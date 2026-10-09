@@ -356,7 +356,7 @@ fun MiniAppWebMcpSurface(
     val localDocumentActive = remember(plugin.pluginId) { AtomicBoolean(false) }
     val encodedId = URLEncoder.encode(plugin.pluginId, StandardCharsets.UTF_8.toString())
     val hostedUrl = "https://fabushi.ombhrum.com/miniapps/$encodedId/"
-    val nativeBridge = remember(plugin.pluginId) {
+    val nativeBridge: MiniAppNativeWebMcpBridge = remember(plugin.pluginId) {
         MiniAppNativeWebMcpBridge(
             plugin = plugin,
             context = context,
