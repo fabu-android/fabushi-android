@@ -83,7 +83,8 @@ impl AndroidAccountService {
                 serde_json::from_str::<Value>(raw)
                     .ok()
                     .and_then(|value| normalize_session(&value, false))
-            });
+            })
+            .filter(|session| session.device_id == device_id);
         Ok(Self {
             base_url,
             device_id,
@@ -170,9 +171,11 @@ impl AndroidAccountService {
     pub fn browser_cancel(&mut self, attempt_id: &str) -> Result<Value, String> {
         let attempt = self
             .browser_attempt
-            .take()
+            .as_ref()
             .filter(|attempt| attempt.attempt_id == attempt_id)
+            .cloned()
             .ok_or("browser login attempt is unknown")?;
+        self.browser_attempt = None;
         let path = format!(
             "/api/auth/browser/attempts/{}/cancel",
             encode_path_segment(&attempt.attempt_id),
