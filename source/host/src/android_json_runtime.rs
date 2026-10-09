@@ -1,6 +1,7 @@
 use crate::account_service::{AccountSessionMutation, AndroidAccountService};
 use crate::android_agent_roster::AndroidAgentRoster;
 use crate::host_secret_store::get_or_create_host_machine_id;
+use crate::messaging_service::AndroidMessagingService;
 use crate::extensions::transcript::TranscriptStore;
 use crate::extensions::webauthn_proxy::{
     WebAuthnBridgeError, WebAuthnProxyExtension, WebAuthnProxyExtensionConfig,
@@ -132,6 +133,7 @@ pub struct AndroidJsonHost {
     account: AndroidAccountService,
     agents: AndroidAgentRoster,
     transcript: Arc<Mutex<TranscriptStore>>,
+    messaging: AndroidMessagingService,
     #[cfg(feature = "ci-account-session-import")]
     ci_session_path: Option<PathBuf>,
     #[cfg(feature = "ci-account-session-import")]
@@ -176,6 +178,8 @@ impl AndroidJsonHost {
             TranscriptStore::open(app_data_dir.join("transcript.json"))
                 .unwrap_or_else(|error| panic!("failed to open canonical Android transcript: {error}")),
         ));
+        let messaging = AndroidMessagingService::open(&app_data_dir)
+            .unwrap_or_else(|error| panic!("failed to open canonical Android messaging repository: {error}"));
         #[cfg(feature = "ci-account-session-import")]
         let ci_session = if mode == AndroidHostMode::Production {
             ci_account_session::from_environment(now_ms() / 1_000)
@@ -195,6 +199,7 @@ impl AndroidJsonHost {
             account,
             agents,
             transcript,
+            messaging,
             #[cfg(feature = "ci-account-session-import")]
             ci_session_path,
             #[cfg(feature = "ci-account-session-import")]
@@ -303,9 +308,9 @@ impl AndroidJsonHost {
             "runtime.stop" => Ok(json!({"status":"stopped"})),
             "runtime.tools" => Ok(json!([])),
             "runtime.call" => Ok(json!({"ok":true,"result":params.get("arguments").cloned().unwrap_or(Value::Null)})),
-            "feature.messaging.access.issue" => Ok(json!({"status":"available"})),
+            "feature.messaging.access.issue" => self.messaging_access_issue(params),
             "feature.messaging.blob.read" => Ok(json!({"data":Value::Null})),
-            "feature.messaging.execute" => Ok(json!({"ok":true})),
+            "feature.messaging.execute" => self.messaging_execute(params),
             "feature.transcript.snapshot" => Ok(Value::Array(
                 self.transcript
                     .lock()
@@ -322,6 +327,77 @@ impl AndroidJsonHost {
         }
     }
 
+
+    fn messaging_access_issue(&mut self, params: &Value) -> Result<Value, String> {
+        let requested_session = required_string(params, "sessionId")?.to_string();
+        let requested_device = required_string(params, "deviceId")?.to_string();
+        let scopes = params
+            .get("scopes")
+            .and_then(Value::as_array)
+            .ok_or("messaging scopes array is required")?;
+        if !scopes.iter().any(|scope| scope.as_str() == Some("messaging")) {
+            return Err("messaging scope is required".into());
+        }
+        let (actor_id, mutation) = self.current_messaging_identity()?;
+        Ok(with_account_session_mutation(
+            json!({
+                "status":"available",
+                "actorId":actor_id,
+                "sessionId":requested_session,
+                "deviceId":requested_device,
+                "protocolVersion":2
+            }),
+            mutation,
+        ))
+    }
+
+    fn messaging_execute(&mut self, params: &Value) -> Result<Value, String> {
+        let (actor_id, mutation) = self.current_messaging_identity()?;
+        let result = self
+            .messaging
+            .execute(params, &actor_id, i64::try_from(now_ms()).unwrap_or(i64::MAX))?;
+        Ok(with_account_session_mutation(result, mutation))
+    }
+
+    fn current_messaging_identity(
+        &mut self,
+    ) -> Result<(String, Option<AccountSessionMutation>), String> {
+        if self.mode == AndroidHostMode::Test {
+            if !self.logged_in {
+                return Err("Sign in to Fabushi to use messaging.".into());
+            }
+            return Ok(("human:android-test".into(), None));
+        }
+        #[cfg(feature = "ci-account-session-import")]
+        if let Some(identity) = self.ci_session_identity.as_ref() {
+            if !self.logged_in {
+                return Err("Sign in to Fabushi to use messaging.".into());
+            }
+            return Ok((
+                format!("human:ci:{}", identity.session_id.replace(':', "-")),
+                None,
+            ));
+        }
+        let (status, mutation) = self.account.public_status()?;
+        if status.get("loggedIn").and_then(Value::as_bool) != Some(true) {
+            return Err("Sign in to Fabushi to use messaging.".into());
+        }
+        let raw_id = status
+            .get("user")
+            .and_then(|user| user.get("id"))
+            .ok_or("Fabushi account identity is missing a user id.")?;
+        let raw_id = match raw_id {
+            Value::String(value) => value.clone(),
+            Value::Number(value) => value.to_string(),
+            _ => return Err("Fabushi account user id has an unsupported type.".into()),
+        };
+        let actor_id = if raw_id.starts_with("human:") {
+            raw_id
+        } else {
+            format!("human:{raw_id}")
+        };
+        Ok((actor_id, mutation))
+    }
 
     fn webauthn_register_provider(&mut self) -> Result<Value, String> {
         let now = now_ms();
