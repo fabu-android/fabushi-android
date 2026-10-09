@@ -189,6 +189,15 @@ impl AndroidMcpAuthWatchManager {
                 self.pending_completions.push(completion.clone());
             }
         }
+        if let McpAuthPollSettlement::Completed(completion)
+            | McpAuthPollSettlement::Cancelled(completion) = &settlement
+        {
+            self.pending_oauth_states.retain(|binding| {
+                !(binding.server_id == completion.server_id
+                    && binding.account_key == completion.account_key
+                    && binding.generation == completion.generation)
+            });
+        }
         if !matches!(settlement, McpAuthPollSettlement::Stale) {
             self.persist()?;
         }
@@ -212,6 +221,11 @@ impl AndroidMcpAuthWatchManager {
             .lifecycle
             .note_auth_completed_elsewhere(server_id, account_key);
         if let Some(watch) = watch.as_ref() {
+            self.pending_oauth_states.retain(|binding| {
+                !(binding.server_id == watch.server_id
+                    && binding.account_key == watch.account_key
+                    && binding.generation == watch.generation)
+            });
             let completion = McpAuthWatchCompletion {
                 generation: watch.generation,
                 server_id: watch.server_id.clone(),
@@ -270,7 +284,13 @@ impl AndroidMcpAuthWatchManager {
 
     pub fn prune_expired(&mut self, now_ms: u64) -> Result<usize, String> {
         let removed = self.lifecycle.prune_expired(now_ms);
-        if removed > 0 {
+        let before_states = self.pending_oauth_states.len();
+        self.pending_oauth_states.retain(|binding| {
+            binding.expires_at_ms > now_ms
+                && self.lifecycle.watch(&binding.server_id, &binding.account_key)
+                    .is_some_and(|watch| watch.generation == binding.generation)
+        });
+        if removed > 0 || self.pending_oauth_states.len() != before_states {
             self.persist()?;
         }
         Ok(removed)
