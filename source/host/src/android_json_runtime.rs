@@ -1209,8 +1209,19 @@ impl AndroidJsonHost {
             (Some(server_id), Some(account_key))
                 if !server_id.trim().is_empty() && !account_key.trim().is_empty() =>
             {
-                self.mcp_auth_watches
+                match self
+                    .mcp_auth_watches
                     .note_auth_completed_elsewhere(server_id, account_key)?
+                {
+                    Some(watch) => Some(watch),
+                    None => {
+                        return Ok(json!({
+                            "provider": provider,
+                            "state": state,
+                            "status": "stale",
+                        }));
+                    }
+                }
             }
             (None, None) => None,
             _ => return Err("MCP OAuth completion serverId/accountKey must be supplied together".into()),
@@ -3034,6 +3045,55 @@ mod tests {
         }
 
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn mcp_oauth_completion_with_explicit_identity_fences_duplicate_stale_callback() {
+        let app_data = tempfile::tempdir().unwrap();
+        let mut host = AndroidJsonHost::new(app_data.path(), AndroidHostMode::Test);
+        host.dispatch(
+            "feature.mcp.authWatch.register",
+            &json!({
+                "serverId":"17",
+                "serverName":"Calendar",
+                "serverUrl":"https://mcp.example.test",
+                "accountKey":"default",
+                "requestingAgentId":"agent-a"
+            }),
+        )
+        .unwrap();
+
+        let completed = host
+            .dispatch(
+                "feature.mcp.oauthComplete",
+                &json!({
+                    "provider":"calendar",
+                    "state":"oauth-state-1",
+                    "code":"authorization-code",
+                    "serverId":"17",
+                    "accountKey":"default"
+                }),
+            )
+            .unwrap();
+        assert_eq!(completed["outcome"], "completed");
+        assert_eq!(completed["serverId"], "17");
+        assert_eq!(completed["accountKey"], "default");
+        assert_eq!(host.events.len(), 1);
+
+        let duplicate = host
+            .dispatch(
+                "feature.mcp.oauthComplete",
+                &json!({
+                    "provider":"calendar",
+                    "state":"oauth-state-1",
+                    "code":"authorization-code",
+                    "serverId":"17",
+                    "accountKey":"default"
+                }),
+            )
+            .unwrap();
+        assert_eq!(duplicate["status"], "stale");
+        assert_eq!(host.events.len(), 1, "stale callback must not emit a second auth completion");
     }
 
     #[cfg(feature = "ci-account-session-import")]
