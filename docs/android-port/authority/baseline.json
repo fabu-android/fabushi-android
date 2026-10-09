@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "observed_date": "2026-10-09",
+  "desktop_repository": "bhrumom/fabushi-desktop",
+  "desktop_branch": "main",
+  "desktop_commit": "3bc92400826cc4ca7ac665b467708e22261edc61",
+  "desktop_root_tree": "3d2a0ad250ca82d0cf3b7bd917d8eca7400e5c31",
+  "android_repository": "fabu-android/fabushi-android",
+  "android_main_at_discovery": "59f6fc8885ce1cb8d1ad4fc5d4ab36f690fb99a2",
+  "android_pr": 3,
+  "android_work_branch": "spec/grok-bot-018-android-parity-20260922",
+  "android_implementation_baseline": "5d049353e167d9b91b5c765e1686f1ac8670f2ff",
+  "scope": "all tracked entries; blobs, symlinks and gitlinks; no path whitelist",
+  "initial_review_status": "unreviewed",
+  "product_acceptance": "not-claimed",
+  "desktop_verified_path_anchors": [
+    "AGENTS.md", "README.md", "RUST_RUNTIME_SOURCE.md", "DESKTOP_SOURCE_CLOSURE.md",
+    "frontend/packages/mcp-app-sdk/src/bridge.ts",
+    "frontend/packages/mcp-app-sdk/src/webmcp.ts",
+    "frontend/packages/shared/src/mahayana-host-features.ts",
+    "contracts/automation/cross-platform-journeys.json",
+    "source/product/fabushi/fabushi-account-service.ts",
+    "source/product/fabushi/fabushi-account-policy.ts",
+    "desktop/e2e/messenger.spec.ts",
+    "desktop/e2e/mahayana-agent-workbench.spec.ts",
+    "desktop/e2e/miniapp-bot-parity.spec.ts",
+    "desktop/e2e/openbot-packaged-acceptance.spec.ts"
+  ]
+}
