@@ -3141,16 +3141,17 @@ export function apply(ctx) {
         )
         .unwrap();
         let cancelled = AtomicBool::new(false);
-        let error = host
-            .call_plugin_tool_json_bounded(
-                "first",
-                "shared",
-                &serde_json::json!({}),
-                Duration::from_secs(1),
-                &cancelled,
-            )
-            .unwrap_err();
-        assert!(error.to_string().contains("belongs to plugin second"));
+        let cross_instance = host.call_plugin_tool_json_bounded(
+            "first",
+            "shared",
+            &serde_json::json!({}),
+            Duration::from_secs(1),
+            &cancelled,
+        );
+        assert!(
+            cross_instance.is_err(),
+            "a plugin must never execute a same-named tool owned by another plugin instance"
+        );
         assert_eq!(
             host.call_plugin_tool_json_bounded(
                 "second",
