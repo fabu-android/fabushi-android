@@ -5,7 +5,11 @@ use crate::android_agent_roster::AndroidAgentRoster;
 use crate::host_secret_store::get_or_create_host_machine_id;
 use crate::messaging_service::AndroidMessagingService;
 use crate::plugin_variable_store::{variable_fields_json, PluginVariableStore, PreparedPluginVariableWrite};
-use crate::mcp_auth::{cleanup_legacy_mcp_auth_credentials, AndroidMcpAuthWatchManager};
+use crate::mcp_auth::{
+    cleanup_legacy_mcp_auth_credentials, AndroidMcpAuthWatchManager,
+    AndroidMcpAuthWatchOwner, CursorDashboardMcpAuthBackend, McpAuthAdminPolicyPort,
+    McpAuthBackendPort, McpAuthOwnerEvent, McpAuthenticateResult,
+};
 use crate::extensions::transcript::TranscriptStore;
 use crate::extensions::webauthn_proxy::{
     WebAuthnBridgeError, WebAuthnProxyExtension, WebAuthnProxyExtensionConfig,
@@ -270,7 +274,8 @@ pub struct AndroidJsonHost {
     agents: AndroidAgentRoster,
     transcript: Arc<Mutex<TranscriptStore>>,
     messaging: AndroidMessagingService,
-    mcp_auth_watches: AndroidMcpAuthWatchManager,
+    mcp_auth_watches: Arc<Mutex<AndroidMcpAuthWatchManager>>,
+    mcp_auth_owner: Option<AndroidMcpAuthWatchOwner>,
     plugin_variables: PluginVariableStore,
     pending_plugin_variable_writes: BTreeMap<String, PreparedPluginVariableWrite>,
     #[cfg(feature = "ci-account-session-import")]
@@ -316,7 +321,7 @@ impl AndroidJsonHost {
         let device_id = get_or_create_host_machine_id(&app_data_dir.join("machine-id"))
             .unwrap_or_else(|error| panic!("failed to open canonical Android machine id: {error}"));
         let account = AndroidAccountService::with_persistent_browser_attempts(
-            device_id,
+            device_id.clone(),
             (mode == AndroidHostMode::Production)
                 .then_some(initial_account_session_json)
                 .flatten(),
@@ -331,11 +336,31 @@ impl AndroidJsonHost {
         ));
         let messaging = AndroidMessagingService::open(&app_data_dir)
             .unwrap_or_else(|error| panic!("failed to open canonical Android messaging repository: {error}"));
-        let mcp_auth_watches = AndroidMcpAuthWatchManager::open(
-            app_data_dir.join("mcp-auth-watches.json"),
-            now_ms(),
-        )
-        .unwrap_or_else(|error| panic!("failed to open durable Android MCP auth watch manager: {error}"));
+        let mcp_auth_watches = Arc::new(Mutex::new(
+            AndroidMcpAuthWatchManager::open(
+                app_data_dir.join("mcp-auth-watches.json"),
+                now_ms(),
+            )
+            .unwrap_or_else(|error| panic!("failed to open durable Android MCP auth watch manager: {error}")),
+        ));
+        let mcp_auth_owner = if mode == AndroidHostMode::Production {
+            let dashboard = Arc::new(
+                CursorDashboardMcpAuthBackend::from_process_environment(device_id.clone())
+                    .unwrap_or_else(|error| panic!("failed to initialize MCP backend owner: {error}")),
+            );
+            let backend: Arc<dyn McpAuthBackendPort> = dashboard.clone();
+            let policy: Arc<dyn McpAuthAdminPolicyPort> = dashboard;
+            Some(
+                AndroidMcpAuthWatchOwner::start(
+                    Arc::clone(&mcp_auth_watches),
+                    backend,
+                    policy,
+                )
+                .unwrap_or_else(|error| panic!("failed to start MCP auth watch owner: {error}")),
+            )
+        } else {
+            None
+        };
         let plugin_variables = PluginVariableStore::open(app_data_dir.join("plugin-variables.json"))
             .unwrap_or_else(|error| panic!("failed to open account-scoped plugin variable store: {error}"));
         let plugin_installer = PluginInstaller::new(app_data_dir.join("plugins"))
@@ -363,6 +388,7 @@ impl AndroidJsonHost {
             transcript,
             messaging,
             mcp_auth_watches,
+            mcp_auth_owner,
             plugin_variables,
             pending_plugin_variable_writes: BTreeMap::new(),
             #[cfg(feature = "ci-account-session-import")]
@@ -428,11 +454,12 @@ impl AndroidJsonHost {
             "feature.auth.oauthPoll" => self.oauth_poll(params),
             "feature.auth.oauthCancel" => self.oauth_cancel(params),
             "feature.mcp.oauthComplete" => self.mcp_oauth_complete(params),
+            "feature.mcp.authenticate" => self.mcp_authenticate(params),
             "feature.mcp.authWatch.register" => self.mcp_auth_watch_register(params),
             "feature.mcp.authWatch.poll" => self.mcp_auth_watch_poll(params),
             "feature.mcp.authWatch.settle" => self.mcp_auth_watch_settle(params),
             "feature.mcp.authWatch.cancel" => self.mcp_auth_watch_cancel(params),
-            "feature.mcp.authWatch.snapshot" => Ok(self.mcp_auth_watches.snapshot()),
+            "feature.mcp.authWatch.snapshot" => self.mcp_auth_watch_snapshot(),
             "feature.auth.logout" => self.account_logout(),
             "feature.automation.upsert" => self.automation_upsert(params),
             "feature.automation.list" => self.automation_list(),
@@ -884,7 +911,11 @@ impl AndroidJsonHost {
 
     fn account_logout(&mut self) -> Result<Value, String> {
         self.pending_plugin_variable_writes.clear();
-        let cancelled_watches = self.mcp_auth_watches.cancel_all()?;
+        let cancelled_watches = self
+            .mcp_auth_watches
+            .lock()
+            .map_err(|_| "MCP auth watch manager lock poisoned".to_string())?
+            .cancel_all()?;
         for completion in cancelled_watches {
             self.events.push_back(json!({
                 "type":"mcp.auth.watch.settled",
@@ -1042,6 +1073,57 @@ impl AndroidJsonHost {
     }
 
 
+    fn mcp_authenticate(&mut self, params: &Value) -> Result<Value, String> {
+        let owner = self
+            .mcp_auth_owner
+            .as_ref()
+            .ok_or("MCP auth owner is available only in production")?;
+        let result = owner.authenticate(
+            now_ms(),
+            required_string(params, "serverId")?,
+            required_string(params, "accountKey")?,
+            required_string(params, "oauthRedirectUri")?,
+            params
+                .get("requestingAgentId")
+                .and_then(Value::as_str)
+                .filter(|value| !value.trim().is_empty()),
+            params
+                .get("forceReauth")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
+        )?;
+        Ok(match result {
+            McpAuthenticateResult::AlreadyAuthenticated => json!({"status":"already-authenticated"}),
+            McpAuthenticateResult::AuthorizationRequired {
+                authorization_url,
+                watch,
+                replaced,
+            } => json!({
+                "status":"authorization-required",
+                "authorizationUrl":authorization_url,
+                "serverId":watch.server_id,
+                "serverName":watch.server_name,
+                "accountKey":watch.account_key,
+                "generation":watch.generation,
+                "expiresAtMs":watch.expires_at_ms,
+                "replacedGeneration":replaced.map(|value| value.generation),
+            }),
+            McpAuthenticateResult::NotConfigured => json!({"status":"not-configured"}),
+            McpAuthenticateResult::AdminBlocked => json!({"status":"admin-blocked"}),
+            McpAuthenticateResult::UnsupportedTransport => json!({"status":"unsupported-transport"}),
+            McpAuthenticateResult::Unreachable(detail) => json!({"status":"unreachable","detail":detail}),
+            McpAuthenticateResult::NotSupported(detail) => json!({"status":"not-supported","detail":detail}),
+        })
+    }
+
+    fn mcp_auth_watch_snapshot(&self) -> Result<Value, String> {
+        Ok(self
+            .mcp_auth_watches
+            .lock()
+            .map_err(|_| "MCP auth watch manager lock poisoned".to_string())?
+            .snapshot())
+    }
+
     fn mcp_auth_watch_register(&mut self, params: &Value) -> Result<Value, String> {
         let server_id = required_string(params, "serverId")?;
         let server_name = required_string(params, "serverName")?;
@@ -1055,7 +1137,11 @@ impl AndroidJsonHost {
             .get("forceReauth")
             .and_then(Value::as_bool)
             .unwrap_or(false);
-        let (watch, replaced) = self.mcp_auth_watches.begin_watch(
+        let (watch, replaced) = self
+            .mcp_auth_watches
+            .lock()
+            .map_err(|_| "MCP auth watch manager lock poisoned".to_string())?
+            .begin_watch(
             now_ms(),
             server_id,
             server_name,
@@ -1077,7 +1163,11 @@ impl AndroidJsonHost {
     fn mcp_auth_watch_poll(&mut self, params: &Value) -> Result<Value, String> {
         let server_id = required_string(params, "serverId")?;
         let account_key = required_string(params, "accountKey")?;
-        let tick = self.mcp_auth_watches.poll_tick(now_ms(), server_id, account_key)?;
+        let tick = self
+            .mcp_auth_watches
+            .lock()
+            .map_err(|_| "MCP auth watch manager lock poisoned".to_string())?
+            .poll_tick(now_ms(), server_id, account_key)?;
         Ok(match tick {
             McpAuthPollTick::Idle => json!({"status":"idle"}),
             McpAuthPollTick::Suppressed => json!({"status":"suppressed"}),
@@ -1121,7 +1211,11 @@ impl AndroidJsonHost {
             deadline_ms: required_u64(params, "deadlineMs")?,
         };
         if now_ms() > request.deadline_ms {
-            let settlement = self.mcp_auth_watches.poll_failed(now_ms(), &request)?;
+            let settlement = self
+                .mcp_auth_watches
+                .lock()
+                .map_err(|_| "MCP auth watch manager lock poisoned".to_string())?
+                .poll_failed(now_ms(), &request)?;
             return Ok(mcp_auth_poll_settlement_json(settlement));
         }
         let outcome = match required_string(params, "outcome")? {
@@ -1133,6 +1227,8 @@ impl AndroidJsonHost {
         };
         let settlement = self
             .mcp_auth_watches
+            .lock()
+            .map_err(|_| "MCP auth watch manager lock poisoned".to_string())?
             .settle_poll(now_ms(), &request, outcome)?;
         let result = mcp_auth_poll_settlement_json(settlement.clone());
         match settlement {
@@ -1168,7 +1264,11 @@ impl AndroidJsonHost {
     fn mcp_auth_watch_cancel(&mut self, params: &Value) -> Result<Value, String> {
         let server_id = required_string(params, "serverId")?;
         let account_key = required_string(params, "accountKey")?;
-        let completion = self.mcp_auth_watches.cancel_watch(server_id, account_key)?;
+        let completion = self
+            .mcp_auth_watches
+            .lock()
+            .map_err(|_| "MCP auth watch manager lock poisoned".to_string())?
+            .cancel_watch(server_id, account_key)?;
         Ok(match completion {
             Some(completion) => {
                 self.emit_mcp_auth_watch_completion(&completion, Some("user-cancelled"));
@@ -1211,6 +1311,8 @@ impl AndroidJsonHost {
             {
                 match self
                     .mcp_auth_watches
+                    .lock()
+                    .map_err(|_| "MCP auth watch manager lock poisoned".to_string())?
                     .note_auth_completed_elsewhere(server_id, account_key)?
                 {
                     Some(watch) => Some(watch),
@@ -1805,7 +1907,68 @@ impl AndroidJsonHost {
         Ok(())
     }
 
+    fn drain_mcp_auth_owner_events(&mut self) -> Result<(), String> {
+        let Some(owner) = self.mcp_auth_owner.as_ref() else {
+            return Ok(());
+        };
+        for event in owner.drain_events()? {
+            match event {
+                McpAuthOwnerEvent::Completed(completion) => {
+                    self.events.push_back(json!({
+                        "type":"mcp.auth.completed",
+                        "serverId":completion.server_id,
+                        "serverName":completion.server_name,
+                        "accountKey":completion.account_key,
+                        "requestingAgentId":completion.requesting_agent_id,
+                        "generation":completion.generation,
+                        "outcome":completion.outcome,
+                        "source":"host-auth-watch-owner",
+                    }));
+                }
+                McpAuthOwnerEvent::Cancelled(completion) => {
+                    self.events.push_back(json!({
+                        "type":"mcp.auth.failed",
+                        "serverId":completion.server_id,
+                        "serverName":completion.server_name,
+                        "accountKey":completion.account_key,
+                        "requestingAgentId":completion.requesting_agent_id,
+                        "generation":completion.generation,
+                        "outcome":"cancelled",
+                        "source":"host-auth-watch-owner",
+                    }));
+                }
+                McpAuthOwnerEvent::Expired(completion) => {
+                    self.events.push_back(json!({
+                        "type":"mcp.auth.failed",
+                        "serverId":completion.server_id,
+                        "serverName":completion.server_name,
+                        "accountKey":completion.account_key,
+                        "requestingAgentId":completion.requesting_agent_id,
+                        "generation":completion.generation,
+                        "outcome":"timeout",
+                        "source":"host-auth-watch-owner",
+                    }));
+                }
+                McpAuthOwnerEvent::BackendUnavailable {
+                    generation,
+                    server_id,
+                    account_key,
+                } => {
+                    self.events.push_back(json!({
+                        "type":"mcp.auth.poll.unreachable",
+                        "serverId":server_id,
+                        "accountKey":account_key,
+                        "generation":generation,
+                        "source":"host-auth-watch-owner",
+                    }));
+                }
+            }
+        }
+        Ok(())
+    }
+
     fn feature_receive(&mut self) -> Result<Value, String> {
+        self.drain_mcp_auth_owner_events()?;
         if let Some(event) = self.events.pop_front() {
             return Ok(event);
         }
