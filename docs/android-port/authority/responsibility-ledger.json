@@ -1790,7 +1790,8 @@
         "requestingAgentId",
         "generation",
         "forceReauth",
-        "expiry/nextPoll"
+        "expiry/nextPoll",
+        "pending canonical completion until resume acceptance"
       ],
       "protocol_wire_contract": [
         "5s poll interval",
@@ -1799,39 +1800,42 @@
         "serverId::accountKey identity",
         "signed-int32 server ID"
       ],
-      "visible_effect": "OAuth completion cannot revive another account/server/old generation and a killed Android process can resume the same pending authentication watch.",
+      "visible_effect": "OAuth completion cannot revive another account/server/old generation; Android Host autonomously advances restored watches, reloads the backend MCP tool catalog before declaring readiness, and resumes the requesting Agent without appending a synthetic user turn.",
       "failure_behavior": [
         "invalid server ID or auth URL fails closed",
         "admin-blocked server cannot authenticate",
-        "unreachable/token-invalid remains pending until expiry",
+        "unreachable/token-invalid/tool-reload failure remains pending until expiry",
+        "duplicate/stale completion is ignored",
         "corrupt durable watch store is discarded"
       ],
-      "cancellation_behavior": "Explicit cancel/logout removes durable watches; completion/cancel race is generation fenced.",
+      "cancellation_behavior": "Explicit cancel/logout/account switch removes durable watches; completion/cancel and late-callback races are generation fenced.",
       "retry_semantics": "Polling reuses the durable watch and never creates a second completion owner.",
       "idempotency_semantics": "serverId+accountKey+generation identify the current watch; replaced generations are stale.",
-      "process_death_recovery": "mcp-auth-watches.json is restored with in-flight polling cleared and original expiry/requester preserved.",
-      "account_fencing": "Watch and legacy wait registry both include normalized accountKey; same connector on two accounts no longer overwrites.",
-      "security_boundary": "UI does not decide token validity; backend/status authority must drive settlement.",
+      "process_death_recovery": "mcp-auth-watches.json restores in-flight watches with polling cleared and preserves successful pending completions until hidden requesting-Agent resume is accepted and acked.",
+      "account_fencing": "Watch identity is serverId::accountKey::generation; logout and account-session fence changes cancel old watches and stale callbacks fail closed.",
+      "security_boundary": "UI does not decide token validity or drive shipping poll/settle. Production Host uses a dedicated Sand renewal credential for Cursor DashboardService and never reuses the Fabushi account bearer for Cursor/Sand MCP RPCs.",
       "android_disposition": "android-adapted",
       "android_target": [
         "source/shared/src/node/mcp/mcp_auth_watch_lifecycle.rs",
         "source/host/src/mcp_auth/android_mcp_auth_watch_manager.rs",
+        "source/host/src/mcp_auth/android_mcp_auth_watch_owner.rs",
+        "source/host/src/mcp_auth/dashboard_mcp_auth_backend.rs",
         "source/host/src/mcp_auth/mcp_auth_wait_registry.rs",
         "source/host/src/mcp_auth/host_mcp_auth_completion.rs",
         "source/host/src/android_json_runtime.rs"
       ],
-      "android_owner": "Rust Host MCP auth watch manager",
+      "android_owner": "Rust Host-owned MCP auth watch manager/background owner",
       "platform_delta": "Android persists pending watch state across process death; system browser/loopback OAuth remains the platform adapter.",
-      "implementation_status": "mapped",
-      "production_wiring": "Durable watch state machine is opened by AndroidJsonHost; fixed register/poll/settle/cancel/snapshot and OAuth completion/logout paths are wired. The Desktop DashboardService checkHttpMcpStatus/validateMcpOAuthTokens equivalent backend adapter plus automatic Host reload/restart/requesting-Agent resume are still open and are intentionally not claimed complete.",
-      "unit_test": "0aba197127d8166b2e1cfdbd6d2aeaa9b37e0a47 rust-runtime-foundation job 114026198574 passed admin recheck, force-reauth, auth URL, replacement, stale poll, timeout, cancellation, account switch, process-death/corruption and wait-registry account-isolation tests.",
-      "contract_test": "0aba197127d8166b2e1cfdbd6d2aeaa9b37e0a47 Grok Android Architecture rust-runtime-foundation job 114026198574 success.",
-      "integration_test": "Canonical backend auth-status/token-validation adapter and reload/resume manager caller remain open.",
-      "packaged_test": "Not claimable until remaining manager/backend composition is wired.",
-      "device_test": "Protected-account MCP OAuth acceptance still requires configured secrets.",
+      "implementation_status": "implemented",
+      "production_wiring": "AndroidJsonHost production startup opens mcp-auth-watches.json, constructs CursorDashboardMcpAuthBackend + AndroidMcpAuthWatchOwner, and starts autonomous progression. feature.mcp.authenticate performs fresh GetAvailableMcpServers admin-policy lookup, CheckHttpMcpStatus, durable register/replacement, 5s polling with bounded ValidateMcpOAuthTokens, fresh policy recheck, then fresh ListSandMcpTools catalog reload before completion. Production external authWatch register/poll/settle is rejected. Successful completion is durably replayable across process death, then queues a hidden requesting-Agent continuation and is acked only after Host accepts that resume.",
+      "unit_test": "4c426a05a402fff14ac95743f77c92192cc47be7 Android Parity Full CI architecture-and-contracts job 114055745713 passed Rust contract/runtime tests covering auth register/replacement, admin block, force-reauth timing, token valid/invalid, tool-reload failure retry, stale generation, cancel, process-death watch restore, autonomous background progression, durable successful-completion replay/ack, duplicate stale callback fencing, and hidden resume transcript ownership.",
+      "contract_test": "4c426a05a402fff14ac95743f77c92192cc47be7 Android Parity Full CI architecture-and-contracts job 114055745713 passed non-strict authority validation/checker tests and Rust contract/runtime tests; strict full-source closure correctly remained red for unrelated global migration debt.",
+      "integration_test": "Production Host composition is implemented and Rust-gated at 4c426a05a402fff14ac95743f77c92192cc47be7; current exact-head Android package and protected-account MCP OAuth/device evidence remain required before verification.",
+      "packaged_test": "Pending current exact-head Android compile/lint/R8/APK/AAB artifact and provenance after ledger update.",
+      "device_test": "Protected-account MCP OAuth/login/device acceptance remains blocked until FABUSHI_CI_TEST_USERNAME/PASSWORD secrets are configured.",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Kept mapped rather than implemented/verified because backend-driven lifecycle is incomplete."
+      "notes": "Implementation is no longer merely mapped: backend-driven autonomous Host lifecycle, fresh policy/token validation, backend tool-catalog reload, durable process-death completion, account/generation fencing and hidden requesting-Agent resume are production-wired. Kept not-verified until the same exact HEAD has package provenance and protected-account device acceptance."
     },
     {
       "responsibility_id": "MCP-PLUGIN-VARIABLES-001",
