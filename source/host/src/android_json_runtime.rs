@@ -1744,8 +1744,6 @@ impl AndroidJsonHost {
         if request_id.len() > 256 || tool.len() > 256 {
             return Err("runtime.call identity exceeds bounded length".into());
         }
-            return Err("runtime.call identity exceeds bounded length".into());
-        }
         if self.capability_broker.needs_reconciliation(&request_id) {
             return Err("runtime.call has outcome-unknown state from a prior Host lifetime; reconcile before replay".into());
         }
