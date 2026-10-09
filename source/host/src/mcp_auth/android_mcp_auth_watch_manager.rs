@@ -172,6 +172,10 @@ impl AndroidMcpAuthWatchManager {
         })
     }
 
+    pub fn watches(&self) -> Vec<PendingMcpAuthWatch> {
+        self.lifecycle.watches().cloned().collect()
+    }
+
     pub fn len(&self) -> usize {
         self.lifecycle.len()
     }
