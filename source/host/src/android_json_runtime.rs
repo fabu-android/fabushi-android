@@ -3396,6 +3396,15 @@ mod tests {
         assert_eq!(completed["serverId"], "17");
         assert_eq!(completed["accountKey"], "default");
         assert_eq!(host.events.len(), 1);
+        let durable = host
+            .mcp_auth_watches
+            .lock()
+            .unwrap()
+            .pending_completions();
+        assert_eq!(durable.len(), 1);
+        assert_eq!(durable[0].server_id, "17");
+        assert_eq!(durable[0].account_key, "default");
+        assert_eq!(durable[0].requesting_agent_id.as_deref(), Some("agent-a"));
 
         let duplicate = host
             .dispatch(
@@ -3411,6 +3420,15 @@ mod tests {
             .unwrap();
         assert_eq!(duplicate["status"], "stale");
         assert_eq!(host.events.len(), 1, "stale callback must not emit a second auth completion");
+        assert_eq!(
+            host.mcp_auth_watches
+                .lock()
+                .unwrap()
+                .pending_completions()
+                .len(),
+            1,
+            "stale callback must not duplicate the durable Host completion"
+        );
     }
 
     #[cfg(feature = "ci-account-session-import")]
