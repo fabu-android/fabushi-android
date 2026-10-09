@@ -321,29 +321,24 @@ impl AndroidNativeRuntime {
     }
 
     fn coordinator_mcp_oauth_register(&mut self, id: Option<Value>, params: &Value) -> String {
-        let Some(state) = params
-            .get("state")
-            .and_then(Value::as_str)
-            .filter(|value| !value.trim().is_empty())
-        else {
+        let Some(state) = params.get("state").and_then(Value::as_str).filter(|value| !value.trim().is_empty()) else {
             return error_response(id, "state is required".into());
         };
-        let Some(provider) = params
-            .get("provider")
-            .and_then(Value::as_str)
-            .filter(|value| !value.trim().is_empty())
-        else {
+        let Some(provider) = params.get("provider").and_then(Value::as_str).filter(|value| !value.trim().is_empty()) else {
             return error_response(id, "provider is required".into());
         };
-
-        match self.mcp_oauth.register(state, provider) {
-            Ok(()) => success_response(
-                id,
-                json!({
-                    "registered": true,
-                    "pendingCount": self.mcp_oauth.pending_count(),
-                }),
-            ),
+        let server_id = params.get("serverId").and_then(Value::as_str).filter(|value| !value.trim().is_empty());
+        let account_key = params.get("accountKey").and_then(Value::as_str).filter(|value| !value.trim().is_empty());
+        let generation = params.get("generation").and_then(Value::as_u64);
+        let has_identity = server_id.is_some() || account_key.is_some() || generation.is_some();
+        if has_identity && (server_id.is_none() || account_key.is_none() || generation.is_none()) {
+            return error_response(id, "OAuth watch identity requires serverId, accountKey, and generation".into());
+        }
+        match self.mcp_oauth.register_bound(state, provider, server_id, account_key, generation) {
+            Ok(()) => success_response(id, json!({
+                "registered": true,
+                "pendingCount": self.mcp_oauth.pending_count(),
+            })),
             Err(message) => error_response(id, message.into()),
         }
     }
@@ -367,7 +362,7 @@ impl AndroidNativeRuntime {
             .filter(|value| !value.trim().is_empty())
             .map(str::to_string);
 
-        let (provider, callback) = match self.mcp_oauth.forward(OAuthCallback {
+        let (registration, callback) = match self.mcp_oauth.forward(OAuthCallback {
             state: state.to_string(),
             code,
             error,
@@ -379,10 +374,13 @@ impl AndroidNativeRuntime {
         self.next_request_id = self.next_request_id.saturating_add(1);
         let host_request_id = format!("mcp-oauth-{:016}", self.next_request_id);
         let host_params = json!({
-            "provider": provider.clone(),
+            "provider": registration.provider.clone(),
             "state": callback.state,
             "code": callback.code,
             "error": callback.error,
+            "serverId": registration.server_id,
+            "accountKey": registration.account_key,
+            "generation": registration.generation,
         });
         let host_reply = self.coordinator.request(CoordinatorRequest {
             protocol_version: COORDINATOR_PROTOCOL_VERSION,
@@ -401,7 +399,7 @@ impl AndroidNativeRuntime {
         success_response(
             id,
             json!({
-                "provider": provider,
+                "provider": registration.provider,
                 "state": state,
                 "outcome": host_result
                     .get("outcome")

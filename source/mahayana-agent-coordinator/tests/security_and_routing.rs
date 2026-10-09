@@ -23,8 +23,32 @@ fn oauth_state_is_single_use_and_fail_closed() {
     registry.register(state, "example-provider").unwrap();
     let mut forwarder = OAuthForwarder::new(registry);
     let callback = OAuthCallback { state: state.into(), code: Some("code-1".into()), error: None };
-    assert_eq!(forwarder.forward(callback.clone()).unwrap().0, "example-provider");
+    assert_eq!(
+        forwarder.forward(callback.clone()).unwrap().0.provider,
+        "example-provider"
+    );
     assert!(forwarder.forward(callback).is_err());
+
+    let bound_state = "abcdef0123456789abcdef0123456789";
+    forwarder
+        .register_bound(
+            bound_state,
+            "bound-provider",
+            Some("17"),
+            Some("work"),
+            Some(42),
+        )
+        .unwrap();
+    let (bound, _) = forwarder
+        .forward(OAuthCallback {
+            state: bound_state.into(),
+            code: None,
+            error: Some("access_denied".into()),
+        })
+        .unwrap();
+    assert_eq!(bound.server_id.as_deref(), Some("17"));
+    assert_eq!(bound.account_key.as_deref(), Some("work"));
+    assert_eq!(bound.generation, Some(42));
 }
 
 #[test]

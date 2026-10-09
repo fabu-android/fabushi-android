@@ -1,4 +1,6 @@
-use fabushi_android_shared::node::mcp::mcp_oauth_loopback::McpOAuthPendingStateRegistry;
+use fabushi_android_shared::node::mcp::mcp_oauth_loopback::{
+    McpOAuthPendingRegistration, McpOAuthPendingStateRegistry,
+};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 pub struct OAuthLoopbackRegistry {
@@ -14,8 +16,26 @@ impl OAuthLoopbackRegistry {
         self.pending.register(now_ms(), state, provider)
     }
 
-    pub fn consume(&mut self, state: &str) -> Option<String> {
-        self.pending.consume(now_ms(), state)
+    pub fn register_bound(
+        &mut self,
+        state: impl Into<String>,
+        provider: impl Into<String>,
+        server_id: Option<&str>,
+        account_key: Option<&str>,
+        generation: Option<u64>,
+    ) -> Result<(), &'static str> {
+        self.pending.register_bound(
+            now_ms(),
+            state,
+            provider,
+            server_id,
+            account_key,
+            generation,
+        )
+    }
+
+    pub fn consume(&mut self, state: &str) -> Option<McpOAuthPendingRegistration> {
+        self.pending.consume_registration(now_ms(), state)
     }
 
     pub fn pending_count(&self) -> usize {

@@ -236,9 +236,17 @@ impl Default for McpOAuthLoopbackState {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct McpOAuthPendingRegistration {
+    pub provider: String,
+    pub server_id: Option<String>,
+    pub account_key: Option<String>,
+    pub generation: Option<u64>,
+}
+
 #[derive(Clone, Debug)]
 pub struct McpOAuthPendingStateRegistry {
-    pending: BTreeMap<String, (String, u64)>,
+    pending: BTreeMap<String, (McpOAuthPendingRegistration, u64)>,
     ttl_ms: u64,
 }
 
@@ -256,42 +264,61 @@ impl McpOAuthPendingStateRegistry {
         state: impl Into<String>,
         provider: impl Into<String>,
     ) -> Result<(), &'static str> {
+        self.register_bound(now_ms, state, provider, None, None, None)
+    }
+
+    pub fn register_bound(
+        &mut self,
+        now_ms: u64,
+        state: impl Into<String>,
+        provider: impl Into<String>,
+        server_id: Option<&str>,
+        account_key: Option<&str>,
+        generation: Option<u64>,
+    ) -> Result<(), &'static str> {
         self.expire(now_ms);
         let state = state.into();
         if state.len() < 16 {
             return Err("OAuth state token is too short");
         }
-        if !state
-            .chars()
-            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '.' | '_' | '~' | '-'))
-        {
+        if !state.chars().all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '.' | '_' | '~' | '-')) {
             return Err("OAuth state token contains unsupported characters");
         }
         let provider = provider.into();
         if provider.trim().is_empty() {
             return Err("OAuth provider is required");
         }
-        if self
-            .pending
-            .insert(
-                state,
-                (provider, now_ms.saturating_add(self.ttl_ms)),
-            )
-            .is_some()
-        {
+        let has_identity = server_id.is_some() || account_key.is_some() || generation.is_some();
+        if has_identity && (server_id.is_none() || account_key.is_none() || generation.is_none()) {
+            return Err("OAuth watch identity must include server, account, and generation");
+        }
+        let server_id = server_id.map(str::trim).filter(|value| !value.is_empty()).map(str::to_string);
+        let account_key = account_key.map(str::trim).filter(|value| !value.is_empty()).map(str::to_string);
+        if has_identity && (server_id.is_none() || account_key.is_none() || generation == Some(0)) {
+            return Err("OAuth watch identity is invalid");
+        }
+        let registration = McpOAuthPendingRegistration { provider, server_id, account_key, generation };
+        if self.pending.insert(state, (registration, now_ms.saturating_add(self.ttl_ms))).is_some() {
             return Err("OAuth state already registered");
         }
         Ok(())
     }
 
     pub fn consume(&mut self, now_ms: u64, state: &str) -> Option<String> {
+        self.consume_registration(now_ms, state).map(|value| value.provider)
+    }
+
+    pub fn consume_registration(
+        &mut self,
+        now_ms: u64,
+        state: &str,
+    ) -> Option<McpOAuthPendingRegistration> {
         self.expire(now_ms);
-        self.pending.remove(state).map(|(provider, _)| provider)
+        self.pending.remove(state).map(|(registration, _)| registration)
     }
 
     pub fn expire(&mut self, now_ms: u64) {
-        self.pending
-            .retain(|_, (_, expires_at_ms)| *expires_at_ms > now_ms);
+        self.pending.retain(|_, (_, expires_at_ms)| *expires_at_ms > now_ms);
     }
 
     pub fn pending_count(&self) -> usize {
