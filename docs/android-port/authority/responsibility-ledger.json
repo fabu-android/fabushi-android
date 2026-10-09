@@ -5,7 +5,7 @@
     "desktop_commit": "3bc92400826cc4ca7ac665b467708e22261edc61",
     "android_repository": "fabu-android/fabushi-android",
     "android_pr": 3,
-    "android_head_at_update": "153076d76d7761a5c4ead02521e484eb633e215c",
+    "android_head_at_update": "63cb978e94a35fb67b5cbc80c958e0a72c1203fc",
     "status": "incomplete",
     "note": "Persistent human-reviewed responsibility ledger for current Desktop main. Historical Grok ledgers are not product-completion authority."
   },
@@ -125,6 +125,102 @@
       "artifact": null,
       "verification_status": "not-verified",
       "notes": "Mapped from the exact current Desktop main merge. No Android verified claim is made until production owner/wiring and same-HEAD evidence exist."
+    },
+    {
+      "responsibility_id": "ACCOUNT-SESSION-001",
+      "domain": "account",
+      "desktop_sources": [
+        {
+          "path": "source/product/fabushi/fabushi-account-service.ts",
+          "blob_sha": "b0bd689dc430fd36ce1e2089027563f80d47b54e",
+          "symbols": [
+            "FabushiAuthService",
+            "currentSession",
+            "refreshSession",
+            "login",
+            "cancelLogin",
+            "logout",
+            "getValidAccessToken"
+          ]
+        },
+        {
+          "path": "source/product/fabushi/fabushi-account-policy.ts",
+          "blob_sha": "c7faad3934f84b088736409fc490ba50597fce58",
+          "symbols": [
+            "FabushiSession",
+            "normalizeFabushiApiBaseUrl",
+            "normalizeFabushiSession",
+            "normalizeFabushiCiSession"
+          ]
+        }
+      ],
+      "source_commit": "3bc92400826cc4ca7ac665b467708e22261edc61",
+      "responsibility": "Own durable Fabushi account session lifecycle, same-origin browser login, session normalization, identity settlement, coordinated refresh, logout/revocation, and valid bearer delivery to production Host inference without exposing credentials to presentation.",
+      "source_owner": "Desktop FabushiAuthService + secret-store boundary",
+      "direct_callers": [
+        "shipping account UI/auth wiring",
+        "Host access credential consumer",
+        "production inference/provider wiring"
+      ],
+      "downstream_dependencies": [
+        "https://api.ombhrum.com account API",
+        "browser auth start/poll/cancel contract",
+        "user-info",
+        "refresh/logout",
+        "provider bearer"
+      ],
+      "state_owner": "Rust Host account service; Android Keystore is storage resource only; Compose/ViewModel never owns tokens",
+      "persistent_state": [
+        "access token",
+        "refresh token",
+        "access/refresh expiry",
+        "session id",
+        "device id",
+        "user id",
+        "resolved profile"
+      ],
+      "protocol_wire_contract": [
+        "POST /api/auth/browser/start",
+        "POST /api/auth/browser/attempts/{attemptId}",
+        "POST /api/auth/browser/attempts/{attemptId}/cancel",
+        "GET /api/auth/user-info",
+        "POST /api/auth/refresh",
+        "POST /api/auth/logout"
+      ],
+      "visible_effect": "Normal production login settles to the same Fabushi account, survives process death, and supplies production Agent inference with a refreshed account bearer without CI-only session injection.",
+      "failure_behavior": [
+        "foreign login origin rejected",
+        "invalid/malformed durable session rejected",
+        "identity-changing refresh rejected",
+        "expired refreshless production session becomes signed-out",
+        "corrupt Keystore ciphertext fails closed"
+      ],
+      "cancellation_behavior": "Browser cancel consumes current attempt and best-effort cancels backend attempt; stale attempt ids are rejected.",
+      "retry_semantics": "Refresh has one process Host owner; no UI retry owner. Side-effecting logout is best-effort after local revocation. Browser poll is explicit and bounded by attempt expiry.",
+      "idempotency_semantics": "Persisted session replacement is atomic; auth callback/poll is bound to attempt id; refresh must preserve device/user identity.",
+      "process_death_recovery": "Android Keystore AES-GCM protects the serialized session; ciphertext lives in noBackupFilesDir; process-owned MahayanaHost injects decrypted session only into native Host at creation.",
+      "account_fencing": "Account/session owner remains behind Coordinator/Host; follow-up work must bind account epoch to all callbacks before verified status.",
+      "security_boundary": "AndroidKeyStore key never leaves platform; secret mutation is consumed inside MahayanaHost and removed before Presentation; public release CI import remains separately compile-gated.",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "source/host/src/account_service.rs",
+        "source/host/src/android_json_runtime.rs",
+        "source/android-host-jni/src/lib.rs",
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/security/AndroidAccountSessionStore.kt",
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/core/MahayanaHost.kt"
+      ],
+      "android_owner": "Rust AndroidAccountService behind Coordinator/Host; Keystore adapter owns encryption/storage mechanics only",
+      "platform_delta": "Desktop secret-store + host credential file becomes AndroidKeyStore AES-GCM + no-backup ciphertext, with initial session injected through the typed native boundary and private persistence mutations consumed before UI.",
+      "implementation_status": "implemented",
+      "production_wiring": "implemented in current PR HEAD; same-HEAD CI/package/device evidence pending",
+      "unit_test": "Rust session normalization/base URL/login-origin tests added; current-head CI pending",
+      "contract_test": "Rust workspace/architecture Actions pending for exact current HEAD",
+      "integration_test": "required: real protected account browser journey + refresh + process death on emulator/device",
+      "packaged_test": "required: public githubRelease excludes CI import and normal login works from packaged artifact",
+      "device_test": "blocked by protected test-account secrets until CI-AUTH-001 is resolved",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Implemented from exact Desktop account source facts. Do not mark verified until current exact HEAD compiles/tests and protected packaged/device login proves durable restore and refresh."
     }
   ]
 }
