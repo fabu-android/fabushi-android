@@ -10,19 +10,29 @@ use std::path::{Path, PathBuf};
 const STORE_VERSION: u64 = 1;
 const MAX_STORE_BYTES: u64 = 512 * 1024;
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DurableMcpOAuthState {
+    pub state: String,
+    pub server_id: String,
+    pub account_key: String,
+    pub generation: u64,
+    pub expires_at_ms: u64,
+}
+
 pub struct AndroidMcpAuthWatchManager {
     store_path: PathBuf,
     lifecycle: McpAuthWatchLifecycle,
     pending_completions: Vec<McpAuthWatchCompletion>,
+    pending_oauth_states: Vec<DurableMcpOAuthState>,
 }
 
 impl AndroidMcpAuthWatchManager {
     pub fn open(store_path: impl Into<PathBuf>, now_ms: u64) -> Result<Self, String> {
         let store_path = store_path.into();
-        let (lifecycle, pending_completions) = match fs::metadata(&store_path) {
+        let (lifecycle, pending_completions, pending_oauth_states) = match fs::metadata(&store_path) {
             Ok(metadata) if !metadata.is_file() || metadata.len() == 0 || metadata.len() > MAX_STORE_BYTES => {
                 let _ = fs::remove_file(&store_path);
-                (McpAuthWatchLifecycle::new(), Vec::new())
+                (McpAuthWatchLifecycle::new(), Vec::new(), Vec::new())
             }
             Ok(_) => match fs::read_to_string(&store_path)
                 .map_err(|error| format!("failed to read MCP auth watch store: {error}"))
@@ -31,11 +41,11 @@ impl AndroidMcpAuthWatchManager {
                 Ok(restored) => restored,
                 Err(_) => {
                     let _ = fs::remove_file(&store_path);
-                    (McpAuthWatchLifecycle::new(), Vec::new())
+                    (McpAuthWatchLifecycle::new(), Vec::new(), Vec::new())
                 }
             },
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                (McpAuthWatchLifecycle::new(), Vec::new())
+                (McpAuthWatchLifecycle::new(), Vec::new(), Vec::new())
             }
             Err(error) => return Err(format!("failed to inspect MCP auth watch store: {error}")),
         };
@@ -43,8 +53,16 @@ impl AndroidMcpAuthWatchManager {
             store_path,
             lifecycle,
             pending_completions,
+            pending_oauth_states,
         };
-        if manager.lifecycle.prune_expired(now_ms) > 0 {
+        let removed_watches = manager.lifecycle.prune_expired(now_ms);
+        let before_states = manager.pending_oauth_states.len();
+        manager.pending_oauth_states.retain(|binding| {
+            binding.expires_at_ms > now_ms
+                && manager.lifecycle.watch(&binding.server_id, &binding.account_key)
+                    .is_some_and(|watch| watch.generation == binding.generation)
+        });
+        if removed_watches > 0 || manager.pending_oauth_states.len() != before_states {
             manager.persist()?;
         }
         Ok(manager)
@@ -72,8 +90,73 @@ impl AndroidMcpAuthWatchManager {
                 force_reauth,
             )
             .map_err(str::to_string)?;
+        if let Some(replaced) = result.1.as_ref() {
+            self.pending_oauth_states.retain(|binding| {
+                !(binding.server_id == replaced.server_id
+                    && binding.account_key == replaced.account_key
+                    && binding.generation == replaced.generation)
+            });
+        }
         self.persist()?;
         Ok(result)
+    }
+
+    pub fn bind_oauth_state(
+        &mut self,
+        state: &str,
+        watch: &PendingMcpAuthWatch,
+    ) -> Result<(), String> {
+        let state = state.trim();
+        if state.len() < 16
+            || state.len() > 512
+            || !state.chars().all(|ch| {
+                ch.is_ascii_alphanumeric() || matches!(ch, '.' | '_' | '~' | '-')
+            })
+        {
+            return Err("MCP OAuth state is invalid".into());
+        }
+        let Some(current) = self.lifecycle.watch(&watch.server_id, &watch.account_key) else {
+            return Err("MCP OAuth state cannot bind a missing auth watch".into());
+        };
+        if current.generation != watch.generation {
+            return Err("MCP OAuth state cannot bind a stale auth watch".into());
+        }
+        self.pending_oauth_states.retain(|binding| binding.state != state);
+        self.pending_oauth_states.push(DurableMcpOAuthState {
+            state: state.to_string(),
+            server_id: watch.server_id.clone(),
+            account_key: watch.account_key.clone(),
+            generation: watch.generation,
+            expires_at_ms: watch.expires_at_ms,
+        });
+        self.persist()
+    }
+
+    pub fn resolve_oauth_state(
+        &self,
+        state: &str,
+        now_ms: u64,
+    ) -> Option<DurableMcpOAuthState> {
+        self.pending_oauth_states.iter().find(|binding| {
+            binding.state == state
+                && binding.expires_at_ms > now_ms
+                && self.lifecycle.watch(&binding.server_id, &binding.account_key)
+                    .is_some_and(|watch| watch.generation == binding.generation)
+        }).cloned()
+    }
+
+    pub fn consume_oauth_state(
+        &mut self,
+        state: &str,
+        now_ms: u64,
+    ) -> Result<Option<DurableMcpOAuthState>, String> {
+        let resolved = self.resolve_oauth_state(state, now_ms);
+        if resolved.is_none() {
+            return Ok(None);
+        }
+        self.pending_oauth_states.retain(|binding| binding.state != state);
+        self.persist()?;
+        Ok(resolved)
     }
 
     pub fn poll_tick(
@@ -156,6 +239,9 @@ impl AndroidMcpAuthWatchManager {
     ) -> Result<Option<McpAuthWatchCompletion>, String> {
         let completion = self.lifecycle.cancel_watch(server_id, account_key);
         if completion.is_some() {
+            self.pending_oauth_states.retain(|binding| {
+                !(binding.server_id == server_id && binding.account_key == account_key)
+            });
             self.persist()?;
         }
         Ok(completion)
@@ -167,6 +253,7 @@ impl AndroidMcpAuthWatchManager {
     ) -> Result<Vec<McpAuthWatchCompletion>, String> {
         let completions = self.lifecycle.cancel_server(server_id);
         if !completions.is_empty() {
+            self.pending_oauth_states.retain(|binding| binding.server_id != server_id);
             self.persist()?;
         }
         Ok(completions)
@@ -174,7 +261,8 @@ impl AndroidMcpAuthWatchManager {
 
     pub fn cancel_all(&mut self) -> Result<Vec<McpAuthWatchCompletion>, String> {
         let completions = self.lifecycle.cancel_all();
-        if !completions.is_empty() {
+        if !completions.is_empty() || !self.pending_oauth_states.is_empty() {
+            self.pending_oauth_states.clear();
             self.persist()?;
         }
         Ok(completions)
@@ -198,6 +286,7 @@ impl AndroidMcpAuthWatchManager {
             "nextGeneration": self.lifecycle.next_generation(),
             "watches": self.lifecycle.watches().map(watch_to_value).collect::<Vec<_>>(),
             "pendingCompletions": self.pending_completions.iter().map(completion_to_value).collect::<Vec<_>>(),
+            "pendingOauthStates": self.pending_oauth_states.iter().map(oauth_state_to_value).collect::<Vec<_>>(),
         })
     }
 
@@ -237,7 +326,7 @@ impl AndroidMcpAuthWatchManager {
     }
 
     fn persist(&mut self) -> Result<(), String> {
-        if self.lifecycle.is_empty() && self.pending_completions.is_empty() {
+        if self.lifecycle.is_empty() && self.pending_completions.is_empty() && self.pending_oauth_states.is_empty() {
             match fs::remove_file(&self.store_path) {
                 Ok(()) => return Ok(()),
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
@@ -290,6 +379,32 @@ fn watch_to_value(watch: &PendingMcpAuthWatch) -> Value {
     })
 }
 
+fn oauth_state_to_value(binding: &DurableMcpOAuthState) -> Value {
+    json!({
+        "state":binding.state,
+        "serverId":binding.server_id,
+        "accountKey":binding.account_key,
+        "generation":binding.generation,
+        "expiresAtMs":binding.expires_at_ms,
+    })
+}
+
+fn parse_oauth_state(value: &Value) -> Option<DurableMcpOAuthState> {
+    let state = bounded_string(value.get("state")?, 512)?;
+    if state.len() < 16
+        || !state.chars().all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '.' | '_' | '~' | '-'))
+    {
+        return None;
+    }
+    Some(DurableMcpOAuthState {
+        state,
+        server_id: bounded_string(value.get("serverId")?, 32)?,
+        account_key: bounded_string(value.get("accountKey")?, 320)?,
+        generation: value.get("generation")?.as_u64()?,
+        expires_at_ms: value.get("expiresAtMs")?.as_u64()?,
+    })
+}
+
 fn completion_to_value(completion: &McpAuthWatchCompletion) -> Value {
     json!({
         "generation":completion.generation,
@@ -319,7 +434,7 @@ fn parse_completion(value: &Value) -> Option<McpAuthWatchCompletion> {
     })
 }
 
-fn parse_store(raw: &str, now_ms: u64) -> Result<(McpAuthWatchLifecycle, Vec<McpAuthWatchCompletion>), String> {
+fn parse_store(raw: &str, now_ms: u64) -> Result<(McpAuthWatchLifecycle, Vec<McpAuthWatchCompletion>, Vec<DurableMcpOAuthState>), String> {
     let value: Value =
         serde_json::from_str(raw).map_err(|_| "MCP auth watch store is invalid JSON")?;
     if value.get("version").and_then(Value::as_u64) != Some(STORE_VERSION) {
@@ -342,6 +457,11 @@ fn parse_store(raw: &str, now_ms: u64) -> Result<(McpAuthWatchLifecycle, Vec<Mcp
         .and_then(Value::as_array)
         .map(|items| items.iter().filter_map(parse_completion).collect::<Vec<_>>())
         .unwrap_or_default();
+    let pending_oauth_states = value
+        .get("pendingOauthStates")
+        .and_then(Value::as_array)
+        .map(|items| items.iter().filter_map(parse_oauth_state).collect::<Vec<_>>())
+        .unwrap_or_default();
     Ok((
         McpAuthWatchLifecycle::from_restored(
             now_ms,
@@ -349,6 +469,7 @@ fn parse_store(raw: &str, now_ms: u64) -> Result<(McpAuthWatchLifecycle, Vec<Mcp
             watches,
         ),
         pending_completions,
+        pending_oauth_states,
     ))
 }
 
@@ -441,6 +562,78 @@ mod tests {
         assert_eq!(restored.generation, second.generation);
         assert_eq!(restored.requesting_agent_id.as_deref(), Some("agent-a"));
         assert!(!restored.is_polling);
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn oauth_state_binding_survives_process_death_and_fences_replacement() {
+        let path = temp_store("oauth-state");
+        let first = {
+            let mut manager = AndroidMcpAuthWatchManager::open(&path, 0).unwrap();
+            let watch = manager
+                .begin_watch(
+                    0,
+                    "17",
+                    "Calendar",
+                    "https://mcp.example.test",
+                    "default",
+                    Some("agent-a"),
+                    false,
+                )
+                .unwrap()
+                .0;
+            manager
+                .bind_oauth_state("0123456789abcdef0123456789abcdef", &watch)
+                .unwrap();
+            assert_eq!(
+                manager
+                    .resolve_oauth_state("0123456789abcdef0123456789abcdef", 1)
+                    .unwrap()
+                    .generation,
+                watch.generation
+            );
+            watch
+        };
+
+        let mut reopened = AndroidMcpAuthWatchManager::open(&path, 2).unwrap();
+        assert_eq!(
+            reopened
+                .resolve_oauth_state("0123456789abcdef0123456789abcdef", 2)
+                .unwrap()
+                .generation,
+            first.generation
+        );
+        let replacement = reopened
+            .begin_watch(
+                3,
+                "17",
+                "Calendar",
+                "https://mcp.example.test",
+                "default",
+                None,
+                false,
+            )
+            .unwrap()
+            .0;
+        assert!(replacement.generation > first.generation);
+        assert!(reopened
+            .resolve_oauth_state("0123456789abcdef0123456789abcdef", 4)
+            .is_none());
+
+        reopened
+            .bind_oauth_state("abcdef0123456789abcdef0123456789", &replacement)
+            .unwrap();
+        let consumed = reopened
+            .consume_oauth_state("abcdef0123456789abcdef0123456789", 5)
+            .unwrap()
+            .unwrap();
+        assert_eq!(consumed.generation, replacement.generation);
+        drop(reopened);
+
+        let reopened = AndroidMcpAuthWatchManager::open(&path, 6).unwrap();
+        assert!(reopened
+            .resolve_oauth_state("abcdef0123456789abcdef0123456789", 6)
+            .is_none());
         let _ = fs::remove_file(path);
     }
 
