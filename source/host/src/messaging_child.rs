@@ -1,8 +1,8 @@
 use serde::{Deserialize, Serialize};
 use std::{
-    fs,
-    io,
-    path::{Path, PathBuf},
+    fs::{self, File},
+    io::{self, Write},
+    path::PathBuf,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -289,6 +289,7 @@ impl ConversationChildStore {
             Err(error) if error.kind() == io::ErrorKind::NotFound => PersistedChildState::default(),
             Err(error) => return Err(error),
         };
+        validate_persisted_child_state(&state)?;
         Ok(Self { path, state })
     }
 
@@ -310,6 +311,7 @@ impl ConversationChildStore {
         if !destination.is_valid() || !bounded_id(actor_id) {
             return Err("invalid conversation child identity");
         }
+        let previous = self.state.clone();
         let index = self
             .state
             .states
@@ -326,7 +328,10 @@ impl ConversationChildStore {
         };
         mutate(entry)?;
         let projected = entry.clone();
-        self.persist().map_err(|_| "conversation child persistence failed")?;
+        if self.persist().is_err() {
+            self.state = previous;
+            return Err("conversation child persistence failed");
+        }
         Ok(projected)
     }
 
@@ -338,13 +343,15 @@ impl ConversationChildStore {
         if !destination.is_valid() || !bounded_id(actor_id) {
             return Err("invalid conversation child identity");
         }
+        let previous = self.state.clone();
         let before = self.state.states.len();
         self.state.states.retain(|state| {
             !(state.destination == *destination && state.actor_id == actor_id)
         });
         let removed = self.state.states.len() != before;
-        if removed {
-            self.persist().map_err(|_| "conversation child persistence failed")?;
+        if removed && self.persist().is_err() {
+            self.state = previous;
+            return Err("conversation child persistence failed");
         }
         Ok(removed)
     }
@@ -356,10 +363,46 @@ impl ConversationChildStore {
         let temporary = self.path.with_extension("json.tmp");
         let bytes = serde_json::to_vec(&self.state)
             .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
-        fs::write(&temporary, bytes)?;
+        {
+            let mut file = File::create(&temporary)?;
+            file.write_all(&bytes)?;
+            file.sync_all()?;
+        }
         fs::rename(&temporary, &self.path)?;
+        if let Some(parent) = self.path.parent() {
+            if let Ok(directory) = File::open(parent) {
+                let _ = directory.sync_all();
+            }
+        }
         Ok(())
     }
+}
+
+fn validate_persisted_child_state(state: &PersistedChildState) -> io::Result<()> {
+    let mut identities = std::collections::BTreeSet::new();
+    for child in &state.states {
+        if !child.destination.is_valid()
+            || !bounded_id(&child.actor_id)
+            || child
+                .pagination
+                .message_ids
+                .iter()
+                .any(|message_id| !bounded_id(message_id))
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "conversation-child store contains invalid identity or pagination state",
+            ));
+        }
+        let key = (child.actor_id.clone(), child.destination.clone());
+        if !identities.insert(key) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "conversation-child store contains duplicate actor/destination state",
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn bounded_id(value: &str) -> bool {
@@ -456,6 +499,34 @@ mod tests {
                 ..ConversationChildUnreadContext::default()
             },
         ));
+    }
+
+    #[test]
+    fn corrupt_or_duplicate_persisted_state_fails_closed() {
+        let root = std::env::temp_dir().join(format!(
+            "fabushi-android-child-store-corrupt-{}",
+            std::process::id(),
+        ));
+        let path = root.join("children.json");
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        fs::write(&path, b"{broken").unwrap();
+        assert_eq!(
+            ConversationChildStore::open(&path).err().unwrap().kind(),
+            io::ErrorKind::InvalidData
+        );
+
+        let child = ConversationChildRuntimeState::new(destination(), "human:1").unwrap();
+        fs::write(
+            &path,
+            serde_json::to_vec(&serde_json::json!({"states":[child.clone(), child]})).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            ConversationChildStore::open(&path).err().unwrap().kind(),
+            io::ErrorKind::InvalidData
+        );
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
