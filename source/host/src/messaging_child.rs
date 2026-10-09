@@ -1,6 +1,5 @@
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::BTreeMap,
     fs,
     io,
     path::{Path, PathBuf},
@@ -268,17 +267,11 @@ pub struct ConversationChildUnreadContext {
     pub actor_is_monoforum_admin: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-struct ChildStateKey {
-    destination: ConversationDestination,
-    actor_id: String,
-}
-
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct PersistedChildState {
     #[serde(default)]
-    states: BTreeMap<ChildStateKey, ConversationChildRuntimeState>,
+    states: Vec<ConversationChildRuntimeState>,
 }
 
 pub struct ConversationChildStore {
@@ -302,7 +295,7 @@ impl ConversationChildStore {
     pub fn states_for_actor(&self, actor_id: &str) -> Vec<ConversationChildRuntimeState> {
         self.state
             .states
-            .values()
+            .iter()
             .filter(|state| state.actor_id == actor_id)
             .cloned()
             .collect()
@@ -317,14 +310,20 @@ impl ConversationChildStore {
         if !destination.is_valid() || !bounded_id(actor_id) {
             return Err("invalid conversation child identity");
         }
-        let key = ChildStateKey {
-            destination: destination.clone(),
-            actor_id: actor_id.to_string(),
+        let index = self
+            .state
+            .states
+            .iter()
+            .position(|state| state.destination == destination && state.actor_id == actor_id);
+        let entry = if let Some(index) = index {
+            &mut self.state.states[index]
+        } else {
+            self.state.states.push(
+                ConversationChildRuntimeState::new(destination, actor_id)
+                    .expect("validated conversation child state"),
+            );
+            self.state.states.last_mut().expect("inserted conversation child state")
         };
-        let entry = self.state.states.entry(key).or_insert_with(|| {
-            ConversationChildRuntimeState::new(destination, actor_id)
-                .expect("validated conversation child state")
-        });
         mutate(entry)?;
         let projected = entry.clone();
         self.persist().map_err(|_| "conversation child persistence failed")?;
@@ -339,11 +338,11 @@ impl ConversationChildStore {
         if !destination.is_valid() || !bounded_id(actor_id) {
             return Err("invalid conversation child identity");
         }
-        let key = ChildStateKey {
-            destination: destination.clone(),
-            actor_id: actor_id.to_string(),
-        };
-        let removed = self.state.states.remove(&key).is_some();
+        let before = self.state.states.len();
+        self.state.states.retain(|state| {
+            !(state.destination == *destination && state.actor_id == actor_id)
+        });
+        let removed = self.state.states.len() != before;
         if removed {
             self.persist().map_err(|_| "conversation child persistence failed")?;
         }
