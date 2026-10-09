@@ -60,35 +60,37 @@ internal data class AndroidUpdateCandidate(
 )
 
 object AndroidVersion {
-    private data class Parsed(val core: List<Long>, val preRelease: List<String>)
+    private val releasePattern = Regex("^(\\d+)\\.(\\d+)\\.(\\d+)$")
+    private val numericIdentifierPattern = Regex("^\\d+$")
+
+    private data class Parsed(
+        val release: List<java.math.BigInteger>,
+        val preRelease: List<String>,
+    )
 
     fun compare(left: String, right: String): Int {
         val leftParsed = parse(left)
+            ?: throw IllegalArgumentException("Cannot compare versions \"$left\" and \"$right\"")
         val rightParsed = parse(right)
-        val count = maxOf(leftParsed.core.size, rightParsed.core.size)
-        repeat(count) { index ->
-            val lhs = leftParsed.core.getOrElse(index) { 0L }
-            val rhs = rightParsed.core.getOrElse(index) { 0L }
-            if (lhs != rhs) return lhs.compareTo(rhs)
-        }
+            ?: throw IllegalArgumentException("Cannot compare versions \"$left\" and \"$right\"")
 
-        if (leftParsed.preRelease.isEmpty() && rightParsed.preRelease.isNotEmpty()) return 1
-        if (leftParsed.preRelease.isNotEmpty() && rightParsed.preRelease.isEmpty()) return -1
-        val preCount = maxOf(leftParsed.preRelease.size, rightParsed.preRelease.size)
-        repeat(preCount) { index ->
-            val lhs = leftParsed.preRelease.getOrNull(index) ?: return -1
-            val rhs = rightParsed.preRelease.getOrNull(index) ?: return 1
-            val lhsNumber = lhs.toLongOrNull()
-            val rhsNumber = rhs.toLongOrNull()
-            val result = when {
-                lhsNumber != null && rhsNumber != null -> lhsNumber.compareTo(rhsNumber)
-                lhsNumber != null -> -1
-                rhsNumber != null -> 1
-                else -> lhs.compareTo(rhs, ignoreCase = true)
-            }
+        repeat(3) { index ->
+            val result = leftParsed.release[index].compareTo(rightParsed.release[index])
+            if (result != 0) return result.sign()
+        }
+        if (leftParsed.preRelease.isEmpty() && rightParsed.preRelease.isEmpty()) return 0
+        if (leftParsed.preRelease.isEmpty()) return 1
+        if (rightParsed.preRelease.isEmpty()) return -1
+
+        val count = minOf(leftParsed.preRelease.size, rightParsed.preRelease.size)
+        repeat(count) { index ->
+            val result = compareIdentifier(
+                leftParsed.preRelease[index],
+                rightParsed.preRelease[index],
+            )
             if (result != 0) return result
         }
-        return 0
+        return (leftParsed.preRelease.size - rightParsed.preRelease.size).sign()
     }
 
     fun isNewer(
@@ -101,15 +103,36 @@ object AndroidVersion {
         return versionResult > 0 || (versionResult == 0 && remoteVersionCode > currentVersionCode)
     }
 
-    private fun parse(value: String): Parsed {
-        val normalized = value.trim().removePrefix("v").substringBefore('+')
-        val pieces = normalized.split('-', limit = 2)
-        val core = pieces.firstOrNull().orEmpty().split('.')
-            .filter { it.isNotBlank() }
-            .map { it.toLongOrNull() ?: 0L }
-            .ifEmpty { listOf(0L) }
-        val preRelease = pieces.getOrNull(1)?.split('.')?.filter { it.isNotBlank() }.orEmpty()
-        return Parsed(core, preRelease)
+    fun isPrerelease(version: String): Boolean = parse(version)?.preRelease?.isNotEmpty() == true
+
+    private fun parse(value: String): Parsed? {
+        val hyphenIndex = value.indexOf('-')
+        val releasePart = if (hyphenIndex == -1) value else value.substring(0, hyphenIndex)
+        val prereleasePart = if (hyphenIndex == -1) null else value.substring(hyphenIndex + 1)
+        val match = releasePattern.matchEntire(releasePart) ?: return null
+        val preRelease = prereleasePart?.split('.') ?: emptyList()
+        if (preRelease.any(String::isEmpty)) return null
+        return Parsed(
+            release = match.groupValues.drop(1).map { java.math.BigInteger(it) },
+            preRelease = preRelease,
+        )
+    }
+
+    private fun compareIdentifier(left: String, right: String): Int {
+        val leftNumeric = numericIdentifierPattern.matches(left)
+        val rightNumeric = numericIdentifierPattern.matches(right)
+        if (leftNumeric && rightNumeric) {
+            return java.math.BigInteger(left).compareTo(java.math.BigInteger(right)).sign()
+        }
+        if (leftNumeric) return -1
+        if (rightNumeric) return 1
+        return left.compareTo(right).sign()
+    }
+
+    private fun Int.sign(): Int = when {
+        this < 0 -> -1
+        this > 0 -> 1
+        else -> 0
     }
 }
 

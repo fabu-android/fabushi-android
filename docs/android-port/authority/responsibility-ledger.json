@@ -1739,6 +1739,248 @@
       "artifact": null,
       "verification_status": "not-verified",
       "notes": "Only relay/transport responsibility is implemented here. Desktop Host producer/projection/inventory rows remain unreviewed and are not claimed by this responsibility."
+    },
+    {
+      "responsibility_id": "MCP-AUTH-WATCH-LIFECYCLE-001",
+      "domain": "mcp",
+      "desktop_sources": [
+        {
+          "path": "source/shared/node/mcp/mcp-auth-watch-lifecycle.ts",
+          "blob_sha": "eb538d8bc3df4e86e948cfed805343e31c7c014f",
+          "symbols": [
+            "SandMcpAuthWatchLifecycle"
+          ]
+        },
+        {
+          "path": "source/shared/node/mcp/mcp-auth-watch.ts",
+          "blob_sha": "ee25badb52858b0afd5dfa02d6f4db6fc3e23d72",
+          "symbols": [
+            "AUTH_WATCH_POLL_INTERVAL_MS",
+            "AUTH_WATCH_POLL_TIMEOUT_MS",
+            "AUTH_WATCH_TIMEOUT_MS"
+          ]
+        },
+        {
+          "path": "source/shared/node/mcp/mcp-server-id.ts",
+          "blob_sha": "fe477dbe135a3333e5422b47136310c38556813e",
+          "symbols": [
+            "validateMcpServerId",
+            "mcpServerIdToInt32"
+          ]
+        }
+      ],
+      "source_commit": "3bc92400826cc4ca7ac665b467708e22261edc61",
+      "responsibility": "Recheck fresh admin policy, resolve authentication status, register/replace account-scoped server watches, poll token validity on Desktop timing, fence stale/duplicate callbacks, survive process death, reload Host MCP state and resume the requesting Agent only after canonical authentication completion.",
+      "source_owner": "Desktop MCP manager/auth watch lifecycle",
+      "direct_callers": [
+        "Desktop SandMcpManager.authenticateServer",
+        "Android Host fixed MCP auth-watch methods"
+      ],
+      "downstream_dependencies": [
+        "MCP backend auth authority",
+        "Host MCP reload/restart",
+        "requesting Agent continuation"
+      ],
+      "state_owner": "AndroidMcpAuthWatchManager under Android Host",
+      "persistent_state": [
+        "serverId",
+        "serverName",
+        "serverUrl",
+        "accountKey",
+        "requestingAgentId",
+        "generation",
+        "forceReauth",
+        "expiry/nextPoll"
+      ],
+      "protocol_wire_contract": [
+        "5s poll interval",
+        "30s individual poll deadline",
+        "15min watch expiry",
+        "serverId::accountKey identity",
+        "signed-int32 server ID"
+      ],
+      "visible_effect": "OAuth completion cannot revive another account/server/old generation and a killed Android process can resume the same pending authentication watch.",
+      "failure_behavior": [
+        "invalid server ID or auth URL fails closed",
+        "admin-blocked server cannot authenticate",
+        "unreachable/token-invalid remains pending until expiry",
+        "corrupt durable watch store is discarded"
+      ],
+      "cancellation_behavior": "Explicit cancel/logout removes durable watches; completion/cancel race is generation fenced.",
+      "retry_semantics": "Polling reuses the durable watch and never creates a second completion owner.",
+      "idempotency_semantics": "serverId+accountKey+generation identify the current watch; replaced generations are stale.",
+      "process_death_recovery": "mcp-auth-watches.json is restored with in-flight polling cleared and original expiry/requester preserved.",
+      "account_fencing": "Watch and legacy wait registry both include normalized accountKey; same connector on two accounts no longer overwrites.",
+      "security_boundary": "UI does not decide token validity; backend/status authority must drive settlement.",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "source/shared/src/node/mcp/mcp_auth_watch_lifecycle.rs",
+        "source/host/src/mcp_auth/android_mcp_auth_watch_manager.rs",
+        "source/host/src/mcp_auth/mcp_auth_wait_registry.rs",
+        "source/host/src/mcp_auth/host_mcp_auth_completion.rs",
+        "source/host/src/android_json_runtime.rs"
+      ],
+      "android_owner": "Rust Host MCP auth watch manager",
+      "platform_delta": "Android persists pending watch state across process death; system browser/loopback OAuth remains the platform adapter.",
+      "implementation_status": "mapped",
+      "production_wiring": "Durable watch state machine is opened by AndroidJsonHost; fixed register/poll/settle/cancel/snapshot and OAuth completion/logout paths are wired. The Desktop DashboardService checkHttpMcpStatus/validateMcpOAuthTokens equivalent backend adapter plus automatic Host reload/restart/requesting-Agent resume are still open and are intentionally not claimed complete.",
+      "unit_test": "0aba197127d8166b2e1cfdbd6d2aeaa9b37e0a47 rust-runtime-foundation job 114026198574 passed admin recheck, force-reauth, auth URL, replacement, stale poll, timeout, cancellation, account switch, process-death/corruption and wait-registry account-isolation tests.",
+      "contract_test": "0aba197127d8166b2e1cfdbd6d2aeaa9b37e0a47 Grok Android Architecture rust-runtime-foundation job 114026198574 success.",
+      "integration_test": "Canonical backend auth-status/token-validation adapter and reload/resume manager caller remain open.",
+      "packaged_test": "Not claimable until remaining manager/backend composition is wired.",
+      "device_test": "Protected-account MCP OAuth acceptance still requires configured secrets.",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Kept mapped rather than implemented/verified because backend-driven lifecycle is incomplete."
+    },
+    {
+      "responsibility_id": "MCP-PLUGIN-VARIABLES-001",
+      "domain": "mcp",
+      "desktop_sources": [
+        {
+          "path": "source/shared/node/mcp/mcp-plugin-variables.ts",
+          "blob_sha": "29c8bb0c4a5a3abba9afc3dc735992a9a2cc57c3",
+          "symbols": [
+            "pluginVariablesSchemaToFields",
+            "findMissingRequiredCatalogFields"
+          ]
+        },
+        {
+          "path": "source/shared/node/mcp/mcp-catalog-flow.ts",
+          "blob_sha": "1b8392c2afef6ba2ce21d514c8f32f565260ad01",
+          "symbols": [
+            "installEntry",
+            "updatePluginInstall",
+            "requireAccountWriter"
+          ]
+        }
+      ],
+      "source_commit": "3bc92400826cc4ca7ac665b467708e22261edc61",
+      "responsibility": "Carry marketplace variable schema into install/update UI and Host runtime; enforce required/default semantics, preserve team-configured behavior, keep account-scoped canonical config durable, and keep secret values in Android protected storage while only injecting them into the process-owned runtime in memory.",
+      "source_owner": "Desktop MCP marketplace/catalog flow + account writer",
+      "direct_callers": [
+        "MarketplaceViewModel install flow",
+        "MahayanaHost runtime.start"
+      ],
+      "downstream_dependencies": [
+        "Marketplace catalog response",
+        "Android Keystore",
+        "Rust plugin runtime"
+      ],
+      "state_owner": "Rust PluginVariableStore for schema/public config/secret handles; AndroidPluginVariableSecretStore for secret plaintext",
+      "persistent_state": [
+        "accountKey+pluginId",
+        "variable schema",
+        "public config",
+        "secret key handles",
+        "teamConfigured flag",
+        "Keystore ciphertext"
+      ],
+      "protocol_wire_contract": [
+        "feature.plugin.variables.fields/prepare/commit/runtimeConfig",
+        "typed Android Coordinator methods",
+        "runtime.start config injection"
+      ],
+      "visible_effect": "A plugin that needs variables prompts for required values, hides secret input, remembers config across restart for the same account, and starts with configured values instead of a hard-coded empty object.",
+      "failure_behavior": [
+        "missing required values rejected",
+        "undeclared fields rejected",
+        "missing protected secret fails closed",
+        "account switch cannot read prior account config"
+      ],
+      "cancellation_behavior": "Variable dialog cancellation does not commit; pending Rust writes are cleared on logout.",
+      "retry_semantics": "Reconfiguration replaces the same account/plugin config; install can retry without exposing secret plaintext in logs or ordinary Rust persistence.",
+      "idempotency_semantics": "Canonical config key is accountKey+pluginId; secret store uses the same scope.",
+      "process_death_recovery": "Public config/secret handles reopen from Rust store and secret ciphertext reopens from Android no-backup protected storage.",
+      "account_fencing": "Rust prepare/commit captures current account fence and commit rejects account changes; Keystore document is partitioned by accountKey.",
+      "security_boundary": "Compose never owns canonical persisted plugin config; secret plaintext is encrypted by Android Keystore and only decrypted for process-local runtime assembly.",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "source/shared/src/node/mcp/mcp_plugin_variables.rs",
+        "source/host/src/plugin_variable_store.rs",
+        "source/host/src/android_json_runtime.rs",
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/security/AndroidPluginVariableSecretStore.kt",
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/core/MahayanaHost.kt",
+        "source/android-preload/src/main/kotlin/com/ombhrum/fabushi/androidpreload/runtime/AndroidCoordinatorPort.kt",
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/coordinator/AndroidCoordinatorRuntime.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/presentation/MarketplaceViewModel.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/features/marketplace/MarketplaceContent.kt"
+      ],
+      "android_owner": "Rust Host canonical config + Android Keystore secret resource",
+      "platform_delta": "Desktop account-writer persistence is represented by Host account-scoped durable config; Android Keystore replaces desktop secret persistence. Team-provided secrets are not copied into local plaintext.",
+      "implementation_status": "implemented",
+      "production_wiring": "Marketplace model parses variablesSchema/team-configured metadata, Compose renders typed secret/required fields, Coordinator uses fixed configure methods, Host prepare -> Keystore replace -> Rust commit persists public config/handles, and runtime.start merges protected secret values in memory. The previous fixed config={} shipping placeholder is removed.",
+      "unit_test": "0aba197127d8166b2e1cfdbd6d2aeaa9b37e0a47 rust-runtime-foundation job 114026198574 passed required/default/secret/account-isolation/restart/update/redaction tests; Android package evidence remains separate.",
+      "contract_test": "Typed Coordinator uses fixed plugin-variable methods; Rust prepare/commit account fence and secret-handle split are covered by exact-head Rust tests.",
+      "integration_test": "Android package compile/lint and a live catalog with variablesSchema remain required before verification.",
+      "packaged_test": "Required on final exact-head package artifact.",
+      "device_test": "Protected storage restart/account-switch path requires packaged emulator/device acceptance.",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Current Fabushi marketplace server does not yet expose Desktop Cursor marketplace variable metadata for every plugin; live catalog parity remains separate."
+    },
+    {
+      "responsibility_id": "UPDATE-VERSION-COMPARE-001",
+      "domain": "release",
+      "desktop_sources": [
+        {
+          "path": "source/electron-main/update/update-version.ts",
+          "blob_sha": "41e076194d2afa295a40d15c035252d31ac2e3fa",
+          "symbols": [
+            "parseVersion",
+            "compareVersionIdentifiers",
+            "compareVersions",
+            "isNewerVersion",
+            "isPrerelease"
+          ]
+        }
+      ],
+      "source_commit": "3bc92400826cc4ca7ac665b467708e22261edc61",
+      "responsibility": "Use the Desktop exact version grammar and prerelease ordering for update selection so malformed or semantically different version strings cannot be treated as a valid Android release.",
+      "source_owner": "Desktop updater version comparator",
+      "direct_callers": [
+        "AndroidUpdateViewModel.findLatestUpdate"
+      ],
+      "downstream_dependencies": [
+        "GitHub Release manifest selection",
+        "signed APK update flow"
+      ],
+      "state_owner": "Stateless AndroidVersion comparator",
+      "persistent_state": [],
+      "protocol_wire_contract": [
+        "release must be exactly major.minor.patch",
+        "optional prerelease identifiers separated by one hyphen and dots",
+        "no empty prerelease identifier",
+        "numeric prerelease sorts before non-numeric",
+        "stable sorts after prerelease"
+      ],
+      "visible_effect": "Android does not accept v-prefixed, build-metadata, shortened, extended or malformed release versions that Desktop rejects.",
+      "failure_behavior": [
+        "invalid version comparison throws and update candidate is not silently normalized"
+      ],
+      "cancellation_behavior": "not applicable; pure comparison",
+      "retry_semantics": "deterministic pure comparison",
+      "idempotency_semantics": "same pair always returns same ordering",
+      "process_death_recovery": "not applicable; stateless",
+      "account_fencing": "not account scoped",
+      "security_boundary": "Remote update metadata cannot broaden the accepted version grammar.",
+      "android_disposition": "direct-port",
+      "android_target": [
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/update/AndroidUpdateViewModel.kt",
+        "mobile/android/app/src/test/java/com/ombhrum/fabushi/AndroidVersionTest.kt"
+      ],
+      "android_owner": "AndroidUpdateViewModel/AndroidVersion",
+      "platform_delta": "Android retains versionCode as a tiebreaker only when Desktop-compatible version strings are exactly equal.",
+      "implementation_status": "implemented",
+      "production_wiring": "GitHub release update selection continues through AndroidVersion.isNewer, now with the Desktop strict parser/order rather than permissive v/build/variable-core normalization.",
+      "unit_test": "New AndroidVersionTest rejects v prefix, short/long core, build metadata, empty prerelease and whitespace; verifies stable/prerelease/numeric/case-sensitive ordering.",
+      "contract_test": "Requires same exact-head Android unit/build/lint Actions after this ledger commit.",
+      "integration_test": "Covered by GitHub release manifest selection path after unit/package success.",
+      "packaged_test": "Requires same exact-head githubRelease package evidence.",
+      "device_test": "Upgrade journey remains part of P01-P24 packaged/device acceptance.",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "This responsibility only closes version parsing/comparison semantics, not the entire updater."
     }
   ],
   "traceability": {
