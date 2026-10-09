@@ -337,15 +337,15 @@
       "android_owner": "source/host/src/runner/production_turn_agent_owner.rs",
       "platform_delta": "Android uses native Compose/platform adapters + typed JNI while preserving canonical Rust owners where platform-independent.",
       "implementation_status": "mapped",
-      "production_wiring": "Partial production closure: existing ProductionTurnAgentOwner owns stream/checkpoint settlement; Host now also owns a durable Agent turn journal before worker dispatch. Full Desktop static build/lifecycle projection and Coordinator durable replay/recovery remain open.",
-      "unit_test": "required",
+      "production_wiring": "Partial production closure: ProductionTurnAgentOwner owns stream/checkpoint settlement; Host owns a durable Agent turn journal before worker dispatch; production JNI now opens durable Coordinator request/event state. Coordinator process reopen fences generation and converts pre-death in-flight requests into fresh-generation operation.outcome-unknown recovery events instead of replaying side effects; successful cancellation removes durable pending state. Full Desktop per-turn build/lifecycle projection and broader Agent lifecycle parity remain open.",
+      "unit_test": "Coordinator Rust tests cover persistent reopen generation fencing, in-flight request to outcome-unknown recovery without replay, and durable cancellation not resurfacing after reopen; exact-head GitHub Actions required. Existing Host durable-turn tests remain required.",
       "contract_test": "required on same exact HEAD",
       "integration_test": "required on same exact HEAD",
       "packaged_test": "required on final minified release artifact",
       "device_test": "required on emulator/physical device as applicable",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Umbrella remains mapped/not-verified. New AGENT-DURABLE-RUN-JOURNAL-001 tracks the implemented process-death/idempotency slice; Desktop per-turn build/lifecycle bindings and Coordinator durable request/event recovery still require separate closure."
+      "notes": "Umbrella remains mapped/not-verified. AGENT-DURABLE-RUN-JOURNAL-001 tracks the Host process-death/idempotency slice; Coordinator durable request/event recovery is now production-wired but not verified until same exact-head Rust/package evidence. Desktop per-turn build/lifecycle bindings and broader Agent lifecycle parity remain open."
     },
     {
       "responsibility_id": "TOOLS-CAPABILITY-BROKER-001",
