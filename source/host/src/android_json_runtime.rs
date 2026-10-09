@@ -238,6 +238,13 @@ impl RuntimeCallCancellationRegistry {
             })
     }
 
+    #[cfg(test)]
+    fn has_request(&self, request_id: &str) -> bool {
+        self.state
+            .lock()
+            .is_ok_and(|state| state.pending.contains_key(request_id))
+    }
+
     pub fn clear_plugin_block(&self, plugin_id: &str) {
         if let Ok(mut state) = self.state.lock() {
             state.blocked_plugins.remove(plugin_id);
@@ -2941,8 +2948,8 @@ export function apply(ctx) {
             let plugin_id = plugin_id.to_string();
             move || {
                 for _ in 0..100 {
-                    if stop_control.signal_plugin(&plugin_id) > 0 {
-                        return true;
+                    if stop_control.has_request("runtime-contract-stop-race") {
+                        return stop_control.signal_plugin(&plugin_id) > 0;
                     }
                     std::thread::sleep(Duration::from_millis(5));
                 }
