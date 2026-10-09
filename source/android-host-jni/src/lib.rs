@@ -50,6 +50,7 @@ impl HostPort for CoordinatorHost {
 pub struct AndroidNativeRuntime {
     coordinator: MahayanaCoordinator<CoordinatorHost>,
     mcp_oauth: OAuthForwarder,
+    mode: AndroidHostMode,
     next_request_id: u64,
     runtime_call_control: Arc<RuntimeCallCancellationRegistry>,
 }
@@ -82,6 +83,7 @@ impl AndroidNativeRuntime {
                 512,
             ),
             mcp_oauth: OAuthForwarder::default(),
+            mode,
             next_request_id: 0,
             runtime_call_control,
         }
@@ -361,27 +363,49 @@ impl AndroidNativeRuntime {
             .and_then(Value::as_str)
             .filter(|value| !value.trim().is_empty())
             .map(str::to_string);
-
-        let (registration, callback) = match self.mcp_oauth.forward(OAuthCallback {
+        let callback = OAuthCallback {
             state: state.to_string(),
             code,
             error,
-        }) {
-            Ok(value) => value,
+        };
+        if let Err(message) = callback.validate() {
+            return error_response(id, message.into());
+        }
+
+        let forwarded = self.mcp_oauth.forward(callback.clone());
+        let (provider, server_id, account_key, generation, callback) = match forwarded {
+            Ok((registration, callback)) => (
+                registration.provider,
+                registration.server_id,
+                registration.account_key,
+                registration.generation,
+                callback,
+            ),
+            Err(message) if self.mode == AndroidHostMode::Production => (
+                "restored".to_string(),
+                None,
+                None,
+                None,
+                callback,
+            ),
             Err(message) => return error_response(id, message.into()),
         };
 
         self.next_request_id = self.next_request_id.saturating_add(1);
         let host_request_id = format!("mcp-oauth-{:016}", self.next_request_id);
-        let host_params = json!({
-            "provider": registration.provider.clone(),
+        let mut host_params = json!({
+            "provider": provider.clone(),
             "state": callback.state,
             "code": callback.code,
             "error": callback.error,
-            "serverId": registration.server_id,
-            "accountKey": registration.account_key,
-            "generation": registration.generation,
         });
+        if let (Some(server_id), Some(account_key), Some(generation)) =
+            (server_id, account_key, generation)
+        {
+            host_params["serverId"] = json!(server_id);
+            host_params["accountKey"] = json!(account_key);
+            host_params["generation"] = json!(generation);
+        }
         let host_reply = self.coordinator.request(CoordinatorRequest {
             protocol_version: COORDINATOR_PROTOCOL_VERSION,
             request_id: host_request_id,
@@ -392,19 +416,21 @@ impl AndroidNativeRuntime {
         });
         let host_result = match host_reply.result_json {
             Ok(raw) => serde_json::from_str::<Value>(&raw)
-                .unwrap_or_else(|_| json!({"outcome":"completed"})),
+                .unwrap_or_else(|_| json!({"status":"stale"})),
             Err(failure) => return failure_response(id, failure),
         };
+        let outcome = host_result
+            .get("outcome")
+            .and_then(Value::as_str)
+            .or_else(|| host_result.get("status").and_then(Value::as_str))
+            .unwrap_or("stale");
 
         success_response(
             id,
             json!({
-                "provider": registration.provider,
+                "provider": provider,
                 "state": state,
-                "outcome": host_result
-                    .get("outcome")
-                    .and_then(Value::as_str)
-                    .unwrap_or("completed"),
+                "outcome": outcome,
                 "pendingCount": self.mcp_oauth.pending_count(),
             }),
         )
