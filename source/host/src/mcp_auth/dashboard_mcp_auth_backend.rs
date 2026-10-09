@@ -1,6 +1,8 @@
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
-use fabushi_android_shared::node::mcp::mcp_auth_watch_lifecycle::McpBackendAuthStatus;
+use fabushi_android_shared::node::mcp::mcp_auth_watch_lifecycle::{
+    McpAuthServerSnapshot, McpAuthTransport, McpBackendAuthStatus,
+};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::env;
@@ -16,6 +18,8 @@ pub const DASHBOARD_VALIDATE_MCP_OAUTH_TOKENS_PATH: &str =
     "/aiserver.v1.DashboardService/ValidateMcpOAuthTokens";
 pub const DASHBOARD_GET_USER_PRIVACY_MODE_PATH: &str =
     "/aiserver.v1.DashboardService/GetUserPrivacyMode";
+pub const DASHBOARD_GET_AVAILABLE_MCP_SERVERS_PATH: &str =
+    "/aiserver.v1.DashboardService/GetAvailableMcpServers";
 pub const CONTROL_RPC_TIMEOUT_MS: u64 = 30_000;
 pub const DEFAULT_CURSOR_BACKEND_URL: &str = "https://api2.cursor.sh";
 pub const SAND_INFERENCE_RENEWAL_CREDENTIAL_ENV: &str =
@@ -268,6 +272,39 @@ impl CursorDashboardMcpAuthBackend {
         Ok(bytes)
     }
 
+    pub fn fresh_server_snapshot(
+        &self,
+        server_id: &str,
+    ) -> Result<Option<McpAuthServerSnapshot>, String> {
+        let requested_id = server_id
+            .parse::<i32>()
+            .map_err(|_| "MCP server id is outside signed int32 range".to_string())?;
+        let credentials = self.credentials.credentials()?;
+        let ghost_mode = self.resolve_ghost_mode(&credentials);
+        let response = self.send_unary(
+            &credentials,
+            DASHBOARD_GET_AVAILABLE_MCP_SERVERS_PATH,
+            &[],
+            CONTROL_RPC_TIMEOUT_MS,
+            ghost_mode,
+        )?;
+        let servers = decode_available_mcp_servers_response(&response)?;
+        Ok(servers
+            .into_iter()
+            .find(|server| server.id == requested_id)
+            .map(|server| McpAuthServerSnapshot {
+                server_id: server.id.to_string(),
+                server_name: server.name,
+                server_url: server.url,
+                transport: match server.transport.to_ascii_lowercase().as_str() {
+                    "stdio" => McpAuthTransport::Stdio,
+                    "sse" => McpAuthTransport::Sse,
+                    _ => McpAuthTransport::Http,
+                },
+                disabled_by_team_admin_policy: server.disabled_by_team_admin_policy,
+            }))
+    }
+
     fn resolve_ghost_mode(
         &self,
         credentials: &SandMcpBackendCredentials,
@@ -344,6 +381,64 @@ impl McpAuthBackendPort for CursorDashboardMcpAuthBackend {
                 && result.has_valid_token
         }))
     }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct AvailableServerWire {
+    id: i32,
+    name: String,
+    enabled: bool,
+    transport: String,
+    url: Option<String>,
+    disabled_by_team_admin_policy: bool,
+}
+
+fn decode_available_mcp_servers_response(
+    input: &[u8],
+) -> Result<Vec<AvailableServerWire>, String> {
+    let mut cursor = 0usize;
+    let mut servers = Vec::new();
+    while cursor < input.len() {
+        let key = read_varint(input, &mut cursor)?;
+        let field = (key >> 3) as u32;
+        let wire = (key & 0x07) as u8;
+        if field == 1 && wire == 2 {
+            servers.push(decode_available_server(read_len_delimited(input, &mut cursor)?)?);
+        } else {
+            skip_field(input, &mut cursor, wire)?;
+        }
+    }
+    Ok(servers)
+}
+
+fn decode_available_server(input: &[u8]) -> Result<AvailableServerWire, String> {
+    let mut cursor = 0usize;
+    let mut server = AvailableServerWire {
+        id: 0,
+        name: String::new(),
+        enabled: false,
+        transport: String::new(),
+        url: None,
+        disabled_by_team_admin_policy: false,
+    };
+    while cursor < input.len() {
+        let key = read_varint(input, &mut cursor)?;
+        let field = (key >> 3) as u32;
+        let wire = (key & 0x07) as u8;
+        match (field, wire) {
+            (1, 0) => server.id = read_varint(input, &mut cursor)? as i32,
+            (2, 2) => server.name = read_string(input, &mut cursor)?,
+            (4, 0) => server.enabled = read_varint(input, &mut cursor)? != 0,
+            (5, 2) => server.transport = read_string(input, &mut cursor)?,
+            (8, 2) => server.url = Some(read_string(input, &mut cursor)?),
+            (14, 0) => {
+                server.disabled_by_team_admin_policy =
+                    read_varint(input, &mut cursor)? != 0
+            }
+            _ => skip_field(input, &mut cursor, wire)?,
+        }
+    }
+    Ok(server)
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -694,6 +789,30 @@ mod tests {
         let validate =
             encode_validate_mcp_oauth_tokens_request("https://mcp.example.test", "work");
         assert_eq!(validate.first().copied(), Some(0x1a));
+    }
+
+    #[test]
+    fn decodes_available_server_admin_policy_wire_shape() {
+        let mut nested = Vec::new();
+        encode_key(1, 0, &mut nested);
+        encode_varint(17, &mut nested);
+        encode_string(2, "Calendar", &mut nested);
+        encode_bool(4, false, &mut nested);
+        encode_string(5, "http", &mut nested);
+        encode_string(8, "https://mcp.example.test", &mut nested);
+        encode_bool(14, true, &mut nested);
+        let response = len_field(1, &nested);
+        assert_eq!(
+            decode_available_mcp_servers_response(&response).unwrap(),
+            vec![AvailableServerWire {
+                id: 17,
+                name: "Calendar".into(),
+                enabled: false,
+                transport: "http".into(),
+                url: Some("https://mcp.example.test".into()),
+                disabled_by_team_admin_policy: true,
+            }]
+        );
     }
 
     #[test]
