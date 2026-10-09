@@ -832,19 +832,15 @@ mod tests {
         let root = test_root("coordinator-reopen");
         {
             let mut runtime = AndroidNativeRuntime::new(root.clone(), AndroidHostMode::Production, 3);
-            let accepted = call(
-                &mut runtime,
-                json!({
-                    "id":"persisted-stream",
-                    "method":"feature.execute",
-                    "params":{"command":{
-                        "type":"chat.send",
-                        "requestId":"persisted-stream",
-                        "text":"hello"
-                    }}
-                }),
-            );
-            assert_eq!(accepted["ok"], true);
+            runtime.coordinator.begin_request(&CoordinatorRequest {
+                protocol_version: COORDINATOR_PROTOCOL_VERSION,
+                request_id: "persisted-stream".into(),
+                session_id: "android-process".into(),
+                method: "feature.execute".into(),
+                params_json: "{}".into(),
+                deadline_ms: None,
+            }).unwrap();
+            runtime.coordinator.bind_operation("persisted-stream", "persisted-stream").unwrap();
             let status = call(&mut runtime, json!({"method":"coordinator.status","params":{}}));
             assert_eq!(status["result"]["activeRequestCount"], 1);
         }
