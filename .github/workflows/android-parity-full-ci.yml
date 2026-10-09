@@ -92,8 +92,12 @@ jobs:
             echo "public githubRelease APK still contains CI session filename marker" >&2
             exit 1
           fi
-          printf 'github_release_ci_import=absent\n' > github-release-security.txt
-          sha256sum "$GITHUB_APK" "$GITHUB_AAB" >> github-release-security.txt
+          RELEASE_APK="fabushi-android-github-release-${SOURCE_SHA}.apk"
+          RELEASE_AAB="fabushi-android-github-release-${SOURCE_SHA}.aab"
+          cp "$GITHUB_APK" "$RELEASE_APK"
+          cp "$GITHUB_AAB" "$RELEASE_AAB"
+          printf 'head=%s\ngithub_release_ci_import=absent\n' "$SOURCE_SHA" > github-release-security.txt
+          sha256sum "$RELEASE_APK" "$RELEASE_AAB" >> github-release-security.txt
       - name: Record exact-HEAD APK identities
         working-directory: mobile/android
         run: |
@@ -123,6 +127,8 @@ jobs:
             mobile/android/artifact-identity.txt
             mobile/android/native-jni.sha256
             mobile/android/github-release-security.txt
+            mobile/android/fabushi-android-github-release-${{ env.SOURCE_SHA }}.apk
+            mobile/android/fabushi-android-github-release-${{ env.SOURCE_SHA }}.aab
           if-no-files-found: error
 
   android-emulator-instrumentation:
