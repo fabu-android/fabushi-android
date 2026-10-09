@@ -991,11 +991,33 @@ mod tests {
             AndroidNativeRuntime::new(test_root("mcp-oauth"), AndroidHostMode::Test, 13);
         let state = "0123456789abcdef0123456789abcdef";
 
+        let watch = call(
+            &mut runtime,
+            json!({
+                "method":"feature.mcp.authWatch.register",
+                "params":{
+                    "serverId":"17",
+                    "serverName":"GitHub",
+                    "serverUrl":"https://mcp.example.test",
+                    "accountKey":"default",
+                    "requestingAgentId":"agent-a"
+                }
+            }),
+        );
+        assert_eq!(watch["ok"], true);
+        let generation = watch["result"]["generation"].as_u64().unwrap();
+
         let registered = call(
             &mut runtime,
             json!({
                 "method":"coordinator.mcpOAuth.register",
-                "params":{"state":state,"provider":"github"}
+                "params":{
+                    "state":state,
+                    "provider":"github",
+                    "serverId":"17",
+                    "accountKey":"default",
+                    "generation":generation
+                }
             }),
         );
         assert_eq!(registered["ok"], true);
