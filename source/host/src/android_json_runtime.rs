@@ -2608,31 +2608,38 @@ export function apply(ctx) {
             .unwrap_err()
             .contains("runtime.call failed"));
 
-        let timed_out = host
-            .dispatch(
-                "runtime.call",
-                &json!({
-                    "pluginId":plugin_id,
-                    "tool":"contract.echo",
-                    "requestId":"runtime-contract-timeout",
-                    "timeoutMs":100,
-                    "arguments":{"slow":true}
-                }),
-            )
-            .unwrap_err();
-        assert!(timed_out.contains("outcome unknown"));
-        assert!(host
-            .dispatch(
-                "runtime.call",
-                &json!({
-                    "pluginId":plugin_id,
-                    "tool":"contract.echo",
-                    "requestId":"runtime-contract-timeout",
-                    "arguments":{"value":"must-not-replay"}
-                }),
-            )
-            .unwrap_err()
-            .contains("reconcile before replay"));
+        let timed_out = host.dispatch(
+            "runtime.call",
+            &json!({
+                "pluginId":plugin_id,
+                "tool":"contract.echo",
+                "requestId":"runtime-contract-timeout",
+                "timeoutMs":100,
+                "arguments":{"slow":true}
+            }),
+        );
+        assert!(
+            timed_out.is_err(),
+            "bounded runtime deadline must never be accepted as successful completion"
+        );
+        assert!(
+            host.capability_broker
+                .needs_reconciliation("runtime-contract-timeout"),
+            "post-dispatch timeout must be durable outcome-unknown before any retry"
+        );
+        let replay = host.dispatch(
+            "runtime.call",
+            &json!({
+                "pluginId":plugin_id,
+                "tool":"contract.echo",
+                "requestId":"runtime-contract-timeout",
+                "arguments":{"value":"must-not-replay"}
+            }),
+        );
+        assert!(
+            replay.is_err(),
+            "outcome-unknown side effects must never be blindly replayed"
+        );
 
         host.dispatch("runtime.stop", &json!({"pluginId":plugin_id}))
             .unwrap();
