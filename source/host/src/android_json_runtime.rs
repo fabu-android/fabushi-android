@@ -2910,6 +2910,62 @@ export function apply(ctx) {
             "outcome-unknown side effects must never be blindly replayed"
         );
 
+        let control = host.runtime_call_control();
+        let cancel_request_id = "runtime-contract-cancel".to_string();
+        let cancel_thread = std::thread::spawn({
+            let control = control.clone();
+            let request_id = cancel_request_id.clone();
+            move || {
+                for _ in 0..100 {
+                    if control.signal_request(&request_id) {
+                        return true;
+                    }
+                    std::thread::sleep(Duration::from_millis(5));
+                }
+                false
+            }
+        });
+        let cancelled = host.dispatch(
+            "runtime.call",
+            &json!({
+                "pluginId":plugin_id,
+                "tool":"contract.echo",
+                "requestId":cancel_request_id,
+                "timeoutMs":1000,
+                "arguments":{"slow":true}
+            }),
+        );
+        assert!(cancel_thread.join().unwrap(), "concurrent control plane must reach the in-flight call");
+        assert!(cancelled.is_err(), "signalled runtime.call must not settle successful");
+        assert!(host.capability_broker.needs_reconciliation("runtime-contract-cancel"));
+
+        let stop_control = host.runtime_call_control();
+        let stop_thread = std::thread::spawn({
+            let plugin_id = plugin_id.to_string();
+            move || {
+                for _ in 0..100 {
+                    if stop_control.signal_plugin(&plugin_id) > 0 {
+                        return true;
+                    }
+                    std::thread::sleep(Duration::from_millis(5));
+                }
+                false
+            }
+        });
+        let stop_race = host.dispatch(
+            "runtime.call",
+            &json!({
+                "pluginId":plugin_id,
+                "tool":"contract.echo",
+                "requestId":"runtime-contract-stop-race",
+                "timeoutMs":1000,
+                "arguments":{"slow":true}
+            }),
+        );
+        assert!(stop_thread.join().unwrap(), "runtime.stop control must cancel the in-flight plugin call");
+        assert!(stop_race.is_err());
+        assert!(host.capability_broker.needs_reconciliation("runtime-contract-stop-race"));
+
         host.dispatch("runtime.stop", &json!({"pluginId":plugin_id}))
             .unwrap();
         assert!(host
