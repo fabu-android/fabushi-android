@@ -291,6 +291,16 @@
           "symbols": [
             "Host composition"
           ]
+        },
+        {
+          "path": "source/host/src/runner/production_turn_agent_owner.rs",
+          "blob_sha": "ace2a22bd5e540f210ba263a8a1ea2b46cf54502",
+          "symbols": [
+            "ProductionTurnAgentOwner",
+            "ProductionTurnAgentStaticConfig",
+            "run_routed_provider_with_projected_turn_input",
+            "dispose"
+          ]
         }
       ],
       "source_commit": "3bc92400826cc4ca7ac665b467708e22261edc61",
@@ -327,7 +337,7 @@
       "android_owner": "source/host/src/runner/production_turn_agent_owner.rs",
       "platform_delta": "Android uses native Compose/platform adapters + typed JNI while preserving canonical Rust owners where platform-independent.",
       "implementation_status": "mapped",
-      "production_wiring": "mapped target(s); production parity not yet established",
+      "production_wiring": "Partial production closure: existing ProductionTurnAgentOwner owns stream/checkpoint settlement; Host now also owns a durable Agent turn journal before worker dispatch. Full Desktop static build/lifecycle projection and Coordinator durable replay/recovery remain open.",
       "unit_test": "required",
       "contract_test": "required on same exact HEAD",
       "integration_test": "required on same exact HEAD",
@@ -335,7 +345,7 @@
       "device_test": "required on emulator/physical device as applicable",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Android has substantial Host/Coordinator code, but this responsibility is not declared complete by this mapping."
+      "notes": "Umbrella remains mapped/not-verified. New AGENT-DURABLE-RUN-JOURNAL-001 tracks the implemented process-death/idempotency slice; Desktop per-turn build/lifecycle bindings and Coordinator durable request/event recovery still require separate closure."
     },
     {
       "responsibility_id": "TOOLS-CAPABILITY-BROKER-001",
@@ -1281,6 +1291,91 @@
       "artifact": null,
       "verification_status": "not-verified",
       "notes": "Production execution is no longer hard-coded fail-closed. The synchronous QuickJS adapter cannot yet be interrupted while inside call_tool_json; bounded deadline is enforced before/after execution and any late return is outcome-unknown/reconciliation, so this row remains not-verified."
+    },
+    {
+      "responsibility_id": "AGENT-DURABLE-RUN-JOURNAL-001",
+      "domain": "agent",
+      "desktop_sources": [
+        {
+          "path": "source/host/src/runner/production_turn_agent_owner.rs",
+          "blob_sha": "ace2a22bd5e540f210ba263a8a1ea2b46cf54502",
+          "symbols": [
+            "ProductionTurnAgentOwner",
+            "TurnRunShell",
+            "last_finished",
+            "cancellation",
+            "dispose"
+          ]
+        },
+        {
+          "path": "source/mahayana/mahayana-rs/mahayana-runtime/src/runtime_store.rs",
+          "blob_sha": "63c4934d3cf53d1b76d247ba604852912a7d5eee",
+          "symbols": [
+            "record_turn",
+            "record_run",
+            "recoverable turn state"
+          ]
+        }
+      ],
+      "source_commit": "3bc92400826cc4ca7ac665b467708e22261edc61",
+      "responsibility": "Persist stable Agent request/operation/account/generation identity before provider dispatch, enforce one terminal settlement, and turn process-death in-flight work into outcome-unknown that requires reconciliation rather than automatic replay.",
+      "source_owner": "Desktop ProductionTurnAgentOwner + Mahayana RuntimeStore",
+      "direct_callers": [
+        "Android Host chat.send/feature.execute production turn path"
+      ],
+      "downstream_dependencies": [
+        "ProductionTurnAgentOwner",
+        "canonical transcript",
+        "provider runtime",
+        "Coordinator request registry"
+      ],
+      "state_owner": "Rust DurableTurnJournal under Android Host",
+      "persistent_state": [
+        "requestId",
+        "operationId",
+        "accountFence",
+        "generation",
+        "state",
+        "startedAtMs",
+        "updatedAtMs",
+        "terminal reason"
+      ],
+      "protocol_wire_contract": [
+        "chat/Agent operation accepted → terminal event",
+        "stable requestId/operationId",
+        "single terminal result"
+      ],
+      "visible_effect": "App/Host restart cannot silently resend an Agent turn whose side effect/result may already exist.",
+      "failure_behavior": [
+        "duplicate active request rejected",
+        "stale account/generation callback rejected",
+        "restart in-flight becomes outcome-unknown",
+        "terminal race rejected"
+      ],
+      "cancellation_behavior": "Explicit Host cancellation durably settles the active operation cancelled before later callbacks can settle it again.",
+      "retry_semantics": "No blind replay after process death/outcome-unknown; reconcile transcript/provider state first.",
+      "idempotency_semantics": "requestId is the durable mutation identity; operationId and monotonic generation fence duplicate/stale workers.",
+      "process_death_recovery": "Cold open converts every persisted running record to outcome-unknown with a reconciliation reason.",
+      "account_fencing": "Each record freezes the current Host account identity and terminal settlement must present the same fence.",
+      "security_boundary": "Journal and settlement live in Rust Host private state; Compose does not own run truth or retry truth.",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "source/host/src/runner/durable_turn_journal.rs",
+        "source/host/src/android_json_runtime.rs",
+        "source/host/src/runner/production_turn_agent_owner.rs"
+      ],
+      "android_owner": "Rust DurableTurnJournal + ProductionTurnAgentOwner under Host",
+      "platform_delta": "Android process death is treated as a first-class lifecycle boundary; persistent journal replaces desktop-process lifetime assumptions.",
+      "implementation_status": "implemented",
+      "production_wiring": "queue_chat_turn persists the durable run before thread/provider dispatch; completion/failure/cancel/spawn/provider-init failures settle the same record; cold start fences in-flight records as outcome-unknown.",
+      "unit_test": "Rust tests cover duplicate request, account/generation stale fencing, terminal race, process restart outcome-unknown, cancellation persistence/idempotency; exact-head Actions required.",
+      "contract_test": "Existing Host production chat path must compile/run against the journal on same exact HEAD.",
+      "integration_test": "Still required: real process death/relaunch reconciliation, account switch mid-run and provider completion/cancel races.",
+      "packaged_test": "Required on final ciAcceptance/githubRelease packaged journey.",
+      "device_test": "Blocked on protected-account emulator journey until Actions secrets are configured.",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Implemented source/production wiring, intentionally not verified until same exact-head CI plus packaged process-death evidence. Coordinator pending/event replay remains an adjacent open responsibility."
     }
   ],
   "traceability": {

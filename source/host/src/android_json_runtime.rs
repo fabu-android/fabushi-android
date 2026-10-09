@@ -8,8 +8,8 @@ use crate::extensions::webauthn_proxy::{
     WebAuthnBridgeError, WebAuthnProxyExtension, WebAuthnProxyExtensionConfig,
 };
 use crate::runner::{
-    AndroidHostInferenceProvider, AndroidInferenceMode, ProductionTurnAgentOwner,
-    ProductionTurnEvent, ProductionTurnInput,
+    AndroidHostInferenceProvider, AndroidInferenceMode, DurableTurnJournal, DurableTurnState,
+    ProductionTurnAgentOwner, ProductionTurnEvent, ProductionTurnInput,
 };
 use fabushi_constants::composer::text_size_allowed;
 use fabushi_android_shared::webauthn_gateway::{
@@ -153,6 +153,7 @@ pub struct AndroidJsonHost {
     pending_approvals: BTreeMap<String, String>,
     turn_events: Arc<Mutex<VecDeque<Value>>>,
     turn_cancellations: BTreeMap<String, Arc<AtomicBool>>,
+    turn_journal: Arc<Mutex<DurableTurnJournal>>,
     installed_plugins: BTreeSet<String>,
     plugin_installer: PluginInstaller,
     plugin_permissions: PermissionManager,
@@ -231,6 +232,10 @@ impl AndroidJsonHost {
             pending_approvals: BTreeMap::new(),
             turn_events: Arc::new(Mutex::new(VecDeque::new())),
             turn_cancellations: BTreeMap::new(),
+            turn_journal: Arc::new(Mutex::new(
+                DurableTurnJournal::open(app_data_dir.join("agent-turn-journal.json"), now_ms())
+                    .unwrap_or_else(|error| panic!("failed to open durable Agent turn journal: {error}")),
+            )),
             installed_plugins: BTreeSet::new(),
             plugin_installer,
             plugin_permissions,
@@ -541,6 +546,14 @@ impl AndroidJsonHost {
             cancelled.store(true, Ordering::Release);
         }
         self.active_operations.remove(operation_id);
+        self.turn_journal
+            .lock()
+            .map_err(|_| "turn journal lock poisoned".to_string())?
+            .settle_operation_cancelled(
+                operation_id,
+                reason.unwrap_or("cancelled"),
+                now_ms(),
+            )?;
         self.pending_approvals.retain(|_, pending_operation| pending_operation != operation_id);
         self.turn_events
             .lock()
@@ -989,6 +1002,13 @@ impl AndroidJsonHost {
             .unwrap_or("default")
             .to_string();
 
+        let (account_fence, _) = self.current_messaging_identity()?;
+        let turn_generation = self
+            .turn_journal
+            .lock()
+            .map_err(|_| "turn journal lock poisoned".to_string())?
+            .begin(request_id, operation_id, &account_fence, now_ms())?;
+
         let cancelled = Arc::new(AtomicBool::new(false));
         self.turn_cancellations
             .insert(operation_id.to_string(), cancelled.clone());
@@ -996,6 +1016,8 @@ impl AndroidJsonHost {
         let mode = self.mode;
         let turn_events = self.turn_events.clone();
         let transcript = self.transcript.clone();
+        let turn_journal = self.turn_journal.clone();
+        let account_fence_owned = account_fence.clone();
         let operation_id_owned = operation_id.to_string();
         let request_id_owned = request_id.to_string();
         let assistant_entry_id_owned = assistant_entry_id.clone();
@@ -1009,6 +1031,18 @@ impl AndroidJsonHost {
                     }
                     AndroidHostMode::Production => {
                         let Some(token) = bearer_token else {
+                            let _ = turn_journal
+                                .lock()
+                                .map_err(|_| "turn journal lock poisoned".to_string())
+                                .and_then(|mut journal| journal.settle(
+                                    &request_id_owned,
+                                    &operation_id_owned,
+                                    &account_fence_owned,
+                                    turn_generation,
+                                    DurableTurnState::Failed,
+                                    Some("provider_credentials_unavailable".into()),
+                                    now_ms(),
+                                ));
                             push_turn_event(
                                 &turn_events,
                                 json!({
@@ -1023,13 +1057,26 @@ impl AndroidJsonHost {
                         match AndroidHostInferenceProvider::production(token, cancelled.clone()) {
                             Ok(provider) => provider,
                             Err(error) => {
+                                let message = error.message;
+                                let _ = turn_journal
+                                    .lock()
+                                    .map_err(|_| "turn journal lock poisoned".to_string())
+                                    .and_then(|mut journal| journal.settle(
+                                        &request_id_owned,
+                                        &operation_id_owned,
+                                        &account_fence_owned,
+                                        turn_generation,
+                                        DurableTurnState::Failed,
+                                        Some(message.clone()),
+                                        now_ms(),
+                                    ));
                                 push_turn_event(
                                     &turn_events,
                                     json!({
                                         "type":"operation.failed",
                                         "operationId":operation_id_owned,
                                         "requestId":request_id_owned,
-                                        "message":error.message,
+                                        "message":message,
                                     }),
                                 );
                                 return;
@@ -1104,6 +1151,18 @@ impl AndroidJsonHost {
                                     }),
                                 );
                             }
+                            turn_journal
+                                .lock()
+                                .map_err(|_| "turn journal lock poisoned".to_string())?
+                                .settle(
+                                    &request_id_owned,
+                                    &operation_id_owned,
+                                    &account_fence_owned,
+                                    turn_generation,
+                                    DurableTurnState::Completed,
+                                    None,
+                                    now_ms(),
+                                )?;
                             terminal_emitted = true;
                             push_turn_event(
                                 &turn_events,
@@ -1117,6 +1176,18 @@ impl AndroidJsonHost {
                             );
                         }
                         ProductionTurnEvent::Failed { message } => {
+                            turn_journal
+                                .lock()
+                                .map_err(|_| "turn journal lock poisoned".to_string())?
+                                .settle(
+                                    &request_id_owned,
+                                    &operation_id_owned,
+                                    &account_fence_owned,
+                                    turn_generation,
+                                    DurableTurnState::Failed,
+                                    Some(message.clone()),
+                                    now_ms(),
+                                )?;
                             terminal_emitted = true;
                             push_turn_event(
                                 &turn_events,
@@ -1129,6 +1200,14 @@ impl AndroidJsonHost {
                             );
                         }
                         ProductionTurnEvent::Cancelled => {
+                            let _ = turn_journal
+                                .lock()
+                                .map_err(|_| "turn journal lock poisoned".to_string())?
+                                .settle_operation_cancelled(
+                                    &operation_id_owned,
+                                    "runner cancelled",
+                                    now_ms(),
+                                )?;
                             terminal_emitted = true;
                             push_turn_event(
                                 &turn_events,
@@ -1158,6 +1237,18 @@ impl AndroidJsonHost {
 
                 if let Err(error) = result {
                     if !cancelled.load(Ordering::Acquire) && !terminal_emitted {
+                        let _ = turn_journal
+                            .lock()
+                            .map_err(|_| "turn journal lock poisoned".to_string())
+                            .and_then(|mut journal| journal.settle(
+                                &request_id_owned,
+                                &operation_id_owned,
+                                &account_fence_owned,
+                                turn_generation,
+                                DurableTurnState::Failed,
+                                Some(error.message.clone()),
+                                now_ms(),
+                            ));
                         push_turn_event(
                             &turn_events,
                             json!({
@@ -1174,6 +1265,19 @@ impl AndroidJsonHost {
         if let Err(error) = spawn {
             self.turn_cancellations.remove(operation_id);
             self.active_operations.remove(operation_id);
+            let _ = self
+                .turn_journal
+                .lock()
+                .map_err(|_| "turn journal lock poisoned".to_string())?
+                .settle(
+                    request_id,
+                    operation_id,
+                    &account_fence,
+                    turn_generation,
+                    DurableTurnState::Failed,
+                    Some(format!("failed to start turn worker: {error}")),
+                    now_ms(),
+                );
             return Err(format!("failed to start turn worker: {error}"));
         }
 

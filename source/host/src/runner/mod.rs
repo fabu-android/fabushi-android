@@ -1,4 +1,5 @@
 pub mod android_host_inference;
+pub mod durable_turn_journal;
 pub mod production_turn_agent_owner;
 pub mod stream_attempt;
 pub mod transient_stream_error;
@@ -22,3 +23,5 @@ pub use transient_stream_error::{
 pub use android_host_inference::{AndroidHostInferenceProvider, AndroidInferenceMode};
 
 pub use turn_run_shell::{ActiveRun, TurnCancellation, TurnRunLease, TurnRunShell, TurnRunShellError};
+
+pub use durable_turn_journal::{DurableTurnJournal, DurableTurnRecord, DurableTurnState};
