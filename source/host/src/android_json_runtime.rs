@@ -2485,6 +2485,148 @@ mod tests {
 
 
     #[test]
+    fn portable_runtime_host_contract_executes_granted_tool_and_fences_errors_timeout_and_replay() {
+        let root = std::env::temp_dir().join(format!(
+            "fabushi-portable-runtime-host-{}-{}",
+            std::process::id(),
+            now_ms()
+        ));
+        let plugin_id = "contract-plugin";
+        let install_dir = root
+            .join("plugin-fixture")
+            .join("1.0.0")
+            .join("fixture");
+        std::fs::create_dir_all(&install_dir).unwrap();
+        std::fs::write(
+            install_dir.join("plugin.mjs"),
+            r#"
+export const name = 'contract-plugin';
+export function apply(ctx) {
+  ctx.tools.register({
+    name: 'contract.echo',
+    async execute(args) {
+      if (args.fail) throw new Error('contract-tool-failed');
+      if (args.slow) await new Promise(resolve => setTimeout(resolve, 250));
+      return { echoed: args.value ?? null };
+    }
+  });
+}
+"#,
+        )
+        .unwrap();
+        let pointer_dir = root.join("plugins").join(plugin_id);
+        std::fs::create_dir_all(&pointer_dir).unwrap();
+        std::fs::write(
+            pointer_dir.join("active.json"),
+            serde_json::to_vec_pretty(&json!({
+                "pluginId":plugin_id,
+                "version":"1.0.0",
+                "artifactId":"fixture",
+                "artifactSha256":"0000000000000000000000000000000000000000000000000000000000000000",
+                "runtime":"deepseek-js",
+                "entry":"plugin.mjs",
+                "requestedPermissions":["storage"],
+                "installedPath":install_dir.to_string_lossy(),
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+
+        let mut host = AndroidJsonHost::new(&root, AndroidHostMode::Test);
+        host.logged_in = true;
+        host.dispatch(
+            "plugin.permission.grant",
+            &json!({"pluginId":plugin_id,"permission":"storage"}),
+        )
+        .unwrap();
+        let started = host
+            .dispatch("runtime.start", &json!({"pluginId":plugin_id,"config":{}}))
+            .unwrap();
+        assert!(started["tools"]
+            .as_array()
+            .is_some_and(|tools| tools.iter().any(|tool| tool == "contract.echo")));
+
+        let success = host
+            .dispatch(
+                "runtime.call",
+                &json!({
+                    "pluginId":plugin_id,
+                    "tool":"contract.echo",
+                    "requestId":"runtime-contract-success",
+                    "arguments":{"value":"ok"}
+                }),
+            )
+            .unwrap();
+        assert_eq!(success["result"]["echoed"], "ok");
+        assert!(host
+            .dispatch(
+                "runtime.call",
+                &json!({
+                    "pluginId":plugin_id,
+                    "tool":"contract.echo",
+                    "requestId":"runtime-contract-success",
+                    "arguments":{"value":"duplicate"}
+                }),
+            )
+            .unwrap_err()
+            .contains("terminal/reconciliation"));
+
+        assert!(host
+            .dispatch(
+                "runtime.call",
+                &json!({
+                    "pluginId":plugin_id,
+                    "tool":"contract.echo",
+                    "requestId":"runtime-contract-error",
+                    "arguments":{"fail":true}
+                }),
+            )
+            .unwrap_err()
+            .contains("runtime.call failed"));
+
+        let timed_out = host
+            .dispatch(
+                "runtime.call",
+                &json!({
+                    "pluginId":plugin_id,
+                    "tool":"contract.echo",
+                    "requestId":"runtime-contract-timeout",
+                    "timeoutMs":100,
+                    "arguments":{"slow":true}
+                }),
+            )
+            .unwrap_err();
+        assert!(timed_out.contains("outcome unknown"));
+        assert!(host
+            .dispatch(
+                "runtime.call",
+                &json!({
+                    "pluginId":plugin_id,
+                    "tool":"contract.echo",
+                    "requestId":"runtime-contract-timeout",
+                    "arguments":{"value":"must-not-replay"}
+                }),
+            )
+            .unwrap_err()
+            .contains("reconcile before replay"));
+
+        host.dispatch("runtime.stop", &json!({"pluginId":plugin_id}))
+            .unwrap();
+        assert!(host
+            .dispatch(
+                "runtime.call",
+                &json!({
+                    "pluginId":plugin_id,
+                    "tool":"contract.echo",
+                    "requestId":"runtime-after-stop",
+                    "arguments":{"value":"blocked"}
+                }),
+            )
+            .is_err());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn production_platform_request_contract_rejects_auth_escape_and_fake_plugin_success() {
         assert!(validate_platform_api_path("/v1/marketplace/plugins?platform=android").is_ok());
         assert!(validate_platform_api_path("/api/auth/logout").is_err());
