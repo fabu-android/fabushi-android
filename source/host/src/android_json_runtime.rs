@@ -1,4 +1,6 @@
+use crate::account_service::{AccountSessionMutation, AndroidAccountService};
 use crate::android_agent_roster::AndroidAgentRoster;
+use crate::host_secret_store::get_or_create_host_machine_id;
 use crate::extensions::transcript::TranscriptStore;
 use crate::extensions::webauthn_proxy::{
     WebAuthnBridgeError, WebAuthnProxyExtension, WebAuthnProxyExtensionConfig,
@@ -127,6 +129,7 @@ pub enum AndroidHostMode {
 
 pub struct AndroidJsonHost {
     mode: AndroidHostMode,
+    account: AndroidAccountService,
     agents: AndroidAgentRoster,
     transcript: Arc<Mutex<TranscriptStore>>,
     #[cfg(feature = "ci-account-session-import")]
@@ -149,7 +152,24 @@ pub struct AndroidJsonHost {
 
 impl AndroidJsonHost {
     pub fn new(app_data_dir: impl Into<PathBuf>, mode: AndroidHostMode) -> Self {
+        Self::new_with_account_session(app_data_dir, mode, None)
+    }
+
+    pub fn new_with_account_session(
+        app_data_dir: impl Into<PathBuf>,
+        mode: AndroidHostMode,
+        initial_account_session_json: Option<&str>,
+    ) -> Self {
         let app_data_dir = app_data_dir.into();
+        let device_id = get_or_create_host_machine_id(&app_data_dir.join("machine-id"))
+            .unwrap_or_else(|error| panic!("failed to open canonical Android machine id: {error}"));
+        let account = AndroidAccountService::new(
+            device_id,
+            (mode == AndroidHostMode::Production)
+                .then_some(initial_account_session_json)
+                .flatten(),
+        )
+        .unwrap_or_else(|error| panic!("failed to initialize Android account service: {error}"));
         let agents = AndroidAgentRoster::open(app_data_dir.join("agents.json"))
             .unwrap_or_else(|error| panic!("failed to open canonical Android agent roster: {error}"));
         let transcript = Arc::new(Mutex::new(
@@ -172,6 +192,7 @@ impl AndroidJsonHost {
         let logged_in = false;
         Self {
             mode,
+            account,
             agents,
             transcript,
             #[cfg(feature = "ci-account-session-import")]
@@ -204,30 +225,20 @@ impl AndroidJsonHost {
                     AndroidHostMode::Test => "android-test",
                 }
             })),
-            "feature.auth.status" => Ok(self.auth_status()),
+            "feature.auth.status" => self.account_status(),
             "feature.auth.deviceAgentSession" => Ok(self.device_agent_session()),
             "feature.auth.providers" => Ok(json!([
                 {"id":"google","displayName":"Google"},
                 {"id":"github","displayName":"GitHub"}
             ])),
-            "feature.auth.browserStart" => self.browser_start(),
-            "feature.auth.browserReopen" => self.browser_reopen(params),
-            "feature.auth.browserCancel" => self.browser_cancel(params),
-            "feature.auth.browserPoll" => self.browser_poll(params),
+            "feature.auth.browserStart" => self.auth_browser_start(),
+            "feature.auth.browserReopen" => self.auth_browser_reopen(params),
+            "feature.auth.browserCancel" => self.auth_browser_cancel(params),
+            "feature.auth.browserPoll" => self.auth_browser_poll(params),
             "feature.auth.oauthStart" => self.oauth_start(params),
             "feature.auth.oauthPoll" => self.oauth_poll(params),
             "feature.mcp.oauthComplete" => self.mcp_oauth_complete(params),
-            "feature.auth.logout" => {
-                self.logged_in = false;
-                #[cfg(feature = "ci-account-session-import")]
-                {
-                    self.ci_session_identity = None;
-                    if let Some(path) = self.ci_session_path.take() {
-                        let _ = std::fs::remove_file(path);
-                    }
-                }
-                Ok(self.auth_status())
-            }
+            "feature.auth.logout" => self.account_logout(),
             "listAgents" => Ok(Value::Array(
                 self.agents.list().into_iter().map(|agent| agent.as_json()).collect()
             )),
@@ -435,6 +446,67 @@ impl AndroidJsonHost {
         Ok(())
     }
 
+    fn account_status(&mut self) -> Result<Value, String> {
+        if self.mode == AndroidHostMode::Test {
+            return Ok(self.auth_status());
+        }
+        #[cfg(feature = "ci-account-session-import")]
+        if self.ci_session_identity.is_some() {
+            return Ok(self.auth_status());
+        }
+        let (status, mutation) = self.account.public_status()?;
+        Ok(with_account_session_mutation(status, mutation))
+    }
+
+    fn account_logout(&mut self) -> Result<Value, String> {
+        if self.mode == AndroidHostMode::Test {
+            self.logged_in = false;
+            return Ok(self.auth_status());
+        }
+        #[cfg(feature = "ci-account-session-import")]
+        if self.ci_session_identity.is_some() {
+            self.logged_in = false;
+            self.ci_session_identity = None;
+            if let Some(path) = self.ci_session_path.take() {
+                let _ = std::fs::remove_file(path);
+            }
+            return Ok(self.auth_status());
+        }
+        let (status, mutation) = self.account.logout()?;
+        Ok(with_account_session_mutation(status, Some(mutation)))
+    }
+
+    fn auth_browser_start(&mut self) -> Result<Value, String> {
+        if self.mode == AndroidHostMode::Test {
+            return self.browser_start();
+        }
+        self.account.browser_start()
+    }
+
+    fn auth_browser_reopen(&mut self, params: &Value) -> Result<Value, String> {
+        if self.mode == AndroidHostMode::Test {
+            return self.browser_reopen(params);
+        }
+        self.account.browser_reopen(required_string(params, "attemptId")?)
+    }
+
+    fn auth_browser_cancel(&mut self, params: &Value) -> Result<Value, String> {
+        if self.mode == AndroidHostMode::Test {
+            return self.browser_cancel(params);
+        }
+        self.account.browser_cancel(required_string(params, "attemptId")?)
+    }
+
+    fn auth_browser_poll(&mut self, params: &Value) -> Result<Value, String> {
+        if self.mode == AndroidHostMode::Test {
+            return self.browser_poll(params);
+        }
+        let (result, mutation) = self
+            .account
+            .browser_poll(required_string(params, "attemptId")?)?;
+        Ok(with_account_session_mutation(result, mutation))
+    }
+
     fn auth_status(&self) -> Value {
         if self.logged_in {
             json!({
@@ -625,7 +697,20 @@ impl AndroidJsonHost {
                 self.finish_operation(&operation_id);
             }
             "chat.send" => {
-                self.queue_chat_turn(&operation_id, request_id, &command)?;
+                let (bearer_token, session_mutation) = self.bearer_token_for_turn()?;
+                self.queue_chat_turn(
+                    &operation_id,
+                    request_id,
+                    &command,
+                    bearer_token,
+                )?;
+                if let Some(mutation) = session_mutation {
+                    self.events.push_back(json!({
+                        "type":"account.session.persisted",
+                        "operationId":operation_id,
+                        "_accountSessionMutation":mutation.as_private_projection(),
+                    }));
+                }
             }
             "marketplace.install" => {
                 if let Some(id) = command.get("miniAppId").and_then(Value::as_str) {
@@ -654,11 +739,26 @@ impl AndroidJsonHost {
         Ok(json!({"requestId":request_id,"operationId":operation_id,"accepted":true}))
     }
 
+    fn bearer_token_for_turn(
+        &mut self,
+    ) -> Result<(Option<String>, Option<AccountSessionMutation>), String> {
+        if self.mode == AndroidHostMode::Test {
+            return Ok((None, None));
+        }
+        #[cfg(feature = "ci-account-session-import")]
+        if let Some(identity) = self.ci_session_identity.as_ref() {
+            return Ok((Some(identity.access_token.clone()), None));
+        }
+        let (token, mutation) = self.account.valid_access_token()?;
+        Ok((Some(token), mutation))
+    }
+
     fn queue_chat_turn(
         &mut self,
         operation_id: &str,
         request_id: &str,
         command: &Value,
+        bearer_token: Option<String>,
     ) -> Result<(), String> {
         let prompt = command
             .get("text")
@@ -739,13 +839,6 @@ impl AndroidJsonHost {
             .insert(operation_id.to_string(), cancelled.clone());
 
         let mode = self.mode;
-        #[cfg(feature = "ci-account-session-import")]
-        let bearer_token = self
-            .ci_session_identity
-            .as_ref()
-            .map(|identity| identity.access_token.clone());
-        #[cfg(not(feature = "ci-account-session-import"))]
-        let bearer_token: Option<String> = None;
         let turn_events = self.turn_events.clone();
         let transcript = self.transcript.clone();
         let operation_id_owned = operation_id.to_string();
@@ -1048,6 +1141,21 @@ impl AndroidJsonHost {
     }
 }
 
+
+fn with_account_session_mutation(
+    mut result: Value,
+    mutation: Option<AccountSessionMutation>,
+) -> Value {
+    if let Some(mutation) = mutation {
+        if let Some(object) = result.as_object_mut() {
+            object.insert(
+                "_accountSessionMutation".into(),
+                mutation.as_private_projection(),
+            );
+        }
+    }
+    result
+}
 
 fn push_turn_event(events: &Arc<Mutex<VecDeque<Value>>>, event: Value) {
     if let Ok(mut queue) = events.lock() {
