@@ -564,6 +564,11 @@ impl AndroidJsonHost {
                 now_ms(),
             )?;
         self.pending_approvals.retain(|_, pending_operation| pending_operation != operation_id);
+        self.capability_broker.cancel_approval_operation(
+            operation_id,
+            reason.unwrap_or("cancelled"),
+            now_ms(),
+        )?;
         self.turn_events
             .lock()
             .map_err(|_| "turn event queue lock poisoned".to_string())?
@@ -889,10 +894,29 @@ impl AndroidJsonHost {
             }
             "capability.request" => {
                 let capability = required_string(&command, "capability")?;
+                if capability.len() > 256 || capability.chars().any(char::is_control) {
+                    self.active_operations.remove(&operation_id);
+                    return Err("capability identity is invalid".into());
+                }
                 let approval_id = format!("approval-{operation_id}");
                 if self.pending_approvals.contains_key(&approval_id) {
+                    self.active_operations.remove(&operation_id);
                     return Err("approval identity collision".into());
                 }
+                let account_fence = self.current_turn_account_fence()?;
+                let approval_request_id = if request_id.trim().is_empty() {
+                    operation_id.as_str()
+                } else {
+                    request_id
+                };
+                self.capability_broker.request_approval(
+                    &approval_id,
+                    approval_request_id,
+                    &operation_id,
+                    capability,
+                    &account_fence,
+                    now_ms(),
+                )?;
                 self.pending_approvals
                     .insert(approval_id.clone(), operation_id.clone());
                 self.events.push_back(json!({
@@ -900,6 +924,7 @@ impl AndroidJsonHost {
                     "operationId":operation_id,
                     "approvalId":approval_id,
                     "capability":capability,
+                    "accountFence":account_fence,
                     "reason":command.get("reason").cloned().unwrap_or(Value::Null)
                 }));
             }
@@ -1352,35 +1377,47 @@ impl AndroidJsonHost {
             .ok_or("approved is required")?;
         let operation_id = self
             .pending_approvals
-            .remove(&approval_id)
+            .get(&approval_id)
+            .cloned()
             .ok_or("approval is unknown, stale, cancelled, or already consumed")?;
         if !self.active_operations.contains(&operation_id) {
             return Err("approval operation is no longer active".into());
         }
+        let account_fence = self.current_turn_account_fence()?;
+        let resolved = self.capability_broker.resolve_approval(
+            &approval_id,
+            approved,
+            &account_fence,
+            now_ms(),
+        )?;
+        if resolved.operation_id != operation_id {
+            return Err("approval operation identity disagrees with durable broker state".into());
+        }
+        self.pending_approvals.remove(&approval_id);
 
         self.events.push_back(json!({
             "type":"approval.resolved",
             "approvalId":approval_id,
             "operationId":operation_id,
+            "capability":resolved.capability,
             "approved":approved,
         }));
+        self.active_operations.remove(&operation_id);
         if approved {
-            self.active_operations.remove(&operation_id);
             self.events.push_back(json!({
-                "type":"operation.failed",
+                "type":"operation.completed",
                 "operationId":operation_id,
-                "message":"capability_broker_execution_not_migrated",
-                "outcome":"not-executed"
+                "approvalId":approval_id,
+                "outcome":"authorized"
             }));
             Ok(json!({
                 "status":"resolved",
                 "approved":true,
                 "operationId":operation_id,
-                "execution":"not-executed",
-                "reason":"capability_broker_execution_not_migrated"
+                "capability":resolved.capability,
+                "execution":"authorized"
             }))
         } else {
-            self.active_operations.remove(&operation_id);
             self.events.push_back(json!({
                 "type":"operation.interrupted",
                 "operationId":operation_id,
@@ -1390,7 +1427,8 @@ impl AndroidJsonHost {
                 "status":"resolved",
                 "approved":false,
                 "operationId":operation_id,
-                "execution":"not-executed"
+                "capability":resolved.capability,
+                "execution":"denied"
             }))
         }
     }
@@ -2101,13 +2139,44 @@ mod tests {
                 &json!({"approvalId":format!("approval-{}", accepted["operationId"].as_str().unwrap()),"approved":true}),
             )
             .unwrap();
-        assert_eq!(approval["execution"], "not-executed");
+        assert_eq!(approval["execution"], "authorized");
+        assert_eq!(approval["capability"], "camera");
         assert!(host
             .dispatch(
                 "feature.approval.resolve",
                 &json!({"approvalId":format!("approval-{}", accepted["operationId"].as_str().unwrap()),"approved":true}),
             )
             .is_err());
+
+        let denied_request = host.dispatch("feature.execute", &json!({"command":{
+            "type":"capability.request",
+            "requestId":"capability-2",
+            "capability":"microphone"
+        }})).unwrap();
+        let denied = host.dispatch(
+            "feature.approval.resolve",
+            &json!({
+                "approvalId":format!("approval-{}", denied_request["operationId"].as_str().unwrap()),
+                "approved":false
+            }),
+        ).unwrap();
+        assert_eq!(denied["execution"], "denied");
+        assert_eq!(denied["capability"], "microphone");
+
+        let cancelled_request = host.dispatch("feature.execute", &json!({"command":{
+            "type":"capability.request",
+            "requestId":"capability-3",
+            "capability":"location"
+        }})).unwrap();
+        let cancelled_operation = cancelled_request["operationId"].as_str().unwrap();
+        host.dispatch("feature.interrupt", &json!({"operationId":cancelled_operation})).unwrap();
+        assert!(host.dispatch(
+            "feature.approval.resolve",
+            &json!({
+                "approvalId":format!("approval-{cancelled_operation}"),
+                "approved":true
+            }),
+        ).is_err());
 
         let long_task = host.dispatch("feature.execute", &json!({"command":{
             "type":"runtime.longTask",
