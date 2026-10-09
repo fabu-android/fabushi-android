@@ -25,20 +25,20 @@ jobs:
         run: python scripts/check_grok_android_parity.py
       - name: Test architecture checker
         run: python -m unittest discover -s tests -p 'test_*.py'
-      - name: Run strict architecture gate and expose migration debt
-        id: strict
-        continue-on-error: true
-        run: python scripts/check_grok_android_parity.py --strict
-      - name: Record strict gate outcome
-        run: |
-          mkdir -p evidence
-          printf 'head=%s\nstrict_outcome=%s\n' "$SOURCE_SHA" "${{ steps.strict.outcome }}" > evidence/architecture-gate.txt
       - name: Rust contract/runtime tests
         run: |
           set -eu
           cargo test --workspace --all-targets
           cargo test -p fabushi-mahayana-host --features ci-account-session-import
           cargo test -p fabushi-android-host-jni --features ci-account-session-import
+      - name: Run strict architecture and complete Desktop-source closure gate
+        id: strict
+        run: python scripts/check_grok_android_parity.py --strict
+      - name: Record strict gate outcome
+        if: always()
+        run: |
+          mkdir -p evidence
+          printf 'head=%s\nstrict_outcome=%s\n' "$SOURCE_SHA" "${{ steps.strict.outcome }}" > evidence/architecture-gate.txt
       - uses: actions/upload-artifact@v4
         with:
           name: architecture-contract-evidence-${{ env.SOURCE_SHA }}

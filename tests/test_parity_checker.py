@@ -17,6 +17,10 @@ class ParityCheckerTest(unittest.TestCase):
         self.assertEqual([], result.errors)
         self.assertEqual(2046, result.summary["inventory_files"])
         self.assertEqual(2046, result.summary["ledger_rows"])
+        self.assertEqual(8172, result.summary["full_source_entries"])
+        self.assertGreater(result.summary["full_source_empty_responsibilities"], 0)
+        self.assertEqual(0, result.summary["missing_reverse_links"])
+        self.assertEqual(0, result.summary["blob_mismatches"])
         self.assertEqual(0, result.summary["legacy_monoliths_present"])
         self.assertEqual(0, result.summary["legacy_android_product_files"])
         self.assertEqual(0, result.summary["presentation_runtime_bypasses"])
@@ -36,6 +40,7 @@ class ParityCheckerTest(unittest.TestCase):
         self.assertEqual(0, result.summary["frontend_android_main_dependencies"])
         self.assertEqual(0, result.summary["architecture_scope_markers"])
         self.assertGreater(result.summary["status_counts"].get("mapped", 0), 0)
+        self.assertGreater(result.summary["strict_incomplete_rows"], 0)
 
 if __name__ == "__main__":
     unittest.main()

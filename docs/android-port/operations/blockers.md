@@ -14,3 +14,12 @@ DOC-WRITE-001 曾向用户指定邮箱通知，threadId `1a1215529c220244`；目
 CI-AUTH-001 已于 2026-10-10 向用户指定邮箱发送一次必要通知，threadId `1a1218d568460e79`；邮件不包含秘密，并明确要求不要通过邮件发送用户名/密码。后续先检查该线程/Actions 实际状态，未解决时不得重复发送同主题邮件。
 
 本记录不声称上述项目是全项目仅有卡点。主实现必须持续登记新发现，并把 `blocked` 具体关联到责任和依赖，不得以一个全局 blocked 停止全部工作。
+
+## CI-AUTH-001 — protected Android emulator account secrets
+
+Current exact evidence at Android HEAD 140a971b7bb7cc32ed657b868a1c42fad6da288a:
+- Full CI run 37967638680 package job 113945895073 completed successfully, including debug/ciAcceptance/githubRelease APK, githubRelease AAB, unit test, lint, release CI-marker stripping, SHA-256 identity recording, and artifact 11634950184.
+- dependent emulator job 113949114567 downloaded and verified those exact-HEAD packages, then failed before emulator startup because FABUSHI_CI_TEST_USERNAME and FABUSHI_CI_TEST_PASSWORD were both empty.
+- Gmail thread 1a1218d568460e79 already notified 1315518325@qq.com; as of this update it has no reply confirming configuration. Do not send a duplicate notice.
+
+This blocks only protected authenticated emulator/device journeys. It does not permit weakening package, architecture, source-closure, Rust/Kotlin, release-security, or unauthenticated gates; continue all independent work.

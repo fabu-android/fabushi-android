@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
+use std::fs;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use url::Url;
 
@@ -31,7 +33,8 @@ pub struct FabushiAccountSession {
     pub ci_runner: Option<bool>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct BrowserAttempt {
     attempt_id: String,
     login_url: String,
@@ -64,6 +67,7 @@ pub struct AndroidAccountService {
     session: Option<FabushiAccountSession>,
     browser_attempt: Option<BrowserAttempt>,
     agent: ureq::Agent,
+    browser_attempt_store: Option<PathBuf>,
 }
 
 impl AndroidAccountService {
@@ -96,7 +100,28 @@ impl AndroidAccountService {
                 .timeout_write(Duration::from_secs(30))
                 .redirects(0)
                 .build(),
+            browser_attempt_store: None,
         })
+    }
+
+    pub fn with_persistent_browser_attempts(
+        device_id: impl Into<String>,
+        initial_session_json: Option<&str>,
+        store_path: impl Into<PathBuf>,
+    ) -> Result<Self, String> {
+        let mut service = Self::new(device_id, initial_session_json)?;
+        let store_path = store_path.into();
+        service.browser_attempt_store = Some(store_path.clone());
+        service.browser_attempt = load_browser_attempt(&store_path, &service.base_url)?;
+        if service
+            .browser_attempt
+            .as_ref()
+            .is_some_and(|attempt| now_ms() >= attempt.expires_at_ms)
+        {
+            service.browser_attempt = None;
+            clear_browser_attempt(&store_path)?;
+        }
+        Ok(service)
     }
 
     #[cfg(test)]
@@ -163,16 +188,40 @@ impl AndroidAccountService {
     }
 
     pub fn browser_start(&mut self) -> Result<Value, String> {
+        self.browser_start_for_provider(None)
+    }
+
+    pub fn browser_start_for_provider(
+        &mut self,
+        provider: Option<&str>,
+    ) -> Result<Value, String> {
+        if self
+            .browser_attempt
+            .as_ref()
+            .is_some_and(|attempt| now_ms() >= attempt.expires_at_ms)
+        {
+            self.browser_attempt = None;
+            self.persist_browser_attempt(None)?;
+        }
+        if self.browser_attempt.is_some() {
+            return Err("Fabushi browser sign-in already has an active attempt.".into());
+        }
+        let mut request = json!({
+            "deviceId": self.device_id,
+            "platform": "android",
+        });
+        if let Some(provider) = provider {
+            let provider = validate_oauth_provider(provider)?;
+            request["provider"] = Value::String(provider.to_string());
+        }
         let body = self.request_json(
             "/api/auth/browser/start",
             "POST",
-            Some(json!({
-                "deviceId": self.device_id,
-                "platform": "android",
-            })),
+            Some(request),
             None,
         )?;
         let attempt = parse_browser_attempt(&body, &self.base_url)?;
+        self.persist_browser_attempt(Some(&attempt))?;
         let result = json!({
             "attemptId":attempt.attempt_id,
             "loginUrl":attempt.login_url,
@@ -208,6 +257,7 @@ impl AndroidAccountService {
             .cloned()
             .ok_or("browser login attempt is unknown")?;
         self.browser_attempt = None;
+        self.persist_browser_attempt(None)?;
         let path = format!(
             "/api/auth/browser/attempts/{}/cancel",
             encode_path_segment(&attempt.attempt_id),
@@ -233,6 +283,7 @@ impl AndroidAccountService {
             .ok_or("browser login attempt is unknown")?;
         if now_ms() >= attempt.expires_at_ms {
             self.browser_attempt = None;
+            self.persist_browser_attempt(None)?;
             return Ok((json!({"attemptId":attempt_id,"status":"expired"}), None));
         }
         let path = format!(
@@ -261,6 +312,7 @@ impl AndroidAccountService {
                     .map_err(|_| "failed to serialize Fabushi account session")?;
                 self.session = Some(verified);
                 self.browser_attempt = None;
+                self.persist_browser_attempt(None)?;
                 Ok((
                     json!({
                         "attemptId":attempt_id,
@@ -272,6 +324,7 @@ impl AndroidAccountService {
             }
             "failed" | "expired" | "cancelled" => {
                 self.browser_attempt = None;
+                self.persist_browser_attempt(None)?;
                 Ok((json!({"attemptId":attempt_id,"status":state}), None))
             }
             _ => Ok((
@@ -285,9 +338,22 @@ impl AndroidAccountService {
         }
     }
 
+
+
+    fn persist_browser_attempt(&self, attempt: Option<&BrowserAttempt>) -> Result<(), String> {
+        let Some(path) = self.browser_attempt_store.as_deref() else {
+            return Ok(());
+        };
+        match attempt {
+            Some(attempt) => persist_browser_attempt(path, attempt),
+            None => clear_browser_attempt(path),
+        }
+    }
+
     pub fn logout(&mut self) -> Result<(Value, AccountSessionMutation), String> {
         let session = self.session.take();
         self.browser_attempt = None;
+        self.persist_browser_attempt(None)?;
         if let Some(session) = session {
             if let Some(refresh_token) = session.refresh_token {
                 let _ = self.request_json(
@@ -501,6 +567,66 @@ pub fn normalize_session(value: &Value, allow_refreshless: bool) -> Option<Fabus
     })
 }
 
+
+
+fn validate_oauth_provider(provider: &str) -> Result<&str, String> {
+    match provider.trim() {
+        "google" => Ok("google"),
+        "github" => Ok("github"),
+        _ => Err("Unsupported Fabushi OAuth provider.".into()),
+    }
+}
+
+fn persist_browser_attempt(path: &Path, attempt: &BrowserAttempt) -> Result<(), String> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|error| format!("failed to create OAuth attempt store: {error}"))?;
+    }
+    let payload = serde_json::to_vec(attempt)
+        .map_err(|error| format!("failed to serialize OAuth attempt: {error}"))?;
+    let tmp = path.with_extension("tmp");
+    fs::write(&tmp, payload).map_err(|error| format!("failed to write OAuth attempt: {error}"))?;
+    fs::rename(&tmp, path).map_err(|error| format!("failed to commit OAuth attempt: {error}"))?;
+    Ok(())
+}
+
+fn clear_browser_attempt(path: &Path) -> Result<(), String> {
+    match fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(format!("failed to clear OAuth attempt: {error}")),
+    }
+}
+
+fn load_browser_attempt(path: &Path, base_url: &Url) -> Result<Option<BrowserAttempt>, String> {
+    let raw = match fs::read(path) {
+        Ok(raw) => raw,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(format!("failed to read OAuth attempt: {error}")),
+    };
+    if raw.len() > 64 * 1024 {
+        clear_browser_attempt(path)?;
+        return Ok(None);
+    }
+    let attempt: BrowserAttempt = match serde_json::from_slice(&raw) {
+        Ok(attempt) => attempt,
+        Err(_) => {
+            clear_browser_attempt(path)?;
+            return Ok(None);
+        }
+    };
+    let trusted_login = Url::parse(&attempt.login_url).ok();
+    if attempt.attempt_id.trim().is_empty()
+        || attempt.poll_secret.trim().is_empty()
+        || trusted_login
+            .as_ref()
+            .is_none_or(|url| url.origin() != base_url.origin())
+    {
+        clear_browser_attempt(path)?;
+        return Ok(None);
+    }
+    Ok(Some(attempt))
+}
+
 fn parse_browser_attempt(value: &Value, base_url: &Url) -> Result<BrowserAttempt, String> {
     let object = value
         .as_object()
@@ -604,6 +730,72 @@ mod tests {
             "username":"user@example.com",
             "userId":"user-1",
         })
+    }
+
+
+
+    #[test]
+    fn oauth_provider_allowlist_rejects_untrusted_provider_names() {
+        assert_eq!(validate_oauth_provider("google").unwrap(), "google");
+        assert_eq!(validate_oauth_provider("github").unwrap(), "github");
+        assert!(validate_oauth_provider("oidc").is_err());
+        assert!(validate_oauth_provider("../google").is_err());
+    }
+
+    #[test]
+    fn browser_attempt_store_survives_reopen_and_rejects_foreign_origin() {
+        let root = std::env::temp_dir().join(format!(
+            "fabushi-account-attempt-{}-{}",
+            std::process::id(),
+            now_ms()
+        ));
+        let path = root.join("attempt.json");
+        let base = normalize_api_base_url(DEFAULT_FABUSHI_API_BASE_URL).unwrap();
+        let attempt = BrowserAttempt {
+            attempt_id: "attempt-1".into(),
+            login_url: "https://api.ombhrum.com/sign-in?attempt=attempt-1".into(),
+            poll_secret: "poll-secret-1".into(),
+            expires_at_ms: now_ms().saturating_add(60_000),
+            poll_after_ms: 750,
+        };
+        persist_browser_attempt(&path, &attempt).unwrap();
+        assert_eq!(load_browser_attempt(&path, &base).unwrap(), Some(attempt.clone()));
+
+        let foreign = BrowserAttempt {
+            login_url: "https://evil.example/sign-in".into(),
+            ..attempt
+        };
+        persist_browser_attempt(&path, &foreign).unwrap();
+        assert_eq!(load_browser_attempt(&path, &base).unwrap(), None);
+        assert!(!path.exists());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn persistent_service_drops_expired_attempt_on_cold_start() {
+        let root = std::env::temp_dir().join(format!(
+            "fabushi-account-expired-attempt-{}-{}",
+            std::process::id(),
+            now_ms()
+        ));
+        let path = root.join("attempt.json");
+        let attempt = BrowserAttempt {
+            attempt_id: "attempt-expired".into(),
+            login_url: "https://api.ombhrum.com/sign-in?attempt=attempt-expired".into(),
+            poll_secret: "poll-secret-expired".into(),
+            expires_at_ms: now_ms().saturating_sub(1),
+            poll_after_ms: 750,
+        };
+        persist_browser_attempt(&path, &attempt).unwrap();
+        let service = AndroidAccountService::with_persistent_browser_attempts(
+            "device-1",
+            None,
+            &path,
+        )
+        .unwrap();
+        assert!(service.browser_attempt.is_none());
+        assert!(!path.exists());
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]

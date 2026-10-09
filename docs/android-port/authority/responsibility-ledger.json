@@ -213,15 +213,15 @@
       "android_owner": "Rust AndroidAccountService behind Coordinator/Host; Keystore adapter owns encryption/storage mechanics only",
       "platform_delta": "Desktop secret-store + host credential file becomes AndroidKeyStore AES-GCM + no-backup ciphertext, with initial session injected through the typed native boundary and private persistence mutations consumed before UI.",
       "implementation_status": "implemented",
-      "production_wiring": "implemented in current PR HEAD; same-HEAD CI/package/device evidence pending",
-      "unit_test": "Rust session normalization/base URL/login-origin tests added; current-head CI pending",
+      "production_wiring": "implemented: real Fabushi browser/OAuth start/poll/cancel share AndroidAccountService; OAuth attempt is durably persisted under Host app data and reloaded on cold start; Custom Tabs accepts only the canonical api.ombhrum.com HTTPS origin; exact-head CI/package/device evidence pending",
+      "unit_test": "Rust session normalization/base URL/login-origin/provider allowlist/persistent-attempt cold-start tests plus Kotlin same-origin Custom Tabs validation; exact-head GitHub Actions pending",
       "contract_test": "Rust workspace/architecture Actions pending for exact current HEAD",
       "integration_test": "required: real protected account browser journey + refresh + process death on emulator/device",
       "packaged_test": "required: public githubRelease excludes CI import and normal login works from packaged artifact",
       "device_test": "blocked by protected test-account secrets until CI-AUTH-001 is resolved",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Implemented from exact Desktop account source facts. Do not mark verified until current exact HEAD compiles/tests and protected packaged/device login proves durable restore and refresh."
+      "notes": "Implemented from exact Desktop account source facts. Production feature.auth.oauthStart/oauthPoll no longer uses fabushi.invalid or consumes a pending attempt. Do not mark verified until the new exact HEAD passes Rust/Kotlin/package evidence and protected packaged/device login proves durable restore, cancellation, refresh, stale callback/account fencing."
     },
     {
       "responsibility_id": "MSG-CANONICAL-COMMANDS-002",
@@ -408,7 +408,7 @@
         }
       ],
       "source_commit": "3bc92400826cc4ca7ac665b467708e22261edc61",
-      "responsibility": "Resolve/verify/install plugin releases, persist grants, host portable runtime lifecycle and expose registered tools under capability policy.",
+      "responsibility": "Umbrella traceability row for the plugin domain. Detailed immutable installation, grant persistence, and executable runtime lifecycle are tracked by PLUGIN-IMMUTABLE-INSTALL-001, PLUGIN-GRANT-STORE-001, and PLUGIN-RUNTIME-EXECUTION-001; this row must not be used to claim whole-domain closure.",
       "source_owner": "Mahayana plugin runtime/host",
       "direct_callers": [
         "shipping Desktop composition; exact callers require continued per-domain decomposition"
@@ -435,21 +435,22 @@
       "security_boundary": "Coordinator/Host/Capability Broker owns authorization; Presentation cannot grant itself capability.",
       "android_disposition": "android-adapted",
       "android_target": [
+        "source/packages/mahayana-plugin-runtime/src/lib.rs",
         "source/host/src/android_json_runtime.rs",
         "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/presentation/MarketplaceViewModel.kt"
       ],
       "android_owner": "source/host/src/android_json_runtime.rs",
       "platform_delta": "Android uses native Compose/platform adapters + typed JNI while preserving canonical Rust owners where platform-independent.",
-      "implementation_status": "mapped",
-      "production_wiring": "mapped target(s); production parity not yet established",
-      "unit_test": "required",
+      "implementation_status": "implemented",
+      "production_wiring": "partially implemented: canonical Desktop plugin-runtime primitive is vendored at exact blob and Host installer/grant paths are wired; executable JS/WASM/MCP runtime remains fail-closed",
+      "unit_test": "canonical mahayana-plugin-runtime tests are vendored unchanged; Host contract tests updated; exact-head GitHub Actions pending",
       "contract_test": "required on same exact HEAD",
       "integration_test": "required on same exact HEAD",
       "packaged_test": "required on final minified release artifact",
       "device_test": "required on emulator/physical device as applicable",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Android currently fail-closes plugin.permission/runtime methods instead of returning fake success. The canonical portable Rust plugin/JS runtime still must be migrated."
+      "notes": "Do not mark verified: immutable installer and permission persistence are now real production paths, while runtime.start/stop/tools/call still intentionally fail closed until an actual execution adapter is migrated."
     },
     {
       "responsibility_id": "MINIAPP-WEBMCP-001",
@@ -957,6 +958,293 @@
       "artifact": null,
       "verification_status": "not-verified",
       "notes": "Representative source anchor is notification privacy surface; full redaction source inventory mapping remains open."
+    },
+    {
+      "responsibility_id": "ACCOUNT-OAUTH-ATTEMPT-001",
+      "domain": "account",
+      "desktop_sources": [
+        {
+          "path": "source/product/fabushi/fabushi-account-service.ts",
+          "blob_sha": "b0bd689dc430fd36ce1e2089027563f80d47b54e",
+          "symbols": [
+            "login",
+            "cancelLogin",
+            "browser attempt lifecycle"
+          ]
+        }
+      ],
+      "source_commit": "3bc92400826cc4ca7ac665b467708e22261edc61",
+      "responsibility": "Own one durable browser/OAuth login attempt across pending polls, cancellation, timeout, process death and cold start without consuming a pending attempt or accepting a stale/foreign callback.",
+      "source_owner": "Desktop FabushiAuthService login-attempt owner",
+      "direct_callers": [
+        "account login presentation",
+        "Host account session owner"
+      ],
+      "downstream_dependencies": [
+        "Fabushi /api/auth/browser/start",
+        "attempt poll/cancel endpoints",
+        "durable account session settlement"
+      ],
+      "state_owner": "Rust AndroidAccountService under Host",
+      "persistent_state": [
+        "attemptId",
+        "same-origin loginUrl",
+        "pollSecret",
+        "expiresAt",
+        "pollAfterMs"
+      ],
+      "protocol_wire_contract": [
+        "POST /api/auth/browser/start",
+        "POST /api/auth/browser/attempts/{attemptId}",
+        "POST /api/auth/browser/attempts/{attemptId}/cancel"
+      ],
+      "visible_effect": "Login can remain pending across multiple polls and app process restart, then settle once or be cancelled/expired.",
+      "failure_behavior": [
+        "unsupported provider rejected",
+        "foreign login origin rejected",
+        "corrupt persisted attempt discarded",
+        "unknown/stale attempt rejected"
+      ],
+      "cancellation_behavior": "Cancel clears the local durable attempt before best-effort backend cancellation; terminal state cannot later be consumed again.",
+      "retry_semantics": "Poll preserves the same attempt while pending; caller follows bounded pollAfterMs and expiry instead of creating a second attempt.",
+      "idempotency_semantics": "At most one active attempt is owned locally; terminal settlement removes its durable record and duplicate/stale ids fail closed.",
+      "process_death_recovery": "Host reloads account-oauth-attempt.json on cold start, validates origin/expiry and resumes the same backend attempt.",
+      "account_fencing": "Attempt settlement remains inside current Host/account owner; broader account-epoch callback fencing remains required before verification.",
+      "security_boundary": "pollSecret is persisted only in private Host app data and never projected to Presentation; Custom Tabs URL must be canonical HTTPS origin.",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "source/host/src/account_service.rs",
+        "source/host/src/android_json_runtime.rs",
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/adapters/account-oauth.kt"
+      ],
+      "android_owner": "Rust AndroidAccountService + AndroidAccountOAuthAdapter only for system Custom Tabs launch",
+      "platform_delta": "Desktop browser auth becomes system Custom Tabs; attempt identity/poll secret stay in Rust Host durable state rather than Activity/ViewModel.",
+      "implementation_status": "implemented",
+      "production_wiring": "feature.auth.oauthStart/oauthPoll/oauthCancel and feature.auth.browser* share the real Fabushi account backend; persistent attempt store is wired at Host construction.",
+      "unit_test": "Rust provider/origin/persistence/expiry tests and Kotlin URL-origin test added; exact-head Actions pending",
+      "contract_test": "Rust workspace + Android JVM contract on new exact HEAD required",
+      "integration_test": "Protected account login/poll/cancel/process-death/cold-start journey required",
+      "packaged_test": "githubRelease normal-login path required; CI session import must remain absent",
+      "device_test": "blocked only for protected-account journey by FABUSHI_CI_TEST_USERNAME/PASSWORD; non-secret tests proceed in Actions",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Source implemented, not verified. Stale callback/account-switch fencing still needs protected integration evidence."
+    },
+    {
+      "responsibility_id": "PLUGIN-IMMUTABLE-INSTALL-001",
+      "domain": "mcp-plugins",
+      "desktop_sources": [
+        {
+          "path": "source/mahayana/mahayana-rs/mahayana-plugin-runtime/src/lib.rs",
+          "blob_sha": "78f65a489081e8d00f1f5b62e031e00daf09f370",
+          "symbols": [
+            "ExternalReleaseManifest",
+            "ArtifactResolver",
+            "PluginInstaller",
+            "InstalledPluginPointer"
+          ]
+        },
+        {
+          "path": "source/mahayana/mahayana-rs/mahayana-platform-worker/src/worker_api/marketplace.rs",
+          "blob_sha": "4a168efe069463cab9af1c8c966ddff8a53dfceb",
+          "symbols": [
+            "github_install_contract",
+            "releaseManifest",
+            "fabushi.marketplace.install.v1"
+          ]
+        }
+      ],
+      "source_commit": "3bc92400826cc4ca7ac665b467708e22261edc61",
+      "responsibility": "Validate canonical external release metadata, select an Android artifact, fetch immutable HTTPS/GitHub/npm bytes, verify size/SHA-256, stage safely, block silent downgrade and atomically persist the active installed pointer.",
+      "source_owner": "Mahayana PluginInstaller + marketplace release contract",
+      "direct_callers": [
+        "marketplace install UI",
+        "Host feature.plugin.install"
+      ],
+      "downstream_dependencies": [
+        "approved marketplace releaseManifest",
+        "immutable artifact publisher",
+        "plugin filesystem store"
+      ],
+      "state_owner": "Mahayana PluginInstaller",
+      "persistent_state": [
+        "active.json",
+        "previous-active.json",
+        "versioned immutable extracted artifact"
+      ],
+      "protocol_wire_contract": [
+        "mahayana.external-release.v1",
+        "fabushi.marketplace.install.v1 metadata",
+        "feature.plugin.install"
+      ],
+      "visible_effect": "An approved Android plugin installs only when its immutable bytes exactly match the release manifest.",
+      "failure_behavior": [
+        "bad protocol/digest/size/source rejected",
+        "path traversal rejected by extractor",
+        "missing entry rejected",
+        "downgrade blocked"
+      ],
+      "cancellation_behavior": "Download/install failure leaves no active fake install; staging is removed on extraction/dependency errors.",
+      "retry_semantics": "Repeated installation of the identical immutable release converges on the same active pointer; no blind substitution of newer bytes.",
+      "idempotency_semantics": "Artifact identity is pluginId+version+artifactId+sha256; active pointer changes atomically.",
+      "process_death_recovery": "Installed immutable versions and active pointer survive process death; interrupted staging is not treated as active.",
+      "account_fencing": "Marketplace fetch is account-scoped upstream; installed package identity is local canonical Host state and must be rechecked at account policy boundaries.",
+      "security_boundary": "Only validated public immutable sources are accepted; Mini App does not choose arbitrary local executable paths or self-grant permissions.",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "source/packages/mahayana-plugin-runtime/src/lib.rs",
+        "source/host/src/android_json_runtime.rs"
+      ],
+      "android_owner": "canonical Rust PluginInstaller under Host",
+      "platform_delta": "Portable Rust installer is copied at exact Desktop blob; Android selects only artifacts declaring platform=android and uses app-private plugin storage.",
+      "implementation_status": "implemented",
+      "production_wiring": "feature.plugin.install now uses canonical PluginInstaller in production; deterministic Test mode remains an explicit fixture only.",
+      "unit_test": "Canonical Desktop PluginInstaller tests vendored unchanged; Host invalid-manifest contract updated; exact-head Actions pending",
+      "contract_test": "Cargo workspace/Host contract on new exact HEAD required",
+      "integration_test": "Real marketplace release install and restart recovery required",
+      "packaged_test": "Final ciAcceptance/githubRelease package path must exercise the same Host installer",
+      "device_test": "Emulator/device install acceptance required after protected session is available",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Exact Desktop source blob preserved. JS/WASM/MCP execution is a separate responsibility and remains fail-closed."
+    },
+    {
+      "responsibility_id": "PLUGIN-GRANT-STORE-001",
+      "domain": "tools-capability-broker",
+      "desktop_sources": [
+        {
+          "path": "source/mahayana/mahayana-rs/mahayana-plugin-runtime/src/lib.rs",
+          "blob_sha": "78f65a489081e8d00f1f5b62e031e00daf09f370",
+          "symbols": [
+            "PermissionManager",
+            "grant",
+            "revoke",
+            "retain_requested"
+          ]
+        }
+      ],
+      "source_commit": "3bc92400826cc4ca7ac665b467708e22261edc61",
+      "responsibility": "Persist explicit least-privilege plugin grants, reject permissions not declared by the installed release, revoke durably, and prune grants when a new release stops requesting them.",
+      "source_owner": "Mahayana PermissionManager",
+      "direct_callers": [
+        "permission approval UI",
+        "Host plugin.permission.grant/revoke",
+        "future Capability Broker runtime.call boundary"
+      ],
+      "downstream_dependencies": [
+        "installed plugin active pointer",
+        "release requestedPermissions"
+      ],
+      "state_owner": "Rust PermissionManager under Host",
+      "persistent_state": [
+        "per-plugin granted permission set"
+      ],
+      "protocol_wire_contract": [
+        "plugin.permission.grant",
+        "plugin.permission.revoke"
+      ],
+      "visible_effect": "User-approved plugin permissions persist across restart but cannot exceed the installed release declaration.",
+      "failure_behavior": [
+        "uninstalled plugin rejected",
+        "undeclared permission rejected",
+        "persistence errors fail closed"
+      ],
+      "cancellation_behavior": "Revocation is durable and takes effect before future runtime execution; there is no UI-only grant owner.",
+      "retry_semantics": "Duplicate grant converges in the set; duplicate revoke is harmless persistence of the absent grant.",
+      "idempotency_semantics": "Permission key is plugin identity + exact permission; release reconciliation retains only still-requested grants.",
+      "process_death_recovery": "Permission JSON reloads in Host after process death; install reconciles stale grants against current requested permissions.",
+      "account_fencing": "Future runtime calls must additionally bind active account/session where capability is account-scoped; grant alone never authorizes a side effect.",
+      "security_boundary": "Compose cannot mutate the store directly; PermissionManager is necessary but not sufficient for Capability Broker execution authorization.",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "source/packages/mahayana-plugin-runtime/src/lib.rs",
+        "source/host/src/android_json_runtime.rs"
+      ],
+      "android_owner": "Rust PermissionManager under Host",
+      "platform_delta": "Platform-independent permission store stays Rust; Android UI only requests grant/revoke through typed Coordinator/JNI Host dispatch.",
+      "implementation_status": "implemented",
+      "production_wiring": "plugin.permission.grant/revoke use canonical PermissionManager and active installed release requestedPermissions; install prunes stale grants.",
+      "unit_test": "Canonical PermissionManager tests vendored; Host uninstalled-plugin rejection contract updated; exact-head Actions pending",
+      "contract_test": "Rust workspace/Host tests required on new exact HEAD",
+      "integration_test": "Permission grant/revoke/restart and Mini App non-escalation journey required",
+      "packaged_test": "Final packaged acceptance must prove same production Host path",
+      "device_test": "Emulator/device evidence pending",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Not verified until runtime execution demonstrates Capability Broker also consumes/rechecks grants at the actual side-effect boundary."
+    },
+    {
+      "responsibility_id": "PLUGIN-RUNTIME-EXECUTION-001",
+      "domain": "mcp-plugins",
+      "desktop_sources": [
+        {
+          "path": "source/mahayana/mahayana-rs/mahayana-plugin-runtime/src/lib.rs",
+          "blob_sha": "78f65a489081e8d00f1f5b62e031e00daf09f370",
+          "symbols": [
+            "PluginSupervisor",
+            "ServiceRegistry",
+            "EffectScope",
+            "PluginState"
+          ]
+        }
+      ],
+      "source_commit": "3bc92400826cc4ca7ac665b467708e22261edc61",
+      "responsibility": "Own portable runtime start/stop, service/tool registration, runtime.call cancellation/timeout, effect disposal, reconnect and process-recovery semantics with Capability Broker enforcement at execution.",
+      "source_owner": "Mahayana runtime lifecycle/service graph plus runtime-specific adapters",
+      "direct_callers": [
+        "MarketplaceViewModel.startPortableRuntime",
+        "Mini App/WebMCP runtime tool bridge"
+      ],
+      "downstream_dependencies": [
+        "installed immutable plugin",
+        "persistent grants",
+        "runtime-specific JS/WASM/MCP adapter",
+        "Capability Broker"
+      ],
+      "state_owner": "Host runtime supervisor (target); currently no executable adapter",
+      "persistent_state": [
+        "runtime instance identity",
+        "service generations",
+        "pending calls/effects",
+        "recovery state"
+      ],
+      "protocol_wire_contract": [
+        "runtime.start",
+        "runtime.stop",
+        "runtime.tools",
+        "runtime.call"
+      ],
+      "visible_effect": "Installed portable plugins can actually start, expose tools and execute calls without Mini App privilege escalation.",
+      "failure_behavior": [
+        "unsupported runtime fails closed",
+        "missing/revoked grants fail closed",
+        "duplicate pending request rejected",
+        "stale instance result rejected"
+      ],
+      "cancellation_behavior": "Stop/dispose cancels pending effects; completion/cancellation race has one terminal outcome.",
+      "retry_semantics": "No blind replay of unknown side effects; reconnect/restart reconciles durable intent with actual runtime state.",
+      "idempotency_semantics": "Call/request IDs and runtime instance generation fence duplicates and stale results.",
+      "process_death_recovery": "Must reconstruct the same durable runtime intent after process death and reconcile pending side effects rather than silently rerun.",
+      "account_fencing": "Account-scoped tool execution requires current account epoch/session proof on every side-effect boundary.",
+      "security_boundary": "Capability Broker consumes/rechecks explicit grants; Mini App surface identity/nonce cannot mint additional capability.",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "source/host/src/android_json_runtime.rs",
+        "source/packages/mahayana-plugin-runtime/src/lib.rs",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/presentation/MarketplaceViewModel.kt"
+      ],
+      "android_owner": "Rust Host runtime supervisor + runtime-specific adapter behind Capability Broker",
+      "platform_delta": "PluginSupervisor primitive is portable, but Android still needs a real executable JS/WASM/MCP adapter rather than desktop process assumptions.",
+      "implementation_status": "mapped",
+      "production_wiring": "runtime.start/stop/tools/call intentionally fail closed; no fake runtime success remains",
+      "unit_test": "Canonical supervisor/effect-scope unit tests exist in vendored crate; Android adapter tests not yet implemented",
+      "contract_test": "Required before implementation can be marked complete",
+      "integration_test": "Required: runtime start/tool catalog/call/cancel/revoke/reconnect/process-death",
+      "packaged_test": "Required on final package",
+      "device_test": "Required on emulator/device",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "This row is deliberately not implemented. Installer/grant completion must not be used to claim executable plugin parity."
     }
   ],
   "traceability": {

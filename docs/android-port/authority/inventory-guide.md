@@ -19,3 +19,9 @@
 独立 documentation-contract job 校验 Markdown 本地链接、JSON 语法及十二个必需功能手册。当前存在 DOC-WRITE-001 时，受阻缺失手册应使该 gate 失败；不准通过删掉要求或忽略链接变绿。source-inventory 独立继续输出可用清单。
 
 输出 artifact 是快照。后续变更必须重跑，并按 source-manifest 和 digest 确认来源。artifact 到期后需从固定 SHA 再生，不把仅剩的聊天摘要作为源范围证明。
+
+## Persistent full-root parity ledger
+
+The generated 8172-entry inventory is now checked into authority as source-inventory-manifest.json plus source-inventory-ledger.jsonl. Every tracked non-tree Desktop entry remains unreviewed until a human/source-backed responsibility mapping exists; generation never auto-inherits old verification.
+
+scripts/check_grok_android_parity.py treats the historical 2,046-file Grok source/frontend ledger only as a transitional compatibility check. The full-root ledger is the closure authority: non-strict mode aggregates unmapped/disposition/status/target/evidence debt, while strict mode requires every tracked entry to have responsibility coverage, terminal verified/not-applicable status, Android target/replacement and exact-HEAD evidence. Responsibility source anchors are checked back against the full inventory and blob SHA, creating bidirectional coverage.

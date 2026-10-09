@@ -15,6 +15,9 @@ use fabushi_android_shared::webauthn_gateway::{
     WebAuthnCeremony, WebAuthnRequestFrame, WebAuthnResponseFrame, WebAuthnStage,
     WebAuthnStageOutcome,
 };
+use mahayana_plugin_runtime::{
+    ExternalReleaseManifest, PermissionManager, PluginInstaller,
+};
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::path::PathBuf;
@@ -149,6 +152,8 @@ pub struct AndroidJsonHost {
     turn_events: Arc<Mutex<VecDeque<Value>>>,
     turn_cancellations: BTreeMap<String, Arc<AtomicBool>>,
     installed_plugins: BTreeSet<String>,
+    plugin_installer: PluginInstaller,
+    plugin_permissions: PermissionManager,
     webauthn: WebAuthnProxyExtension,
     webauthn_provider_queues: BTreeMap<String, VecDeque<WebAuthnRequestFrame>>,
 }
@@ -166,11 +171,12 @@ impl AndroidJsonHost {
         let app_data_dir = app_data_dir.into();
         let device_id = get_or_create_host_machine_id(&app_data_dir.join("machine-id"))
             .unwrap_or_else(|error| panic!("failed to open canonical Android machine id: {error}"));
-        let account = AndroidAccountService::new(
+        let account = AndroidAccountService::with_persistent_browser_attempts(
             device_id,
             (mode == AndroidHostMode::Production)
                 .then_some(initial_account_session_json)
                 .flatten(),
+            app_data_dir.join("account-oauth-attempt.json"),
         )
         .unwrap_or_else(|error| panic!("failed to initialize Android account service: {error}"));
         let agents = AndroidAgentRoster::open(app_data_dir.join("agents.json"))
@@ -181,6 +187,10 @@ impl AndroidJsonHost {
         ));
         let messaging = AndroidMessagingService::open(&app_data_dir)
             .unwrap_or_else(|error| panic!("failed to open canonical Android messaging repository: {error}"));
+        let plugin_installer = PluginInstaller::new(app_data_dir.join("plugins"))
+            .unwrap_or_else(|error| panic!("failed to open canonical Android plugin installer: {error}"));
+        let plugin_permissions = PermissionManager::load(app_data_dir.join("plugin-permissions.json"))
+            .unwrap_or_else(|error| panic!("failed to open canonical Android plugin permission store: {error}"));
         #[cfg(feature = "ci-account-session-import")]
         let ci_session = if mode == AndroidHostMode::Production {
             ci_account_session::from_environment(now_ms() / 1_000)
@@ -216,6 +226,8 @@ impl AndroidJsonHost {
             turn_events: Arc::new(Mutex::new(VecDeque::new())),
             turn_cancellations: BTreeMap::new(),
             installed_plugins: BTreeSet::new(),
+            plugin_installer,
+            plugin_permissions,
             webauthn: WebAuthnProxyExtension::new(WebAuthnProxyExtensionConfig::default()),
             webauthn_provider_queues: BTreeMap::new(),
         }
@@ -244,6 +256,7 @@ impl AndroidJsonHost {
             "feature.auth.browserPoll" => self.auth_browser_poll(params),
             "feature.auth.oauthStart" => self.oauth_start(params),
             "feature.auth.oauthPoll" => self.oauth_poll(params),
+            "feature.auth.oauthCancel" => self.oauth_cancel(params),
             "feature.mcp.oauthComplete" => self.mcp_oauth_complete(params),
             "feature.auth.logout" => self.account_logout(),
             "listAgents" => Ok(Value::Array(
@@ -303,14 +316,14 @@ impl AndroidJsonHost {
             "feature.marketplace.release" => self.marketplace_release(params),
             "feature.plugin.install" => self.plugin_install(params),
             "feature.plugin.uiDocument" => self.plugin_ui_document(params),
-            "plugin.compatibility"
-            | "plugin.permission.grant"
-            | "plugin.permission.revoke"
-            | "runtime.start"
+            "plugin.compatibility" => self.plugin_compatibility(params),
+            "plugin.permission.grant" => self.plugin_permission_grant(params),
+            "plugin.permission.revoke" => self.plugin_permission_revoke(params),
+            "runtime.start"
             | "runtime.stop"
             | "runtime.tools"
             | "runtime.call" => Err(format!(
-                "{method} is unavailable until the canonical portable Mahayana plugin runtime is migrated; Android refuses placeholder success"
+                "{method} is unavailable until a real portable JS/WASM/MCP execution adapter is migrated; Android refuses placeholder success"
             )),
             "feature.messaging.access.issue" => self.messaging_access_issue(params),
             "feature.messaging.blob.read" => self.messaging_blob_read(params),
@@ -657,7 +670,7 @@ impl AndroidJsonHost {
 
     fn browser_start(&mut self) -> Result<Value, String> {
         let attempt_id = self.next_attempt_id("browser");
-        let url = format!("https://auth.fabushi.invalid/android?attemptId={attempt_id}");
+        let url = format!("about:blank#fabushi-test-browser-login?attemptId={attempt_id}");
         self.browser_attempts.insert(attempt_id.clone(), "pending".into());
         Ok(json!({"attemptId":attempt_id,"url":url,"status":"pending"}))
     }
@@ -669,7 +682,7 @@ impl AndroidJsonHost {
         }
         Ok(json!({
             "attemptId":attempt_id,
-            "url":format!("https://auth.fabushi.invalid/android?attemptId={attempt_id}")
+            "url":format!("about:blank#fabushi-test-browser-login?attemptId={attempt_id}")
         }))
     }
 
@@ -725,26 +738,48 @@ impl AndroidJsonHost {
 
     fn oauth_start(&mut self, params: &Value) -> Result<Value, String> {
         let provider = required_string(params, "provider")?;
-        let attempt_id = self.next_attempt_id("oauth");
-        self.oauth_attempts.insert(attempt_id.clone());
+        if self.mode == AndroidHostMode::Test {
+            let attempt_id = self.next_attempt_id("oauth");
+            self.oauth_attempts.insert(attempt_id.clone());
+            return Ok(json!({
+                "attemptId":attempt_id,
+                "provider":provider,
+                "url":format!("https://api.ombhrum.com/sign-in?attempt={attempt_id}")
+            }));
+        }
+        let result = self.account.browser_start_for_provider(Some(provider))?;
         Ok(json!({
-            "attemptId":attempt_id,
+            "attemptId":result["attemptId"],
             "provider":provider,
-            "url":format!("https://auth.fabushi.invalid/oauth/{provider}?attemptId={attempt_id}")
+            "url":result["loginUrl"],
+            "status":result["status"],
+            "pollAfterMs":result["pollAfterMs"],
+            "expiresAt":result["expiresAt"],
         }))
     }
 
     fn oauth_poll(&mut self, params: &Value) -> Result<Value, String> {
         let attempt_id = required_string(params, "attemptId")?;
-        if !self.oauth_attempts.remove(attempt_id) {
-            return Err("OAuth attempt is unknown or already consumed".into());
-        }
         if self.mode == AndroidHostMode::Test {
+            if !self.oauth_attempts.remove(attempt_id) {
+                return Err("OAuth attempt is unknown or already consumed".into());
+            }
             self.logged_in = true;
-            Ok(json!({"attemptId":attempt_id,"status":"completed","auth":self.auth_status()}))
-        } else {
-            Ok(json!({"attemptId":attempt_id,"status":"pending"}))
+            return Ok(json!({"attemptId":attempt_id,"status":"completed","auth":self.auth_status()}));
         }
+        let (result, mutation) = self.account.browser_poll(attempt_id)?;
+        Ok(with_account_session_mutation(result, mutation))
+    }
+
+    fn oauth_cancel(&mut self, params: &Value) -> Result<Value, String> {
+        let attempt_id = required_string(params, "attemptId")?;
+        if self.mode == AndroidHostMode::Test {
+            if !self.oauth_attempts.remove(attempt_id) {
+                return Err("OAuth attempt is unknown or already consumed".into());
+            }
+            return Ok(json!({"attemptId":attempt_id,"status":"cancelled"}));
+        }
+        self.account.browser_cancel(attempt_id)
     }
 
     fn feature_execute(&mut self, params: &Value) -> Result<Value, String> {
@@ -795,16 +830,27 @@ impl AndroidJsonHost {
                 private_session_mutation = session_mutation;
             }
             "marketplace.install" => {
-                if self.mode != AndroidHostMode::Test {
-                    self.active_operations.remove(&operation_id);
-                    return Err(
-                        "marketplace.install requires the verified immutable plugin installer; Android refuses in-memory placeholder installation"
-                            .into(),
-                    );
+                if self.mode == AndroidHostMode::Test {
+                    let id = required_string(&command, "miniAppId")?;
+                    self.installed_plugins.insert(id.to_string());
+                    self.finish_operation(&operation_id);
+                } else {
+                    let release = command
+                        .get("release")
+                        .ok_or("marketplace.install requires the immutable release manifest")?
+                        .clone();
+                    let installed = self.plugin_install(&json!({
+                        "release":release,
+                        "platform":"android",
+                    }))?;
+                    self.events.push_back(json!({
+                        "type":"marketplace.installed",
+                        "operationId":operation_id,
+                        "requestId":request_id,
+                        "plugin":installed,
+                    }));
+                    self.finish_operation(&operation_id);
                 }
-                let id = required_string(&command, "miniAppId")?;
-                self.installed_plugins.insert(id.to_string());
-                self.finish_operation(&operation_id);
             }
             "miniapp.open" | "session.clear" => {
                 self.finish_operation(&operation_id);
@@ -1330,18 +1376,108 @@ impl AndroidJsonHost {
             .filter(|value| !value.trim().is_empty())
             .ok_or("plugin release is missing pluginId")?
             .to_string();
-        if self.mode != AndroidHostMode::Test {
-            return Err(
-                "feature.plugin.install is unavailable until the verified immutable package installer and canonical portable runtime are migrated; Android refuses in-memory placeholder installation"
-                    .into(),
-            );
+        if self.mode == AndroidHostMode::Test {
+            self.installed_plugins.insert(plugin_id.clone());
+            return Ok(json!({
+                "pluginId":plugin_id,
+                "runtime":"deepseek-js",
+                "requestedPermissions":[],
+                "fixture":true
+            }));
         }
-        self.installed_plugins.insert(plugin_id.clone());
+
+        let manifest: ExternalReleaseManifest = serde_json::from_value(release.clone())
+            .map_err(|error| format!("plugin release manifest is invalid: {error}"))?;
+        let pointer = self
+            .plugin_installer
+            .install(
+                &manifest,
+                "android",
+                &["deepseek-js", "javascript", "cordis-js", "mcp", "wasm"],
+            )
+            .map_err(|error| format!("verified plugin installation failed: {error}"))?;
+        self.plugin_permissions
+            .retain_requested(&pointer.plugin_id, &pointer.requested_permissions)
+            .map_err(|error| format!("failed to reconcile plugin permissions: {error}"))?;
+        Ok(json!({
+            "pluginId":pointer.plugin_id,
+            "version":pointer.version,
+            "artifactId":pointer.artifact_id,
+            "artifactSha256":pointer.artifact_sha256,
+            "runtime":pointer.runtime,
+            "entry":pointer.entry,
+            "requestedPermissions":pointer.requested_permissions,
+            "installedPath":pointer.installed_path,
+            "fixture":false
+        }))
+    }
+
+    fn plugin_compatibility(&self, params: &Value) -> Result<Value, String> {
+        let plugin_id = required_string(params, "pluginId")?;
+        if self.mode == AndroidHostMode::Test && self.installed_plugins.contains(plugin_id) {
+            return Ok(json!({
+                "pluginId":plugin_id,
+                "portableCompatible":true,
+                "runtime":"deepseek-js",
+                "fixture":true
+            }));
+        }
+        let active = self
+            .plugin_installer
+            .active(plugin_id)
+            .map_err(|error| format!("failed to inspect installed plugin: {error}"))?
+            .ok_or("plugin is not installed")?;
+        let portable = matches!(
+            active.runtime.as_str(),
+            "deepseek-js" | "javascript" | "cordis-js" | "mcp" | "wasm"
+        );
+        Ok(json!({
+            "pluginId":active.plugin_id,
+            "version":active.version,
+            "runtime":active.runtime,
+            "portableCompatible":portable,
+            "requestedPermissions":active.requested_permissions,
+        }))
+    }
+
+    fn plugin_permission_grant(&mut self, params: &Value) -> Result<Value, String> {
+        let plugin_id = required_string(params, "pluginId")?;
+        let permission = required_string(params, "permission")?;
+        let active = self
+            .plugin_installer
+            .active(plugin_id)
+            .map_err(|error| format!("failed to inspect installed plugin: {error}"))?
+            .ok_or("plugin is not installed")?;
+        self.plugin_permissions
+            .grant(plugin_id, &active.requested_permissions, permission)
+            .map_err(|error| format!("plugin permission grant rejected: {error}"))?;
         Ok(json!({
             "pluginId":plugin_id,
-            "runtime":"deepseek-js",
-            "requestedPermissions":[],
-            "fixture":true
+            "permission":permission,
+            "granted":true,
+            "grants":self.plugin_permissions.grants_for(plugin_id),
+        }))
+    }
+
+    fn plugin_permission_revoke(&mut self, params: &Value) -> Result<Value, String> {
+        let plugin_id = required_string(params, "pluginId")?;
+        let permission = required_string(params, "permission")?;
+        if self
+            .plugin_installer
+            .active(plugin_id)
+            .map_err(|error| format!("failed to inspect installed plugin: {error}"))?
+            .is_none()
+        {
+            return Err("plugin is not installed".into());
+        }
+        self.plugin_permissions
+            .revoke(plugin_id, permission)
+            .map_err(|error| format!("plugin permission revoke failed: {error}"))?;
+        Ok(json!({
+            "pluginId":plugin_id,
+            "permission":permission,
+            "granted":false,
+            "grants":self.plugin_permissions.grants_for(plugin_id),
         }))
     }
 
@@ -1872,18 +2008,28 @@ mod tests {
 
         let root = std::env::temp_dir().join(format!("fabushi-platform-contract-{}", now_ms()));
         let mut host = AndroidJsonHost::new(&root, AndroidHostMode::Test);
-        for method in [
-            "plugin.compatibility",
-            "plugin.permission.grant",
-            "plugin.permission.revoke",
-            "runtime.start",
-            "runtime.stop",
-            "runtime.tools",
-            "runtime.call",
-        ] {
+        for method in ["runtime.start", "runtime.stop", "runtime.tools", "runtime.call"] {
             let error = host.dispatch(method, &json!({"pluginId":"test"})).unwrap_err();
             assert!(error.contains("refuses placeholder success"));
         }
+        assert!(host
+            .dispatch("plugin.compatibility", &json!({"pluginId":"test"}))
+            .unwrap_err()
+            .contains("plugin is not installed"));
+        assert!(host
+            .dispatch(
+                "plugin.permission.grant",
+                &json!({"pluginId":"test","permission":"network"}),
+            )
+            .unwrap_err()
+            .contains("plugin is not installed"));
+        assert!(host
+            .dispatch(
+                "plugin.permission.revoke",
+                &json!({"pluginId":"test","permission":"network"}),
+            )
+            .unwrap_err()
+            .contains("plugin is not installed"));
         let production_root = std::env::temp_dir().join(format!("fabushi-plugin-production-{}", now_ms()));
         let mut production_feature_host = AndroidJsonHost::new(&production_root, AndroidHostMode::Production);
         assert!(production_feature_host
@@ -1892,7 +2038,7 @@ mod tests {
                 &json!({"command":{"type":"marketplace.install","requestId":"install-1","miniAppId":"global-dharma"}}),
             )
             .unwrap_err()
-            .contains("refuses in-memory placeholder installation"));
+            .contains("requires the immutable release manifest"));
         assert!(production_feature_host
             .dispatch(
                 "feature.execute",
@@ -1908,7 +2054,7 @@ mod tests {
                 &json!({"release":{"pluginId":"global-dharma"}}),
             )
             .unwrap_err()
-            .contains("refuses in-memory placeholder installation"));
+            .contains("plugin release manifest is invalid"));
         assert!(production_host
             .dispatch("feature.plugin.uiDocument", &json!({"pluginId":"global-dharma"}))
             .unwrap_err()

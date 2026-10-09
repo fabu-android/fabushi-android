@@ -15,6 +15,7 @@ members = [
   "source/packages/context",
   "source/packages/constants",
   "source/packages/mcp-core",
+  "source/packages/mahayana-plugin-runtime",
   "source/packages/redaction",
   "source/packages/utils",
 ]

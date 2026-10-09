@@ -12,6 +12,11 @@ from dataclasses import dataclass
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 INVENTORY = ROOT / "manifests/grok-bot-0.18-source-frontend-inventory.json"
 LEDGER = ROOT / "manifests/grok-bot-0.18-android-parity-ledger.json"
+FULL_SOURCE_MANIFEST = ROOT / "docs/android-port/authority/source-inventory-manifest.json"
+FULL_SOURCE_LEDGER = ROOT / "docs/android-port/authority/source-inventory-ledger.jsonl"
+RESPONSIBILITY_LEDGER = ROOT / "docs/android-port/authority/responsibility-ledger.json"
+FULL_SOURCE_STATUSES = {"unreviewed", "mapped", "implemented", "verified", "not-applicable"}
+FULL_SOURCE_DISPOSITIONS = {"direct-port", "android-adapted", "not-applicable-with-replacement", "mixed"}
 
 ALLOWED_CLASSES = {"native-equivalent", "shared-core", "platform-adapted", "not-applicable"}
 ALLOWED_STATUS = {"mapped", "implemented", "verified", "blocked"}
@@ -81,6 +86,141 @@ def load_json(path: pathlib.Path) -> dict:
     with path.open("r", encoding="utf-8") as handle:
         return json.load(handle)
 
+def load_jsonl(path: pathlib.Path) -> list[dict]:
+    rows: list[dict] = []
+    with path.open("r", encoding="utf-8") as handle:
+        for line_number, line in enumerate(handle, start=1):
+            if not line.strip():
+                continue
+            try:
+                rows.append(json.loads(line))
+            except json.JSONDecodeError as error:
+                raise ValueError(f"{path}:{line_number}: invalid JSON: {error}") from error
+    return rows
+
+
+def check_full_desktop_inventory(strict: bool, errors: list[str], warnings: list[str]) -> dict[str, object]:
+    manifest = load_json(FULL_SOURCE_MANIFEST)
+    source_rows = load_jsonl(FULL_SOURCE_LEDGER)
+    responsibility_doc = load_json(RESPONSIBILITY_LEDGER)
+    responsibilities = responsibility_doc.get("responsibilities", [])
+    responsibility_by_id = {
+        item.get("responsibility_id"): item
+        for item in responsibilities
+        if item.get("responsibility_id")
+    }
+
+    expected_count = manifest.get("tracked_non_tree_entries")
+    if expected_count != 8172:
+        errors.append(f"full Desktop inventory must declare 8172 tracked entries, got {expected_count!r}")
+    if len(source_rows) != expected_count:
+        errors.append(f"full Desktop source ledger row count mismatch: {len(source_rows)} != {expected_count}")
+
+    authority_commit = manifest.get("desktop_commit")
+    responsibility_authority = responsibility_doc.get("authority", {}).get("desktop_commit")
+    if authority_commit != responsibility_authority:
+        errors.append(
+            "full Desktop inventory/responsibility authority mismatch: "
+            f"{authority_commit!r} != {responsibility_authority!r}"
+        )
+
+    by_path: dict[str, dict] = {}
+    duplicate_paths: list[str] = []
+    status_counts: dict[str, int] = {}
+    debt = {
+        "empty_responsibilities": [],
+        "missing_disposition": [],
+        "nonterminal_status": [],
+        "missing_android_targets": [],
+        "missing_evidence": [],
+    }
+    for row in source_rows:
+        path = str(row.get("source_path", ""))
+        if not path:
+            errors.append("full Desktop source ledger contains row without source_path")
+            continue
+        if path in by_path:
+            duplicate_paths.append(path)
+        by_path[path] = row
+        if row.get("source_commit") != authority_commit:
+            errors.append(f"{path}: source_commit does not match full Desktop authority")
+        status = row.get("implementation_status")
+        status_counts[status] = status_counts.get(status, 0) + 1
+        if status not in FULL_SOURCE_STATUSES:
+            errors.append(f"{path}: invalid full-source implementation_status {status!r}")
+        row_responsibilities = row.get("responsibilities") or []
+        if not row_responsibilities:
+            debt["empty_responsibilities"].append(path)
+        for responsibility_id in row_responsibilities:
+            if responsibility_id not in responsibility_by_id:
+                errors.append(f"{path}: unknown responsibility reference {responsibility_id!r}")
+        disposition = row.get("disposition")
+        if disposition is not None and disposition not in FULL_SOURCE_DISPOSITIONS:
+            errors.append(f"{path}: invalid disposition {disposition!r}")
+        if disposition is None:
+            debt["missing_disposition"].append(path)
+        if status not in {"verified", "not-applicable"}:
+            debt["nonterminal_status"].append(path)
+        if not row.get("android_targets") and disposition != "not-applicable-with-replacement":
+            debt["missing_android_targets"].append(path)
+        if not row.get("evidence"):
+            debt["missing_evidence"].append(path)
+
+    if duplicate_paths:
+        errors.append(f"full Desktop source ledger contains {len(duplicate_paths)} duplicate path(s)")
+
+    for name, paths in debt.items():
+        if not paths:
+            continue
+        sample = ", ".join(paths[:5])
+        message = f"full Desktop source debt {name}={len(paths)}; sample: {sample}"
+        (errors if strict else warnings).append(message)
+
+    missing_reverse_links = 0
+    blob_mismatches = 0
+    for item in responsibilities:
+        rid = item.get("responsibility_id")
+        if strict and (
+            item.get("implementation_status") != "verified"
+            or item.get("verification_status") != "verified"
+        ):
+            errors.append(
+                f"{rid}: strict responsibility gate requires implementation_status=verified "
+                "and verification_status=verified"
+            )
+        for source in item.get("desktop_sources", []):
+            path = source.get("path")
+            row = by_path.get(path)
+            if row is None:
+                errors.append(f"{rid}: Desktop source anchor is absent from 8172-entry inventory: {path}")
+                continue
+            if source.get("blob_sha") and source.get("blob_sha") != row.get("source_blob_sha"):
+                blob_mismatches += 1
+                errors.append(f"{rid}: blob SHA mismatch for {path}")
+            if rid not in (row.get("responsibilities") or []):
+                missing_reverse_links += 1
+                message = f"{rid}: source row {path} is missing reverse responsibility link"
+                (errors if strict else warnings).append(message)
+
+    return {
+        "full_source_entries": len(source_rows),
+        "full_source_empty_responsibilities": len(debt["empty_responsibilities"]),
+        "full_source_status_counts": status_counts,
+        "responsibility_count": len(responsibilities),
+        "missing_reverse_links": missing_reverse_links,
+        "blob_mismatches": blob_mismatches,
+        "strict_incomplete_rows": len(
+            set().union(
+                debt["empty_responsibilities"],
+                debt["missing_disposition"],
+                debt["nonterminal_status"],
+                debt["missing_android_targets"],
+                debt["missing_evidence"],
+            )
+        ),
+    }
+
+
 def expected_target_prefix(grok_path: str) -> str | None:
     for source_prefix, target_prefix in TARGET_PREFIX.items():
         if grok_path.startswith(source_prefix):
@@ -92,6 +232,8 @@ def expected_target_prefix(grok_path: str) -> str | None:
 def run_checks(strict: bool) -> CheckResult:
     errors: list[str] = []
     warnings: list[str] = []
+
+    full_summary = check_full_desktop_inventory(strict, errors, warnings)
 
     inventory = load_json(INVENTORY)
     ledger = load_json(LEDGER)
@@ -310,6 +452,7 @@ def run_checks(strict: bool) -> CheckResult:
         )
 
     summary = {
+        **full_summary,
         "inventory_files": len(inventory_paths),
         "ledger_rows": len(rows),
         "status_counts": status_counts,

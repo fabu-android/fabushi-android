@@ -27,9 +27,11 @@ internal class AndroidAccountOAuthAdapter {
             if (uri.host.isNullOrBlank()) return null
             if (uri.userInfo != null) return null
             if (uri.fragment != null) return null
+            if (!uri.host.equals(FABUSHI_AUTH_HOST, ignoreCase = true)) return null
             return uri
         }
 
         private const val MAX_URL_LENGTH = 8_192
+        private const val FABUSHI_AUTH_HOST = "api.ombhrum.com"
     }
 }

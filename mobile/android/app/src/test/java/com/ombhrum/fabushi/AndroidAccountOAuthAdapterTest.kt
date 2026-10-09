@@ -9,14 +9,15 @@ class AndroidAccountOAuthAdapterTest {
     @Test
     fun externalAuthAcceptsOnlyHttpsWithoutCredentialsOrFragments() {
         val accepted = AndroidAccountOAuthAdapter.validateExternalAuthUrl(
-            "https://auth.example.com/oauth?state=opaque",
+            "https://api.ombhrum.com/sign-in?state=opaque",
         )
         assertEquals("https", accepted?.scheme)
-        assertEquals("auth.example.com", accepted?.host)
+        assertEquals("api.ombhrum.com", accepted?.host)
 
         assertNull(AndroidAccountOAuthAdapter.validateExternalAuthUrl("http://auth.example.com"))
         assertNull(AndroidAccountOAuthAdapter.validateExternalAuthUrl("javascript:alert(1)"))
-        assertNull(AndroidAccountOAuthAdapter.validateExternalAuthUrl("https://user:pass@auth.example.com"))
-        assertNull(AndroidAccountOAuthAdapter.validateExternalAuthUrl("https://auth.example.com/#token"))
+        assertNull(AndroidAccountOAuthAdapter.validateExternalAuthUrl("https://user:pass@api.ombhrum.com"))
+        assertNull(AndroidAccountOAuthAdapter.validateExternalAuthUrl("https://evil.example/oauth"))
+        assertNull(AndroidAccountOAuthAdapter.validateExternalAuthUrl("https://api.ombhrum.com/#token"))
     }
 }
