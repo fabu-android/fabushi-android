@@ -1585,9 +1585,13 @@ impl AndroidJsonHost {
         if !text_size_allowed(&prompt) {
             return Err("chat.send text exceeds maximum composer size".into());
         }
+        let hidden = command
+            .get("hidden")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
 
         let assistant_entry_id = format!("assistant:{operation_id}");
-        {
+        if !hidden {
             let mut transcript = self
                 .transcript
                 .lock()
@@ -1932,6 +1936,58 @@ impl AndroidJsonHost {
         Ok(())
     }
 
+    fn queue_mcp_auth_resume_turn(
+        &mut self,
+        completion: &McpAuthWatchCompletion,
+    ) -> Result<Option<AccountSessionMutation>, String> {
+        let Some(agent_id) = completion
+            .requesting_agent_id
+            .as_deref()
+            .filter(|value| !value.trim().is_empty())
+        else {
+            return Ok(None);
+        };
+        let display_name = mcp_auth_display_name(&completion.server_name, &completion.account_key);
+        let prompt = format!(
+            "[The \"{display_name}\" MCP server finished authorizing — it's connected and its tools are available now. Your first action is a SendMessage telling the user it's connected, then pick up whatever you paused to authorize it. If there was nothing else to do, just confirm it's ready and ask what they'd like to do with it. Remember: nothing reaches the user unless it's inside a SendMessage.]"
+        );
+        let request_id = format!(
+            "mcp-auth-resume:{}:{}:{}:{}",
+            completion.server_id,
+            completion.account_key,
+            completion.generation,
+            agent_id,
+        );
+        let operation_id = self.next_operation_id(&request_id);
+        self.active_operations.insert(operation_id.clone());
+        let (bearer_token, session_mutation) = match self.bearer_token_for_turn() {
+            Ok(value) => value,
+            Err(error) => {
+                self.active_operations.remove(&operation_id);
+                return Err(error);
+            }
+        };
+        let command = json!({
+            "type":"chat.send",
+            "requestId":request_id,
+            "agentId":agent_id,
+            "text":prompt,
+            "hidden":true,
+            "requestSource":"mcp-auth-resume",
+            "skipAckObligation":true,
+        });
+        if let Err(error) = self.queue_chat_turn(
+            &operation_id,
+            command.get("requestId").and_then(Value::as_str).unwrap_or_default(),
+            &command,
+            bearer_token,
+        ) {
+            self.active_operations.remove(&operation_id);
+            return Err(error);
+        }
+        Ok(session_mutation)
+    }
+
     fn drain_mcp_auth_owner_events(&mut self) -> Result<(), String> {
         let Some(owner) = self.mcp_auth_owner.as_ref() else {
             return Ok(());
@@ -1939,16 +1995,35 @@ impl AndroidJsonHost {
         for event in owner.drain_events()? {
             match event {
                 McpAuthOwnerEvent::Completed(completion) => {
-                    self.events.push_back(json!({
-                        "type":"mcp.auth.completed",
-                        "serverId":completion.server_id,
-                        "serverName":completion.server_name,
-                        "accountKey":completion.account_key,
-                        "requestingAgentId":completion.requesting_agent_id,
-                        "generation":completion.generation,
-                        "outcome":completion.outcome,
-                        "source":"host-auth-watch-owner",
-                    }));
+                    let resume_mutation = match self.queue_mcp_auth_resume_turn(&completion) {
+                        Ok(mutation) => mutation,
+                        Err(error) => {
+                            self.events.push_back(json!({
+                                "type":"mcp.auth.resume.failed",
+                                "serverId":completion.server_id,
+                                "serverName":completion.server_name,
+                                "accountKey":completion.account_key,
+                                "requestingAgentId":completion.requesting_agent_id,
+                                "generation":completion.generation,
+                                "message":error,
+                                "source":"host-auth-watch-owner",
+                            }));
+                            None
+                        }
+                    };
+                    self.events.push_back(with_account_session_mutation(
+                        json!({
+                            "type":"mcp.auth.completed",
+                            "serverId":completion.server_id,
+                            "serverName":completion.server_name,
+                            "accountKey":completion.account_key,
+                            "requestingAgentId":completion.requesting_agent_id,
+                            "generation":completion.generation,
+                            "outcome":completion.outcome,
+                            "source":"host-auth-watch-owner",
+                        }),
+                        resume_mutation,
+                    ));
                 }
                 McpAuthOwnerEvent::Cancelled(completion) => {
                     self.events.push_back(json!({
@@ -2770,6 +2845,35 @@ fn mcp_auth_poll_settlement_json(settlement: McpAuthPollSettlement) -> Value {
             "requestingAgentId":completion.requesting_agent_id,
         }),
     }
+}
+
+fn mcp_auth_display_name(server_name: &str, account_key: &str) -> String {
+    if account_key == "default" {
+        return server_name.to_string();
+    }
+    let inert = account_key
+        .chars()
+        .filter(|character| {
+            let code = *character as u32;
+            let hostile_ascii = matches!(
+                *character,
+                '"' | '\'' | '`' | '\\' | '[' | ']' | '{' | '}' | '(' | ')' | '<' | '>'
+            );
+            !(matches!(code, 0x00..=0x1f | 0x7f | 0x2028 | 0x2029) || hostile_ascii)
+        })
+        .collect::<String>();
+    let collapsed = inert.split_whitespace().collect::<Vec<_>>().join(" ");
+    let mut rendered = String::new();
+    let mut utf16_units = 0usize;
+    for character in collapsed.chars() {
+        let next = character.len_utf16();
+        if utf16_units + next > 64 {
+            break;
+        }
+        rendered.push(character);
+        utf16_units += next;
+    }
+    format!("{server_name} ({rendered})")
 }
 
 fn with_account_session_mutation(
