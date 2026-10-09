@@ -261,6 +261,8 @@ class MahayanaHost(
         if (closed) return
         closed = true
         if (featureHostTest) {
+            val observed = isolatedHandle
+            if (observed != 0L) nativeSignalAllRuntimeCalls(observed)
             synchronized(this) {
                 val active = isolatedHandle
                 isolatedHandle = 0L
@@ -271,6 +273,11 @@ class MahayanaHost(
 
         val state = shared ?: return
         synchronized(registryLock) {
+            // When this is the last Java/Kotlin owner, dispose must be able to cancel an
+            // in-flight runtime.call before waiting for the single mutable Host lock.
+            if (state.refCount <= 1 && state.handle != 0L) {
+                nativeSignalAllRuntimeCalls(state.handle)
+            }
             synchronized(state.lock) {
                 state.eventQueues.remove(consumerId)
                 ownedListenerIds.forEach(state.listeners::remove)
