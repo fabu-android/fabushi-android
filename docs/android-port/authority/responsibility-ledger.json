@@ -379,20 +379,21 @@
       "android_disposition": "direct-port",
       "android_target": [
         "source/host/src/android_json_runtime.rs",
+        "source/host/src/capability_broker.rs",
         "source/mahayana-agent-coordinator/src/client_side_tool_v2_relay.rs"
       ],
-      "android_owner": "source/host/src/android_json_runtime.rs",
+      "android_owner": "Rust CapabilityBroker under Android Host",
       "platform_delta": "Android uses native Compose/platform adapters + typed JNI while preserving canonical Rust owners where platform-independent.",
-      "implementation_status": "mapped",
-      "production_wiring": "mapped target(s); production parity not yet established",
-      "unit_test": "required",
-      "contract_test": "required on same exact HEAD",
-      "integration_test": "required on same exact HEAD",
+      "implementation_status": "implemented",
+      "production_wiring": "runtime.call now enters the Rust CapabilityBroker before DeepSeekJsHost execution; authorization is rechecked against immutable release declarations and persisted grants, and durable request/audit state is owned by Host.",
+      "unit_test": "Rust broker tests cover Allow/NeedsUser/Deny, duplicate request, stale generation, restart outcome-unknown; exact-head Actions required.",
+      "contract_test": "Host runtime.call contract requires installed release, declared+persisted grant, plugin-scoped registered tool, stable requestId, current account fence and runtime generation.",
+      "integration_test": "Still required for live approval resolution, true concurrent cancellation and reconciliation against external side effects.",
       "packaged_test": "required on final minified release artifact",
       "device_test": "required on emulator/physical device as applicable",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Current Android feature approval paths require deeper broker parity audit; fake success is forbidden."
+      "notes": "Implemented production owner and durable audit/pending lifecycle on this source change, but do not mark verified before same exact-head CI and packaged/device evidence. Mid-execution preemption remains adapter-limited for synchronous QuickJS calls; late completion becomes outcome-unknown rather than blind replay."
     },
     {
       "responsibility_id": "MCP-PLUGIN-RUNTIME-001",
@@ -450,7 +451,7 @@
       "device_test": "required on emulator/physical device as applicable",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Do not mark verified: immutable installer and permission persistence are now real production paths, while runtime.start/stop/tools/call still intentionally fail closed until an actual execution adapter is migrated."
+      "notes": "Umbrella only. Immutable install, grant store and JS runtime execution now have dedicated rows. MCP/WebMCP transport, approval projection, async cancellation and packaged evidence remain independently open; do not treat this umbrella as verified."
     },
     {
       "responsibility_id": "MINIAPP-WEBMCP-001",
@@ -1247,16 +1248,16 @@
       ],
       "android_owner": "Rust Host runtime supervisor + runtime-specific adapter behind Capability Broker",
       "platform_delta": "PluginSupervisor primitive is portable, but Android still needs a real executable JS/WASM/MCP adapter rather than desktop process assumptions.",
-      "implementation_status": "mapped",
-      "production_wiring": "partially implemented: exact Desktop Android-capable mahayana-js-runtime is vendored; runtime.start/stop/tools use DeepSeekJsHost with persisted grants and plugin-scoped tool registration. runtime.call still deliberately fails closed until cancellable Capability Broker execution, timeout and side-effect reconciliation are wired.",
-      "unit_test": "Canonical JS runtime tests are vendored unchanged; Host start/stop/tools contracts are compiled/tested only in GitHub Actions. runtime.call adapter tests remain required.",
-      "contract_test": "Required before implementation can be marked complete",
+      "implementation_status": "implemented",
+      "production_wiring": "runtime.start/stop/tools use DeepSeekJsHost; runtime.call now executes real call_tool_json only after Capability Broker validation of immutable install, declared permission, persisted grant, plugin-scoped registration, stable requestId, account fence and runtime generation. stop/revoke settle pending calls cancelled; restart turns in-flight calls into outcome-unknown.",
+      "unit_test": "Canonical JS runtime tests plus Android Host CapabilityBroker tests; exact-head Actions required.",
+      "contract_test": "runtime.call fail-closed boundary implemented; duplicate/stale/restart semantics covered in Rust unit tests. True asynchronous timeout/cancel preemption remains open.",
       "integration_test": "Required: runtime start/tool catalog/call/cancel/revoke/reconnect/process-death",
       "packaged_test": "Required on final package",
       "device_test": "Required on emulator/device",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Do not mark implemented/verified as a whole: JS lifecycle/tool discovery now has a real canonical adapter, but runtime.call cancellation/timeout/Capability Broker boundary and process-recovery reconciliation are still open."
+      "notes": "Production execution is no longer hard-coded fail-closed. The synchronous QuickJS adapter cannot yet be interrupted while inside call_tool_json; bounded deadline is enforced before/after execution and any late return is outcome-unknown/reconciliation, so this row remains not-verified."
     }
   ],
   "traceability": {

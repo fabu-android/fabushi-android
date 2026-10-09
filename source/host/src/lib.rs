@@ -5,6 +5,7 @@
 
 pub mod android_agent_roster;
 pub mod android_json_runtime;
+pub mod capability_broker;
 pub mod account_service;
 
 pub mod attachment_paths;
