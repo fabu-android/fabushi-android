@@ -473,6 +473,57 @@ mod tests {
     }
 
     #[test]
+    fn successful_completion_survives_reopen_until_resume_ack() {
+        let path = temp_store("completion-replay");
+        let generation = {
+            let mut manager = AndroidMcpAuthWatchManager::open(&path, 0).unwrap();
+            let watch = manager
+                .begin_watch(
+                    0,
+                    "17",
+                    "Calendar",
+                    "https://mcp.example.test",
+                    "default",
+                    Some("agent-a"),
+                    false,
+                )
+                .unwrap()
+                .0;
+            let request = match manager
+                .poll_tick(AUTH_WATCH_POLL_INTERVAL_MS, "17", "default")
+                .unwrap()
+            {
+                McpAuthPollTick::Request(request) => request,
+                other => panic!("expected poll request, got {other:?}"),
+            };
+            assert!(matches!(
+                manager
+                    .settle_poll(
+                        AUTH_WATCH_POLL_INTERVAL_MS,
+                        &request,
+                        McpAuthPollOutcome::TokenValid,
+                    )
+                    .unwrap(),
+                McpAuthPollSettlement::Completed(_)
+            ));
+            assert_eq!(manager.pending_completions().len(), 1);
+            watch.generation
+        };
+
+        let mut reopened =
+            AndroidMcpAuthWatchManager::open(&path, AUTH_WATCH_POLL_INTERVAL_MS + 1).unwrap();
+        let pending = reopened.pending_completions();
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].generation, generation);
+        assert_eq!(pending[0].requesting_agent_id.as_deref(), Some("agent-a"));
+        assert!(reopened
+            .ack_completion(generation, "17", "default")
+            .unwrap());
+        assert!(reopened.pending_completions().is_empty());
+        assert!(!path.exists());
+    }
+
+    #[test]
     fn force_reauth_timeout_cancel_and_account_switch_are_durable() {
         let path = temp_store("lifecycle");
         let mut manager = AndroidMcpAuthWatchManager::open(&path, 0).unwrap();
