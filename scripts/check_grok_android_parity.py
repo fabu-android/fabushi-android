@@ -267,6 +267,21 @@ def run_checks(strict: bool) -> CheckResult:
         for path in native_host_bridge_paths
         if not path.is_file()
     ]
+    android_build_gradle = ROOT / "mobile/android/app/build.gradle"
+    android_build_gradle_text = android_build_gradle.read_text(encoding="utf-8") if android_build_gradle.is_file() else ""
+    release_session_import_disabled = (
+        "githubRelease {" in android_build_gradle_text
+        and "githubRelease {\n            initWith release\n            matchingFallbacks = ['release']\n            buildConfigField 'boolean', 'GITHUB_UPDATES_ENABLED', 'true'\n            buildConfigField 'boolean', 'CI_ACCOUNT_SESSION_IMPORT_ENABLED', 'false'" in android_build_gradle_text
+    )
+    ci_acceptance_session_import_enabled = (
+        "ciAcceptance {" in android_build_gradle_text
+        and "ciAcceptance {\n            initWith debug\n            applicationIdSuffix '.ci'\n            versionNameSuffix '-ci'\n            matchingFallbacks = ['debug']\n            debuggable true\n            minifyEnabled false\n            shrinkResources false\n            buildConfigField 'boolean', 'GITHUB_UPDATES_ENABLED', 'false'\n            buildConfigField 'boolean', 'CI_ACCOUNT_SESSION_IMPORT_ENABLED', 'true'" in android_build_gradle_text
+    )
+    if not release_session_import_disabled:
+        errors.append("githubRelease must fail closed with CI_ACCOUNT_SESSION_IMPORT_ENABLED=false")
+    if not ci_acceptance_session_import_enabled:
+        errors.append("ciAcceptance must be the only explicit CI session-import variant")
+
     native_ci = ROOT / ".github/workflows/android-parity-full-ci.yml"
     native_ci_text = native_ci.read_text(encoding="utf-8") if native_ci.is_file() else ""
     native_ci_wired = (
@@ -306,6 +321,8 @@ def run_checks(strict: bool) -> CheckResult:
         "presentation_runtime_bypasses": presentation_runtime_bypasses,
         "frontend_android_main_dependencies": frontend_android_main_dependencies,
         "presentation_feature_receive_bypasses": presentation_feature_receive_bypasses,
+        "release_ci_account_session_import_disabled": release_session_import_disabled,
+        "ci_acceptance_session_import_enabled": ci_acceptance_session_import_enabled,
         "native_host_bridge_missing": len(native_host_bridge_missing),
         "native_host_ci_wired": native_ci_wired,
         "architecture_scope_markers": len(architecture_scope_markers),
