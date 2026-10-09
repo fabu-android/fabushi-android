@@ -1,8 +1,33 @@
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
-use std::collections::BTreeMap;
+use serde_json::{json, Value};
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::PathBuf;
+
+const MAX_CAPABILITY_ID_BYTES: usize = 256;
+const MAX_CAPABILITY_JSON_BYTES: usize = 64 * 1024;
+
+fn validate_identity(label: &str, value: &str) -> Result<(), String> {
+    if value.trim().is_empty()
+        || value.len() > MAX_CAPABILITY_ID_BYTES
+        || value.chars().any(char::is_control)
+    {
+        return Err(format!("{label} identity is invalid"));
+    }
+    Ok(())
+}
+
+fn validate_scope_json(label: &str, value: &Value) -> Result<(), String> {
+    if !value.is_null() && !value.is_object() {
+        return Err(format!("{label} must be a JSON object or null"));
+    }
+    let encoded = serde_json::to_vec(value)
+        .map_err(|error| format!("failed to serialize {label}: {error}"))?;
+    if encoded.len() > MAX_CAPABILITY_JSON_BYTES {
+        return Err(format!("{label} exceeds bounded size"));
+    }
+    Ok(())
+}
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -29,6 +54,8 @@ pub struct PendingCapabilityCall {
     pub capability: String,
     pub tool: String,
     pub arguments: Value,
+    #[serde(default)]
+    pub required_permissions: BTreeSet<String>,
     pub account_fence: String,
     pub runtime_generation: u64,
     pub started_at_ms: u64,
@@ -42,6 +69,8 @@ pub struct PendingCapabilityApproval {
     pub request_id: String,
     pub operation_id: String,
     pub capability: String,
+    #[serde(default)]
+    pub target: Value,
     pub account_fence: String,
     pub state: String,
     pub created_at_ms: u64,
@@ -97,6 +126,14 @@ impl CapabilityBroker {
     pub fn authorize(&mut self, request_id: &str, plugin_id: &str, capability: &str, tool: &str,
         account_fence: &str, runtime_generation: u64, declared: bool, granted: bool, now_ms: u64)
         -> Result<CapabilityDecision, String> {
+        validate_identity("request", request_id)?;
+        validate_identity("plugin", plugin_id)?;
+        validate_identity("capability", capability)?;
+        validate_identity("tool", tool)?;
+        validate_identity("account fence", account_fence)?;
+        if runtime_generation == 0 {
+            return Err("runtime generation must be positive".into());
+        }
         let (decision, reason) = if !declared {
             (CapabilityDecision::Deny, Some("capability is not declared by the installed immutable release".into()))
         } else if !granted {
@@ -119,17 +156,16 @@ impl CapabilityBroker {
         request_id: &str,
         operation_id: &str,
         capability: &str,
+        target: Value,
         account_fence: &str,
         now_ms: u64,
     ) -> Result<(), String> {
-        if approval_id.trim().is_empty()
-            || request_id.trim().is_empty()
-            || operation_id.trim().is_empty()
-            || capability.trim().is_empty()
-            || account_fence.trim().is_empty()
-        {
-            return Err("approval identity, capability, and account fence are required".into());
-        }
+        validate_identity("approval", approval_id)?;
+        validate_identity("request", request_id)?;
+        validate_identity("operation", operation_id)?;
+        validate_identity("capability", capability)?;
+        validate_identity("account fence", account_fence)?;
+        validate_scope_json("capability target", &target)?;
         if self.state.approvals.contains_key(approval_id) {
             return Err("approval identity is duplicate or already consumed".into());
         }
@@ -145,6 +181,7 @@ impl CapabilityBroker {
                 request_id: request_id.into(),
                 operation_id: operation_id.into(),
                 capability: capability.into(),
+                target,
                 account_fence: account_fence.into(),
                 state: "pending".into(),
                 created_at_ms: now_ms,
@@ -234,6 +271,24 @@ impl CapabilityBroker {
     }
 
     pub fn begin(&mut self, call: PendingCapabilityCall) -> Result<(), String> {
+        validate_identity("request", &call.request_id)?;
+        validate_identity("plugin", &call.plugin_id)?;
+        validate_identity("capability", &call.capability)?;
+        validate_identity("tool", &call.tool)?;
+        validate_identity("account fence", &call.account_fence)?;
+        validate_scope_json("runtime.call arguments", &call.arguments)?;
+        for permission in &call.required_permissions {
+            validate_identity("required permission", permission)?;
+        }
+        if call.runtime_generation == 0 {
+            return Err("runtime generation must be positive".into());
+        }
+        if call.deadline_at_ms <= call.started_at_ms {
+            return Err("capability deadline must be after start".into());
+        }
+        if call.state != "pending" {
+            return Err("new capability call must start pending".into());
+        }
         if let Some(existing) = self.state.pending.get(&call.request_id) {
             if existing == &call && existing.state != "pending" {
                 return Err(format!("request {} already has terminal/reconciliation state {}", call.request_id, existing.state));
@@ -337,17 +392,17 @@ mod tests {
     }
     #[test] fn approval_accept_decline_duplicate_account_and_restart_are_fail_closed() {
         let (d, mut b) = broker();
-        b.request_approval("a1", "r1", "o1", "camera", "acct-1", 1).unwrap();
+        b.request_approval("a1", "r1", "o1", "camera", json!({"device":"camera"}), "acct-1", 1).unwrap();
         let allowed = b.resolve_approval("a1", true, "acct-1", 2).unwrap();
         assert_eq!(allowed.state, "allowed_once");
         assert!(b.resolve_approval("a1", true, "acct-1", 3).is_err());
 
-        b.request_approval("a2", "r2", "o2", "location", "acct-1", 4).unwrap();
+        b.request_approval("a2", "r2", "o2", "location", json!({"precision":"coarse"}), "acct-1", 4).unwrap();
         assert!(b.resolve_approval("a2", true, "acct-2", 5).is_err());
         let denied = b.resolve_approval("a2", false, "acct-1", 6).unwrap();
         assert_eq!(denied.state, "denied");
 
-        b.request_approval("a3", "r3", "o3", "microphone", "acct-1", 7).unwrap();
+        b.request_approval("a3", "r3", "o3", "microphone", json!({"source":"mic"}), "acct-1", 7).unwrap();
         drop(b);
         let mut reopened = CapabilityBroker::open(d.path().join("broker.json"), 8).unwrap();
         assert_eq!(reopened.approval_state("a3"), Some("pending"));
@@ -358,21 +413,21 @@ mod tests {
 
     #[test] fn duplicate_and_stale_generation_are_rejected() {
         let (_d,mut b)=broker();
-        let c=PendingCapabilityCall{request_id:"r".into(),plugin_id:"p".into(),capability:"c".into(),tool:"t".into(),arguments:Value::Null,account_fence:"a".into(),runtime_generation:2,started_at_ms:1,deadline_at_ms:100,state:"pending".into()};
+        let c=PendingCapabilityCall{request_id:"r".into(),plugin_id:"p".into(),capability:"c".into(),tool:"t".into(),arguments:json!({}),required_permissions:BTreeSet::new(),account_fence:"a".into(),runtime_generation:2,started_at_ms:1,deadline_at_ms:100,state:"pending".into()};
         b.begin(c.clone()).unwrap(); assert!(b.begin(c).is_err());
         assert!(b.assert_current("r","p","a",3,2).is_err());
     }
 
     #[test] fn timeout_and_account_fence_fail_closed() {
         let (_d,mut b)=broker();
-        b.begin(PendingCapabilityCall{request_id:"r".into(),plugin_id:"p".into(),capability:"c".into(),tool:"t".into(),arguments:Value::Null,account_fence:"acct-1".into(),runtime_generation:1,started_at_ms:10,deadline_at_ms:20,state:"pending".into()}).unwrap();
+        b.begin(PendingCapabilityCall{request_id:"r".into(),plugin_id:"p".into(),capability:"c".into(),tool:"t".into(),arguments:json!({}),required_permissions:BTreeSet::new(),account_fence:"acct-1".into(),runtime_generation:1,started_at_ms:10,deadline_at_ms:20,state:"pending".into()}).unwrap();
         assert!(b.assert_current("r","p","acct-2",1,15).is_err());
         assert!(b.assert_current("r","p","acct-1",1,21).is_err());
     }
 
     #[test] fn cancellation_is_single_terminal_and_persists() {
         let (d,mut b)=broker();
-        b.begin(PendingCapabilityCall{request_id:"r".into(),plugin_id:"p".into(),capability:"c".into(),tool:"t".into(),arguments:Value::Null,account_fence:"a".into(),runtime_generation:1,started_at_ms:1,deadline_at_ms:100,state:"pending".into()}).unwrap();
+        b.begin(PendingCapabilityCall{request_id:"r".into(),plugin_id:"p".into(),capability:"c".into(),tool:"t".into(),arguments:json!({}),required_permissions:BTreeSet::new(),account_fence:"a".into(),runtime_generation:1,started_at_ms:1,deadline_at_ms:100,state:"pending".into()}).unwrap();
         assert!(b.cancel_request("r","user cancelled",2).unwrap());
         assert!(!b.cancel_request("r","duplicate cancel",3).unwrap());
         assert_eq!(b.request_state("r"),Some("outcome_unknown"));
@@ -381,6 +436,28 @@ mod tests {
         let b=CapabilityBroker::open(d.path().join("broker.json"),4).unwrap();
         assert_eq!(b.request_state("r"),Some("outcome_unknown"));
         assert_eq!(b.audit_len(),audit);
+    }
+
+    #[test] fn parameter_scope_and_permission_identity_are_validated() {
+        let (_d, mut b) = broker();
+        assert!(b.begin(PendingCapabilityCall {
+            request_id:"invalid-args".into(), plugin_id:"p".into(), capability:"plugin.p.tool.t".into(),
+            tool:"t".into(), arguments:json!(["not-an-object"]), required_permissions:BTreeSet::new(),
+            account_fence:"session:test".into(), runtime_generation:1, started_at_ms:1,
+            deadline_at_ms:100, state:"pending".into(),
+        }).is_err());
+        let mut invalid_permission = BTreeSet::new();
+        invalid_permission.insert("bad\npermission".into());
+        assert!(b.begin(PendingCapabilityCall {
+            request_id:"invalid-permission".into(), plugin_id:"p".into(), capability:"plugin.p.tool.t".into(),
+            tool:"t".into(), arguments:json!({"target":"same"}), required_permissions:invalid_permission,
+            account_fence:"session:test".into(), runtime_generation:1, started_at_ms:1,
+            deadline_at_ms:100, state:"pending".into(),
+        }).is_err());
+        assert!(b.request_approval(
+            "approval-params", "request-params", "operation-params", "camera",
+            json!(["unbounded-shape"]), "session:test", 2
+        ).is_err());
     }
 
     #[test] fn audit_survives_restart() {
@@ -393,7 +470,7 @@ mod tests {
 
     #[test] fn restart_turns_inflight_side_effect_into_outcome_unknown() {
         let (d,mut b)=broker();
-        b.begin(PendingCapabilityCall{request_id:"r".into(),plugin_id:"p".into(),capability:"c".into(),tool:"t".into(),arguments:Value::Null,account_fence:"a".into(),runtime_generation:1,started_at_ms:1,deadline_at_ms:100,state:"pending".into()}).unwrap();
+        b.begin(PendingCapabilityCall{request_id:"r".into(),plugin_id:"p".into(),capability:"c".into(),tool:"t".into(),arguments:json!({}),required_permissions:BTreeSet::new(),account_fence:"a".into(),runtime_generation:1,started_at_ms:1,deadline_at_ms:100,state:"pending".into()}).unwrap();
         drop(b);
         let b=CapabilityBroker::open(d.path().join("broker.json"),20).unwrap();
         assert!(b.needs_reconciliation("r"));
