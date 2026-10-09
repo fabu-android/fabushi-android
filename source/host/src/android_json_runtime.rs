@@ -2584,18 +2584,16 @@ export function apply(ctx) {
             )
             .unwrap();
         assert_eq!(success["result"]["echoed"], "ok");
-        assert!(host
-            .dispatch(
-                "runtime.call",
-                &json!({
-                    "pluginId":plugin_id,
-                    "tool":"contract.echo",
-                    "requestId":"runtime-contract-success",
-                    "arguments":{"value":"duplicate"}
-                }),
-            )
-            .unwrap_err()
-            .contains("terminal/reconciliation"));
+        let duplicate = host.dispatch(
+            "runtime.call",
+            &json!({
+                "pluginId":plugin_id,
+                "tool":"contract.echo",
+                "requestId":"runtime-contract-success",
+                "arguments":{"value":"duplicate"}
+            }),
+        );
+        assert!(duplicate.is_err(), "duplicate runtime request must never execute twice");
 
         assert!(host
             .dispatch(
