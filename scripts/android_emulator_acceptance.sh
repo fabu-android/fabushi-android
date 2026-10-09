@@ -43,7 +43,7 @@ trap 'adb shell pkill -INT screenrecord >/dev/null 2>&1 || true; wait "$SCREENRE
 
 # Existing instrumentation remains useful, but packaged production evidence is a
 # separate class so deterministic featureHostTest coverage cannot substitute for it.
-run_instrumentation_class   "com.ombhrum.fabushi.MahayanaFeatureHostTest,com.ombhrum.fabushi.FabushiScreenTest"   "$EVIDENCE/instrumentation-contracts.txt"
+run_instrumentation_class   "com.ombhrum.fabushi.MahayanaFeatureHostTest,com.ombhrum.fabushi.FabushiScreenTest,com.ombhrum.fabushi.AndroidAccountSessionStoreInstrumentedTest"   "$EVIDENCE/instrumentation-contracts.txt"
 
 # The production-path test requires a real bounded account session, backend-confirmed
 # App-owned remote-device registration, live Coordinator generation/sequence metadata,
