@@ -25,6 +25,8 @@ class ParityCheckerTest(unittest.TestCase):
         self.assertEqual(0, result.summary["presentation_feature_receive_bypasses"])
         self.assertEqual(0, result.summary["native_host_bridge_missing"])
         self.assertTrue(result.summary["native_host_ci_wired"])
+        self.assertTrue(result.summary["release_ci_account_session_import_disabled"])
+        self.assertTrue(result.summary["ci_acceptance_session_import_enabled"])
 
     def test_strict_gate_reports_remaining_real_migration_work(self):
         result = MODULE.run_checks(strict=True)
