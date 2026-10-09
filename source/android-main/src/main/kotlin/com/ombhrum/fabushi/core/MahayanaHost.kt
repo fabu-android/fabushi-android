@@ -1,6 +1,7 @@
 package com.ombhrum.fabushi.core
 
 import android.content.Context
+import com.ombhrum.fabushi.androidmain.security.AndroidAccountSessionStore
 import org.json.JSONObject
 import java.io.Closeable
 import java.util.ArrayDeque
@@ -21,6 +22,7 @@ class MahayanaHost(
     processGeneration: Long = 1L,
 ) : Closeable {
     private val appDataDir = context.filesDir.absolutePath
+    private val accountSessionStore = AndroidAccountSessionStore(context)
     private val consumerId = UUID.randomUUID().toString()
     private val ownedListenerIds = mutableSetOf<String>()
     private val shared: SharedHost?
@@ -46,7 +48,11 @@ class MahayanaHost(
                     existing
                 } else {
                     require(processGeneration > 0L) { "processGeneration must be positive" }
-                    val value = nativeCreate(appDataDir, processGeneration)
+                    val value = nativeCreate(
+                        appDataDir,
+                        processGeneration,
+                        accountSessionStore.readSessionJson().orEmpty(),
+                    )
                     check(value != 0L) { "Failed to initialize Mahayana Rust host" }
                     SharedHost(handle = value, generation = processGeneration).also { created ->
                         created.refCount = 1
@@ -158,7 +164,19 @@ class MahayanaHost(
         if (!response.optBoolean("ok", false)) {
             error(response.optString("error", "Mahayana host request failed"))
         }
+        consumePrivateAccountSessionMutation(response)
         return response
+    }
+
+    private fun consumePrivateAccountSessionMutation(response: JSONObject) {
+        val result = response.optJSONObject("result") ?: return
+        val mutation = result.optJSONObject("_accountSessionMutation") ?: return
+        when (mutation.optString("action")) {
+            "save" -> accountSessionStore.writeSessionJson(mutation.getString("sessionJson"))
+            "clear" -> accountSessionStore.clear()
+            else -> error("Unknown private account-session mutation")
+        }
+        result.remove("_accountSessionMutation")
     }
 
     private fun receiveShared(params: JSONObject): JSONObject {
@@ -237,7 +255,11 @@ class MahayanaHost(
         val listeners: MutableMap<String, (JSONObject) -> Unit> = linkedMapOf(),
     )
 
-    private external fun nativeCreate(appDataDir: String, processGeneration: Long): Long
+    private external fun nativeCreate(
+        appDataDir: String,
+        processGeneration: Long,
+        initialAccountSessionJson: String,
+    ): Long
     private external fun nativeCreateTest(appDataDir: String): Long
     private external fun nativeDispatch(handle: Long, requestJson: String): String
     private external fun nativeDestroy(handle: Long)
