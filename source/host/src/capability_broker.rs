@@ -70,14 +70,15 @@ impl CapabilityBroker {
             serde_json::from_slice::<DurableState>(&fs::read(&path).map_err(|e| e.to_string())?)
                 .map_err(|e| format!("invalid capability broker store: {e}"))?
         } else { DurableState::default() };
+        let mut recovered = Vec::new();
         for pending in state.pending.values_mut() {
             if pending.state == "pending" {
                 pending.state = "outcome_unknown".into();
+                recovered.push(pending.clone());
             }
         }
         let mut broker = Self { path, state };
-        if broker.state.pending.values().any(|p| p.state == "outcome_unknown") {
-            let recovered = broker.state.pending.values().filter(|p| p.state == "outcome_unknown").cloned().collect::<Vec<_>>();
+        if !recovered.is_empty() {
             for item in recovered {
                 broker.state.audit.push(CapabilityAuditRecord {
                     request_id: item.request_id.clone(), plugin_id: item.plugin_id.clone(),
