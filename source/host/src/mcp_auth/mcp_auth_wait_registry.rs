@@ -1,3 +1,4 @@
+use fabushi_android_shared::node::mcp::mcp_server_id::validate_mcp_server_id;
 use std::collections::BTreeMap;
 
 pub const DEFAULT_MCP_AUTH_WAIT_TTL_MS: u64 = 60 * 60 * 1_000;
@@ -52,7 +53,7 @@ impl McpAuthWaitRegistry {
 
         let server_id = registration
             .server_id
-            .filter(|value| !value.trim().is_empty());
+            .and_then(|value| validate_mcp_server_id(&value).ok());
         let name_key = normalize_connector_name(&registration.connector);
         let key = if !name_key.is_empty() {
             Some(name_key)
@@ -162,6 +163,40 @@ mod tests {
     }
 
     #[test]
+    #[test]
+    fn invalid_server_id_registration_does_not_create_id_match() {
+        let mut waits = McpAuthWaitRegistry::new(1_000);
+        waits.register(
+            10,
+            McpAuthWaitRegistration {
+                agent_id: "agent-a".into(),
+                connector: "".into(),
+                server_id: Some("not-a-server".into()),
+            },
+        );
+        assert!(waits.is_empty());
+
+        waits.register(
+            10,
+            McpAuthWaitRegistration {
+                agent_id: "agent-b".into(),
+                connector: "GitHub".into(),
+                server_id: Some("01".into()),
+            },
+        );
+        assert_eq!(
+            waits.take(
+                20,
+                &McpAuthCompletionIdentity {
+                    server_id: "1".into(),
+                    server_name: "github".into(),
+                },
+            )
+            .as_deref(),
+            Some("agent-b")
+        );
+    }
+
     fn name_fallback_is_normalized_and_expired_waits_are_ignored() {
         let mut waits = McpAuthWaitRegistry::new(100);
         waits.register(
