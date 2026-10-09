@@ -36,9 +36,25 @@ pub struct PendingCapabilityCall {
     pub state: String,
 }
 
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+pub struct PendingCapabilityApproval {
+    pub approval_id: String,
+    pub request_id: String,
+    pub operation_id: String,
+    pub capability: String,
+    pub account_fence: String,
+    pub state: String,
+    pub created_at_ms: u64,
+    pub resolved_at_ms: Option<u64>,
+}
+
 #[derive(Default, Deserialize, Serialize)]
 struct DurableState {
+    #[serde(default)]
     pending: BTreeMap<String, PendingCapabilityCall>,
+    #[serde(default)]
+    approvals: BTreeMap<String, PendingCapabilityApproval>,
+    #[serde(default)]
     audit: Vec<CapabilityAuditRecord>,
 }
 
@@ -96,6 +112,126 @@ impl CapabilityBroker {
         Ok(decision)
     }
 
+    pub fn request_approval(
+        &mut self,
+        approval_id: &str,
+        request_id: &str,
+        operation_id: &str,
+        capability: &str,
+        account_fence: &str,
+        now_ms: u64,
+    ) -> Result<(), String> {
+        if approval_id.trim().is_empty()
+            || request_id.trim().is_empty()
+            || operation_id.trim().is_empty()
+            || capability.trim().is_empty()
+            || account_fence.trim().is_empty()
+        {
+            return Err("approval identity, capability, and account fence are required".into());
+        }
+        if self.state.approvals.contains_key(approval_id) {
+            return Err("approval identity is duplicate or already consumed".into());
+        }
+        if self.state.approvals.values().any(|approval| {
+            approval.operation_id == operation_id && approval.state == "pending"
+        }) {
+            return Err("operation already has a pending capability approval".into());
+        }
+        self.state.approvals.insert(
+            approval_id.into(),
+            PendingCapabilityApproval {
+                approval_id: approval_id.into(),
+                request_id: request_id.into(),
+                operation_id: operation_id.into(),
+                capability: capability.into(),
+                account_fence: account_fence.into(),
+                state: "pending".into(),
+                created_at_ms: now_ms,
+                resolved_at_ms: None,
+            },
+        );
+        self.state.audit.push(CapabilityAuditRecord {
+            request_id: request_id.into(),
+            plugin_id: "feature".into(),
+            capability: capability.into(),
+            tool: "capability.request".into(),
+            account_fence: account_fence.into(),
+            runtime_generation: 0,
+            decision: CapabilityDecision::NeedsUser,
+            outcome: "approval_requested".into(),
+            reason: Some("capability requires explicit one-time user approval".into()),
+            at_ms: now_ms,
+        });
+        self.persist()
+    }
+
+    pub fn resolve_approval(
+        &mut self,
+        approval_id: &str,
+        approved: bool,
+        current_account_fence: &str,
+        now_ms: u64,
+    ) -> Result<PendingCapabilityApproval, String> {
+        let approval = self
+            .state
+            .approvals
+            .get_mut(approval_id)
+            .ok_or("approval is unknown, stale, cancelled, or already consumed")?;
+        if approval.state != "pending" {
+            return Err(format!("approval is already {}", approval.state));
+        }
+        if approval.account_fence != current_account_fence {
+            return Err("stale approval fenced by account identity".into());
+        }
+        approval.state = if approved { "allowed_once" } else { "denied" }.into();
+        approval.resolved_at_ms = Some(now_ms);
+        let resolved = approval.clone();
+        self.state.audit.push(CapabilityAuditRecord {
+            request_id: resolved.request_id.clone(),
+            plugin_id: "feature".into(),
+            capability: resolved.capability.clone(),
+            tool: "capability.request".into(),
+            account_fence: resolved.account_fence.clone(),
+            runtime_generation: 0,
+            decision: if approved { CapabilityDecision::Allow } else { CapabilityDecision::Deny },
+            outcome: if approved { "approval_consumed".into() } else { "approval_denied".into() },
+            reason: (!approved).then(|| "user denied the requested capability".into()),
+            at_ms: now_ms,
+        });
+        self.persist()?;
+        Ok(resolved)
+    }
+
+    pub fn cancel_approval_operation(
+        &mut self,
+        operation_id: &str,
+        reason: &str,
+        now_ms: u64,
+    ) -> Result<bool, String> {
+        let approval_id = self.state.approvals.iter().find_map(|(id, approval)| {
+            (approval.operation_id == operation_id && approval.state == "pending").then_some(id.clone())
+        });
+        let Some(approval_id) = approval_id else { return Ok(false); };
+        let approval = self.state.approvals.get_mut(&approval_id).expect("located approval");
+        approval.state = "cancelled".into();
+        approval.resolved_at_ms = Some(now_ms);
+        let cancelled = approval.clone();
+        self.state.audit.push(CapabilityAuditRecord {
+            request_id: cancelled.request_id,
+            plugin_id: "feature".into(),
+            capability: cancelled.capability,
+            tool: "capability.request".into(),
+            account_fence: cancelled.account_fence,
+            runtime_generation: 0,
+            decision: CapabilityDecision::Deny,
+            outcome: "approval_cancelled".into(),
+            reason: Some(reason.into()),
+            at_ms: now_ms,
+        });
+        self.persist()?;
+        Ok(true)
+    }
+
     pub fn begin(&mut self, call: PendingCapabilityCall) -> Result<(), String> {
         if let Some(existing) = self.state.pending.get(&call.request_id) {
             if existing == &call && existing.state != "pending" {
@@ -141,6 +277,11 @@ impl CapabilityBroker {
 
     #[cfg(test)]
     fn audit_len(&self) -> usize { self.state.audit.len() }
+
+    #[cfg(test)]
+    fn approval_state(&self, approval_id: &str) -> Option<&str> {
+        self.state.approvals.get(approval_id).map(|approval| approval.state.as_str())
+    }
 
     pub fn cancel_plugin(&mut self, plugin_id: &str, reason: &str, now_ms: u64) -> Result<usize, String> {
         let ids = self.state.pending.iter().filter_map(|(id,p)| (p.plugin_id==plugin_id && p.state=="pending").then_some(id.clone())).collect::<Vec<_>>();
@@ -193,6 +334,27 @@ mod tests {
         assert_eq!(b.authorize("2","p","c","t","a",1,true,false,2).unwrap(),CapabilityDecision::NeedsUser);
         assert_eq!(b.authorize("3","p","c","t","a",1,false,true,3).unwrap(),CapabilityDecision::Deny);
     }
+    #[test] fn approval_accept_decline_duplicate_account_and_restart_are_fail_closed() {
+        let (d, mut b) = broker();
+        b.request_approval("a1", "r1", "o1", "camera", "acct-1", 1).unwrap();
+        let allowed = b.resolve_approval("a1", true, "acct-1", 2).unwrap();
+        assert_eq!(allowed.state, "allowed_once");
+        assert!(b.resolve_approval("a1", true, "acct-1", 3).is_err());
+
+        b.request_approval("a2", "r2", "o2", "location", "acct-1", 4).unwrap();
+        assert!(b.resolve_approval("a2", true, "acct-2", 5).is_err());
+        let denied = b.resolve_approval("a2", false, "acct-1", 6).unwrap();
+        assert_eq!(denied.state, "denied");
+
+        b.request_approval("a3", "r3", "o3", "microphone", "acct-1", 7).unwrap();
+        drop(b);
+        let mut reopened = CapabilityBroker::open(d.path().join("broker.json"), 8).unwrap();
+        assert_eq!(reopened.approval_state("a3"), Some("pending"));
+        assert!(reopened.cancel_approval_operation("o3", "user cancelled", 9).unwrap());
+        assert_eq!(reopened.approval_state("a3"), Some("cancelled"));
+        assert!(reopened.resolve_approval("a3", true, "acct-1", 10).is_err());
+    }
+
     #[test] fn duplicate_and_stale_generation_are_rejected() {
         let (_d,mut b)=broker();
         let c=PendingCapabilityCall{request_id:"r".into(),plugin_id:"p".into(),capability:"c".into(),tool:"t".into(),arguments:Value::Null,account_fence:"a".into(),runtime_generation:2,started_at_ms:1,deadline_at_ms:100,state:"pending".into()};
