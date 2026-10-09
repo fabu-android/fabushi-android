@@ -1186,6 +1186,17 @@
             "EffectScope",
             "PluginState"
           ]
+        },
+        {
+          "path": "source/mahayana/mahayana-rs/mahayana-js-runtime/src/lib.rs",
+          "blob_sha": "e3cc454d3e1815ae334f01460f9961b4f94c9070",
+          "symbols": [
+            "DeepSeekJsHost",
+            "register_plugin_with_grants",
+            "disable_plugin",
+            "registered_tools",
+            "call_tool_json"
+          ]
         }
       ],
       "source_commit": "3bc92400826cc4ca7ac665b467708e22261edc61",
@@ -1229,22 +1240,23 @@
       "security_boundary": "Capability Broker consumes/rechecks explicit grants; Mini App surface identity/nonce cannot mint additional capability.",
       "android_disposition": "android-adapted",
       "android_target": [
-        "source/host/src/android_json_runtime.rs",
         "source/packages/mahayana-plugin-runtime/src/lib.rs",
+        "source/packages/mahayana-js-runtime/src/lib.rs",
+        "source/host/src/android_json_runtime.rs",
         "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/presentation/MarketplaceViewModel.kt"
       ],
       "android_owner": "Rust Host runtime supervisor + runtime-specific adapter behind Capability Broker",
       "platform_delta": "PluginSupervisor primitive is portable, but Android still needs a real executable JS/WASM/MCP adapter rather than desktop process assumptions.",
       "implementation_status": "mapped",
-      "production_wiring": "runtime.start/stop/tools/call intentionally fail closed; no fake runtime success remains",
-      "unit_test": "Canonical supervisor/effect-scope unit tests exist in vendored crate; Android adapter tests not yet implemented",
+      "production_wiring": "partially implemented: exact Desktop Android-capable mahayana-js-runtime is vendored; runtime.start/stop/tools use DeepSeekJsHost with persisted grants and plugin-scoped tool registration. runtime.call still deliberately fails closed until cancellable Capability Broker execution, timeout and side-effect reconciliation are wired.",
+      "unit_test": "Canonical JS runtime tests are vendored unchanged; Host start/stop/tools contracts are compiled/tested only in GitHub Actions. runtime.call adapter tests remain required.",
       "contract_test": "Required before implementation can be marked complete",
       "integration_test": "Required: runtime start/tool catalog/call/cancel/revoke/reconnect/process-death",
       "packaged_test": "Required on final package",
       "device_test": "Required on emulator/device",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "This row is deliberately not implemented. Installer/grant completion must not be used to claim executable plugin parity."
+      "notes": "Do not mark implemented/verified as a whole: JS lifecycle/tool discovery now has a real canonical adapter, but runtime.call cancellation/timeout/Capability Broker boundary and process-recovery reconciliation are still open."
     }
   ],
   "traceability": {

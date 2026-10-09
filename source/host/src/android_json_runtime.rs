@@ -15,6 +15,7 @@ use fabushi_android_shared::webauthn_gateway::{
     WebAuthnCeremony, WebAuthnRequestFrame, WebAuthnResponseFrame, WebAuthnStage,
     WebAuthnStageOutcome,
 };
+use mahayana_js_runtime::{DeepSeekJsHost, HostEvent};
 use mahayana_plugin_runtime::{
     ExternalReleaseManifest, PermissionManager, PluginInstaller,
 };
@@ -154,6 +155,8 @@ pub struct AndroidJsonHost {
     installed_plugins: BTreeSet<String>,
     plugin_installer: PluginInstaller,
     plugin_permissions: PermissionManager,
+    js_runtime: Option<DeepSeekJsHost>,
+    runtime_tools: BTreeMap<String, BTreeSet<String>>,
     webauthn: WebAuthnProxyExtension,
     webauthn_provider_queues: BTreeMap<String, VecDeque<WebAuthnRequestFrame>>,
 }
@@ -228,6 +231,8 @@ impl AndroidJsonHost {
             installed_plugins: BTreeSet::new(),
             plugin_installer,
             plugin_permissions,
+            js_runtime: None,
+            runtime_tools: BTreeMap::new(),
             webauthn: WebAuthnProxyExtension::new(WebAuthnProxyExtensionConfig::default()),
             webauthn_provider_queues: BTreeMap::new(),
         }
@@ -319,12 +324,13 @@ impl AndroidJsonHost {
             "plugin.compatibility" => self.plugin_compatibility(params),
             "plugin.permission.grant" => self.plugin_permission_grant(params),
             "plugin.permission.revoke" => self.plugin_permission_revoke(params),
-            "runtime.start"
-            | "runtime.stop"
-            | "runtime.tools"
-            | "runtime.call" => Err(format!(
-                "{method} is unavailable until a real portable JS/WASM/MCP execution adapter is migrated; Android refuses placeholder success"
-            )),
+            "runtime.start" => self.runtime_start(params),
+            "runtime.stop" => self.runtime_stop(params),
+            "runtime.tools" => self.runtime_tools(params),
+            "runtime.call" => Err(
+                "runtime.call is unavailable until cancellable Capability Broker execution is wired around the portable runtime; Android refuses an unbounded side-effect call"
+                    .into(),
+            ),
             "feature.messaging.access.issue" => self.messaging_access_issue(params),
             "feature.messaging.blob.read" => self.messaging_blob_read(params),
             "feature.messaging.execute" => self.messaging_execute(params),
@@ -1481,6 +1487,128 @@ impl AndroidJsonHost {
         }))
     }
 
+    fn runtime_start(&mut self, params: &Value) -> Result<Value, String> {
+        let plugin_id = required_string(params, "pluginId")?.to_string();
+        let config = params.get("config").cloned().unwrap_or_else(|| json!({}));
+        if !config.is_object() {
+            return Err("runtime.start config must be a JSON object".into());
+        }
+        let active = self
+            .plugin_installer
+            .active(&plugin_id)
+            .map_err(|error| format!("failed to inspect installed plugin: {error}"))?
+            .ok_or("plugin is not installed")?;
+        if !matches!(
+            active.runtime.as_str(),
+            "deepseek-js" | "javascript" | "cordis-js"
+        ) {
+            return Err(format!(
+                "runtime {} has no Android portable execution adapter",
+                active.runtime
+            ));
+        }
+        let entry = active
+            .entry
+            .as_deref()
+            .filter(|value| !value.trim().is_empty())
+            .ok_or("installed JS plugin release is missing entry")?;
+        let root = PathBuf::from(&active.installed_path);
+        let grants = self.plugin_permissions.grants_for(&plugin_id);
+        if self.js_runtime.is_none() {
+            self.js_runtime = Some(
+                DeepSeekJsHost::new()
+                    .map_err(|error| format!("failed to create portable JS runtime: {error}"))?,
+            );
+        }
+        let runtime = self.js_runtime.as_mut().expect("JS runtime initialized");
+        let state = if runtime.plugin_state(&plugin_id).is_some() {
+            runtime
+                .set_plugin_grants(&plugin_id, grants.iter().cloned())
+                .map_err(|error| format!("failed to update plugin runtime grants: {error}"))?;
+            runtime
+                .enable_plugin(&plugin_id)
+                .map_err(|error| format!("failed to start plugin runtime: {error}"))?
+        } else {
+            runtime
+                .register_plugin_with_grants(
+                    &plugin_id,
+                    &root,
+                    std::path::Path::new(entry),
+                    &config,
+                    &grants,
+                )
+                .map_err(|error| format!("failed to register plugin runtime: {error}"))?
+        };
+        self.sync_js_runtime_events()?;
+        Ok(json!({
+            "pluginId":plugin_id,
+            "runtime":active.runtime,
+            "state":serde_json::to_value(state).unwrap_or(Value::String(format!("{state:?}"))),
+            "tools":self.runtime_tools.get(&plugin_id).cloned().unwrap_or_default(),
+        }))
+    }
+
+    fn runtime_stop(&mut self, params: &Value) -> Result<Value, String> {
+        let plugin_id = required_string(params, "pluginId")?.to_string();
+        let runtime = self
+            .js_runtime
+            .as_mut()
+            .ok_or("plugin runtime is not started")?;
+        runtime
+            .disable_plugin(&plugin_id)
+            .map_err(|error| format!("failed to stop plugin runtime: {error}"))?;
+        self.sync_js_runtime_events()?;
+        self.runtime_tools.remove(&plugin_id);
+        Ok(json!({"pluginId":plugin_id,"state":"DISPOSED"}))
+    }
+
+    fn runtime_tools(&mut self, params: &Value) -> Result<Value, String> {
+        let plugin_id = required_string(params, "pluginId")?.to_string();
+        if self
+            .js_runtime
+            .as_ref()
+            .and_then(|runtime| runtime.plugin_state(&plugin_id))
+            .is_none()
+        {
+            return Err("plugin runtime is not started".into());
+        }
+        self.sync_js_runtime_events()?;
+        Ok(json!({
+            "pluginId":plugin_id,
+            "tools":self.runtime_tools.get(&plugin_id).cloned().unwrap_or_default(),
+        }))
+    }
+
+    fn sync_js_runtime_events(&mut self) -> Result<(), String> {
+        let Some(runtime) = self.js_runtime.as_ref() else {
+            return Ok(());
+        };
+        let events = runtime
+            .drain_events()
+            .map_err(|error| format!("failed to drain plugin runtime events: {error}"))?;
+        for event in events {
+            match event {
+                HostEvent::ToolRegistered { plugin_id, tool, .. } => {
+                    self.runtime_tools.entry(plugin_id).or_default().insert(tool);
+                }
+                HostEvent::ToolUnregistered { plugin_id, tool } => {
+                    let remove_entry = self
+                        .runtime_tools
+                        .get_mut(&plugin_id)
+                        .is_some_and(|tools| {
+                            tools.remove(&tool);
+                            tools.is_empty()
+                        });
+                    if remove_entry {
+                        self.runtime_tools.remove(&plugin_id);
+                    }
+                }
+                HostEvent::ServiceRegistered { .. } | HostEvent::ServiceUnregistered { .. } => {}
+            }
+        }
+        Ok(())
+    }
+
     fn plugin_ui_document(&self, params: &Value) -> Result<Value, String> {
         let plugin_id = required_string(params, "pluginId")?;
         if self.mode != AndroidHostMode::Test {
@@ -2008,10 +2136,13 @@ mod tests {
 
         let root = std::env::temp_dir().join(format!("fabushi-platform-contract-{}", now_ms()));
         let mut host = AndroidJsonHost::new(&root, AndroidHostMode::Test);
-        for method in ["runtime.start", "runtime.stop", "runtime.tools", "runtime.call"] {
-            let error = host.dispatch(method, &json!({"pluginId":"test"})).unwrap_err();
-            assert!(error.contains("refuses placeholder success"));
+        for method in ["runtime.start", "runtime.stop", "runtime.tools"] {
+            assert!(host.dispatch(method, &json!({"pluginId":"test"})).is_err());
         }
+        assert!(host
+            .dispatch("runtime.call", &json!({"pluginId":"test"}))
+            .unwrap_err()
+            .contains("cancellable Capability Broker execution"));
         assert!(host
             .dispatch("plugin.compatibility", &json!({"pluginId":"test"}))
             .unwrap_err()

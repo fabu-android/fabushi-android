@@ -14,6 +14,7 @@ base64 = "0.22"
 fabushi-android-shared = { path = "../shared" }
 fabushi-constants = { path = "../packages/constants" }
 mahayana-plugin-runtime = { path = "../packages/mahayana-plugin-runtime" }
+mahayana-js-runtime = { path = "../packages/mahayana-js-runtime" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"

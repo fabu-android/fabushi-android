@@ -1,23 +1,23 @@
 [package]
-name = "mahayana-plugin-runtime"
+name = "mahayana-js-runtime"
 version.workspace = true
 edition = "2024"
 license.workspace = true
 
 [dependencies]
-base64 = "0.22"
-flate2 = "1.1.8"
+mahayana-plugin-runtime = { path = "../mahayana-plugin-runtime" }
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "multipart", "rustls-tls"] }
+rquickjs = { version = "0.12.2", default-features = false, features = ["std", "loader"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-semver = "1"
-sha1 = "0.10"
+serde_yaml = "0.9"
 sha2 = "0.10"
-tar = { version = "=0.4.45", default-features = false }
 thiserror = "2"
 url = "2"
 uuid = { version = "1", features = ["v4"] }
-zip = "2.4.2"
+
+[target.'cfg(any(target_os = "ios", target_os = "android"))'.dependencies]
+rquickjs = { version = "0.12.2", default-features = false, features = ["std", "loader", "bindgen"] }
 
 [dev-dependencies]
 tempfile = "3"
