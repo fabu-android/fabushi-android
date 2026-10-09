@@ -29,10 +29,10 @@ mod ci_account_session {
 
     #[derive(Clone, Debug, PartialEq, Eq)]
     pub(super) struct CiAccountSessionIdentity {
-        access_token: String,
-        session_id: String,
-        device_id: String,
-        expires_at_epoch_seconds: u64,
+        pub(super) access_token: String,
+        pub(super) session_id: String,
+        pub(super) device_id: String,
+        pub(super) expires_at_epoch_seconds: u64,
     }
 
     const CI_SESSION_MAX_BYTES: u64 = 64 * 1024;
@@ -112,7 +112,7 @@ mod ci_account_session {
         }
         let raw = fs::read_to_string(&path).ok()?;
         let document: Value = serde_json::from_str(&raw).ok()?;
-        let identity = ci_account_session::parse_ci_account_session_document(&document, now_epoch_seconds)?;
+        let identity = parse_ci_account_session_document(&document, now_epoch_seconds)?;
         Some((path, identity))
     }
 
@@ -739,10 +739,13 @@ impl AndroidJsonHost {
             .insert(operation_id.to_string(), cancelled.clone());
 
         let mode = self.mode;
+        #[cfg(feature = "ci-account-session-import")]
         let bearer_token = self
             .ci_session_identity
             .as_ref()
             .map(|identity| identity.access_token.clone());
+        #[cfg(not(feature = "ci-account-session-import"))]
+        let bearer_token: Option<String> = None;
         let turn_events = self.turn_events.clone();
         let transcript = self.transcript.clone();
         let operation_id_owned = operation_id.to_string();
@@ -1449,7 +1452,7 @@ mod tests {
     #[test]
     fn device_agent_session_exposes_only_the_validated_short_lived_ci_session() {
         let now = 1_000_000_u64;
-        let identity = parse_ci_account_session_document(
+        let identity = ci_account_session::parse_ci_account_session_document(
             &json!({
                 "accessToken":"abcdefghijklmnopqrstuvwxyz0123456789",
                 "deviceId":"gha-12345-7-interactive",
