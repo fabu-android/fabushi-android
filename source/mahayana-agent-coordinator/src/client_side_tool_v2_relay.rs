@@ -205,7 +205,7 @@ impl ClientSideToolV2Relay {
 
         let fence = self.agents.entry(event.agent_id.clone()).or_default();
         if fence.epoch.is_empty() {
-            if event.kind == ToolMessageKind::Result {
+            if fence.retired_epochs.contains(&event.epoch) || event.kind == ToolMessageKind::Result {
                 return None;
             }
             fence.epoch = event.epoch.clone();
