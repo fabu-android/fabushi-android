@@ -1326,22 +1326,40 @@ impl AndroidJsonHost {
             return Err("MCP OAuth completion requires exactly one of code or error".into());
         }
 
-        let outcome = if error.is_some() { "failed" } else { "completed" };
-        let watch = match (
+        let identity = match (
             params.get("serverId").and_then(Value::as_str),
             params.get("accountKey").and_then(Value::as_str),
         ) {
             (Some(server_id), Some(account_key))
                 if !server_id.trim().is_empty() && !account_key.trim().is_empty() =>
             {
-                match self
+                Some((server_id.trim().to_string(), account_key.trim().to_string()))
+            }
+            (None, None) => None,
+            _ => return Err("MCP OAuth completion serverId/accountKey must be supplied together".into()),
+        };
+
+        if let Some(code) = code {
+            if let Some(owner) = self.mcp_auth_owner.as_ref() {
+                owner.complete_oauth(&state, code)?;
+            } else if self.mode == AndroidHostMode::Production {
+                return Err("MCP OAuth backend owner is unavailable".into());
+            }
+
+            let watch = if let Some((server_id, account_key)) = identity.as_ref() {
+                let manager = self
                     .mcp_auth_watches
                     .lock()
-                    .map_err(|_| "MCP auth watch manager lock poisoned".to_string())?
-                    .note_auth_completed_elsewhere(server_id, account_key)?
-                {
-                    Some(watch) => Some(watch),
-                    None => {
+                    .map_err(|_| "MCP auth watch manager lock poisoned".to_string())?;
+                let Some(watch) = manager.watch(server_id, account_key).cloned() else {
+                    return Ok(json!({
+                        "provider": provider,
+                        "state": state,
+                        "status": "stale",
+                    }));
+                };
+                if let Some(generation) = params.get("generation").and_then(Value::as_u64) {
+                    if watch.generation != generation {
                         return Ok(json!({
                             "provider": provider,
                             "state": state,
@@ -1349,34 +1367,78 @@ impl AndroidJsonHost {
                         }));
                     }
                 }
+                Some(watch)
+            } else {
+                None
+            };
+            let server_id = watch.as_ref().map(|value| value.server_id.clone());
+            let server_name = watch.as_ref().map(|value| value.server_name.clone());
+            let account_key = watch.as_ref().map(|value| value.account_key.clone());
+            let requesting_agent_id = watch
+                .as_ref()
+                .and_then(|value| value.requesting_agent_id.clone());
+            self.events.push_back(json!({
+                "type":"mcp.auth.callback.accepted",
+                "provider":provider.clone(),
+                "state":state.clone(),
+                "outcome":"pending-validation",
+                "serverId":server_id,
+                "serverName":server_name,
+                "accountKey":account_key,
+                "requestingAgentId":requesting_agent_id,
+            }));
+            return Ok(json!({
+                "provider":provider,
+                "state":state,
+                "outcome":"pending-validation",
+                "serverId":server_id,
+                "serverName":server_name,
+                "accountKey":account_key,
+                "requestingAgentId":requesting_agent_id,
+            }));
+        }
+
+        let cancelled = if let Some((server_id, account_key)) = identity.as_ref() {
+            let mut manager = self
+                .mcp_auth_watches
+                .lock()
+                .map_err(|_| "MCP auth watch manager lock poisoned".to_string())?;
+            if let Some(generation) = params.get("generation").and_then(Value::as_u64) {
+                if manager
+                    .watch(server_id, account_key)
+                    .is_none_or(|watch| watch.generation != generation)
+                {
+                    return Ok(json!({
+                        "provider":provider,
+                        "state":state,
+                        "status":"stale",
+                    }));
+                }
             }
-            (None, None) => None,
-            _ => return Err("MCP OAuth completion serverId/accountKey must be supplied together".into()),
+            manager.cancel_watch(server_id, account_key)?
+        } else {
+            None
         };
-        let server_id = watch.as_ref().map(|value| value.server_id.clone());
-        let server_name = watch.as_ref().map(|value| value.server_name.clone());
-        let account_key = watch.as_ref().map(|value| value.account_key.clone());
-        let requesting_agent_id = watch
+        let server_id = cancelled.as_ref().map(|value| value.server_id.clone());
+        let server_name = cancelled.as_ref().map(|value| value.server_name.clone());
+        let account_key = cancelled.as_ref().map(|value| value.account_key.clone());
+        let requesting_agent_id = cancelled
             .as_ref()
             .and_then(|value| value.requesting_agent_id.clone());
         self.events.push_back(json!({
-            "type": if outcome == "completed" {
-                "mcp.auth.completed"
-            } else {
-                "mcp.auth.failed"
-            },
-            "provider": provider.clone(),
-            "state": state.clone(),
-            "outcome": outcome,
+            "type":"mcp.auth.failed",
+            "provider":provider.clone(),
+            "state":state.clone(),
+            "outcome":"failed",
             "serverId":server_id,
             "serverName":server_name,
             "accountKey":account_key,
             "requestingAgentId":requesting_agent_id,
         }));
         Ok(json!({
-            "provider": provider,
-            "state": state,
-            "outcome": outcome,
+            "provider":provider,
+            "state":state,
+            "outcome":"failed",
             "serverId":server_id,
             "serverName":server_name,
             "accountKey":account_key,
@@ -3410,10 +3472,10 @@ mod tests {
     }
 
     #[test]
-    fn mcp_oauth_completion_with_explicit_identity_fences_duplicate_stale_callback() {
+    fn mcp_oauth_callback_keeps_watch_pending_until_token_validation_and_fences_stale_generation() {
         let app_data = tempfile::tempdir().unwrap();
         let mut host = AndroidJsonHost::new(app_data.path(), AndroidHostMode::Test);
-        host.dispatch(
+        let registered = host.dispatch(
             "feature.mcp.authWatch.register",
             &json!({
                 "serverId":"17",
@@ -3424,8 +3486,9 @@ mod tests {
             }),
         )
         .unwrap();
+        let generation = registered["generation"].as_u64().unwrap();
 
-        let completed = host
+        let accepted = host
             .dispatch(
                 "feature.mcp.oauthComplete",
                 &json!({
@@ -3433,47 +3496,83 @@ mod tests {
                     "state":"oauth-state-1",
                     "code":"authorization-code",
                     "serverId":"17",
-                    "accountKey":"default"
+                    "accountKey":"default",
+                    "generation":generation,
                 }),
             )
             .unwrap();
-        assert_eq!(completed["outcome"], "completed");
-        assert_eq!(completed["serverId"], "17");
-        assert_eq!(completed["accountKey"], "default");
+        assert_eq!(accepted["outcome"], "pending-validation");
+        assert_eq!(accepted["serverId"], "17");
+        assert_eq!(accepted["accountKey"], "default");
         assert_eq!(host.events.len(), 1);
-        let durable = host
-            .mcp_auth_watches
-            .lock()
-            .unwrap()
-            .pending_completions();
-        assert_eq!(durable.len(), 1);
-        assert_eq!(durable[0].server_id, "17");
-        assert_eq!(durable[0].account_key, "default");
-        assert_eq!(durable[0].requesting_agent_id.as_deref(), Some("agent-a"));
-
-        let duplicate = host
-            .dispatch(
-                "feature.mcp.oauthComplete",
-                &json!({
-                    "provider":"calendar",
-                    "state":"oauth-state-1",
-                    "code":"authorization-code",
-                    "serverId":"17",
-                    "accountKey":"default"
-                }),
-            )
-            .unwrap();
-        assert_eq!(duplicate["status"], "stale");
-        assert_eq!(host.events.len(), 1, "stale callback must not emit a second auth completion");
-        assert_eq!(
+        assert_eq!(host.events.front().unwrap()["type"], "mcp.auth.callback.accepted");
+        assert!(
+            host.mcp_auth_watches
+                .lock()
+                .unwrap()
+                .watch("17", "default")
+                .is_some(),
+            "browser callback must not bypass backend token validation"
+        );
+        assert!(
             host.mcp_auth_watches
                 .lock()
                 .unwrap()
                 .pending_completions()
-                .len(),
-            1,
-            "stale callback must not duplicate the durable Host completion"
+                .is_empty(),
+            "browser callback is not a canonical auth completion"
         );
+
+        let stale = host
+            .dispatch(
+                "feature.mcp.oauthComplete",
+                &json!({
+                    "provider":"calendar",
+                    "state":"oauth-state-old",
+                    "code":"authorization-code",
+                    "serverId":"17",
+                    "accountKey":"default",
+                    "generation":generation + 1,
+                }),
+            )
+            .unwrap();
+        assert_eq!(stale["status"], "stale");
+        assert_eq!(host.events.len(), 1, "stale callback must not emit another event");
+    }
+
+    #[test]
+    fn mcp_oauth_error_cancels_matching_watch_without_success_completion() {
+        let app_data = tempfile::tempdir().unwrap();
+        let mut host = AndroidJsonHost::new(app_data.path(), AndroidHostMode::Test);
+        let registered = host.dispatch(
+            "feature.mcp.authWatch.register",
+            &json!({
+                "serverId":"17",
+                "serverName":"Calendar",
+                "serverUrl":"https://mcp.example.test",
+                "accountKey":"default",
+                "requestingAgentId":"agent-a"
+            }),
+        )
+        .unwrap();
+        let generation = registered["generation"].as_u64().unwrap();
+        let failed = host
+            .dispatch(
+                "feature.mcp.oauthComplete",
+                &json!({
+                    "provider":"calendar",
+                    "state":"oauth-state-1",
+                    "error":"access_denied",
+                    "serverId":"17",
+                    "accountKey":"default",
+                    "generation":generation,
+                }),
+            )
+            .unwrap();
+        assert_eq!(failed["outcome"], "failed");
+        assert!(host.mcp_auth_watches.lock().unwrap().watch("17", "default").is_none());
+        assert!(host.mcp_auth_watches.lock().unwrap().pending_completions().is_empty());
+        assert_eq!(host.events.back().unwrap()["type"], "mcp.auth.failed");
     }
 
     #[cfg(feature = "ci-account-session-import")]
