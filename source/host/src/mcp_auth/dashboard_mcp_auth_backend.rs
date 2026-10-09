@@ -16,6 +16,8 @@ pub const DASHBOARD_CHECK_HTTP_MCP_STATUS_PATH: &str =
     "/aiserver.v1.DashboardService/CheckHttpMcpStatus";
 pub const DASHBOARD_VALIDATE_MCP_OAUTH_TOKENS_PATH: &str =
     "/aiserver.v1.DashboardService/ValidateMcpOAuthTokens";
+pub const DASHBOARD_COMPLETE_MCP_OAUTH_PATH: &str =
+    "/aiserver.v1.DashboardService/CompleteMcpOAuth";
 pub const DASHBOARD_GET_USER_PRIVACY_MODE_PATH: &str =
     "/aiserver.v1.DashboardService/GetUserPrivacyMode";
 pub const DASHBOARD_GET_AVAILABLE_MCP_SERVERS_PATH: &str =
@@ -207,6 +209,8 @@ pub trait McpAuthBackendPort: Send + Sync {
         oauth_redirect_uri: &str,
         force_reauth: bool,
     ) -> Result<McpBackendAuthStatus, String>;
+
+    fn complete_oauth(&self, state_id: &str, authorization_code: &str) -> Result<(), String>;
 
     fn validate_token(&self, server_url: &str, account_key: &str) -> Result<bool, String>;
 
@@ -405,6 +409,23 @@ impl McpAuthBackendPort for CursorDashboardMcpAuthBackend {
         })
     }
 
+    fn complete_oauth(&self, state_id: &str, authorization_code: &str) -> Result<(), String> {
+        if state_id.trim().is_empty() || authorization_code.trim().is_empty() {
+            return Err("MCP OAuth completion requires state and authorization code".into());
+        }
+        let credentials = self.credentials.credentials()?;
+        let body = encode_complete_mcp_oauth_request(state_id, authorization_code);
+        let ghost_mode = self.resolve_ghost_mode(&credentials);
+        self.send_unary(
+            &credentials,
+            DASHBOARD_COMPLETE_MCP_OAUTH_PATH,
+            &body,
+            CONTROL_RPC_TIMEOUT_MS,
+            ghost_mode,
+        )?;
+        Ok(())
+    }
+
     fn validate_token(&self, server_url: &str, account_key: &str) -> Result<bool, String> {
         let credentials = self.credentials.credentials()?;
         let body = encode_validate_mcp_oauth_tokens_request(server_url, account_key);
@@ -577,6 +598,13 @@ fn encode_check_http_mcp_status_request(
         encode_bool(5, true, &mut output);
     }
     encode_string(8, account_key, &mut output);
+    output
+}
+
+fn encode_complete_mcp_oauth_request(state_id: &str, authorization_code: &str) -> Vec<u8> {
+    let mut output = Vec::new();
+    encode_string(1, state_id, &mut output);
+    encode_string(2, authorization_code, &mut output);
     output
 }
 
@@ -882,6 +910,10 @@ mod tests {
             DASHBOARD_VALIDATE_MCP_OAUTH_TOKENS_PATH,
             "/aiserver.v1.DashboardService/ValidateMcpOAuthTokens"
         );
+        assert_eq!(
+            DASHBOARD_COMPLETE_MCP_OAUTH_PATH,
+            "/aiserver.v1.DashboardService/CompleteMcpOAuth"
+        );
         let request = encode_check_http_mcp_status_request(
             17,
             "http://127.0.0.1:18080/oauth/callback",
@@ -890,6 +922,10 @@ mod tests {
         );
         assert!(request.windows(2).any(|window| window == [0x28, 0x01]));
         assert!(request.contains(&0x42));
+        let complete = encode_complete_mcp_oauth_request("state-0123456789", "authorization-code");
+        assert_eq!(complete.first().copied(), Some(0x0a));
+        assert!(complete.windows(2).any(|window| window[0] == 0x12));
+        assert!(complete.ends_with(b"authorization-code"));
         let validate =
             encode_validate_mcp_oauth_tokens_request("https://mcp.example.test", "work");
         assert_eq!(validate.first().copied(), Some(0x1a));
