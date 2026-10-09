@@ -1,7 +1,8 @@
+use fabushi_android_shared::node::mcp::mcp_auth_watch::AUTH_WATCH_TIMEOUT_MS;
 use fabushi_android_shared::node::mcp::mcp_server_id::validate_mcp_server_id;
 use std::collections::BTreeMap;
 
-pub const DEFAULT_MCP_AUTH_WAIT_TTL_MS: u64 = 60 * 60 * 1_000;
+pub const DEFAULT_MCP_AUTH_WAIT_TTL_MS: u64 = AUTH_WATCH_TIMEOUT_MS;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct McpAuthCompletionIdentity {
