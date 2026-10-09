@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeMap;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -123,7 +123,14 @@ impl CapabilityBroker {
     pub fn cancel_request(&mut self, request_id: &str, reason: &str, now_ms: u64) -> Result<bool, String> {
         let Some(call) = self.state.pending.get(request_id) else { return Ok(false); };
         if call.state != "pending" { return Ok(false); }
-        self.settle(request_id, "cancelled", Some(reason.into()), now_ms)?;
+        self.settle(
+            request_id,
+            "outcome_unknown",
+            Some(format!(
+                "cancellation requested while execution may be in flight: {reason}; reconcile before replay"
+            )),
+            now_ms,
+        )?;
         Ok(true)
     }
 
@@ -137,7 +144,16 @@ impl CapabilityBroker {
 
     pub fn cancel_plugin(&mut self, plugin_id: &str, reason: &str, now_ms: u64) -> Result<usize, String> {
         let ids = self.state.pending.iter().filter_map(|(id,p)| (p.plugin_id==plugin_id && p.state=="pending").then_some(id.clone())).collect::<Vec<_>>();
-        for id in &ids { self.settle(id, "cancelled", Some(reason.into()), now_ms)?; }
+        for id in &ids {
+            self.settle(
+                id,
+                "outcome_unknown",
+                Some(format!(
+                    "plugin stop/revoke requested while execution may be in flight: {reason}; reconcile before replay"
+                )),
+                now_ms,
+            )?;
+        }
         Ok(ids.len())
     }
 
@@ -196,11 +212,11 @@ mod tests {
         b.begin(PendingCapabilityCall{request_id:"r".into(),plugin_id:"p".into(),capability:"c".into(),tool:"t".into(),arguments:Value::Null,account_fence:"a".into(),runtime_generation:1,started_at_ms:1,deadline_at_ms:100,state:"pending".into()}).unwrap();
         assert!(b.cancel_request("r","user cancelled",2).unwrap());
         assert!(!b.cancel_request("r","duplicate cancel",3).unwrap());
-        assert_eq!(b.request_state("r"),Some("cancelled"));
+        assert_eq!(b.request_state("r"),Some("outcome_unknown"));
         let audit=b.audit_len();
         drop(b);
         let b=CapabilityBroker::open(d.path().join("broker.json"),4).unwrap();
-        assert_eq!(b.request_state("r"),Some("cancelled"));
+        assert_eq!(b.request_state("r"),Some("outcome_unknown"));
         assert_eq!(b.audit_len(),audit);
     }
 

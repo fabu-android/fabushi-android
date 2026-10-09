@@ -35,42 +35,148 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
+import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicReference
 
 private const val WEB_MCP_ORIGIN = "fabushi.ombhrum.com"
 private const val LOCAL_WEB_MCP_ORIGIN = "miniapp.local.fabushi.invalid"
+
+private data class MiniAppBridgeSession(
+    val pluginInstanceId: String,
+    val nonce: String,
+    val grants: Set<String>,
+)
 
 private class MiniAppNativeWebMcpBridge(
     private val plugin: MarketplacePlugin,
     private val context: android.content.Context,
     private val localDocumentActive: () -> Boolean,
-    private val callRuntimeToolJson: (pluginId: String, name: String, argumentsJson: String) -> String,
+    private val callRuntimeToolJson: (
+        pluginId: String,
+        name: String,
+        argumentsJson: String,
+        requestId: String,
+    ) -> String,
+    private val cancelRuntimeCall: (requestId: String) -> Unit,
 ) {
     private val tools = plugin.tools.associateBy { it.name }
+    private val activeSession = AtomicReference<MiniAppBridgeSession?>(null)
+    private val pending = ConcurrentHashMap.newKeySet<String>()
+    private val disposed = AtomicBoolean(false)
+
+    fun activateNewSession(): MiniAppBridgeSession {
+        val session = MiniAppBridgeSession(
+            pluginInstanceId = plugin.pluginId + ":" + UUID.randomUUID().toString(),
+            nonce = UUID.randomUUID().toString().replace("-", "") +
+                UUID.randomUUID().toString().replace("-", ""),
+            grants = setOf("tools/call"),
+        )
+        deactivateCurrent("Mini App load replaced")
+        disposed.set(false)
+        activeSession.set(session)
+        return session
+    }
+
+    fun deactivateCurrent(_reason: String) {
+        activeSession.getAndSet(null) ?: return
+        disposed.set(true)
+        pending.toList().forEach { requestId ->
+            runCatching { cancelRuntimeCall(requestId) }
+        }
+        pending.clear()
+    }
 
     @JavascriptInterface
-    fun callTool(name: String, argumentsJson: String): String {
-        if (!localDocumentActive()) {
+    fun disposeSession(pluginInstanceId: String, nonce: String) {
+        val current = activeSession.get() ?: return
+        if (current.pluginInstanceId != pluginInstanceId || current.nonce != nonce) return
+        deactivateCurrent("Mini App page disposed")
+    }
+
+    @JavascriptInterface
+    fun callTool(
+        pluginInstanceId: String,
+        nonce: String,
+        requestId: String,
+        name: String,
+        argumentsJson: String,
+    ): String {
+        val session = activeSession.get()
+        if (
+            session == null ||
+            disposed.get() ||
+            !localDocumentActive() ||
+            session.pluginInstanceId != pluginInstanceId ||
+            session.nonce != nonce
+        ) {
             return JSONObject()
                 .put("ok", false)
-                .put("error", "Native WebMCP bridge is available only to the local MiniApp document")
+                .put("error", "Stale or inactive Mini App WebMCP load")
+                .toString()
+        }
+        if ("tools/call" !in session.grants) {
+            return JSONObject()
+                .put("ok", false)
+                .put("error", "WebMCP tools/call was not explicitly granted to this load")
+                .toString()
+        }
+        if (
+            requestId.length !in 8..256 ||
+            requestId.none { it == ':' } ||
+            requestId.any(Char::isWhitespace)
+        ) {
+            return JSONObject()
+                .put("ok", false)
+                .put("error", "Invalid stable WebMCP request id")
+                .toString()
+        }
+        if (!pending.add(requestId)) {
+            return JSONObject()
+                .put("ok", false)
+                .put("error", "Duplicate pending WebMCP request id")
                 .toString()
         }
         val tool = tools[name]
-            ?: return JSONObject().put("ok", false).put("error", "Tool is not in this MiniApp contract").toString()
-        if (tool.approval != "none" && !requestNativeApproval(tool)) {
-            return JSONObject().put("ok", false).put("error", "用户取消了 WebMCP Tool 调用").toString()
-        }
-        return runCatching {
-            val resultJson = callRuntimeToolJson(plugin.pluginId, name, argumentsJson)
-            "{\"ok\":true,\"result\":$resultJson}"
-        }.getOrElse { error ->
+            ?: run {
+                pending.remove(requestId)
+                return JSONObject().put("ok", false).put("error", "Tool is not in this MiniApp contract").toString()
+            }
+        return try {
+            if (tool.approval != "none" && !requestNativeApproval(tool)) {
+                JSONObject().put("ok", false).put("error", "用户取消了 WebMCP Tool 调用").toString()
+            } else {
+                val resultJson = callRuntimeToolJson(
+                    plugin.pluginId,
+                    name,
+                    argumentsJson,
+                    requestId,
+                )
+                val stillCurrent = activeSession.get()
+                if (
+                    stillCurrent == null ||
+                    disposed.get() ||
+                    stillCurrent.pluginInstanceId != pluginInstanceId ||
+                    stillCurrent.nonce != nonce
+                ) {
+                    JSONObject()
+                        .put("ok", false)
+                        .put("error", "WebMCP result fenced because the Mini App load was disposed")
+                        .toString()
+                } else {
+                    "{\"ok\":true,\"result\":" + resultJson + "}"
+                }
+            }
+        } catch (error: Throwable) {
             JSONObject()
                 .put("ok", false)
                 .put("error", error.message ?: "WebMCP runtime call failed")
                 .toString()
+        } finally {
+            pending.remove(requestId)
         }
     }
 
@@ -85,8 +191,8 @@ private class MiniAppNativeWebMcpBridge(
                 "该操作会修改小程序或后台状态。"
             }
             AlertDialog.Builder(context)
-                .setTitle("允许 WebMCP 调用 ${tool.name}？")
-                .setMessage("${tool.description}\n\n$warning")
+                .setTitle("允许 WebMCP 调用 " + tool.name + "？")
+                .setMessage(tool.description + "\n\n" + warning)
                 .setPositiveButton("允许") { _, _ ->
                     if (decided.compareAndSet(false, true)) {
                         allowed.set(true)
@@ -148,7 +254,12 @@ private fun miniAppEventProjection(event: JSONObject): JSONObject {
     return output
 }
 
-private fun injectLocalWebMcp(html: String, plugin: MarketplacePlugin, account: JSONObject): String {
+private fun injectLocalWebMcp(
+    html: String,
+    plugin: MarketplacePlugin,
+    account: JSONObject,
+    session: MiniAppBridgeSession,
+): String {
     val tools = toolContractJson(plugin)
     val bootstrap = """
         <script>
@@ -158,11 +269,26 @@ private fun injectLocalWebMcp(html: String, plugin: MarketplacePlugin, account: 
           const localTools=new Map();
           const controllers=[];
           function publicTool(tool){const copy={...tool};delete copy.execute;return copy;}
+          const pluginInstanceId=__FABUSHI_PLUGIN_INSTANCE__;
+          const loadNonce=__FABUSHI_LOAD_NONCE__;
+          const explicitGrants=new Set(__FABUSHI_EXPLICIT_GRANTS__);
+          let nextRequestId=1;
+          let disposed=false;
+          const pending=new Set();
           function nativeCall(name,input){
-            const raw=window.FabushiWebMcpNative.callTool(name,JSON.stringify(input||{}));
-            const payload=JSON.parse(raw);
-            if(!payload.ok)throw new Error(payload.error||'WebMCP runtime call failed');
-            return payload.result;
+            if(disposed)throw new Error('WebMCP load disposed');
+            if(!explicitGrants.has('tools/call'))throw new Error('WebMCP tools/call not granted');
+            const requestId=pluginInstanceId+':'+(nextRequestId++);
+            if(pending.has(requestId))throw new Error('Duplicate pending WebMCP request id');
+            pending.add(requestId);
+            try{
+              const raw=window.FabushiWebMcpNative.callTool(
+                pluginInstanceId,loadNonce,requestId,name,JSON.stringify(input||{})
+              );
+              const payload=JSON.parse(raw);
+              if(!payload.ok)throw new Error(payload.error||'WebMCP runtime call failed');
+              return payload.result;
+            }finally{pending.delete(requestId);}
           }
           function register(item){
             const tool={name:item.name,description:item.description||item.name,inputSchema:{type:'object',properties:{}},annotations:{readOnlyHint:item.readOnlyHint===true},execute:(input)=>nativeCall(item.name,input)};
@@ -186,12 +312,20 @@ private fun injectLocalWebMcp(html: String, plugin: MarketplacePlugin, account: 
           };
           Object.defineProperty(window,'__fabushiMiniAppHost',{configurable:true,value:host});
           Object.defineProperty(window,'__fabushiWebMcp',{configurable:true,value:{version:1,list:()=>Array.from(localTools.values()).map(publicTool),call:async(name,input={})=>{const tool=localTools.get(name);if(!tool)throw new Error('Unknown WebMCP tool: '+name);return tool.execute(input);}}});
-          window.addEventListener('pagehide',()=>{for(const controller of controllers)controller.abort();},{once:true});
+          window.addEventListener('pagehide',()=>{
+            disposed=true;
+            for(const controller of controllers)controller.abort();
+            window.FabushiWebMcpNative.disposeSession(pluginInstanceId,loadNonce);
+            pending.clear();
+          },{once:true});
           window.dispatchEvent(new CustomEvent('fabushi:miniapp-auth',{detail:account}));
           window.dispatchEvent(new CustomEvent('fabushi:webmcp-ready',{detail:{pluginId:${JSONObject.quote(plugin.pluginId)},tools:definitions.map(t=>t.name)}}));
         })();
         </script>
     """.trimIndent()
+        .replace("__FABUSHI_PLUGIN_INSTANCE__", JSONObject.quote(session.pluginInstanceId))
+        .replace("__FABUSHI_LOAD_NONCE__", JSONObject.quote(session.nonce))
+        .replace("__FABUSHI_EXPLICIT_GRANTS__", JSONArray(session.grants.toList()).toString())
     return if (html.contains("</head>", ignoreCase = true)) {
         html.replace(Regex("</head>", RegexOption.IGNORE_CASE), "$bootstrap</head>")
     } else {
@@ -205,7 +339,13 @@ fun MiniAppWebMcpSurface(
     plugin: MarketplacePlugin,
     loadLocalHtml: suspend (pluginId: String) -> String?,
     coordinator: AndroidCoordinatorPort,
-    callRuntimeToolJson: (pluginId: String, name: String, argumentsJson: String) -> String,
+    callRuntimeToolJson: (
+        pluginId: String,
+        name: String,
+        argumentsJson: String,
+        requestId: String,
+    ) -> String,
+    cancelRuntimeCall: (requestId: String) -> Unit,
     onClose: () -> Unit,
 ) {
     val context = LocalContext.current
@@ -216,6 +356,15 @@ fun MiniAppWebMcpSurface(
     val localDocumentActive = remember(plugin.pluginId) { AtomicBoolean(false) }
     val encodedId = URLEncoder.encode(plugin.pluginId, StandardCharsets.UTF_8.toString())
     val hostedUrl = "https://fabushi.ombhrum.com/miniapps/$encodedId/"
+    val nativeBridge = remember(plugin.pluginId) {
+        MiniAppNativeWebMcpBridge(
+            plugin = plugin,
+            context = context,
+            localDocumentActive = localDocumentActive::get,
+            callRuntimeToolJson = callRuntimeToolJson,
+            cancelRuntimeCall = cancelRuntimeCall,
+        )
+    }
 
     LaunchedEffect(plugin.pluginId) {
         accountProjection = runCatching { miniAppAccountProjection(coordinator.authStatus()) }
@@ -251,12 +400,7 @@ fun MiniAppWebMcpSurface(
                 settings.javaScriptCanOpenWindowsAutomatically = false
                 settings.setSupportMultipleWindows(false)
                 addJavascriptInterface(
-                    MiniAppNativeWebMcpBridge(
-                        plugin = plugin,
-                        context = context,
-                        localDocumentActive = localDocumentActive::get,
-                        callRuntimeToolJson = callRuntimeToolJson,
-                    ),
+                    nativeBridge,
                     "FabushiWebMcpNative",
                 )
                 webViewClient = object : WebViewClient() {
@@ -266,7 +410,9 @@ fun MiniAppWebMcpSurface(
                     }
 
                     override fun onPageStarted(view: WebView, url: String?, favicon: Bitmap?) {
-                        localDocumentActive.set(url?.startsWith("https://$LOCAL_WEB_MCP_ORIGIN/") == true)
+                        val isLocal = url?.startsWith("https://$LOCAL_WEB_MCP_ORIGIN/") == true
+                        localDocumentActive.set(isLocal)
+                        if (!isLocal) nativeBridge.deactivateCurrent("Mini App navigated away from local document")
                         status = "正在加载 WebMCP…"
                     }
 
@@ -315,16 +461,18 @@ fun MiniAppWebMcpSurface(
                 view.tag = desiredTag
                 if (local != null) {
                     localDocumentActive.set(true)
+                    val session = nativeBridge.activateNewSession()
                     val baseUrl = "https://$LOCAL_WEB_MCP_ORIGIN/miniapps/$encodedId/"
                     view.loadDataWithBaseURL(
                         baseUrl,
-                        injectLocalWebMcp(local, plugin, accountProjection),
+                        injectLocalWebMcp(local, plugin, accountProjection, session),
                         "text/html",
                         "utf-8",
                         null,
                     )
                 } else {
                     localDocumentActive.set(false)
+                    nativeBridge.deactivateCurrent("Hosted Mini App selected")
                     view.loadUrl(hostedUrl)
                 }
             },
@@ -335,6 +483,7 @@ fun MiniAppWebMcpSurface(
             onDispose {
                 eventListener.close()
                 localDocumentActive.set(false)
+                nativeBridge.deactivateCurrent("Mini App surface disposed")
                 webView.stopLoading()
                 webView.removeJavascriptInterface("FabushiWebMcpNative")
                 webView.loadUrl("about:blank")

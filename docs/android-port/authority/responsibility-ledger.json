@@ -426,7 +426,7 @@
       "device_test": "required on emulator/physical device as applicable",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Implemented production owner and durable audit/pending lifecycle on this source change, but do not mark verified before same exact-head CI and packaged/device evidence. Mid-execution preemption remains adapter-limited for synchronous QuickJS calls; late completion becomes outcome-unknown rather than blind replay. Desktop mahayana-core protocol dependency is anchored to capability.rs plus lib.rs; this Desktop tree has no separate mahayana-core/src/protocol.rs."
+      "notes": "Implemented production owner and durable audit/pending lifecycle on this source change, but do not mark verified before same exact-head CI and packaged/device evidence. Mid-execution preemption remains adapter-limited for synchronous QuickJS calls; late completion becomes outcome-unknown rather than blind replay. Desktop mahayana-core protocol dependency is anchored to capability.rs plus lib.rs; this Desktop tree has no separate mahayana-core/src/protocol.rs. runtime.call now derives required permissions from the installed immutable release and requires all current persisted grants; caller-supplied capability names are not trusted."
     },
     {
       "responsibility_id": "MCP-PLUGIN-RUNTIME-001",
@@ -499,6 +499,16 @@
             "per-load nonce",
             "pending registry"
           ]
+        },
+        {
+          "path": "frontend/packages/mcp-app-sdk/src/webmcp.ts",
+          "blob_sha": "74de0726d35ca0f6b2d5e094a41d04578e0721b8",
+          "symbols": [
+            "registerWebMcpTool",
+            "AbortController registration disposal",
+            "fallback registry",
+            "callRegisteredWebMcpTool"
+          ]
         }
       ],
       "source_commit": "3bc92400826cc4ca7ac665b467708e22261edc61",
@@ -534,16 +544,16 @@
       ],
       "android_owner": "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/features/miniapp/MiniAppWebMcpSurface.kt",
       "platform_delta": "Android uses native Compose/platform adapters + typed JNI while preserving canonical Rust owners where platform-independent.",
-      "implementation_status": "mapped",
-      "production_wiring": "mapped target(s); production parity not yet established",
-      "unit_test": "required",
-      "contract_test": "required on same exact HEAD",
-      "integration_test": "required on same exact HEAD",
+      "implementation_status": "implemented",
+      "production_wiring": "Local Mini App loads use per-load pluginInstanceId + nonce + explicit tools/call grant; native bridge validates exact load identity before/after execution, rejects duplicate pending requestIds, forwards stable requestId to Rust runtime.call, aborts native registration on pagehide, cancels pending local runtime calls on dispose, and fences late results. Rust derives required permissions from immutable release declarations and current persisted grants.",
+      "unit_test": "Rust CapabilityBroker tests cover duplicate/cancel/outcome-unknown; Android compile/static tests must validate typed runtime.cancel and Mini App bridge on same exact HEAD.",
+      "contract_test": "bridge.ts/webmcp.ts anchors cover instance identity, nonce, grants, pending registry, AbortController disposal and fallback registry; same exact-head Android contract evidence required.",
+      "integration_test": "Still required: packaged WebView duplicate/dispose/stale-result journey, native fallback behavior, official remote MCP cancellation/outcome reconciliation.",
       "packaged_test": "required on final minified release artifact",
       "device_test": "required on emulator/physical device as applicable",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Requires exact semantic comparison with bridge.ts + webmcp.ts and packaged WebView acceptance."
+      "notes": "Local-plugin WebMCP fencing implemented; not verified until exact-head Android CI and packaged journey. Official remote MCP in-flight abort/reconciliation remains open."
     },
     {
       "responsibility_id": "MEDIA-ATTACHMENT-ASR-001",
@@ -1290,7 +1300,7 @@
       "device_test": "Required on emulator/device",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Production execution is no longer hard-coded fail-closed. The synchronous QuickJS adapter cannot yet be interrupted while inside call_tool_json; bounded deadline is enforced before/after execution and any late return is outcome-unknown/reconciliation, so this row remains not-verified."
+      "notes": "Production execution is no longer hard-coded fail-closed. The synchronous QuickJS adapter cannot yet be interrupted while inside call_tool_json; bounded deadline is enforced before/after execution and any late return is outcome-unknown/reconciliation, so this row remains not-verified. runtime.call now derives required permissions from the installed immutable release and requires all current persisted grants; caller-supplied capability names are not trusted."
     },
     {
       "responsibility_id": "AGENT-DURABLE-RUN-JOURNAL-001",

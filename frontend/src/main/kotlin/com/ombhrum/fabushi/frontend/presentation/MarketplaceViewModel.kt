@@ -615,16 +615,36 @@ class MarketplaceViewModel(application: Application) : AndroidViewModel(applicat
         }.getOrNull()
     }
 
-    fun callRuntimeToolJson(pluginId: String, name: String, argumentsJson: String): String {
+    fun callRuntimeToolJson(
+        pluginId: String,
+        name: String,
+        argumentsJson: String,
+        requestId: String,
+    ): String {
         require(Regex("^[A-Za-z0-9_.-]{1,128}$").matches(name)) { "Invalid WebMCP tool name" }
+        require(requestId.length in 8..256 && requestId.none(Char::isWhitespace)) {
+            "Invalid stable WebMCP request id"
+        }
         val arguments = JSONObject(argumentsJson.ifBlank { "{}" })
         val result = coordinator.runtimeCallValue(
             JSONObject()
                 .put("pluginId", pluginId)
-                .put("name", name)
+                .put("tool", name)
+                .put("requestId", requestId)
                 .put("arguments", arguments),
         )
         return result.toJsonString()
+    }
+
+    fun cancelRuntimeToolCall(requestId: String) {
+        if (requestId.isBlank()) return
+        runCatching {
+            coordinator.runtimeCancel(
+                JSONObject()
+                    .put("requestId", requestId)
+                    .put("reason", "Mini App load disposed"),
+            )
+        }
     }
 
     override fun onCleared() {

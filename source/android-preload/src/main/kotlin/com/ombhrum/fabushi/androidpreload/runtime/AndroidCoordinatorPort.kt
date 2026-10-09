@@ -56,6 +56,7 @@ interface AndroidCoordinatorPort {
 
     fun runtimeStart(params: JSONObject): JSONObject
     fun runtimeCallValue(params: JSONObject): Any?
+    fun runtimeCancel(params: JSONObject): JSONObject
 
     fun messagingAccessIssue(params: JSONObject): JSONObject
     fun messagingBlobRead(params: JSONObject): JSONObject

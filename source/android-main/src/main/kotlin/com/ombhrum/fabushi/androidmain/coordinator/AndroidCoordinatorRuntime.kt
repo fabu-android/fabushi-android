@@ -158,6 +158,7 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
 
     override fun runtimeStart(params: JSONObject) = host.request("runtime.start", params)
     override fun runtimeCallValue(params: JSONObject): Any? = host.requestValue("runtime.call", params)
+    override fun runtimeCancel(params: JSONObject) = host.request("runtime.cancel", params)
 
     override fun messagingAccessIssue(params: JSONObject) = host.request("feature.messaging.access.issue", params)
     override fun messagingBlobRead(params: JSONObject) = host.request("feature.messaging.blob.read", params)

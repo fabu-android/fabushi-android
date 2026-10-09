@@ -160,7 +160,7 @@ pub struct AndroidJsonHost {
     js_runtime: Option<DeepSeekJsHost>,
     runtime_tools: BTreeMap<String, BTreeSet<String>>,
     runtime_generations: BTreeMap<String, u64>,
-    runtime_call_cancellations: BTreeMap<String, (String, String, Arc<AtomicBool>)>,
+    runtime_call_cancellations: BTreeMap<String, (String, BTreeSet<String>, Arc<AtomicBool>)>,
     capability_broker: CapabilityBroker,
     webauthn: WebAuthnProxyExtension,
     webauthn_provider_queues: BTreeMap<String, VecDeque<WebAuthnRequestFrame>>,
@@ -397,6 +397,13 @@ impl AndroidJsonHost {
         let (actor_id, mutation) = self.current_messaging_identity()?;
         let result = self.messaging.read_blob_range(params, &actor_id)?;
         Ok(with_account_session_mutation(result, mutation))
+    }
+
+    fn current_turn_account_fence(&mut self) -> Result<String, String> {
+        if self.mode == AndroidHostMode::Test {
+            return Ok("human:android-test".into());
+        }
+        self.current_messaging_identity().map(|(identity, _)| identity)
     }
 
     fn current_messaging_identity(
@@ -1004,7 +1011,7 @@ impl AndroidJsonHost {
             .unwrap_or("default")
             .to_string();
 
-        let (account_fence, _) = self.current_messaging_identity()?;
+        let account_fence = self.current_turn_account_fence()?;
         let turn_generation = self
             .turn_journal
             .lock()
@@ -1589,10 +1596,10 @@ impl AndroidJsonHost {
         self.plugin_permissions
             .revoke(plugin_id, permission)
             .map_err(|error| format!("plugin permission revoke failed: {error}"))?;
-        for (pending_plugin, pending_capability, cancelled) in
+        for (pending_plugin, pending_capabilities, cancelled) in
             self.runtime_call_cancellations.values()
         {
-            if pending_plugin == plugin_id && pending_capability == permission {
+            if pending_plugin == plugin_id && pending_capabilities.contains(permission) {
                 cancelled.store(true, Ordering::Release);
             }
         }
@@ -1730,12 +1737,13 @@ impl AndroidJsonHost {
         let plugin_id = required_string(params, "pluginId")?.to_string();
         let tool = required_string(params, "tool")?.to_string();
         let request_id = required_string(params, "requestId")?.to_string();
-        let capability = required_string(params, "capability")?.to_string();
         let arguments = params.get("arguments").cloned().unwrap_or_else(|| json!({}));
         if !arguments.is_object() {
             return Err("runtime.call arguments must be a JSON object".into());
         }
-        if request_id.len() > 256 || tool.len() > 256 || capability.len() > 256 {
+        if request_id.len() > 256 || tool.len() > 256 {
+            return Err("runtime.call identity exceeds bounded length".into());
+        }
             return Err("runtime.call identity exceeds bounded length".into());
         }
         if self.capability_broker.needs_reconciliation(&request_id) {
@@ -1744,20 +1752,29 @@ impl AndroidJsonHost {
         let active = self.plugin_installer.active(&plugin_id)
             .map_err(|error| format!("failed to inspect installed plugin: {error}"))?
             .ok_or("plugin is not installed")?;
-        if !active.requested_permissions.iter().any(|value| value == &capability) {
-            let _ = self.capability_broker.authorize(&request_id,&plugin_id,&capability,&tool,"unbound",0,false,false,now_ms());
-            return Err("runtime.call capability is not declared by installed immutable release".into());
-        }
         let grants = self.plugin_permissions.grants_for(&plugin_id);
+        let capability = if active.requested_permissions.is_empty() {
+            "plugin.runtime.call".to_string()
+        } else {
+            active.requested_permissions.join(",")
+        };
+        let required_permissions = active
+            .requested_permissions
+            .iter()
+            .cloned()
+            .collect::<BTreeSet<_>>();
+        let all_declared_granted = required_permissions
+            .iter()
+            .all(|permission| grants.contains(permission));
         let generation = *self.runtime_generations.get(&plugin_id).ok_or("plugin runtime is not started")?;
         let registered = self.runtime_tools.get(&plugin_id).is_some_and(|tools| tools.contains(&tool));
         if !registered { return Err("runtime.call tool is not registered by this plugin instance".into()); }
         let (account_fence, _) = self.current_messaging_identity()?;
         match self.capability_broker.authorize(
             &request_id,&plugin_id,&capability,&tool,&account_fence,generation,
-            true,grants.contains(&capability),now_ms())? {
+            true,all_declared_granted,now_ms())? {
             CapabilityDecision::Allow => {}
-            CapabilityDecision::NeedsUser => return Err("runtime.call requires explicit user approval/grant".into()),
+            CapabilityDecision::NeedsUser => return Err("runtime.call requires all current immutable-release permission grants".into()),
             CapabilityDecision::Deny => return Err("runtime.call denied by Capability Broker".into()),
         }
         let timeout_ms=params.get("timeoutMs").and_then(Value::as_u64).unwrap_or(15_000).clamp(100,30_000);
@@ -1772,7 +1789,7 @@ impl AndroidJsonHost {
         let cancellation = Arc::new(AtomicBool::new(false));
         if self.runtime_call_cancellations.insert(
             request_id.clone(),
-            (plugin_id.clone(), capability.clone(), cancellation.clone()),
+            (plugin_id.clone(), required_permissions.clone(), cancellation.clone()),
         ).is_some() {
             let _ = self.capability_broker.cancel_request(
                 &request_id,
@@ -1800,7 +1817,10 @@ impl AndroidJsonHost {
                 && current.artifact_sha256 == active.artifact_sha256
                 && current.installed_path == active.installed_path
         });
-        let grant_still_present = self.plugin_permissions.is_granted(&plugin_id, &capability);
+        let grants_after = self.plugin_permissions.grants_for(&plugin_id);
+        let grant_still_present = required_permissions
+            .iter()
+            .all(|permission| grants_after.contains(permission));
         let current_generation = self.runtime_generations.get(&plugin_id).copied();
         let current_account = self.current_messaging_identity().map(|(identity, _)| identity);
         if !release_unchanged

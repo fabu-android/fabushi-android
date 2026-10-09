@@ -88,10 +88,18 @@ internal class MiniAppPlatformBridge(
         )
     }
 
-    fun callOfficialMcpTool(pluginId: String, name: String, arguments: JSONObject): JSONObject {
+    fun callOfficialMcpTool(
+        pluginId: String,
+        name: String,
+        arguments: JSONObject,
+        requestId: String = "official:" + UUID.randomUUID().toString(),
+    ): JSONObject {
         requirePluginId(pluginId)
         require(ToolName.matches(name)) { "Invalid Mini App MCP tool name" }
-        val operationId = "miniapp:$pluginId:${UUID.randomUUID()}"
+        require(requestId.length in 8..256 && requestId.none(Char::isWhitespace)) {
+            "Invalid stable Mini App MCP request id"
+        }
+        val operationId = "miniapp:" + pluginId + ":" + requestId
         publishOperation(pluginId, operationId, name, "started", "正在连接统一 WebMCP")
         return try {
             val token = delegatedPluginToken(pluginId)

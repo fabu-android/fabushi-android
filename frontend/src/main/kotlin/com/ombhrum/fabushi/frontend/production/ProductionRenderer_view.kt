@@ -108,16 +108,20 @@ internal fun ProductionRenderer(
                             loadLocalHtml = { pluginId ->
                                 model.loadLocalMiniAppHtml(pluginId) ?: globalDharmaHostShell(active)
                             },
-                            callRuntimeToolJson = { pluginId, name, argumentsJson ->
+                            callRuntimeToolJson = { pluginId, name, argumentsJson, requestId ->
                                 if (pluginId == MiniAppPlatformBridge.GLOBAL_DHARMA_ID) {
                                     miniAppPlatformBridge.callOfficialMcpTool(
                                         pluginId = pluginId,
                                         name = name,
                                         arguments = JSONObject(argumentsJson.ifBlank { "{}" }),
+                                        requestId = requestId,
                                     ).toString()
                                 } else {
-                                    model.callRuntimeToolJson(pluginId, name, argumentsJson)
+                                    model.callRuntimeToolJson(pluginId, name, argumentsJson, requestId)
                                 }
+                            },
+                            cancelRuntimeCall = { requestId ->
+                                model.cancelRuntimeToolCall(requestId)
                             },
                             onClose = { openedMiniApp = null },
                         )
