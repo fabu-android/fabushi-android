@@ -4,6 +4,7 @@ use crate::automation_runtime::{run_json as automation_run_json, AutomationRunti
 use crate::android_agent_roster::AndroidAgentRoster;
 use crate::host_secret_store::get_or_create_host_machine_id;
 use crate::messaging_service::AndroidMessagingService;
+use crate::mcp_auth::cleanup_legacy_mcp_auth_credentials;
 use crate::extensions::transcript::TranscriptStore;
 use crate::extensions::webauthn_proxy::{
     WebAuthnBridgeError, WebAuthnProxyExtension, WebAuthnProxyExtensionConfig,
@@ -303,6 +304,7 @@ impl AndroidJsonHost {
         initial_account_session_json: Option<&str>,
     ) -> Self {
         let app_data_dir = app_data_dir.into();
+        let _legacy_mcp_auth_cleanup = cleanup_legacy_mcp_auth_credentials(&app_data_dir);
         let device_id = get_or_create_host_machine_id(&app_data_dir.join("machine-id"))
             .unwrap_or_else(|error| panic!("failed to open canonical Android machine id: {error}"));
         let account = AndroidAccountService::with_persistent_browser_attempts(
