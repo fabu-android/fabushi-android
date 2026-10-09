@@ -1,4 +1,4 @@
-use super::{AndroidMcpAuthWatchManager, McpAuthBackendPort};
+use super::{AndroidMcpAuthWatchManager, CursorDashboardMcpAuthBackend, McpAuthBackendPort};
 use fabushi_android_shared::node::mcp::mcp_auth_watch_lifecycle::{
     classify_backend_auth_status, gate_auth_server, McpAuthPollOutcome, McpAuthPollSettlement,
     McpAuthPollTick, McpAuthServerGate, McpAuthServerSnapshot, McpAuthStatusDecision,
@@ -20,6 +20,15 @@ pub trait McpAuthAdminPolicyPort: Send + Sync {
         &self,
         server_id: &str,
     ) -> Result<Option<McpAuthServerSnapshot>, String>;
+}
+
+impl McpAuthAdminPolicyPort for CursorDashboardMcpAuthBackend {
+    fn fresh_server_snapshot(
+        &self,
+        server_id: &str,
+    ) -> Result<Option<McpAuthServerSnapshot>, String> {
+        CursorDashboardMcpAuthBackend::fresh_server_snapshot(self, server_id)
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
