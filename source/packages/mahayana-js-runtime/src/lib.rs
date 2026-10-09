@@ -1183,6 +1183,11 @@ const RUNTIME_PRELUDE: &str = r#"
   globalThis.__mahayanaForgetModule = pluginId => { modules.delete(pluginId); };
   globalThis.__mahayanaActivePlugins = () => JSON.stringify([...plugins.keys()]);
   globalThis.__mahayanaTools = () => JSON.stringify([...tools.keys()]);
+  globalThis.__mahayanaPluginTools = pluginId => JSON.stringify(
+    [...tools.entries()]
+      .filter(([, entry]) => String(entry.owner) === String(pluginId))
+      .map(([name]) => name)
+  );
 })();
 "#;
 
@@ -2027,6 +2032,18 @@ impl DeepSeekJsHost {
 
     pub fn registered_tools(&self) -> Result<Vec<String>, JsRuntimeError> {
         let json = self.call_string_function("__mahayanaTools", ())?;
+        serde_json::from_str(&json)
+            .map_err(|error| JsRuntimeError::InvalidPlugin(error.to_string()))
+    }
+
+    pub fn registered_tools_for_plugin(
+        &self,
+        plugin_id: &str,
+    ) -> Result<Vec<String>, JsRuntimeError> {
+        let json = self.call_string_function(
+            "__mahayanaPluginTools",
+            (plugin_id.to_string(),),
+        )?;
         serde_json::from_str(&json)
             .map_err(|error| JsRuntimeError::InvalidPlugin(error.to_string()))
     }
