@@ -5,7 +5,7 @@ use fabushi_android_shared::node::mcp::mcp_auth_watch_lifecycle::{
     McpAuthWatchCompletion, PendingMcpAuthWatch,
 };
 use fabushi_android_shared::node::mcp::mcp_server_id::parse_i32_mcp_server_id;
-use std::collections::VecDeque;
+use std::collections::{BTreeSet, VecDeque};
 use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc, Mutex,
@@ -61,6 +61,7 @@ pub enum McpAuthenticateResult {
 pub struct AndroidMcpAuthWatchOwner {
     manager: Arc<Mutex<AndroidMcpAuthWatchManager>>,
     events: Arc<Mutex<VecDeque<McpAuthOwnerEvent>>>,
+    announced_completions: Arc<Mutex<BTreeSet<String>>>,
     stop: Arc<AtomicBool>,
     backend: Arc<dyn McpAuthBackendPort>,
     policy: Arc<dyn McpAuthAdminPolicyPort>,
@@ -74,9 +75,11 @@ impl AndroidMcpAuthWatchOwner {
         policy: Arc<dyn McpAuthAdminPolicyPort>,
     ) -> Result<Self, String> {
         let events = Arc::new(Mutex::new(VecDeque::new()));
+        let announced_completions = Arc::new(Mutex::new(BTreeSet::new()));
         let stop = Arc::new(AtomicBool::new(false));
         let manager_for_worker = Arc::clone(&manager);
         let events_for_worker = Arc::clone(&events);
+        let announced_for_worker = Arc::clone(&announced_completions);
         let stop_for_worker = Arc::clone(&stop);
         let backend_for_worker = Arc::clone(&backend);
         let policy_for_worker = Arc::clone(&policy);
@@ -84,12 +87,22 @@ impl AndroidMcpAuthWatchOwner {
             .name("fabushi-mcp-auth-watch-owner".into())
             .spawn(move || {
                 while !stop_for_worker.load(Ordering::Acquire) {
+                    announce_pending_completions(
+                        &manager_for_worker,
+                        &events_for_worker,
+                        &announced_for_worker,
+                    );
                     advance_all(
                         &manager_for_worker,
                         backend_for_worker.as_ref(),
                         policy_for_worker.as_ref(),
                         &events_for_worker,
                         system_now_ms(),
+                    );
+                    announce_pending_completions(
+                        &manager_for_worker,
+                        &events_for_worker,
+                        &announced_for_worker,
                     );
                     let mut remaining = OWNER_TICK_MS;
                     while remaining > 0 && !stop_for_worker.load(Ordering::Acquire) {
@@ -103,6 +116,7 @@ impl AndroidMcpAuthWatchOwner {
         Ok(Self {
             manager,
             events,
+            announced_completions,
             stop,
             backend,
             policy,
@@ -141,11 +155,21 @@ impl AndroidMcpAuthWatchOwner {
     }
 
     pub fn drain_events(&self) -> Result<Vec<McpAuthOwnerEvent>, String> {
-        let mut events = self
-            .events
-            .lock()
-            .map_err(|_| "MCP auth owner event queue lock poisoned".to_string())?;
-        Ok(events.drain(..).collect())
+        let drained = {
+            let mut events = self
+                .events
+                .lock()
+                .map_err(|_| "MCP auth owner event queue lock poisoned".to_string())?;
+            events.drain(..).collect::<Vec<_>>()
+        };
+        if let Ok(mut announced) = self.announced_completions.lock() {
+            for event in &drained {
+                if let McpAuthOwnerEvent::Completed(completion) = event {
+                    announced.remove(&completion_key(completion));
+                }
+            }
+        }
+        Ok(drained)
     }
 
     pub fn stop(&mut self) {
@@ -232,6 +256,49 @@ pub fn authenticate_and_register(
         McpAuthStatusDecision::NotSupported { detail } => {
             Ok(McpAuthenticateResult::NotSupported(detail))
         }
+    }
+}
+
+fn completion_key(completion: &McpAuthWatchCompletion) -> String {
+    format!(
+        "{}::{}::{}",
+        completion.generation, completion.server_id, completion.account_key
+    )
+}
+
+fn announce_pending_completions(
+    manager: &Arc<Mutex<AndroidMcpAuthWatchManager>>,
+    events: &Arc<Mutex<VecDeque<McpAuthOwnerEvent>>>,
+    announced: &Arc<Mutex<BTreeSet<String>>>,
+) {
+    let pending = match manager.lock() {
+        Ok(manager) => manager.pending_completions(),
+        Err(_) => return,
+    };
+    let mut announced = match announced.lock() {
+        Ok(announced) => announced,
+        Err(_) => return,
+    };
+    let mut events = match events.lock() {
+        Ok(events) => events,
+        Err(_) => return,
+    };
+    for completion in pending {
+        let key = completion_key(&completion);
+        if announced.contains(&key) {
+            continue;
+        }
+        let already_queued = events.iter().any(|event| {
+            matches!(
+                event,
+                McpAuthOwnerEvent::Completed(queued)
+                    if completion_key(queued) == key
+            )
+        });
+        if !already_queued {
+            events.push_back(McpAuthOwnerEvent::Completed(completion));
+        }
+        announced.insert(key);
     }
 }
 
