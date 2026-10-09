@@ -34,7 +34,11 @@ jobs:
           mkdir -p evidence
           printf 'head=%s\nstrict_outcome=%s\n' "$SOURCE_SHA" "${{ steps.strict.outcome }}" > evidence/architecture-gate.txt
       - name: Rust contract/runtime tests
-        run: cargo test --workspace --all-targets
+        run: |
+          set -eu
+          cargo test --workspace --all-targets
+          cargo test -p fabushi-mahayana-host --features ci-account-session-import
+          cargo test -p fabushi-android-host-jni --features ci-account-session-import
       - uses: actions/upload-artifact@v4
         with:
           name: architecture-contract-evidence-${{ env.SOURCE_SHA }}
@@ -66,10 +70,13 @@ jobs:
           ANDROID_NDK_ROOT: ${{ env.ANDROID_HOME }}/ndk/28.2.13676358
         run: |
           set -eu
-          rm -rf mobile/android/app/src/main/jniLibs
+          rm -rf mobile/android/app/src/main/jniLibs mobile/android/app/src/ciAcceptance/jniLibs
           cargo ndk -t arm64-v8a -t x86_64 -o mobile/android/app/src/main/jniLibs build --release -p fabushi-android-host-jni
+          cargo ndk -t arm64-v8a -t x86_64 -o mobile/android/app/src/ciAcceptance/jniLibs build --release -p fabushi-android-host-jni --features ci-account-session-import
           test -s mobile/android/app/src/main/jniLibs/arm64-v8a/libmahayana_app_host.so
           test -s mobile/android/app/src/main/jniLibs/x86_64/libmahayana_app_host.so
+          test -s mobile/android/app/src/ciAcceptance/jniLibs/arm64-v8a/libmahayana_app_host.so
+          test -s mobile/android/app/src/ciAcceptance/jniLibs/x86_64/libmahayana_app_host.so
       - name: Compile, unit-test, lint, and assemble production-path acceptance APKs
         working-directory: mobile/android
         run: |
@@ -81,15 +88,27 @@ jobs:
           set -euo pipefail
           GITHUB_APK="$(find app/build/outputs/apk/githubRelease -type f -name '*.apk' -print -quit)"
           GITHUB_AAB="$(find app/build/outputs/bundle/githubRelease -type f -name '*.aab' -print -quit)"
+          CI_APK="$(find app/build/outputs/apk/ciAcceptance -type f -name '*.apk' -print -quit)"
           test -s "$GITHUB_APK"
           test -s "$GITHUB_AAB"
+          test -s "$CI_APK"
           unzip -p "$GITHUB_APK" 'classes*.dex' > /tmp/fabushi-github-release.dex
+          unzip -p "$GITHUB_APK" 'lib/*/libmahayana_app_host.so' > /tmp/fabushi-github-release-native.so
+          unzip -p "$CI_APK" 'lib/*/libmahayana_app_host.so' > /tmp/fabushi-ci-acceptance-native.so
           if grep -aFq 'FABUSHI_CI_ACCOUNT_SESSION_FILE' /tmp/fabushi-github-release.dex; then
-            echo "public githubRelease APK still contains CI account session bootstrap marker" >&2
+            echo "public githubRelease APK still contains Kotlin CI account bootstrap marker" >&2
             exit 1
           fi
           if grep -aFq 'fabushi-ci-session.json' /tmp/fabushi-github-release.dex; then
             echo "public githubRelease APK still contains CI session filename marker" >&2
+            exit 1
+          fi
+          if grep -aFq 'FABUSHI_CI_ACCOUNT_SESSION_FILE' /tmp/fabushi-github-release-native.so; then
+            echo "public githubRelease native Host still contains CI account import capability" >&2
+            exit 1
+          fi
+          if ! grep -aFq 'FABUSHI_CI_ACCOUNT_SESSION_FILE' /tmp/fabushi-ci-acceptance-native.so; then
+            echo "ciAcceptance native Host is missing its explicitly enabled CI account import capability" >&2
             exit 1
           fi
           RELEASE_APK="fabushi-android-github-release-${SOURCE_SHA}.apk"
@@ -115,7 +134,9 @@ jobs:
           printf 'head=%s\n' "$SOURCE_SHA" > artifact-identity.txt
           cat exact-head-apks.sha256 >> artifact-identity.txt
           find app/src/main/jniLibs -type f -name 'libmahayana_app_host.so' -print0 | sort -z | xargs -0 sha256sum > native-jni.sha256
+          find app/src/ciAcceptance/jniLibs -type f -name 'libmahayana_app_host.so' -print0 | sort -z | xargs -0 sha256sum > ci-native-jni.sha256
           cat native-jni.sha256 >> artifact-identity.txt
+          cat ci-native-jni.sha256 >> artifact-identity.txt
       - uses: actions/upload-artifact@v4
         with:
           name: android-exact-head-apks-${{ env.SOURCE_SHA }}
@@ -126,6 +147,7 @@ jobs:
             mobile/android/exact-head-apks.sha256
             mobile/android/artifact-identity.txt
             mobile/android/native-jni.sha256
+            mobile/android/ci-native-jni.sha256
             mobile/android/github-release-security.txt
             mobile/android/fabushi-android-github-release-${{ env.SOURCE_SHA }}.apk
             mobile/android/fabushi-android-github-release-${{ env.SOURCE_SHA }}.aab
