@@ -65,7 +65,7 @@ android {
             initWith release
             matchingFallbacks = ['release']
             buildConfigField 'boolean', 'GITHUB_UPDATES_ENABLED', 'true'
-            buildConfigField 'boolean', 'CI_ACCOUNT_SESSION_IMPORT_ENABLED', 'true'
+            buildConfigField 'boolean', 'CI_ACCOUNT_SESSION_IMPORT_ENABLED', 'false'
             if (releaseKeystore) signingConfig signingConfigs.release
         }
         ciAcceptance {
