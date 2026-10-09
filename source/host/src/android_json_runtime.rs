@@ -1342,24 +1342,30 @@ impl AndroidJsonHost {
         let identity = match (
             params.get("serverId").and_then(Value::as_str),
             params.get("accountKey").and_then(Value::as_str),
+            params.get("generation").and_then(Value::as_u64),
         ) {
-            (Some(server_id), Some(account_key))
-                if !server_id.trim().is_empty() && !account_key.trim().is_empty() =>
+            (Some(server_id), Some(account_key), Some(generation))
+                if !server_id.trim().is_empty()
+                    && !account_key.trim().is_empty()
+                    && generation > 0 =>
             {
-                Some((server_id.trim().to_string(), account_key.trim().to_string()))
+                Some((
+                    server_id.trim().to_string(),
+                    account_key.trim().to_string(),
+                    generation,
+                ))
             }
-            (None, None) => None,
-            _ => return Err("MCP OAuth completion serverId/accountKey must be supplied together".into()),
+            (None, None, None) => None,
+            _ => {
+                return Err(
+                    "MCP OAuth completion identity must include serverId, accountKey, and generation"
+                        .into(),
+                )
+            }
         };
 
         if let Some(code) = code {
-            if let Some(owner) = self.mcp_auth_owner.as_ref() {
-                owner.complete_oauth(&state, code)?;
-            } else if self.mode == AndroidHostMode::Production {
-                return Err("MCP OAuth backend owner is unavailable".into());
-            }
-
-            let watch = if let Some((server_id, account_key)) = identity.as_ref() {
+            let watch = if let Some((server_id, account_key, generation)) = identity.as_ref() {
                 let manager = self
                     .mcp_auth_watches
                     .lock()
@@ -1371,19 +1377,23 @@ impl AndroidJsonHost {
                         "status": "stale",
                     }));
                 };
-                if let Some(generation) = params.get("generation").and_then(Value::as_u64) {
-                    if watch.generation != generation {
-                        return Ok(json!({
-                            "provider": provider,
-                            "state": state,
-                            "status": "stale",
-                        }));
-                    }
+                if watch.generation != *generation {
+                    return Ok(json!({
+                        "provider": provider,
+                        "state": state,
+                        "status": "stale",
+                    }));
                 }
                 Some(watch)
             } else {
                 None
             };
+
+            if let Some(owner) = self.mcp_auth_owner.as_ref() {
+                owner.complete_oauth(&state, code)?;
+            } else if self.mode == AndroidHostMode::Production {
+                return Err("MCP OAuth backend owner is unavailable".into());
+            }
             let server_id = watch.as_ref().map(|value| value.server_id.clone());
             let server_name = watch.as_ref().map(|value| value.server_name.clone());
             let account_key = watch.as_ref().map(|value| value.account_key.clone());
@@ -1411,22 +1421,20 @@ impl AndroidJsonHost {
             }));
         }
 
-        let cancelled = if let Some((server_id, account_key)) = identity.as_ref() {
+        let cancelled = if let Some((server_id, account_key, generation)) = identity.as_ref() {
             let mut manager = self
                 .mcp_auth_watches
                 .lock()
                 .map_err(|_| "MCP auth watch manager lock poisoned".to_string())?;
-            if let Some(generation) = params.get("generation").and_then(Value::as_u64) {
-                if manager
-                    .watch(server_id, account_key)
-                    .is_none_or(|watch| watch.generation != generation)
-                {
-                    return Ok(json!({
-                        "provider":provider,
-                        "state":state,
-                        "status":"stale",
-                    }));
-                }
+            if manager
+                .watch(server_id, account_key)
+                .is_none_or(|watch| watch.generation != *generation)
+            {
+                return Ok(json!({
+                    "provider":provider,
+                    "state":state,
+                    "status":"stale",
+                }));
             }
             manager.cancel_watch(server_id, account_key)?
         } else {
