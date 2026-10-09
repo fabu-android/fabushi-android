@@ -134,6 +134,123 @@ pub enum AndroidHostMode {
     Test,
 }
 
+#[derive(Clone)]
+struct RuntimeCallCancellationEntry {
+    plugin_id: String,
+    required_permissions: BTreeSet<String>,
+    token: Arc<AtomicBool>,
+}
+
+#[derive(Default)]
+struct RuntimeCallCancellationState {
+    pending: BTreeMap<String, RuntimeCallCancellationEntry>,
+    blocked_plugins: BTreeSet<String>,
+    blocked_permissions: BTreeSet<(String, String)>,
+}
+
+#[derive(Default)]
+pub struct RuntimeCallCancellationRegistry {
+    state: Mutex<RuntimeCallCancellationState>,
+}
+
+impl RuntimeCallCancellationRegistry {
+    pub fn register(
+        &self,
+        request_id: &str,
+        plugin_id: &str,
+        required_permissions: BTreeSet<String>,
+    ) -> Result<Arc<AtomicBool>, String> {
+        let mut state = self.state.lock().map_err(|_| "runtime call cancellation registry lock poisoned")?;
+        if state.blocked_plugins.contains(plugin_id)
+            || required_permissions.iter().any(|permission| {
+                state.blocked_permissions.contains(&(plugin_id.to_string(), permission.clone()))
+            })
+        {
+            return Err("runtime.call is fenced by a pending stop or permission revocation".into());
+        }
+        if state.pending.contains_key(request_id) {
+            return Err("duplicate runtime.call request identity".into());
+        }
+        let token = Arc::new(AtomicBool::new(false));
+        state.pending.insert(
+            request_id.to_string(),
+            RuntimeCallCancellationEntry {
+                plugin_id: plugin_id.to_string(),
+                required_permissions,
+                token: token.clone(),
+            },
+        );
+        Ok(token)
+    }
+
+    pub fn complete(&self, request_id: &str) {
+        if let Ok(mut state) = self.state.lock() {
+            state.pending.remove(request_id);
+        }
+    }
+
+    pub fn signal_request(&self, request_id: &str) -> bool {
+        let Ok(state) = self.state.lock() else { return false; };
+        let Some(entry) = state.pending.get(request_id) else { return false; };
+        entry.token.store(true, Ordering::Release);
+        true
+    }
+
+    pub fn signal_plugin(&self, plugin_id: &str) -> usize {
+        let Ok(mut state) = self.state.lock() else { return 0; };
+        state.blocked_plugins.insert(plugin_id.to_string());
+        let mut signalled = 0;
+        for entry in state.pending.values() {
+            if entry.plugin_id == plugin_id {
+                entry.token.store(true, Ordering::Release);
+                signalled += 1;
+            }
+        }
+        signalled
+    }
+
+    pub fn signal_permission(&self, plugin_id: &str, permission: &str) -> usize {
+        let Ok(mut state) = self.state.lock() else { return 0; };
+        state.blocked_permissions.insert((plugin_id.to_string(), permission.to_string()));
+        let mut signalled = 0;
+        for entry in state.pending.values() {
+            if entry.plugin_id == plugin_id && entry.required_permissions.contains(permission) {
+                entry.token.store(true, Ordering::Release);
+                signalled += 1;
+            }
+        }
+        signalled
+    }
+
+    pub fn signal_all(&self) -> usize {
+        let Ok(state) = self.state.lock() else { return 0; };
+        for entry in state.pending.values() {
+            entry.token.store(true, Ordering::Release);
+        }
+        state.pending.len()
+    }
+
+    pub fn is_blocked(&self, plugin_id: &str, required_permissions: &BTreeSet<String>) -> bool {
+        let Ok(state) = self.state.lock() else { return true; };
+        state.blocked_plugins.contains(plugin_id)
+            || required_permissions.iter().any(|permission| {
+                state.blocked_permissions.contains(&(plugin_id.to_string(), permission.clone()))
+            })
+    }
+
+    pub fn clear_plugin_block(&self, plugin_id: &str) {
+        if let Ok(mut state) = self.state.lock() {
+            state.blocked_plugins.remove(plugin_id);
+        }
+    }
+
+    pub fn clear_permission_block(&self, plugin_id: &str, permission: &str) {
+        if let Ok(mut state) = self.state.lock() {
+            state.blocked_permissions.remove(&(plugin_id.to_string(), permission.to_string()));
+        }
+    }
+}
+
 pub struct AndroidJsonHost {
     mode: AndroidHostMode,
     account: AndroidAccountService,
@@ -161,7 +278,7 @@ pub struct AndroidJsonHost {
     js_runtime: Option<DeepSeekJsHost>,
     runtime_tools: BTreeMap<String, BTreeSet<String>>,
     runtime_generations: BTreeMap<String, u64>,
-    runtime_call_cancellations: BTreeMap<String, (String, BTreeSet<String>, Arc<AtomicBool>)>,
+    runtime_call_cancellations: Arc<RuntimeCallCancellationRegistry>,
     capability_broker: CapabilityBroker,
     automation_runtime: AutomationRuntime,
     webauthn: WebAuthnProxyExtension,
@@ -245,7 +362,7 @@ impl AndroidJsonHost {
             js_runtime: None,
             runtime_tools: BTreeMap::new(),
             runtime_generations: BTreeMap::new(),
-            runtime_call_cancellations: BTreeMap::new(),
+            runtime_call_cancellations: Arc::new(RuntimeCallCancellationRegistry::default()),
             capability_broker: CapabilityBroker::open(app_data_dir.join("capability-broker.json"), now_ms())
                 .unwrap_or_else(|error| panic!("failed to open durable Android Capability Broker: {error}")),
             automation_runtime: AutomationRuntime::open(app_data_dir.join("automation-runtime.json"), now_ms())
@@ -253,6 +370,10 @@ impl AndroidJsonHost {
             webauthn: WebAuthnProxyExtension::new(WebAuthnProxyExtensionConfig::default()),
             webauthn_provider_queues: BTreeMap::new(),
         }
+    }
+
+    pub fn runtime_call_control(&self) -> Arc<RuntimeCallCancellationRegistry> {
+        Arc::clone(&self.runtime_call_cancellations)
     }
 
     pub fn dispatch(&mut self, method: &str, params: &Value) -> Result<Value, String> {
@@ -412,11 +533,23 @@ impl AndroidJsonHost {
         Ok(with_account_session_mutation(result, mutation))
     }
 
-    fn current_turn_account_fence(&mut self) -> Result<String, String> {
+    fn current_turn_account_fence(&self) -> Result<String, String> {
         if self.mode == AndroidHostMode::Test {
-            return Ok("human:android-test".into());
+            if !self.logged_in {
+                return Err("Sign in to Fabushi to use account-scoped capabilities.".into());
+            }
+            return Ok("session:test:android".into());
         }
-        self.current_messaging_identity().map(|(identity, _)| identity)
+        #[cfg(feature = "ci-account-session-import")]
+        if let Some(identity) = self.ci_session_identity.as_ref() {
+            if !self.logged_in {
+                return Err("Sign in to Fabushi to use account-scoped capabilities.".into());
+            }
+            let material = format!("{}\n{}", identity.session_id, identity.device_id);
+            return Ok(format!("session:{}", crate::sha256::sha256_hex(material.as_bytes())));
+        }
+        self.account.session_fence()
+            .ok_or_else(|| "Sign in to Fabushi to use account-scoped capabilities.".into())
     }
 
     fn current_messaging_identity(
@@ -1030,11 +1163,13 @@ impl AndroidJsonHost {
                 } else {
                     request_id
                 };
+                let target = command.get("target").cloned().unwrap_or(Value::Null);
                 self.capability_broker.request_approval(
                     &approval_id,
                     approval_request_id,
                     &operation_id,
                     capability,
+                    target.clone(),
                     &account_fence,
                     now_ms(),
                 )?;
@@ -1045,6 +1180,7 @@ impl AndroidJsonHost {
                     "operationId":operation_id,
                     "approvalId":approval_id,
                     "capability":capability,
+                    "target":target,
                     "accountFence":account_fence,
                     "reason":command.get("reason").cloned().unwrap_or(Value::Null)
                 }));
@@ -1733,6 +1869,7 @@ impl AndroidJsonHost {
         self.plugin_permissions
             .grant(plugin_id, &active.requested_permissions, permission)
             .map_err(|error| format!("plugin permission grant rejected: {error}"))?;
+        self.runtime_call_cancellations.clear_permission_block(plugin_id, permission);
         Ok(json!({
             "pluginId":plugin_id,
             "permission":permission,
@@ -1752,21 +1889,16 @@ impl AndroidJsonHost {
         {
             return Err("plugin is not installed".into());
         }
+        self.runtime_call_cancellations.signal_permission(plugin_id, permission);
         self.plugin_permissions
             .revoke(plugin_id, permission)
             .map_err(|error| format!("plugin permission revoke failed: {error}"))?;
-        for (pending_plugin, pending_capabilities, cancelled) in
-            self.runtime_call_cancellations.values()
-        {
-            if pending_plugin == plugin_id && pending_capabilities.contains(permission) {
-                cancelled.store(true, Ordering::Release);
-            }
-        }
         self.capability_broker.cancel_plugin(
             plugin_id,
             "capability grant revoked while call was pending",
             now_ms(),
         )?;
+        self.runtime_call_cancellations.clear_permission_block(plugin_id, permission);
         Ok(json!({
             "pluginId":plugin_id,
             "permission":permission,
@@ -1843,6 +1975,7 @@ impl AndroidJsonHost {
         }
         let generation = self.runtime_generations.entry(plugin_id.clone()).or_insert(0);
         *generation = generation.saturating_add(1);
+        self.runtime_call_cancellations.clear_plugin_block(&plugin_id);
         Ok(json!({
             "pluginId":plugin_id,
             "runtime":active.runtime,
@@ -1854,11 +1987,7 @@ impl AndroidJsonHost {
 
     fn runtime_stop(&mut self, params: &Value) -> Result<Value, String> {
         let plugin_id = required_string(params, "pluginId")?.to_string();
-        for (pending_plugin, _, cancelled) in self.runtime_call_cancellations.values() {
-            if pending_plugin == &plugin_id {
-                cancelled.store(true, Ordering::Release);
-            }
-        }
+        self.runtime_call_cancellations.signal_plugin(&plugin_id);
         self.capability_broker.cancel_plugin(&plugin_id, "runtime stopped", now_ms())?;
         let generation = self.runtime_generations.entry(plugin_id.clone()).or_insert(0);
         *generation = generation.saturating_add(1);
@@ -1907,9 +2036,7 @@ impl AndroidJsonHost {
 
     fn runtime_cancel(&mut self, params: &Value) -> Result<Value, String> {
         let request_id = required_string(params, "requestId")?;
-        if let Some((_, _, token)) = self.runtime_call_cancellations.get(request_id) {
-            token.store(true, Ordering::Release);
-        }
+        self.runtime_call_cancellations.signal_request(request_id);
         let cancelled = self.capability_broker.cancel_request(
             request_id,
             params.get("reason").and_then(Value::as_str).unwrap_or("runtime call cancelled"),
@@ -1936,23 +2063,22 @@ impl AndroidJsonHost {
             .map_err(|error| format!("failed to inspect installed plugin: {error}"))?
             .ok_or("plugin is not installed")?;
         let grants = self.plugin_permissions.grants_for(&plugin_id);
-        let capability = if active.requested_permissions.is_empty() {
-            "plugin.runtime.call".to_string()
-        } else {
-            active.requested_permissions.join(",")
-        };
+        let capability = format!("plugin.{plugin_id}.tool.{tool}");
         let required_permissions = active
             .requested_permissions
             .iter()
             .cloned()
             .collect::<BTreeSet<_>>();
+        if self.runtime_call_cancellations.is_blocked(&plugin_id, &required_permissions) {
+            return Err("runtime.call is fenced by a pending stop or permission revocation".into());
+        }
         let all_declared_granted = required_permissions
             .iter()
             .all(|permission| grants.contains(permission));
         let generation = *self.runtime_generations.get(&plugin_id).ok_or("plugin runtime is not started")?;
         let registered = self.runtime_tools.get(&plugin_id).is_some_and(|tools| tools.contains(&tool));
         if !registered { return Err("runtime.call tool is not registered by this plugin instance".into()); }
-        let (account_fence, _) = self.current_messaging_identity()?;
+        let account_fence = self.current_turn_account_fence()?;
         match self.capability_broker.authorize(
             &request_id,&plugin_id,&capability,&tool,&account_fence,generation,
             true,all_declared_granted,now_ms())? {
@@ -1964,32 +2090,39 @@ impl AndroidJsonHost {
         let started=now_ms();
         self.capability_broker.begin(PendingCapabilityCall{
             request_id:request_id.clone(),plugin_id:plugin_id.clone(),capability:capability.clone(),
-            tool:tool.clone(),arguments:arguments.clone(),account_fence:account_fence.clone(),
+            tool:tool.clone(),arguments:arguments.clone(),required_permissions:required_permissions.clone(),
+            account_fence:account_fence.clone(),
             runtime_generation:generation,started_at_ms:started,deadline_at_ms:started.saturating_add(timeout_ms),
             state:"pending".into(),
         })?;
         self.capability_broker.assert_current(&request_id,&plugin_id,&account_fence,generation,now_ms())?;
-        let cancellation = Arc::new(AtomicBool::new(false));
-        if self.runtime_call_cancellations.insert(
-            request_id.clone(),
-            (plugin_id.clone(), required_permissions.clone(), cancellation.clone()),
-        ).is_some() {
-            let _ = self.capability_broker.cancel_request(
-                &request_id,
-                "duplicate runtime cancellation identity",
-                now_ms(),
-            );
-            return Err("duplicate runtime.call request identity".into());
+        let runtime = self.js_runtime.as_ref().ok_or("plugin runtime is not started")?;
+        let cancellation = match self.runtime_call_cancellations.register(
+            &request_id,
+            &plugin_id,
+            required_permissions.clone(),
+        ) {
+            Ok(token) => token,
+            Err(error) => {
+                let _ = self.capability_broker.cancel_request(
+                    &request_id,
+                    "runtime cancellation/control registration failed",
+                    now_ms(),
+                );
+                return Err(error);
+            }
+        };
+        let mut result = runtime.call_plugin_tool_json_bounded(
+            &plugin_id,
+            &tool,
+            &arguments,
+            Duration::from_millis(timeout_ms),
+            cancellation.as_ref(),
+        );
+        if cancellation.load(Ordering::Acquire) && result.is_ok() {
+            result = Err(mahayana_js_runtime::JsRuntimeError::Cancelled);
         }
-        let mut result = self.js_runtime.as_ref().ok_or("plugin runtime is not started")?
-            .call_plugin_tool_json_bounded(
-                &plugin_id,
-                &tool,
-                &arguments,
-                Duration::from_millis(timeout_ms),
-                cancellation.as_ref(),
-            );
-        self.runtime_call_cancellations.remove(&request_id);
+        self.runtime_call_cancellations.complete(&request_id);
         let finished=now_ms();
 
         let active_after = self.plugin_installer.active(&plugin_id)
@@ -2005,7 +2138,7 @@ impl AndroidJsonHost {
             .iter()
             .all(|permission| grants_after.contains(permission));
         let current_generation = self.runtime_generations.get(&plugin_id).copied();
-        let current_account = self.current_messaging_identity().map(|(identity, _)| identity);
+        let current_account = self.current_turn_account_fence();
         if !release_unchanged
             || !grant_still_present
             || current_generation != Some(generation)
