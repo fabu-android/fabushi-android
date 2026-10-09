@@ -119,6 +119,22 @@ impl CapabilityBroker {
         self.persist()
     }
 
+
+    pub fn cancel_request(&mut self, request_id: &str, reason: &str, now_ms: u64) -> Result<bool, String> {
+        let Some(call) = self.state.pending.get(request_id) else { return Ok(false); };
+        if call.state != "pending" { return Ok(false); }
+        self.settle(request_id, "cancelled", Some(reason.into()), now_ms)?;
+        Ok(true)
+    }
+
+    #[cfg(test)]
+    fn request_state(&self, request_id: &str) -> Option<&str> {
+        self.state.pending.get(request_id).map(|p| p.state.as_str())
+    }
+
+    #[cfg(test)]
+    fn audit_len(&self) -> usize { self.state.audit.len() }
+
     pub fn cancel_plugin(&mut self, plugin_id: &str, reason: &str, now_ms: u64) -> Result<usize, String> {
         let ids = self.state.pending.iter().filter_map(|(id,p)| (p.plugin_id==plugin_id && p.state=="pending").then_some(id.clone())).collect::<Vec<_>>();
         for id in &ids { self.settle(id, "cancelled", Some(reason.into()), now_ms)?; }
@@ -167,6 +183,35 @@ mod tests {
         b.begin(c.clone()).unwrap(); assert!(b.begin(c).is_err());
         assert!(b.assert_current("r","p","a",3,2).is_err());
     }
+
+    #[test] fn timeout_and_account_fence_fail_closed() {
+        let (_d,mut b)=broker();
+        b.begin(PendingCapabilityCall{request_id:"r".into(),plugin_id:"p".into(),capability:"c".into(),tool:"t".into(),arguments:Value::Null,account_fence:"acct-1".into(),runtime_generation:1,started_at_ms:10,deadline_at_ms:20,state:"pending".into()}).unwrap();
+        assert!(b.assert_current("r","p","acct-2",1,15).is_err());
+        assert!(b.assert_current("r","p","acct-1",1,21).is_err());
+    }
+
+    #[test] fn cancellation_is_single_terminal_and_persists() {
+        let (d,mut b)=broker();
+        b.begin(PendingCapabilityCall{request_id:"r".into(),plugin_id:"p".into(),capability:"c".into(),tool:"t".into(),arguments:Value::Null,account_fence:"a".into(),runtime_generation:1,started_at_ms:1,deadline_at_ms:100,state:"pending".into()}).unwrap();
+        assert!(b.cancel_request("r","user cancelled",2).unwrap());
+        assert!(!b.cancel_request("r","duplicate cancel",3).unwrap());
+        assert_eq!(b.request_state("r"),Some("cancelled"));
+        let audit=b.audit_len();
+        drop(b);
+        let b=CapabilityBroker::open(d.path().join("broker.json"),4).unwrap();
+        assert_eq!(b.request_state("r"),Some("cancelled"));
+        assert_eq!(b.audit_len(),audit);
+    }
+
+    #[test] fn audit_survives_restart() {
+        let (d,mut b)=broker();
+        b.authorize("1","p","c","t","a",1,true,true,1).unwrap();
+        let before=b.audit_len(); drop(b);
+        let b=CapabilityBroker::open(d.path().join("broker.json"),2).unwrap();
+        assert_eq!(b.audit_len(),before);
+    }
+
     #[test] fn restart_turns_inflight_side_effect_into_outcome_unknown() {
         let (d,mut b)=broker();
         b.begin(PendingCapabilityCall{request_id:"r".into(),plugin_id:"p".into(),capability:"c".into(),tool:"t".into(),arguments:Value::Null,account_fence:"a".into(),runtime_generation:1,started_at_ms:1,deadline_at_ms:100,state:"pending".into()}).unwrap();

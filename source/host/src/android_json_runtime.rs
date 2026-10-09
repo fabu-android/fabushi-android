@@ -334,6 +334,7 @@ impl AndroidJsonHost {
             "runtime.stop" => self.runtime_stop(params),
             "runtime.tools" => self.runtime_tools(params),
             "runtime.call" => self.runtime_call(params),
+            "runtime.cancel" => self.runtime_cancel(params),
             "feature.messaging.access.issue" => self.messaging_access_issue(params),
             "feature.messaging.blob.read" => self.messaging_blob_read(params),
             "feature.messaging.execute" => self.messaging_execute(params),
@@ -1593,6 +1594,16 @@ impl AndroidJsonHost {
         }))
     }
 
+
+    fn runtime_cancel(&mut self, params: &Value) -> Result<Value, String> {
+        let request_id = required_string(params, "requestId")?;
+        let cancelled = self.capability_broker.cancel_request(
+            request_id,
+            params.get("reason").and_then(Value::as_str).unwrap_or("runtime call cancelled"),
+            now_ms(),
+        )?;
+        Ok(json!({"requestId":request_id,"cancelled":cancelled}))
+    }
 
     fn runtime_call(&mut self, params: &Value) -> Result<Value, String> {
         let plugin_id = required_string(params, "pluginId")?.to_string();
