@@ -57,9 +57,10 @@ impl AndroidMcpAuthWatchManager {
         };
         let removed_watches = manager.lifecycle.prune_expired(now_ms);
         let before_states = manager.pending_oauth_states.len();
+        let lifecycle = &manager.lifecycle;
         manager.pending_oauth_states.retain(|binding| {
             binding.expires_at_ms > now_ms
-                && manager.lifecycle.watch(&binding.server_id, &binding.account_key)
+                && lifecycle.watch(&binding.server_id, &binding.account_key)
                     .is_some_and(|watch| watch.generation == binding.generation)
         });
         if removed_watches > 0 || manager.pending_oauth_states.len() != before_states {
@@ -285,9 +286,10 @@ impl AndroidMcpAuthWatchManager {
     pub fn prune_expired(&mut self, now_ms: u64) -> Result<usize, String> {
         let removed = self.lifecycle.prune_expired(now_ms);
         let before_states = self.pending_oauth_states.len();
+        let lifecycle = &self.lifecycle;
         self.pending_oauth_states.retain(|binding| {
             binding.expires_at_ms > now_ms
-                && self.lifecycle.watch(&binding.server_id, &binding.account_key)
+                && lifecycle.watch(&binding.server_id, &binding.account_key)
                     .is_some_and(|watch| watch.generation == binding.generation)
         });
         if removed > 0 || self.pending_oauth_states.len() != before_states {
