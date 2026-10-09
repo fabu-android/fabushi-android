@@ -689,7 +689,7 @@ mod tests {
             true,
             "work",
         );
-        assert!(request.windows(2).any(|window| window == [0x2a, 0x01]));
+        assert!(request.windows(2).any(|window| window == [0x28, 0x01]));
         assert!(request.contains(&0x42));
         let validate =
             encode_validate_mcp_oauth_tokens_request("https://mcp.example.test", "work");
