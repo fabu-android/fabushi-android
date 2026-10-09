@@ -8,7 +8,8 @@ import java.io.File
 
 /**
  * Imports a bounded refresh-token-free GitHub Actions session before the native
- * Mahayana host is created. Only the GitHub-release variant enables this path.
+ * Mahayana host is created.
+ * Only the CI acceptance variant enables this path. Public release variants fail closed.
  * The installed App validates the staged session, moves it into private storage,
  * and sets the process-local variables consumed by the shared Rust product host.
  */
