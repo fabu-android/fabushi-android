@@ -21,16 +21,17 @@ internal class NativeOfflineSpeechTranscriber(private val context: Context) {
     private val generation = AtomicLong(0)
     private val activeRecognizer = AtomicReference<SpeechRecognizer?>(null)
 
-    fun isAvailable(): Boolean =
-        Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
-            SpeechRecognizer.isOnDeviceRecognitionAvailable(context)
+    fun isAvailable(): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return false
+        return SpeechRecognizer.isOnDeviceRecognitionAvailable(context)
+    }
 
     fun start(
         locale: Locale = Locale.getDefault(),
         onResult: (Result<String>) -> Unit,
     ): Result<Unit> = runCatching {
-        check(Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            "此设备的 Android 版本不支持系统离线语音识别"
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
+            error("此设备的 Android 版本不支持系统离线语音识别")
         }
         check(SpeechRecognizer.isOnDeviceRecognitionAvailable(context)) {
             "此设备未提供可用的系统离线语音识别模型"
