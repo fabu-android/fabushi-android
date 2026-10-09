@@ -722,12 +722,14 @@
       "android_disposition": "android-adapted",
       "android_target": [
         "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/presentation/GlobalDharmaCommercePanel.kt",
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/payments/CommerceOperationJournal.kt",
+        "source/android-preload/src/main/kotlin/com/ombhrum/fabushi/androidpreload/miniapp/MiniAppPlatformBridge.kt",
         "source/host/src/android_json_runtime.rs"
       ],
-      "android_owner": "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/presentation/GlobalDharmaCommercePanel.kt",
+      "android_owner": "Android CommerceOperationJournal + canonical server commerce/entitlement APIs; Presentation only initiates and renders state",
       "platform_delta": "Android uses native Compose/platform adapters + typed JNI while preserving canonical Rust owners where platform-independent.",
       "implementation_status": "mapped",
-      "production_wiring": "mapped target(s); production parity not yet established",
+      "production_wiring": "Partial: Global Dharma purchase/restore uses authenticated canonical server APIs. Stable purchase idempotency identity is now account/plugin/sku scoped and durable outside ViewModel memory; canonical entitlement confirmation settles that journal. FabushiPayBilling still has no production caller, and Play Billing pending/restore/refund/revoke lifecycle remains open.",
       "unit_test": "required",
       "contract_test": "required on same exact HEAD",
       "integration_test": "required on same exact HEAD",
@@ -735,7 +737,7 @@
       "device_test": "required on emulator/physical device as applicable",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "platform.request now routes real authenticated /v1/* calls; native billing/restore and end-to-end commerce state remain open."
+      "notes": "COMMERCE-IDEMPOTENCY-JOURNAL-001 closes crash-safe stable purchase identity for the shipping Global Dharma server path. Full Play Billing purchase token reconciliation, refund/revoke handling and packaged account-switch evidence remain open."
     },
     {
       "responsibility_id": "NAVIGATION-NATIVE-001",
@@ -1469,6 +1471,70 @@
       "artifact": null,
       "verification_status": "not-verified",
       "notes": "Implemented only command lifecycle/recovery slice; full REMOTE-COMPUTER-001 remains open."
+    },
+    {
+      "responsibility_id": "COMMERCE-IDEMPOTENCY-JOURNAL-001",
+      "domain": "commerce",
+      "desktop_sources": [
+        {
+          "path": "source/mahayana/mahayana-rs/mahayana-platform-worker/src/worker_api/commerce.rs",
+          "blob_sha": "ed7a3507ccc4f8eb10bfd8222855899315471f41",
+          "symbols": [
+            "commerce quote/purchase/entitlement worker APIs"
+          ]
+        }
+      ],
+      "source_commit": "3bc92400826cc4ca7ac665b467708e22261edc61",
+      "responsibility": "Persist purchase mutation identity by exact account/plugin/SKU before purchase dispatch and reuse it across retries/process death until canonical entitlement confirmation proves terminal success.",
+      "source_owner": "Mahayana platform commerce",
+      "direct_callers": [
+        "GlobalDharmaCommerceViewModel shipping purchase path"
+      ],
+      "downstream_dependencies": [
+        "MiniAppPlatformBridge purchase/restore",
+        "canonical server entitlement"
+      ],
+      "state_owner": "Android CommerceOperationJournal",
+      "persistent_state": [
+        "accountFence",
+        "pluginId",
+        "sku",
+        "idempotencyKey",
+        "pending/confirmed"
+      ],
+      "protocol_wire_contract": [
+        "commerce purchase idempotencyKey",
+        "canonical entitlement confirmation"
+      ],
+      "visible_effect": "An interrupted purchase retries with the same server mutation identity instead of creating a second charge; another account cannot inherit that key.",
+      "failure_behavior": [
+        "missing account identity fails closed",
+        "foreign idempotency confirmation rejected",
+        "network failure leaves stable pending key for retry"
+      ],
+      "cancellation_behavior": "No local success is invented on cancellation/failure; pending identity remains until canonical entitlement confirms terminal success.",
+      "retry_semantics": "Retry reuses exact durable idempotency key for the same account/plugin/SKU.",
+      "idempotency_semantics": "Account-scoped stable idempotency key is the mutation identity.",
+      "process_death_recovery": "Journal reopens the same pending idempotency key after process death.",
+      "account_fencing": "Journal scope includes canonical current account identity; different accounts receive different keys.",
+      "security_boundary": "Presentation cannot choose a replacement retry key after first dispatch; canonical server remains entitlement authority.",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/payments/CommerceOperationJournal.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/presentation/GlobalDharmaCommercePanel.kt"
+      ],
+      "android_owner": "CommerceOperationJournal + canonical server",
+      "platform_delta": "Android process death requires durable mutation identity around server/Play purchase adapters.",
+      "implementation_status": "implemented",
+      "production_wiring": "Global Dharma test purchase obtains account fence from typed authStatus, asks platform journal for stable key, submits canonical purchase, and marks confirmed only after canonical entitlement reads allowed.",
+      "unit_test": "CommerceOperationJournalTest covers process restart key reuse, account isolation and confirmation key mismatch.",
+      "contract_test": "Same exact-head Android unit/build/lint required.",
+      "integration_test": "Canonical server duplicate retry/process-death journey required.",
+      "packaged_test": "Required on packaged commerce journey.",
+      "device_test": "Play Billing physical-device/license-tester evidence still required.",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Implemented for shipping Global Dharma canonical-server path; does not by itself close Play Billing token/restore/refund/revoke lifecycle."
     }
   ],
   "traceability": {

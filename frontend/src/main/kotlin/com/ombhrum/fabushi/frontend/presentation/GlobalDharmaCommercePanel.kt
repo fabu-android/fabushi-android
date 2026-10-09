@@ -28,7 +28,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
-import java.util.UUID
+import java.io.File
 
 data class GlobalDharmaCommerceState(
     val loading: Boolean = true,
@@ -46,7 +46,9 @@ class GlobalDharmaCommerceViewModel(application: Application) : AndroidViewModel
     private val bridge = MiniAppPlatformBridge(coordinator)
     private val mutableState = MutableStateFlow(GlobalDharmaCommerceState())
     val state: StateFlow<GlobalDharmaCommerceState> = mutableState.asStateFlow()
-    private var pendingLifetimePurchaseKey: String? = null
+    private val commerceJournal = CommerceOperationJournal(
+        File(application.filesDir, "commerce-operation-journal.properties"),
+    )
 
     init {
         refresh()
@@ -71,20 +73,32 @@ class GlobalDharmaCommerceViewModel(application: Application) : AndroidViewModel
         val snapshot = mutableState.value
         if (snapshot.busy || !snapshot.testMode || !snapshot.lifetimeCatalogValid) return
         mutableState.value = snapshot.copy(busy = true, message = "正在通过 Fabushi Pay 测试账本购买 ¥1080 买断权益…")
-        val idempotencyKey = pendingLifetimePurchaseKey
-            ?: "android-global-dharma-lifetime-${UUID.randomUUID()}".also { pendingLifetimePurchaseKey = it }
         viewModelScope.launch {
             runCatching {
                 withContext(Dispatchers.IO) {
+                    val accountFence = currentCommerceAccountFence()
+                    val idempotencyKey = commerceJournal.stableIdempotencyKey(
+                        accountFence = accountFence,
+                        pluginId = MiniAppPlatformBridge.GLOBAL_DHARMA_ID,
+                        sku = MiniAppPlatformBridge.PRAYER_WHEEL_LIFETIME_SKU,
+                    )
                     bridge.purchase(
                         pluginId = MiniAppPlatformBridge.GLOBAL_DHARMA_ID,
                         sku = MiniAppPlatformBridge.PRAYER_WHEEL_LIFETIME_SKU,
                         idempotencyKey = idempotencyKey,
                     )
-                    readCanonicalState()
+                    val refreshed = readCanonicalState()
+                    if (refreshed.allowed) {
+                        commerceJournal.markConfirmed(
+                            accountFence = accountFence,
+                            pluginId = MiniAppPlatformBridge.GLOBAL_DHARMA_ID,
+                            sku = MiniAppPlatformBridge.PRAYER_WHEEL_LIFETIME_SKU,
+                            idempotencyKey = idempotencyKey,
+                        )
+                    }
+                    refreshed
                 }
             }.onSuccess { refreshed ->
-                if (refreshed.allowed) pendingLifetimePurchaseKey = null
                 mutableState.value = refreshed.copy(
                     busy = false,
                     message = if (refreshed.allowed) "¥1080 买断权益已由服务端确认。" else "订单已处理，但权益仍未生效。",
@@ -121,6 +135,15 @@ class GlobalDharmaCommerceViewModel(application: Application) : AndroidViewModel
                 )
             }
         }
+    }
+
+    private fun currentCommerceAccountFence(): String {
+        val auth = coordinator.authStatus()
+        check(auth.optBoolean("loggedIn", false)) { "commerce_account_not_logged_in" }
+        val user = auth.optJSONObject("user") ?: error("commerce_account_identity_missing")
+        val identity = user.optString("id").ifBlank { user.optString("username") }.ifBlank { user.optString("email") }
+        check(identity.isNotBlank() && identity.length <= 320) { "commerce_account_identity_missing" }
+        return identity
     }
 
     private fun readCanonicalState(): GlobalDharmaCommerceState {
