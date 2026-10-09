@@ -16,7 +16,7 @@ pub enum ToolMessageKind {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct EncodedToolMessage {
     pub encoding: String,
     pub message_type: String,
@@ -24,7 +24,7 @@ pub struct EncodedToolMessage {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ToolTransportEvent {
     pub version: u32,
     pub kind: ToolMessageKind,
@@ -379,6 +379,38 @@ mod tests {
             "message": {"encoding":"json","messageType":"aiserver.v1.ClientSideToolV2Call","bytes":"e30="}
         });
         assert!(relay.accept_value(raw).is_none());
+
+        let unknown_top_level = json!({
+            "version": 1,
+            "kind": "call",
+            "accountSlot": "host",
+            "agentId": "agent-a",
+            "epoch": "epoch-1",
+            "sequence": 1,
+            "unexpected": true,
+            "message": {
+                "encoding": "protobuf-base64",
+                "messageType": "aiserver.v1.ClientSideToolV2Call",
+                "bytes": "GgZjYWxsLTE="
+            }
+        });
+        assert!(relay.accept_value(unknown_top_level).is_none());
+
+        let unknown_message_field = json!({
+            "version": 1,
+            "kind": "call",
+            "accountSlot": "host",
+            "agentId": "agent-a",
+            "epoch": "epoch-1",
+            "sequence": 1,
+            "message": {
+                "encoding": "protobuf-base64",
+                "messageType": "aiserver.v1.ClientSideToolV2Call",
+                "bytes": "GgZjYWxsLTE=",
+                "unexpected": true
+            }
+        });
+        assert!(relay.accept_value(unknown_message_field).is_none());
     }
 
     #[test]
