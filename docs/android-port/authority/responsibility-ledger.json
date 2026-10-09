@@ -5,7 +5,7 @@
     "desktop_commit": "3bc92400826cc4ca7ac665b467708e22261edc61",
     "android_repository": "fabu-android/fabushi-android",
     "android_pr": 3,
-    "android_head_at_update": "e124d9fea136dda6eda810d7498e5cdef866b60e",
+    "android_head_at_update": "74a07142aaf11fc61387b383b9d97ec57d128e84",
     "status": "incomplete",
     "note": "Persistent human-reviewed responsibility ledger for Desktop main. Rows are responsibility-level source facts; mapped/implemented never imply verified. Verification requires same-exact-HEAD source implementation, production wiring, CI/package and device evidence."
   },
@@ -2178,6 +2178,66 @@
       "artifact": null,
       "verification_status": "not-verified",
       "notes": "Audit conclusion: the Desktop contents:write finalizer is intentionally absent. Android keeps its product-quality invariant—tests before promotion—while forbidding CI from bulk-inheriting or auto-promoting verification."
+    },
+    {
+      "responsibility_id": "CI-PR20-VERIFY-REPLACEMENT-001",
+      "domain": "source-authority",
+      "desktop_sources": [
+        {
+          "path": ".github/workflows/pr20-verify-once.yml",
+          "blob_sha": "a05bce7d23a5fd0fc88b3076d6afe4a1f27a15d9",
+          "symbols": [
+            "architecture-inventory"
+          ]
+        }
+      ],
+      "source_commit": "3bc92400826cc4ca7ac665b467708e22261edc61",
+      "responsibility": "Bind a historical PR20 migration revision to its exact HEAD, recheck Grok architecture inventory, and prove the Desktop renderer still typechecks/builds after architecture migration changes.",
+      "source_owner": "Historical Desktop PR20 verification workflow",
+      "direct_callers": [
+        "refactor/grok-018-architecture-rebuild push",
+        "workflow_dispatch"
+      ],
+      "downstream_dependencies": [
+        "Desktop Grok architecture checker",
+        "Desktop renderer build"
+      ],
+      "state_owner": "GitHub Actions exact source revision",
+      "persistent_state": [
+        "workflow conclusion for exact SHA"
+      ],
+      "protocol_wire_contract": [
+        "exact GITHUB_SHA checkout",
+        "architecture inventory validation before renderer build"
+      ],
+      "visible_effect": "Architecture migration changes were prevented from silently leaving a renderer that no longer builds.",
+      "failure_behavior": [
+        "HEAD mismatch, architecture drift, dependency install failure or renderer build failure fails the workflow"
+      ],
+      "cancellation_behavior": "No product runtime cancellation semantics; a new source revision receives a new exact-head run.",
+      "retry_semantics": "A rerun proves only the bound source revision.",
+      "idempotency_semantics": "Read-only verification does not mutate source.",
+      "process_death_recovery": "Not an app runtime responsibility; CI is rerunnable.",
+      "account_fencing": "No user account state is involved.",
+      "security_boundary": "Verification consumes source read-only and does not grant product capability.",
+      "android_disposition": "not-applicable-with-replacement",
+      "android_target": [
+        ".github/workflows/grok-android-architecture.yml",
+        ".github/workflows/android-parity-full-ci.yml",
+        "scripts/check_grok_android_parity.py"
+      ],
+      "android_owner": "Android read-only authority/architecture/Rust/Gradle CI",
+      "platform_delta": "The Desktop renderer/macOS runner are platform-specific. Android retains the responsibility through exact-SHA authority checks, Rust workspace tests, architecture gates, and Kotlin/Compose/Gradle build/lint/package gates rather than rebuilding Electron.",
+      "implementation_status": "not-applicable",
+      "production_wiring": "Android Grok Architecture validates the parity ledger and Rust runtime, while Android Parity Full CI validates frozen inventory/checker/Rust and the Android build/package path for the exact PR head.",
+      "unit_test": "74a07142aaf11fc61387b383b9d97ec57d128e84 rust-runtime-foundation job 114035706162 success.",
+      "contract_test": "74a07142aaf11fc61387b383b9d97ec57d128e84 parity-ledger job 114035705923 success and Full CI checker/Rust pre-strict steps success.",
+      "integration_test": "Android build/package job 114035705846 is the native replacement for renderer build integration and must finish on the final exact HEAD.",
+      "packaged_test": "Not inherent to the historical PR20 verifier, but final Android package evidence is required before the replacement CI responsibility can be considered fully verified.",
+      "device_test": "Not inherent to this historical verifier; final Android device acceptance is tracked separately.",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "The PR20 one-off verifier targeted a historical Desktop migration branch and Electron renderer. Android preserves its quality invariant via native exact-head authority/build gates; the Desktop mechanism itself is intentionally not ported."
     }
   ],
   "traceability": {
