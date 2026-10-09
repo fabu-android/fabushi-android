@@ -986,7 +986,7 @@ mod tests {
         );
         assert_eq!(completed["ok"], true);
         assert_eq!(completed["result"]["provider"], "github");
-        assert_eq!(completed["result"]["outcome"], "completed");
+        assert_eq!(completed["result"]["outcome"], "pending-validation");
         assert!(completed["result"].get("code").is_none());
 
         let duplicate = call(
@@ -998,22 +998,22 @@ mod tests {
         );
         assert_eq!(duplicate["ok"], false);
 
-        let mut saw_completion = false;
+        let mut saw_callback_acceptance = false;
         for _ in 0..8 {
             let event = call(
                 &mut runtime,
                 json!({"method":"feature.receive","params":{}}),
             );
             let result = &event["result"];
-            if result["type"] == "mcp.auth.completed" {
-                saw_completion = true;
+            if result["type"] == "mcp.auth.callback.accepted" {
+                saw_callback_acceptance = true;
                 assert_eq!(result["provider"], "github");
                 assert!(result.get("code").is_none());
                 assert!(!result.to_string().contains("secret-oauth-code"));
                 break;
             }
         }
-        assert!(saw_completion);
+        assert!(saw_callback_acceptance);
     }
 
 }
