@@ -145,6 +145,7 @@ pub struct AndroidJsonHost {
     browser_attempts: BTreeMap<String, String>,
     events: VecDeque<Value>,
     active_operations: BTreeSet<String>,
+    pending_approvals: BTreeMap<String, String>,
     turn_events: Arc<Mutex<VecDeque<Value>>>,
     turn_cancellations: BTreeMap<String, Arc<AtomicBool>>,
     installed_plugins: BTreeSet<String>,
@@ -211,6 +212,7 @@ impl AndroidJsonHost {
             browser_attempts: BTreeMap::new(),
             events: VecDeque::new(),
             active_operations: BTreeSet::new(),
+            pending_approvals: BTreeMap::new(),
             turn_events: Arc::new(Mutex::new(VecDeque::new())),
             turn_cancellations: BTreeMap::new(),
             installed_plugins: BTreeSet::new(),
@@ -296,7 +298,7 @@ impl AndroidJsonHost {
             "feature.execute" => self.feature_execute(params),
             "feature.receive" => self.feature_receive(),
             "feature.interrupt" => self.feature_interrupt(params),
-            "feature.approval.resolve" => Ok(json!({"status":"resolved"})),
+            "feature.approval.resolve" => self.feature_approval_resolve(params),
             "feature.marketplace.browse" => self.marketplace_browse(params),
             "feature.marketplace.release" => self.marketplace_release(params),
             "feature.plugin.install" => self.plugin_install(params),
@@ -516,6 +518,7 @@ impl AndroidJsonHost {
             cancelled.store(true, Ordering::Release);
         }
         self.active_operations.remove(operation_id);
+        self.pending_approvals.retain(|_, pending_operation| pending_operation != operation_id);
         self.turn_events
             .lock()
             .map_err(|_| "turn event queue lock poisoned".to_string())?
@@ -801,11 +804,18 @@ impl AndroidJsonHost {
                 self.finish_operation(&operation_id);
             }
             "capability.request" => {
+                let capability = required_string(&command, "capability")?;
+                let approval_id = format!("approval-{operation_id}");
+                if self.pending_approvals.contains_key(&approval_id) {
+                    return Err("approval identity collision".into());
+                }
+                self.pending_approvals
+                    .insert(approval_id.clone(), operation_id.clone());
                 self.events.push_back(json!({
                     "type":"approval.requested",
                     "operationId":operation_id,
-                    "approvalId":format!("approval-{operation_id}"),
-                    "capability":command.get("capability").cloned().unwrap_or(Value::Null),
+                    "approvalId":approval_id,
+                    "capability":capability,
                     "reason":command.get("reason").cloned().unwrap_or(Value::Null)
                 }));
             }
@@ -1158,6 +1168,57 @@ impl AndroidJsonHost {
         Ok(json!({"operationId":operation_id,"status":"interrupted"}))
     }
 
+    fn feature_approval_resolve(&mut self, params: &Value) -> Result<Value, String> {
+        let approval_id = required_string(params, "approvalId")?.to_string();
+        let approved = params
+            .get("approved")
+            .and_then(Value::as_bool)
+            .ok_or("approved is required")?;
+        let operation_id = self
+            .pending_approvals
+            .remove(&approval_id)
+            .ok_or("approval is unknown, stale, cancelled, or already consumed")?;
+        if !self.active_operations.contains(&operation_id) {
+            return Err("approval operation is no longer active".into());
+        }
+
+        self.events.push_back(json!({
+            "type":"approval.resolved",
+            "approvalId":approval_id,
+            "operationId":operation_id,
+            "approved":approved,
+        }));
+        if approved {
+            self.active_operations.remove(&operation_id);
+            self.events.push_back(json!({
+                "type":"operation.failed",
+                "operationId":operation_id,
+                "message":"capability_broker_execution_not_migrated",
+                "outcome":"not-executed"
+            }));
+            Ok(json!({
+                "status":"resolved",
+                "approved":true,
+                "operationId":operation_id,
+                "execution":"not-executed",
+                "reason":"capability_broker_execution_not_migrated"
+            }))
+        } else {
+            self.active_operations.remove(&operation_id);
+            self.events.push_back(json!({
+                "type":"operation.interrupted",
+                "operationId":operation_id,
+                "reason":"approval-denied"
+            }));
+            Ok(json!({
+                "status":"resolved",
+                "approved":false,
+                "operationId":operation_id,
+                "execution":"not-executed"
+            }))
+        }
+    }
+
     fn marketplace_browse(&mut self, _params: &Value) -> Result<Value, String> {
         if self.mode == AndroidHostMode::Test {
             return Ok(json!({"plugins":[{
@@ -1475,6 +1536,19 @@ mod tests {
             }
         }
         assert!(saw_approval);
+        let approval = host
+            .dispatch(
+                "feature.approval.resolve",
+                &json!({"approvalId":format!("approval-{}", accepted["operationId"].as_str().unwrap()),"approved":true}),
+            )
+            .unwrap();
+        assert_eq!(approval["execution"], "not-executed");
+        assert!(host
+            .dispatch(
+                "feature.approval.resolve",
+                &json!({"approvalId":format!("approval-{}", accepted["operationId"].as_str().unwrap()),"approved":true}),
+            )
+            .is_err());
 
         let long_task = host.dispatch("feature.execute", &json!({"command":{
             "type":"runtime.longTask",
