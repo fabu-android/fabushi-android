@@ -5,7 +5,7 @@
     "desktop_commit": "3bc92400826cc4ca7ac665b467708e22261edc61",
     "android_repository": "fabu-android/fabushi-android",
     "android_pr": 3,
-    "android_head_at_update": "f5bfc58c23891131eebc95f9da85f8246142b411",
+    "android_head_at_update": "312b7404e0bfedc21d1e202f0cc9ed78f29c1287",
     "status": "incomplete",
     "note": "Persistent human-reviewed responsibility ledger for Desktop main. Rows are responsibility-level source facts; mapped/implemented never imply verified. Verification requires same-exact-HEAD source implementation, production wiring, CI/package and device evidence."
   },
@@ -1659,6 +1659,86 @@
       "artifact": null,
       "verification_status": "not-verified",
       "notes": "Durable run state machine only; full AUTOMATION-WORKFLOW-001 remains open."
+    },
+    {
+      "responsibility_id": "TOOLS-CLIENT-SIDE-TOOL-V2-RELAY-001",
+      "domain": "tools",
+      "desktop_sources": [
+        {
+          "path": "source/node-agent-coordinator/src/client_side_tool_v2_relay.rs",
+          "blob_sha": "a01c69f3eb7aec0e07a8bcc003d251ad9d3d7c33",
+          "symbols": [
+            "ClientSideToolV2Relay",
+            "CLIENT_SIDE_TOOL_V2_WIRE_VERSION",
+            "CLIENT_SIDE_TOOL_V2_ACCOUNT_SLOT"
+          ]
+        },
+        {
+          "path": "source/shared/rpc/client-side-tool-v2-transport.ts",
+          "blob_sha": "e0a298c7dd5ca454ae2b61e8337a9d74bf18b8ba",
+          "symbols": [
+            "ClientSideToolV2TransportEvent",
+            "client-side-tool-v2 transport contract"
+          ]
+        }
+      ],
+      "source_commit": "3bc92400826cc4ca7ac665b467708e22261edc61",
+      "responsibility": "Own the raw client-side-tool-v2 wire ingress: validate exact protocol version/account slot/protobuf-base64 envelope and message identity, enforce per-agent epoch/sequence/call-result lifecycle fencing, reject malformed/stale/duplicate updates, and replay only accepted canonical updates.",
+      "source_owner": "Desktop Node Agent Coordinator client-side-tool-v2 relay",
+      "direct_callers": [
+        "Desktop client-side-tool-v2 transport ingress",
+        "Android AndroidNativeRuntime coordinator.clientSideToolV2.accept/replay"
+      ],
+      "downstream_dependencies": [
+        "MahayanaCoordinator",
+        "Android JNI shipping runtime",
+        "client-side tool UI/projection consumers"
+      ],
+      "state_owner": "Android MahayanaCoordinator-owned ClientSideToolV2Relay",
+      "persistent_state": [
+        "active epoch per agent",
+        "retired epochs",
+        "last accepted sequence",
+        "accepted call/result lifecycle keyed by toolCallId"
+      ],
+      "protocol_wire_contract": [
+        "CLIENT_SIDE_TOOL_V2_WIRE_VERSION=1",
+        "accountSlot=host",
+        "encoding=protobuf-base64 with canonical STANDARD round-trip",
+        "messageType=aiserver.v1.ClientSideToolV2Call or aiserver.v1.ClientSideToolV2Result",
+        "toolCallId protobuf field 3 for calls / 35 for results",
+        "reset carries no message"
+      ],
+      "visible_effect": "Client-side tool calls/results reach the Android product only after the same wire identity/order fences as Desktop; stale or malformed tool updates cannot surface as current-account tool state.",
+      "failure_behavior": [
+        "wrong version/account slot/encoding/message type fails closed",
+        "non-canonical base64 or malformed protobuf identity fails closed",
+        "duplicate/out-of-order/stale epoch/result-without-call fails closed"
+      ],
+      "cancellation_behavior": "Account logout retires active epochs before later callbacks can be accepted; reset clears open lifecycle state for the active epoch.",
+      "retry_semantics": "Transport retransmission converges by stable epoch/sequence/toolCallId; duplicates are rejected rather than re-applied.",
+      "idempotency_semantics": "Accepted identity is agentId+epoch+sequence with call/result lifecycle additionally fenced by toolCallId.",
+      "process_death_recovery": "A fresh Coordinator cannot accept an orphan result before the corresponding call; replay contains only events accepted by the current runtime. Durable cross-process relay persistence remains a separate responsibility if Desktop shipping composition requires it.",
+      "account_fencing": "Fixed host account-slot plus explicit retirement on feature.auth.logout prevents the previous account epoch from reopening.",
+      "security_boundary": "Raw wire decoding and protocol ownership remain in Rust Coordinator; Kotlin/UI does not decode or authorize this protocol.",
+      "android_disposition": "direct-port",
+      "android_target": [
+        "source/mahayana-agent-coordinator/src/client_side_tool_v2_relay.rs",
+        "source/mahayana-agent-coordinator/src/main.rs",
+        "source/android-host-jni/src/lib.rs"
+      ],
+      "android_owner": "MahayanaCoordinator-owned Rust ClientSideToolV2Relay",
+      "platform_delta": "Desktop Node transport is replaced by Android's typed JNI/Coordinator composition; protocol validation and lifecycle semantics remain Rust-owned.",
+      "implementation_status": "implemented",
+      "production_wiring": "AndroidNativeRuntime routes coordinator.clientSideToolV2.accept directly into MahayanaCoordinator::accept_client_side_tool_v2_wire and replay through the same owner. feature.auth.logout retires active epochs. No Kotlin/UI protocol decoder was added.",
+      "unit_test": "Rust relay tests cover success, bad version/account slot/base64/type/identity, duplicate/out-of-order, retired epoch, stale result, reset/call/result ordering, account switch and restart/replay.",
+      "contract_test": "Exact-head 312b7404e0bfedc21d1e202f0cc9ed78f29c1287 Grok Android Architecture rust-runtime-foundation job 113998269040 passed; Full CI architecture-and-contracts job 113998269097 Rust contract/runtime tests passed before expected full-closure strict failure.",
+      "integration_test": "Android host-JNI production-composition test proves raw accept/replay is reachable only through the Rust Coordinator owner; final packaged/device transport journey still required.",
+      "packaged_test": "required on final minified release artifact",
+      "device_test": "required with live Agent/tool journey after protected account secrets are available",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Only relay/transport responsibility is implemented here. Desktop Host producer/projection/inventory rows remain unreviewed and are not claimed by this responsibility."
     }
   ],
   "traceability": {
