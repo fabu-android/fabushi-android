@@ -65,6 +65,49 @@ impl AndroidHostInferenceProvider {
         })
     }
 
+    pub fn run_summarization_prompt(
+        mode: AndroidInferenceMode,
+        bearer_token: Option<String>,
+        cancelled: Arc<AtomicBool>,
+        system_prompt: &str,
+        user_prompt: &str,
+        should_cancel: &dyn Fn() -> bool,
+    ) -> Result<String, ProviderFailure> {
+        if should_cancel() || cancelled.load(Ordering::Acquire) {
+            return Err(ProviderFailure::new("cancelled"));
+        }
+        let mut provider = match mode {
+            AndroidInferenceMode::Test => Self::new(AndroidInferenceMode::Test),
+            AndroidInferenceMode::Production => {
+                Self::production(
+                    bearer_token.ok_or_else(|| {
+                        ProviderFailure::new("provider_credentials_unavailable")
+                    })?,
+                    Arc::clone(&cancelled),
+                )?
+            }
+        };
+        let prompt = format!(
+            "{system_prompt}\n\n{user_prompt}"
+        );
+        let input = StreamAttemptInput {
+            operation_id: "summarization".into(),
+            agent_id: "mahayana-summarizer".into(),
+            model: provider.default_model.clone(),
+            prompt,
+            resume_checkpoint_available: false,
+        };
+        let mut output = String::new();
+        provider.run_stream(&input, &mut |chunk| {
+            if should_cancel() || cancelled.load(Ordering::Acquire) {
+                return Err("cancelled".into());
+            }
+            output.push_str(chunk);
+            Ok(())
+        })?;
+        Ok(output)
+    }
+
     #[cfg(test)]
     fn with_endpoint(
         bearer_token: String,
@@ -338,6 +381,34 @@ mod tests {
             prompt: "hello".into(),
             resume_checkpoint_available: false,
         }
+    }
+
+    #[test]
+    fn test_summarization_binding_uses_same_android_provider_and_honours_cancellation() {
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let summary = AndroidHostInferenceProvider::run_summarization_prompt(
+            AndroidInferenceMode::Test,
+            None,
+            Arc::clone(&cancelled),
+            "system",
+            "user",
+            &|| false,
+        )
+        .unwrap();
+        assert_eq!(summary, "自动化测试状态正常。");
+
+        cancelled.store(true, Ordering::Release);
+        assert!(AndroidHostInferenceProvider::run_summarization_prompt(
+            AndroidInferenceMode::Test,
+            None,
+            cancelled,
+            "system",
+            "user",
+            &|| false,
+        )
+        .unwrap_err()
+        .message
+        .contains("cancelled"));
     }
 
     #[test]

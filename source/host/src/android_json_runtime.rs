@@ -16,7 +16,10 @@ use crate::extensions::webauthn_proxy::{
 };
 use crate::runner::{
     AndroidHostInferenceProvider, AndroidInferenceMode, DurableTurnJournal, DurableTurnState,
-    ProductionTurnAgentOwner, ProductionTurnEvent, ProductionTurnInput,
+    ProductionTurnAgentBuildBindings, ProductionTurnAgentLifecycleBindings,
+    ProductionTurnAgentOwner, ProductionTurnAgentStaticConfig, ProductionTurnEvent,
+    ProductionTurnInput, ProductionTurnLifecycleStore, ProductionTurnPrivacyMode,
+    ProductionTurnProfileAnnouncementCommit, SAND_AGENT_TOKEN_LIMIT,
 };
 use fabushi_constants::composer::text_size_allowed;
 use fabushi_android_shared::node::mcp::mcp_auth_watch_lifecycle::{
@@ -293,6 +296,8 @@ pub struct AndroidJsonHost {
     turn_events: Arc<Mutex<VecDeque<Value>>>,
     turn_cancellations: BTreeMap<String, Arc<AtomicBool>>,
     turn_journal: Arc<Mutex<DurableTurnJournal>>,
+    turn_lifecycle: Arc<Mutex<ProductionTurnLifecycleStore>>,
+    turn_upgrade_quiescing: Arc<AtomicBool>,
     installed_plugins: BTreeSet<String>,
     plugin_installer: PluginInstaller,
     plugin_permissions: PermissionManager,
@@ -409,6 +414,16 @@ impl AndroidJsonHost {
                 DurableTurnJournal::open(app_data_dir.join("agent-turn-journal.json"), now_ms())
                     .unwrap_or_else(|error| panic!("failed to open durable Agent turn journal: {error}")),
             )),
+            turn_lifecycle: Arc::new(Mutex::new(
+                ProductionTurnLifecycleStore::open(
+                    app_data_dir.join("agent-turn-lifecycle.json"),
+                    now_ms(),
+                )
+                .unwrap_or_else(|error| {
+                    panic!("failed to open durable Agent lifecycle store: {error}")
+                }),
+            )),
+            turn_upgrade_quiescing: Arc::new(AtomicBool::new(false)),
             installed_plugins: BTreeSet::new(),
             plugin_installer,
             plugin_permissions,
@@ -461,6 +476,9 @@ impl AndroidJsonHost {
             "feature.mcp.authWatch.cancel" => self.mcp_auth_watch_cancel(params),
             "feature.mcp.authWatch.snapshot" => self.mcp_auth_watch_snapshot(),
             "feature.auth.logout" => self.account_logout(),
+            "feature.agent.diskPressure.record" => self.agent_disk_pressure_record(params),
+            "feature.agent.turn.reconcile" => self.agent_turn_reconcile(params),
+            "feature.agent.upgradeQuiesce" => self.agent_upgrade_quiesce(params),
             "feature.automation.upsert" => self.automation_upsert(params),
             "feature.automation.list" => self.automation_list(),
             "feature.automation.start" => self.automation_start(params),
@@ -933,7 +951,162 @@ impl AndroidJsonHost {
         Ok(())
     }
 
+    fn fence_turns_for_account_change(
+        &mut self,
+        previous_fence: &str,
+        reason: &str,
+    ) -> Result<(), String> {
+        let now = now_ms();
+        let fenced = self
+            .turn_journal
+            .lock()
+            .map_err(|_| "turn journal lock poisoned".to_string())?
+            .mark_account_outcome_unknown(previous_fence, reason, now)?;
+        self.turn_lifecycle
+            .lock()
+            .map_err(|_| "turn lifecycle lock poisoned".to_string())?
+            .mark_account_outcome_unknown(previous_fence, now)?;
+
+        for record in fenced {
+            if let Some(cancelled) = self.turn_cancellations.remove(&record.operation_id) {
+                cancelled.store(true, Ordering::Release);
+            }
+            self.active_operations.remove(&record.operation_id);
+            push_turn_event(
+                &self.turn_events,
+                json!({
+                    "type":"operation.outcome-unknown",
+                    "operationId":record.operation_id,
+                    "requestId":record.request_id,
+                    "reason":reason,
+                    "accountFence":previous_fence,
+                }),
+            );
+        }
+        Ok(())
+    }
+
+    fn agent_disk_pressure_record(&mut self, params: &Value) -> Result<Value, String> {
+        let account_fence = self.current_turn_account_fence()?;
+        let conversation_id = required_string(params, "conversationId")?;
+        let episode_id = required_string(params, "episodeId")?;
+        self.turn_lifecycle
+            .lock()
+            .map_err(|_| "turn lifecycle lock poisoned".to_string())?
+            .record_disk_pressure_episode(
+                &account_fence,
+                conversation_id,
+                episode_id,
+                now_ms(),
+            )?;
+        Ok(json!({
+            "conversationId":conversation_id,
+            "episodeId":episode_id,
+            "recorded":true,
+        }))
+    }
+
+    fn agent_upgrade_quiesce(&mut self, params: &Value) -> Result<Value, String> {
+        let quiescing = params
+            .get("quiescing")
+            .and_then(Value::as_bool)
+            .ok_or("quiescing is required")?;
+        self.turn_upgrade_quiescing
+            .store(quiescing, Ordering::Release);
+        Ok(json!({"quiescing":quiescing}))
+    }
+
+    fn agent_turn_reconcile(&mut self, params: &Value) -> Result<Value, String> {
+        let request_id = required_string(params, "requestId")?;
+        let outcome = required_string(params, "outcome")?;
+        let account_fence = self.current_turn_account_fence()?;
+        let state = match outcome {
+            "completed" => DurableTurnState::Completed,
+            "failed" => DurableTurnState::Failed,
+            "cancelled" => DurableTurnState::Cancelled,
+            _ => {
+                return Err(
+                    "outcome must be completed, failed, or cancelled after external reconciliation"
+                        .into(),
+                )
+            }
+        };
+
+        let record = {
+            let journal = self
+                .turn_journal
+                .lock()
+                .map_err(|_| "turn journal lock poisoned".to_string())?;
+            journal
+                .record(request_id)
+                .cloned()
+                .ok_or("durable turn record is missing")?
+        };
+        if record.account_fence != account_fence {
+            return Err("outcome-unknown reconciliation is fenced by account identity".into());
+        }
+        if record.state != DurableTurnState::OutcomeUnknown {
+            return Err("durable turn is not outcome-unknown".into());
+        }
+
+        if state == DurableTurnState::Completed {
+            let assistant_text = params
+                .get("assistantText")
+                .and_then(Value::as_str)
+                .filter(|value| !value.trim().is_empty())
+                .ok_or("completed reconciliation requires proven assistantText")?;
+            self.transcript
+                .lock()
+                .map_err(|_| "transcript lock poisoned".to_string())?
+                .append_entry_if_absent(json!({
+                    "id":format!("assistant:{}", record.operation_id),
+                    "kind":"message",
+                    "role":"assistant",
+                    "content":assistant_text,
+                    "operationId":record.operation_id,
+                    "timestampMs":now_ms(),
+                    "reconciled":true,
+                }))
+                .map_err(|error| {
+                    format!("failed to persist reconciled assistant transcript entry: {error}")
+                })?;
+        }
+
+        let reconciled = self
+            .turn_journal
+            .lock()
+            .map_err(|_| "turn journal lock poisoned".to_string())?
+            .reconcile_outcome_unknown(
+                request_id,
+                &account_fence,
+                state,
+                params.get("reason").and_then(Value::as_str).map(str::to_string),
+                now_ms(),
+            )?;
+        let disk_reconciled = self
+            .turn_lifecycle
+            .lock()
+            .map_err(|_| "turn lifecycle lock poisoned".to_string())?
+            .reconcile_disk_pressure_claim(
+                &account_fence,
+                &reconciled.operation_id,
+                reconciled.state == DurableTurnState::Completed,
+                now_ms(),
+            )?;
+
+        Ok(json!({
+            "requestId":request_id,
+            "operationId":reconciled.operation_id,
+            "state":format!("{:?}", reconciled.state).to_ascii_lowercase(),
+            "diskPressureReconciled":disk_reconciled,
+        }))
+    }
+
     fn account_logout(&mut self) -> Result<Value, String> {
+        let previous_fence = self.current_turn_account_fence().ok();
+        if let Some(previous_fence) = previous_fence.as_deref() {
+            self.fence_turns_for_account_change(previous_fence, "account-logout")?;
+        }
         self.pending_plugin_variable_writes.clear();
         self.cancel_mcp_auth_watches_for_account_change("account-logout")?;
         if self.mode == AndroidHostMode::Test {
@@ -987,6 +1160,9 @@ impl AndroidJsonHost {
             && current_fence.is_some()
             && previous_fence != current_fence
         {
+            if let Some(previous_fence) = previous_fence.as_deref() {
+                self.fence_turns_for_account_change(previous_fence, "account-switch")?;
+            }
             self.cancel_mcp_auth_watches_for_account_change("account-switch")?;
         }
         Ok(with_account_session_mutation(result, mutation))
@@ -1540,7 +1716,18 @@ impl AndroidJsonHost {
             self.logged_in = true;
             return Ok(json!({"attemptId":attempt_id,"status":"completed","auth":self.auth_status()}));
         }
+        let previous_fence = self.account.session_fence();
         let (result, mutation) = self.account.browser_poll(attempt_id)?;
+        let current_fence = self.account.session_fence();
+        if previous_fence.is_some()
+            && current_fence.is_some()
+            && previous_fence != current_fence
+        {
+            if let Some(previous_fence) = previous_fence.as_deref() {
+                self.fence_turns_for_account_change(previous_fence, "account-switch")?;
+            }
+            self.cancel_mcp_auth_watches_for_account_change("account-switch")?;
+        }
         Ok(with_account_session_mutation(result, mutation))
     }
 
@@ -1593,13 +1780,22 @@ impl AndroidJsonHost {
                 self.finish_operation(&operation_id);
             }
             "chat.send" => {
-                let (bearer_token, session_mutation) = self.bearer_token_for_turn()?;
-                self.queue_chat_turn(
+                let (bearer_token, session_mutation) = match self.bearer_token_for_turn() {
+                    Ok(value) => value,
+                    Err(error) => {
+                        self.active_operations.remove(&operation_id);
+                        return Err(error);
+                    }
+                };
+                if let Err(error) = self.queue_chat_turn(
                     &operation_id,
                     request_id,
                     &command,
                     bearer_token,
-                )?;
+                ) {
+                    self.active_operations.remove(&operation_id);
+                    return Err(error);
+                }
                 private_session_mutation = session_mutation;
             }
             "marketplace.install" => {
@@ -1779,12 +1975,41 @@ impl AndroidJsonHost {
             .unwrap_or("default")
             .to_string();
 
+        if self.turn_upgrade_quiescing.load(Ordering::Acquire) {
+            return Err("Agent turns are quiescing for upgrade; new dispatch is fenced.".into());
+        }
         let account_fence = self.current_turn_account_fence()?;
         let turn_generation = self
             .turn_journal
             .lock()
             .map_err(|_| "turn journal lock poisoned".to_string())?
             .begin(request_id, operation_id, &account_fence, now_ms())?;
+
+        let profile = self.agents.get(&agent_id);
+        let profile_revision = profile.as_ref().map(|profile| {
+            crate::sha256::sha256_hex(
+                format!(
+                    "{}\n{}\n{}\n{}",
+                    profile.id, profile.name, profile.description, profile.updated_at
+                )
+                .as_bytes(),
+            )
+        });
+        let profile_prompt = match (profile.as_ref(), profile_revision.as_deref()) {
+            (Some(profile), Some(revision))
+                if self
+                    .turn_lifecycle
+                    .lock()
+                    .map_err(|_| "turn lifecycle lock poisoned".to_string())?
+                    .profile_announcement_needed(&account_fence, &agent_id, revision) =>
+            {
+                Some(format!(
+                    "<agent_profile>\nName: {}\nDescription: {}\n</agent_profile>",
+                    profile.name, profile.description
+                ))
+            }
+            _ => None,
+        };
 
         let cancelled = Arc::new(AtomicBool::new(false));
         self.turn_cancellations
@@ -1794,10 +2019,16 @@ impl AndroidJsonHost {
         let turn_events = self.turn_events.clone();
         let transcript = self.transcript.clone();
         let turn_journal = self.turn_journal.clone();
+        let turn_lifecycle = self.turn_lifecycle.clone();
+        let turn_upgrade_quiescing = Arc::clone(&self.turn_upgrade_quiescing);
         let account_fence_owned = account_fence.clone();
         let operation_id_owned = operation_id.to_string();
         let request_id_owned = request_id.to_string();
         let assistant_entry_id_owned = assistant_entry_id.clone();
+        let conversation_id_owned = agent_id.clone();
+        let model_owned = model.clone();
+        let summarization_token = bearer_token.clone();
+        let profile_revision_owned = profile_revision.clone();
 
         let spawn = thread::Builder::new()
             .name(format!("fabushi-turn-{}", operation_id.chars().take(32).collect::<String>()))
@@ -1808,7 +2039,7 @@ impl AndroidJsonHost {
                     }
                     AndroidHostMode::Production => {
                         let Some(token) = bearer_token else {
-                            let _ = turn_journal
+                            let settled = turn_journal
                                 .lock()
                                 .map_err(|_| "turn journal lock poisoned".to_string())
                                 .and_then(|mut journal| journal.settle(
@@ -1819,23 +2050,26 @@ impl AndroidJsonHost {
                                     DurableTurnState::Failed,
                                     Some("provider_credentials_unavailable".into()),
                                     now_ms(),
-                                ));
-                            push_turn_event(
-                                &turn_events,
-                                json!({
-                                    "type":"operation.failed",
-                                    "operationId":operation_id_owned,
-                                    "requestId":request_id_owned,
-                                    "message":"provider_credentials_unavailable",
-                                }),
-                            );
+                                ))
+                                .is_ok();
+                            if settled {
+                                push_turn_event(
+                                    &turn_events,
+                                    json!({
+                                        "type":"operation.failed",
+                                        "operationId":operation_id_owned,
+                                        "requestId":request_id_owned,
+                                        "message":"provider_credentials_unavailable",
+                                    }),
+                                );
+                            }
                             return;
                         };
                         match AndroidHostInferenceProvider::production(token, cancelled.clone()) {
                             Ok(provider) => provider,
                             Err(error) => {
                                 let message = error.message;
-                                let _ = turn_journal
+                                let settled = turn_journal
                                     .lock()
                                     .map_err(|_| "turn journal lock poisoned".to_string())
                                     .and_then(|mut journal| journal.settle(
@@ -1846,26 +2080,187 @@ impl AndroidJsonHost {
                                         DurableTurnState::Failed,
                                         Some(message.clone()),
                                         now_ms(),
-                                    ));
-                                push_turn_event(
-                                    &turn_events,
-                                    json!({
-                                        "type":"operation.failed",
-                                        "operationId":operation_id_owned,
-                                        "requestId":request_id_owned,
-                                        "message":message,
-                                    }),
-                                );
+                                    ))
+                                    .is_ok();
+                                if settled {
+                                    push_turn_event(
+                                        &turn_events,
+                                        json!({
+                                            "type":"operation.failed",
+                                            "operationId":operation_id_owned,
+                                            "requestId":request_id_owned,
+                                            "message":message,
+                                        }),
+                                    );
+                                }
                                 return;
                             }
                         }
                     }
                 };
 
-                let mut owner = ProductionTurnAgentOwner::new(provider);
+                let privacy_mode_resolver = Arc::new(move || {
+                    Some(ProductionTurnPrivacyMode::NoStorage)
+                });
+                let summarization_cancelled = Arc::clone(&cancelled);
+                let summarization_prompt = Arc::new(
+                    move |system_prompt: &str,
+                          user_prompt: &str,
+                          should_cancel: &dyn Fn() -> bool| {
+                        AndroidHostInferenceProvider::run_summarization_prompt(
+                            match mode {
+                                AndroidHostMode::Test => AndroidInferenceMode::Test,
+                                AndroidHostMode::Production => AndroidInferenceMode::Production,
+                            },
+                            summarization_token.clone(),
+                            Arc::clone(&summarization_cancelled),
+                            system_prompt,
+                            user_prompt,
+                            should_cancel,
+                        )
+                    },
+                );
+                let build_bindings = ProductionTurnAgentBuildBindings::new(
+                    ProductionTurnAgentStaticConfig {
+                        model_id: model_owned.clone(),
+                        agent_token_limit: SAND_AGENT_TOKEN_LIMIT,
+                        conversation_id: conversation_id_owned.clone(),
+                        is_box_scoped_subagent: false,
+                        is_subagent_runner: false,
+                        is_shared_room_runner: false,
+                        sand_send_message_delivery_owed: false,
+                        transcripts_folder_available: true,
+                    },
+                    privacy_mode_resolver,
+                    summarization_prompt,
+                );
+
+                let claim_store = Arc::clone(&turn_lifecycle);
+                let claim_account = account_fence_owned.clone();
+                let claim_conversation = conversation_id_owned.clone();
+                let claim_operation = operation_id_owned.clone();
+                let commit_store = Arc::clone(&turn_lifecycle);
+                let commit_account = account_fence_owned.clone();
+                let commit_conversation = conversation_id_owned.clone();
+                let commit_operation = operation_id_owned.clone();
+                let release_store = Arc::clone(&turn_lifecycle);
+                let release_account = account_fence_owned.clone();
+                let release_conversation = conversation_id_owned.clone();
+                let release_operation = operation_id_owned.clone();
+
+                let mut lifecycle_bindings = ProductionTurnAgentLifecycleBindings::new(
+                    account_fence_owned.clone(),
+                    conversation_id_owned.clone(),
+                    operation_id_owned.clone(),
+                )
+                .with_disk_pressure_callbacks(
+                    Arc::new(move || {
+                        claim_store
+                            .lock()
+                            .map_err(|_| "turn lifecycle lock poisoned".to_string())?
+                            .claim_disk_pressure(
+                                &claim_account,
+                                &claim_conversation,
+                                &claim_operation,
+                                now_ms(),
+                            )
+                    }),
+                    Arc::new(move || {
+                        commit_store
+                            .lock()
+                            .map_err(|_| "turn lifecycle lock poisoned".to_string())?
+                            .commit_disk_pressure(
+                                &commit_account,
+                                &commit_conversation,
+                                &commit_operation,
+                                now_ms(),
+                            )
+                    }),
+                    Arc::new(move || {
+                        release_store
+                            .lock()
+                            .map_err(|_| "turn lifecycle lock poisoned".to_string())?
+                            .release_disk_pressure(
+                                &release_account,
+                                &release_conversation,
+                                &release_operation,
+                                now_ms(),
+                            )
+                    }),
+                );
+
+                if let (Some(profile_prompt), Some(profile_revision)) =
+                    (profile_prompt.clone(), profile_revision_owned.clone())
+                {
+                    let profile_store = Arc::clone(&turn_lifecycle);
+                    let profile_account = account_fence_owned.clone();
+                    let profile_agent = conversation_id_owned.clone();
+                    let profile_revision_commit = profile_revision.clone();
+                    let profile_commit: ProductionTurnProfileAnnouncementCommit =
+                        Arc::new(move || {
+                            if let Ok(mut store) = profile_store.lock() {
+                                let _ = store.commit_profile_announcement(
+                                    &profile_account,
+                                    &profile_agent,
+                                    &profile_revision_commit,
+                                    now_ms(),
+                                );
+                            }
+                        });
+                    lifecycle_bindings = lifecycle_bindings.with_profile_announcement(
+                        Some(profile_prompt),
+                        Some(profile_commit),
+                    );
+                }
+
+                let mut owner = match ProductionTurnAgentOwner::new(provider)
+                    .with_upgrade_quiesce_signal(turn_upgrade_quiescing)
+                    .with_build_bindings(build_bindings)
+                    .with_lifecycle_bindings(lifecycle_bindings)
+                {
+                    Ok(owner) => owner,
+                    Err(error) => {
+                        let settled = turn_journal
+                            .lock()
+                            .map_err(|_| "turn journal lock poisoned".to_string())
+                            .and_then(|mut journal| {
+                                journal.settle(
+                                    &request_id_owned,
+                                    &operation_id_owned,
+                                    &account_fence_owned,
+                                    turn_generation,
+                                    DurableTurnState::Failed,
+                                    Some(error.message.clone()),
+                                    now_ms(),
+                                )
+                            })
+                            .is_ok();
+                        if settled {
+                            push_turn_event(
+                                &turn_events,
+                                json!({
+                                    "type":"operation.failed",
+                                    "operationId":operation_id_owned,
+                                    "requestId":request_id_owned,
+                                    "message":error.message,
+                                }),
+                            );
+                        }
+                        return;
+                    }
+                };
                 let mut final_text = String::new();
                 let mut terminal_emitted = false;
                 let mut sink = |event: ProductionTurnEvent| -> Result<(), String> {
+                    turn_journal
+                        .lock()
+                        .map_err(|_| "turn journal lock poisoned".to_string())?
+                        .assert_current(
+                            &request_id_owned,
+                            &operation_id_owned,
+                            &account_fence_owned,
+                            turn_generation,
+                        )?;
                     if cancelled.load(Ordering::Acquire) {
                         return Err("cancelled".into());
                     }
@@ -2014,7 +2409,7 @@ impl AndroidJsonHost {
 
                 if let Err(error) = result {
                     if !cancelled.load(Ordering::Acquire) && !terminal_emitted {
-                        let _ = turn_journal
+                        let settled = turn_journal
                             .lock()
                             .map_err(|_| "turn journal lock poisoned".to_string())
                             .and_then(|mut journal| journal.settle(
@@ -2025,16 +2420,19 @@ impl AndroidJsonHost {
                                 DurableTurnState::Failed,
                                 Some(error.message.clone()),
                                 now_ms(),
-                            ));
-                        push_turn_event(
-                            &turn_events,
-                            json!({
-                                "type":"operation.failed",
-                                "operationId":operation_id_owned,
-                                "requestId":request_id_owned,
-                                "message":error.message,
-                            }),
-                        );
+                            ))
+                            .is_ok();
+                        if settled {
+                            push_turn_event(
+                                &turn_events,
+                                json!({
+                                    "type":"operation.failed",
+                                    "operationId":operation_id_owned,
+                                    "requestId":request_id_owned,
+                                    "message":error.message,
+                                }),
+                            );
+                        }
                     }
                 }
             });
@@ -3922,6 +4320,239 @@ export function apply(ctx) {
                 }),
             )
             .is_err());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn production_turn_lifecycle_is_wired_into_android_chat_dispatch() {
+        let root = std::env::temp_dir().join(format!(
+            "fabushi-agent-lifecycle-wiring-{}",
+            now_ms()
+        ));
+        let mut host = AndroidJsonHost::new(&root, AndroidHostMode::Test);
+        let agent = host.agents.create("Lifecycle Agent", "profile").unwrap();
+        let account_fence = host.current_turn_account_fence().unwrap();
+
+        host.dispatch(
+            "feature.agent.diskPressure.record",
+            &json!({
+                "conversationId":agent.id.clone(),
+                "episodeId":"disk-episode-1"
+            }),
+        )
+        .unwrap();
+
+        let accepted = host
+            .dispatch(
+                "feature.execute",
+                &json!({
+                    "command":{
+                        "type":"chat.send",
+                        "requestId":"lifecycle-request-1",
+                        "agentId":agent.id.clone(),
+                        "model":"default",
+                        "text":"hello"
+                    }
+                }),
+            )
+            .unwrap();
+        let operation_id = accepted["operationId"].as_str().unwrap().to_string();
+
+        let mut completed = false;
+        for _ in 0..64 {
+            let event = host.dispatch("feature.receive", &json!({})).unwrap();
+            if event["type"] == "operation.completed"
+                && event["operationId"] == operation_id
+            {
+                completed = true;
+                break;
+            }
+        }
+        assert!(completed, "test provider turn must reach one terminal completion");
+
+        assert_eq!(
+            host.turn_lifecycle
+                .lock()
+                .unwrap()
+                .claim_disk_pressure(
+                    &account_fence,
+                    &agent.id,
+                    "probe-after-completion",
+                    now_ms(),
+                )
+                .unwrap(),
+            None,
+            "successful production owner must commit rather than release the reminder claim"
+        );
+        let revision = crate::sha256::sha256_hex(
+            format!(
+                "{}\n{}\n{}\n{}",
+                agent.id, agent.name, agent.description, agent.updated_at
+            )
+            .as_bytes(),
+        );
+        assert!(!host
+            .turn_lifecycle
+            .lock()
+            .unwrap()
+            .profile_announcement_needed(&account_fence, &agent.id, &revision));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn account_change_fences_old_turn_before_stale_terminal_or_transcript_write() {
+        let root = std::env::temp_dir().join(format!(
+            "fabushi-agent-account-fence-{}",
+            now_ms()
+        ));
+        let mut host = AndroidJsonHost::new(&root, AndroidHostMode::Test);
+        let account_fence = host.current_turn_account_fence().unwrap();
+        let generation = host
+            .turn_journal
+            .lock()
+            .unwrap()
+            .begin("request-old", "operation-old", &account_fence, now_ms())
+            .unwrap();
+        let cancellation = Arc::new(AtomicBool::new(false));
+        host.turn_cancellations
+            .insert("operation-old".into(), Arc::clone(&cancellation));
+        host.active_operations.insert("operation-old".into());
+
+        host.fence_turns_for_account_change(&account_fence, "account-switch")
+            .unwrap();
+
+        assert!(cancellation.load(Ordering::Acquire));
+        assert!(!host.active_operations.contains("operation-old"));
+        assert_eq!(
+            host.turn_journal
+                .lock()
+                .unwrap()
+                .record("request-old")
+                .unwrap()
+                .state,
+            DurableTurnState::OutcomeUnknown
+        );
+        assert!(host
+            .turn_journal
+            .lock()
+            .unwrap()
+            .assert_current(
+                "request-old",
+                "operation-old",
+                &account_fence,
+                generation,
+            )
+            .is_err());
+        let stale_entry = host
+            .transcript
+            .lock()
+            .unwrap()
+            .entry("assistant:operation-old")
+            .cloned();
+        assert!(stale_entry.is_none());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn outcome_unknown_reconcile_is_explicit_account_fenced_and_idempotent() {
+        let root = std::env::temp_dir().join(format!(
+            "fabushi-agent-reconcile-{}",
+            now_ms()
+        ));
+        let mut host = AndroidJsonHost::new(&root, AndroidHostMode::Test);
+        let account_fence = host.current_turn_account_fence().unwrap();
+        host.turn_journal
+            .lock()
+            .unwrap()
+            .begin("request-unknown", "operation-unknown", &account_fence, 1)
+            .unwrap();
+        host.turn_journal
+            .lock()
+            .unwrap()
+            .mark_account_outcome_unknown(&account_fence, "process/account boundary", 2)
+            .unwrap();
+
+        let reconciled = host
+            .dispatch(
+                "feature.agent.turn.reconcile",
+                &json!({
+                    "requestId":"request-unknown",
+                    "outcome":"completed",
+                    "assistantText":"reconciled answer",
+                    "reason":"provider transcript confirmed"
+                }),
+            )
+            .unwrap();
+        assert_eq!(reconciled["state"], "completed");
+        let reconciled_entry = host
+            .transcript
+            .lock()
+            .unwrap()
+            .entry("assistant:operation-unknown")
+            .cloned();
+        assert_eq!(
+            reconciled_entry
+                .as_ref()
+                .and_then(|entry| entry.get("content"))
+                .and_then(Value::as_str),
+            Some("reconciled answer")
+        );
+        assert!(host
+            .dispatch(
+                "feature.agent.turn.reconcile",
+                &json!({
+                    "requestId":"request-unknown",
+                    "outcome":"completed",
+                    "assistantText":"duplicate"
+                }),
+            )
+            .is_err());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn upgrade_quiesce_fences_new_chat_dispatch_and_resume_reopens_it() {
+        let root = std::env::temp_dir().join(format!(
+            "fabushi-agent-upgrade-quiesce-{}",
+            now_ms()
+        ));
+        let mut host = AndroidJsonHost::new(&root, AndroidHostMode::Test);
+        host.dispatch(
+            "feature.agent.upgradeQuiesce",
+            &json!({"quiescing":true}),
+        )
+        .unwrap();
+        assert!(host
+            .dispatch(
+                "feature.execute",
+                &json!({
+                    "command":{
+                        "type":"chat.send",
+                        "requestId":"quiesced",
+                        "text":"blocked"
+                    }
+                }),
+            )
+            .unwrap_err()
+            .contains("quiescing for upgrade"));
+
+        host.dispatch(
+            "feature.agent.upgradeQuiesce",
+            &json!({"quiescing":false}),
+        )
+        .unwrap();
+        assert!(host
+            .dispatch(
+                "feature.execute",
+                &json!({
+                    "command":{
+                        "type":"chat.send",
+                        "requestId":"resumed",
+                        "text":"allowed"
+                    }
+                }),
+            )
+            .is_ok());
         let _ = std::fs::remove_dir_all(root);
     }
 

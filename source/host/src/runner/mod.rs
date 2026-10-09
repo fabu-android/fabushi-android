@@ -1,14 +1,21 @@
 pub mod android_host_inference;
 pub mod durable_turn_journal;
 pub mod production_turn_agent_owner;
+pub mod production_turn_lifecycle;
 pub mod stream_attempt;
 pub mod transient_stream_error;
 pub mod turn_settle;
 pub mod turn_run_shell;
 
 pub use production_turn_agent_owner::{
-    ProductionTurnAgentOwner, ProductionTurnEvent, ProductionTurnInput, ProductionTurnResult,
+    ProductionTurnAgentBuildBindings, ProductionTurnAgentBuildInput,
+    ProductionTurnAgentLifecycleBindings, ProductionTurnAgentOwner,
+    ProductionTurnAgentStaticConfig, ProductionTurnAgentStaticProjection,
+    ProductionTurnEvent, ProductionTurnInput, ProductionTurnPrivacyMode,
+    ProductionTurnProfileAnnouncementCommit, ProductionTurnResult,
+    ProductionTurnSummarizationPrompt, SAND_AGENT_MAX_STEPS, SAND_AGENT_TOKEN_LIMIT,
 };
+pub use production_turn_lifecycle::ProductionTurnLifecycleStore;
 pub use stream_attempt::{
     ProviderFailure, StreamAttemptHost, StreamAttemptInput, StreamAttemptResult, StreamGeneration,
     TurnStreamProvider,

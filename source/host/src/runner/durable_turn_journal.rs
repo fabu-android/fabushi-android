@@ -179,6 +179,79 @@ impl DurableTurnJournal {
         Ok(true)
     }
 
+    pub fn mark_outcome_unknown(
+        &mut self,
+        request_id: &str,
+        operation_id: &str,
+        account_fence: &str,
+        generation: u64,
+        reason: impl Into<String>,
+        now_ms: u64,
+    ) -> Result<(), String> {
+        self.assert_current(request_id, operation_id, account_fence, generation)?;
+        let record = self.state.records.get_mut(request_id).expect("asserted record");
+        record.state = DurableTurnState::OutcomeUnknown;
+        record.reason = Some(reason.into());
+        record.updated_at_ms = now_ms;
+        self.persist()
+    }
+
+    pub fn mark_account_outcome_unknown(
+        &mut self,
+        account_fence: &str,
+        reason: &str,
+        now_ms: u64,
+    ) -> Result<Vec<DurableTurnRecord>, String> {
+        let mut fenced = Vec::new();
+        for record in self.state.records.values_mut() {
+            if record.state == DurableTurnState::Running
+                && record.account_fence == account_fence
+            {
+                record.state = DurableTurnState::OutcomeUnknown;
+                record.reason = Some(reason.to_string());
+                record.updated_at_ms = now_ms;
+                fenced.push(record.clone());
+            }
+        }
+        if !fenced.is_empty() {
+            self.persist()?;
+        }
+        Ok(fenced)
+    }
+
+    pub fn reconcile_outcome_unknown(
+        &mut self,
+        request_id: &str,
+        account_fence: &str,
+        state: DurableTurnState,
+        reason: Option<String>,
+        now_ms: u64,
+    ) -> Result<DurableTurnRecord, String> {
+        if matches!(state, DurableTurnState::Running | DurableTurnState::OutcomeUnknown) {
+            return Err("reconciliation requires a proven terminal state".into());
+        }
+        let record = self
+            .state
+            .records
+            .get_mut(request_id)
+            .ok_or("durable turn record is missing")?;
+        if record.account_fence != account_fence {
+            return Err("outcome-unknown reconciliation is fenced by account identity".into());
+        }
+        if record.state != DurableTurnState::OutcomeUnknown {
+            return Err(format!(
+                "durable turn is {:?}, not outcome-unknown",
+                record.state
+            ));
+        }
+        record.state = state;
+        record.reason = reason;
+        record.updated_at_ms = now_ms;
+        let reconciled = record.clone();
+        self.persist()?;
+        Ok(reconciled)
+    }
+
     pub fn record(&self, request_id: &str) -> Option<&DurableTurnRecord> {
         self.state.records.get(request_id)
     }
@@ -266,5 +339,70 @@ mod tests {
             journal.record("r1").unwrap().state,
             DurableTurnState::Cancelled
         );
+    }
+
+    #[test]
+    fn account_switch_fences_running_turn_before_stale_callback_can_settle() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut journal = DurableTurnJournal::open(dir.path().join("turns.json"), 1).unwrap();
+        let generation = journal.begin("r1", "o1", "acct:a", 2).unwrap();
+        let fenced = journal
+            .mark_account_outcome_unknown("acct:a", "account switched", 3)
+            .unwrap();
+        assert_eq!(fenced.len(), 1);
+        assert_eq!(fenced[0].operation_id, "o1");
+        assert!(journal
+            .assert_current("r1", "o1", "acct:a", generation)
+            .is_err());
+        assert!(journal
+            .settle(
+                "r1",
+                "o1",
+                "acct:a",
+                generation,
+                DurableTurnState::Completed,
+                None,
+                4,
+            )
+            .is_err());
+    }
+
+    #[test]
+    fn outcome_unknown_reconciliation_is_account_fenced_and_terminal_only() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("turns.json");
+        let mut journal = DurableTurnJournal::open(&path, 1).unwrap();
+        journal.begin("r1", "o1", "acct:a", 2).unwrap();
+        drop(journal);
+        let mut journal = DurableTurnJournal::open(&path, 3).unwrap();
+        assert!(journal
+            .reconcile_outcome_unknown(
+                "r1",
+                "acct:b",
+                DurableTurnState::Completed,
+                None,
+                4,
+            )
+            .is_err());
+        assert!(journal
+            .reconcile_outcome_unknown(
+                "r1",
+                "acct:a",
+                DurableTurnState::OutcomeUnknown,
+                None,
+                5,
+            )
+            .is_err());
+        let reconciled = journal
+            .reconcile_outcome_unknown(
+                "r1",
+                "acct:a",
+                DurableTurnState::Completed,
+                Some("assistant transcript proven durable".into()),
+                6,
+            )
+            .unwrap();
+        assert_eq!(reconciled.state, DurableTurnState::Completed);
+        assert_eq!(reconciled.operation_id, "o1");
     }
 }

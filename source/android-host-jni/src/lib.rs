@@ -828,6 +828,58 @@ mod tests {
     }
 
     #[test]
+    fn agent_lifecycle_controls_are_reachable_only_through_coordinator_host_dispatch() {
+        let mut runtime =
+            AndroidNativeRuntime::new(test_root("agent-lifecycle"), AndroidHostMode::Test, 11);
+
+        let quiesced = call(
+            &mut runtime,
+            json!({
+                "method":"feature.agent.upgradeQuiesce",
+                "params":{"quiescing":true}
+            }),
+        );
+        assert_eq!(quiesced["ok"], true);
+        assert_eq!(quiesced["result"]["quiescing"], true);
+
+        let blocked = call(
+            &mut runtime,
+            json!({
+                "method":"feature.execute",
+                "params":{"command":{
+                    "type":"chat.send",
+                    "requestId":"jni-quiesced-turn",
+                    "text":"must not dispatch"
+                }}
+            }),
+        );
+        assert_eq!(blocked["ok"], false);
+
+        let resumed = call(
+            &mut runtime,
+            json!({
+                "method":"feature.agent.upgradeQuiesce",
+                "params":{"quiescing":false}
+            }),
+        );
+        assert_eq!(resumed["ok"], true);
+
+        let accepted = call(
+            &mut runtime,
+            json!({
+                "method":"feature.execute",
+                "params":{"command":{
+                    "type":"chat.send",
+                    "requestId":"jni-live-turn",
+                    "text":"dispatch"
+                }}
+            }),
+        );
+        assert_eq!(accepted["ok"], true);
+        assert_eq!(accepted["result"]["accepted"], true);
+    }
+
+    #[test]
     fn production_reopen_surfaces_coordinator_outcome_unknown_instead_of_replaying_request() {
         let root = test_root("coordinator-reopen");
         {
