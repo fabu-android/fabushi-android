@@ -1,3 +1,4 @@
+use fabushi_android_shared::node::mcp::mcp_server_id::validate_mcp_server_id;
 use super::mcp_auth_wait_registry::{
     McpAuthCompletionIdentity, McpAuthWaitRegistration, McpAuthWaitRegistry,
 };
@@ -49,15 +50,18 @@ impl HostMcpAuthCompletion {
         runtime: &mut R,
         completion: HostMcpAuthCompletionEvent,
     ) -> Result<Option<String>, R::Error> {
+        let Ok(server_id) = validate_mcp_server_id(&completion.server_id) else {
+            return Ok(None);
+        };
         let waiting_agent = self.waits.take(
             now_ms,
             &McpAuthCompletionIdentity {
-                server_id: completion.server_id.clone(),
+                server_id: server_id.clone(),
                 server_name: completion.server_name.clone(),
             },
         );
         let watching_agent = runtime.note_auth_completed_elsewhere(
-            &completion.server_id,
+            &server_id,
             &completion.account_key,
         );
 
@@ -146,7 +150,7 @@ mod tests {
 
     fn completion(outcome: &str) -> HostMcpAuthCompletionEvent {
         HostMcpAuthCompletionEvent {
-            server_id: "srv".into(),
+            server_id: "1".into(),
             server_name: "GitHub".into(),
             account_key: "account".into(),
             outcome: outcome.into(),
@@ -174,6 +178,21 @@ mod tests {
         let selected = service.resolve(1, &mut runtime, event).unwrap();
         assert_eq!(selected.as_deref(), Some("requester"));
         assert_eq!(runtime.resumes[0].0, "requester");
+    }
+
+    #[test]
+    fn invalid_server_id_completion_fails_closed_before_watch_or_resume() {
+        let mut service = HostMcpAuthCompletion::default();
+        let mut runtime = FakeRuntime {
+            watcher: Some("watcher".into()),
+            ..Default::default()
+        };
+        let mut event = completion("completed");
+        event.server_id = "01".into();
+        event.requesting_agent_id = Some("requester".into());
+        assert_eq!(service.resolve(1, &mut runtime, event).unwrap(), None);
+        assert_eq!(runtime.notes, 0);
+        assert!(runtime.resumes.is_empty());
     }
 
     #[test]
