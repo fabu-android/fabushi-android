@@ -1,6 +1,12 @@
 # Fabushi Android — Agent Instructions
 
-These instructions apply repository-wide to AI-assisted development in `bhrumom/fabushi-android`.
+These instructions apply repository-wide to AI-assisted development in `fabu-android/fabushi-android`.
+
+## CRITICAL: Current Desktop-to-Android migration authority
+
+Start with `ANDROID_PORT.md`, `docs/specs/desktop-main-android-full-parity.md`, and `docs/android-port/README.md`. The current user goal is the complete native Android equivalent of the applicable responsibilities of `bhrumom/fabushi-desktop` canonical `main`; historical Grok material is not the final product authority. Read `docs/android-port/authority/discovery.md` for verified source-layout changes and unresolved delivery issues. Source facts come from pinned code and its real production/build wiring, not stale provenance prose.
+
+All builds and tests run in GitHub Actions. Do not build, test, or package on bhrum2 or the user's Mac. A source inventory or a documentation check does not establish product parity. The documentation delivery blocker for eight feature handbooks is recorded in `docs/android-port/operations/blockers.md`; do not silently remove their completeness requirements.
 
 ## CRITICAL: Repository ownership
 

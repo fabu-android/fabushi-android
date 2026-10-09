@@ -6,7 +6,7 @@
 
 将 `bhrumom/fabushi-desktop` 当前 canonical `main` 的全部适用于 Android 的产品职责、运行时行为、协议、状态机、用户可见功能、错误恢复和发布质量，完整实现到 `fabu-android/fabushi-android`。不是桌面网页套壳、仅 UI 模仿、只移植 Agent、只补 CI、只生成目录或只完成部分 vertical slice。
 
-权威顺序：用户最新明确要求 → 本规范及 `docs/android-port/` → 本规范绑定的 Desktop main 源码与实际 shipping composition → Android 既有规范的非冲突要求 → 历史 Grok 参考资料。旧规范 `docs/specs/grok-bot-0.18-android-architecture-parity.md` 的原生化、独立源码、边界隔离、逐源审计、进程恢复和删除 legacy 要求保留；其以 Grok 重建仓库作为最终产品权威的表述被本规范取代。Android 是 Fabushi Desktop 的原生 Android 版本，不是另一款 Grok 产品。
+权威顺序：用户最新明确要求 → 本规范及 `docs/android-port/` 的明确设计要求 → 本规范绑定的 Desktop main 源码与实际 shipping composition → Android 既有规范的非冲突要求 → 历史 Grok 参考资料。关于现状、文件位置和现有协议的事实，必须以固定 SHA 的实际代码与生产接线为准，不能让旧文字覆盖真实源码。旧规范 `docs/specs/grok-bot-0.18-android-architecture-parity.md` 的原生化、独立源码、边界隔离、逐源审计、进程恢复和删除 legacy 要求保留；其以 Grok 重建仓库作为最终产品权威的表述被本规范取代。Android 是 Fabushi Desktop 的原生 Android 版本，不是另一款 Grok 产品。
 
 本轮发现基线：
 - Desktop main：`3bc92400826cc4ca7ac665b467708e22261edc61`；root tree：`3d2a0ad250ca82d0cf3b7bd917d8eca7400e5c31`。
@@ -17,9 +17,9 @@
 
 ## 2. 全范围，不只 source/frontend
 
-必须取得完整 Git root tree 与 recursive inventory，保存 commit、tree、blob SHA、mode/type、路径和来源。除了 `source/**`、`frontend/**`，还审计 `native/**`、`third_party/**`、`desktop/**`、`contracts/**`、`chatgpt-vps-control/**`、`scripts/**`、`manifests/**`、工作流、构建配置、依赖锁、文档、资产、原生库、gitlink/submodule 与 Git LFS 指针。不得以目录白名单漏掉 shipping 依赖。
+必须取得完整 Git root tree 与 recursive inventory，保存 commit、tree、blob SHA、mode/type、路径和来源。除了 `source/**`、`frontend/**`，还审计真实树中的 `native/**`、`desktop/**`、`contracts/**`、`chatgpt-vps-control/**`、`projects/**`、`scripts/**`、工作流、构建配置、依赖锁、文档、资产、原生库、gitlink/submodule 与 Git LFS 指针。将来出现的 `third_party/**`、`manifests/**` 或其他目录也自动纳入；此列举不是白名单，也不宣称这些目录当前全部存在。
 
-`RUST_RUNTIME_SOURCE.md` 明确桌面 Rust 运行时闭包包含 `third_party/mahayana/mahayana-rs`、`third_party/mahayana/codex-rs`、`native/mahayana-messaging`；`DESKTOP_SOURCE_CLOSURE.md` 明确还存在跨目录前端、MCP SDK、远程电脑及自动化合同。上述文档是入口，不替代完整源码审计。
+`RUST_RUNTIME_SOURCE.md` 与 `DESKTOP_SOURCE_CLOSURE.md` 是历史来源入口，不是可靠的当前路径清单。实际已读 `desktop/package.json` 的 Host 构建指向 `source/host/app/Cargo.toml`、`source/node-agent-coordinator/Cargo.toml`、`source/box-exec-daemon/Cargo.toml`；已读树显示 Mahayana 代码位于 `source/mahayana/mahayana-rs` 和 `source/mahayana/codex-rs`，而非旧说明中的根 `third_party/mahayana/`。其他历史路径必须逐项验证移动后的归宿。完整主仓范围首次在 Actions run `37954441267` 枚举为 9,321 个 tree entries、8,172 个非目录文件条目；这不是完整运行依赖闭包或全部语义已审计的证明。
 
 逐文件登记来源与归宿，逐产品职责实现，不要求一对一文件复制。每个职责必须有 source anchor、唯一 owner、Android target、平台差异、状态机、失败行为、shipping wiring、正反向测试和 exact-HEAD 证据。机器枚举只证明范围，不证明已经理解或实现。
 
