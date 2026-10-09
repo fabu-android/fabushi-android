@@ -1903,6 +1903,29 @@ impl AndroidJsonHost {
             return Err("runtime.call result fenced by changed release/grant/account/runtime state; reconciliation required".into());
         }
 
+        match result {
+            Err(mahayana_js_runtime::JsRuntimeError::TimedOut) => {
+                if !self.capability_broker.needs_reconciliation(&request_id) {
+                    self.capability_broker.settle(
+                        &request_id,
+                        "outcome_unknown",
+                        Some("bounded runtime deadline expired after tool dispatch; reconcile side effects before replay".into()),
+                        finished,
+                    )?;
+                }
+                return Err("runtime.call timed out with outcome unknown; reconciliation required".into());
+            }
+            Err(mahayana_js_runtime::JsRuntimeError::Cancelled) => {
+                let _ = self.capability_broker.cancel_request(
+                    &request_id,
+                    "runtime adapter cancelled",
+                    finished,
+                )?;
+                return Err("runtime.call cancelled; reconciliation may be required".into());
+            }
+            other => result = other,
+        }
+
         if let Err(error)=self.capability_broker.assert_current(&request_id,&plugin_id,&account_fence,generation,finished) {
             return Err(error);
         }
@@ -1910,19 +1933,6 @@ impl AndroidJsonHost {
             Ok(value) => {
                 self.capability_broker.settle(&request_id,"completed",None,finished)?;
                 Ok(json!({"requestId":request_id,"pluginId":plugin_id,"tool":tool,"result":value,"generation":generation}))
-            }
-            Err(mahayana_js_runtime::JsRuntimeError::Cancelled) => {
-                let _ = self.capability_broker.cancel_request(&request_id, "runtime adapter cancelled", finished)?;
-                Err("runtime.call cancelled".into())
-            }
-            Err(mahayana_js_runtime::JsRuntimeError::TimedOut) => {
-                self.capability_broker.settle(
-                    &request_id,
-                    "outcome_unknown",
-                    Some("bounded runtime deadline expired after tool dispatch; reconcile side effects before replay".into()),
-                    finished,
-                )?;
-                Err("runtime.call timed out with outcome unknown; reconciliation required".into())
             }
             Err(error) => {
                 self.capability_broker.settle(&request_id,"failed",Some(error.to_string()),finished)?;
