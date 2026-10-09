@@ -432,6 +432,7 @@ mod tests {
     struct FakeBackend {
         validations: AtomicUsize,
         reloads: AtomicUsize,
+        reload_ok: bool,
         valid: bool,
         check: McpBackendAuthStatus,
     }
@@ -454,7 +455,11 @@ mod tests {
 
         fn reload_server_tools(&self, _server_id: &str) -> Result<usize, String> {
             self.reloads.fetch_add(1, Ordering::SeqCst);
-            Ok(2)
+            if self.reload_ok {
+                Ok(2)
+            } else {
+                Err("tool reload unavailable".into())
+            }
         }
     }
 
@@ -490,6 +495,7 @@ mod tests {
         FakeBackend {
             validations: AtomicUsize::new(0),
             reloads: AtomicUsize::new(0),
+            reload_ok: true,
             valid,
             check: McpBackendAuthStatus {
                 is_available: false,
@@ -533,6 +539,7 @@ mod tests {
         let backend = FakeBackend {
             validations: AtomicUsize::new(0),
             reloads: AtomicUsize::new(0),
+            reload_ok: true,
             valid: true,
             check: McpBackendAuthStatus {
                 is_available: true,
@@ -614,6 +621,56 @@ mod tests {
                 if completion.requesting_agent_id.as_deref() == Some("agent-a")
         ));
         assert!(manager.lock().unwrap().is_empty());
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn tool_reload_failure_keeps_watch_pending_for_retry() {
+        let path = temp_store("reload-unreachable");
+        let manager = Arc::new(Mutex::new(
+            AndroidMcpAuthWatchManager::open(&path, 0).unwrap(),
+        ));
+        manager
+            .lock()
+            .unwrap()
+            .begin_watch(
+                0,
+                "17",
+                "Calendar",
+                "https://mcp.example.test",
+                "default",
+                Some("agent-a"),
+                false,
+            )
+            .unwrap();
+        let backend = FakeBackend {
+            validations: AtomicUsize::new(0),
+            reloads: AtomicUsize::new(0),
+            reload_ok: false,
+            valid: true,
+            check: McpBackendAuthStatus {
+                is_available: false,
+                requires_auth: true,
+                has_valid_token: false,
+                auth_url: "https://auth.example.test".into(),
+                error: String::new(),
+            },
+        };
+        let events = Arc::new(Mutex::new(VecDeque::new()));
+        advance_all(
+            &manager,
+            &backend,
+            &FakePolicy { blocked: false },
+            &events,
+            AUTH_WATCH_POLL_INTERVAL_MS,
+        );
+        assert!(events.lock().unwrap().is_empty());
+        assert_eq!(backend.validations.load(Ordering::SeqCst), 1);
+        assert_eq!(backend.reloads.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            manager.lock().unwrap().watch("17", "default").unwrap().generation,
+            1
+        );
         let _ = fs::remove_file(path);
     }
 
