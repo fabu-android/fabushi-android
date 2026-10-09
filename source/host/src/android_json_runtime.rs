@@ -2271,7 +2271,8 @@ mod tests {
 
     #[test]
     fn deterministic_test_journey_covers_auth_stream_approval_and_interrupt() {
-        let mut host = AndroidJsonHost::new("/tmp/fabushi-host-test", AndroidHostMode::Test);
+        let app_data = tempfile::tempdir().unwrap();
+        let mut host = AndroidJsonHost::new(app_data.path(), AndroidHostMode::Test);
         assert_eq!(host.dispatch("feature.info", &json!({})).unwrap()["platform"], "android");
         assert!(host.dispatch("feature.auth.providers", &json!({})).unwrap().as_array().unwrap().iter().any(|p| p["id"] == "google"));
 

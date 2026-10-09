@@ -1,6 +1,7 @@
 package com.ombhrum.fabushi
 
 import java.io.File
+import kotlin.io.path.createTempDirectory
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -8,7 +9,7 @@ import org.junit.Test
 class RemoteCommandJournalTest {
     @Test
     fun duplicateTerminalRequestReplaysButMismatchedSessionFailsClosed() {
-        val dir = createTempDir(prefix = "remote-command-journal-")
+        val dir = createTempDirectory(prefix = "remote-command-journal-").toFile()
         try {
             val journal = RemoteCommandJournal(File(dir, "journal.properties"))
             val first = journal.begin("request-1", "device-a", "session-a", "fabushi.app.action")
@@ -31,7 +32,7 @@ class RemoteCommandJournalTest {
 
     @Test
     fun processRestartTurnsPendingSideEffectIntoOutcomeUnknown() {
-        val dir = createTempDir(prefix = "remote-command-restart-")
+        val dir = createTempDirectory(prefix = "remote-command-restart-").toFile()
         try {
             val file = File(dir, "journal.properties")
             RemoteCommandJournal(file).begin(
@@ -56,7 +57,7 @@ class RemoteCommandJournalTest {
 
     @Test
     fun disconnectMarksAllPendingCommandsOutcomeUnknown() {
-        val dir = createTempDir(prefix = "remote-command-disconnect-")
+        val dir = createTempDirectory(prefix = "remote-command-disconnect-").toFile()
         try {
             val file = File(dir, "journal.properties")
             val journal = RemoteCommandJournal(file)

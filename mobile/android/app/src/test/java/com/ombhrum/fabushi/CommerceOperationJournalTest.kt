@@ -1,6 +1,7 @@
 package com.ombhrum.fabushi
 
 import java.io.File
+import kotlin.io.path.createTempDirectory
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
 import org.junit.Test
@@ -8,7 +9,7 @@ import org.junit.Test
 class CommerceOperationJournalTest {
     @Test
     fun pendingPurchaseKeepsSameKeyAcrossProcessRestart() {
-        val dir = createTempDir(prefix = "commerce-journal-")
+        val dir = createTempDirectory(prefix = "commerce-journal-").toFile()
         try {
             val file = File(dir, "journal.properties")
             val first = CommerceOperationJournal(file)
@@ -29,7 +30,7 @@ class CommerceOperationJournalTest {
 
     @Test
     fun accountFenceNeverReusesAnotherAccountsMutationIdentity() {
-        val dir = createTempDir(prefix = "commerce-account-")
+        val dir = createTempDirectory(prefix = "commerce-account-").toFile()
         try {
             val journal = CommerceOperationJournal(File(dir, "journal.properties"))
             val first = journal.stableIdempotencyKey("acct-a", "global-dharma", "lifetime")
@@ -42,7 +43,7 @@ class CommerceOperationJournalTest {
 
     @Test
     fun confirmedPurchaseStaysTerminalAndRejectsForeignKey() {
-        val dir = createTempDir(prefix = "commerce-confirmed-")
+        val dir = createTempDirectory(prefix = "commerce-confirmed-").toFile()
         try {
             val journal = CommerceOperationJournal(File(dir, "journal.properties"))
             val key = journal.stableIdempotencyKey("acct-a", "global-dharma", "lifetime")
