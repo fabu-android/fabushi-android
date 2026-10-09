@@ -156,6 +156,7 @@ class MahayanaHost(
             }
         } else {
             val state = checkNotNull(shared)
+            preSignalRuntimeControl(method, params, state)?.let { return it }
             synchronized(state.lock) {
                 check(state.handle != 0L) { "Mahayana host is closed" }
                 JSONObject(nativeDispatch(state.handle, request.toString()))
@@ -166,6 +167,45 @@ class MahayanaHost(
         }
         consumePrivateAccountSessionMutation(response)
         return response
+    }
+
+    private fun preSignalRuntimeControl(
+        method: String,
+        params: JSONObject,
+        state: SharedHost,
+    ): JSONObject? {
+        val active = state.handle
+        if (active == 0L) return null
+        when (method) {
+            "runtime.cancel" -> {
+                val requestId = params.optString("requestId").takeIf { it.isNotBlank() } ?: return null
+                if (nativeSignalRuntimeCancel(active, requestId)) {
+                    return JSONObject()
+                        .put("ok", true)
+                        .put(
+                            "result",
+                            JSONObject()
+                                .put("requestId", requestId)
+                                .put("cancelled", true)
+                                .put("pendingSettlement", true),
+                        )
+                }
+            }
+            "runtime.stop" -> {
+                params.optString("pluginId")
+                    .takeIf { it.isNotBlank() }
+                    ?.let { nativeSignalRuntimePluginCancel(active, it) }
+            }
+            "plugin.permission.revoke" -> {
+                val pluginId = params.optString("pluginId").takeIf { it.isNotBlank() }
+                val permission = params.optString("permission").takeIf { it.isNotBlank() }
+                if (pluginId != null && permission != null) {
+                    nativeSignalRuntimePermissionCancel(active, pluginId, permission)
+                }
+            }
+            "feature.auth.logout" -> nativeSignalAllRuntimeCalls(active)
+        }
+        return null
     }
 
     private fun consumePrivateAccountSessionMutation(response: JSONObject) {
@@ -262,6 +302,14 @@ class MahayanaHost(
     ): Long
     private external fun nativeCreateTest(appDataDir: String): Long
     private external fun nativeDispatch(handle: Long, requestJson: String): String
+    private external fun nativeSignalRuntimeCancel(handle: Long, requestId: String): Boolean
+    private external fun nativeSignalRuntimePluginCancel(handle: Long, pluginId: String): Int
+    private external fun nativeSignalRuntimePermissionCancel(
+        handle: Long,
+        pluginId: String,
+        permission: String,
+    ): Int
+    private external fun nativeSignalAllRuntimeCalls(handle: Long): Int
     private external fun nativeDestroy(handle: Long)
 
     private companion object {
