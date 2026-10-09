@@ -58,6 +58,7 @@ impl HostMcpAuthCompletion {
             &McpAuthCompletionIdentity {
                 server_id: server_id.clone(),
                 server_name: completion.server_name.clone(),
+                account_key: completion.account_key.clone(),
             },
         );
         let watching_agent = runtime.note_auth_completed_elsewhere(
@@ -167,6 +168,7 @@ mod tests {
                 agent_id: "waiter".into(),
                 connector: "github".into(),
                 server_id: None,
+                account_key: "account".into(),
             },
         );
         let mut runtime = FakeRuntime {

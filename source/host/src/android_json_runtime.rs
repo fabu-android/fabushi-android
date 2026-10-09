@@ -4,7 +4,7 @@ use crate::automation_runtime::{run_json as automation_run_json, AutomationRunti
 use crate::android_agent_roster::AndroidAgentRoster;
 use crate::host_secret_store::get_or_create_host_machine_id;
 use crate::messaging_service::AndroidMessagingService;
-use crate::mcp_auth::cleanup_legacy_mcp_auth_credentials;
+use crate::mcp_auth::{cleanup_legacy_mcp_auth_credentials, AndroidMcpAuthWatchManager};
 use crate::extensions::transcript::TranscriptStore;
 use crate::extensions::webauthn_proxy::{
     WebAuthnBridgeError, WebAuthnProxyExtension, WebAuthnProxyExtensionConfig,
@@ -14,6 +14,9 @@ use crate::runner::{
     ProductionTurnAgentOwner, ProductionTurnEvent, ProductionTurnInput,
 };
 use fabushi_constants::composer::text_size_allowed;
+use fabushi_android_shared::node::mcp::mcp_auth_watch_lifecycle::{
+    McpAuthPollOutcome, McpAuthPollRequest, McpAuthPollSettlement, McpAuthPollTick,
+};
 use fabushi_android_shared::webauthn_gateway::{
     WebAuthnCeremony, WebAuthnRequestFrame, WebAuthnResponseFrame, WebAuthnStage,
     WebAuthnStageOutcome,
@@ -265,6 +268,7 @@ pub struct AndroidJsonHost {
     agents: AndroidAgentRoster,
     transcript: Arc<Mutex<TranscriptStore>>,
     messaging: AndroidMessagingService,
+    mcp_auth_watches: AndroidMcpAuthWatchManager,
     #[cfg(feature = "ci-account-session-import")]
     ci_session_path: Option<PathBuf>,
     #[cfg(feature = "ci-account-session-import")]
@@ -323,6 +327,11 @@ impl AndroidJsonHost {
         ));
         let messaging = AndroidMessagingService::open(&app_data_dir)
             .unwrap_or_else(|error| panic!("failed to open canonical Android messaging repository: {error}"));
+        let mcp_auth_watches = AndroidMcpAuthWatchManager::open(
+            app_data_dir.join("mcp-auth-watches.json"),
+            now_ms(),
+        )
+        .unwrap_or_else(|error| panic!("failed to open durable Android MCP auth watch manager: {error}"));
         let plugin_installer = PluginInstaller::new(app_data_dir.join("plugins"))
             .unwrap_or_else(|error| panic!("failed to open canonical Android plugin installer: {error}"));
         let plugin_permissions = PermissionManager::load(app_data_dir.join("plugin-permissions.json"))
@@ -347,6 +356,7 @@ impl AndroidJsonHost {
             agents,
             transcript,
             messaging,
+            mcp_auth_watches,
             #[cfg(feature = "ci-account-session-import")]
             ci_session_path,
             #[cfg(feature = "ci-account-session-import")]
@@ -410,6 +420,11 @@ impl AndroidJsonHost {
             "feature.auth.oauthPoll" => self.oauth_poll(params),
             "feature.auth.oauthCancel" => self.oauth_cancel(params),
             "feature.mcp.oauthComplete" => self.mcp_oauth_complete(params),
+            "feature.mcp.authWatch.register" => self.mcp_auth_watch_register(params),
+            "feature.mcp.authWatch.poll" => self.mcp_auth_watch_poll(params),
+            "feature.mcp.authWatch.settle" => self.mcp_auth_watch_settle(params),
+            "feature.mcp.authWatch.cancel" => self.mcp_auth_watch_cancel(params),
+            "feature.mcp.authWatch.snapshot" => Ok(self.mcp_auth_watches.snapshot()),
             "feature.auth.logout" => self.account_logout(),
             "feature.automation.upsert" => self.automation_upsert(params),
             "feature.automation.list" => self.automation_list(),
@@ -856,6 +871,19 @@ impl AndroidJsonHost {
     }
 
     fn account_logout(&mut self) -> Result<Value, String> {
+        let cancelled_watches = self.mcp_auth_watches.cancel_all()?;
+        for completion in cancelled_watches {
+            self.events.push_back(json!({
+                "type":"mcp.auth.watch.settled",
+                "serverId":completion.server_id,
+                "serverName":completion.server_name,
+                "accountKey":completion.account_key,
+                "requestingAgentId":completion.requesting_agent_id,
+                "generation":completion.generation,
+                "outcome":"cancelled",
+                "reason":"account-logout",
+            }));
+        }
         if self.mode == AndroidHostMode::Test {
             self.logged_in = false;
             return Ok(self.auth_status());
@@ -1000,6 +1028,124 @@ impl AndroidJsonHost {
         Ok(json!({"attemptId":attempt_id,"status":status}))
     }
 
+
+    fn mcp_auth_watch_register(&mut self, params: &Value) -> Result<Value, String> {
+        let server_id = required_string(params, "serverId")?;
+        let server_name = required_string(params, "serverName")?;
+        let server_url = required_string(params, "serverUrl")?;
+        let account_key = required_string(params, "accountKey")?;
+        let requesting_agent_id = params
+            .get("requestingAgentId")
+            .and_then(Value::as_str)
+            .filter(|value| !value.trim().is_empty());
+        let force_reauth = params
+            .get("forceReauth")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        let (watch, replaced) = self.mcp_auth_watches.begin_watch(
+            now_ms(),
+            server_id,
+            server_name,
+            server_url,
+            account_key,
+            requesting_agent_id,
+            force_reauth,
+        )?;
+        Ok(json!({
+            "serverId":watch.server_id,
+            "serverName":watch.server_name,
+            "accountKey":watch.account_key,
+            "generation":watch.generation,
+            "expiresAtMs":watch.expires_at_ms,
+            "replacedGeneration":replaced.map(|value| value.generation),
+        }))
+    }
+
+    fn mcp_auth_watch_poll(&mut self, params: &Value) -> Result<Value, String> {
+        let server_id = required_string(params, "serverId")?;
+        let account_key = required_string(params, "accountKey")?;
+        let tick = self.mcp_auth_watches.poll_tick(now_ms(), server_id, account_key)?;
+        Ok(match tick {
+            McpAuthPollTick::Idle => json!({"status":"idle"}),
+            McpAuthPollTick::Suppressed => json!({"status":"suppressed"}),
+            McpAuthPollTick::Expired => json!({"status":"expired"}),
+            McpAuthPollTick::Request(request) => json!({
+                "status":"poll",
+                "generation":request.generation,
+                "serverId":request.server_id,
+                "serverName":request.server_name,
+                "serverUrl":request.server_url,
+                "accountKey":request.account_key,
+                "requestingAgentId":request.requesting_agent_id,
+                "deadlineMs":request.deadline_ms,
+            }),
+        })
+    }
+
+    fn mcp_auth_watch_settle(&mut self, params: &Value) -> Result<Value, String> {
+        let request = McpAuthPollRequest {
+            generation: required_u64(params, "generation")?,
+            server_id: required_string(params, "serverId")?.to_string(),
+            server_name: required_string(params, "serverName")?.to_string(),
+            server_url: required_string(params, "serverUrl")?.to_string(),
+            account_key: required_string(params, "accountKey")?.to_string(),
+            requesting_agent_id: params
+                .get("requestingAgentId")
+                .and_then(Value::as_str)
+                .filter(|value| !value.trim().is_empty())
+                .map(str::to_string),
+            deadline_ms: required_u64(params, "deadlineMs")?,
+        };
+        if now_ms() > request.deadline_ms {
+            let settlement = self.mcp_auth_watches.poll_failed(now_ms(), &request)?;
+            return Ok(mcp_auth_poll_settlement_json(settlement));
+        }
+        let outcome = match required_string(params, "outcome")? {
+            "token-valid" => McpAuthPollOutcome::TokenValid,
+            "token-invalid" => McpAuthPollOutcome::TokenInvalid,
+            "admin-blocked" => McpAuthPollOutcome::AdminBlocked,
+            "unreachable" => McpAuthPollOutcome::Unreachable,
+            _ => return Err("unsupported MCP auth poll outcome".into()),
+        };
+        let settlement = self
+            .mcp_auth_watches
+            .settle_poll(now_ms(), &request, outcome)?;
+        let result = mcp_auth_poll_settlement_json(settlement.clone());
+        match settlement {
+            McpAuthPollSettlement::Completed(completion)
+            | McpAuthPollSettlement::Cancelled(completion) => {
+                self.events.push_back(json!({
+                    "type":"mcp.auth.watch.settled",
+                    "serverId":completion.server_id,
+                    "serverName":completion.server_name,
+                    "accountKey":completion.account_key,
+                    "requestingAgentId":completion.requesting_agent_id,
+                    "generation":completion.generation,
+                    "outcome":completion.outcome,
+                }));
+            }
+            McpAuthPollSettlement::Pending | McpAuthPollSettlement::Stale => {}
+        }
+        Ok(result)
+    }
+
+    fn mcp_auth_watch_cancel(&mut self, params: &Value) -> Result<Value, String> {
+        let server_id = required_string(params, "serverId")?;
+        let account_key = required_string(params, "accountKey")?;
+        let completion = self.mcp_auth_watches.cancel_watch(server_id, account_key)?;
+        Ok(match completion {
+            Some(completion) => json!({
+                "status":"cancelled",
+                "generation":completion.generation,
+                "serverId":completion.server_id,
+                "serverName":completion.server_name,
+                "accountKey":completion.account_key,
+                "requestingAgentId":completion.requesting_agent_id,
+            }),
+            None => json!({"status":"stale"}),
+        })
+    }
+
     fn mcp_oauth_complete(&mut self, params: &Value) -> Result<Value, String> {
         let provider = required_string(params, "provider")?.to_string();
         let state = required_string(params, "state")?.to_string();
@@ -1016,6 +1162,25 @@ impl AndroidJsonHost {
         }
 
         let outcome = if error.is_some() { "failed" } else { "completed" };
+        let watch = match (
+            params.get("serverId").and_then(Value::as_str),
+            params.get("accountKey").and_then(Value::as_str),
+        ) {
+            (Some(server_id), Some(account_key))
+                if !server_id.trim().is_empty() && !account_key.trim().is_empty() =>
+            {
+                self.mcp_auth_watches
+                    .note_auth_completed_elsewhere(server_id, account_key)?
+            }
+            (None, None) => None,
+            _ => return Err("MCP OAuth completion serverId/accountKey must be supplied together".into()),
+        };
+        let server_id = watch.as_ref().map(|value| value.server_id.clone());
+        let server_name = watch.as_ref().map(|value| value.server_name.clone());
+        let account_key = watch.as_ref().map(|value| value.account_key.clone());
+        let requesting_agent_id = watch
+            .as_ref()
+            .and_then(|value| value.requesting_agent_id.clone());
         self.events.push_back(json!({
             "type": if outcome == "completed" {
                 "mcp.auth.completed"
@@ -1025,11 +1190,19 @@ impl AndroidJsonHost {
             "provider": provider.clone(),
             "state": state.clone(),
             "outcome": outcome,
+            "serverId":server_id,
+            "serverName":server_name,
+            "accountKey":account_key,
+            "requestingAgentId":requesting_agent_id,
         }));
         Ok(json!({
             "provider": provider,
             "state": state,
             "outcome": outcome,
+            "serverId":server_id,
+            "serverName":server_name,
+            "accountKey":account_key,
+            "requestingAgentId":requesting_agent_id,
         }))
     }
 
@@ -2250,6 +2423,30 @@ impl AndroidJsonHost {
     }
 }
 
+
+
+fn mcp_auth_poll_settlement_json(settlement: McpAuthPollSettlement) -> Value {
+    match settlement {
+        McpAuthPollSettlement::Pending => json!({"status":"pending"}),
+        McpAuthPollSettlement::Stale => json!({"status":"stale"}),
+        McpAuthPollSettlement::Completed(completion) => json!({
+            "status":"completed",
+            "generation":completion.generation,
+            "serverId":completion.server_id,
+            "serverName":completion.server_name,
+            "accountKey":completion.account_key,
+            "requestingAgentId":completion.requesting_agent_id,
+        }),
+        McpAuthPollSettlement::Cancelled(completion) => json!({
+            "status":"cancelled",
+            "generation":completion.generation,
+            "serverId":completion.server_id,
+            "serverName":completion.server_name,
+            "accountKey":completion.account_key,
+            "requestingAgentId":completion.requesting_agent_id,
+        }),
+    }
+}
 
 fn with_account_session_mutation(
     mut result: Value,

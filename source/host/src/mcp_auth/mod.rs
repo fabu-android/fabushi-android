@@ -1,7 +1,9 @@
+pub mod android_mcp_auth_watch_manager;
 pub mod host_mcp_auth_completion;
 pub mod legacy_credential_cleanup;
 pub mod mcp_auth_wait_registry;
 
+pub use android_mcp_auth_watch_manager::AndroidMcpAuthWatchManager;
 pub use host_mcp_auth_completion::{
     HostMcpAuthCompletion, HostMcpAuthCompletionEvent, McpAuthCompletionRuntime,
 };

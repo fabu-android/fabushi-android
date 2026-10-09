@@ -1,4 +1,5 @@
 use fabushi_android_shared::node::mcp::mcp_auth_watch::AUTH_WATCH_TIMEOUT_MS;
+use fabushi_android_shared::node::mcp::mcp_auth_watch_lifecycle::normalize_mcp_account_key;
 use fabushi_android_shared::node::mcp::mcp_server_id::validate_mcp_server_id;
 use std::collections::BTreeMap;
 
@@ -8,6 +9,7 @@ pub const DEFAULT_MCP_AUTH_WAIT_TTL_MS: u64 = AUTH_WATCH_TIMEOUT_MS;
 pub struct McpAuthCompletionIdentity {
     pub server_id: String,
     pub server_name: String,
+    pub account_key: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -15,12 +17,14 @@ pub struct McpAuthWaitRegistration {
     pub agent_id: String,
     pub connector: String,
     pub server_id: Option<String>,
+    pub account_key: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct WaitEntry {
     agent_id: String,
     server_id: Option<String>,
+    account_key: String,
     expires_at_ms: u64,
 }
 
@@ -52,6 +56,9 @@ impl McpAuthWaitRegistry {
             return;
         }
 
+        let Ok(account_key) = normalize_mcp_account_key(&registration.account_key) else {
+            return;
+        };
         let server_id = registration
             .server_id
             .and_then(|value| validate_mcp_server_id(&value).ok());
@@ -68,6 +75,7 @@ impl McpAuthWaitRegistry {
                 WaitEntry {
                     agent_id: registration.agent_id,
                     server_id,
+                    account_key,
                     expires_at_ms: now_ms.saturating_add(self.ttl_ms),
                 },
             );
@@ -81,11 +89,17 @@ impl McpAuthWaitRegistry {
     ) -> Option<String> {
         self.prune(now_ms);
         let name_key = normalize_connector_name(&completion.server_name);
+        let Ok(completion_account_key) = normalize_mcp_account_key(&completion.account_key) else {
+            return None;
+        };
         let mut id_match: Option<String> = None;
         let mut name_match: Option<String> = None;
         let mut matched_keys = Vec::new();
 
         for (key, entry) in &self.waits {
+            if entry.account_key != completion_account_key {
+                continue;
+            }
             let matches_id = entry
                 .server_id
                 .as_deref()
@@ -141,6 +155,7 @@ mod tests {
                 agent_id: "by-name".into(),
                 connector: "Git Hub".into(),
                 server_id: None,
+                account_key: "default".into(),
             },
         );
         waits.register(
@@ -149,6 +164,7 @@ mod tests {
                 agent_id: "by-id".into(),
                 connector: "Different".into(),
                 server_id: Some("1".into()),
+                account_key: "default".into(),
             },
         );
 
@@ -157,6 +173,7 @@ mod tests {
             &McpAuthCompletionIdentity {
                 server_id: "1".into(),
                 server_name: "GitHub".into(),
+                account_key: "default".into(),
             },
         );
         assert_eq!(agent.as_deref(), Some("by-id"));
@@ -172,6 +189,7 @@ mod tests {
                 agent_id: "agent-a".into(),
                 connector: "".into(),
                 server_id: Some("not-a-server".into()),
+                account_key: "default".into(),
             },
         );
         assert!(waits.is_empty());
@@ -182,6 +200,7 @@ mod tests {
                 agent_id: "agent-b".into(),
                 connector: "GitHub".into(),
                 server_id: Some("01".into()),
+                account_key: "default".into(),
             },
         );
         assert_eq!(
@@ -190,6 +209,7 @@ mod tests {
                 &McpAuthCompletionIdentity {
                     server_id: "1".into(),
                     server_name: "github".into(),
+                    account_key: "default".into(),
                 },
             )
             .as_deref(),
@@ -206,6 +226,7 @@ mod tests {
                 agent_id: "agent-a".into(),
                 connector: "Google Drive".into(),
                 server_id: None,
+                account_key: "default".into(),
             },
         );
         assert_eq!(
@@ -214,6 +235,7 @@ mod tests {
                 &McpAuthCompletionIdentity {
                     server_id: "other".into(),
                     server_name: "google-drive".into(),
+                    account_key: "default".into(),
                 },
             )
             .as_deref(),
@@ -226,6 +248,7 @@ mod tests {
                 agent_id: "expired".into(),
                 connector: "Calendar".into(),
                 server_id: None,
+                account_key: "default".into(),
             },
         );
         assert_eq!(
@@ -234,6 +257,7 @@ mod tests {
                 &McpAuthCompletionIdentity {
                     server_id: "none".into(),
                     server_name: "calendar".into(),
+                    account_key: "default".into(),
                 },
             ),
             None
