@@ -13,32 +13,36 @@ const MAX_STORE_BYTES: u64 = 512 * 1024;
 pub struct AndroidMcpAuthWatchManager {
     store_path: PathBuf,
     lifecycle: McpAuthWatchLifecycle,
+    pending_completions: Vec<McpAuthWatchCompletion>,
 }
 
 impl AndroidMcpAuthWatchManager {
     pub fn open(store_path: impl Into<PathBuf>, now_ms: u64) -> Result<Self, String> {
         let store_path = store_path.into();
-        let lifecycle = match fs::metadata(&store_path) {
+        let (lifecycle, pending_completions) = match fs::metadata(&store_path) {
             Ok(metadata) if !metadata.is_file() || metadata.len() == 0 || metadata.len() > MAX_STORE_BYTES => {
                 let _ = fs::remove_file(&store_path);
-                McpAuthWatchLifecycle::new()
+                (McpAuthWatchLifecycle::new(), Vec::new())
             }
             Ok(_) => match fs::read_to_string(&store_path)
                 .map_err(|error| format!("failed to read MCP auth watch store: {error}"))
                 .and_then(|raw| parse_store(&raw, now_ms))
             {
-                Ok(lifecycle) => lifecycle,
+                Ok(restored) => restored,
                 Err(_) => {
                     let _ = fs::remove_file(&store_path);
-                    McpAuthWatchLifecycle::new()
+                    (McpAuthWatchLifecycle::new(), Vec::new())
                 }
             },
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => McpAuthWatchLifecycle::new(),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                (McpAuthWatchLifecycle::new(), Vec::new())
+            }
             Err(error) => return Err(format!("failed to inspect MCP auth watch store: {error}")),
         };
         let mut manager = Self {
             store_path,
             lifecycle,
+            pending_completions,
         };
         if manager.lifecycle.prune_expired(now_ms) > 0 {
             manager.persist()?;
@@ -93,6 +97,15 @@ impl AndroidMcpAuthWatchManager {
         outcome: McpAuthPollOutcome,
     ) -> Result<McpAuthPollSettlement, String> {
         let settlement = self.lifecycle.settle_poll(now_ms, request, outcome);
+        if let McpAuthPollSettlement::Completed(completion) = &settlement {
+            if !self.pending_completions.iter().any(|pending| {
+                pending.generation == completion.generation
+                    && pending.server_id == completion.server_id
+                    && pending.account_key == completion.account_key
+            }) {
+                self.pending_completions.push(completion.clone());
+            }
+        }
         if !matches!(settlement, McpAuthPollSettlement::Stale) {
             self.persist()?;
         }
@@ -169,11 +182,35 @@ impl AndroidMcpAuthWatchManager {
             "version": STORE_VERSION,
             "nextGeneration": self.lifecycle.next_generation(),
             "watches": self.lifecycle.watches().map(watch_to_value).collect::<Vec<_>>(),
+            "pendingCompletions": self.pending_completions.iter().map(completion_to_value).collect::<Vec<_>>(),
         })
     }
 
     pub fn watches(&self) -> Vec<PendingMcpAuthWatch> {
         self.lifecycle.watches().cloned().collect()
+    }
+
+    pub fn pending_completions(&self) -> Vec<McpAuthWatchCompletion> {
+        self.pending_completions.clone()
+    }
+
+    pub fn ack_completion(
+        &mut self,
+        generation: u64,
+        server_id: &str,
+        account_key: &str,
+    ) -> Result<bool, String> {
+        let before = self.pending_completions.len();
+        self.pending_completions.retain(|completion| {
+            !(completion.generation == generation
+                && completion.server_id == server_id
+                && completion.account_key == account_key)
+        });
+        let removed = self.pending_completions.len() != before;
+        if removed {
+            self.persist()?;
+        }
+        Ok(removed)
     }
 
     pub fn len(&self) -> usize {
@@ -185,7 +222,7 @@ impl AndroidMcpAuthWatchManager {
     }
 
     fn persist(&mut self) -> Result<(), String> {
-        if self.lifecycle.is_empty() {
+        if self.lifecycle.is_empty() && self.pending_completions.is_empty() {
             match fs::remove_file(&self.store_path) {
                 Ok(()) => return Ok(()),
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
@@ -238,7 +275,36 @@ fn watch_to_value(watch: &PendingMcpAuthWatch) -> Value {
     })
 }
 
-fn parse_store(raw: &str, now_ms: u64) -> Result<McpAuthWatchLifecycle, String> {
+fn completion_to_value(completion: &McpAuthWatchCompletion) -> Value {
+    json!({
+        "generation":completion.generation,
+        "serverId":completion.server_id,
+        "serverName":completion.server_name,
+        "accountKey":completion.account_key,
+        "requestingAgentId":completion.requesting_agent_id,
+        "outcome":completion.outcome,
+    })
+}
+
+fn parse_completion(value: &Value) -> Option<McpAuthWatchCompletion> {
+    let outcome = match value.get("outcome")?.as_str()? {
+        "completed" => "completed",
+        other if other.eq_ignore_ascii_case("token-valid") => "completed",
+        _ => return None,
+    };
+    Some(McpAuthWatchCompletion {
+        generation: value.get("generation")?.as_u64()?,
+        server_id: bounded_string(value.get("serverId")?, 32)?,
+        server_name: bounded_string(value.get("serverName")?, 320)?,
+        account_key: bounded_string(value.get("accountKey")?, 320)?,
+        requesting_agent_id: value
+            .get("requestingAgentId")
+            .and_then(|value| bounded_string(value, 320)),
+        outcome,
+    })
+}
+
+fn parse_store(raw: &str, now_ms: u64) -> Result<(McpAuthWatchLifecycle, Vec<McpAuthWatchCompletion>), String> {
     let value: Value =
         serde_json::from_str(raw).map_err(|_| "MCP auth watch store is invalid JSON")?;
     if value.get("version").and_then(Value::as_u64) != Some(STORE_VERSION) {
@@ -256,10 +322,18 @@ fn parse_store(raw: &str, now_ms: u64) -> Result<McpAuthWatchLifecycle, String> 
         .iter()
         .filter_map(parse_watch)
         .collect::<Vec<_>>();
-    Ok(McpAuthWatchLifecycle::from_restored(
-        now_ms,
-        next_generation,
-        watches,
+    let pending_completions = value
+        .get("pendingCompletions")
+        .and_then(Value::as_array)
+        .map(|items| items.iter().filter_map(parse_completion).collect::<Vec<_>>())
+        .unwrap_or_default();
+    Ok((
+        McpAuthWatchLifecycle::from_restored(
+            now_ms,
+            next_generation,
+            watches,
+        ),
+        pending_completions,
     ))
 }
 
