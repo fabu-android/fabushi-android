@@ -16,7 +16,7 @@ use sha2::{Digest, Sha256};
 use std::collections::{BTreeSet, HashMap};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant};
 use url::Url;
@@ -1161,6 +1161,17 @@ const RUNTIME_PRELUDE: &str = r#"
     return undefined;
   };
 
+  globalThis.__mahayanaInvokePluginTool = async (pluginId, name, argumentsJson) => {
+    const entry = tools.get(String(name));
+    if (!entry) throw new Error(`tool not found: ${name}`);
+    if (String(entry.owner) !== String(pluginId)) {
+      throw new Error(`tool ${name} belongs to plugin ${entry.owner}, not ${pluginId}`);
+    }
+    const args = argumentsJson ? JSON.parse(argumentsJson) : {};
+    const value = await entry.definition.execute(args);
+    return JSON.stringify(value);
+  };
+
   globalThis.__mahayanaInvokeTool = async (name, argumentsJson) => {
     const entry = tools.get(String(name));
     if (!entry) throw new Error(`tool not found: ${name}`);
@@ -2061,6 +2072,87 @@ impl DeepSeekJsHost {
             .map_err(|error| JsRuntimeError::InvalidPlugin(error.to_string()))
     }
 
+    pub fn call_plugin_tool_json_bounded(
+        &self,
+        plugin_id: &str,
+        name: &str,
+        arguments: &Value,
+        timeout: Duration,
+        cancelled: &AtomicBool,
+    ) -> Result<Value, JsRuntimeError> {
+        if timeout.is_zero() {
+            return Err(JsRuntimeError::TimedOut);
+        }
+        let arguments_json = serde_json::to_string(arguments)
+            .map_err(|error| JsRuntimeError::InvalidPlugin(error.to_string()))?;
+        let bridge = self.bridge.clone();
+        let deadline = Instant::now() + timeout;
+        let result_json = self.context.with(|ctx| -> Result<String, JsRuntimeError> {
+            if cancelled.load(Ordering::Acquire) {
+                return Err(JsRuntimeError::Cancelled);
+            }
+            let function: Function = ctx
+                .globals()
+                .get("__mahayanaInvokePluginTool")
+                .map_err(JsRuntimeError::Js)?;
+            let promise: Promise = function
+                .call((plugin_id.to_string(), name.to_string(), arguments_json))
+                .map_err(JsRuntimeError::Js)?;
+            loop {
+                if cancelled.load(Ordering::Acquire) {
+                    return Err(JsRuntimeError::Cancelled);
+                }
+                if Instant::now() >= deadline {
+                    return Err(JsRuntimeError::TimedOut);
+                }
+                if let Some(result) = promise.result::<String>() {
+                    return result.map_err(JsRuntimeError::Js);
+                }
+                let mut progressed = false;
+                while ctx.execute_pending_job() {
+                    progressed = true;
+                    if cancelled.load(Ordering::Acquire) {
+                        return Err(JsRuntimeError::Cancelled);
+                    }
+                    if Instant::now() >= deadline {
+                        return Err(JsRuntimeError::TimedOut);
+                    }
+                }
+                if let Some(result) = promise.result::<String>() {
+                    return result.map_err(JsRuntimeError::Js);
+                }
+                let due = take_due_timers(&bridge)?;
+                if !due.is_empty() {
+                    fire_timer_ids(&ctx, &due).map_err(JsRuntimeError::Js)?;
+                    continue;
+                }
+                if progressed {
+                    continue;
+                }
+                let remaining = deadline.saturating_duration_since(Instant::now());
+                if remaining.is_zero() {
+                    return Err(JsRuntimeError::TimedOut);
+                }
+                match next_timer_delay(&bridge)? {
+                    Some(delay) => {
+                        std::thread::sleep(
+                            delay
+                                .min(remaining)
+                                .min(Duration::from_millis(25)),
+                        );
+                    }
+                    None => {
+                        std::thread::sleep(
+                            remaining.min(Duration::from_millis(5)),
+                        );
+                    }
+                }
+            }
+        })?;
+        serde_json::from_str(&result_json)
+            .map_err(|error| JsRuntimeError::InvalidPlugin(error.to_string()))
+    }
+
     pub fn pump_timers(&self) -> Result<usize, JsRuntimeError> {
         let due = take_due_timers(&self.bridge)?;
         let fired = self
@@ -2922,6 +3014,10 @@ pub enum JsRuntimeError {
     Poisoned,
     #[error("transport error: {0}")]
     Transport(String),
+    #[error("runtime call cancelled")]
+    Cancelled,
+    #[error("runtime call timed out")]
+    TimedOut,
     #[error("failed to apply loader update for {plugin_id}: {message}")]
     UpdateFailed { plugin_id: String, message: String },
     #[error(
@@ -2980,6 +3076,128 @@ export function apply(ctx) {
             .call_tool_json("greet", &serde_json::json!({"name":"Cordis"}))
             .unwrap();
         assert_eq!(result, serde_json::json!("Hello, Cordis!"));
+    }
+
+    #[test]
+    fn plugin_scoped_tool_call_rejects_cross_instance_name_collision() {
+        let first = tempfile::tempdir().unwrap();
+        let second = tempfile::tempdir().unwrap();
+        write_plugin(
+            first.path(),
+            "plugin.mjs",
+            r#"
+export const name = 'first';
+export function apply(ctx) {
+  ctx.tools.register({
+    name: 'shared',
+    async execute() { return 'first'; }
+  });
+}
+"#,
+        );
+        write_plugin(
+            second.path(),
+            "plugin.mjs",
+            r#"
+export const name = 'second';
+export function apply(ctx) {
+  ctx.tools.register({
+    name: 'shared',
+    async execute() { return 'second'; }
+  });
+}
+"#,
+        );
+        let mut host = DeepSeekJsHost::new().unwrap();
+        host.register_plugin(
+            "first",
+            first.path(),
+            Path::new("plugin.mjs"),
+            &serde_json::json!({}),
+        )
+        .unwrap();
+        host.register_plugin(
+            "second",
+            second.path(),
+            Path::new("plugin.mjs"),
+            &serde_json::json!({}),
+        )
+        .unwrap();
+        let cancelled = AtomicBool::new(false);
+        let error = host
+            .call_plugin_tool_json_bounded(
+                "first",
+                "shared",
+                &serde_json::json!({}),
+                Duration::from_secs(1),
+                &cancelled,
+            )
+            .unwrap_err();
+        assert!(error.to_string().contains("belongs to plugin second"));
+        assert_eq!(
+            host.call_plugin_tool_json_bounded(
+                "second",
+                "shared",
+                &serde_json::json!({}),
+                Duration::from_secs(1),
+                &cancelled,
+            )
+            .unwrap(),
+            serde_json::json!("second")
+        );
+    }
+
+    #[test]
+    fn bounded_plugin_tool_call_observes_cancel_and_timer_timeout() {
+        let temp = tempfile::tempdir().unwrap();
+        write_plugin(
+            temp.path(),
+            "plugin.mjs",
+            r#"
+export const name = 'bounded';
+export function apply(ctx) {
+  ctx.tools.register({
+    name: 'slow',
+    async execute() {
+      await new Promise(resolve => setTimeout(resolve, 250));
+      return 'late';
+    }
+  });
+}
+"#,
+        );
+        let mut host = DeepSeekJsHost::new().unwrap();
+        host.register_plugin(
+            "bounded",
+            temp.path(),
+            Path::new("plugin.mjs"),
+            &serde_json::json!({}),
+        )
+        .unwrap();
+
+        let cancelled = AtomicBool::new(true);
+        assert!(matches!(
+            host.call_plugin_tool_json_bounded(
+                "bounded",
+                "slow",
+                &serde_json::json!({}),
+                Duration::from_secs(1),
+                &cancelled,
+            ),
+            Err(JsRuntimeError::Cancelled)
+        ));
+
+        cancelled.store(false, Ordering::Release);
+        assert!(matches!(
+            host.call_plugin_tool_json_bounded(
+                "bounded",
+                "slow",
+                &serde_json::json!({}),
+                Duration::from_millis(10),
+                &cancelled,
+            ),
+            Err(JsRuntimeError::TimedOut)
+        ));
     }
 
     #[test]
