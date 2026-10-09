@@ -20,6 +20,9 @@ pub const DASHBOARD_GET_USER_PRIVACY_MODE_PATH: &str =
     "/aiserver.v1.DashboardService/GetUserPrivacyMode";
 pub const DASHBOARD_GET_AVAILABLE_MCP_SERVERS_PATH: &str =
     "/aiserver.v1.DashboardService/GetAvailableMcpServers";
+pub const DASHBOARD_LIST_SAND_MCP_TOOLS_PATH: &str =
+    "/aiserver.v1.DashboardService/ListSandMcpTools";
+pub const LIST_TOOLS_TIMEOUT_MS: u64 = 60_000;
 pub const CONTROL_RPC_TIMEOUT_MS: u64 = 30_000;
 pub const DEFAULT_CURSOR_BACKEND_URL: &str = "https://api2.cursor.sh";
 pub const SAND_INFERENCE_RENEWAL_CREDENTIAL_ENV: &str =
@@ -206,6 +209,8 @@ pub trait McpAuthBackendPort: Send + Sync {
     ) -> Result<McpBackendAuthStatus, String>;
 
     fn validate_token(&self, server_url: &str, account_key: &str) -> Result<bool, String>;
+
+    fn reload_server_tools(&self, server_id: &str) -> Result<usize, String>;
 }
 
 pub struct CursorDashboardMcpAuthBackend {
@@ -270,6 +275,43 @@ impl CursorDashboardMcpAuthBackend {
             return Err("MCP backend RPC response exceeds bounded size".into());
         }
         Ok(bytes)
+    }
+
+    pub fn reload_server_tools(&self, server_id: &str) -> Result<usize, String> {
+        let requested_id = server_id
+            .parse::<i32>()
+            .map_err(|_| "MCP server id is outside signed int32 range".to_string())?;
+        let credentials = self.credentials.credentials()?;
+        let ghost_mode = self.resolve_ghost_mode(&credentials);
+        let available = self.send_unary(
+            &credentials,
+            DASHBOARD_GET_AVAILABLE_MCP_SERVERS_PATH,
+            &[],
+            CONTROL_RPC_TIMEOUT_MS,
+            ghost_mode,
+        )?;
+        let server = decode_available_mcp_servers_response(&available)?
+            .into_iter()
+            .find(|server| server.id == requested_id)
+            .ok_or("MCP server disappeared during reload")?;
+        if server.disabled_by_team_admin_policy {
+            return Err("MCP server is blocked by current team admin policy".into());
+        }
+        let identifier = server
+            .server_identifier
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .ok_or("MCP server has no backend server identifier")?;
+        let request = encode_list_sand_mcp_tools_request(&[identifier]);
+        let response = self.send_unary(
+            &credentials,
+            DASHBOARD_LIST_SAND_MCP_TOOLS_PATH,
+            &request,
+            LIST_TOOLS_TIMEOUT_MS,
+            ghost_mode,
+        )?;
+        decode_list_sand_mcp_tools_count(&response, identifier)
     }
 
     pub fn fresh_server_snapshot(
@@ -381,6 +423,10 @@ impl McpAuthBackendPort for CursorDashboardMcpAuthBackend {
                 && result.has_valid_token
         }))
     }
+
+    fn reload_server_tools(&self, server_id: &str) -> Result<usize, String> {
+        CursorDashboardMcpAuthBackend::reload_server_tools(self, server_id)
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -391,6 +437,7 @@ struct AvailableServerWire {
     transport: String,
     url: Option<String>,
     disabled_by_team_admin_policy: bool,
+    server_identifier: Option<String>,
 }
 
 fn decode_available_mcp_servers_response(
@@ -420,6 +467,7 @@ fn decode_available_server(input: &[u8]) -> Result<AvailableServerWire, String> 
         transport: String::new(),
         url: None,
         disabled_by_team_admin_policy: false,
+        server_identifier: None,
     };
     while cursor < input.len() {
         let key = read_varint(input, &mut cursor)?;
@@ -435,10 +483,66 @@ fn decode_available_server(input: &[u8]) -> Result<AvailableServerWire, String> 
                 server.disabled_by_team_admin_policy =
                     read_varint(input, &mut cursor)? != 0
             }
+            (15, 2) => server.server_identifier = Some(read_string(input, &mut cursor)?),
             _ => skip_field(input, &mut cursor, wire)?,
         }
     }
     Ok(server)
+}
+
+fn encode_list_sand_mcp_tools_request(server_identifiers: &[&str]) -> Vec<u8> {
+    let mut output = Vec::new();
+    for identifier in server_identifiers {
+        encode_string(1, identifier, &mut output);
+    }
+    output
+}
+
+fn decode_list_sand_mcp_tools_count(
+    input: &[u8],
+    requested_identifier: &str,
+) -> Result<usize, String> {
+    let mut cursor = 0usize;
+    let mut matched = None;
+    while cursor < input.len() {
+        let key = read_varint(input, &mut cursor)?;
+        let field = (key >> 3) as u32;
+        let wire = (key & 0x07) as u8;
+        if field == 1 && wire == 2 {
+            let bytes = read_len_delimited(input, &mut cursor)?;
+            let (identifier, tool_count) = decode_list_sand_mcp_server(bytes)?;
+            if identifier == requested_identifier {
+                matched = Some(tool_count);
+            }
+        } else {
+            skip_field(input, &mut cursor, wire)?;
+        }
+    }
+    matched.ok_or_else(|| {
+        format!(
+            "MCP tool reload did not return server identifier {requested_identifier}"
+        )
+    })
+}
+
+fn decode_list_sand_mcp_server(input: &[u8]) -> Result<(String, usize), String> {
+    let mut cursor = 0usize;
+    let mut identifier = String::new();
+    let mut tool_count = 0usize;
+    while cursor < input.len() {
+        let key = read_varint(input, &mut cursor)?;
+        let field = (key >> 3) as u32;
+        let wire = (key & 0x07) as u8;
+        match (field, wire) {
+            (1, 2) => identifier = read_string(input, &mut cursor)?,
+            (3, 2) => {
+                let _ = read_len_delimited(input, &mut cursor)?;
+                tool_count = tool_count.saturating_add(1);
+            }
+            _ => skip_field(input, &mut cursor, wire)?,
+        }
+    }
+    Ok((identifier, tool_count))
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -801,6 +905,7 @@ mod tests {
         encode_string(5, "http", &mut nested);
         encode_string(8, "https://mcp.example.test", &mut nested);
         encode_bool(14, true, &mut nested);
+        encode_string(15, "calendar/default", &mut nested);
         let response = len_field(1, &nested);
         assert_eq!(
             decode_available_mcp_servers_response(&response).unwrap(),
@@ -811,8 +916,28 @@ mod tests {
                 transport: "http".into(),
                 url: Some("https://mcp.example.test".into()),
                 disabled_by_team_admin_policy: true,
+                server_identifier: Some("calendar/default".into()),
             }]
         );
+    }
+
+    #[test]
+    fn list_tools_reload_request_and_response_match_desktop_wire_contract() {
+        let request = encode_list_sand_mcp_tools_request(&["calendar/default"]);
+        assert_eq!(request[0], 0x0a);
+        assert!(request.ends_with(b"calendar/default"));
+
+        let mut server = Vec::new();
+        encode_string(1, "calendar/default", &mut server);
+        encode_string(2, "ready", &mut server);
+        encode_len_delimited(3, &[0x0a, 0x04, b'l', b'i', b's', b't'], &mut server);
+        encode_len_delimited(3, &[0x0a, 0x06, b'c', b'r', b'e', b'a', b't', b'e'], &mut server);
+        let response = len_field(1, &server);
+        assert_eq!(
+            decode_list_sand_mcp_tools_count(&response, "calendar/default").unwrap(),
+            2
+        );
+        assert!(decode_list_sand_mcp_tools_count(&response, "other").is_err());
     }
 
     #[test]
