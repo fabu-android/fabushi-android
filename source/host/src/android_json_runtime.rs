@@ -1707,6 +1707,19 @@ impl AndroidJsonHost {
                 .map_err(|error| format!("failed to register plugin runtime: {error}"))?
         };
         self.sync_js_runtime_events()?;
+        let owned_tools = self
+            .js_runtime
+            .as_ref()
+            .ok_or("plugin runtime disappeared during start")?
+            .registered_tools_for_plugin(&plugin_id)
+            .map_err(|error| format!("failed to read plugin-scoped runtime tools: {error}"))?
+            .into_iter()
+            .collect::<BTreeSet<_>>();
+        if owned_tools.is_empty() {
+            self.runtime_tools.remove(&plugin_id);
+        } else {
+            self.runtime_tools.insert(plugin_id.clone(), owned_tools);
+        }
         let generation = self.runtime_generations.entry(plugin_id.clone()).or_insert(0);
         *generation = generation.saturating_add(1);
         Ok(json!({
@@ -1751,6 +1764,19 @@ impl AndroidJsonHost {
             return Err("plugin runtime is not started".into());
         }
         self.sync_js_runtime_events()?;
+        let owned_tools = self
+            .js_runtime
+            .as_ref()
+            .ok_or("plugin runtime is not started")?
+            .registered_tools_for_plugin(&plugin_id)
+            .map_err(|error| format!("failed to read plugin-scoped runtime tools: {error}"))?
+            .into_iter()
+            .collect::<BTreeSet<_>>();
+        if owned_tools.is_empty() {
+            self.runtime_tools.remove(&plugin_id);
+        } else {
+            self.runtime_tools.insert(plugin_id.clone(), owned_tools);
+        }
         Ok(json!({
             "pluginId":plugin_id,
             "tools":self.runtime_tools.get(&plugin_id).cloned().unwrap_or_default(),
