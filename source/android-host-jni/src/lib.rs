@@ -70,18 +70,27 @@ impl AndroidNativeRuntime {
         generation: u64,
         initial_account_session_json: Option<&str>,
     ) -> Self {
+        let app_data_dir = app_data_dir.into();
         let runtime = AndroidJsonHost::new_with_account_session(
-            app_data_dir,
+            app_data_dir.clone(),
             mode,
             initial_account_session_json,
         );
         let runtime_call_control = runtime.runtime_call_control();
-        Self {
-            coordinator: MahayanaCoordinator::with_generation(
-                CoordinatorHost { runtime },
+        let coordinator_host = CoordinatorHost { runtime };
+        let coordinator = if mode == AndroidHostMode::Production {
+            MahayanaCoordinator::with_generation_persistent(
+                coordinator_host,
                 generation,
                 512,
-            ),
+                app_data_dir.join("coordinator-state.json"),
+            )
+            .unwrap_or_else(|error| panic!("failed to open durable Android coordinator state: {}", error.message))
+        } else {
+            MahayanaCoordinator::with_generation(coordinator_host, generation, 512)
+        };
+        Self {
+            coordinator,
             mcp_oauth: OAuthForwarder::default(),
             mode,
             next_request_id: 0,
@@ -816,6 +825,42 @@ mod tests {
             }),
         );
         assert_eq!(rejected["ok"], false);
+    }
+
+    #[test]
+    fn production_reopen_surfaces_coordinator_outcome_unknown_instead_of_replaying_request() {
+        let root = test_root("coordinator-reopen");
+        {
+            let mut runtime = AndroidNativeRuntime::new(root.clone(), AndroidHostMode::Production, 3);
+            let accepted = call(
+                &mut runtime,
+                json!({
+                    "id":"persisted-stream",
+                    "method":"feature.execute",
+                    "params":{"command":{
+                        "type":"chat.send",
+                        "requestId":"persisted-stream",
+                        "text":"hello"
+                    }}
+                }),
+            );
+            assert_eq!(accepted["ok"], true);
+            let status = call(&mut runtime, json!({"method":"coordinator.status","params":{}}));
+            assert_eq!(status["result"]["activeRequestCount"], 1);
+        }
+
+        let mut reopened = AndroidNativeRuntime::new(root.clone(), AndroidHostMode::Production, 3);
+        let status = call(&mut reopened, json!({"method":"coordinator.status","params":{}}));
+        assert_eq!(status["result"]["generation"], 4);
+        assert_eq!(status["result"]["activeRequestCount"], 0);
+        let replay = call(
+            &mut reopened,
+            json!({"method":"coordinator.resync","params":{"generation":4,"afterSequence":0}}),
+        );
+        assert_eq!(replay["ok"], true);
+        assert_eq!(replay["result"]["events"][0]["family"], "operation.outcome-unknown");
+        assert_eq!(replay["result"]["events"][0]["payload"]["requestId"], "persisted-stream");
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]
