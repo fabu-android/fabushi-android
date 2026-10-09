@@ -31,6 +31,8 @@ class FabushiScreenTest {
                 onOpen = {},
                 onApprovePermissions = {},
                 onDenyPermissions = {},
+                onSubmitPluginVariables = {},
+                onCancelPluginVariables = {},
             )
         }
 
@@ -62,6 +64,8 @@ class FabushiScreenTest {
                 onOpen = {},
                 onApprovePermissions = {},
                 onDenyPermissions = {},
+                onSubmitPluginVariables = {},
+                onCancelPluginVariables = {},
                 authGateEnabled = true,
                 onBeginBrowserLogin = { loginRequests += 1 },
             )
@@ -91,6 +95,8 @@ class FabushiScreenTest {
                 onOpen = { opened = it },
                 onApprovePermissions = {},
                 onDenyPermissions = {},
+                onSubmitPluginVariables = {},
+                onCancelPluginVariables = {},
             )
         }
 
@@ -122,6 +128,8 @@ class FabushiScreenTest {
                 onOpen = {},
                 onApprovePermissions = {},
                 onDenyPermissions = {},
+                onSubmitPluginVariables = {},
+                onCancelPluginVariables = {},
             )
         }
 
@@ -144,6 +152,8 @@ class FabushiScreenTest {
                 onOpen = {},
                 onApprovePermissions = {},
                 onDenyPermissions = {},
+                onSubmitPluginVariables = {},
+                onCancelPluginVariables = {},
                 updateState = AndroidUpdateUiState(
                     phase = AndroidUpdatePhase.AVAILABLE,
                     currentVersion = "1.0.4",
@@ -177,6 +187,8 @@ class FabushiScreenTest {
                 onOpen = {},
                 onApprovePermissions = {},
                 onDenyPermissions = {},
+                onSubmitPluginVariables = {},
+                onCancelPluginVariables = {},
             )
         }
 
@@ -196,6 +208,8 @@ class FabushiScreenTest {
                 onOpen = {},
                 onApprovePermissions = {},
                 onDenyPermissions = {},
+                onSubmitPluginVariables = {},
+                onCancelPluginVariables = {},
                 appAgentSurface = surface,
             )
         }
