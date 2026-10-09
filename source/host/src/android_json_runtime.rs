@@ -1860,7 +1860,7 @@ impl AndroidJsonHost {
             );
             return Err("duplicate runtime.call request identity".into());
         }
-        let result = self.js_runtime.as_ref().ok_or("plugin runtime is not started")?
+        let mut result = self.js_runtime.as_ref().ok_or("plugin runtime is not started")?
             .call_plugin_tool_json_bounded(
                 &plugin_id,
                 &tool,
