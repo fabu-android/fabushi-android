@@ -141,6 +141,27 @@ impl AndroidAccountService {
         Ok((token, mutation))
     }
 
+    pub(crate) fn authenticated_api_request(
+        &mut self,
+        method: &str,
+        path: &str,
+        body: Option<Value>,
+    ) -> Result<(Value, Option<AccountSessionMutation>), String> {
+        let (token, mutation) = self.valid_access_token()?;
+        let value = self.request_json(path, method, body, Some(&token))?;
+        Ok((value, mutation))
+    }
+
+    pub(crate) fn api_request_with_bearer(
+        &self,
+        method: &str,
+        path: &str,
+        body: Option<Value>,
+        bearer: &str,
+    ) -> Result<Value, String> {
+        self.request_json(path, method, body, Some(bearer))
+    }
+
     pub fn browser_start(&mut self) -> Result<Value, String> {
         let body = self.request_json(
             "/api/auth/browser/start",

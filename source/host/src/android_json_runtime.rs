@@ -301,13 +301,15 @@ impl AndroidJsonHost {
             "feature.marketplace.release" => self.marketplace_release(params),
             "feature.plugin.install" => self.plugin_install(params),
             "feature.plugin.uiDocument" => self.plugin_ui_document(params),
-            "plugin.compatibility" => Ok(json!({"portableCompatible":true})),
-            "plugin.permission.grant" => Ok(json!({"granted":true})),
-            "plugin.permission.revoke" => Ok(json!({"granted":false})),
-            "runtime.start" => Ok(json!({"status":"running"})),
-            "runtime.stop" => Ok(json!({"status":"stopped"})),
-            "runtime.tools" => Ok(json!([])),
-            "runtime.call" => Ok(json!({"ok":true,"result":params.get("arguments").cloned().unwrap_or(Value::Null)})),
+            "plugin.compatibility"
+            | "plugin.permission.grant"
+            | "plugin.permission.revoke"
+            | "runtime.start"
+            | "runtime.stop"
+            | "runtime.tools"
+            | "runtime.call" => Err(format!(
+                "{method} is unavailable until the canonical portable Mahayana plugin runtime is migrated; Android refuses placeholder success"
+            )),
             "feature.messaging.access.issue" => self.messaging_access_issue(params),
             "feature.messaging.blob.read" => self.messaging_blob_read(params),
             "feature.messaging.execute" => self.messaging_execute(params),
@@ -322,7 +324,7 @@ impl AndroidJsonHost {
             "feature.webauthn.pollRequest" => self.webauthn_poll_request(params),
             "feature.webauthn.submitResponses" => self.webauthn_submit_responses(params),
             "feature.webauthn.requestCeremony" => self.webauthn_request_ceremony(params),
-            "platform.request" => Ok(json!({"ok":true})),
+            "platform.request" => self.platform_request(params),
             other => Err(format!("unknown host method {other}")),
         }
     }
@@ -1156,42 +1158,100 @@ impl AndroidJsonHost {
         Ok(json!({"operationId":operation_id,"status":"interrupted"}))
     }
 
-    fn marketplace_browse(&self, _params: &Value) -> Result<Value, String> {
-        let plugins = if self.mode == AndroidHostMode::Test {
-            json!([{
+    fn marketplace_browse(&mut self, _params: &Value) -> Result<Value, String> {
+        if self.mode == AndroidHostMode::Test {
+            return Ok(json!({"plugins":[{
                 "pluginId":"global-dharma",
                 "displayName":"全球法布施",
                 "description":"Android deterministic Mini App",
                 "latestVersion":"1.0.0",
                 "commands":[]
-            }])
-        } else {
-            json!([])
-        };
-        Ok(json!({"plugins":plugins}))
+            }]}));
+        }
+        let (result, mutation) = self.authenticated_platform_api(
+            "GET",
+            "/v1/marketplace/plugins?platform=android",
+            None,
+        )?;
+        Ok(with_account_session_mutation(result, mutation))
     }
 
-    fn marketplace_release(&self, params: &Value) -> Result<Value, String> {
+    fn marketplace_release(&mut self, params: &Value) -> Result<Value, String> {
         let plugin_id = required_string(params, "pluginId")?;
-        let version = params.get("version").and_then(Value::as_str).unwrap_or("1.0.0");
-        let install = json!({
-            "protocol":"fabushi.marketplace.install.v1",
-            "strategy":"github-immutable",
-            "source":{
-                "sourceRef":"android-clean-room",
-                "marketplaceHostsPackage":false
-            }
-        });
-        Ok(json!({
-            "pluginId":plugin_id,
-            "version":version,
-            "install":install,
-            "releaseManifest":{
+        let version = required_string(params, "version")?;
+        let plugin_id = encode_api_path_segment(plugin_id)?;
+        let version = encode_api_path_segment(version)?;
+        if self.mode == AndroidHostMode::Test {
+            let install = json!({
+                "protocol":"fabushi.marketplace.install.v1",
+                "strategy":"github-immutable",
+                "source":{
+                    "sourceRef":"test-fixture-only",
+                    "marketplaceHostsPackage":false
+                }
+            });
+            return Ok(json!({
                 "pluginId":plugin_id,
                 "version":version,
-                "install":install
-            }
-        }))
+                "install":install,
+                "releaseManifest":{
+                    "pluginId":plugin_id,
+                    "version":version,
+                    "install":install
+                }
+            }));
+        }
+        let path = format!("/v1/marketplace/plugins/{plugin_id}/releases/{version}");
+        let (result, mutation) = self.authenticated_platform_api("GET", &path, None)?;
+        Ok(with_account_session_mutation(result, mutation))
+    }
+
+    fn platform_request(&mut self, params: &Value) -> Result<Value, String> {
+        if params.get("authenticated").and_then(Value::as_bool) != Some(true) {
+            return Err("platform.request requires the authenticated Fabushi account boundary".into());
+        }
+        let method = required_string(params, "method")?.to_ascii_uppercase();
+        if !matches!(method.as_str(), "GET" | "POST") {
+            return Err("platform.request supports only GET and POST".into());
+        }
+        let path = required_string(params, "path")?;
+        validate_platform_api_path(path)?;
+        let body = match params.get("body") {
+            None | Some(Value::Null) => None,
+            Some(value) if value.is_object() => Some(value.clone()),
+            Some(_) => return Err("platform.request body must be a JSON object".into()),
+        };
+        if method == "GET" && body.is_some() {
+            return Err("platform.request GET must not carry a request body".into());
+        }
+        let (result, mutation) = self.authenticated_platform_api(&method, path, body)?;
+        Ok(with_account_session_mutation(
+            json!({"ok":true,"data":result}),
+            mutation,
+        ))
+    }
+
+    fn authenticated_platform_api(
+        &mut self,
+        method: &str,
+        path: &str,
+        body: Option<Value>,
+    ) -> Result<(Value, Option<AccountSessionMutation>), String> {
+        validate_platform_api_path(path)?;
+        if self.mode == AndroidHostMode::Test {
+            return Err("production platform API access is disabled in deterministic Host test mode".into());
+        }
+        #[cfg(feature = "ci-account-session-import")]
+        if let Some(identity) = self.ci_session_identity.as_ref() {
+            let result = self.account.api_request_with_bearer(
+                method,
+                path,
+                body,
+                &identity.access_token,
+            )?;
+            return Ok((result, None));
+        }
+        self.account.authenticated_api_request(method, path, body)
     }
 
     fn plugin_install(&mut self, params: &Value) -> Result<Value, String> {
@@ -1338,6 +1398,37 @@ fn required_string<'a>(value: &'a Value, key: &str) -> Result<&'a str, String> {
         .and_then(Value::as_str)
         .filter(|value| !value.trim().is_empty())
         .ok_or_else(|| format!("{key} is required"))
+}
+
+fn validate_platform_api_path(path: &str) -> Result<(), String> {
+    if path.len() > 4_096
+        || !path.starts_with("/v1/")
+        || path.contains(['\r', '\n', '#', '\\'])
+    {
+        return Err("platform.request path must be a bounded /v1/* Fabushi API path".into());
+    }
+    let path_only = path.split('?').next().unwrap_or(path);
+    if path_only
+        .split('/')
+        .any(|segment| matches!(segment, "." | ".."))
+    {
+        return Err("platform.request path traversal is forbidden".into());
+    }
+    let lower = path_only.to_ascii_lowercase();
+    if lower.contains("%2e") || lower.contains("%2f") || lower.contains("%5c") {
+        return Err("platform.request encoded path traversal is forbidden".into());
+    }
+    Ok(())
+}
+
+fn encode_api_path_segment(value: &str) -> Result<String, String> {
+    if value.is_empty()
+        || value.len() > 200
+        || value.chars().any(|character| character.is_control())
+    {
+        return Err("Fabushi API path identifier is invalid".into());
+    }
+    Ok(url::form_urlencoded::byte_serialize(value.as_bytes()).collect())
 }
 
 #[cfg(test)]
@@ -1672,6 +1763,42 @@ mod tests {
         );
         host.logged_in = false;
         assert_eq!(host.device_agent_session(), json!({"loggedIn":false}));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+
+    #[test]
+    fn production_platform_request_contract_rejects_auth_escape_and_fake_plugin_success() {
+        assert!(validate_platform_api_path("/v1/marketplace/plugins?platform=android").is_ok());
+        assert!(validate_platform_api_path("/api/auth/logout").is_err());
+        assert!(validate_platform_api_path("/v1/../api/auth/logout").is_err());
+        assert!(validate_platform_api_path("/v1/%2e%2e/api/auth/logout").is_err());
+
+        let root = std::env::temp_dir().join(format!("fabushi-platform-contract-{}", now_ms()));
+        let mut host = AndroidJsonHost::new(&root, AndroidHostMode::Test);
+        for method in [
+            "plugin.compatibility",
+            "plugin.permission.grant",
+            "plugin.permission.revoke",
+            "runtime.start",
+            "runtime.stop",
+            "runtime.tools",
+            "runtime.call",
+        ] {
+            let error = host.dispatch(method, &json!({"pluginId":"test"})).unwrap_err();
+            assert!(error.contains("refuses placeholder success"));
+        }
+        assert!(host
+            .dispatch(
+                "platform.request",
+                &json!({
+                    "authenticated":true,
+                    "method":"POST",
+                    "path":"/api/auth/logout",
+                    "body":{}
+                }),
+            )
+            .is_err());
         let _ = std::fs::remove_dir_all(root);
     }
 
