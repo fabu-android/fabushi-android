@@ -5,7 +5,7 @@
     "desktop_commit": "3bc92400826cc4ca7ac665b467708e22261edc61",
     "android_repository": "fabu-android/fabushi-android",
     "android_pr": 3,
-    "android_head_at_update": "d28fc55cea0743f887c43c3273c4eda24e376c38",
+    "android_head_at_update": "b6afd4eb3581df2541347c5dadcd43d13b146d8f",
     "status": "incomplete",
     "note": "Persistent human-reviewed responsibility ledger for current Desktop main. Historical Grok ledgers are not product-completion authority."
   },
@@ -108,21 +108,24 @@
       "android_disposition": "direct-port",
       "android_target": [
         "source/host/src/messaging_child.rs",
+        "source/host/src/messaging_service.rs",
+        "source/host/src/android_json_runtime.rs",
         "source/host/src/lib.rs",
-        "future verified membership/service ingress through source/host and Coordinator"
+        "source/android-host-jni typed Host dispatch path",
+        "frontend MessagingViewModel JSON projection consumer"
       ],
-      "android_owner": "Rust ConversationChildStore / ConversationChildRuntimeState under Host; no Compose/ViewModel owner",
+      "android_owner": "Rust AndroidMessagingService canonical repository under Host, delegating actor-scoped child runtime state to ConversationChildStore; no Compose/ViewModel canonical owner",
       "platform_delta": "Core state machine is platform-independent Rust-to-Rust. Android lifecycle adds process-death recovery and typed JNI projection; no Kotlin duplicate owner.",
       "implementation_status": "implemented",
-      "production_wiring": "core state + durable Host store implemented; external mutation ingress deliberately remains fail-closed until canonical conversation membership/community authorization owner is ported",
-      "unit_test": "implemented in source/host/src/messaging_child.rs: pagination, monotonic read, unread policy, pin continuity, durable actor-scoped restore, exact destroy; exact-head CI pending",
-      "contract_test": "pending canonical membership/community authority; no client-supplied authorization escape hatch exists",
-      "integration_test": "pending Coordinator→Host authorized mutation→durable store→JNI projection after membership owner is ported",
+      "production_wiring": "implemented: feature.messaging.access.issue resolves the current authenticated account actor in Host; feature.messaging.execute routes protocol v2 envelopes into AndroidMessagingService, which owns actors/conversations/messages, validates canonical membership/message proof, and delegates child state to ConversationChildStore. Unsupported messaging commands fail closed rather than returning placeholder success.",
+      "unit_test": "implemented: child-state pagination/read/unread/pin/durable exact-destroy tests plus canonical repository membership, process-reopen, request-dedup, stale-account and corruption tests; exact-head CI pending",
+      "contract_test": "implemented in Rust source for authenticated-actor fencing, parent/nested membership proof, topic root/message-child proof, SavedSublist self-parent fail-closed, SyncBatch actor filtering; exact-head CI pending",
+      "integration_test": "production Host ingress now implemented through existing Coordinator/JNI dispatch; same-head CI and packaged/device evidence pending",
       "packaged_test": "required on minified release artifact",
       "device_test": "required: child destination lifecycle survives Activity recreation/process kill without duplicate mutation",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Current Desktop child lifecycle core is now implemented as source-neutral Rust durable state. It is intentionally not exposed through the existing placeholder feature.messaging.execute until membership authorization can be proven server/canonical-state-side. Not verified."
+      "notes": "Canonical membership/message proof and production Host ingress are now implemented without accepting client-supplied authorization truth. This remains not-verified until exact-head Rust/architecture/package/device evidence succeeds; unsupported broader messaging commands remain explicit migration work."
     },
     {
       "responsibility_id": "ACCOUNT-SESSION-001",
