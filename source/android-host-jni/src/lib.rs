@@ -56,10 +56,23 @@ impl AndroidNativeRuntime {
         mode: AndroidHostMode,
         generation: u64,
     ) -> Self {
+        Self::new_with_account_session(app_data_dir, mode, generation, None)
+    }
+
+    pub fn new_with_account_session(
+        app_data_dir: impl Into<PathBuf>,
+        mode: AndroidHostMode,
+        generation: u64,
+        initial_account_session_json: Option<&str>,
+    ) -> Self {
         Self {
             coordinator: MahayanaCoordinator::with_generation(
                 CoordinatorHost {
-                    runtime: AndroidJsonHost::new(app_data_dir, mode),
+                    runtime: AndroidJsonHost::new_with_account_session(
+                        app_data_dir,
+                        mode,
+                        initial_account_session_json,
+                    ),
                 },
                 generation,
                 512,
@@ -503,18 +516,27 @@ mod android_jni {
 
     #[no_mangle]
     pub extern "system" fn Java_com_ombhrum_fabushi_core_MahayanaHost_nativeCreate(
-        env: JNIEnv,
+        mut env: JNIEnv,
         _object: JObject,
         app_data_dir: JString,
         process_generation: jlong,
+        initial_account_session_json: JString,
     ) -> jlong {
+        let path = match env.get_string(&app_data_dir) {
+            Ok(value) => PathBuf::from(value.to_string_lossy().into_owned()),
+            Err(_) => return 0,
+        };
+        let initial_session = match env.get_string(&initial_account_session_json) {
+            Ok(value) => value.to_string_lossy().into_owned(),
+            Err(_) => return 0,
+        };
         let generation = u64::try_from(process_generation).unwrap_or(1).max(1);
-        create(
-            env,
-            app_data_dir,
+        Box::into_raw(Box::new(AndroidNativeRuntime::new_with_account_session(
+            path,
             AndroidHostMode::Production,
             generation,
-        )
+            (!initial_session.trim().is_empty()).then_some(initial_session.as_str()),
+        ))) as jlong
     }
 
     #[no_mangle]
