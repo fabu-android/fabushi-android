@@ -20,7 +20,7 @@ mod tests {
             ClientPersistenceChannels::LIST_KEYS,
             ClientPersistenceChannels::MIGRATE,
         ];
-        let mut sorted = values;
+        let mut sorted = values.to_vec();
         sorted.sort_unstable();
         sorted.dedup();
         assert_eq!(sorted.len(), 5);
