@@ -1,6 +1,9 @@
 use std::collections::{BTreeMap, VecDeque};
 
 use fabushi_android_internal::MonotonicSequence;
+use serde_json::Value;
+
+use crate::client_side_tool_v2_relay::{ClientSideToolV2Relay, RendererToolEvent};
 use fabushi_android_shared::{
     CancelRequest, CoordinatorEvent, CoordinatorFailure, CoordinatorFailureCode, CoordinatorReply,
     CoordinatorRequest, ResyncRequest, ResyncSnapshot,
@@ -27,6 +30,7 @@ pub struct MahayanaCoordinator<H: HostPort> {
     pending: BTreeMap<String, PendingRequest>,
     events: VecDeque<CoordinatorEvent>,
     replay_limit: usize,
+    client_side_tool_v2: ClientSideToolV2Relay,
 }
 
 impl<H: HostPort> MahayanaCoordinator<H> {
@@ -44,10 +48,23 @@ impl<H: HostPort> MahayanaCoordinator<H> {
             pending: BTreeMap::new(),
             events: VecDeque::new(),
             replay_limit: replay_limit.max(1),
+            client_side_tool_v2: ClientSideToolV2Relay::default(),
         }
     }
 
     pub fn generation(&self) -> u64 { self.generation }
+
+    pub fn accept_client_side_tool_v2_wire(&mut self, raw: Value) -> Option<RendererToolEvent> {
+        self.client_side_tool_v2.accept_value(raw)
+    }
+
+    pub fn replay_client_side_tool_v2(&self) -> Vec<RendererToolEvent> {
+        self.client_side_tool_v2.replay()
+    }
+
+    pub fn retire_client_side_tool_v2_for_account_switch(&mut self) {
+        self.client_side_tool_v2.retire_for_account_switch();
+    }
 
     pub fn begin_request(&mut self, request: &CoordinatorRequest) -> Result<(), CoordinatorFailure> {
         request.validate()?;
@@ -447,5 +464,41 @@ mod tests {
         let fresh = coordinator.resync(ResyncRequest { generation: coordinator.generation(), after_sequence: 0 }).unwrap();
         assert!(fresh.events.is_empty());
         assert_eq!(fresh.latest_sequence, 0);
+    }
+
+    #[test]
+    fn coordinator_owns_client_side_tool_v2_wire_ingress() {
+        let mut coordinator = MahayanaCoordinator::new(FakeHost::default());
+        let accepted = coordinator.accept_client_side_tool_v2_wire(serde_json::json!({
+            "version": 1,
+            "kind": "call",
+            "accountSlot": "host",
+            "agentId": "agent-a",
+            "epoch": "epoch-a",
+            "sequence": 1,
+            "message": {
+                "encoding": "protobuf-base64",
+                "messageType": "aiserver.v1.ClientSideToolV2Call",
+                "bytes": "GgZjYWxsLTE="
+            }
+        }));
+        assert!(accepted.is_some());
+        assert_eq!(coordinator.replay_client_side_tool_v2().len(), 1);
+
+        coordinator.retire_client_side_tool_v2_for_account_switch();
+        assert!(coordinator.replay_client_side_tool_v2().is_empty());
+        assert!(coordinator.accept_client_side_tool_v2_wire(serde_json::json!({
+            "version": 1,
+            "kind": "call",
+            "accountSlot": "host",
+            "agentId": "agent-a",
+            "epoch": "epoch-a",
+            "sequence": 2,
+            "message": {
+                "encoding": "protobuf-base64",
+                "messageType": "aiserver.v1.ClientSideToolV2Call",
+                "bytes": "GgZjYWxsLTI="
+            }
+        })).is_none());
     }
 }

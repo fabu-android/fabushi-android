@@ -120,6 +120,12 @@ impl AndroidNativeRuntime {
             "coordinator.publishEvent" => {
                 self.coordinator_publish_event(envelope.get("id").cloned(), &params)
             }
+            "coordinator.clientSideToolV2.accept" => {
+                self.coordinator_client_side_tool_v2_accept(envelope.get("id").cloned(), &params)
+            }
+            "coordinator.clientSideToolV2.replay" => {
+                self.coordinator_client_side_tool_v2_replay(envelope.get("id").cloned())
+            }
             "coordinator.mcpOAuth.register" => {
                 self.coordinator_mcp_oauth_register(envelope.get("id").cloned(), &params)
             }
@@ -213,6 +219,10 @@ impl AndroidNativeRuntime {
             self.record_received_event(&mut result);
         }
 
+        if method == "feature.auth.logout" {
+            self.coordinator.retire_client_side_tool_v2_for_account_switch();
+        }
+
         success_response(envelope.get("id").cloned(), result)
     }
 
@@ -286,6 +296,27 @@ impl AndroidNativeRuntime {
                 "sequence": recorded.sequence,
                 "eventId": recorded.event_id,
             }),
+        )
+    }
+
+    fn coordinator_client_side_tool_v2_accept(&mut self, id: Option<Value>, params: &Value) -> String {
+        let Some(event) = params.get("event") else {
+            return error_response(id, "client-side-tool-v2 event is required".into());
+        };
+        match self.coordinator.accept_client_side_tool_v2_wire(event.clone()) {
+            Some(materialized) => success_response(
+                id,
+                serde_json::to_value(materialized).unwrap_or_else(|_| json!({"accepted":true})),
+            ),
+            None => error_response(id, "client-side-tool-v2 event rejected by Rust wire ingress".into()),
+        }
+    }
+
+    fn coordinator_client_side_tool_v2_replay(&self, id: Option<Value>) -> String {
+        success_response(
+            id,
+            serde_json::to_value(self.coordinator.replay_client_side_tool_v2())
+                .unwrap_or_else(|_| json!([])),
         )
     }
 
