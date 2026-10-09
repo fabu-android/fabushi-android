@@ -21,6 +21,7 @@ pub mod host_gateway_api;
 pub mod host_initial_transcript_load;
 pub mod host_lock;
 pub mod messaging_child;
+pub mod messaging_service;
 pub mod host_paths;
 pub mod host_production_extensions;
 pub mod host_request_context;
