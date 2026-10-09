@@ -21,6 +21,9 @@ pub fn normalize_admin_command_denylist_text(value: &str) -> String {
         pending_separator = false;
         result.push(character);
     }
+    if pending_separator && !result.is_empty() {
+        result.push(' ');
+    }
     result
 }
 
