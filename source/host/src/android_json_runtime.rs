@@ -672,6 +672,7 @@ impl AndroidJsonHost {
             "operationId":operation_id,
             "requestId":request_id
         }));
+        let mut private_session_mutation = None;
 
         match kind {
             "bot.list" => {
@@ -704,13 +705,7 @@ impl AndroidJsonHost {
                     &command,
                     bearer_token,
                 )?;
-                if let Some(mutation) = session_mutation {
-                    self.events.push_back(json!({
-                        "type":"account.session.persisted",
-                        "operationId":operation_id,
-                        "_accountSessionMutation":mutation.as_private_projection(),
-                    }));
-                }
+                private_session_mutation = session_mutation;
             }
             "marketplace.install" => {
                 if let Some(id) = command.get("miniAppId").and_then(Value::as_str) {
@@ -736,7 +731,10 @@ impl AndroidJsonHost {
             }
         }
 
-        Ok(json!({"requestId":request_id,"operationId":operation_id,"accepted":true}))
+        Ok(with_account_session_mutation(
+            json!({"requestId":request_id,"operationId":operation_id,"accepted":true}),
+            private_session_mutation,
+        ))
     }
 
     fn bearer_token_for_turn(
