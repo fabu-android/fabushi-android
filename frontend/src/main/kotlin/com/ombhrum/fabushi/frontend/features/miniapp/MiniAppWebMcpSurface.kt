@@ -68,6 +68,10 @@ private class MiniAppNativeWebMcpBridge(
     private val pending = ConcurrentHashMap.newKeySet<String>()
     private val disposed = AtomicBoolean(false)
 
+    fun installInto(webView: WebView) {
+        webView.addJavascriptInterface(this, "FabushiWebMcpNative")
+    }
+
     fun activateNewSession(): MiniAppBridgeSession {
         val session = MiniAppBridgeSession(
             pluginInstanceId = plugin.pluginId + ":" + UUID.randomUUID().toString(),
@@ -399,10 +403,7 @@ fun MiniAppWebMcpSurface(
                 settings.allowContentAccess = false
                 settings.javaScriptCanOpenWindowsAutomatically = false
                 settings.setSupportMultipleWindows(false)
-                addJavascriptInterface(
-                    nativeBridge,
-                    "FabushiWebMcpNative",
-                )
+                nativeBridge.installInto(this)
                 webViewClient = object : WebViewClient() {
                     override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
                         val uri = request.url
