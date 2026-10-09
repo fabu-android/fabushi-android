@@ -5,7 +5,7 @@
     "desktop_commit": "3bc92400826cc4ca7ac665b467708e22261edc61",
     "android_repository": "fabu-android/fabushi-android",
     "android_pr": 3,
-    "android_head_at_update": "4c3b8ef761f3c2194fa641d6c94b519f647f54e5",
+    "android_head_at_update": "45901d03045da9a63bfbbee14a2a85cc08cc3c41",
     "status": "incomplete",
     "note": "Persistent human-reviewed responsibility ledger for Desktop main. Rows are responsibility-level source facts; mapped/implemented never imply verified. Verification requires same-exact-HEAD source implementation, production wiring, CI/package and device evidence."
   },
@@ -2048,6 +2048,71 @@
       "artifact": null,
       "verification_status": "not-verified",
       "notes": "Reviewed as not-applicable-with-replacement rather than direct-port: Electron/macOS mechanics do not exist on Android, while their product-quality responsibility is retained by Android-native CI. Kept not-verified until same-final-HEAD package and device evidence closes."
+    },
+    {
+      "responsibility_id": "CI-GROK-ARCHITECTURE-IMPORT-REPLACEMENT-001",
+      "domain": "source-authority",
+      "desktop_sources": [
+        {
+          "path": ".github/workflows/grok-architecture-migrate.yml",
+          "blob_sha": "a115a37c7adcc0af2decd14c1c073ba3181209d9",
+          "symbols": [
+            "import-reference"
+          ]
+        }
+      ],
+      "source_commit": "3bc92400826cc4ca7ac665b467708e22261edc61",
+      "responsibility": "Bootstrap a migration branch from a frozen external Grok reference, bind the imported source to a known authority revision, validate the architecture inventory, and prevent silent reference drift.",
+      "source_owner": "Historical Desktop Grok reference import workflow",
+      "direct_callers": [
+        "workflow_dispatch",
+        "refactor/grok-018-architecture-rebuild push"
+      ],
+      "downstream_dependencies": [
+        "frozen Grok 0.18 reconstruction",
+        "architecture manifest",
+        "Desktop migration branch"
+      ],
+      "state_owner": "Historical Desktop migration branch and frozen reference SHA",
+      "persistent_state": [
+        "imported source tree",
+        "architecture manifest",
+        "committed branch revision"
+      ],
+      "protocol_wire_contract": [
+        "frozen Grok reference SHA a9f633e09d49a85829b8236331b9e21f7e612634",
+        "inventory validation before writeback"
+      ],
+      "visible_effect": "The original Desktop rebuild started from a reproducible frozen reference instead of silently drifting with an external repository.",
+      "failure_behavior": [
+        "reference SHA mismatch fails",
+        "import/check failure prevents writeback"
+      ],
+      "cancellation_behavior": "Single non-cancelling migration concurrency group prevents overlapping writeback imports.",
+      "retry_semantics": "A retry reimports the same frozen reference into the same historical branch.",
+      "idempotency_semantics": "No diff means no commit; the frozen reference SHA makes repeated imports deterministic.",
+      "process_death_recovery": "Not a product runtime responsibility; GitHub Actions can rerun the deterministic import.",
+      "account_fencing": "No user account state is involved.",
+      "security_boundary": "The historical workflow had contents:write only because it mutated the migration branch; Android authority workflows are read-only and never import executable source from Grok at runtime.",
+      "android_disposition": "not-applicable-with-replacement",
+      "android_target": [
+        "docs/android-port/authority/source-inventory-ledger.jsonl",
+        "scripts/check_grok_android_parity.py",
+        ".github/workflows/android-port-docs.yml",
+        ".github/workflows/grok-android-architecture.yml"
+      ],
+      "android_owner": "Pinned Desktop-main source inventory plus read-only Android authority checker",
+      "platform_delta": "Android does not recreate the historical Grok 0.18 source-copy bot. Its migration authority is the current pinned bhrumom/fabushi-desktop main tree; source rows start unreviewed and are human-mapped with blob SHA integrity, then read-only GitHub Actions validate inventory/checksum/architecture.",
+      "implementation_status": "not-applicable",
+      "production_wiring": "Replacement authority is active in Android migration documentation and Grok Android Architecture workflows; neither writes generated Desktop/Grok code into the Android branch.",
+      "unit_test": "45901d03045da9a63bfbbee14a2a85cc08cc3c41 parity-ledger job 114034549165 validated the current checker.",
+      "contract_test": "45901d03045da9a63bfbbee14a2a85cc08cc3c41 pinned Desktop complete source inventory job 114034549046 success.",
+      "integration_test": "45901d03045da9a63bfbbee14a2a85cc08cc3c41 Documentation completeness job 114034548636 success.",
+      "packaged_test": "Not applicable: this is migration-source authority, not an APK runtime mechanism.",
+      "device_test": "Not applicable: no user-visible runtime mechanism exists to execute on device.",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Audit conclusion: the Desktop writeback importer is intentionally absent on Android. The user-visible/product-quality requirement—reproducible, non-drifting migration authority—is retained by the pinned Desktop-main inventory/checker. This row remains not-verified until the ledger-update exact HEAD passes the same authority workflows."
     }
   ],
   "traceability": {
