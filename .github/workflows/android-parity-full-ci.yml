@@ -74,7 +74,26 @@ jobs:
         working-directory: mobile/android
         run: |
           set -eu
-          ./gradlew --no-daemon clean             assembleDebug             assembleCiAcceptance             assembleCiAcceptanceAndroidTest             testCiAcceptanceUnitTest             lintDebug
+          ./gradlew --no-daemon clean             assembleDebug             assembleCiAcceptance             assembleCiAcceptanceAndroidTest             assembleGithubRelease             bundleGithubRelease             testCiAcceptanceUnitTest             lintDebug
+      - name: Verify public GitHub release strips CI account bootstrap
+        working-directory: mobile/android
+        run: |
+          set -euo pipefail
+          GITHUB_APK="$(find app/build/outputs/apk/githubRelease -type f -name '*.apk' -print -quit)"
+          GITHUB_AAB="$(find app/build/outputs/bundle/githubRelease -type f -name '*.aab' -print -quit)"
+          test -s "$GITHUB_APK"
+          test -s "$GITHUB_AAB"
+          unzip -p "$GITHUB_APK" 'classes*.dex' > /tmp/fabushi-github-release.dex
+          if grep -aFq 'FABUSHI_CI_ACCOUNT_SESSION_FILE' /tmp/fabushi-github-release.dex; then
+            echo "public githubRelease APK still contains CI account session bootstrap marker" >&2
+            exit 1
+          fi
+          if grep -aFq 'fabushi-ci-session.json' /tmp/fabushi-github-release.dex; then
+            echo "public githubRelease APK still contains CI session filename marker" >&2
+            exit 1
+          fi
+          printf 'github_release_ci_import=absent\n' > github-release-security.txt
+          sha256sum "$GITHUB_APK" "$GITHUB_AAB" >> github-release-security.txt
       - name: Record exact-HEAD APK identities
         working-directory: mobile/android
         run: |
@@ -103,6 +122,7 @@ jobs:
             mobile/android/exact-head-apks.sha256
             mobile/android/artifact-identity.txt
             mobile/android/native-jni.sha256
+            mobile/android/github-release-security.txt
           if-no-files-found: error
 
   android-emulator-instrumentation:
