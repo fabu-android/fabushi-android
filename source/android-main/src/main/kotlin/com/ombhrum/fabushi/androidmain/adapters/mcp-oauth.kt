@@ -14,7 +14,7 @@ import com.ombhrum.fabushi.androidpreload.runtime.AndroidMcpOAuthCompletion
  */
 internal class AndroidMcpOAuthAdapter(
     coordinator: AndroidCoordinatorPort,
-    private val browser: AndroidAccountOAuthAdapter = AndroidAccountOAuthAdapter(),
+    private val browser: AndroidExternalUrlAdapter = AndroidExternalUrlAdapter(),
 ) {
     private val callbacks = AndroidMcpOAuthLoopbackProvider(coordinator)
 

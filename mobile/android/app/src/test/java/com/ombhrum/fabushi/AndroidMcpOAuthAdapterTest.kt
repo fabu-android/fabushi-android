@@ -1,5 +1,7 @@
 package com.ombhrum.fabushi
 
+import com.ombhrum.fabushi.androidmain.adapters.AndroidAccountOAuthAdapter
+import com.ombhrum.fabushi.androidmain.adapters.AndroidExternalUrlAdapter
 import com.ombhrum.fabushi.androidmain.mcp.AndroidMcpOAuthLoopbackProvider
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
@@ -41,6 +43,34 @@ class AndroidMcpOAuthAdapterTest {
             AndroidMcpOAuthLoopbackProvider.parseAuthorization(
                 "http://connector.example/authorize?redirect_uri=fabushi%3A%2F%2Fmcp-oauth%2Fcallback&state=0123456789abcdef",
                 "github",
+            ),
+        )
+    }
+
+    @Test
+    fun mcpExternalBrowserAllowsConnectorHttpsButStripsForeignWebAuthTokens() {
+        val raw = "https://connector.example/authorize?client_id=abc&tgWebAuthUser=secret&%61utologin_token=hidden&state=0123456789abcdef#route?x=1&%74%67WebAuthToken=also-secret"
+        val sanitized = AndroidExternalUrlAdapter.sanitizeExternalHttpsUrl(raw)
+        requireNotNull(sanitized)
+        val value = sanitized.toASCIIString()
+        assert(value.startsWith("https://connector.example/authorize?"))
+        assert(value.contains("client_id=abc"))
+        assert(value.contains("state=0123456789abcdef"))
+        assert(value.contains("#route?x=1"))
+        assert(!value.lowercase().contains("tgwebauth"))
+        assert(!value.lowercase().contains("autologin_token"))
+        assert(!value.contains("secret"))
+        assert(!value.contains("hidden"))
+
+        assertNull(AndroidExternalUrlAdapter.sanitizeExternalHttpsUrl("http://connector.example/authorize"))
+        assertNull(AndroidExternalUrlAdapter.sanitizeExternalHttpsUrl("https://user:pass@connector.example/authorize"))
+    }
+
+    @Test
+    fun accountAuthPrivilegeRemainsFirstPartyOnly() {
+        assertNull(
+            AndroidAccountOAuthAdapter.validateExternalAuthUrl(
+                "https://connector.example/authorize?state=0123456789abcdef",
             ),
         )
     }
