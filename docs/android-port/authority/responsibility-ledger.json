@@ -5,9 +5,9 @@
     "desktop_commit": "3bc92400826cc4ca7ac665b467708e22261edc61",
     "android_repository": "fabu-android/fabushi-android",
     "android_pr": 3,
-    "android_head_at_update": "b6afd4eb3581df2541347c5dadcd43d13b146d8f",
+    "android_head_at_update": "f5bfc58c23891131eebc95f9da85f8246142b411",
     "status": "incomplete",
-    "note": "Persistent human-reviewed responsibility ledger for current Desktop main. Historical Grok ledgers are not product-completion authority."
+    "note": "Persistent human-reviewed responsibility ledger for Desktop main. Rows are responsibility-level source facts; mapped/implemented never imply verified. Verification requires same-exact-HEAD source implementation, production wiring, CI/package and device evidence."
   },
   "responsibilities": [
     {
@@ -222,6 +222,747 @@
       "artifact": null,
       "verification_status": "not-verified",
       "notes": "Implemented from exact Desktop account source facts. Do not mark verified until current exact HEAD compiles/tests and protected packaged/device login proves durable restore and refresh."
+    },
+    {
+      "responsibility_id": "MSG-CANONICAL-COMMANDS-002",
+      "domain": "messaging",
+      "desktop_sources": [
+        {
+          "path": "native/mahayana-messaging/src/service.rs",
+          "blob_sha": "3c85c39d5642c32e6b5333d59251602556219ce4",
+          "symbols": [
+            "MessagingService::handle",
+            "MessagingService::sync_batch"
+          ]
+        }
+      ],
+      "source_commit": "3bc92400826cc4ca7ac665b467708e22261edc61",
+      "responsibility": "Own durable messaging blobs and canonical message/conversation mutations including send/edit/delete/reaction/forward, draft/read/unread, pin/archive/notifications, folders, conversation info/participants and typing.",
+      "source_owner": "native/mahayana-messaging MessagingService",
+      "direct_callers": [
+        "shipping Desktop composition; exact callers require continued per-domain decomposition"
+      ],
+      "downstream_dependencies": [
+        "canonical state/protocol dependencies tracked by the cited Desktop source"
+      ],
+      "state_owner": "native/mahayana-messaging MessagingService",
+      "persistent_state": [
+        "domain-specific durable state; exact schema decomposition remains tracked work"
+      ],
+      "protocol_wire_contract": [
+        "Desktop shipping contract rooted at cited source"
+      ],
+      "visible_effect": "Human messaging mutations survive retry/reopen without UI becoming a second owner.",
+      "failure_behavior": [
+        "fail closed when identity, permission, state or platform preconditions cannot be proven"
+      ],
+      "cancellation_behavior": "Must preserve Desktop cancellation semantics or document an Android replacement; not verified by this mapping row.",
+      "retry_semantics": "No blind retry of side effects; stable identity/reconciliation required where applicable.",
+      "idempotency_semantics": "Must preserve stable request/mutation identity and duplicate handling where applicable.",
+      "process_death_recovery": "Android must restore canonical durable state rather than reissue side effects.",
+      "account_fencing": "All account-scoped callbacks and state require current account/epoch proof.",
+      "security_boundary": "Coordinator/Host/Capability Broker owns authorization; Presentation cannot grant itself capability.",
+      "android_disposition": "direct-port",
+      "android_target": [
+        "source/host/src/messaging_service.rs",
+        "source/host/src/messaging_blob.rs",
+        "source/host/src/android_json_runtime.rs"
+      ],
+      "android_owner": "source/host/src/messaging_service.rs",
+      "platform_delta": "Android uses native Compose/platform adapters + typed JNI while preserving canonical Rust owners where platform-independent.",
+      "implementation_status": "implemented",
+      "production_wiring": "implemented in cited Android targets; package/device proof still pending",
+      "unit_test": "same-head Rust contract/unit gate succeeded on predecessor code HEAD; current ledger HEAD must rerun before verification",
+      "contract_test": "required on same exact HEAD",
+      "integration_test": "required on same exact HEAD",
+      "packaged_test": "required on final minified release artifact",
+      "device_test": "required on emulator/physical device as applicable",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Rust implementation now exists with durable blob owner/range read, membership/admin checks, stable request replay and process reopen tests. Remains not-verified until this ledger-updated HEAD gets package/device evidence."
+    },
+    {
+      "responsibility_id": "AGENT-RUN-LIFECYCLE-001",
+      "domain": "agent",
+      "desktop_sources": [
+        {
+          "path": "source/host/src/lib.rs",
+          "blob_sha": "3181a3dcca61bd00d0f9784d34cce9cce6fc3a26",
+          "symbols": [
+            "Host composition"
+          ]
+        }
+      ],
+      "source_commit": "3bc92400826cc4ca7ac665b467708e22261edc61",
+      "responsibility": "Own Agent run lifecycle, provider/inference, streaming, cancellation, recovery and canonical transcript projection.",
+      "source_owner": "Desktop Rust Host",
+      "direct_callers": [
+        "shipping Desktop composition; exact callers require continued per-domain decomposition"
+      ],
+      "downstream_dependencies": [
+        "canonical state/protocol dependencies tracked by the cited Desktop source"
+      ],
+      "state_owner": "Desktop Rust Host",
+      "persistent_state": [
+        "domain-specific durable state; exact schema decomposition remains tracked work"
+      ],
+      "protocol_wire_contract": [
+        "Desktop shipping contract rooted at cited source"
+      ],
+      "visible_effect": "Agent/Bot turns execute through Host and recover without duplicate turns.",
+      "failure_behavior": [
+        "fail closed when identity, permission, state or platform preconditions cannot be proven"
+      ],
+      "cancellation_behavior": "Must preserve Desktop cancellation semantics or document an Android replacement; not verified by this mapping row.",
+      "retry_semantics": "No blind retry of side effects; stable identity/reconciliation required where applicable.",
+      "idempotency_semantics": "Must preserve stable request/mutation identity and duplicate handling where applicable.",
+      "process_death_recovery": "Android must restore canonical durable state rather than reissue side effects.",
+      "account_fencing": "All account-scoped callbacks and state require current account/epoch proof.",
+      "security_boundary": "Coordinator/Host/Capability Broker owns authorization; Presentation cannot grant itself capability.",
+      "android_disposition": "direct-port",
+      "android_target": [
+        "source/host/src/runner/production_turn_agent_owner.rs",
+        "source/mahayana-agent-coordinator/src/lib.rs"
+      ],
+      "android_owner": "source/host/src/runner/production_turn_agent_owner.rs",
+      "platform_delta": "Android uses native Compose/platform adapters + typed JNI while preserving canonical Rust owners where platform-independent.",
+      "implementation_status": "mapped",
+      "production_wiring": "mapped target(s); production parity not yet established",
+      "unit_test": "required",
+      "contract_test": "required on same exact HEAD",
+      "integration_test": "required on same exact HEAD",
+      "packaged_test": "required on final minified release artifact",
+      "device_test": "required on emulator/physical device as applicable",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Android has substantial Host/Coordinator code, but this responsibility is not declared complete by this mapping."
+    },
+    {
+      "responsibility_id": "TOOLS-CAPABILITY-BROKER-001",
+      "domain": "tools",
+      "desktop_sources": [
+        {
+          "path": "source/mahayana/mahayana-rs/mahayana-runtime/src/capability_broker.rs",
+          "blob_sha": "3a70a43dda961bb847203a12cec940dcbc7c23af",
+          "symbols": [
+            "CapabilityBroker::authorize",
+            "CapabilityBroker::authorize_request"
+          ]
+        }
+      ],
+      "source_commit": "3bc92400826cc4ca7ac665b467708e22261edc61",
+      "responsibility": "Own capability policy, explicit approval boundary, grant consumption and audit before tool execution.",
+      "source_owner": "Mahayana CapabilityBroker",
+      "direct_callers": [
+        "shipping Desktop composition; exact callers require continued per-domain decomposition"
+      ],
+      "downstream_dependencies": [
+        "canonical state/protocol dependencies tracked by the cited Desktop source"
+      ],
+      "state_owner": "Mahayana CapabilityBroker",
+      "persistent_state": [
+        "domain-specific durable state; exact schema decomposition remains tracked work"
+      ],
+      "protocol_wire_contract": [
+        "Desktop shipping contract rooted at cited source"
+      ],
+      "visible_effect": "Tools execute only after scoped authorization and produce auditable outcomes.",
+      "failure_behavior": [
+        "fail closed when identity, permission, state or platform preconditions cannot be proven"
+      ],
+      "cancellation_behavior": "Must preserve Desktop cancellation semantics or document an Android replacement; not verified by this mapping row.",
+      "retry_semantics": "No blind retry of side effects; stable identity/reconciliation required where applicable.",
+      "idempotency_semantics": "Must preserve stable request/mutation identity and duplicate handling where applicable.",
+      "process_death_recovery": "Android must restore canonical durable state rather than reissue side effects.",
+      "account_fencing": "All account-scoped callbacks and state require current account/epoch proof.",
+      "security_boundary": "Coordinator/Host/Capability Broker owns authorization; Presentation cannot grant itself capability.",
+      "android_disposition": "direct-port",
+      "android_target": [
+        "source/host/src/android_json_runtime.rs",
+        "source/mahayana-agent-coordinator/src/client_side_tool_v2_relay.rs"
+      ],
+      "android_owner": "source/host/src/android_json_runtime.rs",
+      "platform_delta": "Android uses native Compose/platform adapters + typed JNI while preserving canonical Rust owners where platform-independent.",
+      "implementation_status": "mapped",
+      "production_wiring": "mapped target(s); production parity not yet established",
+      "unit_test": "required",
+      "contract_test": "required on same exact HEAD",
+      "integration_test": "required on same exact HEAD",
+      "packaged_test": "required on final minified release artifact",
+      "device_test": "required on emulator/physical device as applicable",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Current Android feature approval paths require deeper broker parity audit; fake success is forbidden."
+    },
+    {
+      "responsibility_id": "MCP-PLUGIN-RUNTIME-001",
+      "domain": "mcp-plugins",
+      "desktop_sources": [
+        {
+          "path": "source/mahayana/mahayana-rs/mahayana-plugin-runtime/src/lib.rs",
+          "blob_sha": "78f65a489081e8d00f1f5b62e031e00daf09f370",
+          "symbols": [
+            "PluginInstaller",
+            "runtime lifecycle/service graph"
+          ]
+        }
+      ],
+      "source_commit": "3bc92400826cc4ca7ac665b467708e22261edc61",
+      "responsibility": "Resolve/verify/install plugin releases, persist grants, host portable runtime lifecycle and expose registered tools under capability policy.",
+      "source_owner": "Mahayana plugin runtime/host",
+      "direct_callers": [
+        "shipping Desktop composition; exact callers require continued per-domain decomposition"
+      ],
+      "downstream_dependencies": [
+        "canonical state/protocol dependencies tracked by the cited Desktop source"
+      ],
+      "state_owner": "Mahayana plugin runtime/host",
+      "persistent_state": [
+        "domain-specific durable state; exact schema decomposition remains tracked work"
+      ],
+      "protocol_wire_contract": [
+        "Desktop shipping contract rooted at cited source"
+      ],
+      "visible_effect": "Marketplace plugins can install and run portable tools with explicit grants and revocation.",
+      "failure_behavior": [
+        "fail closed when identity, permission, state or platform preconditions cannot be proven"
+      ],
+      "cancellation_behavior": "Must preserve Desktop cancellation semantics or document an Android replacement; not verified by this mapping row.",
+      "retry_semantics": "No blind retry of side effects; stable identity/reconciliation required where applicable.",
+      "idempotency_semantics": "Must preserve stable request/mutation identity and duplicate handling where applicable.",
+      "process_death_recovery": "Android must restore canonical durable state rather than reissue side effects.",
+      "account_fencing": "All account-scoped callbacks and state require current account/epoch proof.",
+      "security_boundary": "Coordinator/Host/Capability Broker owns authorization; Presentation cannot grant itself capability.",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "source/host/src/android_json_runtime.rs",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/presentation/MarketplaceViewModel.kt"
+      ],
+      "android_owner": "source/host/src/android_json_runtime.rs",
+      "platform_delta": "Android uses native Compose/platform adapters + typed JNI while preserving canonical Rust owners where platform-independent.",
+      "implementation_status": "mapped",
+      "production_wiring": "mapped target(s); production parity not yet established",
+      "unit_test": "required",
+      "contract_test": "required on same exact HEAD",
+      "integration_test": "required on same exact HEAD",
+      "packaged_test": "required on final minified release artifact",
+      "device_test": "required on emulator/physical device as applicable",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Android currently fail-closes plugin.permission/runtime methods instead of returning fake success. The canonical portable Rust plugin/JS runtime still must be migrated."
+    },
+    {
+      "responsibility_id": "MINIAPP-WEBMCP-001",
+      "domain": "miniapp-webmcp",
+      "desktop_sources": [
+        {
+          "path": "frontend/packages/mcp-app-sdk/src/bridge.ts",
+          "blob_sha": "627d2d3743e4921d5c9f6d641c4ecbbc57818776",
+          "symbols": [
+            "private MessagePort bridge",
+            "pluginInstanceId",
+            "per-load nonce",
+            "pending registry"
+          ]
+        }
+      ],
+      "source_commit": "3bc92400826cc4ca7ac665b467708e22261edc61",
+      "responsibility": "Bind every Mini App load to instance/load identity, nonce, explicit grants and cancellable pending native calls with dispose fencing.",
+      "source_owner": "MCP App SDK bridge",
+      "direct_callers": [
+        "shipping Desktop composition; exact callers require continued per-domain decomposition"
+      ],
+      "downstream_dependencies": [
+        "canonical state/protocol dependencies tracked by the cited Desktop source"
+      ],
+      "state_owner": "MCP App SDK bridge",
+      "persistent_state": [
+        "domain-specific durable state; exact schema decomposition remains tracked work"
+      ],
+      "protocol_wire_contract": [
+        "Desktop shipping contract rooted at cited source"
+      ],
+      "visible_effect": "Reloaded/hostile WebView content cannot inherit stale grants or resolve old native calls.",
+      "failure_behavior": [
+        "fail closed when identity, permission, state or platform preconditions cannot be proven"
+      ],
+      "cancellation_behavior": "Must preserve Desktop cancellation semantics or document an Android replacement; not verified by this mapping row.",
+      "retry_semantics": "No blind retry of side effects; stable identity/reconciliation required where applicable.",
+      "idempotency_semantics": "Must preserve stable request/mutation identity and duplicate handling where applicable.",
+      "process_death_recovery": "Android must restore canonical durable state rather than reissue side effects.",
+      "account_fencing": "All account-scoped callbacks and state require current account/epoch proof.",
+      "security_boundary": "Coordinator/Host/Capability Broker owns authorization; Presentation cannot grant itself capability.",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/features/miniapp/MiniAppWebMcpSurface.kt",
+        "source/android-preload/src/main/kotlin/com/ombhrum/fabushi/androidpreload/miniapp/MiniAppPlatformBridge.kt"
+      ],
+      "android_owner": "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/features/miniapp/MiniAppWebMcpSurface.kt",
+      "platform_delta": "Android uses native Compose/platform adapters + typed JNI while preserving canonical Rust owners where platform-independent.",
+      "implementation_status": "mapped",
+      "production_wiring": "mapped target(s); production parity not yet established",
+      "unit_test": "required",
+      "contract_test": "required on same exact HEAD",
+      "integration_test": "required on same exact HEAD",
+      "packaged_test": "required on final minified release artifact",
+      "device_test": "required on emulator/physical device as applicable",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Requires exact semantic comparison with bridge.ts + webmcp.ts and packaged WebView acceptance."
+    },
+    {
+      "responsibility_id": "MEDIA-ATTACHMENT-ASR-001",
+      "domain": "media-asr",
+      "desktop_sources": [
+        {
+          "path": "source/shared/media/attachments.ts",
+          "blob_sha": "88cd6b78d908db716a34b2904edb2cbd17639c6b",
+          "symbols": [
+            "attachment contracts"
+          ]
+        }
+      ],
+      "source_commit": "3bc92400826cc4ca7ac665b467708e22261edc61",
+      "responsibility": "Own attachment limits/opening/metadata and media transfer semantics; pair with true offline ASR and unique microphone ownership.",
+      "source_owner": "Desktop media contracts",
+      "direct_callers": [
+        "shipping Desktop composition; exact callers require continued per-domain decomposition"
+      ],
+      "downstream_dependencies": [
+        "canonical state/protocol dependencies tracked by the cited Desktop source"
+      ],
+      "state_owner": "Desktop media contracts",
+      "persistent_state": [
+        "domain-specific durable state; exact schema decomposition remains tracked work"
+      ],
+      "protocol_wire_contract": [
+        "Desktop shipping contract rooted at cited source"
+      ],
+      "visible_effect": "Users can attach/play/record/transcribe media without cloud fallback being disguised as offline.",
+      "failure_behavior": [
+        "fail closed when identity, permission, state or platform preconditions cannot be proven"
+      ],
+      "cancellation_behavior": "Must preserve Desktop cancellation semantics or document an Android replacement; not verified by this mapping row.",
+      "retry_semantics": "No blind retry of side effects; stable identity/reconciliation required where applicable.",
+      "idempotency_semantics": "Must preserve stable request/mutation identity and duplicate handling where applicable.",
+      "process_death_recovery": "Android must restore canonical durable state rather than reissue side effects.",
+      "account_fencing": "All account-scoped callbacks and state require current account/epoch proof.",
+      "security_boundary": "Coordinator/Host/Capability Broker owns authorization; Presentation cannot grant itself capability.",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "source/shared/src/media/attachments.rs",
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/media/NativeVoiceRecorder.kt",
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/media/NativeVoicePlayer.kt"
+      ],
+      "android_owner": "source/shared/src/media/attachments.rs",
+      "platform_delta": "Android uses native Compose/platform adapters + typed JNI while preserving canonical Rust owners where platform-independent.",
+      "implementation_status": "mapped",
+      "production_wiring": "mapped target(s); production parity not yet established",
+      "unit_test": "required",
+      "contract_test": "required on same exact HEAD",
+      "integration_test": "required on same exact HEAD",
+      "packaged_test": "required on final minified release artifact",
+      "device_test": "required on emulator/physical device as applicable",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Offline ASR engine source anchor is separately tracked by source inventory; Android offline transcription implementation/device proof remains open."
+    },
+    {
+      "responsibility_id": "REMOTE-COMPUTER-001",
+      "domain": "remote",
+      "desktop_sources": [
+        {
+          "path": "source/mahayana/mahayana-rs/mahayana-platform-worker/src/worker_api/remote_computer.rs",
+          "blob_sha": "931730bff5fb6ee484809233fddc614c5c29b485",
+          "symbols": [
+            "remote computer worker API"
+          ]
+        }
+      ],
+      "source_commit": "3bc92400826cc4ca7ac665b467708e22261edc61",
+      "responsibility": "Own remote device identity, pairing/revoke, command lifecycle, reconnect, human takeover and side-effect reconciliation.",
+      "source_owner": "Mahayana platform/remote runtime",
+      "direct_callers": [
+        "shipping Desktop composition; exact callers require continued per-domain decomposition"
+      ],
+      "downstream_dependencies": [
+        "canonical state/protocol dependencies tracked by the cited Desktop source"
+      ],
+      "state_owner": "Mahayana platform/remote runtime",
+      "persistent_state": [
+        "domain-specific durable state; exact schema decomposition remains tracked work"
+      ],
+      "protocol_wire_contract": [
+        "Desktop shipping contract rooted at cited source"
+      ],
+      "visible_effect": "Android can delegate unsupported desktop computer actions to an explicitly authorized Remote Runner.",
+      "failure_behavior": [
+        "fail closed when identity, permission, state or platform preconditions cannot be proven"
+      ],
+      "cancellation_behavior": "Must preserve Desktop cancellation semantics or document an Android replacement; not verified by this mapping row.",
+      "retry_semantics": "No blind retry of side effects; stable identity/reconciliation required where applicable.",
+      "idempotency_semantics": "Must preserve stable request/mutation identity and duplicate handling where applicable.",
+      "process_death_recovery": "Android must restore canonical durable state rather than reissue side effects.",
+      "account_fencing": "All account-scoped callbacks and state require current account/epoch proof.",
+      "security_boundary": "Coordinator/Host/Capability Broker owns authorization; Presentation cannot grant itself capability.",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/remote/FabushiRemoteDeviceGateway.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/features/remote/RemoteComputerSurface.kt"
+      ],
+      "android_owner": "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/remote/FabushiRemoteDeviceGateway.kt",
+      "platform_delta": "Android uses native Compose/platform adapters + typed JNI while preserving canonical Rust owners where platform-independent.",
+      "implementation_status": "mapped",
+      "production_wiring": "mapped target(s); production parity not yet established",
+      "unit_test": "required",
+      "contract_test": "required on same exact HEAD",
+      "integration_test": "required on same exact HEAD",
+      "packaged_test": "required on final minified release artifact",
+      "device_test": "required on emulator/physical device as applicable",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Requires protocol/state-machine parity and protected device evidence."
+    },
+    {
+      "responsibility_id": "COMMERCE-LIFECYCLE-001",
+      "domain": "commerce",
+      "desktop_sources": [
+        {
+          "path": "source/mahayana/mahayana-rs/mahayana-platform-worker/src/worker_api/commerce.rs",
+          "blob_sha": "ed7a3507ccc4f8eb10bfd8222855899315471f41",
+          "symbols": [
+            "commerce quote/purchase/entitlement worker APIs"
+          ]
+        }
+      ],
+      "source_commit": "3bc92400826cc4ca7ac665b467708e22261edc61",
+      "responsibility": "Own quote/purchase/pending/verification/entitlement/restore/revoke semantics with crash-safe reconciliation.",
+      "source_owner": "Mahayana platform commerce",
+      "direct_callers": [
+        "shipping Desktop composition; exact callers require continued per-domain decomposition"
+      ],
+      "downstream_dependencies": [
+        "canonical state/protocol dependencies tracked by the cited Desktop source"
+      ],
+      "state_owner": "Mahayana platform commerce",
+      "persistent_state": [
+        "domain-specific durable state; exact schema decomposition remains tracked work"
+      ],
+      "protocol_wire_contract": [
+        "Desktop shipping contract rooted at cited source"
+      ],
+      "visible_effect": "Purchases and entitlements remain account-bound and recover safely after process death.",
+      "failure_behavior": [
+        "fail closed when identity, permission, state or platform preconditions cannot be proven"
+      ],
+      "cancellation_behavior": "Must preserve Desktop cancellation semantics or document an Android replacement; not verified by this mapping row.",
+      "retry_semantics": "No blind retry of side effects; stable identity/reconciliation required where applicable.",
+      "idempotency_semantics": "Must preserve stable request/mutation identity and duplicate handling where applicable.",
+      "process_death_recovery": "Android must restore canonical durable state rather than reissue side effects.",
+      "account_fencing": "All account-scoped callbacks and state require current account/epoch proof.",
+      "security_boundary": "Coordinator/Host/Capability Broker owns authorization; Presentation cannot grant itself capability.",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/presentation/GlobalDharmaCommercePanel.kt",
+        "source/host/src/android_json_runtime.rs"
+      ],
+      "android_owner": "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/presentation/GlobalDharmaCommercePanel.kt",
+      "platform_delta": "Android uses native Compose/platform adapters + typed JNI while preserving canonical Rust owners where platform-independent.",
+      "implementation_status": "mapped",
+      "production_wiring": "mapped target(s); production parity not yet established",
+      "unit_test": "required",
+      "contract_test": "required on same exact HEAD",
+      "integration_test": "required on same exact HEAD",
+      "packaged_test": "required on final minified release artifact",
+      "device_test": "required on emulator/physical device as applicable",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "platform.request now routes real authenticated /v1/* calls; native billing/restore and end-to-end commerce state remain open."
+    },
+    {
+      "responsibility_id": "NAVIGATION-NATIVE-001",
+      "domain": "navigation",
+      "desktop_sources": [
+        {
+          "path": "source/shared/rpc/coordinator.ts",
+          "blob_sha": "72b5adc91432fc208731cee9b11a2fe1e21ea10d",
+          "symbols": [
+            "Coordinator RPC boundary"
+          ]
+        }
+      ],
+      "source_commit": "3bc92400826cc4ca7ac665b467708e22261edc61",
+      "responsibility": "Preserve navigation-triggered runtime identity and route native Android screens/deep links/back/recreation without moving canonical runtime state into UI.",
+      "source_owner": "Desktop coordinator + renderer navigation",
+      "direct_callers": [
+        "shipping Desktop composition; exact callers require continued per-domain decomposition"
+      ],
+      "downstream_dependencies": [
+        "canonical state/protocol dependencies tracked by the cited Desktop source"
+      ],
+      "state_owner": "Desktop coordinator + renderer navigation",
+      "persistent_state": [
+        "domain-specific durable state; exact schema decomposition remains tracked work"
+      ],
+      "protocol_wire_contract": [
+        "Desktop shipping contract rooted at cited source"
+      ],
+      "visible_effect": "Navigation and recreation do not duplicate canonical account/run/conversation state.",
+      "failure_behavior": [
+        "fail closed when identity, permission, state or platform preconditions cannot be proven"
+      ],
+      "cancellation_behavior": "Must preserve Desktop cancellation semantics or document an Android replacement; not verified by this mapping row.",
+      "retry_semantics": "No blind retry of side effects; stable identity/reconciliation required where applicable.",
+      "idempotency_semantics": "Must preserve stable request/mutation identity and duplicate handling where applicable.",
+      "process_death_recovery": "Android must restore canonical durable state rather than reissue side effects.",
+      "account_fencing": "All account-scoped callbacks and state require current account/epoch proof.",
+      "security_boundary": "Coordinator/Host/Capability Broker owns authorization; Presentation cannot grant itself capability.",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/features/navigation/SectionSurfaces.kt",
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/coordinator/AndroidCoordinatorRuntime.kt"
+      ],
+      "android_owner": "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/features/navigation/SectionSurfaces.kt",
+      "platform_delta": "Android uses native Compose/platform adapters + typed JNI while preserving canonical Rust owners where platform-independent.",
+      "implementation_status": "mapped",
+      "production_wiring": "mapped target(s); production parity not yet established",
+      "unit_test": "required",
+      "contract_test": "required on same exact HEAD",
+      "integration_test": "required on same exact HEAD",
+      "packaged_test": "required on final minified release artifact",
+      "device_test": "required on emulator/physical device as applicable",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Tablet/foldable/accessibility/i18n and deep-link device acceptance remain open."
+    },
+    {
+      "responsibility_id": "AUTOMATION-WORKFLOW-001",
+      "domain": "automation",
+      "desktop_sources": [
+        {
+          "path": "source/shared/workflow-model.ts",
+          "blob_sha": "18577adff39e241df9837f0b73eda47e25f9214f",
+          "symbols": [
+            "workflow model/state machine"
+          ]
+        }
+      ],
+      "source_commit": "3bc92400826cc4ca7ac665b467708e22261edc61",
+      "responsibility": "Own workflow triggers, steps, retries, cancellation, approvals, memory/multi-Agent and process recovery.",
+      "source_owner": "Desktop workflow runtime",
+      "direct_callers": [
+        "shipping Desktop composition; exact callers require continued per-domain decomposition"
+      ],
+      "downstream_dependencies": [
+        "canonical state/protocol dependencies tracked by the cited Desktop source"
+      ],
+      "state_owner": "Desktop workflow runtime",
+      "persistent_state": [
+        "domain-specific durable state; exact schema decomposition remains tracked work"
+      ],
+      "protocol_wire_contract": [
+        "Desktop shipping contract rooted at cited source"
+      ],
+      "visible_effect": "Automations resume the durable workflow rather than duplicating side effects after restart.",
+      "failure_behavior": [
+        "fail closed when identity, permission, state or platform preconditions cannot be proven"
+      ],
+      "cancellation_behavior": "Must preserve Desktop cancellation semantics or document an Android replacement; not verified by this mapping row.",
+      "retry_semantics": "No blind retry of side effects; stable identity/reconciliation required where applicable.",
+      "idempotency_semantics": "Must preserve stable request/mutation identity and duplicate handling where applicable.",
+      "process_death_recovery": "Android must restore canonical durable state rather than reissue side effects.",
+      "account_fencing": "All account-scoped callbacks and state require current account/epoch proof.",
+      "security_boundary": "Coordinator/Host/Capability Broker owns authorization; Presentation cannot grant itself capability.",
+      "android_disposition": "direct-port",
+      "android_target": [
+        "source/host/src/android_json_runtime.rs",
+        "source/mahayana-agent-coordinator/src/lib.rs"
+      ],
+      "android_owner": "source/host/src/android_json_runtime.rs",
+      "platform_delta": "Android uses native Compose/platform adapters + typed JNI while preserving canonical Rust owners where platform-independent.",
+      "implementation_status": "mapped",
+      "production_wiring": "mapped target(s); production parity not yet established",
+      "unit_test": "required",
+      "contract_test": "required on same exact HEAD",
+      "integration_test": "required on same exact HEAD",
+      "packaged_test": "required on final minified release artifact",
+      "device_test": "required on emulator/physical device as applicable",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Current Android responsibility needs deeper source-to-Rust state-machine decomposition."
+    },
+    {
+      "responsibility_id": "SETTINGS-SCOPE-001",
+      "domain": "settings",
+      "desktop_sources": [
+        {
+          "path": "source/shared/node/settings/sand-settings-store.ts",
+          "blob_sha": "52aeef0a22edeb64dab446a4aecf8c79590ee90f",
+          "symbols": [
+            "settings store"
+          ]
+        }
+      ],
+      "source_commit": "3bc92400826cc4ca7ac665b467708e22261edc61",
+      "responsibility": "Own settings scope, migrations and durable preferences without leaking canonical account/runtime truth into presentation.",
+      "source_owner": "Desktop settings store",
+      "direct_callers": [
+        "shipping Desktop composition; exact callers require continued per-domain decomposition"
+      ],
+      "downstream_dependencies": [
+        "canonical state/protocol dependencies tracked by the cited Desktop source"
+      ],
+      "state_owner": "Desktop settings store",
+      "persistent_state": [
+        "domain-specific durable state; exact schema decomposition remains tracked work"
+      ],
+      "protocol_wire_contract": [
+        "Desktop shipping contract rooted at cited source"
+      ],
+      "visible_effect": "User preferences survive upgrade/reset according to scope and migration rules.",
+      "failure_behavior": [
+        "fail closed when identity, permission, state or platform preconditions cannot be proven"
+      ],
+      "cancellation_behavior": "Must preserve Desktop cancellation semantics or document an Android replacement; not verified by this mapping row.",
+      "retry_semantics": "No blind retry of side effects; stable identity/reconciliation required where applicable.",
+      "idempotency_semantics": "Must preserve stable request/mutation identity and duplicate handling where applicable.",
+      "process_death_recovery": "Android must restore canonical durable state rather than reissue side effects.",
+      "account_fencing": "All account-scoped callbacks and state require current account/epoch proof.",
+      "security_boundary": "Coordinator/Host/Capability Broker owns authorization; Presentation cannot grant itself capability.",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "source/shared/src/host_settings.rs"
+      ],
+      "android_owner": "source/shared/src/host_settings.rs",
+      "platform_delta": "Android uses native Compose/platform adapters + typed JNI while preserving canonical Rust owners where platform-independent.",
+      "implementation_status": "mapped",
+      "production_wiring": "mapped target(s); production parity not yet established",
+      "unit_test": "required",
+      "contract_test": "required on same exact HEAD",
+      "integration_test": "required on same exact HEAD",
+      "packaged_test": "required on final minified release artifact",
+      "device_test": "required on emulator/physical device as applicable",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Android DataStore/platform setting adapters and migration evidence remain open."
+    },
+    {
+      "responsibility_id": "NOTIFICATION-OS-001",
+      "domain": "notification",
+      "desktop_sources": [
+        {
+          "path": "source/shared/os-notification.ts",
+          "blob_sha": "ffaf599dada09e938f362d75aa202327eed3a4ad",
+          "symbols": [
+            "OS notification contract"
+          ]
+        }
+      ],
+      "source_commit": "3bc92400826cc4ca7ac665b467708e22261edc61",
+      "responsibility": "Own notification permission/channel/content/deep-link action semantics and account fencing.",
+      "source_owner": "Desktop OS notification abstraction",
+      "direct_callers": [
+        "shipping Desktop composition; exact callers require continued per-domain decomposition"
+      ],
+      "downstream_dependencies": [
+        "canonical state/protocol dependencies tracked by the cited Desktop source"
+      ],
+      "state_owner": "Desktop OS notification abstraction",
+      "persistent_state": [
+        "domain-specific durable state; exact schema decomposition remains tracked work"
+      ],
+      "protocol_wire_contract": [
+        "Desktop shipping contract rooted at cited source"
+      ],
+      "visible_effect": "Android notifications arrive for the correct account and deep-link safely into native surfaces.",
+      "failure_behavior": [
+        "fail closed when identity, permission, state or platform preconditions cannot be proven"
+      ],
+      "cancellation_behavior": "Must preserve Desktop cancellation semantics or document an Android replacement; not verified by this mapping row.",
+      "retry_semantics": "No blind retry of side effects; stable identity/reconciliation required where applicable.",
+      "idempotency_semantics": "Must preserve stable request/mutation identity and duplicate handling where applicable.",
+      "process_death_recovery": "Android must restore canonical durable state rather than reissue side effects.",
+      "account_fencing": "All account-scoped callbacks and state require current account/epoch proof.",
+      "security_boundary": "Coordinator/Host/Capability Broker owns authorization; Presentation cannot grant itself capability.",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/notifications/os-notification-manager.kt",
+        "source/shared/src/os_notification.rs"
+      ],
+      "android_owner": "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/notifications/os-notification-manager.kt",
+      "platform_delta": "Android uses native Compose/platform adapters + typed JNI while preserving canonical Rust owners where platform-independent.",
+      "implementation_status": "mapped",
+      "production_wiring": "mapped target(s); production parity not yet established",
+      "unit_test": "required",
+      "contract_test": "required on same exact HEAD",
+      "integration_test": "required on same exact HEAD",
+      "packaged_test": "required on final minified release artifact",
+      "device_test": "required on emulator/physical device as applicable",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Requires packaged notification permission/channel/deep-link/device evidence."
+    },
+    {
+      "responsibility_id": "PRIVACY-REDACTION-001",
+      "domain": "privacy",
+      "desktop_sources": [
+        {
+          "path": "source/shared/os-notification.ts",
+          "blob_sha": "ffaf599dada09e938f362d75aa202327eed3a4ad",
+          "symbols": [
+            "notification privacy boundary"
+          ]
+        }
+      ],
+      "source_commit": "3bc92400826cc4ca7ac665b467708e22261edc61",
+      "responsibility": "Apply privacy/redaction policy to user-visible and diagnostic surfaces and prevent secret/session leakage.",
+      "source_owner": "Desktop privacy/redaction composition",
+      "direct_callers": [
+        "shipping Desktop composition; exact callers require continued per-domain decomposition"
+      ],
+      "downstream_dependencies": [
+        "canonical state/protocol dependencies tracked by the cited Desktop source"
+      ],
+      "state_owner": "Desktop privacy/redaction composition",
+      "persistent_state": [
+        "domain-specific durable state; exact schema decomposition remains tracked work"
+      ],
+      "protocol_wire_contract": [
+        "Desktop shipping contract rooted at cited source"
+      ],
+      "visible_effect": "Sensitive content and credentials are not leaked through logs, notifications or diagnostics.",
+      "failure_behavior": [
+        "fail closed when identity, permission, state or platform preconditions cannot be proven"
+      ],
+      "cancellation_behavior": "Must preserve Desktop cancellation semantics or document an Android replacement; not verified by this mapping row.",
+      "retry_semantics": "No blind retry of side effects; stable identity/reconciliation required where applicable.",
+      "idempotency_semantics": "Must preserve stable request/mutation identity and duplicate handling where applicable.",
+      "process_death_recovery": "Android must restore canonical durable state rather than reissue side effects.",
+      "account_fencing": "All account-scoped callbacks and state require current account/epoch proof.",
+      "security_boundary": "Coordinator/Host/Capability Broker owns authorization; Presentation cannot grant itself capability.",
+      "android_disposition": "direct-port",
+      "android_target": [
+        "source/packages/redaction/src/privacy_context.rs",
+        "source/packages/redaction/src/privacy_mode.rs"
+      ],
+      "android_owner": "source/packages/redaction/src/privacy_context.rs",
+      "platform_delta": "Android uses native Compose/platform adapters + typed JNI while preserving canonical Rust owners where platform-independent.",
+      "implementation_status": "mapped",
+      "production_wiring": "mapped target(s); production parity not yet established",
+      "unit_test": "required",
+      "contract_test": "required on same exact HEAD",
+      "integration_test": "required on same exact HEAD",
+      "packaged_test": "required on final minified release artifact",
+      "device_test": "required on emulator/physical device as applicable",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Representative source anchor is notification privacy surface; full redaction source inventory mapping remains open."
     }
-  ]
+  ],
+  "traceability": {
+    "source_inventory_authority": "Android migration documentation workflow artifacts generated from the pinned Desktop commit",
+    "rule": "Each responsibility row lists exact Desktop path+blob anchors and Android targets. Complete per-file inventory remains machine-generated; responsibility rows are the human semantic index over that inventory.",
+    "coverage_status": "incomplete",
+    "missing_closure": "Full bidirectional assignment of every tracked Desktop inventory entry to one or more responsibility IDs remains open and must fail completion review until closed."
+  }
 }
