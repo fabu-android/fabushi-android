@@ -5,7 +5,7 @@
     "desktop_commit": "3bc92400826cc4ca7ac665b467708e22261edc61",
     "android_repository": "fabu-android/fabushi-android",
     "android_pr": 3,
-    "android_head_at_update": "45901d03045da9a63bfbbee14a2a85cc08cc3c41",
+    "android_head_at_update": "e124d9fea136dda6eda810d7498e5cdef866b60e",
     "status": "incomplete",
     "note": "Persistent human-reviewed responsibility ledger for Desktop main. Rows are responsibility-level source facts; mapped/implemented never imply verified. Verification requires same-exact-HEAD source implementation, production wiring, CI/package and device evidence."
   },
@@ -2113,6 +2113,71 @@
       "artifact": null,
       "verification_status": "not-verified",
       "notes": "Audit conclusion: the Desktop writeback importer is intentionally absent on Android. The user-visible/product-quality requirement—reproducible, non-drifting migration authority—is retained by the pinned Desktop-main inventory/checker. This row remains not-verified until the ledger-update exact HEAD passes the same authority workflows."
+    },
+    {
+      "responsibility_id": "CI-RUST-PARITY-FINALIZE-REPLACEMENT-001",
+      "domain": "source-authority",
+      "desktop_sources": [
+        {
+          "path": ".github/workflows/grok-rust-parity-finalize.yml",
+          "blob_sha": "a48bde089045aa4cfefa902710b74b463d95c53d",
+          "symbols": [
+            "finalize"
+          ]
+        }
+      ],
+      "source_commit": "3bc92400826cc4ca7ac665b467708e22261edc61",
+      "responsibility": "Run Rust parity contracts for the Desktop Host/Runner, then advance only tested migration-manifest rows and revalidate architecture before recording evidence.",
+      "source_owner": "Historical Desktop Grok Rust parity finalizer",
+      "direct_callers": [
+        "workflow_dispatch",
+        "refactor/grok-018-architecture-rebuild Rust source pushes"
+      ],
+      "downstream_dependencies": [
+        "Desktop Host Rust tests",
+        "Grok parity architecture manifest",
+        "architecture checker"
+      ],
+      "state_owner": "Historical Desktop parity manifest",
+      "persistent_state": [
+        "tested manifest row status",
+        "committed PR branch evidence"
+      ],
+      "protocol_wire_contract": [
+        "input HEAD binding",
+        "Rust tests before row promotion",
+        "architecture recheck before writeback"
+      ],
+      "visible_effect": "Rust migration rows cannot be promoted merely because code exists; tests and architecture validation must precede evidence promotion.",
+      "failure_behavior": [
+        "Rust contract failure prevents promotion",
+        "architecture recheck failure prevents writeback"
+      ],
+      "cancellation_behavior": "Historical finalize run is non-cancelling to avoid overlapping manifest writes.",
+      "retry_semantics": "Reruns only promote still-curated rows after Rust tests pass.",
+      "idempotency_semantics": "No manifest diff produces no commit.",
+      "process_death_recovery": "Not an app runtime responsibility; CI can rerun from a bound source HEAD.",
+      "account_fencing": "No user account state is involved.",
+      "security_boundary": "Android replacement removes automated contents:write promotion; only human-reviewed responsibility rows move state, while Actions remain read-only validators.",
+      "android_disposition": "not-applicable-with-replacement",
+      "android_target": [
+        ".github/workflows/android-parity-full-ci.yml",
+        ".github/workflows/grok-android-architecture.yml",
+        "docs/android-port/authority/responsibility-ledger.json",
+        "scripts/check_grok_android_parity.py"
+      ],
+      "android_owner": "Human-reviewed Android responsibility ledger plus read-only Rust/architecture Actions",
+      "platform_delta": "Desktop historical automation mutated a parity manifest after tests. Android deliberately separates test execution from human semantic promotion: cargo test runs in Actions, but ledger state changes require explicit reviewed commits with source/blob/production evidence.",
+      "implementation_status": "not-applicable",
+      "production_wiring": "Android Parity Full CI and Grok Android Architecture run cargo workspace tests and architecture/ledger checks against exact SOURCE_SHA; neither auto-promotes responsibility status.",
+      "unit_test": "e124d9fea136dda6eda810d7498e5cdef866b60e rust-runtime-foundation is the current exact-head Rust replacement gate; final conclusion must be read before claiming verified.",
+      "contract_test": "e124d9fea136dda6eda810d7498e5cdef866b60e parity-ledger job 114035141936 success.",
+      "integration_test": "Ledger state remains a reviewed source-control change rather than an automated CI side effect.",
+      "packaged_test": "Not applicable to this historical manifest-finalization mechanism; package evidence belongs to the responsibilities being promoted.",
+      "device_test": "Not applicable to the finalize mechanism itself; device evidence belongs to the underlying product responsibility.",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Audit conclusion: the Desktop contents:write finalizer is intentionally absent. Android keeps its product-quality invariant—tests before promotion—while forbidding CI from bulk-inheriting or auto-promoting verification."
     }
   ],
   "traceability": {
