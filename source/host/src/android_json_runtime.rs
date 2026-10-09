@@ -160,6 +160,7 @@ pub struct AndroidJsonHost {
     js_runtime: Option<DeepSeekJsHost>,
     runtime_tools: BTreeMap<String, BTreeSet<String>>,
     runtime_generations: BTreeMap<String, u64>,
+    runtime_call_cancellations: BTreeMap<String, (String, String, Arc<AtomicBool>)>,
     capability_broker: CapabilityBroker,
     webauthn: WebAuthnProxyExtension,
     webauthn_provider_queues: BTreeMap<String, VecDeque<WebAuthnRequestFrame>>,
@@ -242,6 +243,7 @@ impl AndroidJsonHost {
             js_runtime: None,
             runtime_tools: BTreeMap::new(),
             runtime_generations: BTreeMap::new(),
+            runtime_call_cancellations: BTreeMap::new(),
             capability_broker: CapabilityBroker::open(app_data_dir.join("capability-broker.json"), now_ms())
                 .unwrap_or_else(|error| panic!("failed to open durable Android Capability Broker: {error}")),
             webauthn: WebAuthnProxyExtension::new(WebAuthnProxyExtensionConfig::default()),
@@ -1587,6 +1589,13 @@ impl AndroidJsonHost {
         self.plugin_permissions
             .revoke(plugin_id, permission)
             .map_err(|error| format!("plugin permission revoke failed: {error}"))?;
+        for (pending_plugin, pending_capability, cancelled) in
+            self.runtime_call_cancellations.values()
+        {
+            if pending_plugin == plugin_id && pending_capability == permission {
+                cancelled.store(true, Ordering::Release);
+            }
+        }
         self.capability_broker.cancel_plugin(
             plugin_id,
             "capability grant revoked while call was pending",
@@ -1666,6 +1675,11 @@ impl AndroidJsonHost {
 
     fn runtime_stop(&mut self, params: &Value) -> Result<Value, String> {
         let plugin_id = required_string(params, "pluginId")?.to_string();
+        for (pending_plugin, _, cancelled) in self.runtime_call_cancellations.values() {
+            if pending_plugin == &plugin_id {
+                cancelled.store(true, Ordering::Release);
+            }
+        }
         self.capability_broker.cancel_plugin(&plugin_id, "runtime stopped", now_ms())?;
         let generation = self.runtime_generations.entry(plugin_id.clone()).or_insert(0);
         *generation = generation.saturating_add(1);
@@ -1701,6 +1715,9 @@ impl AndroidJsonHost {
 
     fn runtime_cancel(&mut self, params: &Value) -> Result<Value, String> {
         let request_id = required_string(params, "requestId")?;
+        if let Some((_, _, token)) = self.runtime_call_cancellations.get(request_id) {
+            token.store(true, Ordering::Release);
+        }
         let cancelled = self.capability_broker.cancel_request(
             request_id,
             params.get("reason").and_then(Value::as_str).unwrap_or("runtime call cancelled"),
@@ -1715,6 +1732,9 @@ impl AndroidJsonHost {
         let request_id = required_string(params, "requestId")?.to_string();
         let capability = required_string(params, "capability")?.to_string();
         let arguments = params.get("arguments").cloned().unwrap_or_else(|| json!({}));
+        if !arguments.is_object() {
+            return Err("runtime.call arguments must be a JSON object".into());
+        }
         if request_id.len() > 256 || tool.len() > 256 || capability.len() > 256 {
             return Err("runtime.call identity exceeds bounded length".into());
         }
@@ -1749,22 +1769,78 @@ impl AndroidJsonHost {
             state:"pending".into(),
         })?;
         self.capability_broker.assert_current(&request_id,&plugin_id,&account_fence,generation,now_ms())?;
-        let result = self.js_runtime.as_ref().ok_or("plugin runtime is not started")?
-            .call_tool_json(&tool,&arguments);
-        let finished=now_ms();
-        if finished > started.saturating_add(timeout_ms) {
-            self.capability_broker.settle(&request_id,"outcome_unknown",
-                Some("tool returned after bounded deadline; side effect must be reconciled, never blindly replayed".into()),finished)?;
-            return Err("runtime.call timed out with outcome unknown; reconciliation required".into());
+        let cancellation = Arc::new(AtomicBool::new(false));
+        if self.runtime_call_cancellations.insert(
+            request_id.clone(),
+            (plugin_id.clone(), capability.clone(), cancellation.clone()),
+        ).is_some() {
+            let _ = self.capability_broker.cancel_request(
+                &request_id,
+                "duplicate runtime cancellation identity",
+                now_ms(),
+            );
+            return Err("duplicate runtime.call request identity".into());
         }
+        let result = self.js_runtime.as_ref().ok_or("plugin runtime is not started")?
+            .call_plugin_tool_json_bounded(
+                &plugin_id,
+                &tool,
+                &arguments,
+                Duration::from_millis(timeout_ms),
+                cancellation.as_ref(),
+            );
+        self.runtime_call_cancellations.remove(&request_id);
+        let finished=now_ms();
+
+        let active_after = self.plugin_installer.active(&plugin_id)
+            .map_err(|error| format!("failed to recheck installed plugin after runtime.call: {error}"))?;
+        let release_unchanged = active_after.as_ref().is_some_and(|current| {
+            current.version == active.version
+                && current.artifact_id == active.artifact_id
+                && current.artifact_sha256 == active.artifact_sha256
+                && current.installed_path == active.installed_path
+        });
+        let grant_still_present = self.plugin_permissions.is_granted(&plugin_id, &capability);
+        let current_generation = self.runtime_generations.get(&plugin_id).copied();
+        let current_account = self.current_messaging_identity().map(|(identity, _)| identity);
+        if !release_unchanged
+            || !grant_still_present
+            || current_generation != Some(generation)
+            || current_account.as_deref() != Ok(account_fence.as_str())
+        {
+            if self.capability_broker.assert_current(
+                &request_id, &plugin_id, &account_fence, generation, finished
+            ).is_ok() {
+                self.capability_broker.settle(
+                    &request_id,
+                    "outcome_unknown",
+                    Some("installed release, grant, account fence, or runtime generation changed during execution".into()),
+                    finished,
+                )?;
+            }
+            return Err("runtime.call result fenced by changed release/grant/account/runtime state; reconciliation required".into());
+        }
+
         if let Err(error)=self.capability_broker.assert_current(&request_id,&plugin_id,&account_fence,generation,finished) {
-            self.capability_broker.settle(&request_id,"outcome_unknown",Some(error.clone()),finished)?;
             return Err(error);
         }
         match result {
             Ok(value) => {
                 self.capability_broker.settle(&request_id,"completed",None,finished)?;
                 Ok(json!({"requestId":request_id,"pluginId":plugin_id,"tool":tool,"result":value,"generation":generation}))
+            }
+            Err(mahayana_js_runtime::JsRuntimeError::Cancelled) => {
+                let _ = self.capability_broker.cancel_request(&request_id, "runtime adapter cancelled", finished)?;
+                Err("runtime.call cancelled".into())
+            }
+            Err(mahayana_js_runtime::JsRuntimeError::TimedOut) => {
+                self.capability_broker.settle(
+                    &request_id,
+                    "outcome_unknown",
+                    Some("bounded runtime deadline expired after tool dispatch; reconcile side effects before replay".into()),
+                    finished,
+                )?;
+                Err("runtime.call timed out with outcome unknown; reconciliation required".into())
             }
             Err(error) => {
                 self.capability_broker.settle(&request_id,"failed",Some(error.to_string()),finished)?;
