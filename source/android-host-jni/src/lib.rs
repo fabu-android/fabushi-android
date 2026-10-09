@@ -695,10 +695,21 @@ mod tests {
         serde_json::from_str(&runtime.dispatch_legacy_json(&request.to_string())).unwrap()
     }
 
+    fn test_root(label: &str) -> PathBuf {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        std::env::temp_dir().join(format!(
+            "fabushi-jni-{label}-{}-{nonce}",
+            std::process::id()
+        ))
+    }
+
     #[test]
     fn legacy_jni_envelope_routes_through_coordinator_into_test_host() {
         let mut runtime =
-            AndroidNativeRuntime::new("/tmp/fabushi-jni-test", AndroidHostMode::Test, 5);
+            AndroidNativeRuntime::new(test_root("test"), AndroidHostMode::Test, 5);
         let response = call(
             &mut runtime,
             json!({"method":"feature.info","params":{}}),
@@ -715,7 +726,7 @@ mod tests {
     #[test]
     fn streaming_operation_is_active_until_terminal_event_and_replayable() {
         let mut runtime =
-            AndroidNativeRuntime::new("/tmp/fabushi-jni-stream", AndroidHostMode::Test, 9);
+            AndroidNativeRuntime::new(test_root("stream"), AndroidHostMode::Test, 9);
 
         let accepted = call(
             &mut runtime,
@@ -776,7 +787,7 @@ mod tests {
     #[test]
     fn android_adapter_events_share_native_replay_sequence() {
         let mut runtime =
-            AndroidNativeRuntime::new("/tmp/fabushi-jni-adapter", AndroidHostMode::Test, 4);
+            AndroidNativeRuntime::new(test_root("adapter"), AndroidHostMode::Test, 4);
         let published = call(
             &mut runtime,
             json!({
@@ -809,7 +820,7 @@ mod tests {
     #[test]
     fn interrupt_uses_coordinator_cancel_and_emits_terminal_event() {
         let mut runtime =
-            AndroidNativeRuntime::new("/tmp/fabushi-jni-cancel", AndroidHostMode::Test, 3);
+            AndroidNativeRuntime::new(test_root("cancel"), AndroidHostMode::Test, 3);
         let accepted = call(
             &mut runtime,
             json!({
@@ -851,7 +862,7 @@ mod tests {
     #[test]
     fn unknown_renderer_method_fails_closed() {
         let mut runtime =
-            AndroidNativeRuntime::new("/tmp/fabushi-jni-prod", AndroidHostMode::Production, 1);
+            AndroidNativeRuntime::new(test_root("prod"), AndroidHostMode::Production, 1);
         let response = call(
             &mut runtime,
             json!({"method":"renderer.execAnything","params":{}}),
@@ -865,7 +876,7 @@ mod tests {
     #[test]
     fn mcp_oauth_callback_is_single_use_and_host_event_does_not_echo_code() {
         let mut runtime =
-            AndroidNativeRuntime::new("/tmp/fabushi-jni-mcp-oauth", AndroidHostMode::Test, 13);
+            AndroidNativeRuntime::new(test_root("mcp-oauth"), AndroidHostMode::Test, 13);
         let state = "0123456789abcdef0123456789abcdef";
 
         let registered = call(
