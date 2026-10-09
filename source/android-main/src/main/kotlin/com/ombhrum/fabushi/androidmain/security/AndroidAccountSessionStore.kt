@@ -18,7 +18,7 @@ import javax.crypto.spec.GCMParameterSpec
  *
  * The Rust Host owns account/session business state. This class owns only Android credential
  * protection: a Keystore AES key plus a no-backup ciphertext file. Decrypted session JSON is never
- * exposed to Compose/ViewModel state and is exchanged only with the process-owned MahayanaHost
+ * exposed to Compose/ViewModel state and is exchanged only with the process-owned native Host
  * boundary.
  */
 internal class AndroidAccountSessionStore(context: Context) {
