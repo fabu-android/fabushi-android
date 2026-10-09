@@ -9,7 +9,7 @@ use std::env;
 use std::io::Read;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use url::Url;
 
 pub const DASHBOARD_CHECK_HTTP_MCP_STATUS_PATH: &str =
@@ -35,7 +35,41 @@ const DEFAULT_CLIENT_VERSION: &str = "0.1.0";
 const DEFAULT_CREDENTIAL_TTL_MS: u64 = 15 * 60_000;
 const REFRESH_LEEWAY_MS: u64 = 60_000;
 const MAX_RPC_RESPONSE_BYTES: usize = 4 * 1024 * 1024;
+const PRIVACY_MODE_CACHE_MAX_AGE_MS: u64 = 5 * 60_000;
+const PRIVACY_MODE_FALLBACK_CACHE_MAX_AGE_MS: u64 = 10_000;
+const PRIVACY_MODE_FETCH_TIMEOUT_MS: u64 = 3_000;
 static REQUEST_SEQUENCE: AtomicU64 = AtomicU64::new(1);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u64)]
+pub enum SandPrivacyMode {
+    Unspecified = 0,
+    NoStorage = 1,
+    NoTraining = 2,
+    UsageDataTrainingAllowed = 3,
+    UsageCodebaseTrainingAllowed = 4,
+}
+
+impl SandPrivacyMode {
+    fn from_proto(value: u64) -> Option<Self> {
+        match value {
+            0 => Some(Self::Unspecified),
+            1 => Some(Self::NoStorage),
+            2 => Some(Self::NoTraining),
+            3 => Some(Self::UsageDataTrainingAllowed),
+            4 => Some(Self::UsageCodebaseTrainingAllowed),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+struct PrivacyCacheEntry {
+    backend_url: String,
+    account_scope: String,
+    value: Option<SandPrivacyMode>,
+    expires_at: Instant,
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SandMcpBackendCredentials {
@@ -219,11 +253,15 @@ pub trait McpAuthBackendPort: Send + Sync {
 
 pub struct CursorDashboardMcpAuthBackend {
     credentials: Box<dyn SandMcpCredentialProvider>,
+    privacy_cache: Mutex<Option<PrivacyCacheEntry>>,
 }
 
 impl CursorDashboardMcpAuthBackend {
     pub fn new(credentials: Box<dyn SandMcpCredentialProvider>) -> Self {
-        Self { credentials }
+        Self {
+            credentials,
+            privacy_cache: Mutex::new(None),
+        }
     }
 
     pub fn from_process_environment(machine_id: impl Into<String>) -> Result<Self, String> {
@@ -351,24 +389,65 @@ impl CursorDashboardMcpAuthBackend {
             }))
     }
 
+    pub fn resolve_sand_privacy_mode(&self) -> Option<SandPrivacyMode> {
+        let credentials = self.credentials.credentials().ok()?;
+        self.resolve_sand_privacy_mode_with_credentials(&credentials)
+    }
+
+    fn resolve_sand_privacy_mode_with_credentials(
+        &self,
+        credentials: &SandMcpBackendCredentials,
+    ) -> Option<SandPrivacyMode> {
+        let account_scope = format!(
+            "{:x}",
+            Sha256::digest(credentials.access_token.as_bytes())
+        );
+        let now = Instant::now();
+        if let Ok(cache) = self.privacy_cache.lock() {
+            if let Some(entry) = cache.as_ref() {
+                if entry.backend_url == credentials.backend_url
+                    && entry.account_scope == account_scope
+                    && now <= entry.expires_at
+                {
+                    return entry.value;
+                }
+            }
+        }
+
+        let value = self
+            .send_unary(
+                credentials,
+                DASHBOARD_GET_USER_PRIVACY_MODE_PATH,
+                &[0x08, SandPrivacyMode::NoStorage as u8],
+                PRIVACY_MODE_FETCH_TIMEOUT_MS,
+                "true",
+            )
+            .ok()
+            .and_then(|bytes| decode_optional_varint_field(&bytes, 1).ok().flatten())
+            .and_then(SandPrivacyMode::from_proto);
+        let ttl = if value.is_some() {
+            PRIVACY_MODE_CACHE_MAX_AGE_MS
+        } else {
+            PRIVACY_MODE_FALLBACK_CACHE_MAX_AGE_MS
+        };
+        if let Ok(mut cache) = self.privacy_cache.lock() {
+            *cache = Some(PrivacyCacheEntry {
+                backend_url: credentials.backend_url.clone(),
+                account_scope,
+                value,
+                expires_at: now + Duration::from_millis(ttl),
+            });
+        }
+        value
+    }
+
     fn resolve_ghost_mode(
         &self,
         credentials: &SandMcpBackendCredentials,
     ) -> &'static str {
-        let response = self.send_unary(
-            credentials,
-            DASHBOARD_GET_USER_PRIVACY_MODE_PATH,
-            &[0x08, 0x01],
-            3_000,
-            "true",
-        );
-        match response
-            .ok()
-            .and_then(|bytes| decode_optional_varint_field(&bytes, 1).ok().flatten())
-        {
-            Some(3 | 4) => "false",
-            _ => "true",
-        }
+        ghost_mode_from_privacy_mode(
+            self.resolve_sand_privacy_mode_with_credentials(credentials),
+        )
     }
 }
 
@@ -459,6 +538,14 @@ struct AvailableServerWire {
     url: Option<String>,
     disabled_by_team_admin_policy: bool,
     server_identifier: Option<String>,
+}
+
+fn ghost_mode_from_privacy_mode(mode: Option<SandPrivacyMode>) -> &'static str {
+    match mode {
+        Some(SandPrivacyMode::UsageDataTrainingAllowed)
+        | Some(SandPrivacyMode::UsageCodebaseTrainingAllowed) => "false",
+        _ => "true",
+    }
 }
 
 fn decode_available_mcp_servers_response(
@@ -1025,6 +1112,39 @@ mod tests {
         assert!(first.ends_with("machine-a"));
         assert!(second.ends_with("machine-b"));
         assert_ne!(first, second);
+    }
+
+    #[test]
+    fn privacy_mode_wire_values_and_ghost_mode_match_desktop_contract() {
+        assert_eq!(SandPrivacyMode::from_proto(0), Some(SandPrivacyMode::Unspecified));
+        assert_eq!(SandPrivacyMode::from_proto(1), Some(SandPrivacyMode::NoStorage));
+        assert_eq!(SandPrivacyMode::from_proto(2), Some(SandPrivacyMode::NoTraining));
+        assert_eq!(
+            SandPrivacyMode::from_proto(3),
+            Some(SandPrivacyMode::UsageDataTrainingAllowed)
+        );
+        assert_eq!(
+            SandPrivacyMode::from_proto(4),
+            Some(SandPrivacyMode::UsageCodebaseTrainingAllowed)
+        );
+        assert_eq!(SandPrivacyMode::from_proto(5), None);
+        assert_eq!(ghost_mode_from_privacy_mode(None), "true");
+        assert_eq!(
+            ghost_mode_from_privacy_mode(Some(SandPrivacyMode::NoStorage)),
+            "true"
+        );
+        assert_eq!(
+            ghost_mode_from_privacy_mode(Some(SandPrivacyMode::NoTraining)),
+            "true"
+        );
+        assert_eq!(
+            ghost_mode_from_privacy_mode(Some(SandPrivacyMode::UsageDataTrainingAllowed)),
+            "false"
+        );
+        assert_eq!(
+            ghost_mode_from_privacy_mode(Some(SandPrivacyMode::UsageCodebaseTrainingAllowed)),
+            "false"
+        );
     }
 
     #[test]

@@ -1,6 +1,7 @@
 package com.ombhrum.fabushi.androidmain.coordinator
 
 import android.app.Application
+import android.os.StatFs
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidCoordinatorPort
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidMcpOAuthCompletion
 import com.ombhrum.fabushi.core.MahayanaHost
@@ -8,6 +9,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 
@@ -32,6 +34,32 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
     private val lastEventSequence = AtomicLong(0L)
     private val eventPumpExecutor = Executors.newSingleThreadExecutor { runnable ->
         Thread(runnable, "fabushi-coordinator-feature-events").apply { isDaemon = true }
+    }
+    private val storagePressureExecutor = Executors.newSingleThreadScheduledExecutor { runnable ->
+        Thread(runnable, "fabushi-storage-pressure").apply { isDaemon = true }
+    }
+
+    init {
+        storagePressureExecutor.scheduleWithFixedDelay(
+            {
+                runCatching {
+                    val stats = StatFs(application.filesDir.absolutePath)
+                    val totalBytes = stats.totalBytes
+                    val availableBytes = stats.availableBytes
+                    if (totalBytes > 0L && availableBytes >= 0L && availableBytes <= totalBytes) {
+                        host.request(
+                            "feature.agent.diskPressure.observe",
+                            JSONObject()
+                                .put("totalBytes", totalBytes)
+                                .put("availableBytes", availableBytes),
+                        )
+                    }
+                }
+            },
+            0L,
+            STORAGE_PRESSURE_SAMPLE_SECONDS,
+            TimeUnit.SECONDS,
+        )
     }
 
     override fun coordinatorStatus() = host.request("coordinator.status")
@@ -296,6 +324,7 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
     }
 
     companion object {
+        private const val STORAGE_PRESSURE_SAMPLE_SECONDS = 60L
         @Volatile private var instance: AndroidCoordinatorRuntime? = null
 
         fun get(application: Application): AndroidCoordinatorRuntime =

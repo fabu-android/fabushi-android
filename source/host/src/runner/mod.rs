@@ -15,7 +15,9 @@ pub use production_turn_agent_owner::{
     ProductionTurnProfileAnnouncementCommit, ProductionTurnResult,
     ProductionTurnSummarizationPrompt, SAND_AGENT_MAX_STEPS, SAND_AGENT_TOKEN_LIMIT,
 };
-pub use production_turn_lifecycle::ProductionTurnLifecycleStore;
+pub use production_turn_lifecycle::{
+    ProductionDiskPressureLevel, ProductionTurnLifecycleStore,
+};
 pub use stream_attempt::{
     ProviderFailure, StreamAttemptHost, StreamAttemptInput, StreamAttemptResult, StreamGeneration,
     TurnStreamProvider,

@@ -9,6 +9,7 @@ use crate::mcp_auth::{
     cleanup_legacy_mcp_auth_credentials, AndroidMcpAuthWatchManager,
     AndroidMcpAuthWatchOwner, CursorDashboardMcpAuthBackend, McpAuthAdminPolicyPort,
     McpAuthBackendPort, McpAuthOwnerEvent, McpAuthenticateResult,
+    SandPrivacyMode as BackendSandPrivacyMode,
 };
 use crate::extensions::transcript::TranscriptStore;
 use crate::extensions::webauthn_proxy::{
@@ -18,8 +19,8 @@ use crate::runner::{
     AndroidHostInferenceProvider, AndroidInferenceMode, DurableTurnJournal, DurableTurnState,
     ProductionTurnAgentBuildBindings, ProductionTurnAgentLifecycleBindings,
     ProductionTurnAgentOwner, ProductionTurnAgentStaticConfig, ProductionTurnEvent,
-    ProductionTurnInput, ProductionTurnLifecycleStore, ProductionTurnPrivacyMode,
-    ProductionTurnProfileAnnouncementCommit, SAND_AGENT_TOKEN_LIMIT,
+    ProductionDiskPressureLevel, ProductionTurnInput, ProductionTurnLifecycleStore,
+    ProductionTurnPrivacyMode, ProductionTurnProfileAnnouncementCommit, SAND_AGENT_TOKEN_LIMIT,
 };
 use fabushi_constants::composer::text_size_allowed;
 use fabushi_android_shared::node::mcp::mcp_auth_watch_lifecycle::{
@@ -279,6 +280,7 @@ pub struct AndroidJsonHost {
     messaging: AndroidMessagingService,
     mcp_auth_watches: Arc<Mutex<AndroidMcpAuthWatchManager>>,
     mcp_auth_owner: Option<AndroidMcpAuthWatchOwner>,
+    mcp_dashboard_backend: Option<Arc<CursorDashboardMcpAuthBackend>>,
     plugin_variables: PluginVariableStore,
     pending_plugin_variable_writes: BTreeMap<String, PreparedPluginVariableWrite>,
     #[cfg(feature = "ci-account-session-import")]
@@ -348,23 +350,22 @@ impl AndroidJsonHost {
             )
             .unwrap_or_else(|error| panic!("failed to open durable Android MCP auth watch manager: {error}")),
         ));
-        let mcp_auth_owner = if mode == AndroidHostMode::Production {
+        let (mcp_auth_owner, mcp_dashboard_backend) = if mode == AndroidHostMode::Production {
             let dashboard = Arc::new(
                 CursorDashboardMcpAuthBackend::from_process_environment(device_id.clone())
                     .unwrap_or_else(|error| panic!("failed to initialize MCP backend owner: {error}")),
             );
             let backend: Arc<dyn McpAuthBackendPort> = dashboard.clone();
-            let policy: Arc<dyn McpAuthAdminPolicyPort> = dashboard;
-            Some(
-                AndroidMcpAuthWatchOwner::start(
-                    Arc::clone(&mcp_auth_watches),
-                    backend,
-                    policy,
-                )
-                .unwrap_or_else(|error| panic!("failed to start MCP auth watch owner: {error}")),
+            let policy: Arc<dyn McpAuthAdminPolicyPort> = dashboard.clone();
+            let owner = AndroidMcpAuthWatchOwner::start(
+                Arc::clone(&mcp_auth_watches),
+                backend,
+                policy,
             )
+            .unwrap_or_else(|error| panic!("failed to start MCP auth watch owner: {error}"));
+            (Some(owner), Some(dashboard))
         } else {
-            None
+            (None, None)
         };
         let plugin_variables = PluginVariableStore::open(app_data_dir.join("plugin-variables.json"))
             .unwrap_or_else(|error| panic!("failed to open account-scoped plugin variable store: {error}"));
@@ -394,6 +395,7 @@ impl AndroidJsonHost {
             messaging,
             mcp_auth_watches,
             mcp_auth_owner,
+            mcp_dashboard_backend,
             plugin_variables,
             pending_plugin_variable_writes: BTreeMap::new(),
             #[cfg(feature = "ci-account-session-import")]
@@ -476,6 +478,7 @@ impl AndroidJsonHost {
             "feature.mcp.authWatch.cancel" => self.mcp_auth_watch_cancel(params),
             "feature.mcp.authWatch.snapshot" => self.mcp_auth_watch_snapshot(),
             "feature.auth.logout" => self.account_logout(),
+            "feature.agent.diskPressure.observe" => self.agent_disk_pressure_observe(params),
             "feature.agent.diskPressure.record" => self.agent_disk_pressure_record(params),
             "feature.agent.turn.reconcile" => self.agent_turn_reconcile(params),
             "feature.agent.upgradeQuiesce" => self.agent_upgrade_quiesce(params),
@@ -984,6 +987,38 @@ impl AndroidJsonHost {
             );
         }
         Ok(())
+    }
+
+    fn agent_disk_pressure_observe(&mut self, params: &Value) -> Result<Value, String> {
+        let account_fence = self.current_turn_account_fence()?;
+        let total_bytes = params
+            .get("totalBytes")
+            .and_then(Value::as_u64)
+            .ok_or("totalBytes is required")?;
+        let available_bytes = params
+            .get("availableBytes")
+            .and_then(Value::as_u64)
+            .ok_or("availableBytes is required")?;
+        let observed = self
+            .turn_lifecycle
+            .lock()
+            .map_err(|_| "turn lifecycle lock poisoned".to_string())?
+            .observe_disk_pressure_sample(
+                &account_fence,
+                total_bytes,
+                available_bytes,
+                now_ms(),
+            )?;
+        let level = match observed.level {
+            ProductionDiskPressureLevel::Healthy => "healthy",
+            ProductionDiskPressureLevel::Soft => "soft",
+            ProductionDiskPressureLevel::Hard => "hard",
+        };
+        Ok(json!({
+            "level":level,
+            "episodeId":observed.episode_id,
+            "changed":observed.changed,
+        }))
     }
 
     fn agent_disk_pressure_record(&mut self, params: &Value) -> Result<Value, String> {
@@ -2016,6 +2051,7 @@ impl AndroidJsonHost {
             .insert(operation_id.to_string(), cancelled.clone());
 
         let mode = self.mode;
+        let mcp_dashboard_backend = self.mcp_dashboard_backend.clone();
         let turn_events = self.turn_events.clone();
         let transcript = self.transcript.clone();
         let turn_journal = self.turn_journal.clone();
@@ -2099,8 +2135,30 @@ impl AndroidJsonHost {
                     }
                 };
 
-                let privacy_mode_resolver = Arc::new(move || {
-                    Some(ProductionTurnPrivacyMode::NoStorage)
+                let privacy_mode_resolver = Arc::new(move || match mode {
+                    AndroidHostMode::Test => Some(ProductionTurnPrivacyMode::NoStorage),
+                    AndroidHostMode::Production => {
+                        let privacy_mode = mcp_dashboard_backend
+                            .as_ref()
+                            .and_then(|backend| backend.resolve_sand_privacy_mode())?;
+                        Some(match privacy_mode {
+                            BackendSandPrivacyMode::Unspecified => {
+                                ProductionTurnPrivacyMode::Unspecified
+                            }
+                            BackendSandPrivacyMode::NoStorage => {
+                                ProductionTurnPrivacyMode::NoStorage
+                            }
+                            BackendSandPrivacyMode::NoTraining => {
+                                ProductionTurnPrivacyMode::NoTraining
+                            }
+                            BackendSandPrivacyMode::UsageDataTrainingAllowed => {
+                                ProductionTurnPrivacyMode::UsageDataTrainingAllowed
+                            }
+                            BackendSandPrivacyMode::UsageCodebaseTrainingAllowed => {
+                                ProductionTurnPrivacyMode::UsageCodebaseTrainingAllowed
+                            }
+                        })
+                    }
                 });
                 let summarization_cancelled = Arc::clone(&cancelled);
                 let summarization_prompt = Arc::new(

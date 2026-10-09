@@ -12,7 +12,7 @@ pub use android_mcp_auth_watch_owner::{
 };
 pub use dashboard_mcp_auth_backend::{
     CursorDashboardMcpAuthBackend, McpAuthBackendPort, ProcessSandMcpCredentialProvider,
-    SandMcpBackendCredentials, SandMcpCredentialProvider,
+    SandMcpBackendCredentials, SandMcpCredentialProvider, SandPrivacyMode,
 };
 pub use host_mcp_auth_completion::{
     HostMcpAuthCompletion, HostMcpAuthCompletionEvent, McpAuthCompletionRuntime,

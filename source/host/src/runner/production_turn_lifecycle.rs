@@ -5,6 +5,67 @@ use std::{
     path::PathBuf,
 };
 
+const GIB: u64 = 1024 * 1024 * 1024;
+const SOFT_AVAILABLE_BYTES: u64 = 8 * GIB;
+const HARD_AVAILABLE_BYTES: u64 = 2 * GIB;
+const SOFT_RECOVERY_BYTES: u64 = 10 * GIB;
+const HARD_RECOVERY_BYTES: u64 = 3 * GIB;
+const SOFT_AVAILABLE_RATIO: f64 = 0.15;
+const HARD_AVAILABLE_RATIO: f64 = 0.05;
+const SOFT_RECOVERY_RATIO: f64 = 0.20;
+const HARD_RECOVERY_RATIO: f64 = 0.08;
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ProductionDiskPressureLevel {
+    Healthy,
+    Soft,
+    Hard,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+struct ActiveDiskPressureEpisode {
+    account_fence: String,
+    episode_id: String,
+    level: ProductionDiskPressureLevel,
+    updated_at_ms: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ProductionDiskPressureObservation {
+    pub level: ProductionDiskPressureLevel,
+    pub episode_id: Option<String>,
+    pub changed: bool,
+}
+
+pub fn classify_production_disk_pressure(
+    total_bytes: u64,
+    available_bytes: u64,
+    previous: ProductionDiskPressureLevel,
+) -> ProductionDiskPressureLevel {
+    if total_bytes == 0 {
+        return ProductionDiskPressureLevel::Healthy;
+    }
+    let ratio = available_bytes as f64 / total_bytes as f64;
+    if available_bytes <= HARD_AVAILABLE_BYTES || ratio <= HARD_AVAILABLE_RATIO {
+        return ProductionDiskPressureLevel::Hard;
+    }
+    if previous == ProductionDiskPressureLevel::Hard
+        && (available_bytes <= HARD_RECOVERY_BYTES || ratio <= HARD_RECOVERY_RATIO)
+    {
+        return ProductionDiskPressureLevel::Hard;
+    }
+    if available_bytes <= SOFT_AVAILABLE_BYTES || ratio <= SOFT_AVAILABLE_RATIO {
+        return ProductionDiskPressureLevel::Soft;
+    }
+    if previous == ProductionDiskPressureLevel::Soft
+        && (available_bytes <= SOFT_RECOVERY_BYTES || ratio <= SOFT_RECOVERY_RATIO)
+    {
+        return ProductionDiskPressureLevel::Soft;
+    }
+    ProductionDiskPressureLevel::Healthy
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 enum DiskPressureEpisodeState {
@@ -36,6 +97,8 @@ struct ProfileAnnouncement {
 struct LifecycleState {
     disk_pressure: BTreeMap<String, DiskPressureEpisode>,
     profile_announcements: BTreeMap<String, ProfileAnnouncement>,
+    #[serde(default)]
+    active_disk_pressure: BTreeMap<String, ActiveDiskPressureEpisode>,
 }
 
 /// Android-owned durable lifecycle backing for one-turn claims that cannot be
@@ -76,6 +139,72 @@ impl ProductionTurnLifecycleStore {
             store.persist()?;
         }
         Ok(store)
+    }
+
+    pub fn observe_disk_pressure_sample(
+        &mut self,
+        account_fence: &str,
+        total_bytes: u64,
+        available_bytes: u64,
+        now_ms: u64,
+    ) -> Result<ProductionDiskPressureObservation, String> {
+        validate_identity(account_fence, "account fence")?;
+        if total_bytes == 0 || available_bytes > total_bytes {
+            return Err("disk-pressure sample is invalid".into());
+        }
+        let previous = self
+            .state
+            .active_disk_pressure
+            .get(account_fence)
+            .map(|episode| episode.level)
+            .unwrap_or(ProductionDiskPressureLevel::Healthy);
+        let level = classify_production_disk_pressure(total_bytes, available_bytes, previous);
+
+        if level == ProductionDiskPressureLevel::Healthy {
+            let removed = self.state.active_disk_pressure.remove(account_fence);
+            if removed.is_some() {
+                self.persist()?;
+            }
+            return Ok(ProductionDiskPressureObservation {
+                level,
+                episode_id: None,
+                changed: previous != ProductionDiskPressureLevel::Healthy,
+            });
+        }
+
+        let existing = self.state.active_disk_pressure.get(account_fence).cloned();
+        let episode_id = existing
+            .as_ref()
+            .map(|episode| episode.episode_id.clone())
+            .unwrap_or_else(|| {
+                let seed = format!(
+                    "{account_fence}\n{now_ms}\n{total_bytes}\n{available_bytes}"
+                );
+                format!(
+                    "android-disk-pressure:{}",
+                    crate::sha256::sha256_hex(seed.as_bytes())
+                )
+            });
+        let changed = existing
+            .as_ref()
+            .is_none_or(|episode| episode.level != level);
+        if changed {
+            self.state.active_disk_pressure.insert(
+                account_fence.to_string(),
+                ActiveDiskPressureEpisode {
+                    account_fence: account_fence.to_string(),
+                    episode_id: episode_id.clone(),
+                    level,
+                    updated_at_ms: now_ms,
+                },
+            );
+            self.persist()?;
+        }
+        Ok(ProductionDiskPressureObservation {
+            level,
+            episode_id: Some(episode_id),
+            changed,
+        })
     }
 
     pub fn record_disk_pressure_episode(
@@ -127,6 +256,29 @@ impl ProductionTurnLifecycleStore {
         validate_identity(conversation_id, "conversation id")?;
         validate_identity(claim_id, "disk-pressure claim id")?;
         let key = conversation_key(account_fence, conversation_id);
+        if let Some(active) = self.state.active_disk_pressure.get(account_fence).cloned() {
+            let should_seed = match self.state.disk_pressure.get(&key) {
+                None => true,
+                Some(existing) => {
+                    existing.state == DiskPressureEpisodeState::Committed
+                        && existing.episode_id != active.episode_id
+                }
+            };
+            if should_seed {
+                self.state.disk_pressure.insert(
+                    key.clone(),
+                    DiskPressureEpisode {
+                        episode_id: active.episode_id,
+                        account_fence: account_fence.to_string(),
+                        conversation_id: conversation_id.to_string(),
+                        claim_id: None,
+                        state: DiskPressureEpisodeState::Available,
+                        updated_at_ms: now_ms,
+                    },
+                );
+                self.persist()?;
+            }
+        }
         let Some(episode) = self.state.disk_pressure.get_mut(&key) else {
             return Ok(None);
         };
@@ -198,6 +350,7 @@ impl ProductionTurnLifecycleStore {
         now_ms: u64,
     ) -> Result<Vec<String>, String> {
         let mut claims = Vec::new();
+        let active_removed = self.state.active_disk_pressure.remove(account_fence).is_some();
         for episode in self.state.disk_pressure.values_mut() {
             if episode.account_fence == account_fence
                 && episode.state == DiskPressureEpisodeState::Claimed
@@ -209,7 +362,7 @@ impl ProductionTurnLifecycleStore {
                 }
             }
         }
-        if !claims.is_empty() {
+        if active_removed || !claims.is_empty() {
             self.persist()?;
         }
         Ok(claims)
@@ -354,6 +507,101 @@ mod tests {
                 .unwrap_or_default()
                 .as_nanos(),
         ))
+    }
+
+    #[test]
+    fn platform_pressure_thresholds_and_hysteresis_match_desktop_contract() {
+        assert_eq!(
+            classify_production_disk_pressure(
+                100 * GIB,
+                14 * GIB,
+                ProductionDiskPressureLevel::Healthy,
+            ),
+            ProductionDiskPressureLevel::Soft
+        );
+        assert_eq!(
+            classify_production_disk_pressure(
+                100 * GIB,
+                4 * GIB,
+                ProductionDiskPressureLevel::Healthy,
+            ),
+            ProductionDiskPressureLevel::Hard
+        );
+        assert_eq!(
+            classify_production_disk_pressure(
+                100 * GIB,
+                9 * GIB,
+                ProductionDiskPressureLevel::Soft,
+            ),
+            ProductionDiskPressureLevel::Soft
+        );
+        assert_eq!(
+            classify_production_disk_pressure(
+                100 * GIB,
+                25 * GIB,
+                ProductionDiskPressureLevel::Soft,
+            ),
+            ProductionDiskPressureLevel::Healthy
+        );
+        assert_eq!(
+            classify_production_disk_pressure(
+                100 * GIB,
+                7 * GIB,
+                ProductionDiskPressureLevel::Hard,
+            ),
+            ProductionDiskPressureLevel::Hard
+        );
+        assert_eq!(
+            classify_production_disk_pressure(
+                100 * GIB,
+                9 * GIB,
+                ProductionDiskPressureLevel::Hard,
+            ),
+            ProductionDiskPressureLevel::Soft
+        );
+    }
+
+    #[test]
+    fn platform_pressure_observation_seeds_turn_claim_and_survives_reopen() {
+        let path = path("platform-pressure");
+        let mut store = ProductionTurnLifecycleStore::open(&path, 1).unwrap();
+        let observed = store
+            .observe_disk_pressure_sample("acct:a", 100 * GIB, 10 * GIB, 2)
+            .unwrap();
+        assert_eq!(observed.level, ProductionDiskPressureLevel::Soft);
+        let episode_id = observed.episode_id.unwrap();
+        assert_eq!(
+            store
+                .claim_disk_pressure("acct:a", "agent-a", "op-1", 3)
+                .unwrap(),
+            Some(episode_id.clone())
+        );
+        drop(store);
+
+        let mut reopened = ProductionTurnLifecycleStore::open(&path, 4).unwrap();
+        assert_eq!(
+            reopened.state.disk_pressure.values().next().unwrap().state,
+            DiskPressureEpisodeState::OutcomeUnknown
+        );
+        assert_eq!(
+            reopened
+                .observe_disk_pressure_sample("acct:a", 100 * GIB, 10 * GIB, 5)
+                .unwrap()
+                .episode_id,
+            Some(episode_id)
+        );
+        assert_eq!(
+            reopened
+                .claim_disk_pressure("acct:a", "agent-a", "op-2", 6)
+                .unwrap(),
+            None
+        );
+        assert!(!reopened
+            .mark_account_outcome_unknown("acct:a", 7)
+            .unwrap()
+            .is_empty());
+        assert!(!reopened.state.active_disk_pressure.contains_key("acct:a"));
+        let _ = fs::remove_file(path);
     }
 
     #[test]
