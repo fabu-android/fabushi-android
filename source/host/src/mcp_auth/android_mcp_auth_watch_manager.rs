@@ -128,7 +128,22 @@ impl AndroidMcpAuthWatchManager {
         let watch = self
             .lifecycle
             .note_auth_completed_elsewhere(server_id, account_key);
-        if watch.is_some() {
+        if let Some(watch) = watch.as_ref() {
+            let completion = McpAuthWatchCompletion {
+                generation: watch.generation,
+                server_id: watch.server_id.clone(),
+                server_name: watch.server_name.clone(),
+                account_key: watch.account_key.clone(),
+                requesting_agent_id: watch.requesting_agent_id.clone(),
+                outcome: "completed",
+            };
+            if !self.pending_completions.iter().any(|pending| {
+                pending.generation == completion.generation
+                    && pending.server_id == completion.server_id
+                    && pending.account_key == completion.account_key
+            }) {
+                self.pending_completions.push(completion);
+            }
             self.persist()?;
         }
         Ok(watch)
@@ -574,6 +589,56 @@ mod tests {
         assert!(manager.cancel_watch("18", "default").unwrap().is_some());
         assert!(manager.is_empty());
         let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn completion_elsewhere_is_durable_until_host_resume_ack() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = dir.path().join("mcp-auth-watches.json");
+        let mut manager = AndroidMcpAuthWatchManager::open(&store, 1_000).unwrap();
+        let (watch, _) = manager
+            .begin_watch(
+                1_000,
+                "17",
+                "Calendar",
+                "https://mcp.example.test",
+                "default",
+                Some("agent-a"),
+                false,
+            )
+            .unwrap();
+
+        let completed = manager
+            .note_auth_completed_elsewhere("17", "default")
+            .unwrap()
+            .expect("watch should be consumed");
+        assert_eq!(completed.generation, watch.generation);
+        assert!(manager.watch("17", "default").is_none());
+        let pending = manager.pending_completions();
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].generation, watch.generation);
+        assert_eq!(pending[0].server_id, "17");
+        assert_eq!(pending[0].account_key, "default");
+        assert_eq!(pending[0].requesting_agent_id.as_deref(), Some("agent-a"));
+        assert_eq!(pending[0].outcome, "completed");
+
+        assert!(manager
+            .note_auth_completed_elsewhere("17", "default")
+            .unwrap()
+            .is_none());
+        assert_eq!(manager.pending_completions().len(), 1);
+
+        drop(manager);
+        let mut reopened = AndroidMcpAuthWatchManager::open(&store, 1_001).unwrap();
+        assert_eq!(reopened.pending_completions().len(), 1);
+        assert!(reopened
+            .ack_completion(watch.generation, "17", "default")
+            .unwrap());
+        drop(reopened);
+
+        let reopened = AndroidMcpAuthWatchManager::open(&store, 1_002).unwrap();
+        assert!(reopened.pending_completions().is_empty());
+        assert!(reopened.is_empty());
     }
 
     #[test]
