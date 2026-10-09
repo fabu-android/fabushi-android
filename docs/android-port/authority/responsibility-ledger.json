@@ -348,6 +348,29 @@
             "CapabilityBroker::authorize",
             "CapabilityBroker::authorize_request"
           ]
+        },
+        {
+          "path": "source/mahayana/mahayana-rs/mahayana-core/src/capability.rs",
+          "blob_sha": "013544379aa3827f1d7d4a69acf5ba2b44d06650",
+          "symbols": [
+            "CapabilityAvailability",
+            "CapabilityPolicyDecision",
+            "CapabilityRequest",
+            "CapabilityAuditRecord",
+            "CapabilityDescriptor"
+          ]
+        },
+        {
+          "path": "source/mahayana/mahayana-rs/mahayana-core/src/lib.rs",
+          "blob_sha": "5460e7dcbd511d59f9f5c0a82244ba053beadf22",
+          "symbols": [
+            "RuntimeCommand::AuthorizeCapability",
+            "RuntimeCommand::InvokeCapability",
+            "RuntimeCommand::ResolveApproval",
+            "RuntimeCommand::CallLocalPluginTool",
+            "RuntimeCommand::McpToolCall",
+            "RuntimeResponse::CapabilityDecision"
+          ]
         }
       ],
       "source_commit": "3bc92400826cc4ca7ac665b467708e22261edc61",
@@ -393,7 +416,7 @@
       "device_test": "required on emulator/physical device as applicable",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Implemented production owner and durable audit/pending lifecycle on this source change, but do not mark verified before same exact-head CI and packaged/device evidence. Mid-execution preemption remains adapter-limited for synchronous QuickJS calls; late completion becomes outcome-unknown rather than blind replay."
+      "notes": "Implemented production owner and durable audit/pending lifecycle on this source change, but do not mark verified before same exact-head CI and packaged/device evidence. Mid-execution preemption remains adapter-limited for synchronous QuickJS calls; late completion becomes outcome-unknown rather than blind replay. Desktop mahayana-core protocol dependency is anchored to capability.rs plus lib.rs; this Desktop tree has no separate mahayana-core/src/protocol.rs."
     },
     {
       "responsibility_id": "MCP-PLUGIN-RUNTIME-001",
