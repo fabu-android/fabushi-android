@@ -64,24 +64,35 @@ pub struct ClientSideToolV2Relay {
 
 fn read_varint(bytes: &[u8], cursor: &mut usize) -> Option<u64> {
     let mut value = 0_u64;
-    let mut shift = 0_u32;
-    while *cursor < bytes.len() && shift <= 63 {
+    for index in 0..10_u32 {
+        if *cursor >= bytes.len() {
+            return None;
+        }
         let byte = bytes[*cursor];
         *cursor += 1;
-        value |= u64::from(byte & 0x7f) << shift;
+        if index == 9 && byte > 1 {
+            return None;
+        }
+        value |= u64::from(byte & 0x7f) << (index * 7);
         if byte & 0x80 == 0 {
+            if index > 0 && byte == 0 {
+                return None;
+            }
             return Some(value);
         }
-        shift += 7;
     }
     None
 }
 
 fn extract_length_delimited_field(bytes: &[u8], wanted_field: u32) -> Option<Vec<u8>> {
     let mut cursor = 0;
+    let mut found = None;
     while cursor < bytes.len() {
         let key = read_varint(bytes, &mut cursor)?;
         let field = (key >> 3) as u32;
+        if field == 0 {
+            return None;
+        }
         let wire = (key & 0x07) as u8;
         match wire {
             0 => {
@@ -100,7 +111,10 @@ fn extract_length_delimited_field(bytes: &[u8], wanted_field: u32) -> Option<Vec
                     return None;
                 }
                 if field == wanted_field {
-                    return Some(bytes[cursor..end].to_vec());
+                    if found.is_some() {
+                        return None;
+                    }
+                    found = Some(bytes[cursor..end].to_vec());
                 }
                 cursor = end;
             }
@@ -113,7 +127,7 @@ fn extract_length_delimited_field(bytes: &[u8], wanted_field: u32) -> Option<Vec
             _ => return None,
         }
     }
-    None
+    found
 }
 
 fn decode_message(kind: ToolMessageKind, message: &EncodedToolMessage) -> Option<(Vec<u8>, String)> {
@@ -368,6 +382,24 @@ mod tests {
         let mut empty_tool_call = event(1, ToolMessageKind::Call, "");
         empty_tool_call.message = Some(message(ToolMessageKind::Call, ""));
         assert!(relay.accept(empty_tool_call).is_none());
+
+        let mut trailing_malformed = event(1, ToolMessageKind::Call, "call-1");
+        let mut trailing_bytes = protobuf_id(3, "call-1");
+        trailing_bytes.push(0);
+        trailing_malformed.message.as_mut().unwrap().bytes = STANDARD.encode(trailing_bytes);
+        assert!(relay.accept(trailing_malformed).is_none());
+
+        let mut duplicate_identity = event(1, ToolMessageKind::Call, "call-1");
+        let mut duplicate_bytes = protobuf_id(3, "call-1");
+        duplicate_bytes.extend(protobuf_id(3, "call-2"));
+        duplicate_identity.message.as_mut().unwrap().bytes = STANDARD.encode(duplicate_bytes);
+        assert!(relay.accept(duplicate_identity).is_none());
+
+        let mut truncated_tail = event(1, ToolMessageKind::Call, "call-1");
+        let mut truncated_bytes = protobuf_id(3, "call-1");
+        truncated_bytes.extend([0x0a, 0x05, b'x']);
+        truncated_tail.message.as_mut().unwrap().bytes = STANDARD.encode(truncated_bytes);
+        assert!(relay.accept(truncated_tail).is_none());
 
         let raw = json!({
             "version": 1,
