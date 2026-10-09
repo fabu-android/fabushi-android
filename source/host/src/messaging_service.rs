@@ -928,9 +928,9 @@ impl AndroidMessagingService {
         now_ms: i64,
     ) -> Result<Vec<Value>, String> {
         let folder = required_object(command.get("folder"), "folder")?.clone();
-        let folder_id = required_non_empty(folder.get("id"), "folder id")?;
+        let folder_id = required_non_empty(folder.get("id"), "folder id")?.to_string();
         let title = required_non_empty(folder.get("title"), "folder title")?;
-        if !bounded_id(folder_id) || title.len() > 200 {
+        if !bounded_id(&folder_id) || title.len() > 200 {
             return Err("folder id or title is invalid".into());
         }
         let mut seen = BTreeSet::new();
@@ -954,7 +954,7 @@ impl AndroidMessagingService {
             .folders
             .entry(actor_id.to_string())
             .or_default()
-            .insert(folder_id.to_string(), value.clone());
+            .insert(folder_id, value.clone());
         self.bump_cursor();
         Ok(vec![self.server_envelope(
             json!({"type":"folderChanged","folder":value}),
