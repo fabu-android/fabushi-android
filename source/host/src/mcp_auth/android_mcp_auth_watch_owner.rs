@@ -128,6 +128,10 @@ impl AndroidMcpAuthWatchOwner {
         Arc::clone(&self.manager)
     }
 
+    pub fn complete_oauth(&self, state_id: &str, authorization_code: &str) -> Result<(), String> {
+        self.backend.complete_oauth(state_id, authorization_code)
+    }
+
     pub fn authenticate(
         &self,
         now_ms: u64,
@@ -446,6 +450,10 @@ mod tests {
             _force_reauth: bool,
         ) -> Result<McpBackendAuthStatus, String> {
             Ok(self.check.clone())
+        }
+
+        fn complete_oauth(&self, _state_id: &str, _authorization_code: &str) -> Result<(), String> {
+            Ok(())
         }
 
         fn validate_token(&self, _server_url: &str, _account_key: &str) -> Result<bool, String> {
