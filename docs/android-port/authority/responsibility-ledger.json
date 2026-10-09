@@ -1,0 +1,130 @@
+{
+  "schema_version": 1,
+  "authority": {
+    "desktop_repository": "bhrumom/fabushi-desktop",
+    "desktop_commit": "3bc92400826cc4ca7ac665b467708e22261edc61",
+    "android_repository": "fabu-android/fabushi-android",
+    "android_pr": 3,
+    "android_head_at_update": "153076d76d7761a5c4ead02521e484eb633e215c",
+    "status": "incomplete",
+    "note": "Persistent human-reviewed responsibility ledger for current Desktop main. Historical Grok ledgers are not product-completion authority."
+  },
+  "responsibilities": [
+    {
+      "responsibility_id": "MSG-CHILD-LIFECYCLE-001",
+      "domain": "messaging",
+      "desktop_sources": [
+        {
+          "path": "native/mahayana-messaging/src/conversation.rs",
+          "blob_sha": "a669d34de1127310a420943e6cc3c14d9410d716",
+          "symbols": [
+            "ConversationChildIdentity",
+            "ConversationDestination",
+            "ConversationChildPaginationState",
+            "ConversationChildRuntimeState",
+            "ConversationDestinationSelection"
+          ]
+        },
+        {
+          "path": "native/mahayana-messaging/src/engine.rs",
+          "blob_sha": "7fa8496520920dba41c9ff03274f7e7e5b270544",
+          "symbols": [
+            "Command::ReplaceConversationChildWindow",
+            "Command::SetConversationChildPinned",
+            "Command::SetConversationChildActive",
+            "Command::SetConversationChildMarkedUnread",
+            "Command::SetConversationChildNoPaidMessages",
+            "Command::DestroyConversationChild"
+          ]
+        },
+        {
+          "path": "native/mahayana-messaging/src/protocol.rs",
+          "blob_sha": "c0190536131eb939fa4dec249708a067a20602ef",
+          "symbols": [
+            "ClientCommand",
+            "ServerEvent::SyncBatch"
+          ]
+        },
+        {
+          "path": "native/mahayana-messaging/src/service.rs",
+          "blob_sha": "3c85c39d5642c32e6b5333d59251602556219ce4",
+          "symbols": [
+            "MessagingService::handle",
+            "MessagingService::sync_batch",
+            "MessagingService::command_to_engine"
+          ]
+        },
+        {
+          "path": "native/mahayana-messaging/tests/m6_channels_topics_contract.rs",
+          "blob_sha": "a9e0de25b1c31b8e7f2c53ddc8e1381f6f2bed87",
+          "symbols": [
+            "conversation child lifecycle contract tests"
+          ]
+        }
+      ],
+      "source_commit": "3bc92400826cc4ca7ac665b467708e22261edc61",
+      "responsibility": "Maintain source-neutral typed child destinations and actor-scoped lifecycle state for topics, SavedSublist histories, and nested/community conversations; validate pagination windows, monotonic read state, pin/active/unread/no-paid policy, exact-child destruction, membership authorization, and SyncBatch projection.",
+      "source_owner": "native/mahayana-messaging canonical Conversation/MessagingEngine/MessagingService",
+      "direct_callers": [
+        "MessagingService ClientCommand handling",
+        "Sync projection",
+        "shipping messaging clients consuming SyncBatch"
+      ],
+      "downstream_dependencies": [
+        "canonical conversation state",
+        "message membership",
+        "community membership",
+        "durable messaging state store",
+        "protocol serialization"
+      ],
+      "state_owner": "canonical messaging repository; never Compose/ViewModel",
+      "persistent_state": [
+        "conversation_child_states",
+        "read cursors",
+        "draft state",
+        "pagination gap/full-count state",
+        "pin restoration",
+        "active state",
+        "marked-unread state",
+        "no-paid-messages state"
+      ],
+      "protocol_wire_contract": [
+        "ClientCommand conversation-child variants",
+        "ServerEvent::SyncBatch.conversationChildren"
+      ],
+      "visible_effect": "Child chat/topic/saved-sublist state survives sync and lifecycle operations without silently falling back to the parent conversation.",
+      "failure_behavior": [
+        "invalid destination fails closed",
+        "SavedSublist non-self parent fails closed until source-neutral monoforum relation exists",
+        "message-child mismatch fails closed",
+        "outsider mutation denied"
+      ],
+      "cancellation_behavior": "Source merge identifies request cancellation/retry for child history loading as still separate/open responsibility; do not invent successful cancellation semantics here.",
+      "retry_semantics": "No blind replay of side-effecting lifecycle commands; preserve stable command identity when wired through Android Coordinator.",
+      "idempotency_semantics": "Exact repeated state-setting may converge, but destroy/pagination/recovery still require durable command identity and reconciliation at Android wiring.",
+      "process_death_recovery": "Must restore the same persisted child runtime state from the canonical Rust repository; UI recreation must not recreate or mutate canonical child truth.",
+      "account_fencing": "Every projection/mutation must remain actor/account scoped and stale-account callbacks must be rejected by Coordinator epoch.",
+      "security_boundary": "Membership/owner/community authorization is checked by Host/service before canonical child mutation.",
+      "android_disposition": "direct-port",
+      "android_target": [
+        "source/shared (typed contract target)",
+        "source/host (canonical messaging repository/authorization target)",
+        "source/mahayana-agent-coordinator (epoch/recovery/event-order target)",
+        "source/android-host-jni (typed ABI projection target)",
+        "frontend Compose projection consumer"
+      ],
+      "android_owner": "Rust canonical messaging owner behind Coordinator/Host; Android UI is projection-only",
+      "platform_delta": "Core state machine is platform-independent Rust-to-Rust. Android lifecycle adds process-death recovery and typed JNI projection; no Kotlin duplicate owner.",
+      "implementation_status": "mapped",
+      "production_wiring": "open: current Android Host exposes placeholder feature.messaging.execute and does not yet prove a canonical conversation-child repository/protocol path.",
+      "unit_test": "required: identity validation, backward cursor rejection, duplicate/bad pagination, pin restoration, exact destroy",
+      "contract_test": "required: outsider denial, SavedSublist fail-closed parent rule, SyncBatch actor filtering",
+      "integration_test": "required: Coordinator→Host mutation→durable store→JNI projection with account switch and process death",
+      "packaged_test": "required on minified release artifact",
+      "device_test": "required: child destination lifecycle survives Activity recreation/process kill without duplicate mutation",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Mapped from the exact current Desktop main merge. No Android verified claim is made until production owner/wiring and same-HEAD evidence exist."
+    }
+  ]
+}
