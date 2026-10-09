@@ -371,8 +371,8 @@
           ]
         },
         {
-          "path": "source/mahayana/mahayana-rs/mahayana-core/src/lib.rs",
-          "blob_sha": "5460e7dcbd511d59f9f5c0a82244ba053beadf22",
+          "path": "source/mahayana/mahayana-rs/mahayana-runtime/src/lib.rs",
+          "blob_sha": "96a29466fc30467266686a56273cfb4726bbf4d6",
           "symbols": [
             "RuntimeCommand::AuthorizeCapability",
             "RuntimeCommand::InvokeCapability",
@@ -381,20 +381,29 @@
             "RuntimeCommand::McpToolCall",
             "RuntimeResponse::CapabilityDecision"
           ]
+        },
+        {
+          "path": "source/mahayana/mahayana-rs/mahayana-runtime/src/runtime_store.rs",
+          "blob_sha": "63c4934d3cf53d1b76d247ba604852912a7d5eee",
+          "symbols": [
+            "RuntimeStore capability_audit persistence"
+          ]
         }
       ],
       "source_commit": "3bc92400826cc4ca7ac665b467708e22261edc61",
       "responsibility": "Own capability policy, explicit approval boundary, grant consumption and audit before tool execution.",
       "source_owner": "Mahayana CapabilityBroker",
       "direct_callers": [
-        "shipping Desktop composition; exact callers require continued per-domain decomposition"
+        "mahayana-runtime RuntimeCommand::AuthorizeCapability/InvokeCapability/ResolveApproval/CallLocalPluginTool/McpToolCall",
+        "Android Host feature.execute capability.request, feature.approval.resolve, runtime.call"
       ],
       "downstream_dependencies": [
         "canonical state/protocol dependencies tracked by the cited Desktop source"
       ],
       "state_owner": "Mahayana CapabilityBroker",
       "persistent_state": [
-        "domain-specific durable state; exact schema decomposition remains tracked work"
+        "Desktop RuntimeStore capability_audit",
+        "Android capability-broker.json pending approvals/calls and audit, including exact runtime.call arguments, target and required permission scope"
       ],
       "protocol_wire_contract": [
         "Desktop shipping contract rooted at cited source"
@@ -418,10 +427,10 @@
       "android_owner": "Rust CapabilityBroker under Android Host",
       "platform_delta": "Android uses native Compose/platform adapters + typed JNI while preserving canonical Rust owners where platform-independent.",
       "implementation_status": "implemented",
-      "production_wiring": "Rust CapabilityBroker is the production owner for runtime.call authorization/audit and feature capability approvals. runtime.call derives required permissions from the active immutable release, requires persisted grants, validates plugin/tool/account/runtime generation, owns durable pending/outcome-unknown state, and rechecks release/grants/account/generation after execution. feature.approval.resolve consumes a durable account-fenced one-time approval in the Broker; the legacy capability_broker_execution_not_migrated placeholder is removed.",
-      "unit_test": "Broker tests cover Allow/NeedsUser/Deny, durable one-time approval accept/decline, duplicate approval consumption, stale-account approval fencing, approval cancellation/restart, duplicate call, deadline, runtime generation/account fencing, audit persistence, cancellation and Host restart outcome-unknown. Host journey covers approval accept/decline/cancel and duplicate resolution. Exact-head Actions required.",
-      "contract_test": "Host runtime.call requires active immutable release, all declared persisted grants, plugin-scoped registered tool, stable requestId, current account fence and runtime generation. feature approval resolution is durable, single-consume and account-fenced. Same exact-head CI still required.",
-      "integration_test": "Still required for same-head packaged/device approval+tool execution, true concurrent stop/cancel races, and external side-effect reconciliation.",
+      "production_wiring": "Rust CapabilityBroker is the production execution boundary for runtime.call and one-time feature approvals. runtime.call binds exact plugin/tool capability, bounded JSON arguments, immutable-release permission set, hashed account-session fence, runtime generation and stable requestId before DeepSeekJsHost execution. A process-shared cancellation control registry is exposed through a cancellation-only JNI side channel so runtime.cancel, runtime.stop, grant revoke and logout can signal an in-flight call without concurrent mutable Host/QuickJS access; post-dispatch release/grant/account/generation/cancellation are rechecked and uncertainty settles outcome-unknown. feature.approval.resolve consumes durable account-fenced one-time approval state; the legacy capability_broker_execution_not_migrated placeholder is absent.",
+      "unit_test": "Broker tests cover Allow/NeedsUser/Deny, parameter/target/permission validation, durable one-time approval accept/decline, duplicate consume, stale-account fencing, cancellation/restart, duplicate call, deadline/generation/account fencing and audit persistence. Host contract drives real DeepSeekJsHost success/error/duplicate/timeout plus concurrent request cancel and stop/call signalling. Exact-head Actions required.",
+      "contract_test": "Production runtime.call requires active immutable release, every declared persisted grant, plugin-scoped registered tool, stable requestId, bounded object arguments, session-specific account fence and runtime generation. Cancellation JNI path only touches Arc/Atomic control state while normal dispatch remains serialized. Same exact-head CI required.",
+      "integration_test": "Still required on same-head package/device for approval+tool execution, Kotlin/JNI fast cancel, revoke/stop races, external side-effect reconciliation and account switch.",
       "packaged_test": "required on final minified release artifact",
       "device_test": "required on emulator/physical device as applicable",
       "artifact": null,
@@ -476,7 +485,7 @@
       "android_owner": "source/host/src/android_json_runtime.rs",
       "platform_delta": "Android uses native Compose/platform adapters + typed JNI while preserving canonical Rust owners where platform-independent.",
       "implementation_status": "implemented",
-      "production_wiring": "Partial umbrella closure: immutable install/grants, local DeepSeek JS runtime execution, per-load Mini App/WebMCP session fencing and runtime.cancel routing are production-wired. WASM and official remote MCP transport-specific execution/reconciliation remain separate open responsibilities.",
+      "production_wiring": "Partial umbrella closure: immutable install/grants, local DeepSeek JS execution, per-load Mini App/WebMCP session fencing, and production-reachable cancellation-only JNI control are wired. WASM and official remote MCP transport-specific execution/reconciliation remain separate open responsibilities.",
       "unit_test": "JS runtime tests cover plugin-scoped ownership and bounded cancel/timeout; Broker tests cover duplicate/cancel/outcome-unknown; Android compile/static tests must validate typed runtime.cancel and Mini App bridge on the same exact HEAD.",
       "contract_test": "Local JS/Mini App WebMCP path is implemented; official remote MCP transport and packaged WebView/native fallback contracts still require same-head evidence.",
       "integration_test": "Still required: packaged WebView call/duplicate/dispose/stale-result, runtime grant revoke/stop races, official remote MCP cancellation/outcome reconciliation.",
@@ -1246,7 +1255,7 @@
       "android_owner": "Rust PermissionManager under Host",
       "platform_delta": "Platform-independent permission store stays Rust; Android UI only requests grant/revoke through typed Coordinator/JNI Host dispatch.",
       "implementation_status": "implemented",
-      "production_wiring": "plugin.permission.grant/revoke use canonical PermissionManager and active immutable release requestedPermissions; install prunes stale grants. runtime.call derives its required permission set from that immutable release, requires every current persisted grant, and rechecks grants after execution; revoke signals in-flight cancellation before Broker reconciliation.",
+      "production_wiring": "plugin.permission.grant/revoke use canonical PermissionManager and active immutable release requestedPermissions; install prunes stale grants. runtime.call durably binds the exact required permission set and rechecks it before accepting results. Revoke first signals the process-shared cancellation control plane, fences matching new calls until durable revoke, then Broker reconciliation prevents blind replay.",
       "unit_test": "Canonical PermissionManager tests plus Broker/JS runtime cancellation and approval tests are present; exact-head Actions pending.",
       "contract_test": "Host runtime.call uses persisted grants at the actual side-effect boundary and rechecks them before accepting a result; same-head Rust/Host CI required.",
       "integration_test": "Permission grant/revoke/restart and Mini App non-escalation journey required",
@@ -1331,9 +1340,9 @@
       "android_owner": "Rust Host runtime supervisor + runtime-specific adapter behind Capability Broker",
       "platform_delta": "PluginSupervisor primitive is portable, but Android still needs a real executable JS/WASM/MCP adapter rather than desktop process assumptions.",
       "implementation_status": "implemented",
-      "production_wiring": "runtime.start/stop/tools use DeepSeekJsHost; runtime.call uses plugin-scoped call_plugin_tool_json_bounded after immutable-release grant, account, tool and runtime-generation checks. Host keeps a requestId cancellation registry; runtime.cancel, runtime.stop and grant revoke signal the same token. Result settlement rechecks active release fingerprint, all grants, account fence and generation; timeout/cancellation or uncertain post-dispatch state becomes outcome-unknown with no blind replay.",
-      "unit_test": "DeepSeekJsHost tests cover plugin-scoped tool ownership collision, cancellation and timer-based timeout. Broker tests cover authorization, durable approvals, duplicate request, account/generation fencing, cancellation, audit persistence and restart outcome-unknown. Host approval journey covers accept/decline/cancel/duplicate. Exact-head Actions required.",
-      "contract_test": "Production call boundary now uses bounded plugin-scoped execution and durable Broker settlement. Same-head compile/contract CI is required; non-yielding synchronous JS callbacks remain a documented preemption limitation.",
+      "production_wiring": "runtime.start/stop/tools use DeepSeekJsHost; runtime.call executes plugin-scoped call_plugin_tool_json_bounded after immutable-release, persistent-grant, bounded-argument, session-fence, registered-tool and runtime-generation checks. Host owns an Arc-backed pending cancellation registry; Android JNI exposes cancellation-only handles through a separate registry, allowing runtime.cancel/runtime.stop/grant revoke/logout to signal while the serialized Host call executes. Completion rechecks cancellation, release fingerprint, grants, session fence and generation; timeout/cancel/uncertain post-dispatch state becomes durable outcome-unknown with no blind replay.",
+      "unit_test": "DeepSeekJsHost and Host tests cover plugin-scoped success/error/duplicate/timeout, plus a real slow JS tool while another thread signals request cancel and plugin stop. Broker tests cover authorization, target/argument/permission validation, durable approvals, duplicate/account/generation fencing, cancellation and restart outcome-unknown. Exact-head Actions required.",
+      "contract_test": "Production call boundary uses bounded plugin-scoped execution and durable Broker settlement; Kotlin/JNI cancellation side channel keeps QuickJS single-owner but remains reachable during blocking runtime.call. Same-head compile/contract CI required.",
       "integration_test": "Required on same exact HEAD: runtime start/tool catalog/call/error/duplicate/cancel/timeout/stop+call/revoke+call, reconnect, process-death/restart and outcome-unknown reconciliation.",
       "packaged_test": "Required on final package",
       "device_test": "Required on emulator/device",
