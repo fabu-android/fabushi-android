@@ -4447,8 +4447,7 @@ export function apply(ctx) {
             .transcript
             .lock()
             .unwrap()
-            .entry("assistant:operation-old")
-            .cloned();
+            .entry("assistant:operation-old");
         assert!(stale_entry.is_none());
         let _ = std::fs::remove_dir_all(root);
     }
@@ -4488,8 +4487,7 @@ export function apply(ctx) {
             .transcript
             .lock()
             .unwrap()
-            .entry("assistant:operation-unknown")
-            .cloned();
+            .entry("assistant:operation-unknown");
         assert_eq!(
             reconciled_entry
                 .as_ref()

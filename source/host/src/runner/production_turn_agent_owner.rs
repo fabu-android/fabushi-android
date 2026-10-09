@@ -495,12 +495,12 @@ impl<P: TurnStreamProvider> ProductionTurnAgentOwner<P> {
                 "production turn conversation identity drifted after frozen build",
             ));
         }
-        if let Some(lifecycle) = self.lifecycle_bindings.as_ref()
-            && lifecycle.conversation_id != build.static_config.conversation_id
-        {
-            return Err(ProviderFailure::new(
-                "production turn build/lifecycle conversation identities differ",
-            ));
+        if let Some(lifecycle) = self.lifecycle_bindings.as_ref() {
+            if lifecycle.conversation_id != build.static_config.conversation_id {
+                return Err(ProviderFailure::new(
+                    "production turn build/lifecycle conversation identities differ",
+                ));
+            }
         }
         Ok(())
     }
