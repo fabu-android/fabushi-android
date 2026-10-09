@@ -11,7 +11,7 @@ use std::sync::{
     Arc, Mutex,
 };
 use std::thread::{self, JoinHandle};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 const OWNER_TICK_MS: u64 = 250;
 
@@ -223,6 +223,7 @@ fn advance_all(
                 push_event(events, McpAuthOwnerEvent::Expired(completion));
             }
             McpAuthPollTick::Request(request) => {
+                let poll_started = Instant::now();
                 let outcome = match policy.fresh_server_snapshot(&request.server_id) {
                     Ok(Some(snapshot)) if snapshot.disabled_by_team_admin_policy => {
                         McpAuthPollOutcome::AdminBlocked
@@ -258,7 +259,8 @@ fn advance_all(
                     Ok(_) => McpAuthPollOutcome::AdminBlocked,
                     Err(_) => McpAuthPollOutcome::Unreachable,
                 };
-                let settled_at = system_now_ms();
+                let elapsed_ms = poll_started.elapsed().as_millis().try_into().unwrap_or(u64::MAX);
+                let settled_at = now_ms.saturating_add(elapsed_ms);
                 let settlement = match manager.lock() {
                     Ok(mut manager) => {
                         if settled_at > request.deadline_ms {
