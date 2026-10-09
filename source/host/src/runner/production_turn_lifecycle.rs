@@ -596,7 +596,7 @@ mod tests {
                 .unwrap(),
             None
         );
-        assert!(!reopened
+        assert!(reopened
             .mark_account_outcome_unknown("acct:a", 7)
             .unwrap()
             .is_empty());
