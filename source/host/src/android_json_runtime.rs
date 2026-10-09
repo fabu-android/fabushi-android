@@ -1383,33 +1383,22 @@ impl AndroidJsonHost {
             .resolve_oauth_state(&state, now_ms())
             .map(|binding| (binding.server_id, binding.account_key, binding.generation));
 
-        let identity = if self.mode == AndroidHostMode::Production {
-            let Some(durable) = durable_identity.clone() else {
-                return Ok(json!({
-                    "provider":provider,
-                    "state":state,
-                    "status":"stale",
-                }));
-            };
-            if explicit_identity.as_ref().is_some_and(|explicit| explicit != &durable) {
+        let identity = match (explicit_identity, durable_identity.clone()) {
+            (Some(explicit), Some(durable)) if explicit != durable => {
                 return Ok(json!({
                     "provider":provider,
                     "state":state,
                     "status":"stale",
                 }));
             }
-            Some(durable)
-        } else {
-            match (explicit_identity, durable_identity) {
-                (Some(explicit), Some(durable)) if explicit != durable => {
-                    return Ok(json!({
-                        "provider":provider,
-                        "state":state,
-                        "status":"stale",
-                    }));
-                }
-                (Some(explicit), _) => Some(explicit),
-                (None, durable) => durable,
+            (Some(explicit), _) => Some(explicit),
+            (None, Some(durable)) => Some(durable),
+            (None, None) => {
+                return Ok(json!({
+                    "provider":provider,
+                    "state":state,
+                    "status":"stale",
+                }));
             }
         };
 
