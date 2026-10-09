@@ -738,6 +738,63 @@ mod tests {
     }
 
     #[test]
+    fn client_side_tool_v2_wire_ingress_is_reachable_only_through_rust_coordinator() {
+        let mut runtime =
+            AndroidNativeRuntime::new(test_root("client-tool-v2"), AndroidHostMode::Test, 3);
+        let accepted = call(
+            &mut runtime,
+            json!({
+                "id":"tool-wire-1",
+                "method":"coordinator.clientSideToolV2.accept",
+                "params":{"event":{
+                    "version":1,
+                    "kind":"call",
+                    "accountSlot":"host",
+                    "agentId":"agent-a",
+                    "epoch":"epoch-a",
+                    "sequence":1,
+                    "message":{
+                        "encoding":"protobuf-base64",
+                        "messageType":"aiserver.v1.ClientSideToolV2Call",
+                        "bytes":"GgZjYWxsLTE="
+                    }
+                }}
+            }),
+        );
+        assert_eq!(accepted["ok"], true);
+        assert_eq!(accepted["result"]["sequence"], 1);
+
+        let replay = call(
+            &mut runtime,
+            json!({"id":"tool-wire-replay","method":"coordinator.clientSideToolV2.replay","params":{}}),
+        );
+        assert_eq!(replay["ok"], true);
+        assert_eq!(replay["result"].as_array().unwrap().len(), 1);
+
+        let rejected = call(
+            &mut runtime,
+            json!({
+                "id":"tool-wire-bad",
+                "method":"coordinator.clientSideToolV2.accept",
+                "params":{"event":{
+                    "version":2,
+                    "kind":"call",
+                    "accountSlot":"host",
+                    "agentId":"agent-a",
+                    "epoch":"epoch-a",
+                    "sequence":2,
+                    "message":{
+                        "encoding":"protobuf-base64",
+                        "messageType":"aiserver.v1.ClientSideToolV2Call",
+                        "bytes":"GgZjYWxsLTI="
+                    }
+                }}
+            }),
+        );
+        assert_eq!(rejected["ok"], false);
+    }
+
+    #[test]
     fn legacy_jni_envelope_routes_through_coordinator_into_test_host() {
         let mut runtime =
             AndroidNativeRuntime::new(test_root("test"), AndroidHostMode::Test, 5);
