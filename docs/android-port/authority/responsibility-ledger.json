@@ -5,7 +5,7 @@
     "desktop_commit": "3bc92400826cc4ca7ac665b467708e22261edc61",
     "android_repository": "fabu-android/fabushi-android",
     "android_pr": 3,
-    "android_head_at_update": "8de0dc625022901fd2aed80f2f22cfebfc45a6a7",
+    "android_head_at_update": "7327c0e27f633d0d31d841aaf5e7687e5f52774e",
     "status": "incomplete",
     "note": "Persistent human-reviewed responsibility ledger for Desktop main. Rows are responsibility-level source facts; mapped/implemented never imply verified. Verification requires same-exact-HEAD source implementation, production wiring, CI/package and device evidence."
   },
@@ -2394,6 +2394,71 @@
       "artifact": null,
       "verification_status": "not-verified",
       "notes": "Mapped rather than implemented/verified because Android still lacks final same-head packaged/device/performance closure equivalent to the full Desktop runtime confidence envelope; Desktop-only renderer/WASM/OS-specific mechanisms are platform deltas, not deleted product responsibilities."
+    },
+    {
+      "responsibility_id": "SECURITY-EXTERNAL-URL-AUTH-CONTEXT-001",
+      "domain": "security",
+      "desktop_sources": [
+        {
+          "path": ".github/workflows/tdrp-external-url-auth-responsibility.yml",
+          "blob_sha": "4a0d629d502b0dcfc35f2bd220e640a512418289",
+          "symbols": [
+            "external-url-auth",
+            "independent-review"
+          ]
+        }
+      ],
+      "source_commit": "3bc92400826cc4ca7ac665b467708e22261edc61",
+      "responsibility": "Keep server-accepted first-party account-auth URL privilege inside the canonical account owner while ensuring untrusted external web URLs cannot inherit foreign web-login credential parameters; prove the privilege boundary and exact-head evidence independently.",
+      "source_owner": "Desktop external URL policy + Fabushi account owner",
+      "direct_callers": [
+        "Fabushi account browser auth",
+        "MCP external authorization browser",
+        "external URL launch boundary"
+      ],
+      "downstream_dependencies": [
+        "system browser/Custom Tabs",
+        "account session owner",
+        "MCP OAuth browser transport"
+      ],
+      "state_owner": "Account owner for accepted-auth context; external URL adapter owns only sanitized untrusted launch data",
+      "persistent_state": [],
+      "protocol_wire_contract": [
+        "account auth may preserve exact first-party URL only at api.ombhrum.com",
+        "untrusted HTTPS launch strips tgWebAuth* and autologin_token query/fragment parameters",
+        "userinfo and non-HTTPS MCP authorization URLs fail closed"
+      ],
+      "visible_effect": "Account sign-in opens only trusted Fabushi auth URLs, while third-party MCP authorization can open its own HTTPS origin without carrying Telegram/foreign auto-login credentials.",
+      "failure_behavior": [
+        "malformed, non-HTTPS or credential-bearing MCP URL is rejected",
+        "foreign account-auth origin is rejected",
+        "browser-unavailable MCP registration is settled as failure rather than silently continuing"
+      ],
+      "cancellation_behavior": "Browser launch failure completes the registered MCP OAuth attempt with android_browser_unavailable; account auth attempt cancellation remains account-owner controlled.",
+      "retry_semantics": "A fresh authorization state/attempt is required; sanitized external URL launch does not mint account privilege.",
+      "idempotency_semantics": "MCP OAuth state remains single-use; repeated callback cannot recover stripped or account-only credential context.",
+      "process_death_recovery": "Account browser attempt persistence already survives process restart; MCP OAuth pending-state persistence remains a separate open lifecycle item and is not claimed here.",
+      "account_fencing": "Only the account adapter can preserve server-issued Fabushi first-party auth URL context; MCP external adapter has no account token/session access.",
+      "security_boundary": "AndroidAccountOAuthAdapter remains api.ombhrum.com-only. AndroidExternalUrlAdapter accepts arbitrary HTTPS only after stripping foreign web-auth token names equivalent to Desktop stripForeignWebAuthTokens. AndroidMcpOAuthAdapter uses the external adapter rather than widening account privilege.",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/adapters/account-oauth.kt",
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/adapters/external-url.kt",
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/adapters/mcp-oauth.kt",
+        "mobile/android/app/src/test/java/com/ombhrum/fabushi/AndroidMcpOAuthAdapterTest.kt"
+      ],
+      "android_owner": "Process-scoped Android browser adapters under FabushiApplication",
+      "platform_delta": "Electron shell.openExternal policy is replaced by Custom Tabs. Account-auth privilege remains a separate strict first-party adapter; MCP uses an untrusted external HTTPS adapter with token stripping.",
+      "implementation_status": "implemented",
+      "production_wiring": "FabushiProcessRuntime owns AndroidMcpOAuthAdapter; MCP authorization required events call beginAuthorization, which registers callback state then launches through AndroidExternalUrlAdapter. Account login separately launches through AndroidAccountOAuthAdapter.",
+      "unit_test": "7327c0e27f633d0d31d841aaf5e7687e5f52774e existing-android-regression job 114040636062 success, including AndroidMcpOAuthAdapterTest coverage for third-party HTTPS, token stripping, userinfo/http rejection and preserved first-party account restriction.",
+      "contract_test": "7327c0e27f633d0d31d841aaf5e7687e5f52774e parity-ledger and Rust foundation jobs success; Desktop policy names/privilege split were source-reviewed before implementation.",
+      "integration_test": "Production process runtime owns both adapters; same-head package build is still required.",
+      "packaged_test": "Pending 7327c0e27f633d0d31d841aaf5e7687e5f52774e android-build-unit-lint/package conclusion.",
+      "device_test": "Pending protected-account/emulator/device browser round-trip evidence.",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Implemented after finding a concrete production bug: MCP OAuth incorrectly reused the first-party-only account browser adapter, so real third-party connector authorization URLs could never open. The fix separates privilege instead of weakening the account allowlist."
     }
   ],
   "traceability": {
