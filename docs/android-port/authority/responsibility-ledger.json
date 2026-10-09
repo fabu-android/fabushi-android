@@ -664,13 +664,14 @@
       "security_boundary": "Coordinator/Host/Capability Broker owns authorization; Presentation cannot grant itself capability.",
       "android_disposition": "android-adapted",
       "android_target": [
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/features/remote/RemoteComputerSurface.kt",
         "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/remote/FabushiRemoteDeviceGateway.kt",
-        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/features/remote/RemoteComputerSurface.kt"
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/remote/RemoteCommandJournal.kt"
       ],
       "android_owner": "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/remote/FabushiRemoteDeviceGateway.kt",
       "platform_delta": "Android uses native Compose/platform adapters + typed JNI while preserving canonical Rust owners where platform-independent.",
       "implementation_status": "mapped",
-      "production_wiring": "mapped target(s); production parity not yet established",
+      "production_wiring": "Partial: existing account-scoped gateway provides device registration/reconnect and semantic generation fencing; REMOTE-COMMAND-JOURNAL-001 now closes stable command identity/duplicate/process-death outcome-unknown for app-surface commands. Pair/revoke, explicit human takeover, general Remote Runner command protocol and device evidence remain open.",
       "unit_test": "required",
       "contract_test": "required on same exact HEAD",
       "integration_test": "required on same exact HEAD",
@@ -678,7 +679,7 @@
       "device_test": "required on emulator/physical device as applicable",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Requires protocol/state-machine parity and protected device evidence."
+      "notes": "Do not treat command journal closure as full remote-computer parity. Pairing/revoke ownership, human takeover, remote-runner viewport/control protocol and packaged reconnect evidence remain separate debt."
     },
     {
       "responsibility_id": "COMMERCE-LIFECYCLE-001",
@@ -1398,6 +1399,76 @@
       "artifact": null,
       "verification_status": "not-verified",
       "notes": "Implemented source/production wiring, intentionally not verified until same exact-head CI plus packaged process-death evidence. Coordinator pending/event replay remains an adjacent open responsibility."
+    },
+    {
+      "responsibility_id": "REMOTE-COMMAND-JOURNAL-001",
+      "domain": "remote",
+      "desktop_sources": [
+        {
+          "path": "source/mahayana/mahayana-rs/mahayana-platform-worker/src/worker_api/remote_computer.rs",
+          "blob_sha": "931730bff5fb6ee484809233fddc614c5c29b485",
+          "symbols": [
+            "remote computer worker API"
+          ]
+        }
+      ],
+      "source_commit": "3bc92400826cc4ca7ac665b467708e22261edc61",
+      "responsibility": "Persist remote command request identity before side-effectful semantic action execution; converge terminal duplicate requests, fence session/device/tool identity, and require reconciliation after disconnect/process death when execution outcome is unknown.",
+      "source_owner": "Mahayana remote-computer worker API",
+      "direct_callers": [
+        "FabushiRemoteDeviceGateway WebSocket call messages"
+      ],
+      "downstream_dependencies": [
+        "FabushiAppAgentSurface",
+        "account-scoped device-agent session",
+        "semantic generation/viewport revision"
+      ],
+      "state_owner": "Android RemoteCommandJournal under FabushiRemoteDeviceGateway",
+      "persistent_state": [
+        "requestId",
+        "deviceId",
+        "sessionId",
+        "toolName",
+        "pending/completed/failed/outcome-unknown",
+        "terminal response/error"
+      ],
+      "protocol_wire_contract": [
+        "call.requestId",
+        "call.toolName",
+        "result.requestId",
+        "stable device/session identity",
+        "semantic generation on side-effect actions"
+      ],
+      "visible_effect": "Reconnect or app restart cannot silently execute the same remote semantic action twice; completed duplicates converge to the persisted terminal response.",
+      "failure_behavior": [
+        "duplicate pending rejected",
+        "cross-session request identity rejected",
+        "cross-tool request identity rejected",
+        "restart/disconnect pending becomes outcome-unknown"
+      ],
+      "cancellation_behavior": "Connection stop cancels tracked command jobs and durably marks any still-pending command outcome-unknown; no blind replay is allowed.",
+      "retry_semantics": "Only terminal completed/failed requests replay deterministically; outcome-unknown requires reconciliation.",
+      "idempotency_semantics": "requestId is stable mutation identity and is bound to exact deviceId/sessionId/toolName.",
+      "process_death_recovery": "Journal constructor converts persisted pending records to outcome-unknown before accepting any replay.",
+      "account_fencing": "Active device-agent sessionId/deviceId are frozen into each command and mismatches fail closed.",
+      "security_boundary": "Gateway exposes only allowlisted semantic Fabushi app tools; journal does not authorize arbitrary shell/JS/reflection.",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/remote/FabushiRemoteDeviceGateway.kt",
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/remote/RemoteCommandJournal.kt"
+      ],
+      "android_owner": "FabushiRemoteDeviceGateway + RemoteCommandJournal",
+      "platform_delta": "Android delegates desktop-inapplicable computer control through authenticated remote semantic/runner surfaces and must treat mobile process/network loss as outcome-unknown.",
+      "implementation_status": "implemented",
+      "production_wiring": "Gateway persists command before invokeTool; same-session terminal duplicates replay; process restart/disconnect converts pending to outcome-unknown; side-effect actions remain generation fenced by FabushiAppAgentSurface.",
+      "unit_test": "RemoteCommandJournalTest covers terminal replay, session mismatch, restart outcome-unknown and disconnect outcome-unknown; same exact-head Actions required.",
+      "contract_test": "Android build/unit/lint must compile gateway+journal and preserve semantic generation requirement for fabushi.app.action.",
+      "integration_test": "Still required for live websocket reconnect, duplicate delivery, cancellation/completion race and server reconciliation.",
+      "packaged_test": "Required on final ciAcceptance/githubRelease journey.",
+      "device_test": "Blocked until protected-account/device acceptance can run.",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Implemented only command lifecycle/recovery slice; full REMOTE-COMPUTER-001 remains open."
     }
   ],
   "traceability": {

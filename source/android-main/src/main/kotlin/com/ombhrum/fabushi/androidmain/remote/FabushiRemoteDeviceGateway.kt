@@ -3,6 +3,7 @@ package com.ombhrum.fabushi
 import android.content.Context
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidCoordinatorPort
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
@@ -20,6 +21,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 import java.time.Instant
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 
 /**
@@ -50,6 +52,8 @@ internal class FabushiRemoteDeviceGateway(
     )
 
     private val traceFile = File(context.getExternalFilesDir(null) ?: context.filesDir, "device-gateway-trace.jsonl")
+    private val commandJournal = RemoteCommandJournal(File(context.filesDir, "remote-command-journal.properties"))
+    private val commandJobs = ConcurrentHashMap<String, Job>()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val client = OkHttpClient.Builder()
         .connectTimeout(30, TimeUnit.SECONDS)
@@ -140,7 +144,23 @@ internal class FabushiRemoteDeviceGateway(
                         synchronized(stateLock) { registered = true }
                         appendTrace("registered", mapOf("deviceId" to message.optString("deviceId").take(128)))
                     }
-                    "call" -> scope.launch { handleCall(webSocket, message) }
+                    "call" -> {
+                        val requestId = message.optString("requestId").take(128)
+                        if (requestId.isBlank()) return
+                        lateinit var job: Job
+                        job = scope.launch(start = CoroutineStart.LAZY) {
+                            try {
+                                handleCall(webSocket, message)
+                            } finally {
+                                commandJobs.remove(requestId, job)
+                            }
+                        }
+                        if (commandJobs.putIfAbsent(requestId, job) == null) {
+                            job.start()
+                        } else {
+                            job.cancel()
+                        }
+                    }
                 }
             }
 
@@ -172,7 +192,29 @@ internal class FabushiRemoteDeviceGateway(
         val toolName = message.optString("toolName").take(128)
         if (requestId.isBlank() || toolName.isBlank()) return
         val arguments = message.optJSONObject("arguments") ?: JSONObject()
-        appendTrace("call-started", mapOf("requestId" to requestId, "toolName" to toolName))
+        val session = synchronized(stateLock) { activeSession }
+            ?: return sendRemoteError(webSocket, requestId, "device_agent_session_unavailable")
+
+        val admission = runCatching {
+            commandJournal.begin(requestId, session.deviceId, session.sessionId, toolName)
+        }.getOrElse { error ->
+            val safe = safeErrorCode(error)
+            sendRemoteError(webSocket, requestId, safe)
+            appendTrace("call-rejected", mapOf("requestId" to requestId, "toolName" to toolName, "error" to safe))
+            return
+        }
+        if (admission is RemoteCommandAdmission.Replay) {
+            val record = admission.record
+            if (record.state == RemoteCommandState.COMPLETED && record.responseJson != null) {
+                webSocket.send(record.responseJson)
+            } else {
+                sendRemoteError(webSocket, requestId, record.error ?: "remote_command_failed")
+            }
+            appendTrace("call-replayed", mapOf("requestId" to requestId, "toolName" to toolName, "state" to record.state.name))
+            return
+        }
+
+        appendTrace("call-started", mapOf("requestId" to requestId, "toolName" to toolName, "sessionId" to session.sessionId.take(96)))
         runCatching { invokeTool(toolName, arguments) }
             .onSuccess { structured ->
                 val result = JSONObject()
@@ -185,31 +227,36 @@ internal class FabushiRemoteDeviceGateway(
                                 .put("text", "Fabushi Android semantic tool completed."),
                         ),
                     )
-                webSocket.send(
-                    JSONObject()
-                        .put("type", "result")
-                        .put("requestId", requestId)
-                        .put("ok", true)
-                        .put("result", result)
-                        .toString(),
-                )
+                val wire = JSONObject()
+                    .put("type", "result")
+                    .put("requestId", requestId)
+                    .put("ok", true)
+                    .put("result", result)
+                    .toString()
+                commandJournal.complete(requestId, wire)
+                webSocket.send(wire)
                 appendTrace("call-completed", mapOf("requestId" to requestId, "toolName" to toolName, "ok" to true))
             }
             .onFailure { error ->
                 val safe = safeErrorCode(error)
-                webSocket.send(
-                    JSONObject()
-                        .put("type", "result")
-                        .put("requestId", requestId)
-                        .put("ok", false)
-                        .put("error", safe)
-                        .toString(),
-                )
+                runCatching { commandJournal.fail(requestId, safe) }
+                sendRemoteError(webSocket, requestId, safe)
                 appendTrace(
                     "call-completed",
                     mapOf("requestId" to requestId, "toolName" to toolName, "ok" to false, "error" to safe),
                 )
             }
+    }
+
+    private fun sendRemoteError(webSocket: WebSocket, requestId: String, error: String) {
+        webSocket.send(
+            JSONObject()
+                .put("type", "result")
+                .put("requestId", requestId)
+                .put("ok", false)
+                .put("error", error)
+                .toString(),
+        )
     }
 
     private suspend fun invokeTool(toolName: String, arguments: JSONObject): JSONObject =
@@ -299,6 +346,9 @@ internal class FabushiRemoteDeviceGateway(
             previousSocket = socket
             socket = null
         }
+        commandJobs.values.forEach(Job::cancel)
+        commandJobs.clear()
+        commandJournal.markPendingOutcomeUnknown("remote_connection_stopped_before_terminal_result")
         previousSocket?.close(1001, reason.take(80))
         if (previousRegistered) appendTrace("disconnected", mapOf("reason" to reason.take(80)))
     }
@@ -400,6 +450,9 @@ internal class FabushiRemoteDeviceGateway(
         "unknown_fabushi_app_tool", "invalid_device_agent_session", "invalid_device_gateway_call",
         "invalid_app_surface_generation", "app_surface_action_target_missing", "invalid_app_surface_ref",
         "stale_app_surface_generation", "app_surface_element_not_found",
+        "remote_command_identity_session_mismatch", "remote_command_identity_tool_mismatch",
+        "remote_command_already_pending", "remote_command_outcome_unknown_reconcile_required",
+        "device_agent_session_unavailable", "remote_command_failed",
         "app_surface_target_hidden", "app_surface_target_disabled", "sensitive_app_surface_input_requires_secure_input",
         "app_surface_value_too_large", "app_surface_action_unavailable", "unsupported_app_surface_action" -> message
         else -> "transport_error:${error::class.java.simpleName.take(80)}"
