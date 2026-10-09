@@ -5,7 +5,7 @@
     "desktop_commit": "3bc92400826cc4ca7ac665b467708e22261edc61",
     "android_repository": "fabu-android/fabushi-android",
     "android_pr": 3,
-    "android_head_at_update": "74a07142aaf11fc61387b383b9d97ec57d128e84",
+    "android_head_at_update": "f01f9a5d45e805c59842da43df321538844d1193",
     "status": "incomplete",
     "note": "Persistent human-reviewed responsibility ledger for Desktop main. Rows are responsibility-level source facts; mapped/implemented never imply verified. Verification requires same-exact-HEAD source implementation, production wiring, CI/package and device evidence."
   },
@@ -2238,6 +2238,84 @@
       "artifact": null,
       "verification_status": "not-verified",
       "notes": "The PR20 one-off verifier targeted a historical Desktop migration branch and Electron renderer. Android preserves its quality invariant via native exact-head authority/build gates; the Desktop mechanism itself is intentionally not ported."
+    },
+    {
+      "responsibility_id": "RELEASE-ANDROID-DISTRIBUTION-001",
+      "domain": "release",
+      "desktop_sources": [
+        {
+          "path": ".github/workflows/release-macos-main.yml",
+          "blob_sha": "de18d5cb8ba51c71a34a69c8cdaadedd6916112e",
+          "symbols": [
+            "publish",
+            "exact-source package",
+            "signed/notarized packaged acceptance"
+          ]
+        }
+      ],
+      "source_commit": "3bc92400826cc4ca7ac665b467708e22261edc61",
+      "responsibility": "Build the user-distributed product from an exact source revision, bind native/runtime resources, enforce release-only security boundaries, sign and validate the distributable, exercise the actual packaged product with production composition, record updater/distribution metadata and artifact provenance, and publish only after release acceptance.",
+      "source_owner": "Desktop macOS release/package workflow",
+      "direct_callers": [
+        "main push",
+        "manual exact-source release dispatch"
+      ],
+      "downstream_dependencies": [
+        "strict architecture gate",
+        "Mahayana Host",
+        "offline ASR runtime",
+        "Computer Use runtime",
+        "signing/notarization",
+        "packaged acceptance",
+        "updater metadata",
+        "release artifact provenance"
+      ],
+      "state_owner": "Release workflow + signed distributable identity",
+      "persistent_state": [
+        "source SHA",
+        "version",
+        "signed artifact digest",
+        "native/resource provenance",
+        "acceptance evidence",
+        "release metadata"
+      ],
+      "protocol_wire_contract": [
+        "exact source binding",
+        "release and CI acceptance capabilities separated",
+        "native runtime packaged from same source",
+        "artifact digest/provenance tied to run/job/attempt"
+      ],
+      "visible_effect": "Users receive a release package whose executable/runtime/resources correspond to the reviewed source and whose critical product paths were tested as the real packaged application rather than a debug fixture.",
+      "failure_behavior": [
+        "source drift, architecture failure, native/resource build failure, signing/package validation failure, packaged acceptance failure or provenance mismatch blocks release"
+      ],
+      "cancellation_behavior": "Release workflow does not reinterpret a cancelled/failed package as publishable; a new exact-source attempt must create new evidence.",
+      "retry_semantics": "Retry is a new run/attempt bound to the same requested source; old artifact success cannot prove a changed source.",
+      "idempotency_semantics": "Artifact identity and release version/digest prevent an unrelated package from satisfying the gate.",
+      "process_death_recovery": "Product runtime process-death behavior is exercised by Android packaged/device acceptance rather than by the release controller itself.",
+      "account_fencing": "CI/protected test session capability is acceptance-only and must be absent from public Android release artifacts.",
+      "security_boundary": "Signing secrets only belong in protected release execution; public Android package must strip test session import and evidence must not expose credentials.",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        ".github/workflows/android-parity-full-ci.yml",
+        "mobile/android/app/build.gradle",
+        "docs/android-port/release/distribution.md",
+        "docs/android-port/security/provenance.md",
+        "docs/android-port/verification/acceptance.md",
+        "docs/android-port/features/08-remote.md"
+      ],
+      "android_owner": "Android GitHub Actions release/package gates plus Android platform distribution adapters",
+      "platform_delta": "macOS Developer ID/notarization/stapling/Electron updater are replaced by Android signing/channel/install semantics. Android must package JNI ABIs, enforce release/ciAcceptance separation, validate APK/AAB/signature/alignment/16KB support, produce provenance/SBOM/license evidence, and run packaged emulator/real-device install-upgrade acceptance. Desktop arbitrary local Computer Use becomes bounded Android App Surface or authorized Remote Runner.",
+      "implementation_status": "mapped",
+      "production_wiring": "Current Android Full CI already builds exact-head arm64-v8a/x86_64 native Host libraries, assembles debug/ciAcceptance/githubRelease APKs and githubRelease AAB, checks public release has no CI account bootstrap, records SHA-256/native identities and feeds ciAcceptance artifacts to emulator acceptance. Release docs define protected signing, minified final artifact, installation/upgrade, ABI/16KB, SBOM/license and channel requirements.",
+      "unit_test": "Rust/Kotlin/unit/lint gates are present in Android Parity Full CI; each final release candidate still requires same-exact-head success.",
+      "contract_test": "Source authority/architecture and release-vs-ci bootstrap separation are checked by current workflows.",
+      "integration_test": "4c3b8ef761f3c2194fa641d6c94b519f647f54e5 historically passed the full package job 114032243107 after the current plugin-variable/MCP changes, but this is not final-head verification.",
+      "packaged_test": "Open: final exact-head signed/minified user package acceptance, 16KB page/alignment checks, offline-ASR packaged proof, Remote Runner/Computer Use substitution and public-channel smoke are not yet evidenced.",
+      "device_test": "Open: real device clean install, same-signature upgrade, process death/restart during journeys, account/chat/tools/MCP/Mini App/notifications/offline/upgrade remain P01-P24 requirements; protected account secrets are currently unavailable.",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "This row is mapped, not implemented/verified. The macOS workflow carries applicable release-quality responsibilities that Android must preserve through native platform mechanisms; current Android CI closes only part of that release envelope."
     }
   ],
   "traceability": {
