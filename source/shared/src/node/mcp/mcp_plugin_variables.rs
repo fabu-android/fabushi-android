@@ -163,10 +163,11 @@ mod tests {
             },
             "required":["ACCESS_TOKEN","username"]
         }));
-        assert_eq!(fields[0].label, "API URL");
-        assert_eq!(fields[0].placeholder, "api_url");
-        assert_eq!(fields[0].default_value.as_deref(), Some("https://example.test"));
-        assert_eq!(fields[0].hint.as_deref(), Some("Endpoint"));
+        let api_url = fields.iter().find(|field| field.key == "api_url").unwrap();
+        assert_eq!(api_url.label, "API URL");
+        assert_eq!(api_url.placeholder, "api_url");
+        assert_eq!(api_url.default_value.as_deref(), Some("https://example.test"));
+        assert_eq!(api_url.hint.as_deref(), Some("Endpoint"));
         assert!(fields.iter().find(|field| field.key == "ACCESS_TOKEN").unwrap().is_secret);
         assert!(fields.iter().find(|field| field.key == "passphrase").unwrap().is_secret);
         assert!(fields.iter().find(|field| field.key == "client_id").unwrap().is_secret);
