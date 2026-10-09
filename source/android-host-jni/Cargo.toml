@@ -8,6 +8,10 @@ license.workspace = true
 name = "mahayana_app_host"
 crate-type = ["cdylib", "rlib"]
 
+[features]
+default = []
+ci-account-session-import = ["fabushi-mahayana-host/ci-account-session-import"]
+
 [dependencies]
 fabushi-android-shared = { path = "../shared" }
 fabushi-mahayana-agent-coordinator = { path = "../mahayana-agent-coordinator" }
