@@ -9,9 +9,12 @@ use fabushi_mahayana_agent_coordinator::{
     },
     HostPort, MahayanaCoordinator,
 };
-use fabushi_mahayana_host::android_json_runtime::{AndroidHostMode, AndroidJsonHost};
+use fabushi_mahayana_host::android_json_runtime::{
+    AndroidHostMode, AndroidJsonHost, RuntimeCallCancellationRegistry,
+};
 use serde_json::{json, Value};
 use std::path::PathBuf;
+use std::sync::Arc;
 
 struct CoordinatorHost {
     runtime: AndroidJsonHost,
@@ -48,6 +51,7 @@ pub struct AndroidNativeRuntime {
     coordinator: MahayanaCoordinator<CoordinatorHost>,
     mcp_oauth: OAuthForwarder,
     next_request_id: u64,
+    runtime_call_control: Arc<RuntimeCallCancellationRegistry>,
 }
 
 impl AndroidNativeRuntime {
@@ -65,21 +69,26 @@ impl AndroidNativeRuntime {
         generation: u64,
         initial_account_session_json: Option<&str>,
     ) -> Self {
+        let runtime = AndroidJsonHost::new_with_account_session(
+            app_data_dir,
+            mode,
+            initial_account_session_json,
+        );
+        let runtime_call_control = runtime.runtime_call_control();
         Self {
             coordinator: MahayanaCoordinator::with_generation(
-                CoordinatorHost {
-                    runtime: AndroidJsonHost::new_with_account_session(
-                        app_data_dir,
-                        mode,
-                        initial_account_session_json,
-                    ),
-                },
+                CoordinatorHost { runtime },
                 generation,
                 512,
             ),
             mcp_oauth: OAuthForwarder::default(),
             next_request_id: 0,
+            runtime_call_control,
         }
+    }
+
+    pub fn runtime_call_control(&self) -> Arc<RuntimeCallCancellationRegistry> {
+        Arc::clone(&self.runtime_call_control)
     }
 
     pub fn dispatch_legacy_json(&mut self, input: &str) -> String {
@@ -498,8 +507,32 @@ fn error_response(id: Option<Value>, error: String) -> String {
 mod android_jni {
     use super::*;
     use jni::objects::{JObject, JString};
-    use jni::sys::{jlong, jstring};
+    use jni::sys::{jboolean, jint, jlong, jstring};
     use jni::JNIEnv;
+    use std::collections::HashMap;
+    use std::sync::{Mutex, OnceLock};
+
+    fn runtime_controls() -> &'static Mutex<HashMap<jlong, Arc<RuntimeCallCancellationRegistry>>> {
+        static CONTROLS: OnceLock<Mutex<HashMap<jlong, Arc<RuntimeCallCancellationRegistry>>>> =
+            OnceLock::new();
+        CONTROLS.get_or_init(|| Mutex::new(HashMap::new()))
+    }
+
+    fn register_runtime(runtime: AndroidNativeRuntime) -> jlong {
+        let control = runtime.runtime_call_control();
+        let handle = Box::into_raw(Box::new(runtime)) as jlong;
+        if let Ok(mut controls) = runtime_controls().lock() {
+            controls.insert(handle, control);
+            handle
+        } else {
+            unsafe { drop(Box::from_raw(handle as *mut AndroidNativeRuntime)); }
+            0
+        }
+    }
+
+    fn control_for(handle: jlong) -> Option<Arc<RuntimeCallCancellationRegistry>> {
+        runtime_controls().lock().ok()?.get(&handle).cloned()
+    }
 
     fn create(
         mut env: JNIEnv,
@@ -511,7 +544,7 @@ mod android_jni {
             Ok(value) => PathBuf::from(value.to_string_lossy().into_owned()),
             Err(_) => return 0,
         };
-        Box::into_raw(Box::new(AndroidNativeRuntime::new(path, mode, generation))) as jlong
+        register_runtime(AndroidNativeRuntime::new(path, mode, generation))
     }
 
     #[no_mangle]
@@ -531,12 +564,12 @@ mod android_jni {
             Err(_) => return 0,
         };
         let generation = u64::try_from(process_generation).unwrap_or(1).max(1);
-        Box::into_raw(Box::new(AndroidNativeRuntime::new_with_account_session(
+        register_runtime(AndroidNativeRuntime::new_with_account_session(
             path,
             AndroidHostMode::Production,
             generation,
             (!initial_session.trim().is_empty()).then_some(initial_session.as_str()),
-        ))) as jlong
+        ))
     }
 
     #[no_mangle]
@@ -580,15 +613,76 @@ mod android_jni {
     }
 
     #[no_mangle]
+    pub extern "system" fn Java_com_ombhrum_fabushi_core_MahayanaHost_nativeSignalRuntimeCancel(
+        mut env: JNIEnv,
+        _object: JObject,
+        handle: jlong,
+        request_id: JString,
+    ) -> jboolean {
+        if handle == 0 { return 0; }
+        let request_id = match env.get_string(&request_id) {
+            Ok(value) => value.to_string_lossy().into_owned(),
+            Err(_) => return 0,
+        };
+        control_for(handle).is_some_and(|control| control.signal_request(&request_id)) as jboolean
+    }
+
+    #[no_mangle]
+    pub extern "system" fn Java_com_ombhrum_fabushi_core_MahayanaHost_nativeSignalRuntimePluginCancel(
+        mut env: JNIEnv,
+        _object: JObject,
+        handle: jlong,
+        plugin_id: JString,
+    ) -> jint {
+        if handle == 0 { return 0; }
+        let plugin_id = match env.get_string(&plugin_id) {
+            Ok(value) => value.to_string_lossy().into_owned(),
+            Err(_) => return 0,
+        };
+        control_for(handle).map(|control| control.signal_plugin(&plugin_id) as jint).unwrap_or(0)
+    }
+
+    #[no_mangle]
+    pub extern "system" fn Java_com_ombhrum_fabushi_core_MahayanaHost_nativeSignalRuntimePermissionCancel(
+        mut env: JNIEnv,
+        _object: JObject,
+        handle: jlong,
+        plugin_id: JString,
+        permission: JString,
+    ) -> jint {
+        if handle == 0 { return 0; }
+        let plugin_id = match env.get_string(&plugin_id) {
+            Ok(value) => value.to_string_lossy().into_owned(),
+            Err(_) => return 0,
+        };
+        let permission = match env.get_string(&permission) {
+            Ok(value) => value.to_string_lossy().into_owned(),
+            Err(_) => return 0,
+        };
+        control_for(handle).map(|control| control.signal_permission(&plugin_id, &permission) as jint).unwrap_or(0)
+    }
+
+    #[no_mangle]
+    pub extern "system" fn Java_com_ombhrum_fabushi_core_MahayanaHost_nativeSignalAllRuntimeCalls(
+        _env: JNIEnv,
+        _object: JObject,
+        handle: jlong,
+    ) -> jint {
+        if handle == 0 { return 0; }
+        control_for(handle).map(|control| control.signal_all() as jint).unwrap_or(0)
+    }
+
+    #[no_mangle]
     pub extern "system" fn Java_com_ombhrum_fabushi_core_MahayanaHost_nativeDestroy(
         _env: JNIEnv,
         _object: JObject,
         handle: jlong,
     ) {
         if handle != 0 {
-            unsafe {
-                drop(Box::from_raw(handle as *mut AndroidNativeRuntime));
+            if let Ok(mut controls) = runtime_controls().lock() {
+                controls.remove(&handle);
             }
+            unsafe { drop(Box::from_raw(handle as *mut AndroidNativeRuntime)); }
         }
     }
 }
