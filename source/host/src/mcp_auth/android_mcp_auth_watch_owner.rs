@@ -228,6 +228,7 @@ pub fn authenticate_and_register(
         force_reauth,
     ) {
         McpAuthStatusDecision::AlreadyAuthenticated => {
+            backend.reload_server_tools(&eligible.server_id)?;
             Ok(McpAuthenticateResult::AlreadyAuthenticated)
         }
         McpAuthStatusDecision::Start { authorization_url } => {
@@ -344,7 +345,10 @@ fn advance_all(
                                         if fresh.server_id == request.server_id
                                             && !fresh.disabled_by_team_admin_policy =>
                                     {
-                                        McpAuthPollOutcome::TokenValid
+                                        match backend.reload_server_tools(&request.server_id) {
+                                            Ok(_) => McpAuthPollOutcome::TokenValid,
+                                            Err(_) => McpAuthPollOutcome::Unreachable,
+                                        }
                                     }
                                     Ok(_) => McpAuthPollOutcome::AdminBlocked,
                                     Err(_) => McpAuthPollOutcome::Unreachable,
@@ -427,6 +431,7 @@ mod tests {
 
     struct FakeBackend {
         validations: AtomicUsize,
+        reloads: AtomicUsize,
         valid: bool,
         check: McpBackendAuthStatus,
     }
@@ -445,6 +450,11 @@ mod tests {
         fn validate_token(&self, _server_url: &str, _account_key: &str) -> Result<bool, String> {
             self.validations.fetch_add(1, Ordering::SeqCst);
             Ok(self.valid)
+        }
+
+        fn reload_server_tools(&self, _server_id: &str) -> Result<usize, String> {
+            self.reloads.fetch_add(1, Ordering::SeqCst);
+            Ok(2)
         }
     }
 
@@ -479,6 +489,7 @@ mod tests {
     fn backend(valid: bool) -> FakeBackend {
         FakeBackend {
             validations: AtomicUsize::new(0),
+            reloads: AtomicUsize::new(0),
             valid,
             check: McpBackendAuthStatus {
                 is_available: false,
@@ -512,6 +523,40 @@ mod tests {
                 if watch.requesting_agent_id.as_deref() == Some("agent-a")
         ));
         assert_eq!(manager.len(), 1);
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn already_authenticated_path_reloads_tools_before_reporting_ready() {
+        let path = temp_store("already-authenticated");
+        let mut manager = AndroidMcpAuthWatchManager::open(&path, 0).unwrap();
+        let backend = FakeBackend {
+            validations: AtomicUsize::new(0),
+            reloads: AtomicUsize::new(0),
+            valid: true,
+            check: McpBackendAuthStatus {
+                is_available: true,
+                requires_auth: false,
+                has_valid_token: true,
+                auth_url: String::new(),
+                error: String::new(),
+            },
+        };
+        let result = authenticate_and_register(
+            &mut manager,
+            &backend,
+            &FakePolicy { blocked: false },
+            0,
+            "17",
+            "default",
+            "http://127.0.0.1:18080/oauth/callback",
+            Some("agent-a"),
+            false,
+        )
+        .unwrap();
+        assert_eq!(result, McpAuthenticateResult::AlreadyAuthenticated);
+        assert_eq!(backend.reloads.load(Ordering::SeqCst), 1);
+        assert!(manager.is_empty());
         let _ = fs::remove_file(path);
     }
 
@@ -720,6 +765,7 @@ mod tests {
         assert_eq!(completion.requesting_agent_id.as_deref(), Some("agent-a"));
         assert!(manager.lock().unwrap().is_empty());
         assert!(backend_impl.validations.load(Ordering::SeqCst) >= 1);
+        assert!(backend_impl.reloads.load(Ordering::SeqCst) >= 1);
         let _ = fs::remove_file(path);
     }
 
