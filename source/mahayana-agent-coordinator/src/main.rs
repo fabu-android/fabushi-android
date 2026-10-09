@@ -1,7 +1,10 @@
 use std::collections::{BTreeMap, VecDeque};
+use std::fs;
+use std::path::PathBuf;
 
 use fabushi_android_internal::MonotonicSequence;
-use serde_json::Value;
+use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
 
 use crate::client_side_tool_v2_relay::{ClientSideToolV2Relay, RendererToolEvent};
 use fabushi_android_shared::{
@@ -16,11 +19,28 @@ pub trait HostPort {
     fn cancel(&mut self, request_id: &str, reason: Option<&str>) -> Result<(), CoordinatorFailure>;
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 struct PendingRequest {
     session_id: String,
     method: String,
     operation_id: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct PersistedCoordinatorEvent {
+    session_id: String,
+    sequence: u64,
+    family: String,
+    payload_json: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct PersistedCoordinatorState {
+    version: u32,
+    generation: u64,
+    latest_sequence: u64,
+    pending: BTreeMap<String, PendingRequest>,
+    events: Vec<PersistedCoordinatorEvent>,
 }
 
 pub struct MahayanaCoordinator<H: HostPort> {
@@ -31,6 +51,7 @@ pub struct MahayanaCoordinator<H: HostPort> {
     events: VecDeque<CoordinatorEvent>,
     replay_limit: usize,
     client_side_tool_v2: ClientSideToolV2Relay,
+    state_path: Option<PathBuf>,
 }
 
 impl<H: HostPort> MahayanaCoordinator<H> {
@@ -49,7 +70,109 @@ impl<H: HostPort> MahayanaCoordinator<H> {
             events: VecDeque::new(),
             replay_limit: replay_limit.max(1),
             client_side_tool_v2: ClientSideToolV2Relay::default(),
+            state_path: None,
         }
+    }
+
+    pub fn with_generation_persistent(
+        host: H,
+        generation: u64,
+        replay_limit: usize,
+        state_path: impl Into<PathBuf>,
+    ) -> Result<Self, CoordinatorFailure> {
+        let state_path = state_path.into();
+        let persisted = if state_path.exists() {
+            let raw = fs::read_to_string(&state_path).map_err(|error| CoordinatorFailure::new(
+                CoordinatorFailureCode::Internal,
+                format!("failed to read coordinator state: {error}"),
+            ))?;
+            let state: PersistedCoordinatorState = serde_json::from_str(&raw).map_err(|error| CoordinatorFailure::new(
+                CoordinatorFailureCode::Internal,
+                format!("failed to decode coordinator state: {error}"),
+            ))?;
+            if state.version != 1 {
+                return Err(CoordinatorFailure::new(
+                    CoordinatorFailureCode::Internal,
+                    format!("unsupported coordinator state version {}", state.version),
+                ));
+            }
+            Some(state)
+        } else {
+            None
+        };
+        let recovered_generation = persisted.as_ref()
+            .map(|state| state.generation.saturating_add(1))
+            .unwrap_or(generation)
+            .max(generation)
+            .max(1);
+        let mut coordinator = Self {
+            host,
+            generation: recovered_generation,
+            sequence: MonotonicSequence::default(),
+            pending: BTreeMap::new(),
+            events: VecDeque::new(),
+            replay_limit: replay_limit.max(1),
+            client_side_tool_v2: ClientSideToolV2Relay::default(),
+            state_path: Some(state_path),
+        };
+        if let Some(state) = persisted {
+            for (request_id, pending) in state.pending {
+                let sequence = coordinator.sequence.next_value();
+                coordinator.events.push_back(CoordinatorEvent {
+                    event_id: format!("g{}-e{}", coordinator.generation, sequence),
+                    session_id: pending.session_id,
+                    sequence,
+                    family: "operation.outcome-unknown".into(),
+                    payload_json: json!({
+                        "requestId": request_id,
+                        "operationId": pending.operation_id,
+                        "method": pending.method,
+                        "reason": "process-death",
+                        "outcome": "outcome-unknown"
+                    }).to_string(),
+                });
+            }
+            while coordinator.events.len() > coordinator.replay_limit {
+                coordinator.events.pop_front();
+            }
+        }
+        coordinator.persist_state()?;
+        Ok(coordinator)
+    }
+
+    fn persist_state(&self) -> Result<(), CoordinatorFailure> {
+        let Some(path) = self.state_path.as_ref() else { return Ok(()); };
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).map_err(|error| CoordinatorFailure::new(
+                CoordinatorFailureCode::Internal,
+                format!("failed to create coordinator state directory: {error}"),
+            ))?;
+        }
+        let state = PersistedCoordinatorState {
+            version: 1,
+            generation: self.generation,
+            latest_sequence: self.sequence.current(),
+            pending: self.pending.clone(),
+            events: self.events.iter().map(|event| PersistedCoordinatorEvent {
+                session_id: event.session_id.clone(),
+                sequence: event.sequence,
+                family: event.family.clone(),
+                payload_json: event.payload_json.clone(),
+            }).collect(),
+        };
+        let encoded = serde_json::to_vec_pretty(&state).map_err(|error| CoordinatorFailure::new(
+            CoordinatorFailureCode::Internal,
+            format!("failed to encode coordinator state: {error}"),
+        ))?;
+        let tmp = path.with_extension("json.tmp");
+        fs::write(&tmp, encoded).map_err(|error| CoordinatorFailure::new(
+            CoordinatorFailureCode::Internal,
+            format!("failed to write coordinator state: {error}"),
+        ))?;
+        fs::rename(&tmp, path).map_err(|error| CoordinatorFailure::new(
+            CoordinatorFailureCode::Internal,
+            format!("failed to replace coordinator state: {error}"),
+        ))
     }
 
     pub fn generation(&self) -> u64 { self.generation }
@@ -79,14 +202,28 @@ impl<H: HostPort> MahayanaCoordinator<H> {
             method: request.method.clone(),
             operation_id: None,
         });
+        if let Err(error) = self.persist_state() {
+            self.pending.remove(&request.request_id);
+            return Err(error);
+        }
         Ok(())
     }
 
     pub fn complete_request(&mut self, request_id: &str, result: Result<String, CoordinatorFailure>) -> CoordinatorReply {
-        if self.pending.remove(request_id).is_none() {
+        let Some(pending) = self.pending.remove(request_id) else {
             return CoordinatorReply::failed(
                 request_id,
                 CoordinatorFailure::new(CoordinatorFailureCode::UnknownRequest, "request is not active"),
+            );
+        };
+        if let Err(error) = self.persist_state() {
+            self.pending.insert(request_id.to_string(), pending);
+            return CoordinatorReply::failed(
+                request_id,
+                CoordinatorFailure::new(
+                    CoordinatorFailureCode::Internal,
+                    format!("coordinator terminal state is not durable; outcome unknown: {}", error.message),
+                ),
             );
         }
         match result {
@@ -113,10 +250,7 @@ impl<H: HostPort> MahayanaCoordinator<H> {
         let request_id = request.request_id.clone();
         match self.host.execute(&request) {
             Ok(value) => CoordinatorReply::ok(request_id, value),
-            Err(error) => {
-                self.pending.remove(&request_id);
-                CoordinatorReply::failed(request_id, error)
-            }
+            Err(error) => self.complete_request(&request_id, Err(error))
         }
     }
 
@@ -145,7 +279,13 @@ impl<H: HostPort> MahayanaCoordinator<H> {
                 "request is not active",
             )
         })?;
-        pending.operation_id = Some(operation_id.to_string());
+        let previous = pending.operation_id.replace(operation_id.to_string());
+        if let Err(error) = self.persist_state() {
+            if let Some(pending) = self.pending.get_mut(request_id) {
+                pending.operation_id = previous;
+            }
+            return Err(error);
+        }
         Ok(())
     }
 
@@ -273,6 +413,7 @@ impl<H: HostPort> MahayanaCoordinator<H> {
         };
         if self.events.len() >= self.replay_limit { self.events.pop_front(); }
         self.events.push_back(event.clone());
+        let _ = self.persist_state();
         event
     }
 
@@ -314,12 +455,14 @@ impl<H: HostPort> MahayanaCoordinator<H> {
         self.generation = self.generation.saturating_add(1);
         self.sequence = MonotonicSequence::default();
         self.events.clear();
-        std::mem::take(&mut self.pending).into_keys().map(|request_id| {
+        let replies = std::mem::take(&mut self.pending).into_keys().map(|request_id| {
             CoordinatorReply::failed(
                 request_id,
                 CoordinatorFailure::new(CoordinatorFailureCode::HostCrashed, detail.clone()),
             )
-        }).collect()
+        }).collect::<Vec<_>>();
+        let _ = self.persist_state();
+        replies
     }
 
     pub fn active_request_count(&self) -> usize { self.pending.len() }
@@ -464,6 +607,36 @@ mod tests {
         let fresh = coordinator.resync(ResyncRequest { generation: coordinator.generation(), after_sequence: 0 }).unwrap();
         assert!(fresh.events.is_empty());
         assert_eq!(fresh.latest_sequence, 0);
+    }
+
+    #[test]
+    fn persistent_reopen_fences_generation_and_surfaces_outcome_unknown_without_replay() {
+        let root = std::env::temp_dir().join(format!(
+            "fabushi-coordinator-recovery-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
+        ));
+        let state = root.join("coordinator-state.json");
+        {
+            let mut coordinator = MahayanaCoordinator::with_generation_persistent(
+                FakeHost::default(), 7, 8, &state
+            ).unwrap();
+            coordinator.begin_request(&request("recover-1")).unwrap();
+            coordinator.bind_operation("recover-1", "operation-1").unwrap();
+            coordinator.publish_event("session-a", "chat.delta", r#"{"delta":"a"}"#);
+            assert_eq!(coordinator.active_request_count(), 1);
+        }
+        let coordinator = MahayanaCoordinator::with_generation_persistent(
+            FakeHost::default(), 7, 8, &state
+        ).unwrap();
+        assert_eq!(coordinator.generation(), 8);
+        assert_eq!(coordinator.active_request_count(), 0);
+        let recovered = coordinator.resync_since(0);
+        assert_eq!(recovered.events.len(), 1);
+        assert_eq!(recovered.events[0].family, "operation.outcome-unknown");
+        assert!(recovered.events[0].payload_json.contains("recover-1"));
+        assert!(recovered.events[0].payload_json.contains("operation-1"));
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]
