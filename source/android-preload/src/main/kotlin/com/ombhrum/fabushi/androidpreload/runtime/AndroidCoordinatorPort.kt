@@ -20,6 +20,13 @@ interface AndroidCoordinatorPort {
     fun coordinatorStatus(): JSONObject
     fun coordinatorResync(generation: Long, afterSequence: Long): JSONObject
     fun mcpOAuthRegister(state: String, provider: String): Boolean
+    fun mcpOAuthRegisterBound(
+        state: String,
+        provider: String,
+        serverId: String,
+        accountKey: String,
+        generation: Long,
+    ): Boolean = mcpOAuthRegister(state, provider)
     fun mcpOAuthComplete(
         state: String,
         code: String?,

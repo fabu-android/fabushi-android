@@ -19,9 +19,31 @@ internal class AndroidMcpOAuthLoopbackProvider(
     fun registerAuthorization(
         authorizationUrl: String,
         provider: String,
+        serverId: String? = null,
+        accountKey: String? = null,
+        generation: Long? = null,
     ): AndroidMcpOAuthAuthorization? {
         val parsed = parseAuthorization(authorizationUrl, provider) ?: return null
-        return if (coordinator.mcpOAuthRegister(parsed.state, parsed.provider)) parsed else null
+        val identitySupplied = serverId != null || accountKey != null || generation != null
+        val registered = if (identitySupplied) {
+            val resolvedServerId = serverId?.trim().orEmpty()
+            val resolvedAccountKey = accountKey?.trim().orEmpty()
+            val resolvedGeneration = generation ?: 0L
+            if (resolvedServerId.isBlank() || resolvedAccountKey.isBlank() || resolvedGeneration <= 0L) {
+                false
+            } else {
+                coordinator.mcpOAuthRegisterBound(
+                    state = parsed.state,
+                    provider = parsed.provider,
+                    serverId = resolvedServerId,
+                    accountKey = resolvedAccountKey,
+                    generation = resolvedGeneration,
+                )
+            }
+        } else {
+            coordinator.mcpOAuthRegister(parsed.state, parsed.provider)
+        }
+        return if (registered) parsed else null
     }
 
     fun complete(

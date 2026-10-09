@@ -1114,16 +1114,29 @@ impl AndroidJsonHost {
                 authorization_url,
                 watch,
                 replaced,
-            } => json!({
-                "status":"authorization-required",
-                "authorizationUrl":authorization_url,
-                "serverId":watch.server_id,
-                "serverName":watch.server_name,
-                "accountKey":watch.account_key,
-                "generation":watch.generation,
-                "expiresAtMs":watch.expires_at_ms,
-                "replacedGeneration":replaced.map(|value| value.generation),
-            }),
+            } => {
+                let result = json!({
+                    "status":"authorization-required",
+                    "authorizationUrl":authorization_url,
+                    "serverId":watch.server_id,
+                    "serverName":watch.server_name,
+                    "accountKey":watch.account_key,
+                    "generation":watch.generation,
+                    "expiresAtMs":watch.expires_at_ms,
+                    "replacedGeneration":replaced.map(|value| value.generation),
+                });
+                self.events.push_back(json!({
+                    "type":"mcp.authorization.required",
+                    "authorizationUrl":result["authorizationUrl"],
+                    "provider":result["serverId"],
+                    "serverId":result["serverId"],
+                    "serverName":result["serverName"],
+                    "accountKey":result["accountKey"],
+                    "generation":result["generation"],
+                    "expiresAtMs":result["expiresAtMs"],
+                }));
+                result
+            }
             McpAuthenticateResult::NotConfigured => json!({"status":"not-configured"}),
             McpAuthenticateResult::AdminBlocked => json!({"status":"admin-blocked"}),
             McpAuthenticateResult::UnsupportedTransport => json!({"status":"unsupported-transport"}),

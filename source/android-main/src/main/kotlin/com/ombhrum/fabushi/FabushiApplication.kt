@@ -94,10 +94,16 @@ internal class FabushiProcessRuntime(
         val authorizationUrl = event.optString("authorizationUrl").trim()
         val provider = event.optString("provider").trim()
         if (authorizationUrl.isBlank() || provider.isBlank()) return
+        val serverId = event.optString("serverId").trim().takeIf(String::isNotBlank)
+        val accountKey = event.optString("accountKey").trim().takeIf(String::isNotBlank)
+        val generation = event.optLong("generation", 0L).takeIf { it > 0L }
         mcpOAuth.beginAuthorization(
             activity = interactiveActivityOrNull(),
             authorizationUrl = authorizationUrl,
             provider = provider,
+            serverId = serverId,
+            accountKey = accountKey,
+            generation = generation,
         )
     }
 

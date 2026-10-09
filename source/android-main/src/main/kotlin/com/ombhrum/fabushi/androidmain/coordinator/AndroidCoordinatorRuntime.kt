@@ -52,6 +52,23 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
                 .put("provider", provider),
         ).optBoolean("registered", false)
 
+    override fun mcpOAuthRegisterBound(
+        state: String,
+        provider: String,
+        serverId: String,
+        accountKey: String,
+        generation: Long,
+    ): Boolean =
+        host.request(
+            "coordinator.mcpOAuth.register",
+            JSONObject()
+                .put("state", state)
+                .put("provider", provider)
+                .put("serverId", serverId)
+                .put("accountKey", accountKey)
+                .put("generation", generation),
+        ).optBoolean("registered", false)
+
     override fun mcpOAuthComplete(
         state: String,
         code: String?,

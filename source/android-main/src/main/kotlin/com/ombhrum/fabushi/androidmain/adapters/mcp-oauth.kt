@@ -22,10 +22,16 @@ internal class AndroidMcpOAuthAdapter(
         activity: ComponentActivity?,
         authorizationUrl: String,
         provider: String,
+        serverId: String? = null,
+        accountKey: String? = null,
+        generation: Long? = null,
     ): Boolean {
         val pending = callbacks.registerAuthorization(
             authorizationUrl = authorizationUrl,
             provider = provider,
+            serverId = serverId,
+            accountKey = accountKey,
+            generation = generation,
         ) ?: return false
         if (browser.openExternalAuth(activity, pending.authorizationUrl)) {
             return true
