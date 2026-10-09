@@ -113,9 +113,20 @@ impl AndroidAccountService {
     pub fn public_status(
         &mut self,
     ) -> Result<(Value, Option<AccountSessionMutation>), String> {
-        let mutation = self.refresh_if_needed(now_ms())?;
-        let status = self.status_projection();
-        Ok((status, mutation))
+        match self.refresh_if_needed(now_ms()) {
+            Ok(mutation) => Ok((self.status_projection(), mutation)),
+            Err(error) => {
+                self.session = None;
+                Ok((
+                    json!({
+                        "loggedIn":false,
+                        "user":Value::Null,
+                        "errorMessage":error,
+                    }),
+                    Some(AccountSessionMutation::Clear),
+                ))
+            }
+        }
     }
 
     pub fn valid_access_token(
