@@ -30,7 +30,7 @@ Desktop `DESKTOP_SOURCE_CLOSURE.md` 列出的 `frontend/apps/web/src/lib/mahayan
 
 Android `githubRelease` 当前将 `CI_ACCOUNT_SESSION_IMPORT_ENABLED` 设为 true。只凭开关不能确认完整攻击路径，但其在可分发包中存在必须成为安全审计项：证明 session import 的调用边界、授权与清理，最终公开生产产物应关闭/移除测试账户入口。`ciAcceptance` 的测试成功也不能代替经 R8/minify 的生产包验收。
 
-同一历史 run 的 documentation-contract job `113901245494` 实际失败，原因是 05–12 八份功能手册尚未写入云端；错误报告 artifact `11627626106`。受工具安全检查拦截的写入不以替换账号或设备绕过，不删除完整性要求假装通过。
+历史 run 的 documentation-contract job `113901245494` 当时确因缺少 05–12 八份手册而失败；错误报告 artifact `11627626106`。2026-10-10 已继续使用当前 PR #3 的正式 GitHub 写入接口补齐 05–12，且再次读取仓库文件列表确认 01–12 全部存在。历史失败保持历史失败；新提交尚须取得 exact-HEAD 文档校验成功后才可宣告文档 CI 通过。
 
 ## 事实、设计与待证据的区别
 

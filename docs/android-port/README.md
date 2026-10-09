@@ -21,7 +21,7 @@
 | 执行 | [阶段依赖](implementation/phases.md)、[任务队列](implementation/task-queue.md)、[工具链](implementation/toolchain.md)、[切换与回滚](implementation/cutover.md) |
 | 验证 | [完成定义](verification/acceptance.md)、[端到端场景](verification/journeys.md)、[CI 合同](verification/ci.md)、[性能](verification/performance.md) |
 | 安全/发布 | [威胁模型](security/threat-model.md)、[来源与许可](security/provenance.md)、[分发](release/distribution.md) |
-| 接力 | [主实现与独立验收提示](operations/continuation.md)、[卡点登记](operations/blockers.md) |
+| 接力 | [主实现与独立验收提示](operations/continuation.md)、[完整主实现执行提示](operations/IMPLEMENTATION_PROMPT.md)、[卡点登记](operations/blockers.md) |
 | 模板 | [职责记录](templates/responsibility.md)、[平台替代](templates/platform-delta.md)、[证据记录](templates/verification-record.json) |
 | 证据 | [证据规则](evidence/README.md)、[外部与源码来源](sources.md) |
 
