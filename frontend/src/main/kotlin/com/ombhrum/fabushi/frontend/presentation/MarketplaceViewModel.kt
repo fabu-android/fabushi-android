@@ -23,6 +23,16 @@ data class MiniAppToolContract(
     val approval: String,
 )
 
+data class PluginVariableField(
+    val key: String,
+    val label: String,
+    val placeholder: String,
+    val isRequired: Boolean,
+    val isSecret: Boolean,
+    val defaultValue: String? = null,
+    val hint: String? = null,
+)
+
 data class MarketplacePlugin(
     val pluginId: String,
     val displayName: String,
@@ -30,6 +40,14 @@ data class MarketplacePlugin(
     val latestVersion: String?,
     val sourceRef: String? = null,
     val tools: List<MiniAppToolContract> = emptyList(),
+    val variablesSchemaJson: String? = null,
+    val variableFields: List<PluginVariableField> = emptyList(),
+    val teamConfiguredVariables: Boolean = false,
+)
+
+data class PluginVariableRequest(
+    val plugin: MarketplacePlugin,
+    val fields: List<PluginVariableField>,
 )
 
 data class PermissionRequest(
@@ -62,6 +80,7 @@ data class MarketplaceUiState(
     val message: String = "Mahayana Rust Host 已启动",
     val plugins: List<MarketplacePlugin> = emptyList(),
     val permissionRequest: PermissionRequest? = null,
+    val variableRequest: PluginVariableRequest? = null,
     val authResolved: Boolean = false,
     val loggedIn: Boolean = false,
     val accountName: String = "Fabushi",
@@ -456,6 +475,14 @@ class MarketplaceViewModel(application: Application) : AndroidViewModel(applicat
                                     latestVersion = item.optString("latestVersion").takeIf(String::isNotBlank),
                                     sourceRef = sourceRef,
                                     tools = commands.toToolContracts(),
+                                    variablesSchemaJson = item.optJSONObject("variablesSchema")?.toString(),
+                                    variableFields = item.optJSONObject("variablesSchema")
+                                        ?.let(coordinator::pluginVariableFields)
+                                        .toPluginVariableFields(),
+                                    teamConfiguredVariables = item.optBoolean(
+                                        "teamConfiguredVariables",
+                                        item.optBoolean("hasTeamConfiguredVariables", false),
+                                    ),
                                 ),
                             )
                         }
@@ -476,6 +503,61 @@ class MarketplaceViewModel(application: Application) : AndroidViewModel(applicat
     }
 
     fun install(plugin: MarketplacePlugin) {
+        if (plugin.variableFields.isNotEmpty() && !plugin.teamConfiguredVariables) {
+            mutableState.value = mutableState.value.copy(
+                variableRequest = PluginVariableRequest(plugin, plugin.variableFields),
+                installingPluginId = null,
+                message = "请配置 " + plugin.displayName + " 的连接变量",
+            )
+            return
+        }
+        installConfigured(plugin)
+    }
+
+    fun cancelPluginVariables() {
+        val pluginId = mutableState.value.variableRequest?.plugin?.pluginId ?: return
+        mutableState.value = mutableState.value.copy(
+            variableRequest = null,
+            installingPluginId = null,
+            message = pluginId + " 配置已取消",
+        )
+    }
+
+    fun submitPluginVariables(values: Map<String, String>) {
+        val request = mutableState.value.variableRequest ?: return
+        val plugin = request.plugin
+        val schema = plugin.variablesSchemaJson?.let(::JSONObject) ?: JSONObject()
+        mutableState.value = mutableState.value.copy(
+            variableRequest = null,
+            installingPluginId = plugin.pluginId,
+            message = "正在保护并保存 " + plugin.pluginId + " 的变量…",
+        )
+        viewModelScope.launch {
+            runCatching {
+                withContext(Dispatchers.IO) {
+                    val payloadValues = JSONObject()
+                    values.forEach { (key, value) -> payloadValues.put(key, value) }
+                    coordinator.pluginVariablesConfigure(
+                        JSONObject()
+                            .put("pluginId", plugin.pluginId)
+                            .put("schema", schema)
+                            .put("values", payloadValues)
+                            .put("teamConfigured", false),
+                    )
+                }
+            }.onSuccess {
+                installConfigured(plugin)
+            }.onFailure { error ->
+                mutableState.value = mutableState.value.copy(
+                    installingPluginId = null,
+                    variableRequest = PluginVariableRequest(plugin, plugin.variableFields),
+                    message = "变量配置未保存：" + (error.message ?: error::class.java.simpleName),
+                )
+            }
+        }
+    }
+
+    private fun installConfigured(plugin: MarketplacePlugin) {
         val version = plugin.latestVersion
         if (version.isNullOrBlank()) {
             mutableState.value = mutableState.value.copy(message = "${plugin.pluginId} 没有可安装版本")
@@ -590,7 +672,7 @@ class MarketplaceViewModel(application: Application) : AndroidViewModel(applicat
                         "插件不满足移动端 portable runtime 约束"
                     }
                     coordinator.runtimeStart(
-                        JSONObject().put("pluginId", pluginId).put("config", JSONObject()),
+                        JSONObject().put("pluginId", pluginId),
                     )
                 }
             }.onSuccess {
@@ -654,6 +736,25 @@ class MarketplaceViewModel(application: Application) : AndroidViewModel(applicat
     }
 }
 
+private fun JSONArray?.toPluginVariableFields(): List<PluginVariableField> = buildList {
+    val array = this@toPluginVariableFields ?: return@buildList
+    for (index in 0 until array.length()) {
+        val field = array.optJSONObject(index) ?: continue
+        val key = field.optString("key").trim()
+        if (key.isBlank()) continue
+        add(
+            PluginVariableField(
+                key = key,
+                label = field.optString("label", key).ifBlank { key },
+                placeholder = field.optString("placeholder", key).ifBlank { key },
+                isRequired = field.optBoolean("isRequired"),
+                isSecret = field.optBoolean("isSecret"),
+                defaultValue = field.optString("defaultValue").takeIf(String::isNotBlank),
+                hint = field.optString("hint").takeIf(String::isNotBlank),
+            ),
+        )
+    }
+}
 private fun JSONArray?.toStringList(): List<String> = buildList {
     val array = this@toStringList ?: return@buildList
     for (index in 0 until array.length()) {

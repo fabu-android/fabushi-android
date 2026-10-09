@@ -4,6 +4,7 @@ use crate::automation_runtime::{run_json as automation_run_json, AutomationRunti
 use crate::android_agent_roster::AndroidAgentRoster;
 use crate::host_secret_store::get_or_create_host_machine_id;
 use crate::messaging_service::AndroidMessagingService;
+use crate::plugin_variable_store::{variable_fields_json, PluginVariableStore, PreparedPluginVariableWrite};
 use crate::mcp_auth::{cleanup_legacy_mcp_auth_credentials, AndroidMcpAuthWatchManager};
 use crate::extensions::transcript::TranscriptStore;
 use crate::extensions::webauthn_proxy::{
@@ -269,6 +270,8 @@ pub struct AndroidJsonHost {
     transcript: Arc<Mutex<TranscriptStore>>,
     messaging: AndroidMessagingService,
     mcp_auth_watches: AndroidMcpAuthWatchManager,
+    plugin_variables: PluginVariableStore,
+    pending_plugin_variable_writes: BTreeMap<String, PreparedPluginVariableWrite>,
     #[cfg(feature = "ci-account-session-import")]
     ci_session_path: Option<PathBuf>,
     #[cfg(feature = "ci-account-session-import")]
@@ -332,6 +335,8 @@ impl AndroidJsonHost {
             now_ms(),
         )
         .unwrap_or_else(|error| panic!("failed to open durable Android MCP auth watch manager: {error}"));
+        let plugin_variables = PluginVariableStore::open(app_data_dir.join("plugin-variables.json"))
+            .unwrap_or_else(|error| panic!("failed to open account-scoped plugin variable store: {error}"));
         let plugin_installer = PluginInstaller::new(app_data_dir.join("plugins"))
             .unwrap_or_else(|error| panic!("failed to open canonical Android plugin installer: {error}"));
         let plugin_permissions = PermissionManager::load(app_data_dir.join("plugin-permissions.json"))
@@ -357,6 +362,8 @@ impl AndroidJsonHost {
             transcript,
             messaging,
             mcp_auth_watches,
+            plugin_variables,
+            pending_plugin_variable_writes: BTreeMap::new(),
             #[cfg(feature = "ci-account-session-import")]
             ci_session_path,
             #[cfg(feature = "ci-account-session-import")]
@@ -491,6 +498,10 @@ impl AndroidJsonHost {
             "feature.marketplace.browse" => self.marketplace_browse(params),
             "feature.marketplace.release" => self.marketplace_release(params),
             "feature.plugin.install" => self.plugin_install(params),
+            "feature.plugin.variables.fields" => self.plugin_variable_fields(params),
+            "feature.plugin.variables.prepare" => self.plugin_variable_prepare(params),
+            "feature.plugin.variables.commit" => self.plugin_variable_commit(params),
+            "feature.plugin.variables.runtimeConfig" => self.plugin_variable_runtime_config(params),
             "feature.plugin.uiDocument" => self.plugin_ui_document(params),
             "plugin.compatibility" => self.plugin_compatibility(params),
             "plugin.permission.grant" => self.plugin_permission_grant(params),
@@ -871,6 +882,7 @@ impl AndroidJsonHost {
     }
 
     fn account_logout(&mut self) -> Result<Value, String> {
+        self.pending_plugin_variable_writes.clear();
         let cancelled_watches = self.mcp_auth_watches.cancel_all()?;
         for completion in cancelled_watches {
             self.events.push_back(json!({
@@ -1963,6 +1975,91 @@ impl AndroidJsonHost {
             return Ok((result, None));
         }
         self.account.authenticated_api_request(method, path, body)
+    }
+
+
+    fn plugin_variable_fields(&self, params: &Value) -> Result<Value, String> {
+        let schema = params.get("schema").unwrap_or(&Value::Null);
+        Ok(json!({
+            "fields": variable_fields_json(&PluginVariableStore::fields(schema)),
+        }))
+    }
+
+    fn plugin_variable_prepare(&mut self, params: &Value) -> Result<Value, String> {
+        let plugin_id = required_string(params, "pluginId")?.to_string();
+        let schema = params.get("schema").cloned().unwrap_or_else(|| json!({}));
+        let values = params.get("values").cloned().unwrap_or_else(|| json!({}));
+        let team_configured = params
+            .get("teamConfigured")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        let account_key = self.current_turn_account_fence()?;
+        let prepared = self.plugin_variables.prepare_write(
+            &account_key,
+            &plugin_id,
+            &schema,
+            &values,
+            team_configured,
+        )?;
+        let write_id = self.next_attempt_id("plugin-vars");
+        let secret_values = prepared.secret_values.clone();
+        let secret_keys = prepared.secret_keys.iter().cloned().collect::<Vec<_>>();
+        let public_config = prepared.public_config.clone();
+        self.pending_plugin_variable_writes
+            .insert(write_id.clone(), prepared);
+        Ok(json!({
+            "writeId":write_id,
+            "pluginId":plugin_id,
+            "accountKey":account_key,
+            "publicConfig":public_config,
+            "secretKeys":secret_keys,
+            "secretValues":secret_values,
+            "teamConfigured":team_configured,
+        }))
+    }
+
+    fn plugin_variable_commit(&mut self, params: &Value) -> Result<Value, String> {
+        let write_id = required_string(params, "writeId")?.to_string();
+        let prepared = self
+            .pending_plugin_variable_writes
+            .remove(&write_id)
+            .ok_or("plugin variable write is stale, cancelled, or already committed")?;
+        let current_account_key = self.current_turn_account_fence()?;
+        if prepared.account_key != current_account_key {
+            return Err("plugin variable write account fence changed before commit".into());
+        }
+        self.plugin_variables.commit_write(&prepared)?;
+        Ok(json!({
+            "pluginId":prepared.plugin_id,
+            "accountKey":prepared.account_key,
+            "configured":true,
+            "secretKeys":prepared.secret_keys,
+            "teamConfigured":prepared.team_configured,
+        }))
+    }
+
+    fn plugin_variable_runtime_config(&self, params: &Value) -> Result<Value, String> {
+        let plugin_id = required_string(params, "pluginId")?;
+        let account_key = self.current_turn_account_fence()?;
+        if !self.plugin_variables.has_entry(&account_key, plugin_id) {
+            return Ok(json!({
+                "pluginId":plugin_id,
+                "accountKey":account_key,
+                "configured":false,
+                "publicConfig":{},
+                "secretKeys":[],
+                "teamConfigured":false,
+            }));
+        }
+        let config = self.plugin_variables.runtime_config(&account_key, plugin_id)?;
+        Ok(json!({
+            "pluginId":config.plugin_id,
+            "accountKey":config.account_key,
+            "configured":true,
+            "publicConfig":config.public_config,
+            "secretKeys":config.secret_keys,
+            "teamConfigured":config.team_configured,
+        }))
     }
 
     fn plugin_install(&mut self, params: &Value) -> Result<Value, String> {

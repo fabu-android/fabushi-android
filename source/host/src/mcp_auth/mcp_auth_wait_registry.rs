@@ -63,13 +63,14 @@ impl McpAuthWaitRegistry {
             .server_id
             .and_then(|value| validate_mcp_server_id(&value).ok());
         let name_key = normalize_connector_name(&registration.connector);
-        let key = if !name_key.is_empty() {
+        let identity_key = if !name_key.is_empty() {
             Some(name_key)
         } else {
             server_id.as_ref().map(|id| format!("id:{id}"))
         };
 
-        if let Some(key) = key {
+        if let Some(identity_key) = identity_key {
+            let key = format!("{account_key}::{identity_key}");
             self.waits.insert(
                 key,
                 WaitEntry {
@@ -104,8 +105,9 @@ impl McpAuthWaitRegistry {
                 .server_id
                 .as_deref()
                 .is_some_and(|id| id == completion.server_id);
-            let matches_name =
-                entry.server_id.is_none() && !name_key.is_empty() && key == &name_key;
+            let matches_name = entry.server_id.is_none()
+                && !name_key.is_empty()
+                && key == &format!("{completion_account_key}::{name_key}");
             if matches_id || matches_name {
                 matched_keys.push(key.clone());
                 if matches_id {
@@ -215,6 +217,49 @@ mod tests {
             .as_deref(),
             Some("agent-b")
         );
+    }
+
+    #[test]
+    fn same_connector_waits_are_isolated_by_account_key() {
+        let mut waits = McpAuthWaitRegistry::new(1_000);
+        for (account, agent) in [("account-a", "agent-a"), ("account-b", "agent-b")] {
+            waits.register(
+                10,
+                McpAuthWaitRegistration {
+                    agent_id: agent.into(),
+                    connector: "Calendar".into(),
+                    server_id: Some("17".into()),
+                    account_key: account.into(),
+                },
+            );
+        }
+        assert_eq!(waits.len(), 2);
+        assert_eq!(
+            waits.take(
+                20,
+                &McpAuthCompletionIdentity {
+                    server_id: "17".into(),
+                    server_name: "Calendar".into(),
+                    account_key: "account-a".into(),
+                },
+            )
+            .as_deref(),
+            Some("agent-a")
+        );
+        assert_eq!(waits.len(), 1);
+        assert_eq!(
+            waits.take(
+                21,
+                &McpAuthCompletionIdentity {
+                    server_id: "17".into(),
+                    server_name: "Calendar".into(),
+                    account_key: "account-b".into(),
+                },
+            )
+            .as_deref(),
+            Some("agent-b")
+        );
+        assert!(waits.is_empty());
     }
 
     #[test]

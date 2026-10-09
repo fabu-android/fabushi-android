@@ -161,6 +161,11 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
     override fun marketplaceBrowse(params: JSONObject) = host.request("feature.marketplace.browse", params)
     override fun marketplaceRelease(params: JSONObject) = host.request("feature.marketplace.release", params)
     override fun pluginInstall(params: JSONObject) = host.request("feature.plugin.install", params)
+    override fun pluginVariableFields(schema: JSONObject): JSONArray =
+        host.request("feature.plugin.variables.fields", JSONObject().put("schema", schema))
+            .optJSONArray("fields") ?: JSONArray()
+    override fun pluginVariablesConfigure(params: JSONObject) =
+        host.request("feature.plugin.variables.configure", params)
     override fun pluginUiDocument(params: JSONObject) = host.request("feature.plugin.uiDocument", params)
     override fun pluginCompatibility(params: JSONObject) = host.request("plugin.compatibility", params)
     override fun pluginPermissionGrant(params: JSONObject) = host.request("plugin.permission.grant", params)

@@ -2,6 +2,7 @@ package com.ombhrum.fabushi.core
 
 import android.content.Context
 import com.ombhrum.fabushi.androidmain.security.AndroidAccountSessionStore
+import com.ombhrum.fabushi.androidmain.security.AndroidPluginVariableSecretStore
 import org.json.JSONObject
 import java.io.Closeable
 import java.util.ArrayDeque
@@ -23,6 +24,7 @@ class MahayanaHost(
 ) : Closeable {
     private val appDataDir = context.filesDir.absolutePath
     private val accountSessionStore = AndroidAccountSessionStore(context)
+    private val pluginSecretStore = AndroidPluginVariableSecretStore(context)
     private val consumerId = UUID.randomUUID().toString()
     private val ownedListenerIds = mutableSetOf<String>()
     private val shared: SharedHost?
@@ -68,6 +70,12 @@ class MahayanaHost(
         check(!closed) { "Mahayana host is closed" }
         if (!featureHostTest && method == "feature.receive") {
             return receiveShared(params)
+        }
+        if (!featureHostTest && method == "feature.plugin.variables.configure") {
+            return configurePluginVariables(params)
+        }
+        if (!featureHostTest && method == "runtime.start") {
+            return startRuntimeWithProtectedVariables(params)
         }
         val response = dispatch(method, params)
         return response.optJSONObject("result") ?: JSONObject().put("value", response.opt("result"))
@@ -144,6 +152,55 @@ class MahayanaHost(
                 ownedListenerIds.remove(listenerId)
             }
         }
+    }
+
+
+    private fun configurePluginVariables(params: JSONObject): JSONObject {
+        val preparedResponse = dispatch("feature.plugin.variables.prepare", JSONObject(params.toString()))
+        val prepared = preparedResponse.optJSONObject("result")
+            ?: error("Mahayana Host did not return a plugin-variable prepare result")
+        val writeId = prepared.getString("writeId")
+        val pluginId = prepared.getString("pluginId")
+        val accountKey = prepared.getString("accountKey")
+        val secretValues = prepared.optJSONObject("secretValues") ?: JSONObject()
+        pluginSecretStore.replace(accountKey, pluginId, secretValues)
+        val committedResponse = dispatch(
+            "feature.plugin.variables.commit",
+            JSONObject().put("writeId", writeId),
+        )
+        return committedResponse.optJSONObject("result")
+            ?: error("Mahayana Host did not commit plugin variables")
+    }
+
+    private fun startRuntimeWithProtectedVariables(params: JSONObject): JSONObject {
+        val pluginId = params.optString("pluginId").takeIf(String::isNotBlank)
+            ?: error("runtime.start requires pluginId")
+        val projectionResponse = dispatch(
+            "feature.plugin.variables.runtimeConfig",
+            JSONObject().put("pluginId", pluginId),
+        )
+        val projection = projectionResponse.optJSONObject("result")
+            ?: error("Mahayana Host did not return plugin variable runtime config")
+        val config = JSONObject(
+            (projection.optJSONObject("publicConfig") ?: JSONObject()).toString(),
+        )
+        if (projection.optBoolean("configured", false)) {
+            val accountKey = projection.getString("accountKey")
+            val secretKeys = projection.optJSONArray("secretKeys") ?: org.json.JSONArray()
+            val secrets = pluginSecretStore.read(accountKey, pluginId, secretKeys)
+            val keys = secrets.keys()
+            while (keys.hasNext()) {
+                val key = keys.next()
+                config.put(key, secrets.getString(key))
+            }
+        }
+        val runtimeParams = JSONObject(params.toString()).apply {
+            remove("config")
+            put("config", config)
+        }
+        val response = dispatch("runtime.start", runtimeParams)
+        return response.optJSONObject("result")
+            ?: error("Mahayana Host did not return runtime.start result")
     }
 
     private fun dispatch(method: String, params: JSONObject): JSONObject {

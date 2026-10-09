@@ -53,3 +53,4 @@ pub mod watched_directory;
 
 pub use host_event_bus::{HostEvent, HostEventBus};
 pub use sand_host::{HostRuntime, SandHost, SandHostHealth};
+pub mod plugin_variable_store;

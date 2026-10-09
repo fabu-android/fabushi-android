@@ -70,6 +70,8 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -85,8 +87,51 @@ internal fun MarketplaceContent(
     onSearch: () -> Unit,
     onInstall: (MarketplacePlugin) -> Unit,
     onOpen: (MarketplacePlugin) -> Unit,
+    onSubmitVariables: (Map<String, String>) -> Unit,
+    onCancelVariables: () -> Unit,
     onBack: () -> Unit,
 ) {
+    state.variableRequest?.let { request ->
+        var values by remember(request.plugin.pluginId) {
+            mutableStateOf(request.fields.associate { field -> field.key to field.defaultValue.orEmpty() })
+        }
+        val requiredReady = request.fields.all { field ->
+            !field.isRequired || values[field.key].orEmpty().trim().isNotEmpty() || !field.defaultValue.isNullOrBlank()
+        }
+        AlertDialog(
+            onDismissRequest = onCancelVariables,
+            title = { Text("配置 " + request.plugin.displayName) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    request.fields.forEach { field ->
+                        OutlinedTextField(
+                            value = values[field.key].orEmpty(),
+                            onValueChange = { value -> values = values + (field.key to value) },
+                            modifier = Modifier.fillMaxWidth().testTag("plugin-variable-" + field.key),
+                            label = { Text(field.label + if (field.isRequired) " *" else "") },
+                            placeholder = { Text(field.placeholder) },
+                            supportingText = field.hint?.let { hint -> ({ Text(hint) }) },
+                            singleLine = true,
+                            visualTransformation = if (field.isSecret) PasswordVisualTransformation() else VisualTransformation.None,
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = { onSubmitVariables(values) },
+                    enabled = requiredReady,
+                    modifier = Modifier.testTag("plugin-variable-submit"),
+                ) { Text("保存并继续") }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = onCancelVariables,
+                    modifier = Modifier.testTag("plugin-variable-cancel"),
+                ) { Text("取消") }
+            },
+        )
+    }
     Scaffold(modifier = Modifier.fillMaxSize().testTag(TestTags.AppShell)) { padding ->
         LazyColumn(
             modifier = Modifier.fillMaxSize().padding(padding).padding(horizontal = 20.dp),

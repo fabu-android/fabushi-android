@@ -59,6 +59,8 @@ interface AndroidCoordinatorPort {
     fun marketplaceBrowse(params: JSONObject): JSONObject
     fun marketplaceRelease(params: JSONObject): JSONObject
     fun pluginInstall(params: JSONObject): JSONObject
+    fun pluginVariableFields(schema: JSONObject): JSONArray
+    fun pluginVariablesConfigure(params: JSONObject): JSONObject
     fun pluginUiDocument(params: JSONObject): JSONObject
     fun pluginCompatibility(params: JSONObject): JSONObject
     fun pluginPermissionGrant(params: JSONObject): JSONObject

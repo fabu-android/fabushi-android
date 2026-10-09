@@ -145,6 +145,8 @@ fun FabushiMessagingSurface(
     onOpen: (MarketplacePlugin) -> Unit,
     onApprovePermissions: () -> Unit,
     onDenyPermissions: () -> Unit,
+    onSubmitPluginVariables: (Map<String, String>) -> Unit,
+    onCancelPluginVariables: () -> Unit,
     updateState: AndroidUpdateUiState = AndroidUpdateUiState(
         phase = AndroidUpdatePhase.DISABLED,
         currentVersion = BuildConfig.VERSION_NAME,
@@ -453,6 +455,8 @@ fun FabushiMessagingSurface(
             onSearch = onSearch,
             onInstall = onInstall,
             onOpen = onOpen,
+            onSubmitVariables = onSubmitPluginVariables,
+            onCancelVariables = onCancelPluginVariables,
             onBack = { destination = MobileDestination.HOME },
         )
         MobileDestination.REMOTE_COMPUTER -> RemoteComputerSurface(

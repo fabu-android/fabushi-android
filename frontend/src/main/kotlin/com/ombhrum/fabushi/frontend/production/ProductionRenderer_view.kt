@@ -258,6 +258,8 @@ internal fun ProductionRenderer(
                         onOpen = { openedMiniApp = it },
                         onApprovePermissions = model::approvePermissions,
                         onDenyPermissions = model::denyPermissions,
+                        onSubmitPluginVariables = model::submitPluginVariables,
+                        onCancelPluginVariables = model::cancelPluginVariables,
                         updateState = updateState,
                         onCheckUpdate = { updateModel.checkForUpdates(force = true) },
                         onInstallUpdate = updateModel::downloadAndInstall,
