@@ -5,7 +5,7 @@
     "desktop_commit": "3bc92400826cc4ca7ac665b467708e22261edc61",
     "android_repository": "fabu-android/fabushi-android",
     "android_pr": 3,
-    "android_head_at_update": "f01f9a5d45e805c59842da43df321538844d1193",
+    "android_head_at_update": "8de0dc625022901fd2aed80f2f22cfebfc45a6a7",
     "status": "incomplete",
     "note": "Persistent human-reviewed responsibility ledger for Desktop main. Rows are responsibility-level source facts; mapped/implemented never imply verified. Verification requires same-exact-HEAD source implementation, production wiring, CI/package and device evidence."
   },
@@ -2316,6 +2316,84 @@
       "artifact": null,
       "verification_status": "not-verified",
       "notes": "This row is mapped, not implemented/verified. The macOS workflow carries applicable release-quality responsibilities that Android must preserve through native platform mechanisms; current Android CI closes only part of that release envelope."
+    },
+    {
+      "responsibility_id": "RUST-ANDROID-RUNTIME-GATE-001",
+      "domain": "runtime",
+      "desktop_sources": [
+        {
+          "path": ".github/workflows/rust-desktop-runtime.yml",
+          "blob_sha": "a0cff860fac981805863868f9ac2e1ce101a9657",
+          "symbols": [
+            "rust-host",
+            "pressure-profiler-platform",
+            "platform-worker",
+            "renderer"
+          ]
+        }
+      ],
+      "source_commit": "3bc92400826cc4ca7ac665b467708e22261edc61",
+      "responsibility": "Continuously prove the shipping Mahayana Host/Coordinator/Runner and canonical messaging/tool/attachment/human-takeover ownership contracts against the exact source revision, including production composition and resource-pressure behavior, while separately validating platform-specific presentation/deployment boundaries.",
+      "source_owner": "Desktop Rust runtime CI",
+      "direct_callers": [
+        "Desktop main/PR changes across source, native messaging, frontend, contracts and runtime projects"
+      ],
+      "downstream_dependencies": [
+        "Mahayana Host",
+        "Coordinator",
+        "box/local exec daemons",
+        "messaging runtime",
+        "CapabilityBroker",
+        "attachment projection",
+        "human Computer takeover",
+        "platform worker",
+        "renderer boundary"
+      ],
+      "state_owner": "Exact-head CI jobs plus the runtime crates they exercise",
+      "persistent_state": [
+        "workflow conclusions",
+        "messaging responsibility artifact",
+        "CPU profile artifacts when applicable"
+      ],
+      "protocol_wire_contract": [
+        "exact PR head checkout",
+        "local Cargo dependency closure",
+        "Host/Coordinator/Runner ownership",
+        "bounded execution and capability contracts"
+      ],
+      "visible_effect": "Core agent/chat/tool/attachment/runtime behavior cannot be treated as shipping merely because individual crates compile; the composed runtime and its ownership contracts must execute under CI.",
+      "failure_behavior": [
+        "Cargo dependency/build/test failure, Host/Coordinator/Runner contract failure, ownership regression or platform boundary failure blocks the gate"
+      ],
+      "cancellation_behavior": "Obsolete PR runs may be cancelled; runtime cancellation semantics are tested within the underlying responsibilities.",
+      "retry_semantics": "Retries prove only their exact source revision and do not transfer evidence across HEADs.",
+      "idempotency_semantics": "CI is read-only; product side-effect idempotency is covered by the runtime responsibility tests rather than by workflow reruns.",
+      "process_death_recovery": "Android-specific process-death/reconnect durability is required in Host/Coordinator responsibilities and packaged acceptance; Desktop process semantics are not copied mechanically.",
+      "account_fencing": "Android runtime tests must preserve account epoch/session isolation; CI-only account import remains separate from public release.",
+      "security_boundary": "Coordinator/Host/CapabilityBroker/Runner ownership is preserved; Android JNI is the platform ABI and arbitrary Desktop process execution is replaced by bounded local or authorized remote runners.",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        ".github/workflows/android-parity-full-ci.yml",
+        ".github/workflows/grok-android-architecture.yml",
+        "source/host",
+        "source/mahayana-agent-coordinator",
+        "source/android-host-jni",
+        "source/box-exec-daemon",
+        "source/local-exec-daemon",
+        "docs/android-port/verification/performance.md"
+      ],
+      "android_owner": "Android-owned Rust workspace plus exact-head architecture/package Actions",
+      "platform_delta": "Desktop macOS Host checks, three-desktop-OS pressure profiling, WASM worker and Electron renderer jobs are not copied as mechanisms. Android retains the Rust product responsibilities through workspace tests, Android ABI JNI builds, Kotlin/Compose boundary checks, Android package/device tests and Android-specific performance/16KB/JNI resource gates.",
+      "implementation_status": "mapped",
+      "production_wiring": "Android Full CI executes cargo test --workspace --all-targets plus CI-feature Host/JNI tests and builds release JNI Host libraries for arm64-v8a/x86_64 before Gradle packages them. Grok Android Architecture independently runs Rust workspace tests. Android source owns Host, Coordinator, JNI and local/box executor crates.",
+      "unit_test": "Current exact-head Rust foundation and Full CI Rust tests are required; 8de0dc625022901fd2aed80f2f22cfebfc45a6a7 jobs are still running at mapping time.",
+      "contract_test": "Existing Android Rust suites cover Host/Coordinator/CapabilityBroker/tool/recovery contracts, but this workflow-level responsibility is not yet complete merely from crate test presence.",
+      "integration_test": "JNI libraries are built into production/ciAcceptance packaging; final exact-head package integration must pass after this mapping.",
+      "packaged_test": "Open: final package/device acceptance must demonstrate Host/Coordinator/Runner paths, attachments, tools/approvals, MCP, human takeover/remote execution and process-death recovery from the packaged app.",
+      "device_test": "Open: Android P20/P21/P23/P24 require same-head instrumentation, performance/memory/energy/JNI resources, ABI/16KB and real-device install/upgrade evidence.",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Mapped rather than implemented/verified because Android still lacks final same-head packaged/device/performance closure equivalent to the full Desktop runtime confidence envelope; Desktop-only renderer/WASM/OS-specific mechanisms are platform deltas, not deleted product responsibilities."
     }
   ],
   "traceability": {

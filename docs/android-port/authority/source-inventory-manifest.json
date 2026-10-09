@@ -31,7 +31,7 @@
   "symlinks": [],
   "truncation_fallback_used": false,
   "initial_status": "unreviewed",
-  "ledger_sha256": "e67b9e236bdad310a4e5320df3cfa2004a13a0f74ba38cdfe45265995dd8c26b",
+  "ledger_sha256": "8c8b2e53d7658ea61f8588a1759a4240b89165d32e92440daa4b34b322eecfb8",
   "closure_review": "submodule-LFS-dynamic-import-and-semantic-review-pending",
   "product_acceptance": "not-claimed"
 }
