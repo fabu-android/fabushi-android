@@ -2760,7 +2760,20 @@ impl AndroidJsonHost {
             runtime_generation:generation,started_at_ms:started,deadline_at_ms:started.saturating_add(timeout_ms),
             state:"pending".into(),
         })?;
-        self.capability_broker.assert_current(&request_id,&plugin_id,&account_fence,generation,now_ms())?;
+        if let Err(error) = self
+            .capability_broker
+            .assert_current(&request_id, &plugin_id, &account_fence, generation, now_ms())
+        {
+            self.capability_broker.settle(
+                &request_id,
+                "failed",
+                Some(format!(
+                    "runtime.call rejected before tool dispatch; no side effect started: {error}"
+                )),
+                now_ms(),
+            )?;
+            return Err(error);
+        }
         let runtime = self.js_runtime.as_ref().ok_or("plugin runtime is not started")?;
         let cancellation = match self.runtime_call_cancellations.register(
             &request_id,
@@ -3668,7 +3681,7 @@ export function apply(ctx) {
     name: 'contract.echo',
     async execute(args) {
       if (args.fail) throw new Error('contract-tool-failed');
-      if (args.slow) await new Promise(resolve => setTimeout(resolve, 250));
+      if (args.slow) await new Promise(resolve => setTimeout(resolve, 1200));
       return { echoed: args.value ?? null };
     }
   });
@@ -3750,7 +3763,7 @@ export function apply(ctx) {
                 "pluginId":plugin_id,
                 "tool":"contract.echo",
                 "requestId":"runtime-contract-timeout",
-                "timeoutMs":100,
+                "timeoutMs":400,
                 "arguments":{"slow":true}
             }),
         );
