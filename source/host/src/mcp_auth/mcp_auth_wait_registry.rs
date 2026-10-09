@@ -147,14 +147,14 @@ mod tests {
             McpAuthWaitRegistration {
                 agent_id: "by-id".into(),
                 connector: "Different".into(),
-                server_id: Some("srv-1".into()),
+                server_id: Some("1".into()),
             },
         );
 
         let agent = waits.take(
             20,
             &McpAuthCompletionIdentity {
-                server_id: "srv-1".into(),
+                server_id: "1".into(),
                 server_name: "GitHub".into(),
             },
         );
@@ -162,7 +162,6 @@ mod tests {
         assert!(waits.is_empty());
     }
 
-    #[test]
     #[test]
     fn invalid_server_id_registration_does_not_create_id_match() {
         let mut waits = McpAuthWaitRegistry::new(1_000);
@@ -197,6 +196,7 @@ mod tests {
         );
     }
 
+    #[test]
     fn name_fallback_is_normalized_and_expired_waits_are_ignored() {
         let mut waits = McpAuthWaitRegistry::new(100);
         waits.register(
