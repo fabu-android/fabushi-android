@@ -1259,24 +1259,39 @@ impl AndroidJsonHost {
         let plugin_id = release
             .get("pluginId")
             .and_then(Value::as_str)
-            .unwrap_or("global-dharma")
+            .filter(|value| !value.trim().is_empty())
+            .ok_or("plugin release is missing pluginId")?
             .to_string();
+        if self.mode != AndroidHostMode::Test {
+            return Err(
+                "feature.plugin.install is unavailable until the verified immutable package installer and canonical portable runtime are migrated; Android refuses in-memory placeholder installation"
+                    .into(),
+            );
+        }
         self.installed_plugins.insert(plugin_id.clone());
         Ok(json!({
             "pluginId":plugin_id,
             "runtime":"deepseek-js",
-            "requestedPermissions":[]
+            "requestedPermissions":[],
+            "fixture":true
         }))
     }
 
     fn plugin_ui_document(&self, params: &Value) -> Result<Value, String> {
         let plugin_id = required_string(params, "pluginId")?;
-        if !self.installed_plugins.contains(plugin_id) && self.mode != AndroidHostMode::Test {
-            return Err("plugin is not installed".into());
+        if self.mode != AndroidHostMode::Test {
+            return Err(
+                "feature.plugin.uiDocument is unavailable until the installed package UI document is verified and loaded from the canonical plugin store; Android refuses placeholder HTML"
+                    .into(),
+            );
+        }
+        if !self.installed_plugins.contains(plugin_id) {
+            return Err("test plugin is not installed".into());
         }
         Ok(json!({
             "pluginId":plugin_id,
-            "html":"<!doctype html><html><body><main id=\"app\">Fabushi Mini App</main></body></html>"
+            "html":"<!doctype html><html><body><main id=\"app\">Fabushi Mini App test fixture</main></body></html>",
+            "fixture":true
         }))
     }
 }
@@ -1788,6 +1803,21 @@ mod tests {
             let error = host.dispatch(method, &json!({"pluginId":"test"})).unwrap_err();
             assert!(error.contains("refuses placeholder success"));
         }
+        let production_root = std::env::temp_dir().join(format!("fabushi-plugin-production-{}", now_ms()));
+        let mut production_host = AndroidJsonHost::new(&production_root, AndroidHostMode::Production);
+        assert!(production_host
+            .dispatch(
+                "feature.plugin.install",
+                &json!({"release":{"pluginId":"global-dharma"}}),
+            )
+            .unwrap_err()
+            .contains("refuses in-memory placeholder installation"));
+        assert!(production_host
+            .dispatch("feature.plugin.uiDocument", &json!({"pluginId":"global-dharma"}))
+            .unwrap_err()
+            .contains("refuses placeholder HTML"));
+        let _ = std::fs::remove_dir_all(production_root);
+
         assert!(host
             .dispatch(
                 "platform.request",
