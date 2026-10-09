@@ -62,6 +62,8 @@ pub struct AndroidMcpAuthWatchOwner {
     manager: Arc<Mutex<AndroidMcpAuthWatchManager>>,
     events: Arc<Mutex<VecDeque<McpAuthOwnerEvent>>>,
     stop: Arc<AtomicBool>,
+    backend: Arc<dyn McpAuthBackendPort>,
+    policy: Arc<dyn McpAuthAdminPolicyPort>,
     worker: Option<JoinHandle<()>>,
 }
 
@@ -76,14 +78,16 @@ impl AndroidMcpAuthWatchOwner {
         let manager_for_worker = Arc::clone(&manager);
         let events_for_worker = Arc::clone(&events);
         let stop_for_worker = Arc::clone(&stop);
+        let backend_for_worker = Arc::clone(&backend);
+        let policy_for_worker = Arc::clone(&policy);
         let worker = thread::Builder::new()
             .name("fabushi-mcp-auth-watch-owner".into())
             .spawn(move || {
                 while !stop_for_worker.load(Ordering::Acquire) {
                     advance_all(
                         &manager_for_worker,
-                        backend.as_ref(),
-                        policy.as_ref(),
+                        backend_for_worker.as_ref(),
+                        policy_for_worker.as_ref(),
                         &events_for_worker,
                         system_now_ms(),
                     );
@@ -100,12 +104,40 @@ impl AndroidMcpAuthWatchOwner {
             manager,
             events,
             stop,
+            backend,
+            policy,
             worker: Some(worker),
         })
     }
 
     pub fn manager(&self) -> Arc<Mutex<AndroidMcpAuthWatchManager>> {
         Arc::clone(&self.manager)
+    }
+
+    pub fn authenticate(
+        &self,
+        now_ms: u64,
+        server_id: &str,
+        account_key: &str,
+        oauth_redirect_uri: &str,
+        requesting_agent_id: Option<&str>,
+        force_reauth: bool,
+    ) -> Result<McpAuthenticateResult, String> {
+        let mut manager = self
+            .manager
+            .lock()
+            .map_err(|_| "MCP auth watch manager lock poisoned".to_string())?;
+        authenticate_and_register(
+            &mut manager,
+            self.backend.as_ref(),
+            self.policy.as_ref(),
+            now_ms,
+            server_id,
+            account_key,
+            oauth_redirect_uri,
+            requesting_agent_id,
+            force_reauth,
+        )
     }
 
     pub fn drain_events(&self) -> Result<Vec<McpAuthOwnerEvent>, String> {
