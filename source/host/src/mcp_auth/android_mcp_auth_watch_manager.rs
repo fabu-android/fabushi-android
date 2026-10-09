@@ -424,7 +424,10 @@ mod tests {
             manager
                 .poll_tick(AUTH_WATCH_TIMEOUT_MS, "17", "account-a")
                 .unwrap(),
-            McpAuthPollTick::Expired
+            McpAuthPollTick::Expired(completion)
+                if completion.server_id == "17"
+                    && completion.account_key == "account-a"
+                    && completion.outcome == "timeout"
         ));
         assert!(manager.is_empty());
 

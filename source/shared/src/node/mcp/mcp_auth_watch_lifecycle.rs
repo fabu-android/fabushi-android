@@ -99,7 +99,7 @@ pub struct McpAuthWatchCompletion {
 pub enum McpAuthPollTick {
     Idle,
     Suppressed,
-    Expired,
+    Expired(McpAuthWatchCompletion),
     Request(McpAuthPollRequest),
 }
 
@@ -343,8 +343,8 @@ impl McpAuthWatchLifecycle {
             return McpAuthPollTick::Idle;
         };
         if now_ms >= watch.expires_at_ms {
-            self.watches.remove(&key);
-            return McpAuthPollTick::Expired;
+            let watch = self.watches.remove(&key).expect("watch exists");
+            return McpAuthPollTick::Expired(completion_from_watch(watch, "timeout"));
         }
         if watch.is_polling || now_ms < watch.next_poll_at_ms {
             return McpAuthPollTick::Idle;
@@ -680,10 +680,13 @@ mod tests {
                 false,
             )
             .unwrap();
-        assert_eq!(
-            lifecycle.poll_tick(AUTH_WATCH_TIMEOUT_MS, "18", "default"),
-            McpAuthPollTick::Expired
-        );
+        let expired = lifecycle.poll_tick(AUTH_WATCH_TIMEOUT_MS, "18", "default");
+        let McpAuthPollTick::Expired(completion) = expired else {
+            panic!("expected timeout completion, got {expired:?}");
+        };
+        assert_eq!(completion.server_id, "18");
+        assert_eq!(completion.account_key, "default");
+        assert_eq!(completion.outcome, "timeout");
         assert!(lifecycle.is_empty());
 
         lifecycle

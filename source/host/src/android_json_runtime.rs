@@ -17,6 +17,7 @@ use crate::runner::{
 use fabushi_constants::composer::text_size_allowed;
 use fabushi_android_shared::node::mcp::mcp_auth_watch_lifecycle::{
     McpAuthPollOutcome, McpAuthPollRequest, McpAuthPollSettlement, McpAuthPollTick,
+    McpAuthWatchCompletion,
 };
 use fabushi_android_shared::webauthn_gateway::{
     WebAuthnCeremony, WebAuthnRequestFrame, WebAuthnResponseFrame, WebAuthnStage,
@@ -1080,7 +1081,18 @@ impl AndroidJsonHost {
         Ok(match tick {
             McpAuthPollTick::Idle => json!({"status":"idle"}),
             McpAuthPollTick::Suppressed => json!({"status":"suppressed"}),
-            McpAuthPollTick::Expired => json!({"status":"expired"}),
+            McpAuthPollTick::Expired(completion) => {
+                self.emit_mcp_auth_watch_completion(&completion, Some("watch-timeout"));
+                json!({
+                    "status":"expired",
+                    "generation":completion.generation,
+                    "serverId":completion.server_id,
+                    "serverName":completion.server_name,
+                    "accountKey":completion.account_key,
+                    "requestingAgentId":completion.requesting_agent_id,
+                    "outcome":completion.outcome,
+                })
+            }
             McpAuthPollTick::Request(request) => json!({
                 "status":"poll",
                 "generation":request.generation,
@@ -1126,19 +1138,31 @@ impl AndroidJsonHost {
         match settlement {
             McpAuthPollSettlement::Completed(completion)
             | McpAuthPollSettlement::Cancelled(completion) => {
-                self.events.push_back(json!({
-                    "type":"mcp.auth.watch.settled",
-                    "serverId":completion.server_id,
-                    "serverName":completion.server_name,
-                    "accountKey":completion.account_key,
-                    "requestingAgentId":completion.requesting_agent_id,
-                    "generation":completion.generation,
-                    "outcome":completion.outcome,
-                }));
+                self.emit_mcp_auth_watch_completion(&completion, None);
             }
             McpAuthPollSettlement::Pending | McpAuthPollSettlement::Stale => {}
         }
         Ok(result)
+    }
+
+    fn emit_mcp_auth_watch_completion(
+        &mut self,
+        completion: &McpAuthWatchCompletion,
+        reason: Option<&str>,
+    ) {
+        let mut event = json!({
+            "type":"mcp.auth.watch.settled",
+            "serverId":completion.server_id,
+            "serverName":completion.server_name,
+            "accountKey":completion.account_key,
+            "requestingAgentId":completion.requesting_agent_id,
+            "generation":completion.generation,
+            "outcome":completion.outcome,
+        });
+        if let Some(reason) = reason {
+            event["reason"] = json!(reason);
+        }
+        self.events.push_back(event);
     }
 
     fn mcp_auth_watch_cancel(&mut self, params: &Value) -> Result<Value, String> {
@@ -1146,14 +1170,18 @@ impl AndroidJsonHost {
         let account_key = required_string(params, "accountKey")?;
         let completion = self.mcp_auth_watches.cancel_watch(server_id, account_key)?;
         Ok(match completion {
-            Some(completion) => json!({
-                "status":"cancelled",
-                "generation":completion.generation,
-                "serverId":completion.server_id,
-                "serverName":completion.server_name,
-                "accountKey":completion.account_key,
-                "requestingAgentId":completion.requesting_agent_id,
-            }),
+            Some(completion) => {
+                self.emit_mcp_auth_watch_completion(&completion, Some("user-cancelled"));
+                json!({
+                    "status":"cancelled",
+                    "generation":completion.generation,
+                    "serverId":completion.server_id,
+                    "serverName":completion.server_name,
+                    "accountKey":completion.account_key,
+                    "requestingAgentId":completion.requesting_agent_id,
+                    "outcome":completion.outcome,
+                })
+            }
             None => json!({"status":"stale"}),
         })
     }
