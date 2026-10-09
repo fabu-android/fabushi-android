@@ -3365,6 +3365,51 @@ mod tests {
     }
 
     #[test]
+    fn hidden_mcp_auth_resume_does_not_create_synthetic_user_transcript_entry() {
+        let app_data = tempfile::tempdir().unwrap();
+        let mut host = AndroidJsonHost::new(app_data.path(), AndroidHostMode::Test);
+        let completion = McpAuthWatchCompletion {
+            generation: 7,
+            server_id: "17".into(),
+            server_name: "Calendar".into(),
+            account_key: "work".into(),
+            requesting_agent_id: Some("agent-a".into()),
+            outcome: "completed",
+        };
+        host.queue_mcp_auth_resume_turn(&completion).unwrap();
+
+        let deadline = std::time::Instant::now() + Duration::from_secs(2);
+        loop {
+            let event = host.feature_receive().unwrap();
+            if event.get("type").and_then(Value::as_str) == Some("operation.completed") {
+                break;
+            }
+            if std::time::Instant::now() >= deadline {
+                panic!("hidden MCP auth resume did not complete");
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+
+        let snapshot = host
+            .dispatch("feature.transcript.snapshot", &json!({}))
+            .unwrap();
+        let entries = snapshot.as_array().unwrap();
+        assert!(
+            entries.iter().all(|entry| entry["role"] != "user"),
+            "MCP auth resume must not append a fake user turn"
+        );
+        assert!(
+            entries.iter().any(|entry| {
+                entry["role"] == "assistant"
+                    && entry["content"]
+                        .as_str()
+                        .is_some_and(|text| text.contains("自动化测试状态正常"))
+            }),
+            "requesting agent should still produce the assistant continuation"
+        );
+    }
+
+    #[test]
     fn mcp_oauth_completion_with_explicit_identity_fences_duplicate_stale_callback() {
         let app_data = tempfile::tempdir().unwrap();
         let mut host = AndroidJsonHost::new(app_data.path(), AndroidHostMode::Test);
