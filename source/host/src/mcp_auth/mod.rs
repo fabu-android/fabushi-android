@@ -1,10 +1,15 @@
 pub mod android_mcp_auth_watch_manager;
+pub mod android_mcp_auth_watch_owner;
 pub mod dashboard_mcp_auth_backend;
 pub mod host_mcp_auth_completion;
 pub mod legacy_credential_cleanup;
 pub mod mcp_auth_wait_registry;
 
 pub use android_mcp_auth_watch_manager::AndroidMcpAuthWatchManager;
+pub use android_mcp_auth_watch_owner::{
+    authenticate_and_register, AndroidMcpAuthWatchOwner, McpAuthAdminPolicyPort,
+    McpAuthOwnerEvent, McpAuthenticateResult,
+};
 pub use dashboard_mcp_auth_backend::{
     CursorDashboardMcpAuthBackend, McpAuthBackendPort, ProcessSandMcpCredentialProvider,
     SandMcpBackendCredentials, SandMcpCredentialProvider,
