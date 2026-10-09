@@ -5,7 +5,7 @@
     "desktop_commit": "3bc92400826cc4ca7ac665b467708e22261edc61",
     "android_repository": "fabu-android/fabushi-android",
     "android_pr": 3,
-    "android_head_at_update": "312b7404e0bfedc21d1e202f0cc9ed78f29c1287",
+    "android_head_at_update": "4c3b8ef761f3c2194fa641d6c94b519f647f54e5",
     "status": "incomplete",
     "note": "Persistent human-reviewed responsibility ledger for Desktop main. Rows are responsibility-level source facts; mapped/implemented never imply verified. Verification requires same-exact-HEAD source implementation, production wiring, CI/package and device evidence."
   },
@@ -1981,6 +1981,73 @@
       "artifact": null,
       "verification_status": "not-verified",
       "notes": "This responsibility only closes version parsing/comparison semantics, not the entire updater."
+    },
+    {
+      "responsibility_id": "CI-DESKTOP-CHAT-PARITY-REPLACEMENT-001",
+      "domain": "release-ci",
+      "desktop_sources": [
+        {
+          "path": ".github/workflows/desktop-chat-parity-ci.yml",
+          "blob_sha": "1c366cc0a12183eb2c3845edeec5eeb5947ee1d5",
+          "symbols": [
+            "renderer",
+            "focused-electron-e2e"
+          ]
+        }
+      ],
+      "source_commit": "3bc92400826cc4ca7ac665b467708e22261edc61",
+      "responsibility": "Bind CI to the exact source HEAD; build and test the shipping product architecture; enforce platform boundaries; run focused packaged interaction regressions; and retain failure evidence tied to the tested SHA.",
+      "source_owner": "Desktop GitHub Actions chat parity workflow",
+      "direct_callers": [
+        "GitHub pull_request/workflow_dispatch",
+        "Desktop renderer and focused Electron E2E jobs"
+      ],
+      "downstream_dependencies": [
+        "Desktop build/runtime",
+        "architecture contracts",
+        "Mahayana Host",
+        "packaged interaction evidence"
+      ],
+      "state_owner": "GitHub Actions run bound to source SHA",
+      "persistent_state": [
+        "workflow run/job conclusions",
+        "artifact evidence named by exact SHA"
+      ],
+      "protocol_wire_contract": [
+        "exact tested HEAD",
+        "read-only repository permissions",
+        "cancellable PR concurrency",
+        "artifact provenance bound to source SHA"
+      ],
+      "visible_effect": "Changes cannot be accepted as product parity merely because source compiles; the shipping platform build and focused interaction path must be exercised with evidence.",
+      "failure_behavior": [
+        "build/typecheck/contract failures fail the run",
+        "focused product interaction failures retain evidence",
+        "old-HEAD green runs do not prove a newer HEAD"
+      ],
+      "cancellation_behavior": "Desktop cancels obsolete PR concurrency; Android uses exact PR head checkout and each run remains SHA-scoped.",
+      "retry_semantics": "A rerun proves only the exact SHA and run attempt that produced it.",
+      "idempotency_semantics": "Artifacts and evidence are named by source SHA so repeated runs cannot silently prove a different revision.",
+      "process_death_recovery": "Not an app runtime responsibility; failed/cancelled CI is restarted as a new exact-SHA workflow run.",
+      "account_fencing": "Protected-account emulator acceptance is isolated to the CI-only acceptance variant; public githubRelease must strip CI session import.",
+      "security_boundary": "Android replacement keeps contents:read, exact-SHA checkout, release bootstrap stripping, native ABI hashing and packaged artifact identity checks.",
+      "android_disposition": "not-applicable-with-replacement",
+      "android_target": [
+        ".github/workflows/android-parity-full-ci.yml",
+        ".github/workflows/grok-android-architecture.yml"
+      ],
+      "android_owner": "Android GitHub Actions parity, architecture, package and emulator gates",
+      "platform_delta": "Electron renderer/typecheck/macOS Playwright are Desktop-only mechanisms. Android replaces them with Rust workspace/ABI checks, Gradle Kotlin/Compose/unit/lint gates, release APK/AAB construction, CI-bootstrap stripping, exact artifact hashes and Android emulator acceptance.",
+      "implementation_status": "implemented",
+      "production_wiring": "Android Parity Full CI checks out SOURCE_SHA, runs frozen inventory and architecture contracts, Rust workspace tests, arm64-v8a/x86_64 JNI release builds, Gradle compile/unit/lint/APK/AAB packaging, public-release CI-bootstrap stripping, exact-head artifact hashing and an emulator acceptance job. Grok Android Architecture supplies independent ledger/Rust/regression gates.",
+      "unit_test": "4c3b8ef761f3c2194fa641d6c94b519f647f54e5 Android Parity Full CI architecture-and-contracts job 114032242808 Rust contract/runtime tests success.",
+      "contract_test": "4c3b8ef761f3c2194fa641d6c94b519f647f54e5 Grok Android Architecture run 37993148547 success; Full CI strict closure remains correctly red because unrelated authority is incomplete.",
+      "integration_test": "Android build/unit/lint/package job exists as the replacement for Desktop renderer/focused build integration; same-final-HEAD success is still required.",
+      "packaged_test": "Required on the final exact-head android-build-unit-lint artifact; this row does not borrow older package evidence.",
+      "device_test": "Protected-account emulator acceptance remains blocked until FABUSHI_CI_TEST_USERNAME/PASSWORD are configured.",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Reviewed as not-applicable-with-replacement rather than direct-port: Electron/macOS mechanics do not exist on Android, while their product-quality responsibility is retained by Android-native CI. Kept not-verified until same-final-HEAD package and device evidence closes."
     }
   ],
   "traceability": {
