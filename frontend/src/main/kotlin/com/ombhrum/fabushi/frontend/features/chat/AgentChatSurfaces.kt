@@ -108,6 +108,15 @@ internal fun MobileAgentChat(
             }
             Row(Modifier.fillMaxWidth().padding(8.dp), verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedTextField(value = state.chatDraft, onValueChange = onDraftChange, modifier = Modifier.weight(1f), enabled = !state.chatBusy, placeholder = { Text("消息大乘助手") }, maxLines = 5)
+                if (!state.chatBusy) {
+                    OfflineAsrDraftControl(
+                        currentDraft = state.chatDraft,
+                        enabled = true,
+                        onDraftChange = onDraftChange,
+                        sessionKey = "mahayana-assistant",
+                        testTag = "mahayana-offline-asr",
+                    )
+                }
                 if (state.chatBusy) {
                     Button(onClick = onStop, modifier = Modifier.size(52.dp).testTag(TestTags.MahayanaStop), contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp), colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE44F61))) { Text("■", color = Color.White) }
                 } else {

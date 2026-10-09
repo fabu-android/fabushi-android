@@ -4,8 +4,10 @@ import android.content.Context
 import android.media.MediaRecorder
 import android.os.Build
 import java.io.File
+import java.util.UUID
 
 internal class NativeVoiceRecorder(private val context: Context) {
+    private val microphoneOwnerId = "voice-recorder:${UUID.randomUUID()}"
     data class Recording(val file: File, val bytes: ByteArray)
 
     private var recorder: MediaRecorder? = null
@@ -15,6 +17,7 @@ internal class NativeVoiceRecorder(private val context: Context) {
 
     fun start(): Result<Unit> = runCatching {
         check(!isRecording) { "录音已经开始" }
+        check(MicrophoneLease.acquire(microphoneOwnerId)) { "麦克风正在被其他 Fabushi 录音功能使用" }
         val directory = File(context.cacheDir, "fabushi-voice").apply { mkdirs() }
         val file = File(directory, "voice-${System.nanoTime()}.m4a")
         @Suppress("DEPRECATION")
@@ -25,8 +28,14 @@ internal class NativeVoiceRecorder(private val context: Context) {
         mediaRecorder.setAudioEncodingBitRate(64_000)
         mediaRecorder.setAudioSamplingRate(44_100)
         mediaRecorder.setOutputFile(file.absolutePath)
-        mediaRecorder.prepare()
-        mediaRecorder.start()
+        try {
+            mediaRecorder.prepare()
+            mediaRecorder.start()
+        } catch (error: Throwable) {
+            runCatching { mediaRecorder.release() }
+            MicrophoneLease.release(microphoneOwnerId)
+            throw error
+        }
         recorder = mediaRecorder
         outputFile = file
         isRecording = true
@@ -36,7 +45,10 @@ internal class NativeVoiceRecorder(private val context: Context) {
         check(isRecording) { "录音尚未开始" }
         val active = checkNotNull(recorder)
         val file = checkNotNull(outputFile)
-        try { active.stop() } finally { active.release() }
+        try { active.stop() } finally {
+            active.release()
+            MicrophoneLease.release(microphoneOwnerId)
+        }
         recorder = null
         outputFile = null
         isRecording = false
@@ -49,6 +61,7 @@ internal class NativeVoiceRecorder(private val context: Context) {
         runCatching { recorder?.stop() }
         runCatching { recorder?.release() }
         recorder = null
+        MicrophoneLease.release(microphoneOwnerId)
         isRecording = false
         outputFile?.delete()
         outputFile = null

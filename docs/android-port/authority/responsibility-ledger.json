@@ -565,6 +565,13 @@
           "symbols": [
             "attachment contracts"
           ]
+        },
+        {
+          "path": "source/packaging/offline-asr-engine.json",
+          "blob_sha": "aca72ae2bd3753b7c95bc9f9f0dc8e22b91e544a",
+          "symbols": [
+            "offline ASR engine packaging contract"
+          ]
         }
       ],
       "source_commit": "3bc92400826cc4ca7ac665b467708e22261edc61",
@@ -595,22 +602,27 @@
       "security_boundary": "Coordinator/Host/Capability Broker owns authorization; Presentation cannot grant itself capability.",
       "android_disposition": "android-adapted",
       "android_target": [
-        "source/shared/src/media/attachments.rs",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/features/bots/GrokBotComponents.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/features/chat/AgentChatSurfaces.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/features/chat/OfflineAsrDraftControl.kt",
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/media/MicrophoneLease.kt",
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/media/NativeOfflineSpeechTranscriber.kt",
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/media/NativeVoicePlayer.kt",
         "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/media/NativeVoiceRecorder.kt",
-        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/media/NativeVoicePlayer.kt"
+        "source/shared/src/media/attachments.rs"
       ],
-      "android_owner": "source/shared/src/media/attachments.rs",
+      "android_owner": "Rust attachment contracts + Android MicrophoneLease/NativeVoiceRecorder/NativeOfflineSpeechTranscriber platform adapters",
       "platform_delta": "Android uses native Compose/platform adapters + typed JNI while preserving canonical Rust owners where platform-independent.",
-      "implementation_status": "mapped",
-      "production_wiring": "mapped target(s); production parity not yet established",
-      "unit_test": "required",
-      "contract_test": "required on same exact HEAD",
-      "integration_test": "required on same exact HEAD",
-      "packaged_test": "required on final minified release artifact",
-      "device_test": "required on emulator/physical device as applicable",
+      "implementation_status": "implemented",
+      "production_wiring": "Human conversation keeps native MediaRecorder voice-message capture; recorder and on-device ASR now share one process-wide MicrophoneLease. Agent and Bot composers expose on-device-only SpeechRecognizer input, require Android on-device recognition availability, never instantiate ordinary/cloud SpeechRecognizer, fence late results by generation/cancel, and write successful transcription only into the editable draft without auto-send.",
+      "unit_test": "Same exact-head Android compile/unit/lint gate must compile Android SpeechRecognizer API use and shared microphone owner; dedicated JVM unit test is still required for the pure microphone lease owner.",
+      "contract_test": "Source contract requires createOnDeviceSpeechRecognizer + isOnDeviceRecognitionAvailable, no createSpeechRecognizer fallback, EXTRA_PARTIAL_RESULTS=false and result-to-draft only.",
+      "integration_test": "Still required: real emulator/device offline-network-disabled transcription, recorder-vs-ASR mutual exclusion, permission denial, unavailable language/model, cancel/late-result fencing.",
+      "packaged_test": "Required in exact-head packaged journey with network disabled and final APK/AAB.",
+      "device_test": "Required on physical Android device because emulator speech service availability is device-image dependent.",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Offline ASR engine source anchor is separately tracked by source inventory; Android offline transcription implementation/device proof remains open."
+      "notes": "Production implementation added but remains not-verified until same exact-head Android build plus offline device evidence. Human voice-message semantics remain unchanged; ASR is only an editable-draft input for Agent/Bot."
     },
     {
       "responsibility_id": "REMOTE-COMPUTER-001",

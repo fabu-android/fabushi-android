@@ -225,6 +225,15 @@ internal fun GrokBotChatAndroid(
                 modifier = Modifier.weight(1f).testTag("mobile-bot-draft"),
                 shape = RoundedCornerShape(19.dp),
             )
+            if (!state.busy) {
+                OfflineAsrDraftControl(
+                    currentDraft = state.draft,
+                    enabled = true,
+                    onDraftChange = onDraftChange,
+                    sessionKey = bot.id,
+                    testTag = "mobile-bot-offline-asr",
+                )
+            }
             Button(
                 onClick = if (state.busy) onStop else onSend,
                 enabled = state.busy || state.draft.trim().isNotEmpty(),
