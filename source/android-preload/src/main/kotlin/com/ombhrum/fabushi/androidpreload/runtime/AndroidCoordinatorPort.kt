@@ -33,6 +33,15 @@ interface AndroidCoordinatorPort {
     fun authBrowserCancel(params: JSONObject): JSONObject
     fun authBrowserPoll(params: JSONObject): JSONObject
     fun authLogout(): JSONObject
+    fun automationUpsert(params: JSONObject): JSONObject
+    fun automationList(): org.json.JSONArray
+    fun automationStart(params: JSONObject): JSONObject
+    fun automationAdvanceStep(params: JSONObject): JSONObject
+    fun automationAwaitApproval(params: JSONObject): JSONObject
+    fun automationResolveApproval(params: JSONObject): JSONObject
+    fun automationCancel(params: JSONObject): JSONObject
+    fun automationSettle(params: JSONObject): JSONObject
+    fun automationSnapshot(params: JSONObject): JSONObject
 
     fun featureExecute(params: JSONObject): JSONObject
     fun featureInterrupt(params: JSONObject): JSONObject

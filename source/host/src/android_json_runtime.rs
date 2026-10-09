@@ -1,5 +1,6 @@
 use crate::account_service::{AccountSessionMutation, AndroidAccountService};
 use crate::capability_broker::{CapabilityBroker, CapabilityDecision, PendingCapabilityCall};
+use crate::automation_runtime::{run_json as automation_run_json, AutomationRuntime, AutomationSpec};
 use crate::android_agent_roster::AndroidAgentRoster;
 use crate::host_secret_store::get_or_create_host_machine_id;
 use crate::messaging_service::AndroidMessagingService;
@@ -162,6 +163,7 @@ pub struct AndroidJsonHost {
     runtime_generations: BTreeMap<String, u64>,
     runtime_call_cancellations: BTreeMap<String, (String, BTreeSet<String>, Arc<AtomicBool>)>,
     capability_broker: CapabilityBroker,
+    automation_runtime: AutomationRuntime,
     webauthn: WebAuthnProxyExtension,
     webauthn_provider_queues: BTreeMap<String, VecDeque<WebAuthnRequestFrame>>,
 }
@@ -246,6 +248,8 @@ impl AndroidJsonHost {
             runtime_call_cancellations: BTreeMap::new(),
             capability_broker: CapabilityBroker::open(app_data_dir.join("capability-broker.json"), now_ms())
                 .unwrap_or_else(|error| panic!("failed to open durable Android Capability Broker: {error}")),
+            automation_runtime: AutomationRuntime::open(app_data_dir.join("automation-runtime.json"), now_ms())
+                .unwrap_or_else(|error| panic!("failed to open durable Android automation runtime: {error}")),
             webauthn: WebAuthnProxyExtension::new(WebAuthnProxyExtensionConfig::default()),
             webauthn_provider_queues: BTreeMap::new(),
         }
@@ -277,6 +281,15 @@ impl AndroidJsonHost {
             "feature.auth.oauthCancel" => self.oauth_cancel(params),
             "feature.mcp.oauthComplete" => self.mcp_oauth_complete(params),
             "feature.auth.logout" => self.account_logout(),
+            "feature.automation.upsert" => self.automation_upsert(params),
+            "feature.automation.list" => self.automation_list(),
+            "feature.automation.start" => self.automation_start(params),
+            "feature.automation.advanceStep" => self.automation_advance_step(params),
+            "feature.automation.awaitApproval" => self.automation_await_approval(params),
+            "feature.automation.resolveApproval" => self.automation_resolve_approval(params),
+            "feature.automation.cancel" => self.automation_cancel(params),
+            "feature.automation.settle" => self.automation_settle(params),
+            "feature.automation.snapshot" => self.automation_snapshot(params),
             "listAgents" => Ok(Value::Array(
                 self.agents.list().into_iter().map(|agent| agent.as_json()).collect()
             )),
@@ -593,6 +606,114 @@ impl AndroidJsonHost {
         }
         let (status, mutation) = self.account.public_status()?;
         Ok(with_account_session_mutation(status, mutation))
+    }
+
+    fn automation_upsert(&mut self, params: &Value) -> Result<Value, String> {
+        let account_fence = self.current_turn_account_fence()?;
+        let spec = AutomationSpec {
+            id: required_string(params, "id")?.to_string(),
+            name: required_string(params, "name")?.to_string(),
+            prompt: required_string(params, "prompt")?.to_string(),
+            schedule: required_string(params, "schedule")?.to_string(),
+            enabled: params.get("enabled").and_then(Value::as_bool).unwrap_or(true),
+            account_fence,
+            created_at_ms: params.get("createdAtMs").and_then(Value::as_u64).unwrap_or_else(now_ms),
+            last_run_at_ms: params.get("lastRunAtMs").and_then(Value::as_u64),
+            next_run_at_ms: params.get("nextRunAtMs").and_then(Value::as_u64),
+        };
+        let id = spec.id.clone();
+        self.automation_runtime.upsert_spec(spec)?;
+        Ok(json!({"id":id,"stored":true}))
+    }
+
+    fn automation_list(&mut self) -> Result<Value, String> {
+        let account_fence = self.current_turn_account_fence()?;
+        Ok(Value::Array(self.automation_runtime.list_for_account(&account_fence)))
+    }
+
+    fn automation_start(&mut self, params: &Value) -> Result<Value, String> {
+        let account_fence = self.current_turn_account_fence()?;
+        let run = self.automation_runtime.begin_run(
+            required_string(params, "automationId")?,
+            required_string(params, "requestId")?,
+            required_string(params, "runId")?,
+            &account_fence,
+            now_ms(),
+        )?;
+        Ok(automation_run_json(&run))
+    }
+
+    fn automation_advance_step(&mut self, params: &Value) -> Result<Value, String> {
+        let account_fence = self.current_turn_account_fence()?;
+        let run = self.automation_runtime.advance_step(
+            required_string(params, "runId")?,
+            &account_fence,
+            required_u64(params, "generation")?,
+            now_ms(),
+        )?;
+        Ok(automation_run_json(&run))
+    }
+
+    fn automation_await_approval(&mut self, params: &Value) -> Result<Value, String> {
+        let account_fence = self.current_turn_account_fence()?;
+        let run = self.automation_runtime.await_approval(
+            required_string(params, "runId")?,
+            &account_fence,
+            required_u64(params, "generation")?,
+            required_string(params, "approvalId")?,
+            now_ms(),
+        )?;
+        Ok(automation_run_json(&run))
+    }
+
+    fn automation_resolve_approval(&mut self, params: &Value) -> Result<Value, String> {
+        let account_fence = self.current_turn_account_fence()?;
+        let allowed = params.get("allowed").and_then(Value::as_bool).ok_or("allowed is required")?;
+        let run = self.automation_runtime.resolve_approval(
+            required_string(params, "runId")?,
+            &account_fence,
+            required_u64(params, "generation")?,
+            required_string(params, "approvalId")?,
+            allowed,
+            now_ms(),
+        )?;
+        Ok(automation_run_json(&run))
+    }
+
+    fn automation_cancel(&mut self, params: &Value) -> Result<Value, String> {
+        let account_fence = self.current_turn_account_fence()?;
+        let run = self.automation_runtime.cancel(
+            required_string(params, "runId")?,
+            &account_fence,
+            required_u64(params, "generation")?,
+            params.get("reason").and_then(Value::as_str).unwrap_or("cancelled"),
+            now_ms(),
+        )?;
+        Ok(automation_run_json(&run))
+    }
+
+    fn automation_settle(&mut self, params: &Value) -> Result<Value, String> {
+        let account_fence = self.current_turn_account_fence()?;
+        let succeeded = params.get("succeeded").and_then(Value::as_bool).ok_or("succeeded is required")?;
+        let run = self.automation_runtime.settle(
+            required_string(params, "runId")?,
+            &account_fence,
+            required_u64(params, "generation")?,
+            succeeded,
+            params.get("reason").and_then(Value::as_str).map(str::to_string),
+            now_ms(),
+        )?;
+        Ok(automation_run_json(&run))
+    }
+
+    fn automation_snapshot(&mut self, params: &Value) -> Result<Value, String> {
+        let run_id = required_string(params, "runId")?;
+        let account_fence = self.current_turn_account_fence()?;
+        let value = self.automation_runtime.snapshot(run_id).ok_or("automation run not found")?;
+        if value.get("account_fence").and_then(Value::as_str) != Some(account_fence.as_str()) {
+            return Err("automation run account fence mismatch".into());
+        }
+        Ok(value)
     }
 
     fn account_logout(&mut self) -> Result<Value, String> {
@@ -2019,6 +2140,10 @@ impl Drop for AndroidJsonHost {
         }
         self.turn_cancellations.clear();
     }
+}
+
+fn required_u64(value: &Value, key: &str) -> Result<u64, String> {
+    value.get(key).and_then(Value::as_u64).ok_or_else(|| format!("{key} is required"))
 }
 
 fn now_ms() -> u64 {

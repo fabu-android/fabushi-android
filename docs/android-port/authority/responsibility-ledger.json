@@ -805,6 +805,27 @@
           "symbols": [
             "workflow model/state machine"
           ]
+        },
+        {
+          "path": "source/shared/automations.ts",
+          "blob_sha": "1ea04ea14ec5cc2371c6958cfc528bdf965546ed",
+          "symbols": [
+            "AutomationTrigger",
+            "CronTrigger",
+            "EventTrigger",
+            "triggerList",
+            "triggerSchedule"
+          ]
+        },
+        {
+          "path": "source/shared/automation-schedule.ts",
+          "blob_sha": "2864c2b928def09308872cd2e52e77a2b49e009d",
+          "symbols": [
+            "computeNextRunAt",
+            "parseEveryIntervalMs",
+            "compileCronMatcher",
+            "describeSchedule"
+          ]
         }
       ],
       "source_commit": "3bc92400826cc4ca7ac665b467708e22261edc61",
@@ -835,13 +856,16 @@
       "security_boundary": "Coordinator/Host/Capability Broker owns authorization; Presentation cannot grant itself capability.",
       "android_disposition": "direct-port",
       "android_target": [
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/coordinator/AndroidCoordinatorRuntime.kt",
+        "source/android-preload/src/main/kotlin/com/ombhrum/fabushi/androidpreload/runtime/AndroidCoordinatorPort.kt",
         "source/host/src/android_json_runtime.rs",
+        "source/host/src/automation_runtime.rs",
         "source/mahayana-agent-coordinator/src/lib.rs"
       ],
-      "android_owner": "source/host/src/android_json_runtime.rs",
+      "android_owner": "Rust AutomationRuntime under Android Host; typed Coordinator bridge only exposes commands/projections",
       "platform_delta": "Android uses native Compose/platform adapters + typed JNI while preserving canonical Rust owners where platform-independent.",
       "implementation_status": "mapped",
-      "production_wiring": "mapped target(s); production parity not yet established",
+      "production_wiring": "Partial: durable workflow spec/run owner and typed Host/Coordinator API are implemented. Stable request/run/generation/account/step-mutation identity, approval persistence, cancellation and process-death outcome-unknown fencing are wired. Cron/event trigger listener execution, WorkManager/OS scheduling adapter, actual workflow step executor and multi-Agent orchestration remain open.",
       "unit_test": "required",
       "contract_test": "required on same exact HEAD",
       "integration_test": "required on same exact HEAD",
@@ -849,7 +873,7 @@
       "device_test": "required on emulator/physical device as applicable",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Current Android responsibility needs deeper source-to-Rust state-machine decomposition."
+      "notes": "AUTOMATION-DURABLE-RUN-001 closes the platform-independent durable run/approval/idempotency slice. It does not claim full automation parity: trigger listener adapters, schedule computation parity, workflow file import/export, actual tool/Agent step execution and packaged background execution remain open."
     },
     {
       "responsibility_id": "SETTINGS-SCOPE-001",
@@ -1535,6 +1559,97 @@
       "artifact": null,
       "verification_status": "not-verified",
       "notes": "Implemented for shipping Global Dharma canonical-server path; does not by itself close Play Billing token/restore/refund/revoke lifecycle."
+    },
+    {
+      "responsibility_id": "AUTOMATION-DURABLE-RUN-001",
+      "domain": "automation",
+      "desktop_sources": [
+        {
+          "path": "source/shared/workflow-model.ts",
+          "blob_sha": "18577adff39e241df9837f0b73eda47e25f9214f",
+          "symbols": [
+            "WorkflowRecord",
+            "AutomationProjection",
+            "WorkflowTrigger"
+          ]
+        },
+        {
+          "path": "source/shared/automations.ts",
+          "blob_sha": "1ea04ea14ec5cc2371c6958cfc528bdf965546ed",
+          "symbols": [
+            "AutomationTrigger",
+            "CronTrigger",
+            "EventTrigger"
+          ]
+        },
+        {
+          "path": "source/shared/automation-schedule.ts",
+          "blob_sha": "2864c2b928def09308872cd2e52e77a2b49e009d",
+          "symbols": [
+            "computeNextRunAt",
+            "automationAnchor"
+          ]
+        }
+      ],
+      "source_commit": "3bc92400826cc4ca7ac665b467708e22261edc61",
+      "responsibility": "Persist account-scoped automation specs and durable run identity/state so duplicate triggers, approvals, cancellation, steps and process death cannot blindly replay side effects.",
+      "source_owner": "Desktop workflow/automation model + runtime composition",
+      "direct_callers": [
+        "Android typed Coordinator automation surface"
+      ],
+      "downstream_dependencies": [
+        "Host Agent/tool execution",
+        "Capability Broker",
+        "schedule/event adapters"
+      ],
+      "state_owner": "Rust AutomationRuntime under Android Host",
+      "persistent_state": [
+        "automation spec",
+        "requestId",
+        "runId",
+        "accountFence",
+        "generation",
+        "stepIndex",
+        "stepMutationId",
+        "approvalId",
+        "run state",
+        "last/next run metadata"
+      ],
+      "protocol_wire_contract": [
+        "feature.automation.upsert/list/start/advanceStep/awaitApproval/resolveApproval/cancel/settle/snapshot"
+      ],
+      "visible_effect": "A workflow run resumes/reconciles its original durable identity instead of silently creating duplicate tool/Agent side effects after restart.",
+      "failure_behavior": [
+        "duplicate active request rejected",
+        "outcome-unknown blocks replay",
+        "account/generation/approval mismatch fail closed",
+        "disabled automation cannot start"
+      ],
+      "cancellation_behavior": "Cancellation durably moves running/awaiting-approval to cancelled and later callbacks cannot settle it as success.",
+      "retry_semantics": "Known terminal duplicate request converges to prior run; in-flight process death becomes outcome-unknown and requires reconciliation.",
+      "idempotency_semantics": "requestId is run mutation identity; each step gets deterministic requestId:step:N identity.",
+      "process_death_recovery": "Cold open converts running work to outcome-unknown; awaiting approval remains durable and can only resume with exact approval identity.",
+      "account_fencing": "Automation spec and every run are bound to exact account fence; cross-account reads/callbacks fail closed.",
+      "security_boundary": "Compose/Kotlin does not own workflow truth or retry truth; Host Rust owns durable state and later tool steps must still pass Capability Broker.",
+      "android_disposition": "direct-port",
+      "android_target": [
+        "source/host/src/automation_runtime.rs",
+        "source/host/src/android_json_runtime.rs",
+        "source/android-preload/src/main/kotlin/com/ombhrum/fabushi/androidpreload/runtime/AndroidCoordinatorPort.kt",
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/coordinator/AndroidCoordinatorRuntime.kt"
+      ],
+      "android_owner": "Rust AutomationRuntime under Android Host",
+      "platform_delta": "Android trigger execution will use OS/background adapters, while platform-independent run/idempotency/approval state remains Rust-owned.",
+      "implementation_status": "implemented",
+      "production_wiring": "AndroidJsonHost opens automation-runtime.json and exposes typed Coordinator operations for durable lifecycle; no UI-side canonical state.",
+      "unit_test": "Rust tests cover duplicate convergence, restart outcome-unknown, account/generation/approval fencing and deterministic step mutation identities; exact-head Actions required.",
+      "contract_test": "Typed AndroidCoordinatorPort only exposes fixed automation methods; same exact-head Android compile required.",
+      "integration_test": "Still required for actual Agent/tool step execution through Capability Broker and trigger adapter retry/reconnect.",
+      "packaged_test": "Required for background/package restart workflow journey.",
+      "device_test": "Required for WorkManager/OS kill/background restrictions once scheduling adapter is wired.",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Durable run state machine only; full AUTOMATION-WORKFLOW-001 remains open."
     }
   ],
   "traceability": {
