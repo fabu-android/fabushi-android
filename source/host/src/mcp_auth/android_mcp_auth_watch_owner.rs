@@ -600,6 +600,63 @@ mod tests {
     }
 
     #[test]
+    fn background_owner_advances_reopened_watch_without_external_poll_or_settle() {
+        let path = temp_store("background-restore");
+        let now = system_now_ms();
+        {
+            let mut manager = AndroidMcpAuthWatchManager::open(&path, now).unwrap();
+            manager
+                .begin_watch(
+                    now.saturating_sub(AUTH_WATCH_POLL_INTERVAL_MS),
+                    "17",
+                    "Calendar",
+                    "https://mcp.example.test",
+                    "default",
+                    Some("agent-a"),
+                    false,
+                )
+                .unwrap();
+        }
+
+        let manager = Arc::new(Mutex::new(
+            AndroidMcpAuthWatchManager::open(&path, now).unwrap(),
+        ));
+        let backend_impl = Arc::new(backend(true));
+        let backend: Arc<dyn McpAuthBackendPort> = backend_impl.clone();
+        let policy: Arc<dyn McpAuthAdminPolicyPort> =
+            Arc::new(FakePolicy { blocked: false });
+        let mut owner = AndroidMcpAuthWatchOwner::start(
+            Arc::clone(&manager),
+            backend,
+            policy,
+        )
+        .unwrap();
+
+        let deadline = Instant::now() + Duration::from_secs(2);
+        let completed = loop {
+            let events = owner.drain_events().unwrap();
+            if let Some(completion) = events.into_iter().find_map(|event| match event {
+                McpAuthOwnerEvent::Completed(completion) => Some(completion),
+                _ => None,
+            }) {
+                break Some(completion);
+            }
+            if Instant::now() >= deadline {
+                break None;
+            }
+            thread::sleep(Duration::from_millis(20));
+        };
+
+        owner.stop();
+        let completion = completed.expect("background owner should complete restored watch");
+        assert_eq!(completion.server_id, "17");
+        assert_eq!(completion.requesting_agent_id.as_deref(), Some("agent-a"));
+        assert!(manager.lock().unwrap().is_empty());
+        assert!(backend_impl.validations.load(Ordering::SeqCst) >= 1);
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
     fn cancel_and_admin_recheck_are_terminal_and_late_callbacks_stay_stale() {
         let path = temp_store("cancel");
         let mut manager = AndroidMcpAuthWatchManager::open(&path, 0).unwrap();
