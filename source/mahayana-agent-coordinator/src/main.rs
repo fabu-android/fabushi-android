@@ -354,15 +354,29 @@ impl<H: HostPort> MahayanaCoordinator<H> {
             );
         };
         let host_result = self.host.cancel(operation_id, reason);
-        self.pending.remove(&request_id);
         match host_result {
-            Ok(()) => CoordinatorReply::failed(
-                request_id,
-                CoordinatorFailure::new(
-                    CoordinatorFailureCode::Cancelled,
-                    "request cancelled",
-                ),
-            ),
+            Ok(()) => {
+                let removed = self.pending.remove(&request_id);
+                if let Err(error) = self.persist_state() {
+                    if let Some(pending) = removed {
+                        self.pending.insert(request_id.clone(), pending);
+                    }
+                    return CoordinatorReply::failed(
+                        request_id,
+                        CoordinatorFailure::new(
+                            CoordinatorFailureCode::Internal,
+                            format!("coordinator cancellation is not durable; outcome unknown: {}", error.message),
+                        ),
+                    );
+                }
+                CoordinatorReply::failed(
+                    request_id,
+                    CoordinatorFailure::new(
+                        CoordinatorFailureCode::Cancelled,
+                        "request cancelled",
+                    ),
+                )
+            }
             Err(error) => CoordinatorReply::failed(request_id, error),
         }
     }
@@ -380,12 +394,26 @@ impl<H: HostPort> MahayanaCoordinator<H> {
             .unwrap_or(cancel.request_id.as_str())
             .to_string();
         let host_result = self.host.cancel(&operation_id, cancel.reason.as_deref());
-        self.pending.remove(&cancel.request_id);
         match host_result {
-            Ok(()) => CoordinatorReply::failed(
-                cancel.request_id,
-                CoordinatorFailure::new(CoordinatorFailureCode::Cancelled, "request cancelled"),
-            ),
+            Ok(()) => {
+                let removed = self.pending.remove(&cancel.request_id);
+                if let Err(error) = self.persist_state() {
+                    if let Some(pending) = removed {
+                        self.pending.insert(cancel.request_id.clone(), pending);
+                    }
+                    return CoordinatorReply::failed(
+                        cancel.request_id,
+                        CoordinatorFailure::new(
+                            CoordinatorFailureCode::Internal,
+                            format!("coordinator cancellation is not durable; outcome unknown: {}", error.message),
+                        ),
+                    );
+                }
+                CoordinatorReply::failed(
+                    cancel.request_id,
+                    CoordinatorFailure::new(CoordinatorFailureCode::Cancelled, "request cancelled"),
+                )
+            }
             Err(error) => CoordinatorReply::failed(cancel.request_id, error),
         }
     }
@@ -536,6 +564,32 @@ mod tests {
         assert!(coordinator.resync(ResyncRequest { generation: 1, after_sequence: 0 }).is_err());
         let fresh = coordinator.resync(ResyncRequest { generation: 2, after_sequence: 0 }).unwrap();
         assert!(fresh.events.is_empty());
+    }
+
+    #[test]
+    fn durable_cancel_is_not_recovered_as_in_flight_after_reopen() {
+        let root = std::env::temp_dir().join(format!(
+            "fabushi-coordinator-cancel-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
+        ));
+        let state = root.join("coordinator-state.json");
+        {
+            let mut coordinator = MahayanaCoordinator::with_generation_persistent(
+                FakeHost::default(), 5, 8, &state
+            ).unwrap();
+            coordinator.begin_request(&request("cancel-1")).unwrap();
+            coordinator.bind_operation("cancel-1", "operation-cancel-1").unwrap();
+            let cancelled = coordinator.cancel_operation("operation-cancel-1", Some("user"));
+            assert_eq!(cancelled.result_json.unwrap_err().code, CoordinatorFailureCode::Cancelled);
+            assert_eq!(coordinator.active_request_count(), 0);
+        }
+        let coordinator = MahayanaCoordinator::with_generation_persistent(
+            FakeHost::default(), 5, 8, &state
+        ).unwrap();
+        assert_eq!(coordinator.active_request_count(), 0);
+        assert!(coordinator.resync_since(0).events.is_empty());
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]
