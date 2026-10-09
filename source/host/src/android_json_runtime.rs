@@ -795,9 +795,15 @@ impl AndroidJsonHost {
                 private_session_mutation = session_mutation;
             }
             "marketplace.install" => {
-                if let Some(id) = command.get("miniAppId").and_then(Value::as_str) {
-                    self.installed_plugins.insert(id.to_string());
+                if self.mode != AndroidHostMode::Test {
+                    self.active_operations.remove(&operation_id);
+                    return Err(
+                        "marketplace.install requires the verified immutable plugin installer; Android refuses in-memory placeholder installation"
+                            .into(),
+                    );
                 }
+                let id = required_string(&command, "miniAppId")?;
+                self.installed_plugins.insert(id.to_string());
                 self.finish_operation(&operation_id);
             }
             "miniapp.open" | "session.clear" => {
@@ -821,7 +827,8 @@ impl AndroidJsonHost {
             }
             "runtime.longTask" => {}
             _ => {
-                self.finish_operation(&operation_id);
+                self.active_operations.remove(&operation_id);
+                return Err(format!("unsupported Android feature command: {kind}"));
             }
         }
 
@@ -1878,6 +1885,22 @@ mod tests {
             assert!(error.contains("refuses placeholder success"));
         }
         let production_root = std::env::temp_dir().join(format!("fabushi-plugin-production-{}", now_ms()));
+        let mut production_feature_host = AndroidJsonHost::new(&production_root, AndroidHostMode::Production);
+        assert!(production_feature_host
+            .dispatch(
+                "feature.execute",
+                &json!({"command":{"type":"marketplace.install","requestId":"install-1","miniAppId":"global-dharma"}}),
+            )
+            .unwrap_err()
+            .contains("refuses in-memory placeholder installation"));
+        assert!(production_feature_host
+            .dispatch(
+                "feature.execute",
+                &json!({"command":{"type":"unknown.production.command","requestId":"unknown-1"}}),
+            )
+            .unwrap_err()
+            .contains("unsupported Android feature command"));
+
         let mut production_host = AndroidJsonHost::new(&production_root, AndroidHostMode::Production);
         assert!(production_host
             .dispatch(
