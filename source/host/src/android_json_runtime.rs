@@ -909,8 +909,10 @@ impl AndroidJsonHost {
         Ok(value)
     }
 
-    fn account_logout(&mut self) -> Result<Value, String> {
-        self.pending_plugin_variable_writes.clear();
+    fn cancel_mcp_auth_watches_for_account_change(
+        &mut self,
+        reason: &str,
+    ) -> Result<(), String> {
         let cancelled_watches = self
             .mcp_auth_watches
             .lock()
@@ -925,9 +927,15 @@ impl AndroidJsonHost {
                 "requestingAgentId":completion.requesting_agent_id,
                 "generation":completion.generation,
                 "outcome":"cancelled",
-                "reason":"account-logout",
+                "reason":reason,
             }));
         }
+        Ok(())
+    }
+
+    fn account_logout(&mut self) -> Result<Value, String> {
+        self.pending_plugin_variable_writes.clear();
+        self.cancel_mcp_auth_watches_for_account_change("account-logout")?;
         if self.mode == AndroidHostMode::Test {
             self.logged_in = false;
             return Ok(self.auth_status());
@@ -970,9 +978,17 @@ impl AndroidJsonHost {
         if self.mode == AndroidHostMode::Test {
             return self.browser_poll(params);
         }
+        let previous_fence = self.account.session_fence();
         let (result, mutation) = self
             .account
             .browser_poll(required_string(params, "attemptId")?)?;
+        let current_fence = self.account.session_fence();
+        if previous_fence.is_some()
+            && current_fence.is_some()
+            && previous_fence != current_fence
+        {
+            self.cancel_mcp_auth_watches_for_account_change("account-switch")?;
+        }
         Ok(with_account_session_mutation(result, mutation))
     }
 
@@ -1125,6 +1141,9 @@ impl AndroidJsonHost {
     }
 
     fn mcp_auth_watch_register(&mut self, params: &Value) -> Result<Value, String> {
+        if self.mode == AndroidHostMode::Production {
+            return Err("external MCP auth watch register is disabled; Host owns the shipping lifecycle".into());
+        }
         let server_id = required_string(params, "serverId")?;
         let server_name = required_string(params, "serverName")?;
         let server_url = required_string(params, "serverUrl")?;
@@ -1161,6 +1180,9 @@ impl AndroidJsonHost {
     }
 
     fn mcp_auth_watch_poll(&mut self, params: &Value) -> Result<Value, String> {
+        if self.mode == AndroidHostMode::Production {
+            return Err("external MCP auth watch poll is disabled; Host owns the shipping lifecycle".into());
+        }
         let server_id = required_string(params, "serverId")?;
         let account_key = required_string(params, "accountKey")?;
         let tick = self
@@ -1197,6 +1219,9 @@ impl AndroidJsonHost {
     }
 
     fn mcp_auth_watch_settle(&mut self, params: &Value) -> Result<Value, String> {
+        if self.mode == AndroidHostMode::Production {
+            return Err("external MCP auth watch settle is disabled; Host owns the shipping lifecycle".into());
+        }
         let request = McpAuthPollRequest {
             generation: required_u64(params, "generation")?,
             server_id: required_string(params, "serverId")?.to_string(),
