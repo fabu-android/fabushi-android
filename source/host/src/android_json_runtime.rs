@@ -1995,6 +1995,20 @@ impl AndroidJsonHost {
         for event in owner.drain_events()? {
             match event {
                 McpAuthOwnerEvent::Completed(completion) => {
+                    let completion_is_pending = self
+                        .mcp_auth_watches
+                        .lock()
+                        .map_err(|_| "MCP auth watch manager lock poisoned".to_string())?
+                        .pending_completions()
+                        .iter()
+                        .any(|pending| {
+                            pending.generation == completion.generation
+                                && pending.server_id == completion.server_id
+                                && pending.account_key == completion.account_key
+                        });
+                    if !completion_is_pending {
+                        continue;
+                    }
                     let (resume_mutation, resume_accepted) =
                         match self.queue_mcp_auth_resume_turn(&completion) {
                             Ok(mutation) => (mutation, true),
