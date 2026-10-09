@@ -309,7 +309,7 @@ impl AndroidJsonHost {
             "runtime.tools" => Ok(json!([])),
             "runtime.call" => Ok(json!({"ok":true,"result":params.get("arguments").cloned().unwrap_or(Value::Null)})),
             "feature.messaging.access.issue" => self.messaging_access_issue(params),
-            "feature.messaging.blob.read" => Ok(json!({"data":Value::Null})),
+            "feature.messaging.blob.read" => self.messaging_blob_read(params),
             "feature.messaging.execute" => self.messaging_execute(params),
             "feature.transcript.snapshot" => Ok(Value::Array(
                 self.transcript
@@ -356,6 +356,12 @@ impl AndroidJsonHost {
         let result = self
             .messaging
             .execute(params, &actor_id, i64::try_from(now_ms()).unwrap_or(i64::MAX))?;
+        Ok(with_account_session_mutation(result, mutation))
+    }
+
+    fn messaging_blob_read(&mut self, params: &Value) -> Result<Value, String> {
+        let (actor_id, mutation) = self.current_messaging_identity()?;
+        let result = self.messaging.read_blob_range(params, &actor_id)?;
         Ok(with_account_session_mutation(result, mutation))
     }
 

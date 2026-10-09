@@ -20,6 +20,7 @@ pub mod host_event_bus;
 pub mod host_gateway_api;
 pub mod host_initial_transcript_load;
 pub mod host_lock;
+pub mod messaging_blob;
 pub mod messaging_child;
 pub mod messaging_service;
 pub mod host_paths;

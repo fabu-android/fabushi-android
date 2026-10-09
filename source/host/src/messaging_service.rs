@@ -1,7 +1,11 @@
-use crate::messaging_child::{
-    ConversationChildIdentity, ConversationChildPaginationState, ConversationChildStore,
-    ConversationDestination, ConversationMessagePosition,
+use crate::{
+    messaging_blob::{BlobId, BlobMetadata, FileBlobStore},
+    messaging_child::{
+        ConversationChildIdentity, ConversationChildPaginationState, ConversationChildStore,
+        ConversationDestination, ConversationMessagePosition,
+    },
 };
+use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 use std::{
@@ -27,6 +31,16 @@ struct MessagingRepositoryState {
     #[serde(default)]
     messages: BTreeMap<String, BTreeMap<String, Value>>,
     #[serde(default)]
+    drafts: BTreeMap<String, BTreeMap<String, Value>>,
+    #[serde(default)]
+    folders: BTreeMap<String, BTreeMap<String, Value>>,
+    #[serde(default)]
+    conversation_preferences: BTreeMap<String, BTreeMap<String, Value>>,
+    #[serde(default)]
+    reaction_actors: BTreeMap<String, BTreeMap<String, BTreeMap<String, BTreeSet<String>>>>,
+    #[serde(default)]
+    poll_votes: BTreeMap<String, BTreeMap<String, BTreeMap<String, BTreeSet<String>>>>,
+    #[serde(default)]
     request_results: BTreeMap<String, Value>,
     #[serde(default)]
     request_order: Vec<String>,
@@ -40,6 +54,11 @@ impl Default for MessagingRepositoryState {
             actors: BTreeMap::new(),
             conversations: BTreeMap::new(),
             messages: BTreeMap::new(),
+            drafts: BTreeMap::new(),
+            folders: BTreeMap::new(),
+            conversation_preferences: BTreeMap::new(),
+            reaction_actors: BTreeMap::new(),
+            poll_votes: BTreeMap::new(),
             request_results: BTreeMap::new(),
             request_order: Vec::new(),
         }
@@ -55,6 +74,7 @@ pub struct AndroidMessagingService {
     path: PathBuf,
     state: MessagingRepositoryState,
     children: ConversationChildStore,
+    blobs: FileBlobStore,
 }
 
 impl AndroidMessagingService {
@@ -85,10 +105,12 @@ impl AndroidMessagingService {
             Err(error) => return Err(error),
         };
         let children = ConversationChildStore::open(app_data_dir.join("conversation-children.json"))?;
+        let blobs = FileBlobStore::new(app_data_dir.join("messaging-blobs"));
         Ok(Self {
             path,
             state,
             children,
+            blobs,
         })
     }
 
@@ -170,6 +192,47 @@ impl AndroidMessagingService {
             "upsertProfile" => self.upsert_profile(command, actor_id, now_ms),
             "createConversation" => self.create_conversation(command, actor_id, now_ms),
             "sendMessage" => self.send_message(command, actor_id, now_ms),
+            "beginBlobUpload" => self.begin_blob_upload(command, actor_id),
+            "appendBlobChunk" => self.append_blob_chunk(command, actor_id),
+            "finishBlobUpload" => self.finish_blob_upload(command, actor_id),
+            "deleteBlob" => self.delete_blob(command, actor_id),
+            "editMessage" => self.edit_message(command, actor_id, now_ms),
+            "deleteMessages" => self.delete_messages(command, actor_id, now_ms),
+            "markRead" => self.mark_read(command, actor_id, now_ms),
+            "setMarkedUnread" => self.set_marked_unread(command, actor_id, now_ms),
+            "setDraft" => self.set_draft(command, actor_id, now_ms),
+            "setConversationNotifications" => {
+                self.set_conversation_notifications(command, actor_id, now_ms)
+            }
+            "upsertFolder" => self.upsert_folder(command, actor_id, now_ms),
+            "deleteFolder" => self.delete_folder(command, actor_id, now_ms),
+            "archiveConversation" => self.set_conversation_flag(
+                command,
+                actor_id,
+                now_ms,
+                "archived",
+                "archived",
+            ),
+            "pinConversation" => self.set_conversation_flag(
+                command,
+                actor_id,
+                now_ms,
+                "pinned",
+                "pinned",
+            ),
+            "updateConversationInfo" => self.update_conversation_info(command, actor_id, now_ms),
+            "setConversationParticipant" => {
+                self.set_conversation_participant(command, actor_id, now_ms)
+            }
+            "removeConversationParticipant" => {
+                self.remove_conversation_participant(command, actor_id, now_ms)
+            }
+            "forwardMessage" => self.forward_message(command, actor_id, now_ms),
+            "setReaction" => self.set_reaction(command, actor_id, now_ms),
+            "pinMessage" => self.pin_message(command, actor_id, now_ms),
+            "votePoll" => self.vote_poll(command, actor_id, now_ms),
+            "startTyping" => self.typing(command, actor_id, now_ms, true),
+            "stopTyping" => self.typing(command, actor_id, now_ms, false),
             "markConversationChildRead" => {
                 let destination = parse_destination(command.get("destination"))?;
                 self.validate_child_destination(&destination, actor_id)?;
@@ -447,14 +510,7 @@ impl AndroidMessagingService {
         now_ms: i64,
     ) -> Result<Vec<Value>, String> {
         let conversation_id = required_non_empty(command.get("conversationId"), "conversation id")?;
-        let conversation = self
-            .state
-            .conversations
-            .get(conversation_id)
-            .ok_or("conversation does not exist")?;
-        if !conversation_has_access(conversation, actor_id) {
-            return Err("send message requires conversation membership".into());
-        }
+        let conversation = self.require_conversation_access(conversation_id, actor_id)?.clone();
         let client_message_id =
             required_non_empty(command.get("clientMessageId"), "clientMessageId")?;
         if !bounded_id(client_message_id) {
@@ -468,7 +524,7 @@ impl AndroidMessagingService {
             .cloned()
         {
             return Ok(vec![self.server_envelope(
-                json!({"type":"messageAdded","message":existing}),
+                json!({"type":"messageAdded","message":self.project_message(&existing, actor_id)}),
                 now_ms,
             )]);
         }
@@ -477,6 +533,13 @@ impl AndroidMessagingService {
             .filter(|value| value.is_object())
             .cloned()
             .ok_or("message content is required")?;
+        self.validate_content_for_send(&conversation, &content, actor_id)?;
+        if let Some(reply_to) = optional_string(command.get("replyToMessageId")) {
+            self.require_message(conversation_id, &reply_to)?;
+        }
+        if let Some(thread_root) = optional_string(command.get("threadRootMessageId")) {
+            self.require_message(conversation_id, &thread_root)?;
+        }
         let message = json!({
             "id":client_message_id,
             "clientMessageId":client_message_id,
@@ -500,11 +563,1000 @@ impl AndroidMessagingService {
             .entry(conversation_id.to_string())
             .or_default()
             .insert(client_message_id.to_string(), message.clone());
+        let mut updated_conversation = conversation;
+        if let Some(object) = updated_conversation.as_object_mut() {
+            object.insert("lastMessageId".into(), Value::String(client_message_id.to_string()));
+            object.insert("updatedAtMs".into(), json!(now_ms));
+        }
+        self.state
+            .conversations
+            .insert(conversation_id.to_string(), updated_conversation);
         self.bump_cursor();
         Ok(vec![self.server_envelope(
-            json!({"type":"messageAdded","message":message}),
+            json!({"type":"messageAdded","message":self.project_message(&message, actor_id)}),
             now_ms,
         )])
+    }
+
+    pub fn read_blob_range(
+        &self,
+        params: &Value,
+        actor_id: &str,
+    ) -> Result<Value, String> {
+        let id = BlobId::new(required_string(params, "blobId")?.to_string())
+            .map_err(|error| error.to_string())?;
+        let offset = required_u64(params.get("offset"), "blob offset")?;
+        let length = required_u64(params.get("length"), "blob length")?;
+        let metadata = self.blobs.metadata(&id).map_err(|error| error.to_string())?;
+        let owns = metadata.owner_actor_id.as_deref() == Some(actor_id);
+        let referenced = self.state.conversations.iter().any(|(conversation_id, conversation)| {
+            conversation_has_access(conversation, actor_id)
+                && self
+                    .state
+                    .messages
+                    .get(conversation_id)
+                    .is_some_and(|messages| {
+                        messages
+                            .values()
+                            .any(|message| message_blob_id(message) == Some(id.0.as_str()))
+                    })
+        });
+        if !owns && !referenced {
+            return Err("blob read requires owner or canonical conversation membership".into());
+        }
+        let bytes = self
+            .blobs
+            .read_range(&id, offset, length)
+            .map_err(|error| error.to_string())?;
+        let returned = bytes.len() as u64;
+        Ok(json!({
+            "blobId":id.0,
+            "offset":offset,
+            "length":returned,
+            "sizeBytes":metadata.size_bytes,
+            "dataBase64":BASE64_STANDARD.encode(bytes),
+            "eof":offset.saturating_add(returned) >= metadata.size_bytes
+        }))
+    }
+
+    fn begin_blob_upload(
+        &mut self,
+        command: &Map<String, Value>,
+        actor_id: &str,
+    ) -> Result<Vec<Value>, String> {
+        let mut metadata: BlobMetadata = serde_json::from_value(
+            command
+                .get("metadata")
+                .cloned()
+                .ok_or("blob metadata is required")?,
+        )
+        .map_err(|error| format!("invalid blob metadata: {error}"))?;
+        metadata.owner_actor_id = Some(actor_id.to_string());
+        self.blobs
+            .begin_upload(&metadata)
+            .map_err(|error| error.to_string())?;
+        Ok(Vec::new())
+    }
+
+    fn append_blob_chunk(
+        &mut self,
+        command: &Map<String, Value>,
+        actor_id: &str,
+    ) -> Result<Vec<Value>, String> {
+        let id = BlobId::new(required_non_empty(command.get("blobId"), "blob id")?.to_string())
+            .map_err(|error| error.to_string())?;
+        self.require_blob_owner(&id, actor_id)?;
+        let offset = required_u64(command.get("offset"), "blob offset")?;
+        let encoded = required_non_empty(command.get("dataBase64"), "blob dataBase64")?;
+        let bytes = BASE64_STANDARD
+            .decode(encoded)
+            .map_err(|_| "blob chunk is not valid base64".to_string())?;
+        self.blobs
+            .append_chunk(&id, offset, &bytes)
+            .map_err(|error| error.to_string())?;
+        Ok(Vec::new())
+    }
+
+    fn finish_blob_upload(
+        &mut self,
+        command: &Map<String, Value>,
+        actor_id: &str,
+    ) -> Result<Vec<Value>, String> {
+        let id = BlobId::new(required_non_empty(command.get("blobId"), "blob id")?.to_string())
+            .map_err(|error| error.to_string())?;
+        self.require_blob_owner(&id, actor_id)?;
+        self.blobs
+            .finish_upload(&id)
+            .map_err(|error| error.to_string())?;
+        Ok(Vec::new())
+    }
+
+    fn delete_blob(
+        &mut self,
+        command: &Map<String, Value>,
+        actor_id: &str,
+    ) -> Result<Vec<Value>, String> {
+        let id = BlobId::new(required_non_empty(command.get("blobId"), "blob id")?.to_string())
+            .map_err(|error| error.to_string())?;
+        self.require_blob_owner(&id, actor_id)?;
+        if self
+            .state
+            .messages
+            .values()
+            .flat_map(|messages| messages.values())
+            .any(|message| message_blob_id(message) == Some(id.0.as_str()))
+        {
+            return Err("referenced messaging blob cannot be deleted".into());
+        }
+        self.blobs.delete(&id).map_err(|error| error.to_string())?;
+        Ok(Vec::new())
+    }
+
+    fn edit_message(
+        &mut self,
+        command: &Map<String, Value>,
+        actor_id: &str,
+        now_ms: i64,
+    ) -> Result<Vec<Value>, String> {
+        let conversation_id = required_non_empty(command.get("conversationId"), "conversation id")?;
+        self.require_conversation_access(conversation_id, actor_id)?;
+        let message_id = required_non_empty(command.get("messageId"), "message id")?;
+        let current = self.require_message(conversation_id, message_id)?.clone();
+        if current.get("senderId").and_then(Value::as_str) != Some(actor_id) {
+            return Err("message edit requires original sender".into());
+        }
+        let content = command
+            .get("content")
+            .filter(|value| value.is_object())
+            .cloned()
+            .ok_or("edited message content is required")?;
+        if content.get("type").and_then(Value::as_str) != Some("text") {
+            return Err("Android message editing currently permits text content only".into());
+        }
+        let mut updated = current;
+        if let Some(object) = updated.as_object_mut() {
+            object.insert("content".into(), content);
+            object.insert("editedAtMs".into(), json!(now_ms));
+        }
+        self.state
+            .messages
+            .get_mut(conversation_id)
+            .ok_or("conversation message state is missing")?
+            .insert(message_id.to_string(), updated.clone());
+        self.bump_cursor();
+        Ok(vec![self.server_envelope(
+            json!({"type":"messageChanged","message":self.project_message(&updated, actor_id)}),
+            now_ms,
+        )])
+    }
+
+    fn delete_messages(
+        &mut self,
+        command: &Map<String, Value>,
+        actor_id: &str,
+        now_ms: i64,
+    ) -> Result<Vec<Value>, String> {
+        let conversation_id = required_non_empty(command.get("conversationId"), "conversation id")?;
+        let conversation = self.require_conversation_access(conversation_id, actor_id)?.clone();
+        if command.get("forEveryone").and_then(Value::as_bool) != Some(true) {
+            return Err("local-only deletion is not yet represented by the canonical Android repository".into());
+        }
+        let ids = command
+            .get("messageIds")
+            .and_then(Value::as_array)
+            .ok_or("messageIds array is required")?
+            .iter()
+            .map(|value| {
+                value
+                    .as_str()
+                    .filter(|value| bounded_id(value))
+                    .map(str::to_string)
+                    .ok_or_else(|| "message id is invalid".to_string())
+            })
+            .collect::<Result<BTreeSet<_>, _>>()?;
+        if ids.is_empty() {
+            return Err("at least one message id is required".into());
+        }
+        let can_manage = conversation_can_manage(&conversation, actor_id);
+        for message_id in &ids {
+            let message = self.require_message(conversation_id, message_id)?;
+            if message.get("senderId").and_then(Value::as_str) != Some(actor_id) && !can_manage {
+                return Err("message deletion requires sender or conversation administrator".into());
+            }
+        }
+        let messages = self
+            .state
+            .messages
+            .get_mut(conversation_id)
+            .ok_or("conversation message state is missing")?;
+        for message_id in &ids {
+            messages.remove(message_id);
+        }
+        if let Some(reactions) = self.state.reaction_actors.get_mut(conversation_id) {
+            for message_id in &ids {
+                reactions.remove(message_id);
+            }
+        }
+        if let Some(votes) = self.state.poll_votes.get_mut(conversation_id) {
+            for message_id in &ids {
+                votes.remove(message_id);
+            }
+        }
+        let latest = messages
+            .values()
+            .max_by_key(|message| message.get("createdAtMs").and_then(Value::as_i64).unwrap_or_default())
+            .and_then(|message| message.get("id").and_then(Value::as_str))
+            .map(str::to_string);
+        let mut updated_conversation = conversation;
+        if let Some(object) = updated_conversation.as_object_mut() {
+            object.insert(
+                "lastMessageId".into(),
+                latest.map(Value::String).unwrap_or(Value::Null),
+            );
+            let pinned = object
+                .get("pinnedMessageIds")
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default()
+                .into_iter()
+                .filter(|value| value.as_str().is_none_or(|id| !ids.contains(id)))
+                .collect::<Vec<_>>();
+            object.insert("pinnedMessageIds".into(), Value::Array(pinned));
+            object.insert("updatedAtMs".into(), json!(now_ms));
+        }
+        self.state
+            .conversations
+            .insert(conversation_id.to_string(), updated_conversation);
+        self.bump_cursor();
+        Ok(vec![self.server_envelope(
+            json!({"type":"messagesDeleted","conversationId":conversation_id,"messageIds":ids}),
+            now_ms,
+        )])
+    }
+
+    fn mark_read(
+        &mut self,
+        command: &Map<String, Value>,
+        actor_id: &str,
+        now_ms: i64,
+    ) -> Result<Vec<Value>, String> {
+        let conversation_id = required_non_empty(command.get("conversationId"), "conversation id")?;
+        self.require_conversation_access(conversation_id, actor_id)?;
+        let message_id = required_non_empty(command.get("messageId"), "message id")?;
+        self.require_message(conversation_id, message_id)?;
+        let preferences = self.conversation_preferences_mut(actor_id, conversation_id);
+        preferences.insert("lastReadMessageId".into(), Value::String(message_id.to_string()));
+        preferences.insert("unreadCount".into(), json!(0));
+        preferences.insert("markedUnread".into(), json!(false));
+        self.bump_cursor();
+        let conversation = self
+            .state
+            .conversations
+            .get(conversation_id)
+            .ok_or("conversation does not exist")?;
+        Ok(vec![self.server_envelope(
+            json!({"type":"conversationChanged","conversation":self.project_conversation(conversation, actor_id)}),
+            now_ms,
+        )])
+    }
+
+    fn set_marked_unread(
+        &mut self,
+        command: &Map<String, Value>,
+        actor_id: &str,
+        now_ms: i64,
+    ) -> Result<Vec<Value>, String> {
+        let conversation_id = required_non_empty(command.get("conversationId"), "conversation id")?;
+        self.require_conversation_access(conversation_id, actor_id)?;
+        let marked_unread = required_bool(command.get("markedUnread"), "markedUnread")?;
+        self.conversation_preferences_mut(actor_id, conversation_id)
+            .insert("markedUnread".into(), json!(marked_unread));
+        self.bump_cursor();
+        Ok(vec![self.server_envelope(
+            json!({"type":"markedUnreadChanged","conversationId":conversation_id,"markedUnread":marked_unread}),
+            now_ms,
+        )])
+    }
+
+    fn set_draft(
+        &mut self,
+        command: &Map<String, Value>,
+        actor_id: &str,
+        now_ms: i64,
+    ) -> Result<Vec<Value>, String> {
+        let conversation_id = required_non_empty(command.get("conversationId"), "conversation id")?;
+        self.require_conversation_access(conversation_id, actor_id)?;
+        let text = command.get("text").and_then(Value::as_str).unwrap_or("");
+        if text.len() > 64 * 1024 {
+            return Err("draft is too large".into());
+        }
+        let reply_to = optional_string(command.get("replyToMessageId"));
+        if let Some(message_id) = reply_to.as_deref() {
+            self.require_message(conversation_id, message_id)?;
+        }
+        let draft = json!({
+            "conversationId":conversation_id,
+            "actorId":actor_id,
+            "text":text,
+            "replyToMessageId":reply_to,
+            "updatedAtMs":now_ms
+        });
+        let actor_drafts = self.state.drafts.entry(actor_id.to_string()).or_default();
+        if text.trim().is_empty() && reply_to.is_none() {
+            actor_drafts.remove(conversation_id);
+        } else {
+            actor_drafts.insert(conversation_id.to_string(), draft.clone());
+        }
+        self.bump_cursor();
+        Ok(vec![self.server_envelope(
+            json!({"type":"draftChanged","draft":draft}),
+            now_ms,
+        )])
+    }
+
+    fn set_conversation_notifications(
+        &mut self,
+        command: &Map<String, Value>,
+        actor_id: &str,
+        now_ms: i64,
+    ) -> Result<Vec<Value>, String> {
+        let conversation_id = required_non_empty(command.get("conversationId"), "conversation id")?;
+        self.require_conversation_access(conversation_id, actor_id)?;
+        let settings = command
+            .get("settings")
+            .filter(|value| value.is_object())
+            .cloned()
+            .ok_or("notification settings object is required")?;
+        self.conversation_preferences_mut(actor_id, conversation_id)
+            .insert("notificationSettings".into(), settings);
+        self.bump_cursor();
+        let conversation = self
+            .state
+            .conversations
+            .get(conversation_id)
+            .ok_or("conversation does not exist")?;
+        Ok(vec![self.server_envelope(
+            json!({"type":"conversationChanged","conversation":self.project_conversation(conversation, actor_id)}),
+            now_ms,
+        )])
+    }
+
+    fn upsert_folder(
+        &mut self,
+        command: &Map<String, Value>,
+        actor_id: &str,
+        now_ms: i64,
+    ) -> Result<Vec<Value>, String> {
+        let folder = required_object(command.get("folder"), "folder")?.clone();
+        let folder_id = required_non_empty(folder.get("id"), "folder id")?;
+        let title = required_non_empty(folder.get("title"), "folder title")?;
+        if !bounded_id(folder_id) || title.len() > 200 {
+            return Err("folder id or title is invalid".into());
+        }
+        let mut seen = BTreeSet::new();
+        for conversation_id in folder
+            .get("conversationIds")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default()
+        {
+            let conversation_id = conversation_id
+                .as_str()
+                .filter(|value| bounded_id(value))
+                .ok_or("folder conversation id is invalid")?;
+            if !seen.insert(conversation_id.to_string()) {
+                return Err("folder contains duplicate conversation id".into());
+            }
+            self.require_conversation_access(conversation_id, actor_id)?;
+        }
+        let value = Value::Object(folder);
+        self.state
+            .folders
+            .entry(actor_id.to_string())
+            .or_default()
+            .insert(folder_id.to_string(), value.clone());
+        self.bump_cursor();
+        Ok(vec![self.server_envelope(
+            json!({"type":"folderChanged","folder":value}),
+            now_ms,
+        )])
+    }
+
+    fn delete_folder(
+        &mut self,
+        command: &Map<String, Value>,
+        actor_id: &str,
+        now_ms: i64,
+    ) -> Result<Vec<Value>, String> {
+        let folder_id = required_non_empty(command.get("folderId"), "folder id")?;
+        let removed = self
+            .state
+            .folders
+            .entry(actor_id.to_string())
+            .or_default()
+            .remove(folder_id);
+        if removed.is_none() {
+            return Err("folder does not exist for authenticated actor".into());
+        }
+        self.bump_cursor();
+        Ok(vec![self.server_envelope(
+            json!({"type":"folderDeleted","folderId":folder_id}),
+            now_ms,
+        )])
+    }
+
+    fn set_conversation_flag(
+        &mut self,
+        command: &Map<String, Value>,
+        actor_id: &str,
+        now_ms: i64,
+        command_key: &str,
+        state_key: &str,
+    ) -> Result<Vec<Value>, String> {
+        let conversation_id = required_non_empty(command.get("conversationId"), "conversation id")?;
+        self.require_conversation_access(conversation_id, actor_id)?;
+        let value = required_bool(command.get(command_key), command_key)?;
+        self.conversation_preferences_mut(actor_id, conversation_id)
+            .insert(state_key.to_string(), json!(value));
+        self.bump_cursor();
+        let conversation = self
+            .state
+            .conversations
+            .get(conversation_id)
+            .ok_or("conversation does not exist")?;
+        Ok(vec![self.server_envelope(
+            json!({"type":"conversationChanged","conversation":self.project_conversation(conversation, actor_id)}),
+            now_ms,
+        )])
+    }
+
+    fn update_conversation_info(
+        &mut self,
+        command: &Map<String, Value>,
+        actor_id: &str,
+        now_ms: i64,
+    ) -> Result<Vec<Value>, String> {
+        let conversation_id = required_non_empty(command.get("conversationId"), "conversation id")?;
+        let mut conversation = self.require_conversation_access(conversation_id, actor_id)?.clone();
+        if !conversation_can_manage(&conversation, actor_id) {
+            return Err("conversation info update requires owner or administrator".into());
+        }
+        if !matches!(conversation_kind(&conversation), Some("group") | Some("channel")) {
+            return Err("conversation info update is only valid for groups or channels".into());
+        }
+        let title = required_non_empty(command.get("title"), "conversation title")?.trim();
+        if title.len() > 200 {
+            return Err("conversation title is too long".into());
+        }
+        let description = optional_string(command.get("description"));
+        if description.as_ref().is_some_and(|value| value.len() > 4096) {
+            return Err("conversation description is too long".into());
+        }
+        if let Some(object) = conversation.as_object_mut() {
+            object.insert("title".into(), Value::String(title.to_string()));
+            object.insert(
+                "description".into(),
+                description.map(Value::String).unwrap_or(Value::Null),
+            );
+            object.insert("updatedAtMs".into(), json!(now_ms));
+        }
+        self.state
+            .conversations
+            .insert(conversation_id.to_string(), conversation.clone());
+        self.bump_cursor();
+        Ok(vec![self.server_envelope(
+            json!({"type":"conversationChanged","conversation":self.project_conversation(&conversation, actor_id)}),
+            now_ms,
+        )])
+    }
+
+    fn set_conversation_participant(
+        &mut self,
+        command: &Map<String, Value>,
+        actor_id: &str,
+        now_ms: i64,
+    ) -> Result<Vec<Value>, String> {
+        let conversation_id = required_non_empty(command.get("conversationId"), "conversation id")?;
+        let mut conversation = self.require_conversation_access(conversation_id, actor_id)?.clone();
+        if !conversation_can_manage(&conversation, actor_id) {
+            return Err("participant update requires owner or administrator".into());
+        }
+        if !matches!(conversation_kind(&conversation), Some("group") | Some("channel")) {
+            return Err("participant updates are only valid for groups or channels".into());
+        }
+        let participant = required_object(command.get("participant"), "participant")?.clone();
+        let target_actor_id = required_non_empty(participant.get("actorId"), "participant actorId")?;
+        let role = required_non_empty(participant.get("role"), "participant role")?;
+        if !matches!(role, "owner" | "admin" | "member" | "restricted") {
+            return Err("participant role is invalid".into());
+        }
+        if !self.state.actors.contains_key(target_actor_id) && target_actor_id != actor_id {
+            return Err("participant actor does not exist in canonical messaging state".into());
+        }
+        if conversation_owner(&conversation) == Some(target_actor_id) && role != "owner" {
+            return Err("conversation owner cannot be downgraded".into());
+        }
+        if role == "owner" && conversation_owner(&conversation) != Some(target_actor_id) {
+            return Err("ownership transfer requires a dedicated verified contract".into());
+        }
+        let participants = conversation
+            .as_object_mut()
+            .ok_or("conversation object is invalid")?
+            .entry("participants")
+            .or_insert_with(|| Value::Array(Vec::new()))
+            .as_array_mut()
+            .ok_or("conversation participants are invalid")?;
+        if let Some(existing) = participants
+            .iter_mut()
+            .find(|value| value.get("actorId").and_then(Value::as_str) == Some(target_actor_id))
+        {
+            *existing = Value::Object(participant.clone());
+        } else {
+            participants.push(Value::Object(participant.clone()));
+        }
+        if let Some(object) = conversation.as_object_mut() {
+            object.insert("updatedAtMs".into(), json!(now_ms));
+        }
+        self.state
+            .conversations
+            .insert(conversation_id.to_string(), conversation.clone());
+        self.bump_cursor();
+        Ok(vec![self.server_envelope(
+            json!({"type":"conversationParticipantChanged","conversation":self.project_conversation(&conversation, actor_id),"participant":Value::Object(participant)}),
+            now_ms,
+        )])
+    }
+
+    fn remove_conversation_participant(
+        &mut self,
+        command: &Map<String, Value>,
+        actor_id: &str,
+        now_ms: i64,
+    ) -> Result<Vec<Value>, String> {
+        let conversation_id = required_non_empty(command.get("conversationId"), "conversation id")?;
+        let mut conversation = self.require_conversation_access(conversation_id, actor_id)?.clone();
+        if !conversation_can_manage(&conversation, actor_id) {
+            return Err("participant removal requires owner or administrator".into());
+        }
+        if !matches!(conversation_kind(&conversation), Some("group") | Some("channel")) {
+            return Err("participant removal is only valid for groups or channels".into());
+        }
+        let target_actor_id = required_non_empty(command.get("actorId"), "participant actorId")?;
+        if conversation_owner(&conversation) == Some(target_actor_id) {
+            return Err("conversation owner cannot be removed".into());
+        }
+        let participants = conversation
+            .as_object_mut()
+            .ok_or("conversation object is invalid")?
+            .get_mut("participants")
+            .and_then(Value::as_array_mut)
+            .ok_or("conversation participants are invalid")?;
+        let before = participants.len();
+        participants.retain(|value| value.get("actorId").and_then(Value::as_str) != Some(target_actor_id));
+        if participants.len() == before {
+            return Err("participant does not exist in conversation".into());
+        }
+        if let Some(object) = conversation.as_object_mut() {
+            object.insert("updatedAtMs".into(), json!(now_ms));
+        }
+        self.state
+            .conversations
+            .insert(conversation_id.to_string(), conversation.clone());
+        self.bump_cursor();
+        Ok(vec![self.server_envelope(
+            json!({"type":"conversationParticipantChanged","conversation":self.project_conversation(&conversation, actor_id),"removedActorId":target_actor_id}),
+            now_ms,
+        )])
+    }
+
+    fn forward_message(
+        &mut self,
+        command: &Map<String, Value>,
+        actor_id: &str,
+        now_ms: i64,
+    ) -> Result<Vec<Value>, String> {
+        let source_id = required_non_empty(command.get("sourceConversationId"), "source conversation id")?;
+        let destination_id = required_non_empty(command.get("destinationConversationId"), "destination conversation id")?;
+        self.require_conversation_access(source_id, actor_id)?;
+        let destination = self.require_conversation_access(destination_id, actor_id)?.clone();
+        let message_id = required_non_empty(command.get("messageId"), "message id")?;
+        let source = self.require_message(source_id, message_id)?.clone();
+        if source.get("protectedContent").and_then(Value::as_bool) == Some(true) {
+            return Err("protected content cannot be forwarded".into());
+        }
+        let client_message_id = required_non_empty(command.get("clientMessageId"), "clientMessageId")?;
+        if !bounded_id(client_message_id) {
+            return Err("clientMessageId is invalid".into());
+        }
+        if let Some(existing) = self
+            .state
+            .messages
+            .get(destination_id)
+            .and_then(|messages| messages.get(client_message_id))
+            .cloned()
+        {
+            return Ok(vec![self.server_envelope(
+                json!({"type":"messageAdded","message":self.project_message(&existing, actor_id)}),
+                now_ms,
+            )]);
+        }
+        let content = source.get("content").cloned().ok_or("source message content is missing")?;
+        if !conversation_can_send(&destination, actor_id, &content) {
+            return Err("destination conversation does not permit this message".into());
+        }
+        let forwarded = json!({
+            "id":client_message_id,
+            "clientMessageId":client_message_id,
+            "conversationId":destination_id,
+            "senderId":actor_id,
+            "content":content,
+            "replyToMessageId":Value::Null,
+            "threadRootMessageId":command.get("threadRootMessageId").cloned().unwrap_or(Value::Null),
+            "createdAtMs":now_ms,
+            "editedAtMs":Value::Null,
+            "scheduledAtMs":command.get("scheduledAtMs").cloned().unwrap_or(Value::Null),
+            "silent":command.get("silent").and_then(Value::as_bool).unwrap_or(false),
+            "protectedContent":false,
+            "deliveryState":"sent",
+            "reactions":[],
+            "pinned":false,
+            "deleted":false,
+            "forwardOrigin":source.get("senderId").cloned().unwrap_or(Value::Null)
+        });
+        self.state
+            .messages
+            .entry(destination_id.to_string())
+            .or_default()
+            .insert(client_message_id.to_string(), forwarded.clone());
+        let mut updated = destination;
+        if let Some(object) = updated.as_object_mut() {
+            object.insert("lastMessageId".into(), Value::String(client_message_id.to_string()));
+            object.insert("updatedAtMs".into(), json!(now_ms));
+        }
+        self.state
+            .conversations
+            .insert(destination_id.to_string(), updated);
+        self.bump_cursor();
+        Ok(vec![self.server_envelope(
+            json!({"type":"messageAdded","message":self.project_message(&forwarded, actor_id)}),
+            now_ms,
+        )])
+    }
+
+    fn set_reaction(
+        &mut self,
+        command: &Map<String, Value>,
+        actor_id: &str,
+        now_ms: i64,
+    ) -> Result<Vec<Value>, String> {
+        let conversation_id = required_non_empty(command.get("conversationId"), "conversation id")?;
+        self.require_conversation_access(conversation_id, actor_id)?;
+        let message_id = required_non_empty(command.get("messageId"), "message id")?;
+        self.require_message(conversation_id, message_id)?;
+        let reaction = required_object(command.get("reaction"), "reaction")?;
+        let symbol = required_non_empty(reaction.get("reaction"), "reaction value")?;
+        if symbol.chars().count() > 32 {
+            return Err("reaction value is too long".into());
+        }
+        let enabled = reaction
+            .get("chosenByMe")
+            .and_then(Value::as_bool)
+            .ok_or("reaction chosenByMe is required")?;
+        let actors = self
+            .state
+            .reaction_actors
+            .entry(conversation_id.to_string())
+            .or_default()
+            .entry(message_id.to_string())
+            .or_default()
+            .entry(symbol.to_string())
+            .or_default();
+        if enabled {
+            actors.insert(actor_id.to_string());
+        } else {
+            actors.remove(actor_id);
+        }
+        let message = self.require_message(conversation_id, message_id)?.clone();
+        self.bump_cursor();
+        Ok(vec![self.server_envelope(
+            json!({"type":"messageChanged","message":self.project_message(&message, actor_id)}),
+            now_ms,
+        )])
+    }
+
+    fn pin_message(
+        &mut self,
+        command: &Map<String, Value>,
+        actor_id: &str,
+        now_ms: i64,
+    ) -> Result<Vec<Value>, String> {
+        let conversation_id = required_non_empty(command.get("conversationId"), "conversation id")?;
+        let mut conversation = self.require_conversation_access(conversation_id, actor_id)?.clone();
+        if !conversation_can_pin(&conversation, actor_id) {
+            return Err("pinning messages is not permitted for authenticated actor".into());
+        }
+        let message_id = required_non_empty(command.get("messageId"), "message id")?;
+        let mut message = self.require_message(conversation_id, message_id)?.clone();
+        let pinned = required_bool(command.get("pinned"), "pinned")?;
+        if let Some(object) = message.as_object_mut() {
+            object.insert("pinned".into(), json!(pinned));
+        }
+        self.state
+            .messages
+            .get_mut(conversation_id)
+            .ok_or("conversation message state is missing")?
+            .insert(message_id.to_string(), message.clone());
+        let object = conversation.as_object_mut().ok_or("conversation object is invalid")?;
+        let mut ids = object
+            .get("pinnedMessageIds")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        ids.retain(|value| value.as_str() != Some(message_id));
+        if pinned {
+            ids.push(Value::String(message_id.to_string()));
+        }
+        object.insert("pinnedMessageIds".into(), Value::Array(ids));
+        object.insert("updatedAtMs".into(), json!(now_ms));
+        self.state
+            .conversations
+            .insert(conversation_id.to_string(), conversation);
+        self.bump_cursor();
+        Ok(vec![self.server_envelope(
+            json!({"type":"messageChanged","message":self.project_message(&message, actor_id)}),
+            now_ms,
+        )])
+    }
+
+    fn vote_poll(
+        &mut self,
+        command: &Map<String, Value>,
+        actor_id: &str,
+        now_ms: i64,
+    ) -> Result<Vec<Value>, String> {
+        let conversation_id = required_non_empty(command.get("conversationId"), "conversation id")?;
+        let conversation = self.require_conversation_access(conversation_id, actor_id)?;
+        if !conversation_can_send_kind(conversation, actor_id, "poll") {
+            return Err("poll voting is not permitted for authenticated actor".into());
+        }
+        let message_id = required_non_empty(command.get("messageId"), "message id")?;
+        let message = self.require_message(conversation_id, message_id)?.clone();
+        let data = message
+            .get("content")
+            .and_then(|value| value.get("data"))
+            .and_then(Value::as_object)
+            .ok_or("poll message data is missing")?;
+        if message
+            .get("content")
+            .and_then(|value| value.get("type"))
+            .and_then(Value::as_str)
+            != Some("poll")
+        {
+            return Err("votePoll target is not a poll".into());
+        }
+        let allowed = data
+            .get("options")
+            .and_then(Value::as_array)
+            .ok_or("poll options are missing")?
+            .iter()
+            .filter_map(|option| option.get("id").and_then(Value::as_str))
+            .map(str::to_string)
+            .collect::<BTreeSet<_>>();
+        let selected = command
+            .get("optionIds")
+            .and_then(Value::as_array)
+            .ok_or("optionIds array is required")?
+            .iter()
+            .map(|value| {
+                value
+                    .as_str()
+                    .filter(|id| allowed.contains(*id))
+                    .map(str::to_string)
+                    .ok_or_else(|| "poll option is invalid".to_string())
+            })
+            .collect::<Result<BTreeSet<_>, _>>()?;
+        if !data
+            .get("multipleAnswers")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+            && selected.len() > 1
+        {
+            return Err("poll permits only one answer".into());
+        }
+        self.state
+            .poll_votes
+            .entry(conversation_id.to_string())
+            .or_default()
+            .entry(message_id.to_string())
+            .or_default()
+            .insert(actor_id.to_string(), selected);
+        self.bump_cursor();
+        Ok(vec![self.server_envelope(
+            json!({"type":"messageChanged","message":self.project_message(&message, actor_id)}),
+            now_ms,
+        )])
+    }
+
+    fn typing(
+        &mut self,
+        command: &Map<String, Value>,
+        actor_id: &str,
+        now_ms: i64,
+        started: bool,
+    ) -> Result<Vec<Value>, String> {
+        let conversation_id = required_non_empty(command.get("conversationId"), "conversation id")?;
+        self.require_conversation_access(conversation_id, actor_id)?;
+        let action = if started {
+            Value::String(
+                command
+                    .get("action")
+                    .and_then(Value::as_str)
+                    .filter(|value| !value.trim().is_empty())
+                    .unwrap_or("typing")
+                    .to_string(),
+            )
+        } else {
+            Value::Null
+        };
+        self.bump_cursor();
+        Ok(vec![self.server_envelope(
+            json!({"type":"typingChanged","conversationId":conversation_id,"actorId":actor_id,"action":action}),
+            now_ms,
+        )])
+    }
+
+    fn require_blob_owner(&self, id: &BlobId, actor_id: &str) -> Result<BlobMetadata, String> {
+        let metadata = self
+            .blobs
+            .upload_metadata(id)
+            .map_err(|error| error.to_string())?;
+        if metadata.owner_actor_id.as_deref() != Some(actor_id) {
+            return Err("blob mutation requires durable owner".into());
+        }
+        Ok(metadata)
+    }
+
+    fn require_conversation_access(
+        &self,
+        conversation_id: &str,
+        actor_id: &str,
+    ) -> Result<&Value, String> {
+        let conversation = self
+            .state
+            .conversations
+            .get(conversation_id)
+            .ok_or("conversation does not exist")?;
+        if !conversation_has_access(conversation, actor_id) {
+            return Err("messaging command requires canonical conversation membership".into());
+        }
+        Ok(conversation)
+    }
+
+    fn validate_content_for_send(
+        &self,
+        conversation: &Value,
+        content: &Value,
+        actor_id: &str,
+    ) -> Result<(), String> {
+        let kind = content
+            .get("type")
+            .and_then(Value::as_str)
+            .filter(|value| !value.trim().is_empty())
+            .ok_or("message content type is required")?;
+        if !conversation_can_send_kind(conversation, actor_id, kind) {
+            return Err("conversation permissions reject message content".into());
+        }
+        if let Some(blob_id) = content_blob_id(content) {
+            let id = BlobId::new(blob_id.to_string()).map_err(|error| error.to_string())?;
+            let metadata = self.blobs.metadata(&id).map_err(|error| error.to_string())?;
+            if metadata.owner_actor_id.as_deref() != Some(actor_id) {
+                return Err("sending local media requires durable blob ownership".into());
+            }
+        }
+        Ok(())
+    }
+
+    fn conversation_preferences_mut(
+        &mut self,
+        actor_id: &str,
+        conversation_id: &str,
+    ) -> &mut Map<String, Value> {
+        let value = self
+            .state
+            .conversation_preferences
+            .entry(actor_id.to_string())
+            .or_default()
+            .entry(conversation_id.to_string())
+            .or_insert_with(|| Value::Object(Map::new()));
+        if !value.is_object() {
+            *value = Value::Object(Map::new());
+        }
+        value.as_object_mut().expect("preference value is object")
+    }
+
+    fn project_conversation(&self, conversation: &Value, actor_id: &str) -> Value {
+        let mut projected = conversation.clone();
+        let Some(conversation_id) = conversation.get("id").and_then(Value::as_str) else {
+            return projected;
+        };
+        if let Some(preferences) = self
+            .state
+            .conversation_preferences
+            .get(actor_id)
+            .and_then(|values| values.get(conversation_id))
+            .and_then(Value::as_object)
+        {
+            if let Some(object) = projected.as_object_mut() {
+                for (key, value) in preferences {
+                    object.insert(key.clone(), value.clone());
+                }
+            }
+        }
+        projected
+    }
+
+    fn project_message(&self, message: &Value, actor_id: &str) -> Value {
+        let mut projected = message.clone();
+        let Some(conversation_id) = message.get("conversationId").and_then(Value::as_str) else {
+            return projected;
+        };
+        let Some(message_id) = message.get("id").and_then(Value::as_str) else {
+            return projected;
+        };
+        if let Some(reactions) = self
+            .state
+            .reaction_actors
+            .get(conversation_id)
+            .and_then(|messages| messages.get(message_id))
+        {
+            let values = reactions
+                .iter()
+                .filter(|(_, actors)| !actors.is_empty())
+                .map(|(reaction, actors)| {
+                    json!({
+                        "reaction":reaction,
+                        "count":actors.len(),
+                        "chosenByMe":actors.contains(actor_id),
+                        "recentActorIds":actors.iter().take(8).cloned().collect::<Vec<_>>()
+                    })
+                })
+                .collect::<Vec<_>>();
+            if let Some(object) = projected.as_object_mut() {
+                object.insert("reactions".into(), Value::Array(values));
+            }
+        }
+        if let Some(votes) = self
+            .state
+            .poll_votes
+            .get(conversation_id)
+            .and_then(|messages| messages.get(message_id))
+        {
+            if let Some(options) = projected
+                .get_mut("content")
+                .and_then(|content| content.get_mut("data"))
+                .and_then(|data| data.get_mut("options"))
+                .and_then(Value::as_array_mut)
+            {
+                let selected = votes.get(actor_id);
+                for option in options {
+                    let Some(option_id) = option.get("id").and_then(Value::as_str).map(str::to_string) else {
+                        continue;
+                    };
+                    if let Some(object) = option.as_object_mut() {
+                        let count = votes
+                            .values()
+                            .filter(|choices| choices.contains(&option_id))
+                            .count();
+                        object.insert("voterCount".into(), json!(count));
+                        object.insert(
+                            "chosen".into(),
+                            json!(selected.is_some_and(|choices| choices.contains(&option_id))),
+                        );
+                    }
+                }
+            }
+        }
+        projected
     }
 
     fn validate_child_destination(
@@ -596,12 +1648,13 @@ impl AndroidMessagingService {
         let conversations = visible_ids
             .iter()
             .filter_map(|id| self.state.conversations.get(id))
-            .cloned()
+            .map(|conversation| self.project_conversation(conversation, actor_id))
             .collect::<Vec<_>>();
         let messages = visible_ids
             .iter()
             .filter_map(|id| self.state.messages.get(id))
-            .flat_map(|messages| messages.values().cloned())
+            .flat_map(|messages| messages.values())
+            .map(|message| self.project_message(message, actor_id))
             .collect::<Vec<_>>();
         let actors = self
             .state
@@ -629,14 +1682,32 @@ impl AndroidMessagingService {
             .into_iter()
             .filter(|child| visible_ids.contains(&child.destination.conversation_id.0))
             .collect::<Vec<_>>();
+        let folders = self
+            .state
+            .folders
+            .get(actor_id)
+            .map(|values| values.values().cloned().collect::<Vec<_>>())
+            .unwrap_or_default();
+        let drafts = self
+            .state
+            .drafts
+            .get(actor_id)
+            .map(|values| {
+                values
+                    .iter()
+                    .filter(|(conversation_id, _)| visible_ids.contains(*conversation_id))
+                    .map(|(_, draft)| draft.clone())
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
         self.server_envelope(
             json!({
                 "type":"syncBatch",
                 "actors":actors,
                 "conversations":conversations,
                 "messages":messages,
-                "folders":[],
-                "drafts":[],
+                "folders":folders,
+                "drafts":drafts,
                 "topicDrafts":[],
                 "pendingPresenceSends":[],
                 "conversationChildren":children,
@@ -702,17 +1773,112 @@ impl AndroidMessagingService {
 }
 
 fn validate_loaded_state(state: &MessagingRepositoryState) -> io::Result<()> {
-    if state
-        .request_order
-        .iter()
-        .any(|key| !state.request_results.contains_key(key))
-    {
+    let mut seen_requests = BTreeSet::new();
+    if state.request_order.iter().any(|key| {
+        !seen_requests.insert(key)
+            || !state.request_results.contains_key(key)
+    }) {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
             "messaging request replay index is inconsistent",
         ));
     }
+    for (conversation_id, conversation) in &state.conversations {
+        if conversation.get("id").and_then(Value::as_str) != Some(conversation_id.as_str()) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "messaging conversation key does not match stored id",
+            ));
+        }
+    }
+    for (conversation_id, messages) in &state.messages {
+        if !state.conversations.contains_key(conversation_id) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "messaging message references missing conversation",
+            ));
+        }
+        for (message_id, message) in messages {
+            if message.get("id").and_then(Value::as_str) != Some(message_id.as_str())
+                || message.get("conversationId").and_then(Value::as_str)
+                    != Some(conversation_id.as_str())
+            {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "messaging message key or conversation is inconsistent",
+                ));
+            }
+        }
+    }
     Ok(())
+}
+
+fn conversation_role<'a>(conversation: &'a Value, actor_id: &str) -> Option<&'a str> {
+    if conversation_owner(conversation) == Some(actor_id) {
+        return Some("owner");
+    }
+    conversation
+        .get("participants")
+        .and_then(Value::as_array)
+        .and_then(|participants| {
+            participants.iter().find_map(|participant| {
+                (participant.get("actorId").and_then(Value::as_str) == Some(actor_id))
+                    .then(|| participant.get("role").and_then(Value::as_str))
+                    .flatten()
+            })
+        })
+}
+
+fn conversation_can_manage(conversation: &Value, actor_id: &str) -> bool {
+    matches!(conversation_role(conversation, actor_id), Some("owner") | Some("admin"))
+}
+
+fn conversation_permission(conversation: &Value, key: &str) -> bool {
+    conversation
+        .get("permissions")
+        .and_then(|permissions| permissions.get(key))
+        .and_then(Value::as_bool)
+        == Some(true)
+}
+
+fn conversation_can_send_kind(conversation: &Value, actor_id: &str, kind: &str) -> bool {
+    if !conversation_has_access(conversation, actor_id) {
+        return false;
+    }
+    if conversation_can_manage(conversation, actor_id) {
+        return true;
+    }
+    let permission = match kind {
+        "photo" | "video" | "document" | "voice" | "audio" => "canSendMedia",
+        "poll" => "canSendPolls",
+        _ => "canSendMessages",
+    };
+    conversation_permission(conversation, permission)
+}
+
+fn conversation_can_send(conversation: &Value, actor_id: &str, content: &Value) -> bool {
+    content
+        .get("type")
+        .and_then(Value::as_str)
+        .is_some_and(|kind| conversation_can_send_kind(conversation, actor_id, kind))
+}
+
+fn conversation_can_pin(conversation: &Value, actor_id: &str) -> bool {
+    conversation_can_manage(conversation, actor_id)
+        || (conversation_has_access(conversation, actor_id)
+            && conversation_permission(conversation, "canPinMessages"))
+}
+
+fn content_blob_id(content: &Value) -> Option<&str> {
+    content
+        .get("data")
+        .and_then(|data| data.get("media"))
+        .and_then(|media| media.get("id"))
+        .and_then(Value::as_str)
+}
+
+fn message_blob_id(message: &Value) -> Option<&str> {
+    message.get("content").and_then(content_blob_id)
 }
 
 fn parse_destination(value: Option<&Value>) -> Result<ConversationDestination, String> {
@@ -782,6 +1948,12 @@ fn required_non_empty<'a>(value: Option<&'a Value>, label: &str) -> Result<&'a s
 fn required_bool(value: Option<&Value>, label: &str) -> Result<bool, String> {
     value
         .and_then(Value::as_bool)
+        .ok_or_else(|| format!("{label} is required"))
+}
+
+fn required_u64(value: Option<&Value>, label: &str) -> Result<u64, String> {
+    value
+        .and_then(Value::as_u64)
         .ok_or_else(|| format!("{label} is required"))
 }
 
@@ -971,4 +2143,228 @@ mod tests {
         assert_eq!(error.kind(), io::ErrorKind::InvalidData);
         let _ = fs::remove_dir_all(root);
     }
+    #[test]
+    fn blob_upload_range_read_reopen_and_account_fence_are_durable() {
+        let root = temp_root("blob");
+        let actor = "human:owner";
+        {
+            let mut service = AndroidMessagingService::open(&root).unwrap();
+            seed(&mut service, actor);
+            execute(
+                &mut service,
+                "blob-begin",
+                actor,
+                json!({"type":"beginBlobUpload","metadata":{
+                    "id":"blob-1","fileName":"hello.txt","mimeType":"text/plain",
+                    "sizeBytes":11,"contentHash":Value::Null,"createdAtMs":1
+                }}),
+            )
+            .unwrap();
+            execute(
+                &mut service,
+                "blob-append-1",
+                actor,
+                json!({"type":"appendBlobChunk","blobId":"blob-1","offset":0,"dataBase64":"aGVsbG8g"}),
+            )
+            .unwrap();
+            execute(
+                &mut service,
+                "blob-append-1-retry",
+                actor,
+                json!({"type":"appendBlobChunk","blobId":"blob-1","offset":0,"dataBase64":"aGVsbG8g"}),
+            )
+            .unwrap();
+            execute(
+                &mut service,
+                "blob-append-2",
+                actor,
+                json!({"type":"appendBlobChunk","blobId":"blob-1","offset":6,"dataBase64":"d29ybGQ="}),
+            )
+            .unwrap();
+            execute(
+                &mut service,
+                "blob-finish",
+                actor,
+                json!({"type":"finishBlobUpload","blobId":"blob-1"}),
+            )
+            .unwrap();
+            execute(
+                &mut service,
+                "media-message",
+                actor,
+                json!({"type":"sendMessage","conversationId":"conversation:parent","clientMessageId":"message:media",
+                    "content":{"type":"document","data":{"media":{
+                        "id":"blob-1","fileName":"hello.txt","mimeType":"text/plain","sizeBytes":11,
+                        "remoteUrl":"fabushi-blob://blob-1"
+                    },"caption":{"text":"","entities":[]}}}}),
+            )
+            .unwrap();
+            let read = service
+                .read_blob_range(&json!({"blobId":"blob-1","offset":6,"length":5}), actor)
+                .unwrap();
+            assert_eq!(read["dataBase64"], "d29ybGQ=");
+            assert!(service
+                .read_blob_range(
+                    &json!({"blobId":"blob-1","offset":0,"length":5}),
+                    "human:outsider"
+                )
+                .is_err());
+        }
+        let reopened = AndroidMessagingService::open(&root).unwrap();
+        assert_eq!(
+            reopened
+                .read_blob_range(&json!({"blobId":"blob-1","offset":0,"length":5}), actor)
+                .unwrap()["dataBase64"],
+            "aGVsbG8="
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn canonical_mutations_enforce_admin_and_keep_account_scoped_draft_and_reaction_projection() {
+        let root = temp_root("mutations");
+        let owner = "human:owner";
+        let other = "human:other";
+        let mut service = AndroidMessagingService::open(&root).unwrap();
+        seed(&mut service, owner);
+        execute(
+            &mut service,
+            "other-profile",
+            other,
+            json!({"type":"upsertProfile","actor":{"id":other,"kind":"human","displayName":"Other"}}),
+        )
+        .unwrap();
+        execute(
+            &mut service,
+            "add-other",
+            owner,
+            json!({"type":"setConversationParticipant","conversationId":"conversation:parent",
+                "participant":{"actorId":other,"role":"member","joinedAtMs":2,"mutedUntilMs":Value::Null}}),
+        )
+        .unwrap();
+
+        execute(
+            &mut service,
+            "draft-owner",
+            owner,
+            json!({"type":"setDraft","conversationId":"conversation:parent","text":"owner draft","replyToMessageId":Value::Null}),
+        )
+        .unwrap();
+        execute(
+            &mut service,
+            "react-owner",
+            owner,
+            json!({"type":"setReaction","conversationId":"conversation:parent","messageId":"message:root",
+                "reaction":{"reaction":"👍","chosenByMe":true}}),
+        )
+        .unwrap();
+        assert!(execute(
+            &mut service,
+            "info-other",
+            other,
+            json!({"type":"updateConversationInfo","conversationId":"conversation:parent","title":"forged","description":Value::Null}),
+        )
+        .is_err());
+
+        let owner_sync = execute(&mut service, "sync-owner", owner, json!({"type":"sync"})).unwrap();
+        assert_eq!(
+            owner_sync["envelopes"][0]["event"]["drafts"][0]["text"],
+            "owner draft"
+        );
+        assert_eq!(
+            owner_sync["envelopes"][0]["event"]["messages"][0]["reactions"][0]["chosenByMe"],
+            true
+        );
+        let other_sync = execute(&mut service, "sync-other", other, json!({"type":"sync"})).unwrap();
+        assert!(other_sync["envelopes"][0]["event"]["drafts"]
+            .as_array()
+            .unwrap()
+            .is_empty());
+        assert_eq!(
+            other_sync["envelopes"][0]["event"]["messages"][0]["reactions"][0]["chosenByMe"],
+            false
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn forward_edit_delete_pin_read_folder_and_typing_survive_repository_reopen() {
+        let root = temp_root("commands");
+        let actor = "human:owner";
+        {
+            let mut service = AndroidMessagingService::open(&root).unwrap();
+            seed(&mut service, actor);
+            execute(
+                &mut service,
+                "edit",
+                actor,
+                json!({"type":"editMessage","conversationId":"conversation:parent","messageId":"message:root",
+                    "content":{"type":"text","data":{"text":{"text":"edited","entities":[]}}}}),
+            )
+            .unwrap();
+            execute(
+                &mut service,
+                "pin-message",
+                actor,
+                json!({"type":"pinMessage","conversationId":"conversation:parent","messageId":"message:root","pinned":true}),
+            )
+            .unwrap();
+            execute(
+                &mut service,
+                "mark-read",
+                actor,
+                json!({"type":"markRead","conversationId":"conversation:parent","messageId":"message:root"}),
+            )
+            .unwrap();
+            execute(
+                &mut service,
+                "archive",
+                actor,
+                json!({"type":"archiveConversation","conversationId":"conversation:parent","archived":true}),
+            )
+            .unwrap();
+            execute(
+                &mut service,
+                "folder",
+                actor,
+                json!({"type":"upsertFolder","folder":{"id":"folder:one","title":"One","conversationIds":["conversation:parent"]}}),
+            )
+            .unwrap();
+            let typing = execute(
+                &mut service,
+                "typing",
+                actor,
+                json!({"type":"startTyping","conversationId":"conversation:parent","action":"typing"}),
+            )
+            .unwrap();
+            assert_eq!(typing["envelopes"][0]["event"]["type"], "typingChanged");
+            execute(
+                &mut service,
+                "forward",
+                actor,
+                json!({"type":"forwardMessage","sourceConversationId":"conversation:parent",
+                    "messageId":"message:root","destinationConversationId":"conversation:parent","clientMessageId":"message:forward"}),
+            )
+            .unwrap();
+            execute(
+                &mut service,
+                "delete",
+                actor,
+                json!({"type":"deleteMessages","conversationId":"conversation:parent","messageIds":["message:forward"],"forEveryone":true}),
+            )
+            .unwrap();
+        }
+        let mut reopened = AndroidMessagingService::open(&root).unwrap();
+        let sync = execute(&mut reopened, "sync-reopen-commands", actor, json!({"type":"sync"})).unwrap();
+        let event = &sync["envelopes"][0]["event"];
+        assert_eq!(event["messages"][0]["content"]["data"]["text"]["text"], "edited");
+        assert_eq!(event["messages"][0]["pinned"], true);
+        assert_eq!(event["conversations"][0]["archived"], true);
+        assert_eq!(event["conversations"][0]["lastReadMessageId"], "message:root");
+        assert_eq!(event["folders"][0]["id"], "folder:one");
+        assert_eq!(event["messages"].as_array().unwrap().len(), 1);
+        let _ = fs::remove_dir_all(root);
+    }
+
+
 }
