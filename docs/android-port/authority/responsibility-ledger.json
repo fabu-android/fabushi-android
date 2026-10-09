@@ -2401,7 +2401,7 @@
       "desktop_sources": [
         {
           "path": ".github/workflows/tdrp-external-url-auth-responsibility.yml",
-          "blob_sha": "4a0d629d502b0dcfc35f2bd220e640a512418289",
+          "blob_sha": "a47532498d3f3d7cc4fd7ab96f05423016715b56",
           "symbols": [
             "external-url-auth",
             "independent-review"
