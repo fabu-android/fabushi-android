@@ -5,6 +5,10 @@ edition.workspace = true
 license.workspace = true
 autobins = false
 
+[features]
+default = []
+ci-account-session-import = []
+
 [dependencies]
 fabushi-android-shared = { path = "../shared" }
 fabushi-constants = { path = "../packages/constants" }
