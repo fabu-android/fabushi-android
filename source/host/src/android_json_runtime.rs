@@ -535,9 +535,6 @@ impl AndroidJsonHost {
 
     fn current_turn_account_fence(&self) -> Result<String, String> {
         if self.mode == AndroidHostMode::Test {
-            if !self.logged_in {
-                return Err("Sign in to Fabushi to use account-scoped capabilities.".into());
-            }
             return Ok("session:test:android".into());
         }
         #[cfg(feature = "ci-account-session-import")]
