@@ -1995,22 +1995,33 @@ impl AndroidJsonHost {
         for event in owner.drain_events()? {
             match event {
                 McpAuthOwnerEvent::Completed(completion) => {
-                    let resume_mutation = match self.queue_mcp_auth_resume_turn(&completion) {
-                        Ok(mutation) => mutation,
-                        Err(error) => {
-                            self.events.push_back(json!({
-                                "type":"mcp.auth.resume.failed",
-                                "serverId":completion.server_id,
-                                "serverName":completion.server_name,
-                                "accountKey":completion.account_key,
-                                "requestingAgentId":completion.requesting_agent_id,
-                                "generation":completion.generation,
-                                "message":error,
-                                "source":"host-auth-watch-owner",
-                            }));
-                            None
-                        }
-                    };
+                    let (resume_mutation, resume_accepted) =
+                        match self.queue_mcp_auth_resume_turn(&completion) {
+                            Ok(mutation) => (mutation, true),
+                            Err(error) => {
+                                self.events.push_back(json!({
+                                    "type":"mcp.auth.resume.failed",
+                                    "serverId":completion.server_id,
+                                    "serverName":completion.server_name,
+                                    "accountKey":completion.account_key,
+                                    "requestingAgentId":completion.requesting_agent_id,
+                                    "generation":completion.generation,
+                                    "message":error,
+                                    "source":"host-auth-watch-owner",
+                                }));
+                                (None, false)
+                            }
+                        };
+                    if resume_accepted {
+                        self.mcp_auth_watches
+                            .lock()
+                            .map_err(|_| "MCP auth watch manager lock poisoned".to_string())?
+                            .ack_completion(
+                                completion.generation,
+                                &completion.server_id,
+                                &completion.account_key,
+                            )?;
+                    }
                     self.events.push_back(with_account_session_mutation(
                         json!({
                             "type":"mcp.auth.completed",
