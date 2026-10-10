@@ -24,6 +24,7 @@ use crate::runner::{
     ProductionTurnAgentOwner, ProductionTurnAgentStaticConfig, ProductionTurnEvent,
     ProductionDiskPressureLevel, ProductionTurnInput, ProductionTurnLifecycleStore,
     ProductionTurnPrivacyMode, ProductionTurnProfileAnnouncementCommit, SAND_AGENT_TOKEN_LIMIT,
+    shared_turn_run_shell, SharedTurnRunShell,
     build_turn_subagent_types, parse_turn_subagent_capability_projection,
     COORDINATOR_SUBAGENT_CAPABILITIES_FIELD, DurableSubagentOwner, SubagentFrozenTurnConfig,
     SubagentRunOutcome, SubagentSteerReview, SubagentTaskReviewCallback,
@@ -158,6 +159,71 @@ impl SubagentReviewApprovalRegistry {
             pending.remove(approval_id);
         }
     }
+}
+
+fn mark_turn_awaiting_user(
+    shell: &SharedTurnRunShell,
+    lifecycle: &Arc<Mutex<ProductionTurnLifecycleStore>>,
+    account_fence: &str,
+    agent_id: &str,
+    request_id: &str,
+    operation_id: &str,
+    turn_generation: u64,
+    process_epoch: u64,
+    reason: &str,
+) -> Result<(), String> {
+    shell
+        .lock()
+        .map_err(|_| "turn run shell lock poisoned".to_string())?
+        .mark_awaiting_user(operation_id)
+        .map_err(|error| format!("turn waiting-user mark rejected: {error:?}"))?;
+    let durable = lifecycle
+        .lock()
+        .map_err(|_| "turn lifecycle lock poisoned".to_string())?
+        .mark_awaiting_user(
+            account_fence,
+            agent_id,
+            request_id,
+            operation_id,
+            turn_generation,
+            process_epoch,
+            reason,
+            now_ms(),
+        );
+    if let Err(error) = durable {
+        if let Ok(mut shell) = shell.lock() {
+            let _ = shell.resume_awaiting_user(operation_id);
+        }
+        return Err(error);
+    }
+    Ok(())
+}
+
+fn clear_turn_awaiting_user(
+    shell: &SharedTurnRunShell,
+    lifecycle: &Arc<Mutex<ProductionTurnLifecycleStore>>,
+    account_fence: &str,
+    agent_id: &str,
+    request_id: &str,
+    operation_id: &str,
+    turn_generation: u64,
+    process_epoch: u64,
+) -> Result<(), String> {
+    let durable = lifecycle
+        .lock()
+        .map_err(|_| "turn lifecycle lock poisoned".to_string())?
+        .clear_awaiting_user(
+            account_fence,
+            agent_id,
+            request_id,
+            operation_id,
+            turn_generation,
+            process_epoch,
+        );
+    if let Ok(mut shell) = shell.lock() {
+        let _ = shell.resume_awaiting_user(operation_id);
+    }
+    durable.map(|_| ())
 }
 
 fn wait_for_subagent_review_approval(
@@ -1048,6 +1114,10 @@ impl AndroidJsonHost {
             .messaging
             .lock()
             .map_err(|_| "canonical Android messaging owner lock poisoned".to_string())?;
+        let lifecycle = self
+            .turn_lifecycle
+            .lock()
+            .map_err(|_| "turn lifecycle lock poisoned".to_string())?;
 
         Ok(agents
             .into_iter()
@@ -1076,9 +1146,30 @@ impl AndroidJsonHost {
                         .map(Value::String)
                         .collect();
                     object.insert("conversationPartnerIds".into(), Value::Array(partners));
-                    // No second owner: preserve Desktop's nullable waiting-state contract until
-                    // Host has an explicit durable waiting-user event/state owner.
-                    object.insert("awaitingUserResponse".into(), Value::Null);
+                    let waiting = account_fence.as_deref().and_then(|fence| {
+                        lifecycle.awaiting_user_projection(fence, &agent.id)
+                    });
+                    match waiting {
+                        Some(waiting) => {
+                            object.insert(
+                                "updatedAt".into(),
+                                Value::from(agent.updated_at.max(waiting.updated_at_ms)),
+                            );
+                            object.insert(
+                                "awaitingUserResponse".into(),
+                                json!({
+                                    "reason":waiting.reason,
+                                    "requestId":waiting.request_id,
+                                    "operationId":waiting.operation_id,
+                                    "turnGeneration":waiting.turn_generation,
+                                    "recoveryRequired":waiting.recovery_required,
+                                }),
+                            );
+                        }
+                        None => {
+                            object.insert("awaitingUserResponse".into(), Value::Null);
+                        }
+                    }
                 }
                 value
             })
@@ -1899,22 +1990,28 @@ impl AndroidJsonHost {
                 params.get("reason").and_then(Value::as_str).map(str::to_string),
                 now_ms(),
             )?;
-        let disk_reconciled = self
+        let mut lifecycle = self
             .turn_lifecycle
             .lock()
-            .map_err(|_| "turn lifecycle lock poisoned".to_string())?
-            .reconcile_disk_pressure_claim(
-                &account_fence,
-                &reconciled.operation_id,
-                reconciled.state == DurableTurnState::Completed,
-                now_ms(),
-            )?;
+            .map_err(|_| "turn lifecycle lock poisoned".to_string())?;
+        let disk_reconciled = lifecycle.reconcile_disk_pressure_claim(
+            &account_fence,
+            &reconciled.operation_id,
+            reconciled.state == DurableTurnState::Completed,
+            now_ms(),
+        )?;
+        let awaiting_user_reconciled = lifecycle.reconcile_awaiting_user(
+            &account_fence,
+            &reconciled.operation_id,
+            reconciled.generation,
+        )?;
 
         Ok(json!({
             "requestId":request_id,
             "operationId":reconciled.operation_id,
             "state":format!("{:?}", reconciled.state).to_ascii_lowercase(),
             "diskPressureReconciled":disk_reconciled,
+            "awaitingUserReconciled":awaiting_user_reconciled,
         }))
     }
 
@@ -3177,6 +3274,25 @@ impl AndroidJsonHost {
                     AndroidHostMode::Test => AndroidInferenceMode::Test,
                     AndroidHostMode::Production => AndroidInferenceMode::Production,
                 };
+                let turn_run_shell = shared_turn_run_shell();
+                let turn_lifecycle_process_epoch = match turn_lifecycle.lock() {
+                    Ok(store) => store.process_epoch(),
+                    Err(_) => {
+                        let _ = turn_journal
+                            .lock()
+                            .map_err(|_| "turn journal lock poisoned".to_string())
+                            .and_then(|mut journal| journal.settle(
+                                &request_id_owned,
+                                &operation_id_owned,
+                                &account_fence_owned,
+                                turn_generation,
+                                DurableTurnState::Failed,
+                                Some("turn lifecycle lock poisoned".into()),
+                                now_ms(),
+                            ));
+                        return;
+                    }
+                };
                 let task_review_token = bearer_token.clone();
                 let task_review_cancelled = Arc::clone(&cancelled);
                 let task_review_broker = subagent_review_broker.clone();
@@ -3185,6 +3301,9 @@ impl AndroidJsonHost {
                 let task_review_parent_agent = conversation_id_owned.clone();
                 let task_review_parent_request = request_id_owned.clone();
                 let task_review_account_fence = account_fence_owned.clone();
+                let task_review_parent_operation = operation_id_owned.clone();
+                let task_review_shell = Arc::clone(&turn_run_shell);
+                let task_review_lifecycle = Arc::clone(&turn_lifecycle);
                 let task_review: SubagentTaskReviewCallback = Arc::new(
                     move |prompt, subagent_type, tool_call_id| {
                         if tool_call_id.trim().is_empty() {
@@ -3207,7 +3326,18 @@ impl AndroidJsonHost {
                             AndroidSubagentReviewDecision::Allow => Ok(None),
                             AndroidSubagentReviewDecision::Reject { reason } => Ok(Some(reason)),
                             AndroidSubagentReviewDecision::Block { reason, proposed_rule } => {
-                                let approved = wait_for_subagent_review_approval(
+                                mark_turn_awaiting_user(
+                                    &task_review_shell,
+                                    &task_review_lifecycle,
+                                    &task_review_account_fence,
+                                    &task_review_parent_agent,
+                                    &task_review_parent_request,
+                                    &task_review_parent_operation,
+                                    turn_generation,
+                                    turn_lifecycle_process_epoch,
+                                    &reason,
+                                )?;
+                                let approval = wait_for_subagent_review_approval(
                                     &task_review_broker,
                                     &task_review_approvals,
                                     &task_review_events,
@@ -3224,7 +3354,19 @@ impl AndroidJsonHost {
                                     &reason,
                                     proposed_rule.as_deref(),
                                     subagent_review_expiry_policy,
-                                )?;
+                                );
+                                let cleared = clear_turn_awaiting_user(
+                                    &task_review_shell,
+                                    &task_review_lifecycle,
+                                    &task_review_account_fence,
+                                    &task_review_parent_agent,
+                                    &task_review_parent_request,
+                                    &task_review_parent_operation,
+                                    turn_generation,
+                                    turn_lifecycle_process_epoch,
+                                );
+                                let approved = approval?;
+                                cleared?;
                                 Ok((!approved).then_some(reason))
                             }
                         }
@@ -3238,6 +3380,9 @@ impl AndroidJsonHost {
                 let steer_review_parent_agent = conversation_id_owned.clone();
                 let steer_review_parent_request = request_id_owned.clone();
                 let steer_review_account_fence = account_fence_owned.clone();
+                let steer_review_parent_operation = operation_id_owned.clone();
+                let steer_review_shell = Arc::clone(&turn_run_shell);
+                let steer_review_lifecycle = Arc::clone(&turn_lifecycle);
                 let steer_review: SubagentSteerReviewCallback = Arc::new(
                     move |subagent_id, message, tool_call_id| {
                         if tool_call_id.trim().is_empty() {
@@ -3263,7 +3408,18 @@ impl AndroidJsonHost {
                                 reason,
                             }),
                             AndroidSubagentReviewDecision::Block { reason, proposed_rule } => {
-                                let approved = wait_for_subagent_review_approval(
+                                mark_turn_awaiting_user(
+                                    &steer_review_shell,
+                                    &steer_review_lifecycle,
+                                    &steer_review_account_fence,
+                                    &steer_review_parent_agent,
+                                    &steer_review_parent_request,
+                                    &steer_review_parent_operation,
+                                    turn_generation,
+                                    turn_lifecycle_process_epoch,
+                                    &reason,
+                                )?;
+                                let approval = wait_for_subagent_review_approval(
                                     &steer_review_broker,
                                     &steer_review_approvals,
                                     &steer_review_events,
@@ -3280,7 +3436,19 @@ impl AndroidJsonHost {
                                     &reason,
                                     proposed_rule.as_deref(),
                                     subagent_review_expiry_policy,
-                                )?;
+                                );
+                                let cleared = clear_turn_awaiting_user(
+                                    &steer_review_shell,
+                                    &steer_review_lifecycle,
+                                    &steer_review_account_fence,
+                                    &steer_review_parent_agent,
+                                    &steer_review_parent_request,
+                                    &steer_review_parent_operation,
+                                    turn_generation,
+                                    turn_lifecycle_process_epoch,
+                                );
+                                let approved = approval?;
+                                cleared?;
                                 Ok(SubagentSteerReview {
                                     allowed: approved,
                                     reason: if approved { String::new() } else { reason },
@@ -3535,6 +3703,7 @@ impl AndroidJsonHost {
                 }
 
                 let mut owner = match ProductionTurnAgentOwner::new(provider)
+                    .with_turn_run_shell(Arc::clone(&turn_run_shell))
                     .with_upgrade_quiesce_signal(turn_upgrade_quiescing)
                     .with_build_bindings(build_bindings)
                     .with_lifecycle_bindings(lifecycle_bindings)
@@ -6460,6 +6629,21 @@ export function apply(ctx) {
             }))
             .unwrap();
         host.active_operations.insert("projection-op".into());
+        let lifecycle_epoch = host.turn_lifecycle.lock().unwrap().process_epoch();
+        host.turn_lifecycle
+            .lock()
+            .unwrap()
+            .mark_awaiting_user(
+                &account_fence,
+                &agent.id,
+                "projection-request",
+                "projection-op",
+                9,
+                lifecycle_epoch,
+                "Waiting for approval",
+                201,
+            )
+            .unwrap();
 
         let list = host.dispatch("listAgents", &json!({})).unwrap();
         let row = list
@@ -6471,8 +6655,9 @@ export function apply(ctx) {
         assert_eq!(row["lastMessage"], "canonical latest message");
         assert_eq!(row["isRunning"], true);
         assert_eq!(row["conversationPartnerIds"], json!([partner.id.clone()]));
-        assert_eq!(row["awaitingUserResponse"], Value::Null);
-        assert!(row["updatedAt"].as_u64().unwrap() >= 200);
+        assert_eq!(row["awaitingUserResponse"]["reason"], "Waiting for approval");
+        assert_eq!(row["awaitingUserResponse"]["recoveryRequired"], false);
+        assert!(row["updatedAt"].as_u64().unwrap() >= 201);
 
         host.active_operations.remove("projection-op");
         drop(host);
@@ -6491,6 +6676,25 @@ export function apply(ctx) {
             "canonical relationship must survive Host process restart"
         );
         assert_eq!(reopened_row["isRunning"], false);
+        assert_eq!(
+            reopened_row["awaitingUserResponse"]["recoveryRequired"],
+            true,
+            "process restart must preserve waiting truth as recovery-required instead of fabricating an active run"
+        );
+        reopened
+            .turn_lifecycle
+            .lock()
+            .unwrap()
+            .reconcile_awaiting_user(&account_fence, "projection-op", 9)
+            .unwrap();
+        let reconciled_list = reopened.dispatch("listAgents", &json!({})).unwrap();
+        let reconciled_row = reconciled_list
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|row| row["id"] == agent.id)
+            .unwrap();
+        assert!(reconciled_row["awaitingUserResponse"].is_null());
 
         reopened
             .agents

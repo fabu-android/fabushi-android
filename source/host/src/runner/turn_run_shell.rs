@@ -1,4 +1,13 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    sync::{Arc, Mutex},
+};
+
+pub type SharedTurnRunShell = Arc<Mutex<TurnRunShell>>;
+
+pub fn shared_turn_run_shell() -> SharedTurnRunShell {
+    Arc::new(Mutex::new(TurnRunShell::default()))
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TurnCancellation {
@@ -109,6 +118,16 @@ impl TurnRunShell {
         Ok(())
     }
 
+    pub fn resume_awaiting_user(
+        &mut self,
+        operation_id: &str,
+    ) -> Result<(), TurnRunShellError> {
+        if !self.active.contains_key(operation_id) || !self.awaiting_user.remove(operation_id) {
+            return Err(TurnRunShellError::UnknownRun);
+        }
+        Ok(())
+    }
+
     pub fn end_awaiting_user(
         &mut self,
         operation_id: &str,
@@ -216,7 +235,11 @@ mod tests {
         shell.begin("op-2", "req-2", "hello").unwrap();
         shell.mark_awaiting_user("op-1").unwrap();
         assert!(shell.is_awaiting_user("op-1"));
+        shell.resume_awaiting_user("op-1").unwrap();
+        assert!(shell.is_active("op-1"));
+        assert!(!shell.is_awaiting_user("op-1"));
 
+        shell.mark_awaiting_user("op-1").unwrap();
         shell.end_awaiting_user("op-1", "answer received").unwrap();
         assert!(!shell.is_active("op-1"));
         assert_eq!(

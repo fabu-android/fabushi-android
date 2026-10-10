@@ -22,7 +22,7 @@ pub use production_turn_agent_owner::{
     ProductionTurnSummarizationPrompt, SAND_AGENT_MAX_STEPS, SAND_AGENT_TOKEN_LIMIT,
 };
 pub use production_turn_lifecycle::{
-    ProductionDiskPressureLevel, ProductionTurnLifecycleStore,
+    ProductionAwaitingUserProjection, ProductionDiskPressureLevel, ProductionTurnLifecycleStore,
 };
 pub use stream_attempt::{
     ProviderFailure, StreamAttemptHost, StreamAttemptInput, StreamAttemptResult, StreamGeneration,
@@ -45,7 +45,10 @@ pub use agent_management::{
     SEND_TO_AGENT_TOOL_NAME, UPDATE_AGENT_TOOL_NAME,
 };
 
-pub use turn_run_shell::{ActiveRun, TurnCancellation, TurnRunLease, TurnRunShell, TurnRunShellError};
+pub use turn_run_shell::{
+    shared_turn_run_shell, ActiveRun, SharedTurnRunShell, TurnCancellation, TurnRunLease,
+    TurnRunShell, TurnRunShellError,
+};
 
 pub use durable_turn_journal::{DurableTurnJournal, DurableTurnRecord, DurableTurnState};
 

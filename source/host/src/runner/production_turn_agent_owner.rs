@@ -5,7 +5,7 @@ use std::sync::{
 
 use super::{
     stream_attempt::{ProviderFailure, StreamAttemptHost, StreamAttemptInput, TurnStreamProvider},
-    turn_run_shell::{TurnCancellation, TurnRunShell, TurnRunShellError},
+    turn_run_shell::{shared_turn_run_shell, SharedTurnRunShell, TurnCancellation, TurnRunShellError},
     turn_settle::{prepare_checkpoint, persist_checkpoint, settle_completed_turn, TurnSettlement},
 };
 
@@ -219,7 +219,7 @@ pub struct ProductionTurnResult {
 
 pub struct ProductionTurnAgentOwner<P: TurnStreamProvider> {
     stream: StreamAttemptHost<P>,
-    shell: TurnRunShell,
+    shell: SharedTurnRunShell,
     upgrade_quiescing: Arc<AtomicBool>,
     build_input: Option<ProductionTurnAgentBuildInput>,
     summarization_prompt: Option<ProductionTurnSummarizationPrompt>,
@@ -234,7 +234,7 @@ impl<P: TurnStreamProvider> ProductionTurnAgentOwner<P> {
     pub fn new(provider: P) -> Self {
         Self {
             stream: StreamAttemptHost::new(provider),
-            shell: TurnRunShell::default(),
+            shell: shared_turn_run_shell(),
             upgrade_quiescing: Arc::new(AtomicBool::new(false)),
             build_input: None,
             summarization_prompt: None,
@@ -248,6 +248,11 @@ impl<P: TurnStreamProvider> ProductionTurnAgentOwner<P> {
 
     pub fn with_upgrade_quiesce_signal(mut self, signal: Arc<AtomicBool>) -> Self {
         self.upgrade_quiescing = signal;
+        self
+    }
+
+    pub fn with_turn_run_shell(mut self, shell: SharedTurnRunShell) -> Self {
+        self.shell = shell;
         self
     }
 
@@ -324,6 +329,8 @@ impl<P: TurnStreamProvider> ProductionTurnAgentOwner<P> {
 
         let projected_prompt = self.project_prompt_for_turn(&input.prompt);
         self.shell
+            .lock()
+            .map_err(|_| ProviderFailure::new("turn run shell lock poisoned"))?
             .begin(&input.operation_id, &input.request_id, &projected_prompt)
             .map_err(|error| ProviderFailure::new(format!("turn run rejected: {error:?}")))?;
 
@@ -358,7 +365,11 @@ impl<P: TurnStreamProvider> ProductionTurnAgentOwner<P> {
                 sink(ProductionTurnEvent::Delta(chunk.to_string()))
             },
         );
-        let _ = self.shell.finish(&input.operation_id);
+        let _ = self
+            .shell
+            .lock()
+            .map_err(|_| ProviderFailure::new("turn run shell lock poisoned"))?
+            .finish(&input.operation_id);
 
         for retry in &emitted_retries {
             sink(ProductionTurnEvent::Retrying {
@@ -425,6 +436,8 @@ impl<P: TurnStreamProvider> ProductionTurnAgentOwner<P> {
 
     pub fn cancel(&mut self, operation_id: &str) -> Result<ProductionTurnEvent, String> {
         self.shell
+            .lock()
+            .map_err(|_| "turn run shell lock poisoned".to_string())?
             .cancel(
                 operation_id,
                 TurnCancellation {
@@ -439,22 +452,31 @@ impl<P: TurnStreamProvider> ProductionTurnAgentOwner<P> {
     }
 
     pub fn is_active(&self, operation_id: &str) -> bool {
-        self.shell.is_active(operation_id)
+        self.shell
+            .lock()
+            .is_ok_and(|shell| shell.is_active(operation_id))
     }
 
     pub fn request_quiesce_for_upgrade(&mut self) {
         self.upgrade_quiescing.store(true, Ordering::Release);
-        self.shell.request_quiesce_for_upgrade();
+        if let Ok(mut shell) = self.shell.lock() {
+            shell.request_quiesce_for_upgrade();
+        }
     }
 
     pub fn cancel_quiesce_for_upgrade(&mut self) {
         self.upgrade_quiescing.store(false, Ordering::Release);
-        self.shell.cancel_quiesce_for_upgrade();
+        if let Ok(mut shell) = self.shell.lock() {
+            shell.cancel_quiesce_for_upgrade();
+        }
     }
 
     pub fn is_quiescing_for_upgrade(&self) -> bool {
         self.upgrade_quiescing.load(Ordering::Acquire)
-            || self.shell.is_quiescing_for_upgrade()
+            || self
+                .shell
+                .lock()
+                .is_ok_and(|shell| shell.is_quiescing_for_upgrade())
     }
 
     pub fn dispose(&mut self) {

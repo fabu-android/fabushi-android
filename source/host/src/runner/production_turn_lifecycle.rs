@@ -93,12 +93,46 @@ struct ProfileAnnouncement {
     committed_at_ms: u64,
 }
 
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+enum AwaitingUserState {
+    Active,
+    RecoveryRequired,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+struct AwaitingUserRecord {
+    account_fence: String,
+    agent_id: String,
+    request_id: String,
+    operation_id: String,
+    turn_generation: u64,
+    owner_process_epoch: u64,
+    reason: String,
+    state: AwaitingUserState,
+    updated_at_ms: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ProductionAwaitingUserProjection {
+    pub request_id: String,
+    pub operation_id: String,
+    pub turn_generation: u64,
+    pub reason: String,
+    pub recovery_required: bool,
+    pub updated_at_ms: u64,
+}
+
 #[derive(Default, Deserialize, Serialize)]
 struct LifecycleState {
     disk_pressure: BTreeMap<String, DiskPressureEpisode>,
     profile_announcements: BTreeMap<String, ProfileAnnouncement>,
     #[serde(default)]
     active_disk_pressure: BTreeMap<String, ActiveDiskPressureEpisode>,
+    #[serde(default)]
+    awaiting_user: BTreeMap<String, AwaitingUserRecord>,
+    #[serde(default)]
+    process_epoch: u64,
 }
 
 /// Android-owned durable lifecycle backing for one-turn claims that cannot be
@@ -125,7 +159,16 @@ impl ProductionTurnLifecycleStore {
             LifecycleState::default()
         };
 
-        let mut changed = false;
+        state.process_epoch = state.process_epoch.saturating_add(1).max(1);
+        let current_process_epoch = state.process_epoch;
+        let mut changed = true;
+        for waiting in state.awaiting_user.values_mut() {
+            if waiting.state == AwaitingUserState::Active {
+                waiting.state = AwaitingUserState::RecoveryRequired;
+                waiting.owner_process_epoch = current_process_epoch;
+                waiting.updated_at_ms = now_ms;
+            }
+        }
         for episode in state.disk_pressure.values_mut() {
             if episode.state == DiskPressureEpisodeState::Claimed {
                 episode.state = DiskPressureEpisodeState::OutcomeUnknown;
@@ -139,6 +182,128 @@ impl ProductionTurnLifecycleStore {
             store.persist()?;
         }
         Ok(store)
+    }
+
+    pub fn process_epoch(&self) -> u64 {
+        self.state.process_epoch
+    }
+
+    pub fn mark_awaiting_user(
+        &mut self,
+        account_fence: &str,
+        agent_id: &str,
+        request_id: &str,
+        operation_id: &str,
+        turn_generation: u64,
+        owner_process_epoch: u64,
+        reason: &str,
+        now_ms: u64,
+    ) -> Result<(), String> {
+        validate_identity(account_fence, "account fence")?;
+        validate_identity(agent_id, "agent id")?;
+        validate_identity(request_id, "request id")?;
+        validate_identity(operation_id, "operation id")?;
+        if turn_generation == 0 || owner_process_epoch != self.state.process_epoch {
+            return Err("awaiting-user callback is fenced by turn/process epoch".into());
+        }
+        let reason = reason.trim();
+        if reason.is_empty() {
+            return Err("awaiting-user reason is invalid".into());
+        }
+        let key = conversation_key(account_fence, agent_id);
+        if let Some(existing) = self.state.awaiting_user.get(&key) {
+            if existing.request_id == request_id
+                && existing.operation_id == operation_id
+                && existing.turn_generation == turn_generation
+                && existing.owner_process_epoch == owner_process_epoch
+                && existing.state == AwaitingUserState::Active
+            {
+                return Ok(());
+            }
+            return Err("agent already has unresolved awaiting-user state".into());
+        }
+        self.state.awaiting_user.insert(
+            key,
+            AwaitingUserRecord {
+                account_fence: account_fence.to_string(),
+                agent_id: agent_id.to_string(),
+                request_id: request_id.to_string(),
+                operation_id: operation_id.to_string(),
+                turn_generation,
+                owner_process_epoch,
+                reason: reason.chars().take(500).collect(),
+                state: AwaitingUserState::Active,
+                updated_at_ms: now_ms,
+            },
+        );
+        self.persist()
+    }
+
+    pub fn clear_awaiting_user(
+        &mut self,
+        account_fence: &str,
+        agent_id: &str,
+        request_id: &str,
+        operation_id: &str,
+        turn_generation: u64,
+        owner_process_epoch: u64,
+    ) -> Result<bool, String> {
+        if owner_process_epoch != self.state.process_epoch {
+            return Err("stale awaiting-user callback fenced by process epoch".into());
+        }
+        let key = conversation_key(account_fence, agent_id);
+        let Some(existing) = self.state.awaiting_user.get(&key) else {
+            return Ok(false);
+        };
+        if existing.request_id != request_id
+            || existing.operation_id != operation_id
+            || existing.turn_generation != turn_generation
+            || existing.owner_process_epoch != owner_process_epoch
+            || existing.state != AwaitingUserState::Active
+        {
+            return Err("stale awaiting-user callback fenced by account/turn identity".into());
+        }
+        self.state.awaiting_user.remove(&key);
+        self.persist()?;
+        Ok(true)
+    }
+
+    pub fn reconcile_awaiting_user(
+        &mut self,
+        account_fence: &str,
+        operation_id: &str,
+        turn_generation: u64,
+    ) -> Result<bool, String> {
+        let key = self.state.awaiting_user.iter().find_map(|(key, record)| {
+            (record.account_fence == account_fence
+                && record.operation_id == operation_id
+                && record.turn_generation == turn_generation)
+                .then_some(key.clone())
+        });
+        let Some(key) = key else {
+            return Ok(false);
+        };
+        self.state.awaiting_user.remove(&key);
+        self.persist()?;
+        Ok(true)
+    }
+
+    pub fn awaiting_user_projection(
+        &self,
+        account_fence: &str,
+        agent_id: &str,
+    ) -> Option<ProductionAwaitingUserProjection> {
+        self.state
+            .awaiting_user
+            .get(&conversation_key(account_fence, agent_id))
+            .map(|record| ProductionAwaitingUserProjection {
+                request_id: record.request_id.clone(),
+                operation_id: record.operation_id.clone(),
+                turn_generation: record.turn_generation,
+                reason: record.reason.clone(),
+                recovery_required: record.state == AwaitingUserState::RecoveryRequired,
+                updated_at_ms: record.updated_at_ms,
+            })
     }
 
     pub fn observe_disk_pressure_sample(
@@ -351,6 +516,18 @@ impl ProductionTurnLifecycleStore {
     ) -> Result<Vec<String>, String> {
         let mut claims = Vec::new();
         let active_removed = self.state.active_disk_pressure.remove(account_fence).is_some();
+        let process_epoch = self.state.process_epoch;
+        let mut waiting_changed = false;
+        for waiting in self.state.awaiting_user.values_mut() {
+            if waiting.account_fence == account_fence
+                && waiting.state == AwaitingUserState::Active
+            {
+                waiting.state = AwaitingUserState::RecoveryRequired;
+                waiting.owner_process_epoch = process_epoch;
+                waiting.updated_at_ms = now_ms;
+                waiting_changed = true;
+            }
+        }
         for episode in self.state.disk_pressure.values_mut() {
             if episode.account_fence == account_fence
                 && episode.state == DiskPressureEpisodeState::Claimed
@@ -362,7 +539,7 @@ impl ProductionTurnLifecycleStore {
                 }
             }
         }
-        if active_removed || !claims.is_empty() {
+        if active_removed || waiting_changed || !claims.is_empty() {
             self.persist()?;
         }
         Ok(claims)
@@ -507,6 +684,57 @@ mod tests {
                 .unwrap_or_default()
                 .as_nanos(),
         ))
+    }
+
+    #[test]
+    fn awaiting_user_is_durable_recovery_fenced_and_reconciled() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("turn-lifecycle.json");
+        let mut first = ProductionTurnLifecycleStore::open(&path, 1).unwrap();
+        let first_epoch = first.process_epoch();
+        first
+            .mark_awaiting_user(
+                "session:a",
+                "agent-a",
+                "request-a",
+                "operation-a",
+                7,
+                first_epoch,
+                "Approval required",
+                2,
+            )
+            .unwrap();
+        let active = first
+            .awaiting_user_projection("session:a", "agent-a")
+            .unwrap();
+        assert!(!active.recovery_required);
+        assert_eq!(active.reason, "Approval required");
+        drop(first);
+
+        let mut reopened = ProductionTurnLifecycleStore::open(&path, 3).unwrap();
+        let reopened_epoch = reopened.process_epoch();
+        assert!(reopened_epoch > first_epoch);
+        let restored = reopened
+            .awaiting_user_projection("session:a", "agent-a")
+            .unwrap();
+        assert!(restored.recovery_required);
+        assert!(reopened
+            .clear_awaiting_user(
+                "session:a",
+                "agent-a",
+                "request-a",
+                "operation-a",
+                7,
+                first_epoch,
+            )
+            .unwrap_err()
+            .contains("process epoch"));
+        assert!(reopened
+            .reconcile_awaiting_user("session:a", "operation-a", 7)
+            .unwrap());
+        assert!(reopened
+            .awaiting_user_projection("session:a", "agent-a")
+            .is_none());
     }
 
     #[test]
