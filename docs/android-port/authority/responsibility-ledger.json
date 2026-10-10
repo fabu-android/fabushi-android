@@ -6033,6 +6033,41 @@
             "taskMeta",
             "useClockNow"
           ]
+        },
+        {
+          "path": "source/host/src/extensions/transcript/async_task_union.rs",
+          "blob_sha": "c05e484508737d8d9a7ec81712ac9fa755ea573c",
+          "symbols": [
+            "AsyncTask",
+            "merge_async_tasks",
+            "pending_wake_marker_to_async_task"
+          ]
+        },
+        {
+          "path": "source/host/src/extensions/transcript/sand_pending_wake_store.rs",
+          "blob_sha": "f889a28a0c2fab16f2db90dc46bb12f5afe87d0c",
+          "symbols": [
+            "DurablePendingWakeMarker",
+            "SandPendingWakeStore",
+            "PendingWakeKind"
+          ]
+        },
+        {
+          "path": "source/host/src/extensions/transcript/production_runtime.rs",
+          "blob_sha": "249133724863295b2992e89f168139679959c93a",
+          "symbols": [
+            "ProductionTranscriptRuntime::get_async_tasks",
+            "recreate_carry_pending_wakes",
+            "has_carryable_pending_wake"
+          ]
+        },
+        {
+          "path": "source/host/tests/async_task_union_contract.rs",
+          "blob_sha": "6aed898ce9356fad76247aafbce065da7936a272",
+          "symbols": [
+            "production_runtime_projects_durable_pending_wakes",
+            "async_task_union_contract"
+          ]
         }
       ],
       "source_commit": "92fcc2b0f64b6b8f8f8829305b30874b558d6b35",
@@ -6075,6 +6110,8 @@
       "security_boundary": "Compose/ViewModel may read typed projection only; it cannot mutate canonical task owner or infer extra tool capability.",
       "android_disposition": "android-adapted",
       "android_target": [
+        "source/host/src/extensions/transcript/sand_pending_wake_store.rs",
+        "source/host/src/extensions/transcript/async_task_union.rs",
         "source/host/src/android_json_runtime.rs",
         "source/android-preload/src/main/kotlin/com/ombhrum/fabushi/androidpreload/runtime/AndroidCoordinatorPort.kt",
         "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/coordinator/AndroidCoordinatorRuntime.kt",
@@ -6087,15 +6124,15 @@
       "android_owner": "Rust Host running-task projection + typed Coordinator transport; MobileBotViewModel/Compose own transient snapshot and display only.",
       "platform_delta": "Desktop useSyncExternalStore provider and browser interval become Kotlin StateFlow/coroutine/Compose lifecycle. Android must preserve provider semantics rather than the DOM implementation mechanism.",
       "implementation_status": "mapped",
-      "production_wiring": "Partial production wiring exists: AndroidJsonHost exposes feature.agent.asyncTasks, typed AndroidCoordinatorPort/Runtime carries it, MobileBotViewModel applies generation fencing, and native AgentAsyncTasksPanel is shipping. Current Host projection only proves subagent records; no audited shell/cloud-agent source closure is present, and the ViewModel does not yet consume an async-task push event/reconnect provider lifecycle equivalent.",
+      "production_wiring": "Partial production wiring exists: AndroidJsonHost exposes feature.agent.asyncTasks; typed AndroidCoordinatorPort/Runtime carries it; Host now merges account-fenced durable pending wakes with live subagent truth; subagent launch/terminal invalidations and Coordinator resync refresh drive the shipping ViewModel/Compose surface. Desktop-equivalent background shell and cloud-agent producer owners are still not closed, so this responsibility remains mapped.",
       "unit_test": "AgentAsyncTasksParityTest covers task kinds, malformed/settled rejection, Desktop relative-time thresholds and labels; exact-head CI is required after this mapping commit.",
-      "contract_test": "tests/test_agent_async_tasks_wiring.py checks account-fenced Host projection, typed Coordinator path, shipping native panel and stale-result fencing/30s interval. Missing push/reconnect and shell/cloud-agent source contracts remain open.",
+      "contract_test": "Rust source now contains account-fenced durable pending-wake persistence, union/dedupe/recreate-detail tests and Host projection tests; tests/test_agent_async_tasks_wiring.py covers typed event/resync wiring. Same-exact-HEAD CI after the wire-shape fix is still required, and shell/cloud-agent producer contracts remain open.",
       "integration_test": "Typed Host -> Coordinator -> ViewModel -> Compose path exists, but full Desktop provider lifecycle semantics are not yet integration-complete.",
       "packaged_test": "required after semantic gaps close on final exact-head APK/AAB",
       "device_test": "required for live running subagent/shell/cloud-agent updates, reconnect/account switch and process recreation",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Fresh Desktop 92fcc2b0 semantic audit on 2026-10-11. Deliberately mapped, not implemented/verified. Do not promote until push-event/reconnect lifecycle and all three task-kind source owners are proven in production plus same-exact-HEAD unit/contract/integration/package/device evidence."
+      "notes": "Fresh Desktop 92fcc2b0 semantic audit extended to Host async_task_union, sand_pending_wake_store, ProductionTranscriptRuntime get_async_tasks/recreate responsibilities and union contract. Android adds accountFence to durable markers because its Host data root spans account sessions; unfenced legacy rows fail closed. Deliberately remains mapped/not-verified until shell/cloud-agent source owners plus exact-head package/device evidence close."
     }
   ],
   "traceability": {
