@@ -20,6 +20,8 @@ pub struct AndroidAgentRecord {
     #[serde(default)]
     pub is_group: bool,
     #[serde(default)]
+    pub member_ids: Vec<String>,
+    #[serde(default)]
     pub is_hidden_from_sidebar: bool,
     #[serde(default)]
     pub has_unread: bool,
@@ -35,6 +37,7 @@ impl AndroidAgentRecord {
             "name": self.name,
             "description": self.description,
             "isGroup": self.is_group,
+            "memberIds": self.member_ids,
             "isHiddenFromSidebar": self.is_hidden_from_sidebar,
             "hasUnread": self.has_unread,
             "isPinned": self.is_pinned,
@@ -131,6 +134,7 @@ impl AndroidAgentRoster {
             name,
             description,
             is_group: false,
+            member_ids: Vec::new(),
             is_hidden_from_sidebar: false,
             has_unread: false,
             is_pinned: false,
@@ -139,6 +143,53 @@ impl AndroidAgentRoster {
         next.agents.push(record.clone());
         self.commit(next)?;
         Ok(record)
+    }
+
+    pub fn create_group(
+        &mut self,
+        name: &str,
+        description: &str,
+        member_ids: &[String],
+    ) -> io::Result<AndroidAgentRecord> {
+        let name = normalize_name(name)?;
+        let description = normalize_description(description);
+        let members = validate_group_members(&self.state, None, member_ids)?;
+        let mut next = self.state.clone();
+        next.next_id = next.next_id.saturating_add(1);
+        let record = AndroidAgentRecord {
+            id: format!("group-{:08}", next.next_id),
+            name,
+            description,
+            is_group: true,
+            member_ids: members,
+            is_hidden_from_sidebar: false,
+            has_unread: false,
+            is_pinned: false,
+            updated_at: now_ms(),
+        };
+        next.agents.push(record.clone());
+        self.commit(next)?;
+        Ok(record)
+    }
+
+    pub fn set_group_members(
+        &mut self,
+        id: &str,
+        member_ids: &[String],
+    ) -> io::Result<AndroidAgentRecord> {
+        let id = id.trim();
+        let current = self
+            .state
+            .agents
+            .iter()
+            .find(|agent| agent.id == id)
+            .cloned()
+            .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "agent group not found"))?;
+        if !current.is_group {
+            return Err(io::Error::new(io::ErrorKind::InvalidInput, "setGroupMembers target must be a group"));
+        }
+        let members = validate_group_members(&self.state, Some(id), member_ids)?;
+        self.mutate_agent(id, |agent| agent.member_ids = members)
     }
 
     pub fn create_for_tool_call(
@@ -176,6 +227,7 @@ impl AndroidAgentRoster {
             name: normalized_name,
             description: normalized_description,
             is_group: false,
+            member_ids: Vec::new(),
             is_hidden_from_sidebar: false,
             has_unread: false,
             is_pinned: false,
@@ -285,6 +337,7 @@ impl AndroidAgentRoster {
             name: duplicate_name(&source.name),
             description: source.description,
             is_group: source.is_group,
+            member_ids: source.member_ids,
             is_hidden_from_sidebar: false,
             has_unread: false,
             is_pinned: false,
@@ -311,6 +364,11 @@ impl AndroidAgentRoster {
             return Ok(Vec::new());
         }
         next.pinned_agent_ids.retain(|id| !targets.contains(id));
+        for agent in &mut next.agents {
+            if agent.is_group {
+                agent.member_ids.retain(|member_id| !targets.contains(member_id));
+            }
+        }
         let deleted = targets
             .into_iter()
             .filter(|id| !next.agents.iter().any(|agent| agent.id == *id))
@@ -432,9 +490,58 @@ fn normalize_state(state: &mut AndroidAgentRosterFile) {
         .iter()
         .cloned()
         .collect::<BTreeSet<_>>();
+    let non_group_ids = state
+        .agents
+        .iter()
+        .filter(|agent| !agent.is_group)
+        .map(|agent| agent.id.clone())
+        .collect::<BTreeSet<_>>();
     for agent in &mut state.agents {
         agent.is_pinned = pinned.contains(&agent.id);
+        if agent.is_group {
+            let mut member_seen = BTreeSet::new();
+            agent.member_ids.retain(|member_id| {
+                non_group_ids.contains(member_id) && member_seen.insert(member_id.clone())
+            });
+            agent.member_ids.truncate(6);
+        } else {
+            agent.member_ids.clear();
+        }
     }
+}
+
+fn validate_group_members(
+    state: &AndroidAgentRosterFile,
+    group_id: Option<&str>,
+    member_ids: &[String],
+) -> io::Result<Vec<String>> {
+    let existing_non_groups = state
+        .agents
+        .iter()
+        .filter(|agent| !agent.is_group)
+        .map(|agent| agent.id.as_str())
+        .collect::<BTreeSet<_>>();
+    let mut seen = BTreeSet::new();
+    let mut members = Vec::new();
+    for raw in member_ids {
+        let member_id = raw.trim();
+        if member_id.is_empty() || group_id.is_some_and(|id| id == member_id) {
+            return Err(io::Error::new(io::ErrorKind::InvalidInput, "group member id is invalid"));
+        }
+        if !existing_non_groups.contains(member_id) {
+            return Err(io::Error::new(io::ErrorKind::NotFound, format!("group member {member_id} not found or is another group")));
+        }
+        if seen.insert(member_id.to_string()) {
+            members.push(member_id.to_string());
+        }
+    }
+    if members.is_empty() {
+        return Err(io::Error::new(io::ErrorKind::InvalidInput, "agent group requires at least one member"));
+    }
+    if members.len() > 6 {
+        return Err(io::Error::new(io::ErrorKind::InvalidInput, "agent group supports at most 6 members"));
+    }
+    Ok(members)
 }
 
 fn normalize_name(value: &str) -> io::Result<String> {
@@ -522,6 +629,48 @@ mod tests {
         assert_eq!(roster.count(), 2);
         assert_eq!(roster.delete(std::slice::from_ref(&first.id)).unwrap(), vec![first.id]);
         assert_eq!(roster.count(), 1);
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn group_members_are_canonical_durable_and_fenced_to_non_group_agents() {
+        let path = temp_path("group-members");
+        let mut roster = AndroidAgentRoster::open(&path).unwrap();
+        let first = roster.create("First", "").unwrap();
+        let second = roster.create("Second", "").unwrap();
+        let group = roster
+            .create_group("Team", "shared", &[first.id.clone(), second.id.clone(), first.id.clone()])
+            .unwrap();
+        assert!(group.is_group);
+        assert_eq!(group.member_ids, vec![first.id.clone(), second.id.clone()]);
+
+        let updated = roster
+            .set_group_members(&group.id, std::slice::from_ref(&second.id))
+            .unwrap();
+        assert_eq!(updated.member_ids, vec![second.id.clone()]);
+        assert!(roster
+            .set_group_members(&group.id, std::slice::from_ref(&group.id))
+            .is_err());
+
+        let reopened = AndroidAgentRoster::open(&path).unwrap();
+        assert_eq!(
+            reopened.get(&group.id).unwrap().member_ids,
+            vec![second.id.clone()]
+        );
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn deleting_an_agent_removes_it_from_group_membership_without_second_truth() {
+        let path = temp_path("group-delete");
+        let mut roster = AndroidAgentRoster::open(&path).unwrap();
+        let first = roster.create("First", "").unwrap();
+        let second = roster.create("Second", "").unwrap();
+        let group = roster
+            .create_group("Team", "", &[first.id.clone(), second.id.clone()])
+            .unwrap();
+        roster.delete(std::slice::from_ref(&first.id)).unwrap();
+        assert_eq!(roster.get(&group.id).unwrap().member_ids, vec![second.id]);
         let _ = fs::remove_file(path);
     }
 

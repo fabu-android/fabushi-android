@@ -60,6 +60,8 @@ interface AndroidCoordinatorPort {
 
     fun agentList(): JSONArray
     fun agentCreate(name: String, description: String): JSONObject
+    fun agentCreateGroup(name: String, description: String, memberIds: List<String>): JSONObject
+    fun agentSetGroupMembers(id: String, memberIds: List<String>): JSONObject
     fun agentUpdate(id: String, name: String, description: String): JSONObject
     fun agentSetHidden(id: String, isHidden: Boolean): JSONObject
     fun agentSetUnread(id: String, isUnread: Boolean): JSONObject

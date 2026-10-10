@@ -611,6 +611,39 @@ impl AndroidJsonHost {
                     .map_err(|error| error.to_string())?;
                 Ok(json!({"agent": agent.as_json()}))
             }
+            "createGroup" => {
+                let name = required_string(params, "name")?;
+                let description = params.get("description").and_then(Value::as_str).unwrap_or("");
+                let member_ids = params
+                    .get("memberAgentIds")
+                    .and_then(Value::as_array)
+                    .ok_or("memberAgentIds array is required")?
+                    .iter()
+                    .map(|value| value.as_str().ok_or("memberAgentIds must contain strings").map(str::to_string))
+                    .collect::<Result<Vec<_>, _>>()?;
+                let group = self.agents
+                    .lock()
+                    .map_err(|_| "canonical Android Agent roster lock poisoned".to_string())?
+                    .create_group(name, description, &member_ids)
+                    .map_err(|error| error.to_string())?;
+                Ok(group.as_json())
+            }
+            "setGroupMembers" => {
+                let id = required_string(params, "id")?;
+                let member_ids = params
+                    .get("memberAgentIds")
+                    .and_then(Value::as_array)
+                    .ok_or("memberAgentIds array is required")?
+                    .iter()
+                    .map(|value| value.as_str().ok_or("memberAgentIds must contain strings").map(str::to_string))
+                    .collect::<Result<Vec<_>, _>>()?;
+                let group = self.agents
+                    .lock()
+                    .map_err(|_| "canonical Android Agent roster lock poisoned".to_string())?
+                    .set_group_members(id, &member_ids)
+                    .map_err(|error| error.to_string())?;
+                Ok(group.as_json())
+            }
             "updateAgent" => {
                 let id = required_string(params, "id")?;
                 let mut agents = self.agents.lock().map_err(|_| "canonical Android Agent roster lock poisoned".to_string())?;

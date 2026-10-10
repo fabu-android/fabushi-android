@@ -190,6 +190,29 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
                 .put("origin", "user"),
         )
 
+    override fun agentCreateGroup(name: String, description: String, memberIds: List<String>): JSONObject {
+        val members = JSONArray()
+        memberIds.forEach(members::put)
+        return host.request(
+            "createGroup",
+            JSONObject()
+                .put("name", name)
+                .put("description", description)
+                .put("memberAgentIds", members),
+        )
+    }
+
+    override fun agentSetGroupMembers(id: String, memberIds: List<String>): JSONObject {
+        val members = JSONArray()
+        memberIds.forEach(members::put)
+        return host.request(
+            "setGroupMembers",
+            JSONObject()
+                .put("id", id)
+                .put("memberAgentIds", members),
+        )
+    }
+
     override fun agentUpdate(id: String, name: String, description: String): JSONObject =
         host.request(
             "updateAgent",
