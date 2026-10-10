@@ -28,6 +28,8 @@ import androidx.compose.ui.unit.dp
 internal fun CommandPalette(
     open: Boolean,
     entries: List<CommandPaletteEntry>,
+    messageSearchStatus: CommandPaletteMessageStatus = CommandPaletteMessageStatus.IDLE,
+    onQueryChange: (String) -> Unit = {},
     onDismiss: () -> Unit,
 ) {
     if (!open) return
@@ -47,7 +49,10 @@ internal fun CommandPalette(
             ) {
                 OutlinedTextField(
                     value = query,
-                    onValueChange = { query = it },
+                    onValueChange = {
+                        query = it
+                        onQueryChange(it)
+                    },
                     singleLine = true,
                     placeholder = { Text("Search agents and actions") },
                     modifier = Modifier
@@ -60,6 +65,7 @@ internal fun CommandPalette(
                 ) {
                     listOf(
                         CommandPaletteTab.ALL to "All",
+                        CommandPaletteTab.MESSAGES to "Messages",
                         CommandPaletteTab.AGENTS to "Agents",
                         CommandPaletteTab.ACTIONS to "Actions",
                     ).forEach { (candidate, label) ->
@@ -72,8 +78,16 @@ internal fun CommandPalette(
                     }
                 }
                 if (visible.isEmpty()) {
+                    val emptyMessage = when {
+                        tab == CommandPaletteTab.MESSAGES && query.isBlank() -> "Search messages"
+                        messageSearchStatus == CommandPaletteMessageStatus.LOADING &&
+                            (tab == CommandPaletteTab.MESSAGES || tab == CommandPaletteTab.ALL) -> "Searching messages…"
+                        messageSearchStatus == CommandPaletteMessageStatus.FAILED &&
+                            (tab == CommandPaletteTab.MESSAGES || tab == CommandPaletteTab.ALL) -> "Message search unavailable"
+                        else -> "No matching results"
+                    }
                     Text(
-                        "No matching results",
+                        emptyMessage,
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(vertical = 18.dp),
