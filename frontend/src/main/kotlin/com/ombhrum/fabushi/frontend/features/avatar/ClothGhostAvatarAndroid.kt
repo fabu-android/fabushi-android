@@ -63,6 +63,9 @@ internal fun ghostColor(identity: String): Color {
     return palette[identity.hashCode().absoluteValue % palette.size]
 }
 
+internal fun avatarAnimationDurationMillis(active: Boolean): Int? =
+    if (active) 1200 else null
+
 @Composable
 fun ClothGhostAvatarAndroid(
     botId: String,
@@ -71,16 +74,22 @@ fun ClothGhostAvatarAndroid(
     badge: Color? = null,
     modifier: Modifier = Modifier,
 ) {
-    val transition = rememberInfiniteTransition(label = "cloth-ghost")
-    val phase by transition.animateFloat(
-        initialValue = 0f,
-        targetValue = (Math.PI * 2).toFloat(),
-        animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = if (active) 1200 else 2600),
-            repeatMode = RepeatMode.Restart,
-        ),
-        label = "cloth-phase",
-    )
+    val animationDurationMillis = avatarAnimationDurationMillis(active)
+    val phase = if (animationDurationMillis != null) {
+        val transition = rememberInfiniteTransition(label = "cloth-ghost-active")
+        val animatedPhase by transition.animateFloat(
+            initialValue = 0f,
+            targetValue = (Math.PI * 2).toFloat(),
+            animationSpec = infiniteRepeatable(
+                animation = tween(durationMillis = animationDurationMillis),
+                repeatMode = RepeatMode.Restart,
+            ),
+            label = "cloth-phase",
+        )
+        animatedPhase
+    } else {
+        0f
+    }
     val base = ghostColor(botId)
     Box(modifier.size(size), contentAlignment = Alignment.Center) {
         Canvas(Modifier.fillMaxSize().testTag("cloth-ghost-avatar")) {
