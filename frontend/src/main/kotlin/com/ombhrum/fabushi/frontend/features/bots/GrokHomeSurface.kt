@@ -595,6 +595,7 @@ fun GrokHomeSurface(
                                 hasUnread = bot.hasUnread,
                                 isHidden = bot.isHidden,
                                 onEditName = { editingBotId = it },
+                                onShowFullConversation = { onOpenBot(bot) },
                                 onHideFromSidebar = onHideBot,
                                 onDuplicateAgent = onDuplicateBot,
                                 onTogglePin = onSetBotPinned,
