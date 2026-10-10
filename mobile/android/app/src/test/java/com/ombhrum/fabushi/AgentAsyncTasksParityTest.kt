@@ -62,7 +62,10 @@ class AgentAsyncTasksParityTest {
 
     @Test
     fun relativeTimeFormattingMatchesDesktopThresholds() {
-        // Keep the synthetic clock comfortably after Unix epoch so the 1-year case\n        // exercises the relative-time threshold instead of the invalid timestamp guard.\n        val now = 400L * 24L * 60L * 60L * 1_000L\n        assertEquals("now", formatAsyncTaskTime(now - 59_000L, now))
+        // Keep the synthetic clock comfortably after Unix epoch so the 1-year case
+        // exercises the relative-time threshold instead of the invalid timestamp guard.
+        val now = 400L * 24L * 60L * 60L * 1_000L
+        assertEquals("now", formatAsyncTaskTime(now - 59_000L, now))
         assertEquals("1m ago", formatAsyncTaskTime(now - 60_000L, now))
         assertEquals("1h ago", formatAsyncTaskTime(now - 60L * 60L * 1_000L, now))
         assertEquals("1d ago", formatAsyncTaskTime(now - 24L * 60L * 60L * 1_000L, now))
