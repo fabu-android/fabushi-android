@@ -5436,6 +5436,9 @@
       "security_boundary": "link opening follows Android URL policy; update/computer actions cannot bypass their protected owners; palette itself has no privileged bridge.",
       "android_disposition": "android-adapted",
       "android_target": [
+        "source/host/src/android_json_runtime.rs",
+        "source/host/src/extensions/transcript/transcript_store.rs",
+        "source/android-preload/src/main/kotlin/com/ombhrum/fabushi/androidpreload/runtime/AndroidCoordinatorPort.kt",
         "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/production/command-palette-model.kt",
         "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/production/command-palette-root-commands.kt",
         "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/production/command-palette-update-command.kt",
@@ -5444,7 +5447,7 @@
       "android_owner": "Native Compose command palette over typed domain projections",
       "platform_delta": "Desktop DOM focus/virtual-scroll shortcuts become Android Compose focus/keyboard/semantics. Search/provider lifecycle contracts and unique domain ownership remain required.",
       "implementation_status": "mapped",
-      "production_wiring": "Android has native palette fuzzy/canonical identity logic, root/update commands and shipping renderer entrypoint. It does not yet prove Desktop-equivalent message search provider, media/file search provider, link metadata provider, routine provider, full tabs/nested-command lifecycle or cancellation/stale-result fencing.",
+      "production_wiring": "Android native palette core/root/update wiring exists. Commit 5c56722c6ce4c910238e4749d840665414fcaa6b adds durable owning-agent identity to canonical Host transcript (including reopen/dedupe and reconciliation inheritance), so message-search activation no longer needs a UI-owned identity guess. Debounced/cancellable message provider projection, media/file provider, link metadata provider, routine provider, full tabs/nested lifecycle and stale-result fencing are still incomplete.",
       "unit_test": "existing FrontendProductionModelParityTest covers part of native model/root/update behavior; provider-state/cancellation breadth remains required",
       "contract_test": "required for current-account search identity, malformed row rejection, cancellation/stale callback fencing and domain-safe activation",
       "integration_test": "required through production renderer against messaging/media/automation/update owners",
@@ -5452,7 +5455,7 @@
       "device_test": "required for native keyboard/focus/accessibility and large-result behavior",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Mapped rather than implemented because provider breadth is materially incomplete even though native core model/root/update slices exist."
+      "notes": "Mapped rather than implemented because provider breadth is materially incomplete. Canonical transcript identity prerequisite is now implemented by 5c56722c6ce4c910238e4749d840665414fcaa6b; no verification upgrade is claimed until same-final-head CI/package/device gates succeed."
     }
   ],
   "traceability": {
