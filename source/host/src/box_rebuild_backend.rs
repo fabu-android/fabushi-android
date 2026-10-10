@@ -344,10 +344,9 @@ fn decode_recreate_response(input: &[u8]) -> Result<ComputerRecreateReply, Strin
             (1, 0) => started = read_varint(input, &mut cursor)? != 0,
             (2, 2) => reason = read_string(input, &mut cursor)?,
             (3, 2) => {
-                operation_id = read_string(input, &mut cursor)?
-                    .trim()
-                    .to_string()
-                    .into();
+                operation_id = Some(
+                    read_string(input, &mut cursor)?.trim().to_string(),
+                );
             }
             _ => skip_field(input, &mut cursor, wire)?,
         }
@@ -377,10 +376,9 @@ fn decode_migration_event(input: &[u8]) -> Result<ComputerMigrationEvent, String
             (3, 0) => at_ms = read_varint(input, &mut cursor)?,
             (4, 2) => offset_key = read_string(input, &mut cursor)?,
             (5, 2) => {
-                operation_id = read_string(input, &mut cursor)?
-                    .trim()
-                    .to_string()
-                    .into();
+                operation_id = Some(
+                    read_string(input, &mut cursor)?.trim().to_string(),
+                );
             }
             _ => skip_field(input, &mut cursor, wire)?,
         }
