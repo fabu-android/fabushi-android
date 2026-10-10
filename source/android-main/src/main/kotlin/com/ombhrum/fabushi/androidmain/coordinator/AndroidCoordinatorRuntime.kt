@@ -14,6 +14,8 @@ import com.ombhrum.fabushi.androidpreload.runtime.AccountTruthState
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidCoordinatorPort
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidMcpOAuthCompletion
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidSidebarSection
+import com.ombhrum.fabushi.androidmain.security.AndroidRemotePairingStore
+import com.ombhrum.fabushi.androidmain.security.RemotePairingCredential
 import com.ombhrum.fabushi.core.MahayanaHost
 import org.json.JSONArray
 import org.json.JSONObject
@@ -39,6 +41,7 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
     private val processRuntime = CoordinatorProcessRuntime(epochStore)
     val processGeneration: Long = processRuntime.start()
     private val host = MahayanaHost(application, processGeneration = processGeneration)
+    private val remotePairingStore = AndroidRemotePairingStore(application)
     // Independent shared-Host consumer for process-owned rebuild/transport state. MahayanaHost
     // fans each native event into every registered consumer queue, so this owner may drain
     // continuously without stealing approvals/chat/tool events from Presentation.
@@ -339,16 +342,23 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
         host.request("feature.auth.logout").also(::observeAccountAccessAuth)
 
     private fun observeAccountAccessAuth(auth: JSONObject) {
+        val previousEpoch = accountAccessOwner.currentProjection().accountEpoch
         val user = auth.optJSONObject("user")
         val identity = auth.optString("authId").trim()
             .ifBlank { user?.optString("id").orEmpty().trim() }
             .ifBlank { user?.optString("email").orEmpty().trim() }
             .takeIf(String::isNotEmpty)
+        val loggedIn = auth.optBoolean("loggedIn", false)
         accountAccessOwner.observeAuth(
-            loggedIn = auth.optBoolean("loggedIn", false),
+            loggedIn = loggedIn,
             identity = identity,
         )
-        computerRebuildOwner.observeAccount(accountAccessOwner.currentProjection().accountEpoch)
+        val currentEpoch = accountAccessOwner.currentProjection().accountEpoch
+        if (!loggedIn || currentEpoch != previousEpoch) {
+            remotePairingStore.clear()
+            runCatching { host.clearProtectedRemoteBinding() }
+        }
+        computerRebuildOwner.observeAccount(currentEpoch)
     }
     override fun automationUpsert(params: JSONObject) = host.request("feature.automation.upsert", params)
     override fun automationList(): JSONArray = host.requestValue("feature.automation.list") as? JSONArray ?: JSONArray()
@@ -610,6 +620,88 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
     override fun messagingExecute(params: JSONObject) = host.request("feature.messaging.execute", params)
 
     override fun platformRequest(params: JSONObject) = host.request("platform.request", params)
+
+    override fun remoteComputerList(): JSONObject =
+        authenticatedRemotePlatformRequest("GET", "/v1/computers")
+
+    override fun remoteComputerPair(pairingCode: String, label: String): JSONObject {
+        val normalizedCode = pairingCode.trim().uppercase()
+        require(normalizedCode.length == 12 && normalizedCode.all { it.isDigit() || it in 'A'..'F' }) {
+            "Remote pairing code is invalid"
+        }
+        val normalizedLabel = label.trim()
+        require(normalizedLabel.isNotEmpty() && normalizedLabel.length <= 80) {
+            "Remote pairing label is invalid"
+        }
+        val currentFence = host.request("feature.account.fence").getString("accountFence")
+        val currentEpoch = accountAccessOwner.currentProjection().accountEpoch
+        require(currentEpoch > 0L) { "Remote pairing requires a settled account epoch" }
+        val data = authenticatedRemotePlatformRequest(
+            "POST",
+            "/v1/computers/pair",
+            JSONObject()
+                .put("pairingCode", normalizedCode)
+                .put("label", normalizedLabel),
+        )
+        val credential = RemotePairingCredential(
+            deviceId = boundedRemoteIdentifier(data.getString("deviceId"), "deviceId"),
+            clientId = boundedRemoteIdentifier(data.getString("clientId"), "clientId"),
+            clientToken = data.getString("clientToken"),
+            accountFence = currentFence,
+            accountEpoch = currentEpoch,
+        )
+        remotePairingStore.write(RemotePairingCredential.parse(credential.toSecretJson()))
+        return JSONObject()
+            .put("deviceId", credential.deviceId)
+            .put("clientId", credential.clientId)
+            .put("computerLabel", data.optString("computerLabel"))
+            .put("clientLabel", data.optString("clientLabel"))
+            .put("pairedAt", data.optLong("pairedAt"))
+            .put("accountEpoch", credential.accountEpoch)
+    }
+
+    override fun remoteComputerRevoke(deviceId: String, clientId: String): JSONObject {
+        val safeDeviceId = boundedRemoteIdentifier(deviceId, "deviceId")
+        val safeClientId = boundedRemoteIdentifier(clientId, "clientId")
+        val currentFence = host.request("feature.account.fence").getString("accountFence")
+        val currentEpoch = accountAccessOwner.currentProjection().accountEpoch
+        val stored = remotePairingStore.readForAccountFence(currentFence, currentEpoch)
+        if (stored != null && stored.deviceId == safeDeviceId && stored.clientId == safeClientId) {
+            remotePairingStore.clear()
+        }
+        // Local execution authority is revoked before the remote mutation. A network failure cannot
+        // leave this Android process authorized to dispatch against a possibly revoked client.
+        host.clearProtectedRemoteBinding()
+        return authenticatedRemotePlatformRequest(
+            "POST",
+            "/v1/computers/$safeDeviceId/clients/$safeClientId/revoke",
+        )
+    }
+
+    private fun authenticatedRemotePlatformRequest(
+        method: String,
+        path: String,
+        body: JSONObject? = null,
+    ): JSONObject {
+        val request = JSONObject()
+            .put("authenticated", true)
+            .put("method", method)
+            .put("path", path)
+        body?.let { request.put("body", JSONObject(it.toString())) }
+        val response = platformRequest(request)
+        check(response.optBoolean("ok", false)) { "Remote Computer platform request was not accepted" }
+        return response.getJSONObject("data")
+    }
+
+    private fun boundedRemoteIdentifier(value: String, label: String): String {
+        val normalized = value.trim()
+        require(normalized.isNotEmpty() && normalized.length <= 160) { "Remote $label is invalid" }
+        require(normalized.all { it.isLetterOrDigit() || it in setOf('-', '_', '.', ':') }) {
+            "Remote $label contains unsupported path characters"
+        }
+        return normalized
+    }
+
     override fun webAuthnRegisterProvider() = host.request("feature.webauthn.registerProvider")
     override fun webAuthnUnregisterProvider(params: JSONObject) = host.request("feature.webauthn.unregisterProvider", params)
     override fun webAuthnPollRequest(params: JSONObject) = host.request("feature.webauthn.pollRequest", params)

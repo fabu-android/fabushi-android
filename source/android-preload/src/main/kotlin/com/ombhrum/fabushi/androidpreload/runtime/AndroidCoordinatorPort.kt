@@ -97,6 +97,11 @@ interface AndroidCoordinatorPort {
     fun messagingExecute(params: JSONObject): JSONObject
 
     fun platformRequest(params: JSONObject): JSONObject
+    fun remoteComputerList(): JSONObject = error("remote_computer_list_not_implemented")
+    fun remoteComputerPair(pairingCode: String, label: String): JSONObject =
+        error("remote_computer_pair_not_implemented")
+    fun remoteComputerRevoke(deviceId: String, clientId: String): JSONObject =
+        error("remote_computer_revoke_not_implemented")
     fun webAuthnRegisterProvider(): JSONObject
     fun webAuthnUnregisterProvider(params: JSONObject): JSONObject
     fun webAuthnPollRequest(params: JSONObject): JSONObject

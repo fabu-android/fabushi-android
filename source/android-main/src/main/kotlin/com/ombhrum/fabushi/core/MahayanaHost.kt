@@ -82,6 +82,18 @@ class MahayanaHost(
         }
     }
 
+    internal fun clearProtectedRemoteBinding() {
+        check(!featureHostTest && !closed) { "Protected Remote binding clear requires production Host" }
+        remoteBindingStore.clear()
+        val state = checkNotNull(shared)
+        synchronized(state.lock) {
+            check(state.handle != 0L) { "Mahayana host is closed" }
+            check(nativeSetRemoteBinding(state.handle, "")) {
+                "Native Host rejected protected Remote binding clear"
+            }
+        }
+    }
+
     /**
      * The native Host is the canonical account-fence owner. Protected Remote
      * credentials may only be reinstalled after that fence is read from the live
