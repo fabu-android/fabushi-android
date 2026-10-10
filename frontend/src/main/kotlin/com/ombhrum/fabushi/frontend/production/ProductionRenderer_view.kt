@@ -53,6 +53,7 @@ internal fun ProductionRenderer(
                 var openedMiniApp by remember { mutableStateOf<MarketplacePlugin?>(null) }
                 var rendererRoute by remember { mutableStateOf(RendererRoute.GROK_HOME) }
                 var commandPaletteOpen by remember { mutableStateOf(false) }
+                var showAbout by remember { mutableStateOf(false) }
                 var deepLinkInfo by remember { mutableStateOf<DeepLinkInfo?>(null) }
 
                 BackHandler(enabled = rendererRoute != RendererRoute.GROK_HOME && state.loggedIn) {
@@ -72,6 +73,12 @@ internal fun ProductionRenderer(
                     link = deepLinkInfo,
                     onClose = { deepLinkInfo = null },
                 )
+                if (showAbout) {
+                    AndroidAboutDialog(
+                        updateState = updateState,
+                        onClose = { showAbout = false },
+                    )
+                }
 
                 LaunchedEffect(state.loggedIn) {
                     runtimePort.setLoggedIn(state.loggedIn)
@@ -244,6 +251,19 @@ internal fun ProductionRenderer(
                                 detail = "Open conversations",
                                 searchText = "Messages conversations chats channels",
                                 activate = { rendererRoute = RendererRoute.MESSAGING },
+                            ),
+                        )
+                        add(
+                            CommandPaletteEntry(
+                                id = "android:about",
+                                kind = CommandPaletteEntryKind.COMMAND,
+                                label = "About Fabushi",
+                                detail = "Version and platform information",
+                                searchText = "About Fabushi version build Android",
+                                activate = {
+                                    commandPaletteOpen = false
+                                    showAbout = true
+                                },
                             ),
                         )
                         commandPaletteUpdateCommand(
