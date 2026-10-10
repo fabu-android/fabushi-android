@@ -306,6 +306,7 @@ internal fun ProductionRenderer(
                             open = commandPaletteOpen,
                             entries = paletteEntries,
                             messageSearchStatus = botState.paletteMessageSearch.status,
+                            routineStatus = botState.paletteRoutines.status,
                             onQueryChange = botModel::setPaletteMessageQuery,
                             onDismiss = {
                                 botModel.resetPaletteMessageSearch()

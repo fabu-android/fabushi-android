@@ -29,6 +29,7 @@ internal fun CommandPalette(
     open: Boolean,
     entries: List<CommandPaletteEntry>,
     messageSearchStatus: CommandPaletteMessageStatus = CommandPaletteMessageStatus.IDLE,
+    routineStatus: CommandPaletteRoutineStatus = CommandPaletteRoutineStatus.IDLE,
     onQueryChange: (String) -> Unit = {},
     onDismiss: () -> Unit,
 ) {
@@ -81,6 +82,12 @@ internal fun CommandPalette(
                 if (visible.isEmpty()) {
                     val emptyMessage = when {
                         tab == CommandPaletteTab.MESSAGES && query.isBlank() -> "Search messages"
+                        tab == CommandPaletteTab.ROUTINES &&
+                            routineStatus == CommandPaletteRoutineStatus.LOADING -> "Loading routines…"
+                        tab == CommandPaletteTab.ROUTINES &&
+                            routineStatus == CommandPaletteRoutineStatus.FAILED -> "Routines unavailable"
+                        tab == CommandPaletteTab.ROUTINES &&
+                            routineStatus == CommandPaletteRoutineStatus.EMPTY -> "No routines"
                         messageSearchStatus == CommandPaletteMessageStatus.LOADING &&
                             (tab == CommandPaletteTab.MESSAGES || tab == CommandPaletteTab.ALL) -> "Searching messages…"
                         messageSearchStatus == CommandPaletteMessageStatus.FAILED &&
