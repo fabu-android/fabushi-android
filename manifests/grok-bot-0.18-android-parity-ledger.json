@@ -30,7 +30,7 @@
       "evidence_anchor": "b-nnett/grok-bot-0.18-reconstructed@a9f633e09d49a85829b8236331b9e21f7e612634:frontend/index.html#blob=aae734455efe5e3175d4caa911b8241936cbaa75",
       "android_target_path": "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/production/bootstrap_view.kt",
       "target_language_runtime": "Kotlin / Jetpack Compose",
-      "parity_class": "android-adapted",
+      "parity_class": "platform-adapted",
       "implementation_status": "verified",
       "test_evidence": "frontend production bootstrap is wired by MainActivity -> FabushiApplicationRoot -> ProductionRenderer; mobile/android/app/src/test/java/com/ombhrum/fabushi/FrontendProductionModelParityTest.kt is executed by Grok Android Architecture existing-android-regression",
       "legacy_android_path_replaced_or_removed": "mobile/android/app/src/main/java/com/ombhrum/fabushi/FabushiScreen.kt; GrokMobileShellAndroid.kt; feature UI embedded in MainActivity.kt",
