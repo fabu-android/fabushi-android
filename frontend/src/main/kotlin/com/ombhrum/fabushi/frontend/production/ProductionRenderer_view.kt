@@ -53,6 +53,7 @@ internal fun ProductionRenderer(
                 var openedMiniApp by remember { mutableStateOf<MarketplacePlugin?>(null) }
                 var rendererRoute by remember { mutableStateOf(RendererRoute.GROK_HOME) }
                 var commandPaletteOpen by remember { mutableStateOf(false) }
+                var commandPaletteAgentFilter by remember { mutableStateOf<String?>(null) }
                 var showAbout by remember { mutableStateOf(false) }
                 var deepLinkInfo by remember { mutableStateOf<DeepLinkInfo?>(null) }
 
@@ -202,7 +203,9 @@ internal fun ProductionRenderer(
                         }
                     }
                     val paletteRoutineEntries = commandPaletteRoutineEntries(
-                        routines = botState.paletteRoutines.value,
+                        routines = botState.paletteRoutines.value.filter { routine ->
+                            commandPaletteAgentFilter == null || routine.agentId == commandPaletteAgentFilter
+                        },
                         agentNames = paletteAgentNames,
                     ) { agentId ->
                         val targetBot = if (agentId == "mahayana-assistant") {
@@ -297,6 +300,14 @@ internal fun ProductionRenderer(
                             onRefreshAccess = model::refreshAccountAccess,
                             onOpenAgentNetwork = { rendererRoute = RendererRoute.AGENT_NETWORK },
                             onOpenCommandPalette = {
+                                commandPaletteAgentFilter = null
+                                botModel.resetPaletteMessageSearch()
+                                botModel.resetPaletteRoutines()
+                                botModel.refreshPaletteRoutines()
+                                commandPaletteOpen = true
+                            },
+                            onShowBotAsyncTasks = { bot ->
+                                commandPaletteAgentFilter = bot.id
                                 botModel.resetPaletteMessageSearch()
                                 botModel.resetPaletteRoutines()
                                 botModel.refreshPaletteRoutines()
@@ -337,10 +348,16 @@ internal fun ProductionRenderer(
                             entries = paletteEntries,
                             messageSearchStatus = botState.paletteMessageSearch.status,
                             routineStatus = botState.paletteRoutines.status,
+                            initialTab = if (commandPaletteAgentFilter == null) {
+                                CommandPaletteTab.ALL
+                            } else {
+                                CommandPaletteTab.ROUTINES
+                            },
                             onQueryChange = botModel::setPaletteMessageQuery,
                             onDismiss = {
                                 botModel.resetPaletteMessageSearch()
                                 botModel.resetPaletteRoutines()
+                                commandPaletteAgentFilter = null
                                 commandPaletteOpen = false
                             },
                         )
