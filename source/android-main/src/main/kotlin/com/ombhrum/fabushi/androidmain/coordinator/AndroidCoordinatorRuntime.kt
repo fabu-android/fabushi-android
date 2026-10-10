@@ -13,6 +13,7 @@ import com.ombhrum.fabushi.androidpreload.runtime.AccountRosterLoadState
 import com.ombhrum.fabushi.androidpreload.runtime.AccountTruthState
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidCoordinatorPort
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidMcpOAuthCompletion
+import com.ombhrum.fabushi.androidpreload.runtime.AndroidSidebarSection
 import com.ombhrum.fabushi.core.MahayanaHost
 import org.json.JSONArray
 import org.json.JSONObject
@@ -519,6 +520,56 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
         return buildList {
             for (index in 0 until settled.length()) {
                 settled.optString(index).takeIf(String::isNotBlank)?.let(::add)
+            }
+        }
+    }
+
+    override fun agentSidebarSections(): List<AndroidSidebarSection> =
+        parseSidebarSections(host.request("feature.agent.sidebarSections").optJSONArray("sections"))
+
+    override fun agentSetSidebarSections(
+        sections: List<AndroidSidebarSection>,
+    ): List<AndroidSidebarSection> {
+        val values = JSONArray()
+        sections.forEach { section ->
+            val agentIds = JSONArray()
+            section.agentIds.forEach(agentIds::put)
+            values.put(
+                JSONObject()
+                    .put("id", section.id)
+                    .put("name", section.name)
+                    .put("agentIds", agentIds)
+                    .put("isCollapsed", false),
+            )
+        }
+        val result = durableAgentRosterMutation(
+            JSONObject()
+                .put("kind", "sidebar-sections")
+                .put("sections", values),
+        ) as? JSONObject ?: JSONObject()
+        return parseSidebarSections(result.optJSONArray("sections"))
+    }
+
+    private fun parseSidebarSections(values: JSONArray?): List<AndroidSidebarSection> {
+        if (values == null) return emptyList()
+        return buildList {
+            for (index in 0 until values.length()) {
+                val section = values.optJSONObject(index) ?: continue
+                val id = section.optString("id").trim()
+                if (id.isBlank()) continue
+                val agentIds = buildList {
+                    val raw = section.optJSONArray("agentIds") ?: JSONArray()
+                    for (agentIndex in 0 until raw.length()) {
+                        raw.optString(agentIndex).trim().takeIf(String::isNotBlank)?.let(::add)
+                    }
+                }
+                add(
+                    AndroidSidebarSection(
+                        id = id,
+                        name = section.optString("name"),
+                        agentIds = agentIds,
+                    ),
+                )
             }
         }
     }
