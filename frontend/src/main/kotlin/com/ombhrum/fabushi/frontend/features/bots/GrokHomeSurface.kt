@@ -53,6 +53,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.ombhrum.fabushi.androidpreload.runtime.AccountAccessBlockReason
 import com.ombhrum.fabushi.androidpreload.runtime.AccountAccessProjection
+import com.ombhrum.fabushi.androidpreload.runtime.AccountAccessState
 import kotlin.math.absoluteValue
 import kotlin.math.sin
 
@@ -69,6 +70,7 @@ fun GrokHomeSurface(
     appAgentSurface: FabushiAppAgentSurface,
     onOpenMessaging: () -> Unit,
     onRefreshAccess: () -> Unit,
+    onOpenAccessOnboarding: () -> Unit,
     onOpenAgentNetwork: () -> Unit,
     onOpenCommandPalette: () -> Unit,
     onShowBotAsyncTasks: (MobileBotSummaryAndroid) -> Unit,
@@ -468,6 +470,7 @@ fun GrokHomeSurface(
             }
             if (accessProjection.mayShowAccessNotice) {
                 item {
+                    val notice = accountAccessNoticeCopy(accessProjection)
                     Column(
                         Modifier
                             .fillMaxWidth()
@@ -477,10 +480,15 @@ fun GrokHomeSurface(
                             .testTag("account-access-notice"),
                         verticalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
-                        Text("账号访问暂不可用", color = GrokMobileInk, fontWeight = FontWeight.Bold)
-                        Text(accountAccessReasonCopy(accessProjection.blockReason), color = GrokMobileMuted, fontSize = 12.sp)
-                        Button(onClick = onRefreshAccess, modifier = Modifier.testTag("account-access-retry")) {
-                            Text("重新检查")
+                        Text(notice.title, color = GrokMobileInk, fontWeight = FontWeight.Bold)
+                        Text(notice.body, color = GrokMobileMuted, fontSize = 12.sp)
+                        notice.action?.let { action ->
+                            Button(
+                                onClick = onOpenAccessOnboarding,
+                                modifier = Modifier.testTag("account-access-action"),
+                            ) {
+                                Text(action)
+                            }
                         }
                     }
                 }
@@ -691,15 +699,72 @@ fun GrokHomeSurface(
 
 
 
-private fun accountAccessReasonCopy(reason: AccountAccessBlockReason): String = when (reason) {
-    AccountAccessBlockReason.TEAM_PRIVACY_MODE -> "当前团队隐私策略不允许使用此能力。"
-    AccountAccessBlockReason.TEAM_SETUP_REQUIRED -> "团队需要先完成设置。"
-    AccountAccessBlockReason.TEAM_ACCESS_REQUIRED -> "当前账号还没有团队访问权限。"
-    AccountAccessBlockReason.NOT_OFFERED -> "当前账号暂未提供此能力。"
-    AccountAccessBlockReason.FREE_TRIAL_AVAILABLE -> "当前账号可先完成试用或权益开通。"
-    AccountAccessBlockReason.PAYWALL_INDIVIDUAL,
-    AccountAccessBlockReason.PAYWALL_TEAM_MEMBER,
-    AccountAccessBlockReason.PAYWALL_TEAM_ADMIN -> "当前账号需要完成对应权益开通。"
-    AccountAccessBlockReason.NONE,
-    AccountAccessBlockReason.UNSPECIFIED -> "当前访问决定需要由账号服务重新确认。"
-}
+internal const val ACCESS_ONBOARDING_URL = "https://fabushi.ombhrum.com/"
+
+internal data class AccountAccessNoticeCopy(
+    val title: String,
+    val body: String,
+    val action: String?,
+)
+
+internal fun accountAccessNoticeCopy(access: AccountAccessProjection): AccountAccessNoticeCopy =
+    when (access.blockReason) {
+        AccountAccessBlockReason.TEAM_PRIVACY_MODE -> AccountAccessNoticeCopy(
+            title = "Your team's privacy mode blocks Fabushi",
+            body = "Fabushi cannot run under the team's legacy privacy mode. Ask a team admin to change that policy.",
+            action = "See Details",
+        )
+        AccountAccessBlockReason.TEAM_SETUP_REQUIRED -> AccountAccessNoticeCopy(
+            title = "Your team has not set up Fabushi yet",
+            body = "A team admin must finish setup before members can send messages.",
+            action = "See Details",
+        )
+        AccountAccessBlockReason.TEAM_ACCESS_REQUIRED -> AccountAccessNoticeCopy(
+            title = "Your team has not granted this account Fabushi access",
+            body = "A team admin can grant access from the team's settings.",
+            action = "Request Access",
+        )
+        AccountAccessBlockReason.NOT_OFFERED -> AccountAccessNoticeCopy(
+            title = "Fabushi is not available for this account",
+            body = "There is no setup or purchase path available for this account.",
+            action = null,
+        )
+        AccountAccessBlockReason.FREE_TRIAL_AVAILABLE -> AccountAccessNoticeCopy(
+            title = "Start a Fabushi trial to send messages",
+            body = "This account can start a trial now.",
+            action = "Start Trial",
+        )
+        AccountAccessBlockReason.PAYWALL_INDIVIDUAL -> AccountAccessNoticeCopy(
+            title = "Fabushi requires an eligible plan",
+            body = "Upgrade this account before sending messages.",
+            action = "Upgrade",
+        )
+        AccountAccessBlockReason.PAYWALL_TEAM_MEMBER -> AccountAccessNoticeCopy(
+            title = "Fabushi requires an eligible team seat",
+            body = "Ask a team admin to move this account to an eligible seat.",
+            action = "Request Access",
+        )
+        AccountAccessBlockReason.PAYWALL_TEAM_ADMIN -> AccountAccessNoticeCopy(
+            title = "Fabushi requires an eligible team seat",
+            body = "Move this account to an eligible seat before sending messages.",
+            action = "Manage Seats",
+        )
+        AccountAccessBlockReason.NONE,
+        AccountAccessBlockReason.UNSPECIFIED -> when (access.sandAccessState) {
+            AccountAccessState.UNAVAILABLE -> AccountAccessNoticeCopy(
+                title = "Fabushi is not available for this account",
+                body = "Sending stays disabled until this account is granted access.",
+                action = "Check Access",
+            )
+            AccountAccessState.PAYMENT_REQUIRED -> AccountAccessNoticeCopy(
+                title = "Fabushi is not included in this plan",
+                body = "Sending stays disabled until the account has access.",
+                action = "Check Access",
+            )
+            else -> AccountAccessNoticeCopy(
+                title = "Fabushi is not available on this account yet",
+                body = "Check what this account needs on the web.",
+                action = "Check Access",
+            )
+        }
+    }
