@@ -28,6 +28,7 @@ internal fun AgentRowActions(
     hasUnread: Boolean = false,
     isHidden: Boolean = false,
     onEditName: ((String) -> Unit)? = null,
+    onShowFullConversation: ((String) -> Unit)? = null,
     onHideFromSidebar: (String) -> Unit,
     onCopyConversationId: ((String) -> Unit)? = null,
     onDuplicateAgent: ((String) -> Unit)? = null,
@@ -48,7 +49,7 @@ internal fun AgentRowActions(
         includePin = onTogglePin != null,
     )
 
-    if (isHidden || (actions.isEmpty() && onEditName == null)) return
+    if (isHidden || (actions.isEmpty() && onEditName == null && onShowFullConversation == null)) return
 
     Box(modifier) {
         TextButton(
@@ -63,10 +64,19 @@ internal fun AgentRowActions(
         ) {
             if (onEditName != null) {
                 DropdownMenuItem(
-                    text = { Text("Edit Profile") },
+                    text = { Text("Rename") },
                     onClick = {
                         expanded = false
                         onEditName(agentId)
+                    },
+                )
+            }
+            if (onShowFullConversation != null) {
+                DropdownMenuItem(
+                    text = { Text("Show full conversation") },
+                    onClick = {
+                        expanded = false
+                        onShowFullConversation(agentId)
                     },
                 )
             }
