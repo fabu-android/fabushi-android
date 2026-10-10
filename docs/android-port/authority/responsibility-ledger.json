@@ -189,6 +189,43 @@
             "FBCP-QA-02..18",
             "FBCP AC-01..50"
           ]
+        },
+        {
+          "path": "frontend/src/recovered/features/access-cover.contract.test.ts",
+          "blob_sha": "4ae9ea8e65eed6f6288d6e1183a5211b1b4a84b0",
+          "symbols": [
+            "access/first-box contract tests"
+          ]
+        },
+        {
+          "path": "frontend/src/recovered/features/access-roster-state.contract.test.ts",
+          "blob_sha": "b90d0f184dda30379506dfd1801dabbcebf4e7eb",
+          "symbols": [
+            "access/rebuild/roster contract tests"
+          ]
+        },
+        {
+          "path": "frontend/src/recovered/features/account/session/menu.tsx",
+          "blob_sha": "d7f2fe093ad210eee719441ea54f725222970391",
+          "symbols": [
+            "AccountMenu",
+            "commitAccountName",
+            "usageResetLabel"
+          ]
+        },
+        {
+          "path": "frontend/src/recovered/features/account/session/sign-in-status.tsx",
+          "blob_sha": "27baf91b25ff168f06220d673f94f2b1120e24cd",
+          "symbols": [
+            "SignInStatus"
+          ]
+        },
+        {
+          "path": "frontend/src/recovered/features/account/session/sign-out.tsx",
+          "blob_sha": "adac949f01e36ade242c9118089305f70309bce5",
+          "symbols": [
+            "SignOutDialog"
+          ]
         }
       ],
       "source_commit": "92fcc2b0f64b6b8f8f8829305b30874b558d6b35",
@@ -260,7 +297,7 @@
       "device_test": "blocked by protected test-account secrets until CI-AUTH-001 is resolved",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Implemented from exact Desktop account source facts. Production feature.auth.oauthStart/oauthPoll no longer uses fabushi.invalid or consumes a pending attempt. Do not mark verified until the new exact HEAD passes Rust/Kotlin/package evidence and protected packaged/device login proves durable restore, cancellation, refresh, stale callback/account fencing. FBCP Revision 7 is a cross-cutting source authority for this responsibility; this mapping does not upgrade implementation_status or verification_status."
+      "notes": "Implemented from exact Desktop account source facts. Production feature.auth.oauthStart/oauthPoll no longer uses fabushi.invalid or consumes a pending attempt. Do not mark verified until the new exact HEAD passes Rust/Kotlin/package evidence and protected packaged/device login proves durable restore, cancellation, refresh, stale callback/account fencing. FBCP Revision 7 is a cross-cutting source authority for this responsibility; this mapping does not upgrade implementation_status or verification_status. Source audit c36d3d48ec44bacaea14b024b2a73f043ac1977b: linked current Desktop access/account UI contract anchors; mapped/implemented source rows retain their own exact status and do not upgrade this responsibility verification."
     },
     {
       "responsibility_id": "MSG-CANONICAL-COMMANDS-002",
@@ -1602,6 +1639,14 @@
             "cancelLogin",
             "browser attempt lifecycle"
           ]
+        },
+        {
+          "path": "frontend/src/recovered/features/account/session/sign-in-status.tsx",
+          "blob_sha": "27baf91b25ff168f06220d673f94f2b1120e24cd",
+          "symbols": [
+            "SignInStatus",
+            "login/reopen/cancel"
+          ]
         }
       ],
       "source_commit": "92fcc2b0f64b6b8f8f8829305b30874b558d6b35",
@@ -1659,7 +1704,7 @@
       "device_test": "blocked only for protected-account journey by FABUSHI_CI_TEST_USERNAME/PASSWORD; non-secret tests proceed in Actions",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Source implemented, not verified. Stale callback/account-switch fencing still needs protected integration evidence."
+      "notes": "Source implemented, not verified. Stale callback/account-switch fencing still needs protected integration evidence. Source audit c36d3d48ec44bacaea14b024b2a73f043ac1977b: linked current Desktop access/account UI contract anchors; mapped/implemented source rows retain their own exact status and do not upgrade this responsibility verification."
     },
     {
       "responsibility_id": "PLUGIN-IMMUTABLE-INSTALL-001",
@@ -5876,6 +5921,20 @@
           "symbols": [
             "createDevBoxRebuildSignalStore"
           ]
+        },
+        {
+          "path": "frontend/src/recovered/features/access-cover.contract.test.ts",
+          "blob_sha": "4ae9ea8e65eed6f6288d6e1183a5211b1b4a84b0",
+          "symbols": [
+            "rebuild signal generation/ack/dispose contract"
+          ]
+        },
+        {
+          "path": "frontend/src/recovered/features/access-roster-state.contract.test.ts",
+          "blob_sha": "b90d0f184dda30379506dfd1801dabbcebf4e7eb",
+          "symbols": [
+            "rebuild reducer/transport/composition contract tests"
+          ]
         }
       ],
       "source_commit": "92fcc2b0f64b6b8f8f8829305b30874b558d6b35",
@@ -5939,7 +5998,7 @@
       "device_test": "required after signed githubRelease artifact exists",
       "artifact": "architecture evidence 11681070363; signing blocker evidence 11680662837",
       "verification_status": "not-verified",
-      "notes": "Implemented but intentionally not verified. Exact-head 512eb71af4e47e9fa35c705843153c2a347341fd architecture run 38081842127 succeeded; Full CI 38081842136 built the exact-head native Host then stopped at the mandatory signing gate. Packaging/device settlement and strict full-source closure remain open."
+      "notes": "Implemented but intentionally not verified. Exact-head 512eb71af4e47e9fa35c705843153c2a347341fd architecture run 38081842127 succeeded; Full CI 38081842136 built the exact-head native Host then stopped at the mandatory signing gate. Packaging/device settlement and strict full-source closure remain open. Source audit c36d3d48ec44bacaea14b024b2a73f043ac1977b: linked current Desktop access/account UI contract anchors; mapped/implemented source rows retain their own exact status and do not upgrade this responsibility verification."
     }
   ],
   "traceability": {
