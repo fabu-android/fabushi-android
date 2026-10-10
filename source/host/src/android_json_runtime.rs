@@ -2971,6 +2971,14 @@ impl AndroidJsonHost {
         let subagent_owner = Arc::clone(&self.subagent_owner);
         let subagent_events = Arc::clone(&self.subagent_events);
         let subagent_tools = self.subagent_tools.clone();
+        let subagent_review_process_epoch = self
+            .subagent_owner
+            .lock()
+            .map_err(|_| "durable subagent owner lock poisoned".to_string())?
+            .process_epoch();
+        let subagent_review_broker = self.capability_broker.clone();
+        let subagent_review_approvals = Arc::clone(&self.subagent_review_approvals);
+        let subagent_review_events = Arc::clone(&self.turn_events);
         let multitask_todos = Arc::clone(&self.multitask_todos);
         let agent_roster = Arc::clone(&self.agents);
         let agent_messaging = Arc::clone(&self.messaging);
@@ -3038,6 +3046,12 @@ impl AndroidJsonHost {
                 };
                 let task_review_token = bearer_token.clone();
                 let task_review_cancelled = Arc::clone(&cancelled);
+                let task_review_broker = subagent_review_broker.clone();
+                let task_review_approvals = Arc::clone(&subagent_review_approvals);
+                let task_review_events = Arc::clone(&subagent_review_events);
+                let task_review_parent_agent = conversation_id_owned.clone();
+                let task_review_parent_request = request_id_owned.clone();
+                let task_review_account_fence = account_fence_owned.clone();
                 let task_review: SubagentTaskReviewCallback = Arc::new(
                     move |prompt, subagent_type, tool_call_id| {
                         if tool_call_id.trim().is_empty() {
@@ -3055,13 +3069,38 @@ impl AndroidJsonHost {
                         .map_err(|error| error.message)?
                         {
                             AndroidSubagentReviewDecision::Allow => Ok(None),
-                            AndroidSubagentReviewDecision::Block { reason, .. }
-                            | AndroidSubagentReviewDecision::Reject { reason } => Ok(Some(reason)),
+                            AndroidSubagentReviewDecision::Reject { reason } => Ok(Some(reason)),
+                            AndroidSubagentReviewDecision::Block { reason, proposed_rule } => {
+                                let approved = wait_for_subagent_review_approval(
+                                    &task_review_broker,
+                                    &task_review_approvals,
+                                    &task_review_events,
+                                    &task_review_cancelled,
+                                    &task_review_parent_agent,
+                                    &task_review_parent_request,
+                                    &task_review_account_fence,
+                                    subagent_review_process_epoch,
+                                    tool_call_id,
+                                    "launch",
+                                    prompt,
+                                    None,
+                                    Some(subagent_type),
+                                    &reason,
+                                    proposed_rule.as_deref(),
+                                )?;
+                                Ok((!approved).then_some(reason))
+                            }
                         }
                     },
                 );
                 let steer_review_token = bearer_token.clone();
                 let steer_review_cancelled = Arc::clone(&cancelled);
+                let steer_review_broker = subagent_review_broker.clone();
+                let steer_review_approvals = Arc::clone(&subagent_review_approvals);
+                let steer_review_events = Arc::clone(&subagent_review_events);
+                let steer_review_parent_agent = conversation_id_owned.clone();
+                let steer_review_parent_request = request_id_owned.clone();
+                let steer_review_account_fence = account_fence_owned.clone();
                 let steer_review: SubagentSteerReviewCallback = Arc::new(
                     move |subagent_id, message, tool_call_id| {
                         if tool_call_id.trim().is_empty() {
@@ -3082,11 +3121,33 @@ impl AndroidJsonHost {
                                 allowed: true,
                                 reason: String::new(),
                             }),
-                            AndroidSubagentReviewDecision::Block { reason, .. }
-                            | AndroidSubagentReviewDecision::Reject { reason } => Ok(SubagentSteerReview {
+                            AndroidSubagentReviewDecision::Reject { reason } => Ok(SubagentSteerReview {
                                 allowed: false,
                                 reason,
                             }),
+                            AndroidSubagentReviewDecision::Block { reason, proposed_rule } => {
+                                let approved = wait_for_subagent_review_approval(
+                                    &steer_review_broker,
+                                    &steer_review_approvals,
+                                    &steer_review_events,
+                                    &steer_review_cancelled,
+                                    &steer_review_parent_agent,
+                                    &steer_review_parent_request,
+                                    &steer_review_account_fence,
+                                    subagent_review_process_epoch,
+                                    tool_call_id,
+                                    "steer",
+                                    message,
+                                    Some(subagent_id),
+                                    None,
+                                    &reason,
+                                    proposed_rule.as_deref(),
+                                )?;
+                                Ok(SubagentSteerReview {
+                                    allowed: approved,
+                                    reason: if approved { String::new() } else { reason },
+                                })
+                            }
                         }
                     },
                 );
@@ -3976,6 +4037,30 @@ impl AndroidJsonHost {
             .and_then(Value::as_bool)
             .ok_or("approved is required")?;
         let account_fence = self.current_turn_account_fence()?;
+        if self.subagent_review_approvals.contains(&approval_id) {
+            let resolved = self.capability_broker.resolve_approval(
+                &approval_id,
+                approved,
+                &account_fence,
+                now_ms(),
+            )?;
+            self.subagent_review_approvals.resolve(&approval_id, approved)?;
+            self.events.push_back(json!({
+                "type":"approval.resolved",
+                "approvalId":approval_id,
+                "operationId":resolved.operation_id,
+                "capability":resolved.capability,
+                "approved":approved,
+                "autoReview":true,
+            }));
+            return Ok(json!({
+                "status":"resolved",
+                "approved":approved,
+                "operationId":resolved.operation_id,
+                "capability":resolved.capability,
+                "execution": if approved { "review-unlocked" } else { "denied" },
+            }));
+        }
         if let Some(resolution) = self.remote_approvals.resolve_from_ui(
             &self.capability_broker,
             &approval_id,
