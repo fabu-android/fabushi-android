@@ -2260,6 +2260,9 @@ impl AndroidJsonHost {
         let subagent_capabilities = parse_turn_subagent_capability_projection(
             command.get(COORDINATOR_SUBAGENT_CAPABILITIES_FIELD),
         )?;
+        if self.turn_upgrade_quiescing.load(Ordering::Acquire) {
+            return Err("Agent turns are quiescing for upgrade; new dispatch is fenced.".into());
+        }
 
         let assistant_entry_id = format!("assistant:{operation_id}");
         if !hidden {
@@ -2325,9 +2328,6 @@ impl AndroidJsonHost {
                 .filter(|value| !value.trim().is_empty())
                 .unwrap_or("default"),
         );
-        if self.turn_upgrade_quiescing.load(Ordering::Acquire) {
-            return Err("Agent turns are quiescing for upgrade; new dispatch is fenced.".into());
-        }
         let account_fence = self.current_turn_account_fence()?;
         let turn_generation = self
             .turn_journal
@@ -5131,6 +5131,19 @@ export function apply(ctx) {
             )
             .unwrap_err()
             .contains("quiescing for upgrade"));
+        assert_eq!(
+            host.dispatch("feature.transcript.snapshot", &json!({})).unwrap(),
+            json!([]),
+            "upgrade quiesce rejection must happen before canonical transcript mutation"
+        );
+        drop(host);
+
+        let mut host = AndroidJsonHost::new(&root, AndroidHostMode::Test);
+        assert_eq!(
+            host.dispatch("feature.transcript.snapshot", &json!({})).unwrap(),
+            json!([]),
+            "quiesced rejection must not leave a ghost message after Host reopen"
+        );
 
         host.dispatch(
             "feature.agent.upgradeQuiesce",
