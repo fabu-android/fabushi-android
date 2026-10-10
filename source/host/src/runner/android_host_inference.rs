@@ -24,7 +24,13 @@ pub enum AndroidInferenceMode {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum AndroidSubagentReviewDecision {
     Allow,
-    Deny(String),
+    Block {
+        reason: String,
+        proposed_rule: Option<String>,
+    },
+    Reject {
+        reason: String,
+    },
 }
 
 pub trait AndroidRoutedToolBridge: Send + Sync {
@@ -176,10 +182,18 @@ impl AndroidHostInferenceProvider {
             if prompt.contains("[[review:error]]") {
                 return Err(ProviderFailure::new("test subagent auto-review failure"));
             }
-            if prompt.contains("[[review:deny]]") {
-                return Ok(AndroidSubagentReviewDecision::Deny(
-                    "Blocked by generated-subagent auto-review.".into(),
-                ));
+            if prompt.contains("[[review:reject]]") {
+                return Ok(AndroidSubagentReviewDecision::Reject {
+                    reason: "Generated-subagent auto-review rejected this action.".into(),
+                });
+            }
+            if prompt.contains("[[review:block]]") || prompt.contains("[[review:deny]]") {
+                return Ok(AndroidSubagentReviewDecision::Block {
+                    reason: "Blocked by generated-subagent auto-review.".into(),
+                    proposed_rule: prompt
+                        .contains("[[review:rule]]")
+                        .then(|| "Allow this generated-subagent action when explicitly approved.".into()),
+                });
             }
             return Ok(AndroidSubagentReviewDecision::Allow);
         }
@@ -526,16 +540,38 @@ fn parse_subagent_review_decision(
         .unwrap_or_default();
     match decision {
         "allow" => Ok(AndroidSubagentReviewDecision::Allow),
-        "deny" => {
+        "block" => {
             let reason = value
                 .get("reason")
                 .and_then(Value::as_str)
                 .map(str::trim)
                 .filter(|value| !value.is_empty())
                 .ok_or_else(|| {
-                    ProviderFailure::new("subagent auto-review deny decision omitted reason")
+                    ProviderFailure::new("subagent auto-review block decision omitted reason")
                 })?;
-            Ok(AndroidSubagentReviewDecision::Deny(reason.to_string()))
+            let proposed_rule = value
+                .get("proposed_rule")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_string);
+            Ok(AndroidSubagentReviewDecision::Block {
+                reason: reason.to_string(),
+                proposed_rule,
+            })
+        }
+        "reject" => {
+            let reason = value
+                .get("reason")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .ok_or_else(|| {
+                    ProviderFailure::new("subagent auto-review reject decision omitted reason")
+                })?;
+            Ok(AndroidSubagentReviewDecision::Reject {
+                reason: reason.to_string(),
+            })
         }
         _ => Err(ProviderFailure::new(
             "subagent auto-review returned invalid decision",
@@ -697,17 +733,38 @@ mod tests {
         .unwrap();
         assert_eq!(allow, AndroidSubagentReviewDecision::Allow);
 
-        let deny = AndroidHostInferenceProvider::run_subagent_review(
+        let blocked = AndroidHostInferenceProvider::run_subagent_review(
             AndroidInferenceMode::Test,
             None,
             Arc::new(AtomicBool::new(false)),
             "steer",
-            "[[review:deny]] unsafe steer",
+            "[[review:block]][[review:rule]] unsafe steer",
             Some("generated:child"),
             None,
         )
         .unwrap();
-        assert!(matches!(deny, AndroidSubagentReviewDecision::Deny(_)));
+        assert!(matches!(
+            blocked,
+            AndroidSubagentReviewDecision::Block {
+                proposed_rule: Some(_),
+                ..
+            }
+        ));
+
+        let rejected = AndroidHostInferenceProvider::run_subagent_review(
+            AndroidInferenceMode::Test,
+            None,
+            Arc::new(AtomicBool::new(false)),
+            "launch",
+            "[[review:reject]] forbidden child",
+            None,
+            Some("executor"),
+        )
+        .unwrap();
+        assert!(matches!(
+            rejected,
+            AndroidSubagentReviewDecision::Reject { .. }
+        ));
 
         let error = AndroidHostInferenceProvider::run_subagent_review(
             AndroidInferenceMode::Test,
@@ -721,7 +778,18 @@ mod tests {
         .unwrap_err();
         assert!(error.message.contains("auto-review failure"));
 
-        assert!(parse_subagent_review_decision(r#"{"decision":"deny"}"#).is_err());
+        assert!(parse_subagent_review_decision(r#"{"decision":"block"}"#).is_err());
+        assert!(parse_subagent_review_decision(r#"{"decision":"reject"}"#).is_err());
+        assert_eq!(
+            parse_subagent_review_decision(
+                r#"{"decision":"block","reason":"review","proposed_rule":"allow once"}"#
+            )
+            .unwrap(),
+            AndroidSubagentReviewDecision::Block {
+                reason: "review".into(),
+                proposed_rule: Some("allow once".into()),
+            }
+        );
         assert!(parse_subagent_review_decision("not-json").is_err());
     }
 
