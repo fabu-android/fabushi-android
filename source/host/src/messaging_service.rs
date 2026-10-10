@@ -578,6 +578,158 @@ impl AndroidMessagingService {
         )])
     }
 
+    /// Durable Agent-to-Agent/group delivery through the canonical messaging owner.
+    ///
+    /// The caller owns tool-call argument idempotency. This repository owns the
+    /// actual delivered message and replays the same stable message id after
+    /// process death rather than reissuing the side effect.
+    pub fn deliver_agent_message(
+        &mut self,
+        account_fence: &str,
+        sender_id: &str,
+        target_id: &str,
+        target_is_group: bool,
+        message: &str,
+        images: &[Value],
+        priority: bool,
+        tool_call_id: &str,
+        now_ms: i64,
+    ) -> Result<Value, String> {
+        let account_fence = account_fence.trim();
+        let sender_id = sender_id.trim();
+        let target_id = target_id.trim();
+        let message = message.trim();
+        let tool_call_id = tool_call_id.trim();
+        if account_fence.is_empty() || sender_id.is_empty() || target_id.is_empty()
+            || message.is_empty() || tool_call_id.is_empty()
+        {
+            return Err("agent delivery requires account, sender, target, message and tool-call identity".into());
+        }
+        if sender_id == target_id {
+            return Err("agent delivery cannot target the sending agent".into());
+        }
+
+        let replay_key = format!(
+            "agent-delivery:{}",
+            crate::sha256::sha256_hex(
+                format!("{account_fence}\n{sender_id}\n{tool_call_id}").as_bytes()
+            )
+        );
+        if let Some(result) = self.state.request_results.get(&replay_key) {
+            return Ok(result.clone());
+        }
+
+        let previous = self.state.clone();
+        let conversation_id = if target_is_group {
+            let conversation = self
+                .state
+                .conversations
+                .get(target_id)
+                .ok_or("target Agent group has no canonical messaging conversation")?;
+            if !conversation_has_access(conversation, sender_id) {
+                return Err("sending Agent is not a member of the target group".into());
+            }
+            target_id.to_string()
+        } else {
+            let mut pair = [sender_id, target_id];
+            pair.sort_unstable();
+            let digest = crate::sha256::sha256_hex(
+                format!("{account_fence}\n{}\n{}", pair[0], pair[1]).as_bytes(),
+            );
+            let conversation_id = format!("agent-direct:{}", &digest[..32]);
+            self.state.conversations.entry(conversation_id.clone()).or_insert_with(|| {
+                json!({
+                    "id":conversation_id,
+                    "kind":"direct",
+                    "ownerId":sender_id,
+                    "participants":[
+                        {"actorId":sender_id,"role":"owner","joinedAtMs":now_ms},
+                        {"actorId":target_id,"role":"member","joinedAtMs":now_ms}
+                    ],
+                    "permissions":{
+                        "canSendMessages":true,
+                        "canSendMedia":true
+                    },
+                    "updatedAtMs":now_ms
+                })
+            });
+            conversation_id
+        };
+
+        let message_id = format!(
+            "agent-message:{}",
+            &crate::sha256::sha256_hex(
+                format!("{account_fence}\n{sender_id}\n{target_id}\n{tool_call_id}").as_bytes()
+            )[..32]
+        );
+        if self
+            .state
+            .messages
+            .get(&conversation_id)
+            .and_then(|messages| messages.get(&message_id))
+            .is_none()
+        {
+            let content = json!({
+                "type":"text",
+                "data":{
+                    "text":{"text":message,"entities":[]},
+                    "agentImages":images,
+                    "agentPriority": if target_is_group { false } else { priority }
+                }
+            });
+            let conversation = self
+                .state
+                .conversations
+                .get(&conversation_id)
+                .cloned()
+                .ok_or("canonical Agent conversation disappeared")?;
+            self.validate_content_for_send(&conversation, &content, sender_id)?;
+            let delivered = json!({
+                "id":message_id,
+                "clientMessageId":message_id,
+                "conversationId":conversation_id,
+                "senderId":sender_id,
+                "content":content,
+                "createdAtMs":now_ms,
+                "editedAtMs":Value::Null,
+                "scheduledAtMs":Value::Null,
+                "silent":false,
+                "protectedContent":false,
+                "deliveryState":"sent",
+                "reactions":[],
+                "pinned":false,
+                "deleted":false
+            });
+            self.state
+                .messages
+                .entry(conversation_id.clone())
+                .or_default()
+                .insert(message_id.clone(), delivered);
+            if let Some(conversation) = self.state.conversations.get_mut(&conversation_id) {
+                if let Some(object) = conversation.as_object_mut() {
+                    object.insert("lastMessageId".into(), Value::String(message_id.clone()));
+                    object.insert("updatedAtMs".into(), json!(now_ms));
+                }
+            }
+            self.bump_cursor();
+        }
+
+        let result = json!({
+            "status":"delivered",
+            "conversationId":conversation_id,
+            "messageId":message_id,
+            "targetId":target_id,
+            "priorityApplied":!target_is_group && priority,
+            "deliveryMode":"async-new-turn"
+        });
+        self.remember_result(replay_key, result.clone());
+        if let Err(error) = self.persist() {
+            self.state = previous;
+            return Err(format!("failed to persist Agent delivery: {error}"));
+        }
+        Ok(result)
+    }
+
     pub fn read_blob_range(
         &self,
         params: &Value,
