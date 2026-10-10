@@ -2,6 +2,7 @@
 //! Clean-room implementation from the Fabushi Android Spec; no reconstructed Grok source is copied.
 
 pub mod coordinator;
+pub mod agents;
 pub mod execution;
 pub mod rpc;
 
