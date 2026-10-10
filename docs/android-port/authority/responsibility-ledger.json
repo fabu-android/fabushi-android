@@ -2597,6 +2597,77 @@
       "artifact": null,
       "verification_status": "not-verified",
       "notes": "Implemented after finding a concrete production bug: MCP OAuth incorrectly reused the first-party-only account browser adapter, so real third-party connector authorization URLs could never open. The fix separates privilege instead of weakening the account allowlist."
+    },
+    {
+      "responsibility_id": "CI-DESKTOP-SOURCE-AUTHORITY-REPLACEMENT-001",
+      "domain": "release",
+      "desktop_sources": [
+        {
+          "path": ".github/workflows/tdrp-revision9-authority.yml",
+          "blob_sha": "2d2cc9feffac73afc9674b4c84ac1d536d9fa64f",
+          "symbols": [
+            "candidate-authority",
+            "accepted-gate-contract",
+            "recursive-root-authority-shards",
+            "recursive-root-authority-gate"
+          ]
+        }
+      ],
+      "source_commit": "3bc92400826cc4ca7ac665b467708e22261edc61",
+      "responsibility": "Continuously bind migration work to an exact upstream/source authority, recursively inventory the source boundary, retain artifact provenance, and keep completion fail-closed while semantic/source debt remains.",
+      "source_owner": "Desktop GitHub Actions source-authority workflow",
+      "direct_callers": [
+        "GitHub push/main and workflow_dispatch"
+      ],
+      "downstream_dependencies": [
+        "source inventory",
+        "authority lock",
+        "recursive child/root discovery",
+        "artifact provenance"
+      ],
+      "state_owner": "Git/GitHub Actions authority metadata",
+      "persistent_state": [
+        "source inventory ledger",
+        "responsibility ledger",
+        "workflow artifacts"
+      ],
+      "protocol_wire_contract": [
+        "exact source SHA",
+        "recursive inventory counters",
+        "strict closure result",
+        "artifact digest/provenance"
+      ],
+      "visible_effect": "Migration evidence cannot silently drift from the source revision or report completion while source responsibilities remain open.",
+      "failure_behavior": [
+        "fail closed on source drift, missing provenance, unclassified source authority, or nonzero closure debt"
+      ],
+      "cancellation_behavior": "Cancelled CI is not acceptance evidence.",
+      "retry_semantics": "A rerun proves only the exact tested SHA and must regenerate evidence from that revision.",
+      "idempotency_semantics": "Authority identity and counters are deterministic for the same source/target revisions.",
+      "process_death_recovery": "GitHub Actions reruns from immutable Git state; no local mutable build state is accepted as evidence.",
+      "account_fencing": "Repository/PR identity and exact commit SHA fence the evidence.",
+      "security_boundary": "Read-only source authority and CI artifacts; no production credential import is required.",
+      "android_disposition": "not-applicable-with-replacement",
+      "android_target": [
+        "docs/android-port/authority/source-inventory-manifest.json",
+        "docs/android-port/authority/source-inventory-ledger.jsonl",
+        "docs/android-port/authority/responsibility-ledger.json",
+        "scripts/check_grok_android_parity.py",
+        ".github/workflows/grok-android-architecture.yml",
+        ".github/workflows/android-parity-full-ci.yml"
+      ],
+      "android_owner": "Android migration authority + strict parity checker",
+      "platform_delta": "Desktop TDRP-specific recursive Telegram authority workflow is not an Android runtime capability. Android replaces it with the pinned Desktop main 8172-entry authority ledger, reverse responsibility links, strict completeness counters, exact-HEAD Rust/Android CI and artifact provenance.",
+      "implementation_status": "implemented",
+      "production_wiring": "The Android PR checker loads the full Desktop source manifest/JSONL and responsibility ledger, validates source commit/blob/reverse-link integrity and reports strict source debt. Both architecture and full CI workflows check out SOURCE_SHA explicitly and run the checker/Rust tests; package jobs bind APK/AAB identity to the same SHA.",
+      "unit_test": "tests/test_grok_android_parity.py via Grok Android Architecture parity-ledger",
+      "contract_test": "scripts/check_grok_android_parity.py non-strict + --strict in Android Parity Full CI",
+      "integration_test": "GitHub Actions exact-HEAD architecture-and-contracts + package composition",
+      "packaged_test": "Package identity/provenance is produced by android-build-unit-lint but final migration acceptance remains open.",
+      "device_test": "Not applicable to source-authority accounting itself; device acceptance is a downstream final gate.",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Replacement is implemented but deliberately not verified while full source closure remains nonzero. Do not mark this responsibility or its source row verified until the same final HEAD has zero strict debt and final package/device gates."
     }
   ],
   "traceability": {
