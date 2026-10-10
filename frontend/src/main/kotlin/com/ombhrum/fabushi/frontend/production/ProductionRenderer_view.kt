@@ -158,6 +158,16 @@ internal fun ProductionRenderer(
                     val miniAppBot = botState.activeBot?.takeIf { !it.miniAppId.isNullOrBlank() }
                     val miniAppPlugin = miniAppBot?.miniAppId?.let { id -> state.plugins.firstOrNull { it.pluginId == id } }
                     LaunchedEffect(miniAppBot?.id, miniAppPlugin?.pluginId, miniAppBot?.menuButtonText) {
+                        botState.asyncTasksAgent?.let { agent ->
+                            AgentAsyncTasksPanel(
+                                agent = agent,
+                                tasks = botState.asyncTasks,
+                                loading = botState.asyncTasksLoading,
+                                error = botState.asyncTasksError,
+                                onClose = botModel::closeAsyncTasks,
+                                onRefresh = botModel::refreshAsyncTasks,
+                            )
+                        }
                         if (miniAppBot != null) {
                             appAgentSurface.setOverlay(
                                 key = "miniapp-bot-menu",
@@ -312,13 +322,7 @@ internal fun ProductionRenderer(
                                 botModel.refreshPaletteRoutines()
                                 commandPaletteOpen = true
                             },
-                            onShowBotAsyncTasks = { bot ->
-                                commandPaletteAgentFilter = bot.id
-                                botModel.resetPaletteMessageSearch()
-                                botModel.resetPaletteRoutines()
-                                botModel.refreshPaletteRoutines()
-                                commandPaletteOpen = true
-                            },
+                            onShowBotAsyncTasks = botModel::openAsyncTasks,
                             onRefreshBots = botModel::refreshBots,
                             onCreateBot = botModel::createBot,
                             onCreateGroup = botModel::createGroup,
