@@ -12,6 +12,8 @@ use fabushi_mahayana_agent_coordinator::{
 use fabushi_mahayana_host::android_json_runtime::{
     AndroidHostMode, AndroidJsonHost, RuntimeCallCancellationRegistry,
 };
+use fabushi_mahayana_host::box_rebuild_backend::AndroidBoxRebuildBackend;
+use fabushi_mahayana_host::host_secret_store::get_or_create_host_machine_id;
 use serde_json::{json, Value};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -586,20 +588,56 @@ mod android_jni {
         CONTROLS.get_or_init(|| Mutex::new(HashMap::new()))
     }
 
-    fn register_runtime(runtime: AndroidNativeRuntime) -> jlong {
+    fn rebuild_backends() -> &'static Mutex<HashMap<jlong, Arc<AndroidBoxRebuildBackend>>> {
+        static BACKENDS: OnceLock<Mutex<HashMap<jlong, Arc<AndroidBoxRebuildBackend>>>> =
+            OnceLock::new();
+        BACKENDS.get_or_init(|| Mutex::new(HashMap::new()))
+    }
+
+    fn register_runtime(
+        runtime: AndroidNativeRuntime,
+        rebuild_backend: Option<Arc<AndroidBoxRebuildBackend>>,
+    ) -> jlong {
         let control = runtime.runtime_call_control();
         let handle = Box::into_raw(Box::new(runtime)) as jlong;
-        if let Ok(mut controls) = runtime_controls().lock() {
-            controls.insert(handle, control);
-            handle
-        } else {
+        let Ok(mut controls) = runtime_controls().lock() else {
             unsafe { drop(Box::from_raw(handle as *mut AndroidNativeRuntime)); }
-            0
+            return 0;
+        };
+        controls.insert(handle, control);
+        drop(controls);
+        if let Some(backend) = rebuild_backend {
+            let Ok(mut backends) = rebuild_backends().lock() else {
+                if let Ok(mut controls) = runtime_controls().lock() {
+                    controls.remove(&handle);
+                }
+                unsafe { drop(Box::from_raw(handle as *mut AndroidNativeRuntime)); }
+                return 0;
+            };
+            backends.insert(handle, backend);
         }
+        handle
     }
 
     fn control_for(handle: jlong) -> Option<Arc<RuntimeCallCancellationRegistry>> {
         runtime_controls().lock().ok()?.get(&handle).cloned()
+    }
+
+    fn rebuild_backend_for(handle: jlong) -> Option<Arc<AndroidBoxRebuildBackend>> {
+        rebuild_backends().lock().ok()?.get(&handle).cloned()
+    }
+
+    fn rebuild_json_result(
+        env: &mut JNIEnv,
+        result: Result<Value, String>,
+    ) -> jstring {
+        let envelope = match result {
+            Ok(value) => json!({"ok":true,"result":value}),
+            Err(error) => json!({"ok":false,"error":error}),
+        };
+        env.new_string(envelope.to_string())
+            .map(|value| value.into_raw())
+            .unwrap_or(std::ptr::null_mut())
     }
 
     fn create(
@@ -612,7 +650,7 @@ mod android_jni {
             Ok(value) => PathBuf::from(value.to_string_lossy().into_owned()),
             Err(_) => return 0,
         };
-        register_runtime(AndroidNativeRuntime::new(path, mode, generation))
+        register_runtime(AndroidNativeRuntime::new(path, mode, generation), None)
     }
 
     #[no_mangle]
@@ -632,12 +670,23 @@ mod android_jni {
             Err(_) => return 0,
         };
         let generation = u64::try_from(process_generation).unwrap_or(1).max(1);
-        register_runtime(AndroidNativeRuntime::new_with_account_session(
-            path,
-            AndroidHostMode::Production,
-            generation,
-            (!initial_session.trim().is_empty()).then_some(initial_session.as_str()),
-        ))
+        let machine_id = match get_or_create_host_machine_id(&path.join("machine-id")) {
+            Ok(value) => value,
+            Err(_) => return 0,
+        };
+        let rebuild_backend = match AndroidBoxRebuildBackend::from_process_environment(machine_id) {
+            Ok(value) => Arc::new(value),
+            Err(_) => return 0,
+        };
+        register_runtime(
+            AndroidNativeRuntime::new_with_account_session(
+                path,
+                AndroidHostMode::Production,
+                generation,
+                (!initial_session.trim().is_empty()).then_some(initial_session.as_str()),
+            ),
+            Some(rebuild_backend),
+        )
     }
 
     #[no_mangle]
@@ -696,6 +745,78 @@ mod android_jni {
         env.new_string(runtime.dispatch_legacy_json(&input))
             .map(|value| value.into_raw())
             .unwrap_or(std::ptr::null_mut())
+    }
+
+    #[no_mangle]
+    pub extern "system" fn Java_com_ombhrum_fabushi_core_MahayanaHost_nativeComputerRebuildRequest(
+        mut env: JNIEnv,
+        _object: JObject,
+        handle: jlong,
+        request_id: JString,
+        preserve_data: jboolean,
+        force_recreate: jboolean,
+    ) -> jstring {
+        if handle == 0 {
+            return rebuild_json_result(&mut env, Err("native runtime is not initialized".into()));
+        }
+        let request_id = match env.get_string(&request_id) {
+            Ok(value) => value.to_string_lossy().into_owned(),
+            Err(error) => return rebuild_json_result(&mut env, Err(format!("invalid rebuild request id: {error}"))),
+        };
+        let Some(backend) = rebuild_backend_for(handle) else {
+            return rebuild_json_result(&mut env, Err("computer rebuild backend is unavailable".into()));
+        };
+        let reply = if force_recreate != 0 {
+            backend.force_recreate(&request_id)
+        } else {
+            backend.recreate(&request_id, preserve_data != 0, false)
+        };
+        rebuild_json_result(
+            &mut env,
+            reply.map(|reply| {
+                json!({
+                    "started":reply.started,
+                    "reason":reply.reason,
+                    "operationId":reply.operation_id,
+                })
+            }),
+        )
+    }
+
+    #[no_mangle]
+    pub extern "system" fn Java_com_ombhrum_fabushi_core_MahayanaHost_nativeComputerRebuildWatchOnce(
+        mut env: JNIEnv,
+        _object: JObject,
+        handle: jlong,
+        request_id: JString,
+        from_offset_key: JString,
+    ) -> jstring {
+        if handle == 0 {
+            return rebuild_json_result(&mut env, Err("native runtime is not initialized".into()));
+        }
+        let request_id = match env.get_string(&request_id) {
+            Ok(value) => value.to_string_lossy().into_owned(),
+            Err(error) => return rebuild_json_result(&mut env, Err(format!("invalid migration request id: {error}"))),
+        };
+        let from_offset_key = match env.get_string(&from_offset_key) {
+            Ok(value) => value.to_string_lossy().into_owned(),
+            Err(error) => return rebuild_json_result(&mut env, Err(format!("invalid migration offset: {error}"))),
+        };
+        let Some(backend) = rebuild_backend_for(handle) else {
+            return rebuild_json_result(&mut env, Err("computer rebuild backend is unavailable".into()));
+        };
+        rebuild_json_result(
+            &mut env,
+            backend.watch_migration_once(&request_id, &from_offset_key).map(|event| {
+                json!({
+                    "operationId":event.operation_id,
+                    "phase":event.phase.wire_name(),
+                    "detail":event.detail,
+                    "atMs":event.at_ms,
+                    "offsetKey":event.offset_key,
+                })
+            }),
+        )
     }
 
     #[no_mangle]
@@ -767,6 +888,9 @@ mod android_jni {
         if handle != 0 {
             if let Ok(mut controls) = runtime_controls().lock() {
                 controls.remove(&handle);
+            }
+            if let Ok(mut backends) = rebuild_backends().lock() {
+                backends.remove(&handle);
             }
             unsafe { drop(Box::from_raw(handle as *mut AndroidNativeRuntime)); }
         }

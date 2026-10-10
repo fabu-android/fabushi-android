@@ -7,6 +7,7 @@ pub mod android_agent_roster;
 pub mod android_sidebar_sections;
 pub mod android_json_runtime;
 pub mod automation_runtime;
+pub mod box_rebuild_backend;
 pub mod capability_broker;
 pub mod account_service;
 

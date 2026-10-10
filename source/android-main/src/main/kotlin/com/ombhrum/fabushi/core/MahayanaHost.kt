@@ -140,6 +140,52 @@ class MahayanaHost(
         return response.optJSONObject("result") ?: JSONObject().put("value", response.opt("result"))
     }
 
+    internal fun requestComputerRebuild(
+        requestId: String,
+        preserveData: Boolean,
+        forceRecreate: Boolean,
+    ): JSONObject {
+        check(!featureHostTest && !closed) { "Computer rebuild requires production Host" }
+        // Resolve the canonical Host account fence before dispatching a side effect. The backend
+        // uses its own Sand credential; this check is solely the Android account/epoch fence.
+        request("feature.account.fence").getString("accountFence")
+        val state = checkNotNull(shared)
+        val active = synchronized(state.lock) {
+            check(state.handle != 0L) { "Mahayana host is closed" }
+            state.handle
+        }
+        val response = JSONObject(
+            nativeComputerRebuildRequest(active, requestId, preserveData, forceRecreate),
+        )
+        check(response.optBoolean("ok", false)) {
+            response.optString("error", "Computer rebuild backend request failed")
+        }
+        return response.optJSONObject("result")
+            ?: error("Computer rebuild backend returned no result")
+    }
+
+    internal fun watchComputerRebuildOnce(
+        requestId: String,
+        fromOffsetKey: String,
+    ): JSONObject {
+        check(!featureHostTest && !closed) { "Computer rebuild watch requires production Host" }
+        val state = checkNotNull(shared)
+        val active = synchronized(state.lock) {
+            check(state.handle != 0L) { "Mahayana host is closed" }
+            state.handle
+        }
+        // The JNI backend is independent of the mutable Host runtime, so the 30-second streaming
+        // stall watchdog never holds SharedHost.lock and cannot block chat/tool/account dispatch.
+        val response = JSONObject(
+            nativeComputerRebuildWatchOnce(active, requestId, fromOffsetKey),
+        )
+        check(response.optBoolean("ok", false)) {
+            response.optString("error", "Computer rebuild migration watch failed")
+        }
+        return response.optJSONObject("result")
+            ?: error("Computer rebuild migration watch returned no event")
+    }
+
     fun coordinatorStatus(): JSONObject = request("coordinator.status")
 
     fun coordinatorResync(generation: Long, afterSequence: Long): JSONObject =
@@ -441,6 +487,17 @@ class MahayanaHost(
     private external fun nativeCreateTest(appDataDir: String): Long
     private external fun nativeDispatch(handle: Long, requestJson: String): String
     private external fun nativeSetRemoteBinding(handle: Long, bindingJson: String): Boolean
+    private external fun nativeComputerRebuildRequest(
+        handle: Long,
+        requestId: String,
+        preserveData: Boolean,
+        forceRecreate: Boolean,
+    ): String
+    private external fun nativeComputerRebuildWatchOnce(
+        handle: Long,
+        requestId: String,
+        fromOffsetKey: String,
+    ): String
     private external fun nativeSignalRuntimeCancel(handle: Long, requestId: String): Boolean
     private external fun nativeSignalRuntimePluginCancel(handle: Long, pluginId: String): Int
     private external fun nativeSignalRuntimePermissionCancel(
