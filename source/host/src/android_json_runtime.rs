@@ -2276,7 +2276,6 @@ impl AndroidJsonHost {
             .insert(operation_id.to_string(), cancelled.clone());
 
         let mode = self.mode;
-        let mcp_dashboard_backend = self.mcp_dashboard_backend.clone();
         let turn_events = self.turn_events.clone();
         let transcript = self.transcript.clone();
         let turn_journal = self.turn_journal.clone();
@@ -2496,6 +2495,7 @@ impl AndroidJsonHost {
 
                 let privacy_mode_resolver = Arc::new(move || Some(frozen_privacy));
                 let summarization_cancelled = Arc::clone(&cancelled);
+                let summarization_model = model_owned.clone();
                 let summarization_prompt = Arc::new(
                     move |system_prompt: &str,
                           user_prompt: &str,
@@ -2507,7 +2507,7 @@ impl AndroidJsonHost {
                             },
                             summarization_token.clone(),
                             Arc::clone(&summarization_cancelled),
-                            &model_owned,
+                            &summarization_model,
                             system_prompt,
                             user_prompt,
                             should_cancel,
