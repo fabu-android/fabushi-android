@@ -73,6 +73,65 @@ data class MessagingContact(
 
 data class ChatReaction(val reaction: String, val count: Int, val chosenByMe: Boolean)
 
+internal fun desiredReactionEnabled(message: ChatMessage, reaction: String): Boolean {
+    val symbol = reaction.trim()
+    if (symbol.isEmpty()) return false
+    return message.reactions.none { it.reaction == symbol && it.chosenByMe }
+}
+
+internal fun optimisticReactionMessage(
+    message: ChatMessage,
+    reaction: String,
+    enabled: Boolean,
+): ChatMessage {
+    val symbol = reaction.trim()
+    if (symbol.isEmpty()) return message
+    if (message.deliveryState in setOf("pending", "queued", "failed", "sending")) return message
+
+    val index = message.reactions.indexOfFirst { it.reaction == symbol }
+    if (index < 0) {
+        return if (enabled) {
+            message.copy(reactions = message.reactions + ChatReaction(symbol, count = 1, chosenByMe = true))
+        } else {
+            message
+        }
+    }
+
+    val current = message.reactions[index]
+    if (enabled == current.chosenByMe) return message
+    val next = message.reactions.toMutableList()
+    if (enabled) {
+        next[index] = current.copy(
+            count = current.count.coerceAtLeast(0) + 1,
+            chosenByMe = true,
+        )
+    } else {
+        val nextCount = (current.count - 1).coerceAtLeast(0)
+        if (nextCount == 0) {
+            next.removeAt(index)
+        } else {
+            next[index] = current.copy(count = nextCount, chosenByMe = false)
+        }
+    }
+    return message.copy(reactions = next)
+}
+
+internal fun optimisticReactionMessages(
+    messages: List<ChatMessage>,
+    messageId: String,
+    reaction: String,
+    enabled: Boolean,
+): List<ChatMessage> {
+    var changed = false
+    val next = messages.map { message ->
+        if (message.id != messageId) return@map message
+        val projected = optimisticReactionMessage(message, reaction, enabled)
+        if (projected != message) changed = true
+        projected
+    }
+    return if (changed) next else messages
+}
+
 data class ChatPollOption(val id: String, val text: String, val voterCount: Int, val chosen: Boolean)
 
 data class ChatMessage(
@@ -307,9 +366,46 @@ internal class MessagingViewModel(application: Application) : AndroidViewModel(a
     }
     fun deleteMessage(conversationId: String, messageId: String, forEveryone: Boolean = true) =
         executeAsync(JSONObject().put("type", "deleteMessages").put("conversationId", conversationId).put("messageIds", JSONArray().put(messageId)).put("forEveryone", forEveryone))
-    fun setReaction(conversationId: String, messageId: String, reaction: String, enabled: Boolean) =
-        executeAsync(JSONObject().put("type", "setReaction").put("conversationId", conversationId).put("messageId", messageId)
-            .put("reaction", JSONObject().put("reaction", reaction).put("count", if (enabled) 1 else 0).put("chosenByMe", enabled).put("recentActorIds", if (enabled) JSONArray().put(actorId) else JSONArray())))
+    fun setReaction(conversationId: String, messageId: String, reaction: String, enabled: Boolean) {
+        val snapshot = mutableState.value
+        val currentMessages = snapshot.messagesByConversation[conversationId].orEmpty()
+        val optimisticMessages = optimisticReactionMessages(
+            messages = currentMessages,
+            messageId = messageId,
+            reaction = reaction,
+            enabled = enabled,
+        )
+        if (optimisticMessages !== currentMessages) {
+            mutableState.value = snapshot.copy(
+                messagesByConversation = snapshot.messagesByConversation + (conversationId to optimisticMessages),
+            )
+        }
+
+        viewModelScope.launch {
+            runCatching {
+                withContext(Dispatchers.IO) {
+                    ensureIdentity()
+                    execute(
+                        JSONObject()
+                            .put("type", "setReaction")
+                            .put("conversationId", conversationId)
+                            .put("messageId", messageId)
+                            .put(
+                                "reaction",
+                                JSONObject()
+                                    .put("reaction", reaction.trim())
+                                    .put("count", if (enabled) 1 else 0)
+                                    .put("chosenByMe", enabled)
+                                    .put("recentActorIds", if (enabled) JSONArray().put(actorId) else JSONArray()),
+                            ),
+                    )
+                }
+            }.onFailure {
+                mutableState.value = mutableState.value.copy(error = it.message)
+                refresh()
+            }
+        }
+    }
     fun forwardMessage(sourceConversationId: String, messageId: String, destinationConversationIds: List<String>) {
         val destinations = normalizeForwardDestinations(destinationConversationIds)
         if (destinations.isEmpty()) return
