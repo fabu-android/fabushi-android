@@ -91,6 +91,12 @@ data class MobileBotUiState(
 class MobileBotViewModel(application: Application) : AndroidViewModel(application) {
     private val coordinator: AndroidCoordinatorPort = CoordinatorClient.presentation()
     private val miniApps = MiniAppPlatformBridge(coordinator)
+    private val rosterSelection = RosterSelectionStore(
+        SharedPreferencesRosterSelectionPersistence(
+            application.getSharedPreferences("fabushi.agent-selection", 0),
+        ),
+    )
+    private var rosterSelectionAccountSlot: String? = null
     private val mutableState = MutableStateFlow(MobileBotUiState())
     private val messagesByBot = mutableMapOf<String, List<MobileChatMessage>>()
     private val draftsByBot = mutableMapOf<String, String>()
@@ -117,6 +123,17 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
         mutableState.value = mutableState.value.copy(rosterLoading = true)
         viewModelScope.launch {
             val previous = mutableState.value.bots
+            val selectionAccountResult = withContext(Dispatchers.IO) {
+                runCatching { canonicalRosterSelectionAccountSlot() }
+            }
+            if (selectionAccountResult.isSuccess) {
+                val nextSlot = selectionAccountResult.getOrNull()
+                if (nextSlot != rosterSelectionAccountSlot) {
+                    withContext(Dispatchers.IO) { rosterSelection.restore(nextSlot) }
+                    rosterSelectionAccountSlot = nextSlot
+                }
+            }
+            val restoredSelection = rosterSelection.get().currentAgentId
             val installedResult = withContext(Dispatchers.IO) { runCatching { loadInstalledMiniAppBots() } }
             val surfaceResult = withContext(Dispatchers.IO) { runCatching { loadSurfaceBots() } }
             val sectionsResult = withContext(Dispatchers.IO) { runCatching { coordinator.agentSidebarSections() } }
@@ -148,14 +165,52 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
                     add("sidebar sections: ${(error.message ?: error::class.java.simpleName).take(240)}")
                 }
             }
+            withContext(Dispatchers.IO) {
+                rosterSelection.reconcile(
+                    agentIds = listOf("mahayana-assistant") + bots.map(MobileBotSummaryAndroid::id),
+                    isRosterComplete = installedResult.isSuccess && surfaceResult.isSuccess,
+                )
+            }
             mutableState.value = mutableState.value.copy(
                 bots = bots,
                 sidebarSections = sectionsResult.getOrElse { mutableState.value.sidebarSections },
                 error = diagnostics.takeIf { it.isNotEmpty() }?.joinToString(" | "),
                 rosterLoading = false,
             )
+            val settledSelection = rosterSelection.get().currentAgentId
+            if (
+                mutableState.value.activeBot == null &&
+                restoredSelection != null &&
+                restoredSelection == settledSelection
+            ) {
+                botForSelection(restoredSelection, bots)?.let(::openBot)
+            }
         }
     }
+
+    private fun canonicalRosterSelectionAccountSlot(): String? {
+        val auth = coordinator.authStatus()
+        if (!auth.optBoolean("loggedIn", false)) return null
+        val user = auth.optJSONObject("user")
+        return auth.optString("authId").trim()
+            .ifBlank { user?.optString("id").orEmpty().trim() }
+            .ifBlank { user?.optString("email").orEmpty().trim() }
+            .takeIf(String::isNotEmpty)
+    }
+
+    private fun botForSelection(
+        agentId: String,
+        bots: List<MobileBotSummaryAndroid>,
+    ): MobileBotSummaryAndroid? =
+        if (agentId == "mahayana-assistant") {
+            MobileBotSummaryAndroid(
+                id = "mahayana-assistant",
+                name = "Mahayana",
+                description = "Mahayana multi-step agent",
+            )
+        } else {
+            bots.firstOrNull { it.id == agentId }
+        }
 
     private fun loadSurfaceBots(): List<MobileBotSummaryAndroid> {
         val rows = coordinator.agentList()
@@ -454,6 +509,7 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     fun openBot(bot: MobileBotSummaryAndroid, targetEntryId: String? = null) {
+        rosterSelection.select(bot.id)
         openBotGeneration += 1
         val generation = openBotGeneration
         val cachedMessages = messagesByBot[bot.id].orEmpty()
@@ -468,7 +524,10 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
                 error = null,
             ),
         )
-        if (bot.miniAppId != null) return
+        if (bot.miniAppId != null) {
+            rosterSelection.settle(bot.id)
+            return
+        }
 
         viewModelScope.launch {
             try {
@@ -487,6 +546,7 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
                         error = null,
                     ),
                 )
+                rosterSelection.settle(bot.id)
             } catch (error: CancellationException) {
                 throw error
             } catch (error: Throwable) {
@@ -496,6 +556,7 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
                             error = error.message ?: "Bot transcript restore failed",
                         ),
                     )
+                    rosterSelection.settle(bot.id)
                 }
             }
         }
@@ -509,6 +570,7 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
 
     fun closeBot() {
         if (mutableState.value.busy) return
+        rosterSelection.select(null)
         openBotGeneration += 1
         commitState(
             mutableState.value.copy(
@@ -520,6 +582,15 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
                 error = null,
             ),
         )
+    }
+
+    fun resetAccountScope() {
+        rosterSelection.reset()
+        rosterSelectionAccountSlot = null
+        openBotGeneration += 1
+        messagesByBot.clear()
+        draftsByBot.clear()
+        commitState(MobileBotUiState())
     }
 
     fun setDraft(value: String) {
@@ -925,6 +996,7 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
         paletteRoutineJob = null
         paletteRoutineFence.cancel()
         openBotGeneration += 1
+        rosterSelection.dispose()
         featureEventSubscription?.close()
         featureEventSubscription = null
         super.onCleared()
