@@ -60,6 +60,17 @@
           "symbols": [
             "conversation child lifecycle contract tests"
           ]
+        },
+        {
+          "path": "docs/specs/fabushi-bot-communication-platform.md",
+          "blob_sha": "bcee7a0b16cfa98eb0a6f67da8c3ee08eef77d3e",
+          "symbols": [
+            "FBCP-FR-02",
+            "FBCP-UW-01..06",
+            "FBCP sections 4/6/7",
+            "FBCP-QA-02..18",
+            "FBCP AC-01..50"
+          ]
         }
       ],
       "source_commit": "3bc92400826cc4ca7ac665b467708e22261edc61",
@@ -125,7 +136,7 @@
       "device_test": "required: child destination lifecycle survives Activity recreation/process kill without duplicate mutation",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Canonical membership/message proof and production Host ingress are now implemented without accepting client-supplied authorization truth. This remains not-verified until exact-head Rust/architecture/package/device evidence succeeds; unsupported broader messaging commands remain explicit migration work."
+      "notes": "Canonical membership/message proof and production Host ingress are now implemented without accepting client-supplied authorization truth. This remains not-verified until exact-head Rust/architecture/package/device evidence succeeds; unsupported broader messaging commands remain explicit migration work. FBCP Revision 7 is a cross-cutting source authority for this responsibility; this mapping does not upgrade implementation_status or verification_status."
     },
     {
       "responsibility_id": "ACCOUNT-SESSION-001",
@@ -166,6 +177,17 @@
           "blob_sha": "758803dc9d4955e085099e916bdef93b3621c507",
           "symbols": [
             "reviewed Desktop platform/build/verification contract"
+          ]
+        },
+        {
+          "path": "docs/specs/fabushi-bot-communication-platform.md",
+          "blob_sha": "bcee7a0b16cfa98eb0a6f67da8c3ee08eef77d3e",
+          "symbols": [
+            "FBCP-FR-02",
+            "FBCP-UW-01..06",
+            "FBCP sections 4/6/7",
+            "FBCP-QA-02..18",
+            "FBCP AC-01..50"
           ]
         }
       ],
@@ -235,7 +257,7 @@
       "device_test": "blocked by protected test-account secrets until CI-AUTH-001 is resolved",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Implemented from exact Desktop account source facts. Production feature.auth.oauthStart/oauthPoll no longer uses fabushi.invalid or consumes a pending attempt. Do not mark verified until the new exact HEAD passes Rust/Kotlin/package evidence and protected packaged/device login proves durable restore, cancellation, refresh, stale callback/account fencing."
+      "notes": "Implemented from exact Desktop account source facts. Production feature.auth.oauthStart/oauthPoll no longer uses fabushi.invalid or consumes a pending attempt. Do not mark verified until the new exact HEAD passes Rust/Kotlin/package evidence and protected packaged/device login proves durable restore, cancellation, refresh, stale callback/account fencing. FBCP Revision 7 is a cross-cutting source authority for this responsibility; this mapping does not upgrade implementation_status or verification_status."
     },
     {
       "responsibility_id": "MSG-CANONICAL-COMMANDS-002",
@@ -247,6 +269,17 @@
           "symbols": [
             "MessagingService::handle",
             "MessagingService::sync_batch"
+          ]
+        },
+        {
+          "path": "docs/specs/fabushi-bot-communication-platform.md",
+          "blob_sha": "bcee7a0b16cfa98eb0a6f67da8c3ee08eef77d3e",
+          "symbols": [
+            "FBCP-FR-02",
+            "FBCP-UW-01..06",
+            "FBCP sections 4/6/7",
+            "FBCP-QA-02..18",
+            "FBCP AC-01..50"
           ]
         }
       ],
@@ -293,7 +326,7 @@
       "device_test": "required on emulator/physical device as applicable",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Rust implementation now exists with durable blob owner/range read, membership/admin checks, stable request replay and process reopen tests. Remains not-verified until this ledger-updated HEAD gets package/device evidence."
+      "notes": "Rust implementation now exists with durable blob owner/range read, membership/admin checks, stable request replay and process reopen tests. Remains not-verified until this ledger-updated HEAD gets package/device evidence. FBCP Revision 7 is a cross-cutting source authority for this responsibility; this mapping does not upgrade implementation_status or verification_status."
     },
     {
       "responsibility_id": "AGENT-RUN-LIFECYCLE-001",
@@ -616,6 +649,17 @@
             "PluginInstaller",
             "runtime lifecycle/service graph"
           ]
+        },
+        {
+          "path": "docs/specs/fabushi-bot-communication-platform.md",
+          "blob_sha": "bcee7a0b16cfa98eb0a6f67da8c3ee08eef77d3e",
+          "symbols": [
+            "FBCP-FR-02",
+            "FBCP-UW-01..06",
+            "FBCP sections 4/6/7",
+            "FBCP-QA-02..18",
+            "FBCP AC-01..50"
+          ]
         }
       ],
       "source_commit": "3bc92400826cc4ca7ac665b467708e22261edc61",
@@ -661,7 +705,7 @@
       "device_test": "required on emulator/physical device as applicable",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Umbrella remains not-verified. Local JS + Mini App/WebMCP execution is no longer fail-closed, but WASM/official remote MCP execution and final packaged/device evidence are still open."
+      "notes": "Umbrella remains not-verified. Local JS + Mini App/WebMCP execution is no longer fail-closed, but WASM/official remote MCP execution and final packaged/device evidence are still open. FBCP Revision 7 is a cross-cutting source authority for this responsibility; this mapping does not upgrade implementation_status or verification_status."
     },
     {
       "responsibility_id": "MINIAPP-WEBMCP-001",
@@ -685,6 +729,17 @@
             "AbortController registration disposal",
             "fallback registry",
             "callRegisteredWebMcpTool"
+          ]
+        },
+        {
+          "path": "docs/specs/fabushi-bot-communication-platform.md",
+          "blob_sha": "bcee7a0b16cfa98eb0a6f67da8c3ee08eef77d3e",
+          "symbols": [
+            "FBCP-FR-02",
+            "FBCP-UW-01..06",
+            "FBCP sections 4/6/7",
+            "FBCP-QA-02..18",
+            "FBCP AC-01..50"
           ]
         }
       ],
@@ -730,7 +785,7 @@
       "device_test": "required on emulator/physical device as applicable",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Local-plugin WebMCP fencing implemented; not verified until exact-head Android CI and packaged journey. Official remote MCP in-flight abort/reconciliation remains open."
+      "notes": "Local-plugin WebMCP fencing implemented; not verified until exact-head Android CI and packaged journey. Official remote MCP in-flight abort/reconciliation remains open. FBCP Revision 7 is a cross-cutting source authority for this responsibility; this mapping does not upgrade implementation_status or verification_status."
     },
     {
       "responsibility_id": "MEDIA-ATTACHMENT-ASR-001",
@@ -748,6 +803,17 @@
           "blob_sha": "aca72ae2bd3753b7c95bc9f9f0dc8e22b91e544a",
           "symbols": [
             "offline ASR engine packaging contract"
+          ]
+        },
+        {
+          "path": "docs/specs/fabushi-bot-communication-platform.md",
+          "blob_sha": "bcee7a0b16cfa98eb0a6f67da8c3ee08eef77d3e",
+          "symbols": [
+            "FBCP-FR-02",
+            "FBCP-UW-01..06",
+            "FBCP sections 4/6/7",
+            "FBCP-QA-02..18",
+            "FBCP AC-01..50"
           ]
         }
       ],
@@ -799,7 +865,7 @@
       "device_test": "Required on physical Android device because emulator speech service availability is device-image dependent.",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Production implementation added but remains not-verified until same exact-head Android build plus offline device evidence. Human voice-message semantics remain unchanged; ASR is only an editable-draft input for Agent/Bot."
+      "notes": "Production implementation added but remains not-verified until same exact-head Android build plus offline device evidence. Human voice-message semantics remain unchanged; ASR is only an editable-draft input for Agent/Bot. FBCP Revision 7 is a cross-cutting source authority for this responsibility; this mapping does not upgrade implementation_status or verification_status."
     },
     {
       "responsibility_id": "REMOTE-COMPUTER-001",
@@ -879,6 +945,17 @@
           "symbols": [
             "remote computer HTTP routes"
           ]
+        },
+        {
+          "path": "docs/specs/fabushi-bot-communication-platform.md",
+          "blob_sha": "bcee7a0b16cfa98eb0a6f67da8c3ee08eef77d3e",
+          "symbols": [
+            "FBCP-FR-02",
+            "FBCP-UW-01..06",
+            "FBCP sections 4/6/7",
+            "FBCP-QA-02..18",
+            "FBCP AC-01..50"
+          ]
         }
       ],
       "source_commit": "3bc92400826cc4ca7ac665b467708e22261edc61",
@@ -927,7 +1004,7 @@
       "device_test": "required on emulator/physical device as applicable",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "2026-10-10 current-main review located concrete Desktop Host executor interfaces and worker pairing/session/signaling endpoints but not the production client wire for side-effectful outbound commands. No transport is invented. REMOTE-COMPUTER-001 remains not-verified until exact endpoint/frame/auth/ack/reconcile semantics are proven, wired through Capability Broker + account/process epoch, and verified on the same exact HEAD with packaged/device evidence."
+      "notes": "2026-10-10 current-main review located concrete Desktop Host executor interfaces and worker pairing/session/signaling endpoints but not the production client wire for side-effectful outbound commands. No transport is invented. REMOTE-COMPUTER-001 remains not-verified until exact endpoint/frame/auth/ack/reconcile semantics are proven, wired through Capability Broker + account/process epoch, and verified on the same exact HEAD with packaged/device evidence. FBCP Revision 7 is a cross-cutting source authority for this responsibility; this mapping does not upgrade implementation_status or verification_status."
     },
     {
       "responsibility_id": "COMMERCE-LIFECYCLE-001",
@@ -946,6 +1023,17 @@
           "symbols": [
             "PaymentSettlement owner decision",
             "settlement lifecycle/reconciliation/security requirements"
+          ]
+        },
+        {
+          "path": "docs/specs/fabushi-bot-communication-platform.md",
+          "blob_sha": "bcee7a0b16cfa98eb0a6f67da8c3ee08eef77d3e",
+          "symbols": [
+            "FBCP-FR-02",
+            "FBCP-UW-01..06",
+            "FBCP sections 4/6/7",
+            "FBCP-QA-02..18",
+            "FBCP AC-01..50"
           ]
         }
       ],
@@ -993,7 +1081,7 @@
       "device_test": "required on emulator/physical device as applicable",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "COMMERCE-IDEMPOTENCY-JOURNAL-001 closes crash-safe stable purchase identity for the shipping Global Dharma server path. Full Play Billing purchase token reconciliation, refund/revoke handling and packaged account-switch evidence remain open. Desktop FBCP-ADR-002 is explicitly proposed/no production implementation, so this row remains mapped rather than verified. Android must preserve a canonical settlement owner distinct from UI/transcript, durable terminal settlement, account fencing, provider reconciliation, cancellation/refund/reversal semantics, and fail-closed production rails."
+      "notes": "COMMERCE-IDEMPOTENCY-JOURNAL-001 closes crash-safe stable purchase identity for the shipping Global Dharma server path. Full Play Billing purchase token reconciliation, refund/revoke handling and packaged account-switch evidence remain open. Desktop FBCP-ADR-002 is explicitly proposed/no production implementation, so this row remains mapped rather than verified. Android must preserve a canonical settlement owner distinct from UI/transcript, durable terminal settlement, account fencing, provider reconciliation, cancellation/refund/reversal semantics, and fail-closed production rails. FBCP Revision 7 is a cross-cutting source authority for this responsibility; this mapping does not upgrade implementation_status or verification_status."
     },
     {
       "responsibility_id": "NAVIGATION-NATIVE-001",
@@ -1004,6 +1092,17 @@
           "blob_sha": "72b5adc91432fc208731cee9b11a2fe1e21ea10d",
           "symbols": [
             "Coordinator RPC boundary"
+          ]
+        },
+        {
+          "path": "docs/specs/fabushi-bot-communication-platform.md",
+          "blob_sha": "bcee7a0b16cfa98eb0a6f67da8c3ee08eef77d3e",
+          "symbols": [
+            "FBCP-FR-02",
+            "FBCP-UW-01..06",
+            "FBCP sections 4/6/7",
+            "FBCP-QA-02..18",
+            "FBCP AC-01..50"
           ]
         }
       ],
@@ -1049,7 +1148,7 @@
       "device_test": "required on emulator/physical device as applicable",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Tablet/foldable/accessibility/i18n and deep-link device acceptance remain open."
+      "notes": "Tablet/foldable/accessibility/i18n and deep-link device acceptance remain open. FBCP Revision 7 is a cross-cutting source authority for this responsibility; this mapping does not upgrade implementation_status or verification_status."
     },
     {
       "responsibility_id": "AUTOMATION-WORKFLOW-001",
@@ -1081,6 +1180,17 @@
             "parseEveryIntervalMs",
             "compileCronMatcher",
             "describeSchedule"
+          ]
+        },
+        {
+          "path": "docs/specs/fabushi-bot-communication-platform.md",
+          "blob_sha": "bcee7a0b16cfa98eb0a6f67da8c3ee08eef77d3e",
+          "symbols": [
+            "FBCP-FR-02",
+            "FBCP-UW-01..06",
+            "FBCP sections 4/6/7",
+            "FBCP-QA-02..18",
+            "FBCP AC-01..50"
           ]
         }
       ],
@@ -1129,7 +1239,7 @@
       "device_test": "required on emulator/physical device as applicable",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "AUTOMATION-DURABLE-RUN-001 closes the platform-independent durable run/approval/idempotency slice. It does not claim full automation parity: trigger listener adapters, schedule computation parity, workflow file import/export, actual tool/Agent step execution and packaged background execution remain open."
+      "notes": "AUTOMATION-DURABLE-RUN-001 closes the platform-independent durable run/approval/idempotency slice. It does not claim full automation parity: trigger listener adapters, schedule computation parity, workflow file import/export, actual tool/Agent step execution and packaged background execution remain open. FBCP Revision 7 is a cross-cutting source authority for this responsibility; this mapping does not upgrade implementation_status or verification_status."
     },
     {
       "responsibility_id": "SETTINGS-SCOPE-001",
@@ -1140,6 +1250,17 @@
           "blob_sha": "52aeef0a22edeb64dab446a4aecf8c79590ee90f",
           "symbols": [
             "settings store"
+          ]
+        },
+        {
+          "path": "docs/specs/fabushi-bot-communication-platform.md",
+          "blob_sha": "bcee7a0b16cfa98eb0a6f67da8c3ee08eef77d3e",
+          "symbols": [
+            "FBCP-FR-02",
+            "FBCP-UW-01..06",
+            "FBCP sections 4/6/7",
+            "FBCP-QA-02..18",
+            "FBCP AC-01..50"
           ]
         }
       ],
@@ -1184,7 +1305,7 @@
       "device_test": "required on emulator/physical device as applicable",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Android DataStore/platform setting adapters and migration evidence remain open."
+      "notes": "Android DataStore/platform setting adapters and migration evidence remain open. FBCP Revision 7 is a cross-cutting source authority for this responsibility; this mapping does not upgrade implementation_status or verification_status."
     },
     {
       "responsibility_id": "NOTIFICATION-OS-001",
@@ -1195,6 +1316,17 @@
           "blob_sha": "ffaf599dada09e938f362d75aa202327eed3a4ad",
           "symbols": [
             "OS notification contract"
+          ]
+        },
+        {
+          "path": "docs/specs/fabushi-bot-communication-platform.md",
+          "blob_sha": "bcee7a0b16cfa98eb0a6f67da8c3ee08eef77d3e",
+          "symbols": [
+            "FBCP-FR-02",
+            "FBCP-UW-01..06",
+            "FBCP sections 4/6/7",
+            "FBCP-QA-02..18",
+            "FBCP AC-01..50"
           ]
         }
       ],
@@ -1240,7 +1372,7 @@
       "device_test": "required on emulator/physical device as applicable",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Requires packaged notification permission/channel/deep-link/device evidence."
+      "notes": "Requires packaged notification permission/channel/deep-link/device evidence. FBCP Revision 7 is a cross-cutting source authority for this responsibility; this mapping does not upgrade implementation_status or verification_status."
     },
     {
       "responsibility_id": "PRIVACY-REDACTION-001",
@@ -1251,6 +1383,17 @@
           "blob_sha": "ffaf599dada09e938f362d75aa202327eed3a4ad",
           "symbols": [
             "notification privacy boundary"
+          ]
+        },
+        {
+          "path": "docs/specs/fabushi-bot-communication-platform.md",
+          "blob_sha": "bcee7a0b16cfa98eb0a6f67da8c3ee08eef77d3e",
+          "symbols": [
+            "FBCP-FR-02",
+            "FBCP-UW-01..06",
+            "FBCP sections 4/6/7",
+            "FBCP-QA-02..18",
+            "FBCP AC-01..50"
           ]
         }
       ],
@@ -1296,7 +1439,7 @@
       "device_test": "required on emulator/physical device as applicable",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Representative source anchor is notification privacy surface; full redaction source inventory mapping remains open."
+      "notes": "Representative source anchor is notification privacy surface; full redaction source inventory mapping remains open. FBCP Revision 7 is a cross-cutting source authority for this responsibility; this mapping does not upgrade implementation_status or verification_status."
     },
     {
       "responsibility_id": "ACCOUNT-OAUTH-ATTEMPT-001",
@@ -1778,6 +1921,17 @@
             "PaymentSettlement owner decision",
             "settlement lifecycle/reconciliation/security requirements"
           ]
+        },
+        {
+          "path": "docs/specs/fabushi-bot-communication-platform.md",
+          "blob_sha": "bcee7a0b16cfa98eb0a6f67da8c3ee08eef77d3e",
+          "symbols": [
+            "FBCP-FR-02",
+            "FBCP-UW-01..06",
+            "FBCP sections 4/6/7",
+            "FBCP-QA-02..18",
+            "FBCP AC-01..50"
+          ]
         }
       ],
       "source_commit": "3bc92400826cc4ca7ac665b467708e22261edc61",
@@ -1830,7 +1984,7 @@
       "device_test": "Play Billing physical-device/license-tester evidence still required.",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Implemented for shipping Global Dharma canonical-server path; does not by itself close Play Billing token/restore/refund/revoke lifecycle. FBCP-ADR-002 strengthens the idempotency/recovery requirement: provider-accepted-but-locally-unsettled operations must reconcile after crash and must never be blindly resubmitted. Current CommerceOperationJournal covers stable scoped idempotency and confirmation only; broader settlement/reversal/reconciliation remains open."
+      "notes": "Implemented for shipping Global Dharma canonical-server path; does not by itself close Play Billing token/restore/refund/revoke lifecycle. FBCP-ADR-002 strengthens the idempotency/recovery requirement: provider-accepted-but-locally-unsettled operations must reconcile after crash and must never be blindly resubmitted. Current CommerceOperationJournal covers stable scoped idempotency and confirmation only; broader settlement/reversal/reconciliation remains open. FBCP Revision 7 is a cross-cutting source authority for this responsibility; this mapping does not upgrade implementation_status or verification_status."
     },
     {
       "responsibility_id": "AUTOMATION-DURABLE-RUN-001",
@@ -2886,6 +3040,17 @@
             "canonical-search",
             "independent-review"
           ]
+        },
+        {
+          "path": "docs/specs/fabushi-bot-communication-platform.md",
+          "blob_sha": "bcee7a0b16cfa98eb0a6f67da8c3ee08eef77d3e",
+          "symbols": [
+            "FBCP-FR-02",
+            "FBCP-UW-01..06",
+            "FBCP sections 4/6/7",
+            "FBCP-QA-02..18",
+            "FBCP AC-01..50"
+          ]
         }
       ],
       "source_commit": "3bc92400826cc4ca7ac665b467708e22261edc61",
@@ -2935,7 +3100,7 @@
       "device_test": "Not yet independently exercised in final protected-device acceptance.",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Implemented but intentionally not verified until same final exact HEAD CI/package/device gates succeed."
+      "notes": "Implemented but intentionally not verified until same final exact HEAD CI/package/device gates succeed. FBCP Revision 7 is a cross-cutting source authority for this responsibility; this mapping does not upgrade implementation_status or verification_status."
     },
     {
       "responsibility_id": "GOVERNANCE-SPEC-FIRST-ANDROID-001",
@@ -3880,6 +4045,17 @@
             "CallSession/Signaling owner decision",
             "signaling lifecycle/reconnect/security requirements"
           ]
+        },
+        {
+          "path": "docs/specs/fabushi-bot-communication-platform.md",
+          "blob_sha": "bcee7a0b16cfa98eb0a6f67da8c3ee08eef77d3e",
+          "symbols": [
+            "FBCP-FR-02",
+            "FBCP-UW-01..06",
+            "FBCP sections 4/6/7",
+            "FBCP-QA-02..18",
+            "FBCP AC-01..50"
+          ]
         }
       ],
       "source_commit": "3bc92400826cc4ca7ac665b467708e22261edc61",
@@ -3934,7 +4110,7 @@
       "device_test": "required on physical Android hardware for microphone/camera permission, voice/video media and lifecycle recovery",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Registered from the Desktop Mahayana workbench source audit only; this does not claim the missing Android call runtime is implemented. FBCP-ADR-003 explicitly says the canonical call/signaling owner is still proposed and must be separate from Computer, Transcript and Coordinator. Current Android native recorder/player and conversation call surface do not yet implement offer/answer sequencing, reconnect generation fencing, participant/device session truth, or durable terminal call metadata; keep mapped/not-verified."
+      "notes": "Registered from the Desktop Mahayana workbench source audit only; this does not claim the missing Android call runtime is implemented. FBCP-ADR-003 explicitly says the canonical call/signaling owner is still proposed and must be separate from Computer, Transcript and Coordinator. Current Android native recorder/player and conversation call surface do not yet implement offer/answer sequencing, reconnect generation fencing, participant/device session truth, or durable terminal call metadata; keep mapped/not-verified. FBCP Revision 7 is a cross-cutting source authority for this responsibility; this mapping does not upgrade implementation_status or verification_status."
     },
     {
       "responsibility_id": "UI-I18N-A11Y-IME-ANDROID-001",
@@ -4413,6 +4589,30 @@
     "source_inventory_authority": "Android migration documentation workflow artifacts generated from the pinned Desktop commit",
     "rule": "Each responsibility row lists exact Desktop path+blob anchors and Android targets. Complete per-file inventory remains machine-generated; responsibility rows are the human semantic index over that inventory.",
     "coverage_status": "incomplete",
-    "missing_closure": "Full bidirectional assignment of every tracked Desktop inventory entry to one or more responsibility IDs remains open and must fail completion review until closed."
+    "missing_closure": "Full bidirectional assignment of every tracked Desktop inventory entry to one or more responsibility IDs remains open and must fail completion review until closed.",
+    "fbcp_revision7": {
+      "source_commit": "3bc92400826cc4ca7ac665b467708e22261edc61",
+      "source_path": "docs/specs/fabushi-bot-communication-platform.md",
+      "source_blob_sha": "bcee7a0b16cfa98eb0a6f67da8c3ee08eef77d3e",
+      "responsibility_ids": [
+        "ACCOUNT-SESSION-001",
+        "MSG-CHILD-LIFECYCLE-001",
+        "MSG-CANONICAL-COMMANDS-002",
+        "MEDIA-ATTACHMENT-ASR-001",
+        "MEDIA-HUMAN-CALL-ANDROID-001",
+        "COMMERCE-LIFECYCLE-001",
+        "COMMERCE-IDEMPOTENCY-JOURNAL-001",
+        "NOTIFICATION-OS-001",
+        "SETTINGS-SCOPE-001",
+        "PRIVACY-REDACTION-001",
+        "SEARCH-CANONICAL-IDENTITY-001",
+        "NAVIGATION-NATIVE-001",
+        "AUTOMATION-WORKFLOW-001",
+        "MCP-PLUGIN-RUNTIME-001",
+        "MINIAPP-WEBMCP-001",
+        "REMOTE-COMPUTER-001"
+      ],
+      "status": "mapped-not-verified"
+    }
   }
 }
