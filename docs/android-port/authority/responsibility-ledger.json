@@ -3150,6 +3150,79 @@
       "artifact": null,
       "verification_status": "not-verified",
       "notes": "Implementation is present and the Desktop-only loopback discovery mechanism is intentionally replaced, not copied. Current exact-head CI/package/protected-device evidence is still pending, so this responsibility is not verified."
+    },
+    {
+      "responsibility_id": "VERIFICATION-CROSS-PLATFORM-JOURNEY-CONTRACT-001",
+      "domain": "verification",
+      "desktop_sources": [
+        {
+          "path": "contracts/automation/cross-platform-journeys.json",
+          "blob_sha": "82989197f0801c39ac81cdaf7f4c8d841875e1ed",
+          "symbols": [
+            "schemaVersion",
+            "features"
+          ]
+        }
+      ],
+      "source_commit": "3bc92400826cc4ca7ac665b467708e22261edc61",
+      "responsibility": "Keep the shared auth/runtime/chat/marketplace/Mini App/capability approval/interrupt/session-clear journeys machine readable and bound to real platform owners so cross-platform acceptance cannot silently drop a product journey.",
+      "source_owner": "Desktop cross-platform automation contract",
+      "direct_callers": [
+        "Desktop/Android acceptance planning and CI contracts"
+      ],
+      "downstream_dependencies": [
+        "auth coordinator",
+        "runtime readiness",
+        "chat Host",
+        "marketplace/plugin runtime",
+        "Mini App surface",
+        "Capability Broker",
+        "operation cancellation",
+        "session lifecycle"
+      ],
+      "state_owner": "repository verification contract; production state remains owned by each cited runtime",
+      "persistent_state": [
+        "versioned machine-readable journey definitions only"
+      ],
+      "protocol_wire_contract": [
+        "auth.login",
+        "runtime.boot",
+        "chat.send",
+        "marketplace.install",
+        "miniapp.open",
+        "capability.approval",
+        "operation.interrupt",
+        "session.clear"
+      ],
+      "visible_effect": "Android release verification retains the same minimum cross-platform product journeys rather than testing only Android-specific happy paths.",
+      "failure_behavior": [
+        "missing journey/action or missing shipping owner makes the contract test fail",
+        "contract does not create production side effects"
+      ],
+      "cancellation_behavior": "operation.interrupt remains an explicit required journey; cancellation semantics are owned by Coordinator/Host.",
+      "retry_semantics": "verification contract is deterministic; production retry semantics are tested by the owning domain.",
+      "idempotency_semantics": "contract feature IDs are unique and stable; production idempotency remains in the owning runtime.",
+      "process_death_recovery": "runtime.boot/session.clear and Android J12/J13/J14 verification expand recovery beyond the shared minimum.",
+      "account_fencing": "auth/session/capability journey owners remain account-scoped; this verification resource has no account state.",
+      "security_boundary": "The contract only names actions and owners; it cannot bypass typed Coordinator/Host/Capability Broker paths.",
+      "android_disposition": "direct-port",
+      "android_target": [
+        "contracts/automation/cross-platform-journeys.json",
+        "mobile/android/app/src/test/java/com/ombhrum/fabushi/CrossPlatformJourneyContractTest.kt",
+        "docs/android-port/verification/journeys.md"
+      ],
+      "android_owner": "contracts/automation/cross-platform-journeys.json",
+      "platform_delta": "The eight shared journeys are retained as a machine-readable Android-owned contract with explicit Android owner annotations. Android verification docs add broader native/recovery/device journeys without weakening the shared minimum.",
+      "implementation_status": "implemented",
+      "production_wiring": "The contract names real Android owners for each shared journey. CrossPlatformJourneyContractTest verifies the exact feature/action set, Desktop source authority, and presence of shipping Coordinator/Host/Mini App/Marketplace/Capability Broker entrypoints.",
+      "unit_test": "CrossPlatformJourneyContractTest",
+      "contract_test": "CrossPlatformJourneyContractTest binds the machine-readable contract to shipping source entrypoints.",
+      "integration_test": "Domain-specific packaged/device journeys remain separately required; contract presence does not claim those are already successful.",
+      "packaged_test": "required through final packaged acceptance",
+      "device_test": "required for protected-account/device journeys",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Direct-port is appropriate because this Desktop file is itself a cross-platform acceptance contract. Added in aff95dde..31ba373; same exact-head CI/package/device verification still pending."
     }
   ],
   "traceability": {
