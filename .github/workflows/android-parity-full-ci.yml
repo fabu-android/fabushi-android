@@ -88,6 +88,8 @@ jobs:
             assembleCiAcceptanceAndroidTest \
             testCiAcceptanceUnitTest \
             lintDebug
+      - name: Test release SBOM dependency parser
+        run: python scripts/test_generate_android_release_sbom.py
       - name: Generate exact-HEAD SBOM and license inventory
         working-directory: mobile/android
         run: |
@@ -208,6 +210,8 @@ jobs:
         run: |
           set -eu
           ./gradlew --no-daemon clean assembleGithubRelease bundleGithubRelease assembleCiAcceptance
+      - name: Test release SBOM dependency parser
+        run: python scripts/test_generate_android_release_sbom.py
       - name: Generate release SBOM and license inventory
         working-directory: mobile/android
         run: |
