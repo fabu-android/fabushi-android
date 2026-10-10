@@ -5000,6 +5000,115 @@ export function apply(ctx) {
     }
 
     #[test]
+    fn subagent_review_and_allowed_type_projection_fail_closed_before_mutation() {
+        let root = std::env::temp_dir().join(format!(
+            "fabushi-subagent-review-{}-{}",
+            std::process::id(),
+            now_ms()
+        ));
+        let mut host = AndroidJsonHost::new(&root, AndroidHostMode::Test);
+        let base = json!({
+            "toolName":crate::runner::TASK_TOOL_NAME,
+            "toolCallId":"review-tool",
+            "parentAgentId":"agent-parent",
+            "parentRequestId":"parent-request",
+            "model":"default",
+        });
+
+        let mut denied = base.clone();
+        denied["arguments"] = json!({
+            "prompt":"[[review:deny]] unsafe child request",
+            "subagent_type":"general-purpose"
+        });
+        let denied = host
+            .dispatch("feature.agent.subagent.tool", &denied)
+            .unwrap();
+        assert_eq!(denied["status"], "review-denied");
+        assert!(host.subagent_owner.lock().unwrap().all_records().is_empty());
+
+        let mut review_error = base.clone();
+        review_error["toolCallId"] = json!("review-error-tool");
+        review_error["arguments"] = json!({
+            "prompt":"[[review:error]] classifier unavailable",
+            "subagent_type":"general-purpose"
+        });
+        assert!(host
+            .dispatch("feature.agent.subagent.tool", &review_error)
+            .unwrap_err()
+            .contains("auto-review failure"));
+        assert!(host.subagent_owner.lock().unwrap().all_records().is_empty());
+
+        let mut invalid_type = base;
+        invalid_type["toolCallId"] = json!("invalid-type-tool");
+        invalid_type["arguments"] = json!({
+            "prompt":"ordinary child request",
+            "subagent_type":"computeruse"
+        });
+        assert!(host
+            .dispatch("feature.agent.subagent.tool", &invalid_type)
+            .unwrap_err()
+            .contains("unavailable for this turn"));
+        assert!(host.subagent_owner.lock().unwrap().all_records().is_empty());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn parent_agent_provider_routes_task_through_frozen_subagent_graph() {
+        let root = std::env::temp_dir().join(format!(
+            "fabushi-subagent-provider-{}-{}",
+            std::process::id(),
+            now_ms()
+        ));
+        let mut host = AndroidJsonHost::new(&root, AndroidHostMode::Test);
+        let accepted = host
+            .dispatch(
+                "feature.execute",
+                &json!({"command":{
+                    "type":"chat.send",
+                    "requestId":"parent-tool-request",
+                    "agentId":"mahayana-assistant",
+                    "model":"default",
+                    "text":"[[tool:Task]] {\"prompt\":\"child work\",\"subagent_type\":\"general-purpose\"}"
+                }}),
+            )
+            .unwrap();
+        let operation_id = accepted["operationId"].as_str().unwrap().to_string();
+
+        let deadline = std::time::Instant::now() + Duration::from_secs(3);
+        let mut parent_completed = false;
+        let mut child_terminal = false;
+        while std::time::Instant::now() < deadline && !(parent_completed && child_terminal) {
+            let event = host.dispatch("feature.receive", &json!({})).unwrap();
+            if event["type"] == "operation.completed" && event["operationId"] == operation_id {
+                parent_completed = true;
+            }
+            if matches!(
+                event.get("type").and_then(Value::as_str),
+                Some("subagent.completed") | Some("subagent.failed") | Some("subagent.aborted")
+            ) {
+                child_terminal = true;
+            }
+            if event.as_object().is_some_and(|object| object.is_empty()) {
+                thread::sleep(Duration::from_millis(10));
+            }
+        }
+        assert!(parent_completed, "parent routed-provider turn must settle");
+        assert!(child_terminal, "Task routed tool must launch and settle a durable child");
+
+        let records = host.subagent_owner.lock().unwrap().all_records();
+        assert_eq!(records.len(), 1);
+        let frozen = records[0].frozen_turn.as_ref().expect("frozen child turn");
+        assert_eq!(frozen.model_id, "deepseek-chat");
+        assert_eq!(frozen.allowed_subagent_types, vec!["general-purpose"]);
+        assert!(frozen.tool_names.iter().any(|name| name == crate::runner::TASK_TOOL_NAME));
+        assert_eq!(
+            frozen.summarization_binding_id,
+            "android-host-inference:same-provider"
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn production_platform_request_contract_rejects_auth_escape_and_fake_plugin_success() {
         assert!(validate_platform_api_path("/v1/marketplace/plugins?platform=android").is_ok());
         assert!(validate_platform_api_path("/api/auth/logout").is_err());
