@@ -150,7 +150,13 @@ impl AndroidAgentRoster {
         description: &str,
     ) -> Result<AndroidAgentRecord, String> {
         let key = management_call_key(account_fence, sender_agent_id, tool_call_id)?;
-        let args = json!({"tool":"CreateAgent","name":name.trim(),"description":description.trim()});
+        let normalized_name = normalize_name(name).map_err(|error| error.to_string())?;
+        let normalized_description = normalize_description(description);
+        let args = json!({
+            "tool":"CreateAgent",
+            "name":normalized_name,
+            "description":normalized_description
+        });
         if let Some(call) = self.state.management_calls.get(&key) {
             if call.get("args") != Some(&args) {
                 return Err("CreateAgent tool_call_id was reused with mismatched arguments".into());
@@ -163,12 +169,25 @@ impl AndroidAgentRoster {
                     .map_err(|error| format!("CreateAgent durable replay result is invalid: {error}")));
         }
 
-        let created = self.create(name, description).map_err(|error| error.to_string())?;
-        self.remember_management_call(
+        let mut next = self.state.clone();
+        next.next_id = next.next_id.saturating_add(1);
+        let created = AndroidAgentRecord {
+            id: format!("agent-{:08}", next.next_id),
+            name: normalized_name,
+            description: normalized_description,
+            is_group: false,
+            is_hidden_from_sidebar: false,
+            has_unread: false,
+            is_pinned: false,
+            updated_at: now_ms(),
+        };
+        next.agents.push(created.clone());
+        record_management_call(
+            &mut next,
             key,
             json!({"args":args,"result":created.as_json()}),
-        )
-        .map_err(|error| error.to_string())?;
+        );
+        self.commit(next).map_err(|error| error.to_string())?;
         Ok(created)
     }
 
@@ -182,9 +201,10 @@ impl AndroidAgentRoster {
         description: Option<&str>,
     ) -> Result<Option<AndroidAgentRecord>, String> {
         let key = management_call_key(account_fence, sender_agent_id, tool_call_id)?;
+        let id = id.trim();
         let args = json!({
             "tool":"UpdateAgent",
-            "agentId":id.trim(),
+            "agentId":id,
             "name":name.map(str::trim),
             "description":description.map(str::trim)
         });
@@ -201,21 +221,30 @@ impl AndroidAgentRoster {
             };
         }
 
-        let Some(current) = self.get(id) else {
-            self.remember_management_call(key, json!({"args":args,"result":Value::Null}))
-                .map_err(|error| error.to_string())?;
+        let mut next = self.state.clone();
+        let Some(index) = next.agents.iter().position(|agent| agent.id == id) else {
+            record_management_call(&mut next, key, json!({"args":args,"result":Value::Null}));
+            self.commit(next).map_err(|error| error.to_string())?;
             return Ok(None);
         };
-        let next_name = name.unwrap_or(&current.name);
-        let next_description = description.unwrap_or(&current.description);
-        let updated = self
-            .update_profile(id, next_name, next_description)
-            .map_err(|error| error.to_string())?;
-        self.remember_management_call(
+        let current = next.agents[index].clone();
+        let next_name = match name {
+            Some(value) => normalize_name(value).map_err(|error| error.to_string())?,
+            None => current.name,
+        };
+        let next_description = description
+            .map(normalize_description)
+            .unwrap_or(current.description);
+        next.agents[index].name = next_name;
+        next.agents[index].description = next_description;
+        next.agents[index].updated_at = now_ms();
+        let updated = next.agents[index].clone();
+        record_management_call(
+            &mut next,
             key,
             json!({"args":args,"result":updated.as_json()}),
-        )
-        .map_err(|error| error.to_string())?;
+        );
+        self.commit(next).map_err(|error| error.to_string())?;
         Ok(Some(updated))
     }
 
@@ -318,18 +347,6 @@ impl AndroidAgentRoster {
         self.state.pinned_agent_ids.clone()
     }
 
-    fn remember_management_call(&mut self, key: String, call: Value) -> io::Result<()> {
-        let mut next = self.state.clone();
-        next.management_calls.insert(key.clone(), call);
-        next.management_call_order.retain(|value| value != &key);
-        next.management_call_order.push(key.clone());
-        while next.management_call_order.len() > 512 {
-            let expired = next.management_call_order.remove(0);
-            next.management_calls.remove(&expired);
-        }
-        self.commit(next)
-    }
-
     fn mutate_agent(
         &mut self,
         id: &str,
@@ -353,6 +370,20 @@ impl AndroidAgentRoster {
         persist(&self.path, &next)?;
         self.state = next;
         Ok(())
+    }
+}
+
+fn record_management_call(
+    state: &mut AndroidAgentRosterFile,
+    key: String,
+    call: Value,
+) {
+    state.management_calls.insert(key.clone(), call);
+    state.management_call_order.retain(|value| value != &key);
+    state.management_call_order.push(key);
+    while state.management_call_order.len() > 512 {
+        let expired = state.management_call_order.remove(0);
+        state.management_calls.remove(&expired);
     }
 }
 
