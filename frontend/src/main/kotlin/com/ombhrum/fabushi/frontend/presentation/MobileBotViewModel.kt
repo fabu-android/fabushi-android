@@ -4,7 +4,10 @@ import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidCoordinatorPort
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -38,6 +41,10 @@ data class MobileBotUiState(
     val messages: List<MobileChatMessage> = emptyList(),
     val busy: Boolean = false,
     val operationId: String? = null,
+    val messageTargetId: String? = null,
+    val paletteMessageSearch: CommandPaletteMessageSnapshot = CommandPaletteMessageSnapshot(
+        status = CommandPaletteMessageStatus.IDLE,
+    ),
     val error: String? = null,
     val creating: Boolean = false,
     val rosterLoading: Boolean = false,
@@ -49,6 +56,9 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
     private val mutableState = MutableStateFlow(MobileBotUiState())
     private val messagesByBot = mutableMapOf<String, List<MobileChatMessage>>()
     private val draftsByBot = mutableMapOf<String, String>()
+    private val paletteMessageFence = CommandPaletteMessageRequestFence()
+    private var paletteMessageSearchJob: Job? = null
+    private var openBotGeneration = 0L
     val state: StateFlow<MobileBotUiState> = mutableState.asStateFlow()
     private var featureEventSubscription: AutoCloseable? = coordinator.addFeatureEventListener { event ->
         viewModelScope.launch { handleOperationEvent(event) }
@@ -293,24 +303,136 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
-    fun openBot(bot: MobileBotSummaryAndroid) {
+    fun openBot(bot: MobileBotSummaryAndroid, targetEntryId: String? = null) {
+        openBotGeneration += 1
+        val generation = openBotGeneration
+        val cachedMessages = messagesByBot[bot.id].orEmpty()
+        val baselineEntryIds = cachedMessages.mapTo(linkedSetOf(), MobileChatMessage::id)
         commitState(
             mutableState.value.copy(
                 activeBot = bot,
                 draft = draftsByBot[bot.id].orEmpty(),
-                messages = messagesByBot[bot.id].orEmpty(),
+                messages = cachedMessages,
+                messageTargetId = targetEntryId,
+                error = null,
+            ),
+        )
+        if (bot.miniAppId != null) return
+
+        viewModelScope.launch {
+            try {
+                val transcript = withContext(Dispatchers.IO) { coordinator.transcriptSnapshot() }
+                val canonical = canonicalMobileTranscriptForAgent(transcript, bot.id)
+                if (generation != openBotGeneration || mutableState.value.activeBot?.id != bot.id) return@launch
+                val merged = mergeCanonicalMobileTranscript(
+                    baselineEntryIds = baselineEntryIds,
+                    current = mutableState.value.messages,
+                    canonical = canonical,
+                )
+                commitState(
+                    mutableState.value.copy(
+                        messages = merged,
+                        messageTargetId = targetEntryId,
+                        error = null,
+                    ),
+                )
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Throwable) {
+                if (generation == openBotGeneration && mutableState.value.activeBot?.id == bot.id) {
+                    commitState(
+                        mutableState.value.copy(
+                            error = error.message ?: "Bot transcript restore failed",
+                        ),
+                    )
+                }
+            }
+        }
+    }
+
+    fun consumeMessageTarget(entryId: String) {
+        if (mutableState.value.messageTargetId == entryId) {
+            commitState(mutableState.value.copy(messageTargetId = null))
+        }
+    }
+
+    fun closeBot() {
+        if (mutableState.value.busy) return
+        openBotGeneration += 1
+        commitState(
+            mutableState.value.copy(
+                activeBot = null,
+                draft = "",
+                messages = emptyList(),
+                messageTargetId = null,
                 error = null,
             ),
         )
     }
 
-    fun closeBot() {
-        if (mutableState.value.busy) return
-        commitState(mutableState.value.copy(activeBot = null, draft = "", messages = emptyList(), error = null))
-    }
-
     fun setDraft(value: String) {
         commitState(mutableState.value.copy(draft = value))
+    }
+
+    fun resetPaletteMessageSearch() {
+        paletteMessageSearchJob?.cancel()
+        paletteMessageSearchJob = null
+        paletteMessageFence.cancel()
+        mutableState.value = mutableState.value.copy(
+            paletteMessageSearch = CommandPaletteMessageSnapshot(
+                status = CommandPaletteMessageStatus.IDLE,
+            ),
+        )
+    }
+
+    fun setPaletteMessageQuery(query: String) {
+        paletteMessageSearchJob?.cancel()
+        paletteMessageSearchJob = null
+        paletteMessageFence.cancel()
+        val normalized = query.trim()
+        if (normalized.isEmpty()) {
+            mutableState.value = mutableState.value.copy(
+                paletteMessageSearch = CommandPaletteMessageSnapshot(
+                    status = CommandPaletteMessageStatus.IDLE,
+                ),
+            )
+            return
+        }
+
+        val token = paletteMessageFence.begin()
+        mutableState.value = mutableState.value.copy(
+            paletteMessageSearch = CommandPaletteMessageSnapshot(
+                status = CommandPaletteMessageStatus.LOADING,
+            ),
+        )
+        paletteMessageSearchJob = viewModelScope.launch {
+            try {
+                delay(COMMAND_PALETTE_MESSAGE_DEBOUNCE_MS)
+                val transcript = withContext(Dispatchers.IO) { coordinator.transcriptSnapshot() }
+                val results = commandPaletteMessagesFromTranscript(transcript, normalized)
+                if (!paletteMessageFence.accepts(token)) return@launch
+                mutableState.value = mutableState.value.copy(
+                    paletteMessageSearch = CommandPaletteMessageSnapshot(
+                        status = if (results.isEmpty()) {
+                            CommandPaletteMessageStatus.EMPTY
+                        } else {
+                            CommandPaletteMessageStatus.READY
+                        },
+                        value = results,
+                    ),
+                )
+            } catch (error: CancellationException) {
+                throw error
+            } catch (_: Throwable) {
+                if (paletteMessageFence.accepts(token)) {
+                    mutableState.value = mutableState.value.copy(
+                        paletteMessageSearch = CommandPaletteMessageSnapshot(
+                            status = CommandPaletteMessageStatus.FAILED,
+                        ),
+                    )
+                }
+            }
+        }
     }
 
     fun send() {
@@ -324,6 +446,7 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
             busy = true,
             error = null,
             operationId = requestId,
+            messageTargetId = null,
             messages = snapshot.messages + MobileChatMessage(requestId, MobileChatRole.USER, text),
         ))
         val miniAppId = bot.miniAppId
@@ -547,6 +670,10 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     override fun onCleared() {
+        paletteMessageSearchJob?.cancel()
+        paletteMessageSearchJob = null
+        paletteMessageFence.cancel()
+        openBotGeneration += 1
         featureEventSubscription?.close()
         featureEventSubscription = null
         super.onCleared()
