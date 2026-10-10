@@ -219,7 +219,11 @@ internal fun ProductionRenderer(
                             add(
                                 CommandPaletteEntry(
                                     id = "agent:${bot.id}",
-                                    kind = CommandPaletteEntryKind.AGENT,
+                                    kind = if (bot.isGroup) {
+                                        CommandPaletteEntryKind.GROUP
+                                    } else {
+                                        CommandPaletteEntryKind.AGENT
+                                    },
                                     label = bot.name,
                                     detail = bot.description.takeIf(String::isNotBlank),
                                     searchText = listOf(bot.name, bot.description, "agent bot")

@@ -126,6 +126,35 @@ class FrontendProductionModelParityTest {
     }
 
     @Test
+    fun commandPaletteSeparatesAgentsAndGroupsByShippingIdentity() {
+        val agent = CommandPaletteEntry(
+            id = "agent:solo",
+            kind = CommandPaletteEntryKind.AGENT,
+            label = "Solo",
+            activate = {},
+        )
+        val group = CommandPaletteEntry(
+            id = "agent:team",
+            kind = CommandPaletteEntryKind.GROUP,
+            label = "Team",
+            activate = {},
+        )
+
+        assertEquals(
+            listOf("agent:solo"),
+            commandPaletteEntries(listOf(agent, group), CommandPaletteTab.AGENTS, "").map { it.id },
+        )
+        assertEquals(
+            listOf("agent:team"),
+            commandPaletteEntries(listOf(agent, group), CommandPaletteTab.GROUPS, "").map { it.id },
+        )
+        assertEquals(
+            listOf("agent:team"),
+            commandPaletteEntries(listOf(agent, group), CommandPaletteTab.GROUPS, "team").map { it.id },
+        )
+    }
+
+    @Test
     fun commandPaletteCanonicalIdentityReplacesStaleRowsWithoutDuplicates() {
         val stale = CommandPaletteEntry(
             id = "human:ada",

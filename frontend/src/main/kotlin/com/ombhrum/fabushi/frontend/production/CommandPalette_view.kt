@@ -68,6 +68,7 @@ internal fun CommandPalette(
                         CommandPaletteTab.ALL to "All",
                         CommandPaletteTab.MESSAGES to "Messages",
                         CommandPaletteTab.AGENTS to "Agents",
+                        CommandPaletteTab.GROUPS to "Groups",
                         CommandPaletteTab.ROUTINES to "Routines",
                         CommandPaletteTab.ACTIONS to "Actions",
                     ).forEach { (candidate, label) ->
