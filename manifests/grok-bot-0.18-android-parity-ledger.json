@@ -28,12 +28,14 @@
       "grok_size_bytes": 643,
       "grok_responsibility": "Android Compose renderer/build counterpart for index.html.",
       "evidence_anchor": "b-nnett/grok-bot-0.18-reconstructed@a9f633e09d49a85829b8236331b9e21f7e612634:frontend/index.html#blob=aae734455efe5e3175d4caa911b8241936cbaa75",
-      "android_target_path": "frontend/src/main/AndroidManifest.xml",
+      "android_target_path": "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/production/bootstrap_view.kt",
       "target_language_runtime": "Kotlin / Jetpack Compose",
-      "parity_class": "platform-adapted",
-      "implementation_status": "mapped",
-      "test_evidence": "pending implementation; file coverage is mechanically checked against the frozen inventory",
-      "legacy_android_path_replaced_or_removed": "mobile/android/app/src/main/java/com/ombhrum/fabushi/FabushiScreen.kt; GrokMobileShellAndroid.kt; feature UI embedded in MainActivity.kt"
+      "parity_class": "android-adapted",
+      "implementation_status": "verified",
+      "test_evidence": "frontend production bootstrap is wired by MainActivity -> FabushiApplicationRoot -> ProductionRenderer; mobile/android/app/src/test/java/com/ombhrum/fabushi/FrontendProductionModelParityTest.kt is executed by Grok Android Architecture existing-android-regression",
+      "legacy_android_path_replaced_or_removed": "mobile/android/app/src/main/java/com/ombhrum/fabushi/FabushiScreen.kt; GrokMobileShellAndroid.kt; feature UI embedded in MainActivity.kt",
+      "platform_delta": "Desktop HTML/React root is replaced by Android Activity + native Jetpack Compose bootstrap; no WebView shell is used.",
+      "production_wiring": "mobile/android/app/src/main/java/com/ombhrum/fabushi/MainActivity.kt -> frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/production/bootstrap_view.kt -> ProductionRenderer_view.kt"
     },
     {
       "grok_path": "frontend/manifests/component-names.json",
@@ -43,10 +45,20 @@
       "evidence_anchor": "b-nnett/grok-bot-0.18-reconstructed@a9f633e09d49a85829b8236331b9e21f7e612634:frontend/manifests/component-names.json#blob=e80d8237b59cb27f4e4f0fa174cc946185db58c7",
       "android_target_path": "frontend/manifests/component-names.json",
       "target_language_runtime": "reference-data",
-      "parity_class": "platform-adapted",
-      "implementation_status": "mapped",
-      "test_evidence": "pending implementation; file coverage is mechanically checked against the frozen inventory",
-      "legacy_android_path_replaced_or_removed": "mobile/android/app/src/main/java/com/ombhrum/fabushi/FabushiScreen.kt; GrokMobileShellAndroid.kt; feature UI embedded in MainActivity.kt"
+      "parity_class": "not-applicable",
+      "implementation_status": "verified",
+      "test_evidence": "scripts/check_grok_android_parity.py validates reviewed not-applicable rows; current Desktop authority and native Compose wiring are independently enforced by Android migration documentation/architecture workflows.",
+      "legacy_android_path_replaced_or_removed": "mobile/android/app/src/main/java/com/ombhrum/fabushi/FabushiScreen.kt; GrokMobileShellAndroid.kt; feature UI embedded in MainActivity.kt",
+      "not_applicable_reason": "Historical Grok 0.18 reconstruction/evidence metadata or README, not a current bhrumom/fabushi-desktop@3bc92400826cc4ca7ac665b467708e22261edc61 shipping runtime responsibility. Android replaces the authority/evidence role with docs/android-port/authority/source-inventory-ledger.jsonl + responsibility-ledger.json and the native Compose production composition; creating same-name runtime files would be false parity.",
+      "not_applicable_reviewed": true,
+      "replacement_evidence": [
+        "docs/android-port/authority/source-inventory-ledger.jsonl",
+        "docs/android-port/authority/responsibility-ledger.json",
+        "docs/specs/desktop-main-android-full-parity.md",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/production/ProductionRenderer_view.kt"
+      ],
+      "user_visible_delta": "None: these files were reconstruction/evidence metadata or explanatory material rather than user-facing shipping behavior.",
+      "review_conclusion": "not-applicable-with-replacement"
     },
     {
       "grok_path": "frontend/manifests/computer-shell-evidence.json",
@@ -56,10 +68,20 @@
       "evidence_anchor": "b-nnett/grok-bot-0.18-reconstructed@a9f633e09d49a85829b8236331b9e21f7e612634:frontend/manifests/computer-shell-evidence.json#blob=5c42c82ce7ecb86a0817f661853e170913548bf6",
       "android_target_path": "frontend/manifests/computer-shell-evidence.json",
       "target_language_runtime": "reference-data",
-      "parity_class": "platform-adapted",
-      "implementation_status": "mapped",
-      "test_evidence": "pending implementation; file coverage is mechanically checked against the frozen inventory",
-      "legacy_android_path_replaced_or_removed": "mobile/android/app/src/main/java/com/ombhrum/fabushi/FabushiScreen.kt; GrokMobileShellAndroid.kt; feature UI embedded in MainActivity.kt"
+      "parity_class": "not-applicable",
+      "implementation_status": "verified",
+      "test_evidence": "scripts/check_grok_android_parity.py validates reviewed not-applicable rows; current Desktop authority and native Compose wiring are independently enforced by Android migration documentation/architecture workflows.",
+      "legacy_android_path_replaced_or_removed": "mobile/android/app/src/main/java/com/ombhrum/fabushi/FabushiScreen.kt; GrokMobileShellAndroid.kt; feature UI embedded in MainActivity.kt",
+      "not_applicable_reason": "Historical Grok 0.18 reconstruction/evidence metadata or README, not a current bhrumom/fabushi-desktop@3bc92400826cc4ca7ac665b467708e22261edc61 shipping runtime responsibility. Android replaces the authority/evidence role with docs/android-port/authority/source-inventory-ledger.jsonl + responsibility-ledger.json and the native Compose production composition; creating same-name runtime files would be false parity.",
+      "not_applicable_reviewed": true,
+      "replacement_evidence": [
+        "docs/android-port/authority/source-inventory-ledger.jsonl",
+        "docs/android-port/authority/responsibility-ledger.json",
+        "docs/specs/desktop-main-android-full-parity.md",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/production/ProductionRenderer_view.kt"
+      ],
+      "user_visible_delta": "None: these files were reconstruction/evidence metadata or explanatory material rather than user-facing shipping behavior.",
+      "review_conclusion": "not-applicable-with-replacement"
     },
     {
       "grok_path": "frontend/manifests/conversation-evidence.json",
@@ -69,10 +91,20 @@
       "evidence_anchor": "b-nnett/grok-bot-0.18-reconstructed@a9f633e09d49a85829b8236331b9e21f7e612634:frontend/manifests/conversation-evidence.json#blob=485bf51ee3a7f85649614ee840b70b84ee6d6551",
       "android_target_path": "frontend/manifests/conversation-evidence.json",
       "target_language_runtime": "reference-data",
-      "parity_class": "platform-adapted",
-      "implementation_status": "mapped",
-      "test_evidence": "pending implementation; file coverage is mechanically checked against the frozen inventory",
-      "legacy_android_path_replaced_or_removed": "mobile/android/app/src/main/java/com/ombhrum/fabushi/FabushiScreen.kt; GrokMobileShellAndroid.kt; feature UI embedded in MainActivity.kt"
+      "parity_class": "not-applicable",
+      "implementation_status": "verified",
+      "test_evidence": "scripts/check_grok_android_parity.py validates reviewed not-applicable rows; current Desktop authority and native Compose wiring are independently enforced by Android migration documentation/architecture workflows.",
+      "legacy_android_path_replaced_or_removed": "mobile/android/app/src/main/java/com/ombhrum/fabushi/FabushiScreen.kt; GrokMobileShellAndroid.kt; feature UI embedded in MainActivity.kt",
+      "not_applicable_reason": "Historical Grok 0.18 reconstruction/evidence metadata or README, not a current bhrumom/fabushi-desktop@3bc92400826cc4ca7ac665b467708e22261edc61 shipping runtime responsibility. Android replaces the authority/evidence role with docs/android-port/authority/source-inventory-ledger.jsonl + responsibility-ledger.json and the native Compose production composition; creating same-name runtime files would be false parity.",
+      "not_applicable_reviewed": true,
+      "replacement_evidence": [
+        "docs/android-port/authority/source-inventory-ledger.jsonl",
+        "docs/android-port/authority/responsibility-ledger.json",
+        "docs/specs/desktop-main-android-full-parity.md",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/production/ProductionRenderer_view.kt"
+      ],
+      "user_visible_delta": "None: these files were reconstruction/evidence metadata or explanatory material rather than user-facing shipping behavior.",
+      "review_conclusion": "not-applicable-with-replacement"
     },
     {
       "grok_path": "frontend/manifests/mermaid-immutable-fingerprints.json",
@@ -82,10 +114,20 @@
       "evidence_anchor": "b-nnett/grok-bot-0.18-reconstructed@a9f633e09d49a85829b8236331b9e21f7e612634:frontend/manifests/mermaid-immutable-fingerprints.json#blob=0db5152b63de740fdc5756a13fd20a6940a0232c",
       "android_target_path": "frontend/manifests/mermaid-immutable-fingerprints.json",
       "target_language_runtime": "reference-data",
-      "parity_class": "platform-adapted",
-      "implementation_status": "mapped",
-      "test_evidence": "pending implementation; file coverage is mechanically checked against the frozen inventory",
-      "legacy_android_path_replaced_or_removed": "mobile/android/app/src/main/java/com/ombhrum/fabushi/FabushiScreen.kt; GrokMobileShellAndroid.kt; feature UI embedded in MainActivity.kt"
+      "parity_class": "not-applicable",
+      "implementation_status": "verified",
+      "test_evidence": "scripts/check_grok_android_parity.py validates reviewed not-applicable rows; current Desktop authority and native Compose wiring are independently enforced by Android migration documentation/architecture workflows.",
+      "legacy_android_path_replaced_or_removed": "mobile/android/app/src/main/java/com/ombhrum/fabushi/FabushiScreen.kt; GrokMobileShellAndroid.kt; feature UI embedded in MainActivity.kt",
+      "not_applicable_reason": "Historical Grok 0.18 reconstruction/evidence metadata or README, not a current bhrumom/fabushi-desktop@3bc92400826cc4ca7ac665b467708e22261edc61 shipping runtime responsibility. Android replaces the authority/evidence role with docs/android-port/authority/source-inventory-ledger.jsonl + responsibility-ledger.json and the native Compose production composition; creating same-name runtime files would be false parity.",
+      "not_applicable_reviewed": true,
+      "replacement_evidence": [
+        "docs/android-port/authority/source-inventory-ledger.jsonl",
+        "docs/android-port/authority/responsibility-ledger.json",
+        "docs/specs/desktop-main-android-full-parity.md",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/production/ProductionRenderer_view.kt"
+      ],
+      "user_visible_delta": "None: these files were reconstruction/evidence metadata or explanatory material rather than user-facing shipping behavior.",
+      "review_conclusion": "not-applicable-with-replacement"
     },
     {
       "grok_path": "frontend/manifests/mermaid-public-candidate-lock.json",
@@ -95,10 +137,20 @@
       "evidence_anchor": "b-nnett/grok-bot-0.18-reconstructed@a9f633e09d49a85829b8236331b9e21f7e612634:frontend/manifests/mermaid-public-candidate-lock.json#blob=9d3e26c44f1e3f1c5f15bac00128e2b5cd4b54b0",
       "android_target_path": "frontend/manifests/mermaid-public-candidate-lock.json",
       "target_language_runtime": "reference-data",
-      "parity_class": "platform-adapted",
-      "implementation_status": "mapped",
-      "test_evidence": "pending implementation; file coverage is mechanically checked against the frozen inventory",
-      "legacy_android_path_replaced_or_removed": "mobile/android/app/src/main/java/com/ombhrum/fabushi/FabushiScreen.kt; GrokMobileShellAndroid.kt; feature UI embedded in MainActivity.kt"
+      "parity_class": "not-applicable",
+      "implementation_status": "verified",
+      "test_evidence": "scripts/check_grok_android_parity.py validates reviewed not-applicable rows; current Desktop authority and native Compose wiring are independently enforced by Android migration documentation/architecture workflows.",
+      "legacy_android_path_replaced_or_removed": "mobile/android/app/src/main/java/com/ombhrum/fabushi/FabushiScreen.kt; GrokMobileShellAndroid.kt; feature UI embedded in MainActivity.kt",
+      "not_applicable_reason": "Historical Grok 0.18 reconstruction/evidence metadata or README, not a current bhrumom/fabushi-desktop@3bc92400826cc4ca7ac665b467708e22261edc61 shipping runtime responsibility. Android replaces the authority/evidence role with docs/android-port/authority/source-inventory-ledger.jsonl + responsibility-ledger.json and the native Compose production composition; creating same-name runtime files would be false parity.",
+      "not_applicable_reviewed": true,
+      "replacement_evidence": [
+        "docs/android-port/authority/source-inventory-ledger.jsonl",
+        "docs/android-port/authority/responsibility-ledger.json",
+        "docs/specs/desktop-main-android-full-parity.md",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/production/ProductionRenderer_view.kt"
+      ],
+      "user_visible_delta": "None: these files were reconstruction/evidence metadata or explanatory material rather than user-facing shipping behavior.",
+      "review_conclusion": "not-applicable-with-replacement"
     },
     {
       "grok_path": "frontend/manifests/mermaid-public-package-closure.json",
@@ -108,10 +160,20 @@
       "evidence_anchor": "b-nnett/grok-bot-0.18-reconstructed@a9f633e09d49a85829b8236331b9e21f7e612634:frontend/manifests/mermaid-public-package-closure.json#blob=13e1cdd19b8259317ff456200db37377c73139c8",
       "android_target_path": "frontend/manifests/mermaid-public-package-closure.json",
       "target_language_runtime": "reference-data",
-      "parity_class": "platform-adapted",
-      "implementation_status": "mapped",
-      "test_evidence": "pending implementation; file coverage is mechanically checked against the frozen inventory",
-      "legacy_android_path_replaced_or_removed": "mobile/android/app/src/main/java/com/ombhrum/fabushi/FabushiScreen.kt; GrokMobileShellAndroid.kt; feature UI embedded in MainActivity.kt"
+      "parity_class": "not-applicable",
+      "implementation_status": "verified",
+      "test_evidence": "scripts/check_grok_android_parity.py validates reviewed not-applicable rows; current Desktop authority and native Compose wiring are independently enforced by Android migration documentation/architecture workflows.",
+      "legacy_android_path_replaced_or_removed": "mobile/android/app/src/main/java/com/ombhrum/fabushi/FabushiScreen.kt; GrokMobileShellAndroid.kt; feature UI embedded in MainActivity.kt",
+      "not_applicable_reason": "Historical Grok 0.18 reconstruction/evidence metadata or README, not a current bhrumom/fabushi-desktop@3bc92400826cc4ca7ac665b467708e22261edc61 shipping runtime responsibility. Android replaces the authority/evidence role with docs/android-port/authority/source-inventory-ledger.jsonl + responsibility-ledger.json and the native Compose production composition; creating same-name runtime files would be false parity.",
+      "not_applicable_reviewed": true,
+      "replacement_evidence": [
+        "docs/android-port/authority/source-inventory-ledger.jsonl",
+        "docs/android-port/authority/responsibility-ledger.json",
+        "docs/specs/desktop-main-android-full-parity.md",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/production/ProductionRenderer_view.kt"
+      ],
+      "user_visible_delta": "None: these files were reconstruction/evidence metadata or explanatory material rather than user-facing shipping behavior.",
+      "review_conclusion": "not-applicable-with-replacement"
     },
     {
       "grok_path": "frontend/manifests/renderer-bootstrap.json",
@@ -121,10 +183,20 @@
       "evidence_anchor": "b-nnett/grok-bot-0.18-reconstructed@a9f633e09d49a85829b8236331b9e21f7e612634:frontend/manifests/renderer-bootstrap.json#blob=870ae62c903d79123da2e4e25735c93bd262b249",
       "android_target_path": "frontend/manifests/renderer-bootstrap.json",
       "target_language_runtime": "reference-data",
-      "parity_class": "platform-adapted",
-      "implementation_status": "mapped",
-      "test_evidence": "pending implementation; file coverage is mechanically checked against the frozen inventory",
-      "legacy_android_path_replaced_or_removed": "mobile/android/app/src/main/java/com/ombhrum/fabushi/FabushiScreen.kt; GrokMobileShellAndroid.kt; feature UI embedded in MainActivity.kt"
+      "parity_class": "not-applicable",
+      "implementation_status": "verified",
+      "test_evidence": "scripts/check_grok_android_parity.py validates reviewed not-applicable rows; current Desktop authority and native Compose wiring are independently enforced by Android migration documentation/architecture workflows.",
+      "legacy_android_path_replaced_or_removed": "mobile/android/app/src/main/java/com/ombhrum/fabushi/FabushiScreen.kt; GrokMobileShellAndroid.kt; feature UI embedded in MainActivity.kt",
+      "not_applicable_reason": "Historical Grok 0.18 reconstruction/evidence metadata or README, not a current bhrumom/fabushi-desktop@3bc92400826cc4ca7ac665b467708e22261edc61 shipping runtime responsibility. Android replaces the authority/evidence role with docs/android-port/authority/source-inventory-ledger.jsonl + responsibility-ledger.json and the native Compose production composition; creating same-name runtime files would be false parity.",
+      "not_applicable_reviewed": true,
+      "replacement_evidence": [
+        "docs/android-port/authority/source-inventory-ledger.jsonl",
+        "docs/android-port/authority/responsibility-ledger.json",
+        "docs/specs/desktop-main-android-full-parity.md",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/production/ProductionRenderer_view.kt"
+      ],
+      "user_visible_delta": "None: these files were reconstruction/evidence metadata or explanatory material rather than user-facing shipping behavior.",
+      "review_conclusion": "not-applicable-with-replacement"
     },
     {
       "grok_path": "frontend/manifests/renderer-runtime-assets.json",
@@ -134,10 +206,20 @@
       "evidence_anchor": "b-nnett/grok-bot-0.18-reconstructed@a9f633e09d49a85829b8236331b9e21f7e612634:frontend/manifests/renderer-runtime-assets.json#blob=d6940f79a37e43735dbf15dc917bfb84c795a23a",
       "android_target_path": "frontend/manifests/renderer-runtime-assets.json",
       "target_language_runtime": "reference-data",
-      "parity_class": "platform-adapted",
-      "implementation_status": "mapped",
-      "test_evidence": "pending implementation; file coverage is mechanically checked against the frozen inventory",
-      "legacy_android_path_replaced_or_removed": "mobile/android/app/src/main/java/com/ombhrum/fabushi/FabushiScreen.kt; GrokMobileShellAndroid.kt; feature UI embedded in MainActivity.kt"
+      "parity_class": "not-applicable",
+      "implementation_status": "verified",
+      "test_evidence": "scripts/check_grok_android_parity.py validates reviewed not-applicable rows; current Desktop authority and native Compose wiring are independently enforced by Android migration documentation/architecture workflows.",
+      "legacy_android_path_replaced_or_removed": "mobile/android/app/src/main/java/com/ombhrum/fabushi/FabushiScreen.kt; GrokMobileShellAndroid.kt; feature UI embedded in MainActivity.kt",
+      "not_applicable_reason": "Historical Grok 0.18 reconstruction/evidence metadata or README, not a current bhrumom/fabushi-desktop@3bc92400826cc4ca7ac665b467708e22261edc61 shipping runtime responsibility. Android replaces the authority/evidence role with docs/android-port/authority/source-inventory-ledger.jsonl + responsibility-ledger.json and the native Compose production composition; creating same-name runtime files would be false parity.",
+      "not_applicable_reviewed": true,
+      "replacement_evidence": [
+        "docs/android-port/authority/source-inventory-ledger.jsonl",
+        "docs/android-port/authority/responsibility-ledger.json",
+        "docs/specs/desktop-main-android-full-parity.md",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/production/ProductionRenderer_view.kt"
+      ],
+      "user_visible_delta": "None: these files were reconstruction/evidence metadata or explanatory material rather than user-facing shipping behavior.",
+      "review_conclusion": "not-applicable-with-replacement"
     },
     {
       "grok_path": "frontend/manifests/semantic-symbols.json",
@@ -147,10 +229,20 @@
       "evidence_anchor": "b-nnett/grok-bot-0.18-reconstructed@a9f633e09d49a85829b8236331b9e21f7e612634:frontend/manifests/semantic-symbols.json#blob=39dc04ed8a2a3404d5a8fcb92ff31a10acc238e1",
       "android_target_path": "frontend/manifests/semantic-symbols.json",
       "target_language_runtime": "reference-data",
-      "parity_class": "platform-adapted",
-      "implementation_status": "mapped",
-      "test_evidence": "pending implementation; file coverage is mechanically checked against the frozen inventory",
-      "legacy_android_path_replaced_or_removed": "mobile/android/app/src/main/java/com/ombhrum/fabushi/FabushiScreen.kt; GrokMobileShellAndroid.kt; feature UI embedded in MainActivity.kt"
+      "parity_class": "not-applicable",
+      "implementation_status": "verified",
+      "test_evidence": "scripts/check_grok_android_parity.py validates reviewed not-applicable rows; current Desktop authority and native Compose wiring are independently enforced by Android migration documentation/architecture workflows.",
+      "legacy_android_path_replaced_or_removed": "mobile/android/app/src/main/java/com/ombhrum/fabushi/FabushiScreen.kt; GrokMobileShellAndroid.kt; feature UI embedded in MainActivity.kt",
+      "not_applicable_reason": "Historical Grok 0.18 reconstruction/evidence metadata or README, not a current bhrumom/fabushi-desktop@3bc92400826cc4ca7ac665b467708e22261edc61 shipping runtime responsibility. Android replaces the authority/evidence role with docs/android-port/authority/source-inventory-ledger.jsonl + responsibility-ledger.json and the native Compose production composition; creating same-name runtime files would be false parity.",
+      "not_applicable_reviewed": true,
+      "replacement_evidence": [
+        "docs/android-port/authority/source-inventory-ledger.jsonl",
+        "docs/android-port/authority/responsibility-ledger.json",
+        "docs/specs/desktop-main-android-full-parity.md",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/production/ProductionRenderer_view.kt"
+      ],
+      "user_visible_delta": "None: these files were reconstruction/evidence metadata or explanatory material rather than user-facing shipping behavior.",
+      "review_conclusion": "not-applicable-with-replacement"
     },
     {
       "grok_path": "frontend/manifests/ui-evidence-anchors.json",
@@ -160,10 +252,20 @@
       "evidence_anchor": "b-nnett/grok-bot-0.18-reconstructed@a9f633e09d49a85829b8236331b9e21f7e612634:frontend/manifests/ui-evidence-anchors.json#blob=8c0721ae930be9f0623f278f5b64c247277f63e8",
       "android_target_path": "frontend/manifests/ui-evidence-anchors.json",
       "target_language_runtime": "reference-data",
-      "parity_class": "platform-adapted",
-      "implementation_status": "mapped",
-      "test_evidence": "pending implementation; file coverage is mechanically checked against the frozen inventory",
-      "legacy_android_path_replaced_or_removed": "mobile/android/app/src/main/java/com/ombhrum/fabushi/FabushiScreen.kt; GrokMobileShellAndroid.kt; feature UI embedded in MainActivity.kt"
+      "parity_class": "not-applicable",
+      "implementation_status": "verified",
+      "test_evidence": "scripts/check_grok_android_parity.py validates reviewed not-applicable rows; current Desktop authority and native Compose wiring are independently enforced by Android migration documentation/architecture workflows.",
+      "legacy_android_path_replaced_or_removed": "mobile/android/app/src/main/java/com/ombhrum/fabushi/FabushiScreen.kt; GrokMobileShellAndroid.kt; feature UI embedded in MainActivity.kt",
+      "not_applicable_reason": "Historical Grok 0.18 reconstruction/evidence metadata or README, not a current bhrumom/fabushi-desktop@3bc92400826cc4ca7ac665b467708e22261edc61 shipping runtime responsibility. Android replaces the authority/evidence role with docs/android-port/authority/source-inventory-ledger.jsonl + responsibility-ledger.json and the native Compose production composition; creating same-name runtime files would be false parity.",
+      "not_applicable_reviewed": true,
+      "replacement_evidence": [
+        "docs/android-port/authority/source-inventory-ledger.jsonl",
+        "docs/android-port/authority/responsibility-ledger.json",
+        "docs/specs/desktop-main-android-full-parity.md",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/production/ProductionRenderer_view.kt"
+      ],
+      "user_visible_delta": "None: these files were reconstruction/evidence metadata or explanatory material rather than user-facing shipping behavior.",
+      "review_conclusion": "not-applicable-with-replacement"
     },
     {
       "grok_path": "frontend/README.md",
@@ -173,10 +275,20 @@
       "evidence_anchor": "b-nnett/grok-bot-0.18-reconstructed@a9f633e09d49a85829b8236331b9e21f7e612634:frontend/README.md#blob=9f79b78ae0823bf753a8e967716fdfa656b4083c",
       "android_target_path": "frontend/README.md",
       "target_language_runtime": "Kotlin / Jetpack Compose",
-      "parity_class": "platform-adapted",
-      "implementation_status": "mapped",
-      "test_evidence": "pending implementation; file coverage is mechanically checked against the frozen inventory",
-      "legacy_android_path_replaced_or_removed": "mobile/android/app/src/main/java/com/ombhrum/fabushi/FabushiScreen.kt; GrokMobileShellAndroid.kt; feature UI embedded in MainActivity.kt"
+      "parity_class": "not-applicable",
+      "implementation_status": "verified",
+      "test_evidence": "scripts/check_grok_android_parity.py validates reviewed not-applicable rows; current Desktop authority and native Compose wiring are independently enforced by Android migration documentation/architecture workflows.",
+      "legacy_android_path_replaced_or_removed": "mobile/android/app/src/main/java/com/ombhrum/fabushi/FabushiScreen.kt; GrokMobileShellAndroid.kt; feature UI embedded in MainActivity.kt",
+      "not_applicable_reason": "Historical Grok 0.18 reconstruction/evidence metadata or README, not a current bhrumom/fabushi-desktop@3bc92400826cc4ca7ac665b467708e22261edc61 shipping runtime responsibility. Android replaces the authority/evidence role with docs/android-port/authority/source-inventory-ledger.jsonl + responsibility-ledger.json and the native Compose production composition; creating same-name runtime files would be false parity.",
+      "not_applicable_reviewed": true,
+      "replacement_evidence": [
+        "docs/android-port/authority/source-inventory-ledger.jsonl",
+        "docs/android-port/authority/responsibility-ledger.json",
+        "docs/specs/desktop-main-android-full-parity.md",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/production/ProductionRenderer_view.kt"
+      ],
+      "user_visible_delta": "None: these files were reconstruction/evidence metadata or explanatory material rather than user-facing shipping behavior.",
+      "review_conclusion": "not-applicable-with-replacement"
     },
     {
       "grok_path": "frontend/src/dev/dev-shell.css",
@@ -26858,8 +26970,8 @@
     }
   ],
   "status_summary": {
-    "mapped": 1780,
-    "implemented": 256,
-    "verified": 10
+    "verified": 22,
+    "mapped": 1768,
+    "implemented": 256
   }
 }
