@@ -1,23 +1,68 @@
 use super::{
-    DurableSubagentOwner, ProductionTurnAgentBuildBindings, ProductionTurnAgentOwner,
+    AndroidRoutedToolBridge, DurableSubagentOwner, ProductionTurnAgentBuildBindings,
+    ProductionTurnAgentOwner,
     ProductionTurnAgentStaticConfig, ProductionTurnEvent, ProductionTurnInput,
     ProductionTurnPrivacyMode, SubagentLaunch, SubagentRunOutcome,
-    SubagentSessionSnapshot, SAND_AGENT_TOKEN_LIMIT,
+    SubagentSessionSnapshot, SubagentToolBridge, SubagentToolContext, SAND_AGENT_TOKEN_LIMIT,
 };
 use crate::android_json_runtime::{AndroidHostMode, now_ms};
 use super::{AndroidHostInferenceProvider, AndroidInferenceMode};
 use serde_json::{json, Value};
-use std::collections::VecDeque;
+use std::collections::{BTreeSet, VecDeque};
 use std::sync::{
     atomic::AtomicBool,
     Arc, Mutex,
 };
 use std::thread;
 
+struct GeneratedSubagentRoutedTools {
+    bridge: SubagentToolBridge,
+    context: SubagentToolContext,
+    allowed_names: BTreeSet<String>,
+}
+
+impl AndroidRoutedToolBridge for GeneratedSubagentRoutedTools {
+    fn list_tools(&self) -> Result<Vec<Value>, String> {
+        Ok(self
+            .bridge
+            .tool_definitions(&self.context)
+            .into_iter()
+            .filter(|definition| {
+                definition
+                    .get("name")
+                    .and_then(Value::as_str)
+                    .is_some_and(|name| self.allowed_names.contains(name))
+            })
+            .map(|definition| {
+                json!({
+                    "type":"function",
+                    "name":definition.get("name").cloned().unwrap_or(Value::Null),
+                    "description":definition.get("description").cloned().unwrap_or_else(|| Value::String(String::new())),
+                    "parameters":definition.get("inputSchema").cloned().unwrap_or_else(|| json!({"type":"object"})),
+                })
+            })
+            .collect())
+    }
+
+    fn call_tool(&self, name: &str, args: Value, tool_call_id: &str) -> Result<Value, String> {
+        if !self.allowed_names.contains(name) {
+            return Err(format!("generated subagent routed tool is unavailable for this turn: {name}"));
+        }
+        let result = self
+            .bridge
+            .call(name, &args, tool_call_id, &self.context, now_ms())?;
+        if result.launch.is_some() {
+            return Err("generated subagent routed tool attempted an unprojected child launch".into());
+        }
+        Ok(result.value)
+    }
+}
+
 pub fn spawn_generated_subagent(
     mode: AndroidHostMode,
     bearer_token: Option<String>,
     owner: Arc<Mutex<DurableSubagentOwner>>,
+    subagent_tools: SubagentToolBridge,
     events: Arc<Mutex<VecDeque<Value>>>,
     launch: SubagentLaunch,
 ) -> Result<(), String> {
@@ -35,6 +80,21 @@ pub fn spawn_generated_subagent(
         return Err("generated subagent frozen provider configuration is unsupported".into());
     }
     let model = frozen_turn.model_id.clone();
+    let mut child_projection = frozen_turn.clone();
+    child_projection.allowed_subagent_types.clear();
+    let routed_tools: Arc<dyn AndroidRoutedToolBridge> = Arc::new(GeneratedSubagentRoutedTools {
+        bridge: subagent_tools,
+        context: SubagentToolContext {
+            parent_agent_id: record.parent_agent_id.clone(),
+            parent_request_id: request_id.clone(),
+            root_parent_request_id: record.lineage.root_parent_request_id.clone(),
+            account_fence: account_fence.clone(),
+            box_id: record.box_id.clone(),
+            quiet_origin: record.quiet_origin.clone(),
+            frozen_turn: child_projection,
+        },
+        allowed_names: frozen_turn.tool_names.iter().cloned().collect(),
+    });
 
     thread::Builder::new()
         .name(format!(
@@ -59,7 +119,8 @@ pub fn spawn_generated_subagent(
                 }
 
                 let provider = match mode {
-                    AndroidHostMode::Test => AndroidHostInferenceProvider::new(AndroidInferenceMode::Test),
+                    AndroidHostMode::Test => AndroidHostInferenceProvider::new(AndroidInferenceMode::Test)
+                        .with_routed_tools(Arc::clone(&routed_tools)),
                     AndroidHostMode::Production => {
                         let Some(token) = bearer_token.clone() else {
                             settle_and_publish(
@@ -73,7 +134,7 @@ pub fn spawn_generated_subagent(
                             return;
                         };
                         match AndroidHostInferenceProvider::production(token, Arc::clone(&cancelled)) {
-                            Ok(provider) => provider,
+                            Ok(provider) => provider.with_routed_tools(Arc::clone(&routed_tools)),
                             Err(error) => {
                                 settle_and_publish(
                                     &owner,
