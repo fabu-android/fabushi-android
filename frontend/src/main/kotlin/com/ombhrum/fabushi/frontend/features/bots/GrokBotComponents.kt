@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
@@ -125,7 +126,16 @@ internal fun GrokBotChatAndroid(
     onDraftChange: (String) -> Unit,
     onSend: () -> Unit,
     onStop: () -> Unit,
+    onMessageTargetConsumed: (String) -> Unit,
 ) {
+    val messageListState = rememberLazyListState()
+    LaunchedEffect(bot.id, state.messageTargetId, state.messages) {
+        val targetId = state.messageTargetId ?: return@LaunchedEffect
+        val targetIndex = state.messages.indexOfFirst { it.id == targetId }
+        if (targetIndex < 0) return@LaunchedEffect
+        messageListState.animateScrollToItem(targetIndex)
+        onMessageTargetConsumed(targetId)
+    }
     LaunchedEffect(bot.id, state.draft, state.busy, state.error, state.messages, appAgentSurface) {
         val elements = mutableListOf(
             FabushiAppAgentSurface.Element("mobile-bot-chat", "application", "Bot ${bot.name}"),
@@ -182,7 +192,11 @@ internal fun GrokBotChatAndroid(
                     .testTag("command-palette-open-chat"),
             )
         }
-        LazyColumn(Modifier.weight(1f).fillMaxWidth().padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
+        LazyColumn(
+            state = messageListState,
+            modifier = Modifier.weight(1f).fillMaxWidth().padding(horizontal = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(7.dp),
+        ) {
             if (state.messages.isEmpty()) item {
                 Column(Modifier.fillMaxWidth().padding(top = 96.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     ClothGhostAvatarAndroid(bot.id, 82.dp)
