@@ -815,6 +815,15 @@ mod tests {
             )
             .unwrap_err()
             .contains("mismatched"));
+        let mut changed_tools = frozen_config("default");
+        changed_tools.tool_names.pop();
+        assert!(owner
+            .launch(
+                "parent", lineage("req"), "box", "general-purpose", "call-1", "work",
+                "acct", None, changed_tools, 15,
+            )
+            .unwrap_err()
+            .contains("mismatched"));
         let _ = fs::remove_file(path);
     }
 
