@@ -1,4 +1,5 @@
 import importlib.util
+import json
 import pathlib
 import sys
 import unittest
@@ -17,7 +18,10 @@ class ParityCheckerTest(unittest.TestCase):
         self.assertEqual([], result.errors)
         self.assertEqual(2046, result.summary["inventory_files"])
         self.assertEqual(2046, result.summary["ledger_rows"])
-        self.assertEqual(8172, result.summary["full_source_entries"])
+        manifest = json.loads(
+            (ROOT / "docs/android-port/authority/source-inventory-manifest.json").read_text(encoding="utf-8")
+        )
+        self.assertEqual(manifest["tracked_non_tree_entries"], result.summary["full_source_entries"])
         self.assertGreater(result.summary["full_source_empty_responsibilities"], 0)
         self.assertEqual(0, result.summary["missing_reverse_links"])
         self.assertEqual(0, result.summary["blob_mismatches"])
