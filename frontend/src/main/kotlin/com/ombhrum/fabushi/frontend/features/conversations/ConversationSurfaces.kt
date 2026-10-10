@@ -126,6 +126,7 @@ internal fun ConversationHome(
     onDeleteFolder: (String) -> Unit,
     onOpenAgentChat: () -> Unit,
     onLogout: () -> Unit,
+    onSemanticContextChanged: (AndroidMobileSection?, Boolean) -> Unit = { _, _ -> },
 ) {
     var showContactPicker by remember { mutableStateOf(false) }
     var pendingKind by remember { mutableStateOf<ConversationKind?>(null) }
@@ -135,6 +136,11 @@ internal fun ConversationHome(
     var selectedConversation by remember { mutableStateOf<ConversationSummary?>(null) }
     var contextConversation by remember { mutableStateOf<ConversationSummary?>(null) }
     var activeSection by remember { mutableStateOf<AndroidMobileSection?>(null) }
+
+    LaunchedEffect(activeSection, selectedConversation) {
+        onSemanticContextChanged(activeSection, selectedConversation != null)
+    }
+
     val conversations = messagingState.conversations
     val filteredConversations = conversations
         .filter { !it.isArchived }
