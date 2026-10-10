@@ -144,6 +144,12 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
     override fun transcriptSnapshot(): JSONArray =
         host.requestValue("feature.transcript.snapshot") as? JSONArray ?: JSONArray()
 
+    override fun assistantProjection(): JSONObject =
+        host.request("feature.assistant.projection")
+
+    override fun assistantMarkRead(): JSONObject =
+        host.request("feature.assistant.markRead")
+
     override fun agentSubagentTool(params: JSONObject): JSONObject =
         host.request(
             "feature.agent.subagent.tool",
