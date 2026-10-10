@@ -1,8 +1,23 @@
 use super::subagent_runtime::{
-    status_label, DurableSubagentOwner, DurableSubagentRecord, SubagentLaunch, SubagentLineage,
+    status_label, DurableSubagentOwner, DurableSubagentRecord, SubagentFrozenTurnConfig,
+    SubagentLaunch, SubagentLineage,
 };
 use serde_json::{json, Value};
 use std::sync::{Arc, Mutex};
+
+pub type SubagentTaskReviewCallback = Arc<
+    dyn Fn(&str, &str, &str) -> Result<Option<String>, String> + Send + Sync + 'static,
+>;
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SubagentSteerReview {
+    pub allowed: bool,
+    pub reason: String,
+}
+
+pub type SubagentSteerReviewCallback = Arc<
+    dyn Fn(&str, &str, &str) -> Result<SubagentSteerReview, String> + Send + Sync + 'static,
+>;
 
 pub const TASK_TOOL_NAME: &str = "Task";
 pub const CHECK_SUBAGENT_TOOL_NAME: &str = "CheckSubagent";
@@ -17,6 +32,7 @@ pub struct SubagentToolContext {
     pub account_fence: String,
     pub box_id: String,
     pub quiet_origin: Option<String>,
+    pub frozen_turn: SubagentFrozenTurnConfig,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -28,11 +44,58 @@ pub struct SubagentToolResult {
 #[derive(Clone)]
 pub struct SubagentToolBridge {
     owner: Arc<Mutex<DurableSubagentOwner>>,
+    review_task: Option<SubagentTaskReviewCallback>,
+    review_steer: Option<SubagentSteerReviewCallback>,
 }
 
 impl SubagentToolBridge {
     pub fn new(owner: Arc<Mutex<DurableSubagentOwner>>) -> Self {
-        Self { owner }
+        Self {
+            owner,
+            review_task: None,
+            review_steer: None,
+        }
+    }
+
+    pub fn with_task_review(mut self, review: SubagentTaskReviewCallback) -> Self {
+        self.review_task = Some(review);
+        self
+    }
+
+    pub fn with_steer_review(mut self, review: SubagentSteerReviewCallback) -> Self {
+        self.review_steer = Some(review);
+        self
+    }
+
+    pub fn tool_definitions(&self, context: &SubagentToolContext) -> Vec<Value> {
+        let allowed = &context.frozen_turn.allowed_subagent_types;
+        vec![
+            json!({
+                "name": TASK_TOOL_NAME,
+                "description": "Delegate a self-contained task to a background subagent.",
+                "inputSchema": {
+                    "type":"object",
+                    "required":["prompt"],
+                    "additionalProperties":false,
+                    "properties":{
+                        "prompt":{"type":"string","minLength":1},
+                        "subagent_type":{"type":"string","enum":allowed},
+                    }
+                }
+            }),
+            json!({
+                "name":CHECK_SUBAGENT_TOOL_NAME,
+                "inputSchema":{"type":"object","additionalProperties":false,"properties":{"subagent_id":{"type":"string"}}}
+            }),
+            json!({
+                "name":MESSAGE_SUBAGENT_TOOL_NAME,
+                "inputSchema":{"type":"object","required":["subagent_id","message"],"additionalProperties":false,"properties":{"subagent_id":{"type":"string","minLength":1},"message":{"type":"string","minLength":1}}}
+            }),
+            json!({
+                "name":STOP_SUBAGENT_TOOL_NAME,
+                "inputSchema":{"type":"object","required":["subagent_id"],"additionalProperties":false,"properties":{"subagent_id":{"type":"string","minLength":1}}}
+            }),
+        ]
     }
 
     pub fn owner(&self) -> Arc<Mutex<DurableSubagentOwner>> {
@@ -64,13 +127,35 @@ impl SubagentToolBridge {
         now_ms: u64,
     ) -> Result<SubagentToolResult, String> {
         let prompt = required(args, "prompt")?;
-        let subagent_type = args
+        let requested_subagent_type = args
             .get("subagent_type")
             .or_else(|| args.get("subagentType"))
             .and_then(Value::as_str)
             .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .unwrap_or("general-purpose");
+            .filter(|value| !value.is_empty());
+        let allowed = &context.frozen_turn.allowed_subagent_types;
+        if allowed.is_empty() {
+            return Err("Task has no available subagent types for this turn".into());
+        }
+        let subagent_type = match requested_subagent_type {
+            Some(value) => allowed
+                .iter()
+                .find(|candidate| candidate.eq_ignore_ascii_case(value))
+                .map(String::as_str)
+                .ok_or_else(|| format!("Task subagent type is unavailable for this turn: {value}"))?,
+            None => allowed
+                .first()
+                .map(String::as_str)
+                .ok_or_else(|| "Task has no available subagent types for this turn".to_string())?,
+        };
+        if let Some(review) = self.review_task.as_ref() {
+            if let Some(reason) = review(prompt, subagent_type, tool_call_id)? {
+                return Ok(SubagentToolResult {
+                    value: json!({"status":"review-denied","reason":reason}),
+                    launch: None,
+                });
+            }
+        }
         let lineage = SubagentLineage {
             parent_request_id: Some(context.parent_request_id.clone()),
             root_parent_request_id: context
@@ -92,6 +177,7 @@ impl SubagentToolBridge {
                 prompt,
                 &context.account_fence,
                 context.quiet_origin.as_deref(),
+                context.frozen_turn.clone(),
                 now_ms,
             )?;
         let value = json!({
@@ -148,6 +234,20 @@ impl SubagentToolBridge {
     ) -> Result<SubagentToolResult, String> {
         let id = required_alias(args, "subagent_id", "subagentId")?;
         let message = required(args, "message")?;
+        if let Some(review) = self.review_steer.as_ref() {
+            let decision = review(id, message, _tool_call_id)?;
+            if !decision.allowed {
+                return Ok(SubagentToolResult {
+                    value: json!({
+                        "subagentId":id,
+                        "status":"review-denied",
+                        "delivered":false,
+                        "reason":decision.reason,
+                    }),
+                    launch: None,
+                });
+            }
+        }
         let mut owner = self
             .owner
             .lock()
@@ -246,7 +346,96 @@ mod tests {
             account_fence: "acct".into(),
             box_id: "box".into(),
             quiet_origin: None,
+            frozen_turn: SubagentFrozenTurnConfig {
+                provider_id: "android-host-inference".into(),
+                model_id: "default".into(),
+                tool_names: vec![
+                    CHECK_SUBAGENT_TOOL_NAME.into(),
+                    MESSAGE_SUBAGENT_TOOL_NAME.into(),
+                    STOP_SUBAGENT_TOOL_NAME.into(),
+                ],
+                allowed_subagent_types: vec!["general-purpose".into()],
+                privacy_mode: "no-storage".into(),
+                summarization_binding_id: "android-host-inference:same-provider".into(),
+            },
         }
+    }
+
+    #[test]
+    fn task_definition_and_launch_fail_closed_to_frozen_allowed_types() {
+        let path = path("allowed-types");
+        let owner = Arc::new(Mutex::new(DurableSubagentOwner::open(&path, 1).unwrap()));
+        let bridge = SubagentToolBridge::new(Arc::clone(&owner));
+        let ctx = context();
+        let definitions = bridge.tool_definitions(&ctx);
+        assert_eq!(definitions[0]["inputSchema"]["properties"]["subagent_type"]["enum"], json!(["general-purpose"]));
+        assert!(bridge
+            .call(
+                TASK_TOOL_NAME,
+                &json!({"prompt":"research","subagent_type":"computeruse"}),
+                "tool-invalid",
+                &ctx,
+                2,
+            )
+            .unwrap_err()
+            .contains("unavailable"));
+        assert!(owner.lock().unwrap().all_records().is_empty());
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn task_and_steer_review_run_before_any_durable_mutation() {
+        let path = path("review");
+        let owner = Arc::new(Mutex::new(DurableSubagentOwner::open(&path, 1).unwrap()));
+        let deny_task: SubagentTaskReviewCallback =
+            Arc::new(|_, _, _| Ok(Some("launch denied".into())));
+        let bridge = SubagentToolBridge::new(Arc::clone(&owner)).with_task_review(deny_task);
+        let denied = bridge
+            .call(TASK_TOOL_NAME, &json!({"prompt":"research"}), "tool-denied", &context(), 2)
+            .unwrap();
+        assert_eq!(denied.value["status"], "review-denied");
+        assert!(owner.lock().unwrap().all_records().is_empty());
+
+        let allow = SubagentToolBridge::new(Arc::clone(&owner));
+        let launched = allow
+            .call(TASK_TOOL_NAME, &json!({"prompt":"research"}), "tool-ok", &context(), 3)
+            .unwrap();
+        let id = launched.value["subagentId"].as_str().unwrap().to_string();
+        let deny_steer: SubagentSteerReviewCallback = Arc::new(|_, _, _| {
+            Ok(SubagentSteerReview { allowed: false, reason: "steer denied".into() })
+        });
+        let bridge = SubagentToolBridge::new(Arc::clone(&owner)).with_steer_review(deny_steer);
+        let denied = bridge
+            .call(
+                MESSAGE_SUBAGENT_TOOL_NAME,
+                &json!({"subagent_id":id,"message":"redirect"}),
+                "steer-denied",
+                &context(),
+                4,
+            )
+            .unwrap();
+        assert_eq!(denied.value["status"], "review-denied");
+        assert_eq!(
+            owner.lock().unwrap().get(&id).unwrap().pending_steer,
+            None,
+            "review denial must precede owner mutation"
+        );
+
+        let review_error: SubagentSteerReviewCallback =
+            Arc::new(|_, _, _| Err("review unavailable".into()));
+        let bridge = SubagentToolBridge::new(Arc::clone(&owner)).with_steer_review(review_error);
+        assert!(bridge
+            .call(
+                MESSAGE_SUBAGENT_TOOL_NAME,
+                &json!({"subagent_id":id,"message":"redirect"}),
+                "steer-error",
+                &context(),
+                5,
+            )
+            .unwrap_err()
+            .contains("review unavailable"));
+        assert_eq!(owner.lock().unwrap().get(&id).unwrap().pending_steer, None);
+        let _ = fs::remove_file(path);
     }
 
     #[test]
