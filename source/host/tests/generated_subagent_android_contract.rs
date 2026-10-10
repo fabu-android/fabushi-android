@@ -63,7 +63,8 @@ fn typed_android_port_and_jni_route_generated_subagent_calls_through_coordinator
 
     assert!(port.contains("fun agentSubagentTool(params: JSONObject): JSONObject"));
     assert!(port.contains("fun agentSubagentReconcile(params: JSONObject): JSONObject"));
-    assert!(android_main.contains("host.request(\"feature.agent.subagent.tool\", params)"));
+    assert!(android_main.contains("\"feature.agent.subagent.tool\","));
+    assert!(android_main.contains("AgentTurnCapabilityProjection.forSubagentTool(params)"));
     assert!(android_main.contains("host.request(\"feature.agent.subagent.reconcile\", params)"));
     assert!(jni.contains("self.coordinator.request(request)"));
     assert!(host.contains("\"feature.agent.subagent.tool\" => self.agent_subagent_tool(params)"));

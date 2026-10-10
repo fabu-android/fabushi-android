@@ -3616,6 +3616,137 @@
       "artifact": null,
       "verification_status": "not-verified",
       "notes": "Mapped intentionally. Do not mark implemented/verified until a same-exact-HEAD final APK/AAB journey uploads reviewable visual evidence with provenance."
+    },
+    {
+      "responsibility_id": "MEDIA-HUMAN-CALL-ANDROID-001",
+      "domain": "media-call",
+      "desktop_sources": [
+        {
+          "path": "desktop/e2e/mahayana-agent-workbench.spec.ts",
+          "blob_sha": "d616a34c02c0f3160998c528071eb73eee444897",
+          "symbols": [
+            "Human call surface exposes the shipping WebRTC and Electron media bridge"
+          ]
+        }
+      ],
+      "source_commit": "3bc92400826cc4ca7ac665b467708e22261edc61",
+      "responsibility": "Own Human voice/video call capability, media-device preferences and permission/media bridge semantics as one account-fenced call runtime rather than UI-owned WebRTC side effects.",
+      "source_owner": "Desktop Human conversation call surface plus Electron callMedia/WebRTC bridge",
+      "direct_callers": [
+        "Human conversation call controls",
+        "shipping Human conversation surface"
+      ],
+      "downstream_dependencies": [
+        "WebRTC peer connection/media tracks",
+        "microphone/camera permissions and device selection",
+        "display-source capture bridge where supported"
+      ],
+      "state_owner": "Shipping call runtime owns canonical call/session state; presentation owns only transient controls.",
+      "persistent_state": [
+        "account-scoped microphone/camera preference metadata",
+        "durable conversation identity; live media session itself is process/runtime scoped"
+      ],
+      "protocol_wire_contract": [
+        "Start voice call",
+        "Start video call",
+        "callMedia.requestPermissions",
+        "callMedia.listDisplaySources",
+        "callMedia.setPreferences/getPreferences"
+      ],
+      "visible_effect": "Human conversations expose working native voice/video call controls with explicit permission/device state and no hidden privilege expansion.",
+      "failure_behavior": [
+        "permission denial or missing hardware fails closed with visible unavailable/error state",
+        "stale callbacks cannot attach media to a different account/conversation"
+      ],
+      "cancellation_behavior": "Hangup/cancel tears down owned media tracks and ignores late negotiation/media callbacks.",
+      "retry_semantics": "Do not blindly replay call setup after process death or unknown signaling outcome; reconcile remote/session state first.",
+      "idempotency_semantics": "Call/session identity must fence duplicate start and late callbacks.",
+      "process_death_recovery": "Reopen must restore durable conversation/device preference state without pretending an unknown live call survived.",
+      "account_fencing": "All call/session/media callbacks are scoped to the current signed-in account and conversation.",
+      "security_boundary": "Android runtime, not Compose, owns microphone/camera/screen-capture grants; screen capture requires Android user-consent flow.",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/features/conversations/ConversationSurfaces.kt",
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/media/NativeVoiceRecorder.kt",
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/media/NativeVoicePlayer.kt"
+      ],
+      "android_owner": "No complete canonical Android Human-call owner yet; current conversation and media adapters are dependencies only.",
+      "platform_delta": "Electron callMedia/display-source bridge must be replaced by Android-native WebRTC/media-device APIs and MediaProjection-style user-consent boundaries; Desktop arbitrary display-source enumeration is not copied.",
+      "implementation_status": "mapped",
+      "production_wiring": "Not complete. Current native conversation/media owners do not yet constitute a Human WebRTC call state machine, signaling owner, device/permission lifecycle, process-death recovery or packaged call acceptance.",
+      "unit_test": "required: state transitions, duplicate start, hangup/cancel race, stale callback/account fence and device preference validation",
+      "contract_test": "required against Desktop Human call control and callMedia preference/permission semantics",
+      "integration_test": "required through typed Android bridge, native media runtime and real signaling/provider boundary",
+      "packaged_test": "required on final exact-head minified APK/AAB",
+      "device_test": "required on physical Android hardware for microphone/camera permission, voice/video media and lifecycle recovery",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Registered from the Desktop Mahayana workbench source audit only; this does not claim the missing Android call runtime is implemented."
+    },
+    {
+      "responsibility_id": "UI-I18N-A11Y-IME-ANDROID-001",
+      "domain": "ui-localization-accessibility",
+      "desktop_sources": [
+        {
+          "path": "desktop/e2e/mahayana-agent-workbench.spec.ts",
+          "blob_sha": "d616a34c02c0f3160998c528071eb73eee444897",
+          "symbols": [
+            "Settings localization, accessibility, bidirectional text, and IME stay on shipping Electron surfaces"
+          ]
+        }
+      ],
+      "source_commit": "3bc92400826cc4ca7ac665b467708e22261edc61",
+      "responsibility": "Preserve shipping localization, accessibility, RTL/bidirectional text and IME composition semantics across settings and conversation surfaces with native Android resource/input/accessibility ownership.",
+      "source_owner": "Desktop shipping settings/conversation renderer surfaces",
+      "direct_callers": [
+        "Settings UI",
+        "conversation composer/transcript",
+        "keyboard/accessibility interaction paths"
+      ],
+      "downstream_dependencies": [
+        "locale/resource selection",
+        "accessibility semantics/focus order",
+        "RTL/BiDi text layout",
+        "Android IME composition/input connection"
+      ],
+      "state_owner": "Account-scoped settings owner persists locale/direction choices; native UI owns transient focus and IME composition only.",
+      "persistent_state": [
+        "selected locale/direction and accessibility-related settings where product-scoped"
+      ],
+      "protocol_wire_contract": [
+        "language selection",
+        "direction/RTL projection",
+        "accessible labels/live-region-equivalent announcements",
+        "IME-composed text to canonical draft/send path"
+      ],
+      "visible_effect": "Localized settings/chat remain keyboard/screen-reader usable, RTL and mixed-direction text render correctly, and IME composition sends the intended final text.",
+      "failure_behavior": [
+        "unsupported locale or malformed setting falls back through an explicit supported-locale policy without corrupting canonical settings",
+        "IME/accessibility events never create duplicate message side effects"
+      ],
+      "cancellation_behavior": "Cancelled/dismissed IME composition remains transient and must not send or persist a partial canonical message.",
+      "retry_semantics": "UI rendering/input retries are side-effect free; canonical send/settings mutations retain stable request identity.",
+      "idempotency_semantics": "Repeated locale/accessibility projection is idempotent; message send remains owned by canonical messaging identity.",
+      "process_death_recovery": "Persisted locale/direction settings restore after process death while transient focus/IME composition is recreated safely.",
+      "account_fencing": "Account-scoped settings cannot leak across account switches; late UI callbacks use current presentation/account epoch.",
+      "security_boundary": "Accessibility/IME input is treated as user input only and cannot bypass Host/tool capability checks.",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/features/conversations/ConversationSurfaces.kt",
+        "mobile/android/app/src/main/AndroidManifest.xml"
+      ],
+      "android_owner": "Native Compose/resources/accessibility/IME surfaces are the intended owner; full responsibility decomposition and acceptance are incomplete.",
+      "platform_delta": "Electron DOM aria/keyboard/contenteditable mechanics become Jetpack Compose semantics, Android resources/configuration and native IME APIs while preserving user-visible localization and input behavior.",
+      "implementation_status": "mapped",
+      "production_wiring": "Not complete. Existing Compose surfaces do not yet provide same-scope proof for settings localization, screen-reader/focus semantics, RTL/BiDi rendering and IME composition/restart behavior.",
+      "unit_test": "required: locale/direction state, mixed-direction text, IME composition/cancel and stable canonical send identity",
+      "contract_test": "required against Desktop settings localization/accessibility/BiDi/IME behavior",
+      "integration_test": "required with Compose semantics tree, Android resources/configuration and IME input",
+      "packaged_test": "required on final exact-head minified APK/AAB under multiple locales/directions",
+      "device_test": "required with TalkBack/accessibility and real IME on supported Android device/API",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Registered from the Desktop Mahayana workbench source audit only; remains mapped/not-verified and does not claim broad UI parity."
     }
   ],
   "traceability": {
