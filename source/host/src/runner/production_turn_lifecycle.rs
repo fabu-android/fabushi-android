@@ -783,7 +783,7 @@ mod tests {
             .contains("unresolved"));
 
         store
-            .fence_account_outcome_unknown("session:a", 5)
+            .mark_account_outcome_unknown("session:a", 5)
             .unwrap();
         let fenced = store
             .awaiting_user_projection("session:a", "agent-a")
