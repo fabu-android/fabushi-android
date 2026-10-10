@@ -6,9 +6,9 @@ use std::thread;
 use std::time::Duration;
 use url::Url;
 
-const EXECUTE_PATH: &str = "fabushi.remote.v1.ExecutionService/Execute";
-const RECONCILE_PATH: &str = "fabushi.remote.v1.ExecutionService/Reconcile";
-const CANCEL_PATH: &str = "fabushi.remote.v1.ExecutionService/Cancel";
+pub const EXECUTE_PATH: &str = "fabushi.remote.v1.ExecutionService/Execute";
+pub const RECONCILE_PATH: &str = "fabushi.remote.v1.ExecutionService/Reconcile";
+pub const CANCEL_PATH: &str = "fabushi.remote.v1.ExecutionService/Cancel";
 const MAX_IDENTITY_BYTES: usize = 512;
 const MAX_BEARER_BYTES: usize = 16 * 1024;
 
@@ -376,16 +376,10 @@ impl RemoteExecutionTransport for AuthenticatedRemoteHttpTransport {
                         }
                     }
                 }
-                Err(HttpFailure::Status {
-                    status,
-                    ack_id,
-                    detail,
-                }) if (400..500).contains(&status) && status != 408 && status != 429 => {
-                    return Ok(RemoteReconcileOutcome::Rejected {
-                        ack_id,
-                        reason: detail,
-                    });
-                }
+                // HTTP authorization/conflict failures during reconciliation do not
+                // prove the original side effect was rejected. Preserve outcome-unknown
+                // and keep reconciling the idempotent query instead of inventing a
+                // terminal result.
                 Err(HttpFailure::Status { ack_id, .. }) => {
                     last_ack = ack_id.or(last_ack);
                 }
@@ -445,13 +439,10 @@ impl RemoteExecutionTransport for AuthenticatedRemoteHttpTransport {
                     response.status
                 )),
             }),
-            Err(HttpFailure::Status {
-                status,
-                ack_id,
-                detail,
-            }) if (400..500).contains(&status) && status != 408 && status != 429 => {
-                Ok(RemoteCancelOutcome::Confirmed { ack_id })
-            }
+            // A failed cancel request (including 401/403 after credential
+            // rotation) cannot prove that the already-dispatched side effect stopped.
+            // Only an explicit successful "cancelled"/"rejected" wire response is
+            // terminal.
             Err(HttpFailure::Status {
                 ack_id, detail, ..
             }) => Ok(RemoteCancelOutcome::OutcomeUnknown {
@@ -843,6 +834,44 @@ mod tests {
         let request = captured.lock().unwrap().join("\n");
         assert!(request.contains(CANCEL_PATH));
         assert!(request.contains("X-Fabushi-Permission-Grant-Id: grant-1"));
+    }
+
+    #[test]
+    fn reconciliation_http_auth_failure_never_becomes_false_terminal_rejection() {
+        let (port, captured, handle) = spawn_json_server(vec![
+            (403, r#"{"ackId":"ack-1","status":"rejected","error":"credential_rotated"}"#),
+            (403, r#"{"ackId":"ack-1","status":"rejected","error":"credential_rotated"}"#),
+            (403, r#"{"ackId":"ack-1","status":"rejected","error":"credential_rotated"}"#),
+        ]);
+        let (mut transport, context) = context(port);
+        let outcome = transport.reconcile(&context, "op-1", "req-1").unwrap();
+        assert_eq!(
+            outcome,
+            RemoteReconcileOutcome::Pending {
+                ack_id: Some("ack-1".into())
+            }
+        );
+        handle.join().unwrap();
+        assert_eq!(captured.lock().unwrap().len(), 3);
+    }
+
+    #[test]
+    fn cancellation_http_auth_failure_is_outcome_unknown_not_confirmed() {
+        let (port, captured, handle) = spawn_json_server(vec![(
+            403,
+            r#"{"ackId":"ack-1","status":"rejected","error":"credential_rotated"}"#,
+        )]);
+        let (mut transport, context) = context(port);
+        let outcome = transport.cancel(&context, "op-1", "req-1").unwrap();
+        assert!(matches!(
+            outcome,
+            RemoteCancelOutcome::OutcomeUnknown {
+                ack_id: Some(ack_id),
+                reason
+            } if ack_id == "ack-1" && reason == "credential_rotated"
+        ));
+        handle.join().unwrap();
+        assert_eq!(captured.lock().unwrap().len(), 1);
     }
 
     #[test]
