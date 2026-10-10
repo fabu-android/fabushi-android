@@ -5525,6 +5525,72 @@ export function apply(ctx) {
     }
 
     #[test]
+    fn agent_roster_projects_canonical_transcript_and_live_run_activity() {
+        let root = std::env::temp_dir().join(format!(
+            "fabushi-agent-roster-projection-{}",
+            now_ms()
+        ));
+        let mut host = AndroidJsonHost::new(&root, AndroidHostMode::Test);
+        let agent = host
+            .agents
+            .lock()
+            .unwrap()
+            .create("Projection Agent", "profile")
+            .unwrap();
+        host.transcript
+            .lock()
+            .unwrap()
+            .append_entry(json!({
+                "id":"projection-user-1",
+                "kind":"message",
+                "role":"user",
+                "content":"older",
+                "operationId":"projection-op",
+                "agentId":agent.id.clone(),
+                "timestampMs":100_u64,
+            }))
+            .unwrap();
+        host.transcript
+            .lock()
+            .unwrap()
+            .append_entry(json!({
+                "id":"projection-assistant-1",
+                "kind":"message",
+                "role":"assistant",
+                "content":"canonical latest message",
+                "operationId":"projection-op",
+                "agentId":agent.id.clone(),
+                "timestampMs":200_u64,
+            }))
+            .unwrap();
+        host.active_operations.insert("projection-op".into());
+
+        let list = host.dispatch("listAgents", &json!({})).unwrap();
+        let row = list
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|row| row["id"] == agent.id)
+            .unwrap();
+        assert_eq!(row["lastMessage"], "canonical latest message");
+        assert_eq!(row["isRunning"], true);
+        assert_eq!(row["conversationPartnerIds"], json!([]));
+        assert_eq!(row["awaitingUserResponse"], false);
+        assert!(row["updatedAt"].as_u64().unwrap() >= 200);
+
+        host.active_operations.remove("projection-op");
+        let settled = host.dispatch("listAgents", &json!({})).unwrap();
+        let row = settled
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|row| row["id"] == agent.id)
+            .unwrap();
+        assert_eq!(row["isRunning"], false);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn production_turn_lifecycle_is_wired_into_android_chat_dispatch() {
         let root = std::env::temp_dir().join(format!(
             "fabushi-agent-lifecycle-wiring-{}",
