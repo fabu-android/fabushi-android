@@ -8,6 +8,7 @@ RUNTIME = ROOT / "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androi
 VM = ROOT / "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/presentation/MobileBotViewModel.kt"
 RENDERER = ROOT / "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/production/ProductionRenderer_view.kt"
 PANEL = ROOT / "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/production/AgentAsyncTasksPanel_view.kt"
+SUBAGENT_WORKER = ROOT / "source/host/src/runner/subagent_worker.rs"
 
 
 class AgentAsyncTasksWiringTest(unittest.TestCase):
@@ -41,6 +42,29 @@ class AgentAsyncTasksWiringTest(unittest.TestCase):
         self.assertIn("asyncTasksJob?.cancel()", vm)
         self.assertIn("ASYNC_TASKS_REFRESH_INTERVAL_MS = 30_000L", panel)
         self.assertIn("delay(ASYNC_TASKS_REFRESH_INTERVAL_MS)", panel)
+
+
+    def test_host_events_refresh_visible_async_tasks_without_chat_operation_ownership(self):
+        worker = SUBAGENT_WORKER.read_text(encoding="utf-8")
+        vm = VM.read_text(encoding="utf-8")
+        runtime = RUNTIME.read_text(encoding="utf-8")
+
+        self.assertIn('"type":"agent.async-tasks.changed"', worker)
+        self.assertIn('"parentAgentId":parent_agent_id', worker)
+        self.assertIn('"parentAgentId":record.parent_agent_id', worker)
+
+        async_event = vm.index('if (type == "agent.async-tasks.changed")')
+        chat_gate = vm.index("val operationId = mutableState.value.operationId ?: return")
+        self.assertLess(async_event, chat_gate)
+        self.assertIn('event.optString("parentAgentId") == visibleAgentId', vm)
+        self.assertIn('if (type == "agent.async-tasks.refresh")', vm)
+
+        resync = runtime.index("private fun replayCoordinatorEvents()")
+        refresh = runtime.index(
+            'dispatchFeatureEvent(JSONObject().put("type", "agent.async-tasks.refresh"))',
+            resync,
+        )
+        self.assertGreater(refresh, resync)
 
 
 if __name__ == "__main__":
