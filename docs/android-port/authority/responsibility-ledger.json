@@ -5,7 +5,7 @@
     "desktop_commit": "3bc92400826cc4ca7ac665b467708e22261edc61",
     "android_repository": "fabu-android/fabushi-android",
     "android_pr": 3,
-    "android_head_at_update": "cdf60add8d501d37087659c14b427ecde84fff19",
+    "android_head_at_update": "bbb2e778e8eceb38b6e097ff4c0752ebb0ea4da0",
     "status": "incomplete",
     "note": "Persistent human-reviewed responsibility ledger for Desktop main. Rows are responsibility-level source facts; mapped/implemented never imply verified. Verification requires same-exact-HEAD source implementation, production wiring, CI/package and device evidence."
   },
@@ -769,6 +769,33 @@
             "appSurfaceToolDefinitions",
             "registerWebMcpTool",
             "reverse disposer"
+          ]
+        },
+        {
+          "path": "frontend/packages/mcp-app-sdk/src/commands.ts",
+          "blob_sha": "ed10e4cfb5782f046a22f34545c3934f41091072",
+          "symbols": [
+            "parseToolCommand",
+            "schemaDefaults",
+            "validateSchemaValue"
+          ]
+        },
+        {
+          "path": "frontend/packages/mcp-app-sdk/src/index.ts",
+          "blob_sha": "7809281a897865a38e83de2bdd70783e0cdac314",
+          "symbols": [
+            "MCP App SDK public exports"
+          ]
+        },
+        {
+          "path": "frontend/packages/mcp-app-sdk/src/types.ts",
+          "blob_sha": "a637947fe91947c8fd2f210ec76ba3f77c3f7786",
+          "symbols": [
+            "JsonSchema",
+            "McpTool",
+            "JsonRpcRequest",
+            "JsonRpcResponse",
+            "McpToolResult"
           ]
         }
       ],
@@ -3583,6 +3610,30 @@
           "blob_sha": "5821564394663e7511ac5d745eaca906ad7bdfc5",
           "symbols": [
             "platform/architecture contract reviewed for Android replacement"
+          ]
+        },
+        {
+          "path": "frontend/packages/mcp-app-sdk/src/app-surface.ts",
+          "blob_sha": "49347f5fb14acebb7ba9e3fea9e8e15085440545",
+          "symbols": [
+            "FABUSHI_APP_TOOL_NAMES",
+            "appSurfaceToolDefinitions",
+            "appSurfaceRegistry",
+            "AppSurface.call"
+          ]
+        },
+        {
+          "path": "frontend/packages/mcp-app-sdk/src/index.ts",
+          "blob_sha": "7809281a897865a38e83de2bdd70783e0cdac314",
+          "symbols": [
+            "App Surface public export"
+          ]
+        },
+        {
+          "path": "frontend/packages/mcp-app-sdk/src/types.ts",
+          "blob_sha": "a637947fe91947c8fd2f210ec76ba3f77c3f7786",
+          "symbols": [
+            "JsonSchema/type contracts used by App Surface"
           ]
         }
       ],
