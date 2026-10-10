@@ -99,11 +99,11 @@ internal fun commandPaletteMessageEntries(
             relativeCommandPaletteTime(message.timestampMs, nowMs).takeIf(String::isNotBlank),
         ).joinToString(" · ")
         CommandPaletteEntry(
-            id = "message:\${message.agentId}:\${message.entryId}",
+            id = "message:${message.agentId}:${message.entryId}",
             kind = CommandPaletteEntryKind.MESSAGE,
             label = message.snippet,
             detail = detail,
-            searchText = "\${message.snippet} $agentName",
+            searchText = "${message.snippet} $agentName",
             activate = { onOpen(message) },
         )
     }
@@ -113,10 +113,10 @@ private fun relativeCommandPaletteTime(timestampMs: Long, nowMs: Long): String {
     val seconds = (nowMs - timestampMs) / 1_000L
     return when {
         seconds < 60L -> "now"
-        seconds < 3_600L -> "\${seconds / 60L}m ago"
-        seconds < 86_400L -> "\${seconds / 3_600L}h ago"
-        seconds < 30L * 86_400L -> "\${seconds / 86_400L}d ago"
-        seconds < 365L * 86_400L -> "\${seconds / (30L * 86_400L)}mo ago"
-        else -> "\${seconds / (365L * 86_400L)}y ago"
+        seconds < 3_600L -> "${seconds / 60L}m ago"
+        seconds < 86_400L -> "${seconds / 3_600L}h ago"
+        seconds < 30L * 86_400L -> "${seconds / 86_400L}d ago"
+        seconds < 365L * 86_400L -> "${seconds / (30L * 86_400L)}mo ago"
+        else -> "${seconds / (365L * 86_400L)}y ago"
     }
 }
