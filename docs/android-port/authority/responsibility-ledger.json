@@ -5,7 +5,7 @@
     "desktop_commit": "3bc92400826cc4ca7ac665b467708e22261edc61",
     "android_repository": "fabu-android/fabushi-android",
     "android_pr": 3,
-    "android_head_at_update": "7fd6969f7adaa8d393a568c61aff04e9c92e3089",
+    "android_head_at_update": "21c61c6c6fef40e696688666606256c2839d466c",
     "status": "incomplete",
     "note": "Persistent human-reviewed responsibility ledger for Desktop main. Rows are responsibility-level source facts; mapped/implemented never imply verified. Verification requires same-exact-HEAD source implementation, production wiring, CI/package and device evidence."
   },
@@ -2949,6 +2949,14 @@
             "Build and test execution environment",
             "FBCP-001"
           ]
+        },
+        {
+          "path": "docs/specs/SPEC_TEMPLATE.md",
+          "blob_sha": "72272d9696c38f3b968d610ad12489b080e31293",
+          "symbols": [
+            "minimum specification structure",
+            "spec compliance record"
+          ]
         }
       ],
       "source_commit": "3bc92400826cc4ca7ac665b467708e22261edc61",
@@ -3003,7 +3011,7 @@
       "device_test": "Not directly applicable to governance; device acceptance is downstream.",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Governance replacement is implemented. Final verification remains blocked by nonzero strict source debt and downstream package/device gates."
+      "notes": "Governance replacement is implemented. Final verification remains blocked by nonzero strict source debt and downstream package/device gates. Desktop SPEC_TEMPLATE is governance authority only; it requires stable requirements, architecture/state ownership, failure modes, exact evidence and a compliance record. Android maps this through repository governance/spec/verification workflows, but this source row remains mapped until the migration's final exact-head DoD is satisfied."
     },
     {
       "responsibility_id": "AUTHORITY-SOURCE-CLOSURE-REPLACEMENT-001",
