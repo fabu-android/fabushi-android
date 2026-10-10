@@ -1163,6 +1163,26 @@ impl AndroidJsonHost {
         Ok(with_account_session_mutation(result, mutation))
     }
 
+    fn current_sidebar_account_scope(&self) -> Result<String, String> {
+        if self.mode == AndroidHostMode::Test {
+            return Ok("account-device:test:android".to_string());
+        }
+        #[cfg(feature = "ci-account-session-import")]
+        if let Some(identity) = self.ci_session_identity.as_ref() {
+            if !self.logged_in {
+                return Err("Sign in to Fabushi to use account-scoped capabilities.".into());
+            }
+            let material = format!("{}\n{}", identity.session_id, identity.device_id);
+            return Ok(format!(
+                "account-device:ci:{}",
+                crate::sha256::sha256_hex(material.as_bytes())
+            ));
+        }
+        self.account
+            .account_storage_scope()
+            .ok_or_else(|| "Sign in to Fabushi to use account-scoped capabilities.".into())
+    }
+
     fn current_turn_account_fence(&self) -> Result<String, String> {
         let resolved = if self.mode == AndroidHostMode::Test {
             Ok("session:test:android".to_string())
@@ -1690,12 +1710,13 @@ impl AndroidJsonHost {
                 .into_iter()
                 .map(|agent| agent.id)
                 .collect::<BTreeSet<_>>();
+            let account_scope = self.current_sidebar_account_scope()?;
             return self
                 .sidebar_sections
                 .lock()
                 .map_err(|_| "canonical Android sidebar sections lock poisoned".to_string())?
                 .set(
-                    &current_account_fence,
+                    &account_scope,
                     operation_id,
                     &sections,
                     &known_agent_ids,
@@ -1713,7 +1734,7 @@ impl AndroidJsonHost {
     }
 
     fn agent_sidebar_sections(&mut self) -> Result<Value, String> {
-        let account_fence = self.current_turn_account_fence()?;
+        let account_scope = self.current_sidebar_account_scope()?;
         let known_agent_ids = self
             .agents
             .lock()
@@ -1726,7 +1747,7 @@ impl AndroidJsonHost {
             .sidebar_sections
             .lock()
             .map_err(|_| "canonical Android sidebar sections lock poisoned".to_string())?
-            .get(&account_fence, &known_agent_ids);
+            .get(&account_scope, &known_agent_ids);
         Ok(json!({"sections":sections}))
     }
 
