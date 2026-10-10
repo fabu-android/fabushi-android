@@ -11,6 +11,7 @@ enum class AccountPaymentState { SETTLED, REQUIRED, PENDING, OUTCOME_UNKNOWN, UN
 enum class AccountEntitlementState { GRANTED, DENIED, REVOKED, UNKNOWN }
 enum class AccountRecoveryState { READY, RECONNECTING, OUTCOME_UNKNOWN, UNKNOWN }
 enum class AccountRebuildState { IDLE, RECONNECTING, OUTCOME_UNKNOWN, UNKNOWN }
+enum class AccountRosterLoadState { LOADING, READY, ERROR, UNKNOWN }
 
 /** Immutable projection only; canonical account/payment/entitlement/remote truth stays with domain owners. */
 data class AccountAccessProjection(
@@ -30,6 +31,13 @@ data class AccountAccessProjection(
     val sessionSettled: Boolean,
     val rebuildState: AccountRebuildState,
     val recoveryState: AccountRecoveryState,
+    val rosterLoadState: AccountRosterLoadState,
+    val rosterFailureCode: String?,
+    val rosterFailureTransportKind: String?,
+    val isShowingRestoredRoster: Boolean,
+    val isRosterFetching: Boolean,
+    val hasReachedBox: Boolean,
+    val isAwaitingFirstBox: Boolean,
     val complete: Boolean,
     val detail: String? = null,
 ) {
@@ -39,7 +47,11 @@ data class AccountAccessProjection(
             sandAccessState == AccountAccessState.PAYMENT_REQUIRED
 
     val mayShowAccessNotice: Boolean
-        get() = loggedIn && explicitlyBlocked && rebuildState == AccountRebuildState.IDLE
+        get() = loggedIn &&
+            rosterFailureCode == "sand-access-blocked" &&
+            !hasReachedBox &&
+            !isShowingRestoredRoster &&
+            rebuildState == AccountRebuildState.IDLE
 
     companion object {
         fun initial(accountEpoch: Long = 0L) = AccountAccessProjection(
@@ -59,6 +71,13 @@ data class AccountAccessProjection(
             sessionSettled = false,
             rebuildState = AccountRebuildState.UNKNOWN,
             recoveryState = AccountRecoveryState.UNKNOWN,
+            rosterLoadState = AccountRosterLoadState.UNKNOWN,
+            rosterFailureCode = null,
+            rosterFailureTransportKind = null,
+            isShowingRestoredRoster = false,
+            isRosterFetching = false,
+            hasReachedBox = false,
+            isAwaitingFirstBox = false,
             complete = false,
         )
     }
