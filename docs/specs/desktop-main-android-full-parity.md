@@ -60,3 +60,14 @@ Android 的进程、后台执行、应用沙箱、权限、动态代码、商店
 本轮执行任务是编写并提交完整迁移文档和其范围/质量校验工具，不是直接完成整个 Android 应用，也不是授权发布 APK、迁移密钥或修改其他仓库。继续现有 PR #3；不覆盖 main、不删除既有实现、不合并未独立验收的产品代码。
 
 遇到必须用户介入的权限/账号/凭据卡点时，先检查 Gmail 是否已有同主题未解决通知；只向 `1315518325@qq.com` 发送必要且不含秘密的通知。卡点不阻止其他可推进的文档、源审计与 CI 工作。
+
+
+## 8. Generated Subagent durable ownership and production cutover
+
+The Android Host/Runner must preserve the current Desktop shipping generated-subagent responsibility as a single durable Rust-owned state machine. The source anchors for the current Desktop baseline are `source/host/src/runner/subagent_runtime.rs`, `source/host/src/runner/tools/sand_task_subagent_tool.rs`, `source/host/src/runner/tools/sand_subagent_management_tools.rs`, and their generated-subagent production-cutover/runtime-adapter contracts.
+
+The Android implementation must not reduce this responsibility to a UI state enum. The Host/Runner owner must persist a stable subagent request identity derived from the parent tool call; parent request, root-parent request, parent Agent and tool-call lineage; account fence; process epoch; pending wake; steering/abort intent; session snapshot; terminal projection; and computer-use usage/audit material needed for recovery. Task dispatch, CheckSubagent, MessageSubagent and StopSubagent must enter through the shipping Host tool graph and then the Coordinator/JNI production composition. Compose and ViewModel may project immutable state only and must never own a second subagent registry.
+
+Process death or Host reopen must not replay an uncertain child side effect. Active children recovered without a proven terminal result become `outcome-unknown` and require reconciliation. Account switch fences children from the prior account. Old-epoch and stale callbacks are rejected. Duplicate Task identities are idempotent only when their frozen launch identity matches; mismatched reuse fails closed. Abort wins a cancellation/completion race, parent-scoped cancellation targets only that parent's running children, pending wakes are disarmed exactly once, and a steering message causes a continuation with the same stable subagent request identity instead of creating a second child.
+
+Production verification is exact-HEAD only. Focused Rust/contract/integration coverage must include success, failure, duplicate launch, steer continuation, abort, parent cancellation, process reopen, account fence, stale callback, outcome-unknown reconciliation, computer-use usage/audit and Task/CheckSubagent/MessageSubagent/StopSubagent bridge wiring. Responsibility ledger entries remain `not-verified` until the same Android exact HEAD has the source implementation, shipping production wiring, GitHub Actions evidence, final APK/AAB provenance and required device/protected-account acceptance. The full-source strict closure gate remains fail-closed and may not be weakened to make this slice green.
