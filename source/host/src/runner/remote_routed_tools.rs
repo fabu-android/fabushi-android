@@ -199,7 +199,7 @@ impl AndroidRoutedToolBridge for RemoteRoutedTools {
         tools.retain(|tool| {
             !matches!(
                 tool.get("name").and_then(Value::as_str),
-                Some("Shell") | Some("Read") | Some("Computer")
+                Some("Shell") | Some("Read") | Some("Computer") | Some("Screenshot")
             )
         });
         tools.push(json!({
@@ -259,12 +259,22 @@ impl AndroidRoutedToolBridge for RemoteRoutedTools {
                     }
                 }
             }));
+            tools.push(json!({
+                "type":"function",
+                "name":"Screenshot",
+                "description":"Capture the paired trusted Remote desktop using the Desktop Fabushi screenshot contract. Every dispatch requires one-time user approval.",
+                "parameters":{
+                    "type":"object",
+                    "additionalProperties":false,
+                    "properties":{}
+                }
+            }));
         }
         Ok(tools)
     }
 
     fn call_tool(&self, name: &str, args: Value, tool_call_id: &str) -> Result<Value, String> {
-        if !matches!(name, "Shell" | "Read" | "Computer") {
+        if !matches!(name, "Shell" | "Read" | "Computer" | "Screenshot") {
             return self.delegate.call_tool(name, args, tool_call_id);
         }
         if self.cancelled.load(Ordering::Acquire) {
@@ -288,11 +298,11 @@ impl AndroidRoutedToolBridge for RemoteRoutedTools {
         let capability = match name {
             "Shell" => "remote.shell",
             "Read" => "remote.read",
-            "Computer" => "computer.use",
+            "Computer" | "Screenshot" => "computer.use",
             _ => unreachable!("unsupported Remote routed tool was delegated"),
         };
         let binding = self.current_binding()?;
-        if name == "Computer" && !binding.has_desktop {
+        if matches!(name, "Computer" | "Screenshot") && !binding.has_desktop {
             return Err("trusted Remote binding does not own a desktop".into());
         }
         let context = binding.context(&operation_id, &request_id, &approval_id)?;
@@ -573,6 +583,12 @@ fn validate_remote_tool_input(name: &str, args: &Value) -> Result<u64, String> {
             validate_remote_computer_action(args, true)?;
             Ok(30_000)
         }
+        "Screenshot" => {
+            if !object.is_empty() {
+                return Err("Remote Screenshot does not accept arguments".into());
+            }
+            Ok(30_000)
+        }
         _ => Err("unsupported Remote routed tool".into()),
     }
 }
@@ -768,6 +784,12 @@ mod tests {
             .is_err());
     }
 
+
+    #[test]
+    fn remote_screenshot_rejects_nonempty_arguments() {
+        assert_eq!(validate_remote_tool_input("Screenshot", &json!({})).unwrap(), 30_000);
+        assert!(validate_remote_tool_input("Screenshot", &json!({"x":1})).is_err());
+    }
 
     #[test]
     fn remote_computer_validation_matches_desktop_action_bounds() {
