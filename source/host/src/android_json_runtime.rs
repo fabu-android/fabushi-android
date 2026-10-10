@@ -1,5 +1,5 @@
 use crate::account_service::{AccountSessionMutation, AndroidAccountService};
-use crate::capability_broker::{CapabilityBroker, CapabilityDecision, PendingCapabilityCall};
+use crate::capability_broker::{CapabilityDecision, PendingCapabilityCall, SharedCapabilityBroker};
 use crate::automation_runtime::{run_json as automation_run_json, AutomationRuntime, AutomationSpec};
 use crate::android_agent_roster::AndroidAgentRoster;
 use crate::host_secret_store::get_or_create_host_machine_id;
@@ -324,7 +324,7 @@ pub struct AndroidJsonHost {
     runtime_tools: BTreeMap<String, BTreeSet<String>>,
     runtime_generations: BTreeMap<String, u64>,
     runtime_call_cancellations: Arc<RuntimeCallCancellationRegistry>,
-    capability_broker: CapabilityBroker,
+    capability_broker: SharedCapabilityBroker,
     automation_runtime: AutomationRuntime,
     webauthn: WebAuthnProxyExtension,
     webauthn_provider_queues: BTreeMap<String, VecDeque<WebAuthnRequestFrame>>,
@@ -471,7 +471,7 @@ impl AndroidJsonHost {
             runtime_tools: BTreeMap::new(),
             runtime_generations: BTreeMap::new(),
             runtime_call_cancellations: Arc::new(RuntimeCallCancellationRegistry::default()),
-            capability_broker: CapabilityBroker::open(app_data_dir.join("capability-broker.json"), now_ms())
+            capability_broker: SharedCapabilityBroker::open(app_data_dir.join("capability-broker.json"), now_ms())
                 .unwrap_or_else(|error| panic!("failed to open durable Android Capability Broker: {error}")),
             automation_runtime: AutomationRuntime::open(app_data_dir.join("automation-runtime.json"), now_ms())
                 .unwrap_or_else(|error| panic!("failed to open durable Android automation runtime: {error}")),

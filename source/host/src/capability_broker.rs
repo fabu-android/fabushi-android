@@ -3,6 +3,7 @@ use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::PathBuf;
+use std::sync::{Arc, Mutex, MutexGuard};
 
 const MAX_CAPABILITY_ID_BYTES: usize = 256;
 const MAX_CAPABILITY_JSON_BYTES: usize = 64 * 1024;
@@ -423,6 +424,170 @@ impl CapabilityBroker {
         let tmp=self.path.with_extension("json.tmp");
         fs::write(&tmp, serde_json::to_vec_pretty(&self.state).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
         fs::rename(tmp, &self.path).map_err(|e| e.to_string())
+    }
+}
+
+
+#[derive(Clone)]
+pub struct SharedCapabilityBroker {
+    inner: Arc<Mutex<CapabilityBroker>>,
+}
+
+impl SharedCapabilityBroker {
+    pub fn open(path: impl Into<PathBuf>, now_ms: u64) -> Result<Self, String> {
+        Ok(Self {
+            inner: Arc::new(Mutex::new(CapabilityBroker::open(path, now_ms)?)),
+        })
+    }
+
+    fn lock(&self) -> Result<MutexGuard<'_, CapabilityBroker>, String> {
+        self.inner
+            .lock()
+            .map_err(|_| "capability broker lock poisoned".to_string())
+    }
+
+    pub fn authorize(
+        &self,
+        request_id: &str,
+        plugin_id: &str,
+        capability: &str,
+        tool: &str,
+        account_fence: &str,
+        runtime_generation: u64,
+        declared: bool,
+        granted: bool,
+        now_ms: u64,
+    ) -> Result<CapabilityDecision, String> {
+        self.lock()?.authorize(
+            request_id,
+            plugin_id,
+            capability,
+            tool,
+            account_fence,
+            runtime_generation,
+            declared,
+            granted,
+            now_ms,
+        )
+    }
+
+    pub fn request_approval(
+        &self,
+        approval_id: &str,
+        request_id: &str,
+        operation_id: &str,
+        capability: &str,
+        target: Value,
+        account_fence: &str,
+        now_ms: u64,
+    ) -> Result<(), String> {
+        self.lock()?.request_approval(
+            approval_id,
+            request_id,
+            operation_id,
+            capability,
+            target,
+            account_fence,
+            now_ms,
+        )
+    }
+
+    pub fn resolve_approval(
+        &self,
+        approval_id: &str,
+        approved: bool,
+        current_account_fence: &str,
+        now_ms: u64,
+    ) -> Result<PendingCapabilityApproval, String> {
+        self.lock()?.resolve_approval(
+            approval_id,
+            approved,
+            current_account_fence,
+            now_ms,
+        )
+    }
+
+    pub fn consume_approval_for_dispatch(
+        &self,
+        approval_id: &str,
+        operation_id: &str,
+        request_id: &str,
+        capability: &str,
+        current_account_fence: &str,
+        now_ms: u64,
+    ) -> Result<PendingCapabilityApproval, String> {
+        self.lock()?.consume_approval_for_dispatch(
+            approval_id,
+            operation_id,
+            request_id,
+            capability,
+            current_account_fence,
+            now_ms,
+        )
+    }
+
+    pub fn cancel_approval_operation(
+        &self,
+        operation_id: &str,
+        reason: &str,
+        now_ms: u64,
+    ) -> Result<bool, String> {
+        self.lock()?.cancel_approval_operation(operation_id, reason, now_ms)
+    }
+
+    pub fn begin(&self, call: PendingCapabilityCall) -> Result<(), String> {
+        self.lock()?.begin(call)
+    }
+
+    pub fn settle(
+        &self,
+        request_id: &str,
+        outcome: &str,
+        reason: Option<String>,
+        now_ms: u64,
+    ) -> Result<(), String> {
+        self.lock()?.settle(request_id, outcome, reason, now_ms)
+    }
+
+    pub fn cancel_request(
+        &self,
+        request_id: &str,
+        reason: &str,
+        now_ms: u64,
+    ) -> Result<bool, String> {
+        self.lock()?.cancel_request(request_id, reason, now_ms)
+    }
+
+    pub fn cancel_plugin(
+        &self,
+        plugin_id: &str,
+        reason: &str,
+        now_ms: u64,
+    ) -> Result<usize, String> {
+        self.lock()?.cancel_plugin(plugin_id, reason, now_ms)
+    }
+
+    pub fn assert_current(
+        &self,
+        request_id: &str,
+        plugin_id: &str,
+        account_fence: &str,
+        runtime_generation: u64,
+        now_ms: u64,
+    ) -> Result<(), String> {
+        self.lock()?.assert_current(
+            request_id,
+            plugin_id,
+            account_fence,
+            runtime_generation,
+            now_ms,
+        )
+    }
+
+    pub fn needs_reconciliation(&self, request_id: &str) -> bool {
+        self.lock()
+            .map(|broker| broker.needs_reconciliation(request_id))
+            .unwrap_or(true)
     }
 }
 
