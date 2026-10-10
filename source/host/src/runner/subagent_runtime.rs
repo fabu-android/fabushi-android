@@ -770,11 +770,7 @@ mod tests {
         SubagentFrozenTurnConfig {
             provider_id: "android-host-inference".into(),
             model_id: model_id.into(),
-            tool_names: vec![
-                "CheckSubagent".into(),
-                "MessageSubagent".into(),
-                "StopSubagent".into(),
-            ],
+            tool_names: Vec::new(),
             allowed_subagent_types: vec!["general-purpose".into()],
             privacy_mode: "no-storage".into(),
             summarization_binding_id: "android-host-inference:same-provider".into(),
@@ -816,7 +812,7 @@ mod tests {
             .unwrap_err()
             .contains("mismatched"));
         let mut changed_tools = frozen_config("default");
-        changed_tools.tool_names.pop();
+        changed_tools.tool_names.push("unexpected-child-tool".into());
         assert!(owner
             .launch(
                 "parent", lineage("req"), "box", "general-purpose", "call-1", "work",

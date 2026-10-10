@@ -431,11 +431,7 @@ mod tests {
             frozen_turn: SubagentFrozenTurnConfig {
                 provider_id: "android-host-inference".into(),
                 model_id: "default".into(),
-                tool_names: vec![
-                    CHECK_SUBAGENT_TOOL_NAME.into(),
-                    MESSAGE_SUBAGENT_TOOL_NAME.into(),
-                    STOP_SUBAGENT_TOOL_NAME.into(),
-                ],
+                tool_names: Vec::new(),
                 allowed_subagent_types: vec!["general-purpose".into()],
                 privacy_mode: "no-storage".into(),
                 summarization_binding_id: "android-host-inference:same-provider".into(),

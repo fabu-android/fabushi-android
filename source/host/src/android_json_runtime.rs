@@ -1274,11 +1274,7 @@ impl AndroidJsonHost {
         let frozen_turn = SubagentFrozenTurnConfig {
             provider_id: "android-host-inference".into(),
             model_id,
-            tool_names: vec![
-                crate::runner::CHECK_SUBAGENT_TOOL_NAME.into(),
-                crate::runner::MESSAGE_SUBAGENT_TOOL_NAME.into(),
-                crate::runner::STOP_SUBAGENT_TOOL_NAME.into(),
-            ],
+            tool_names: Vec::new(),
             allowed_subagent_types,
             privacy_mode,
             summarization_binding_id: "android-host-inference:same-provider".into(),
@@ -2420,11 +2416,7 @@ impl AndroidJsonHost {
         let frozen_subagent_turn = SubagentFrozenTurnConfig {
             provider_id: "android-host-inference".into(),
             model_id: model.clone(),
-            tool_names: vec![
-                crate::runner::CHECK_SUBAGENT_TOOL_NAME.into(),
-                crate::runner::MESSAGE_SUBAGENT_TOOL_NAME.into(),
-                crate::runner::STOP_SUBAGENT_TOOL_NAME.into(),
-            ],
+            tool_names: Vec::new(),
             allowed_subagent_types,
             privacy_mode: frozen_privacy_label,
             summarization_binding_id: "android-host-inference:same-provider".into(),
@@ -5267,16 +5259,9 @@ export function apply(ctx) {
         assert_eq!(frozen.model_id, "deepseek-chat");
         assert_eq!(frozen.allowed_subagent_types, vec!["general-purpose"]);
         assert!(
-            !frozen.tool_names.iter().any(|name| name == crate::runner::TASK_TOOL_NAME),
-            "Task is a parent-only launcher and must not be frozen as a child capability"
+            frozen.tool_names.is_empty(),
+            "root Task/CheckSubagent/MessageSubagent/StopSubagent control tools are parent-only and must not be frozen into the generated child"
         );
-        for expected in [
-            crate::runner::CHECK_SUBAGENT_TOOL_NAME,
-            crate::runner::MESSAGE_SUBAGENT_TOOL_NAME,
-            crate::runner::STOP_SUBAGENT_TOOL_NAME,
-        ] {
-            assert!(frozen.tool_names.iter().any(|name| name == expected));
-        }
         assert_eq!(
             frozen.summarization_binding_id,
             "android-host-inference:same-provider"

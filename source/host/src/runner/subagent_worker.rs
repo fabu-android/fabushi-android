@@ -99,12 +99,16 @@ pub fn build_parent_subagent_routed_tools(
     // The durable frozen tool projection describes the child turn, not the
     // parent-only Task launcher. Parent Task exposure is derived from the same
     // frozen allowed-type projection and never persisted as a child capability.
-    let mut allowed_names = context
-        .frozen_turn
-        .tool_names
-        .iter()
-        .cloned()
-        .collect::<BTreeSet<_>>();
+    // Desktop installs generated-subagent management only on the root/parent
+    // turn. Child-executable tools are a separate frozen projection and must
+    // never implicitly grant sibling/parent control.
+    let mut allowed_names = [
+        super::CHECK_SUBAGENT_TOOL_NAME.to_string(),
+        super::MESSAGE_SUBAGENT_TOOL_NAME.to_string(),
+        super::STOP_SUBAGENT_TOOL_NAME.to_string(),
+    ]
+    .into_iter()
+    .collect::<BTreeSet<_>>();
     if !context.frozen_turn.allowed_subagent_types.is_empty() {
         allowed_names.insert(super::TASK_TOOL_NAME.to_string());
     }
@@ -432,5 +436,89 @@ fn publish_settlement(
                 "audit":audit,
             }));
         }
+    }
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn context() -> SubagentToolContext {
+        SubagentToolContext {
+            parent_agent_id: "parent".into(),
+            parent_request_id: "parent-request".into(),
+            root_parent_request_id: Some("root-request".into()),
+            account_fence: "acct".into(),
+            box_id: "android-local".into(),
+            quiet_origin: None,
+            frozen_turn: super::super::SubagentFrozenTurnConfig {
+                provider_id: "android-host-inference".into(),
+                model_id: "deepseek-chat".into(),
+                tool_names: Vec::new(),
+                allowed_subagent_types: vec!["general-purpose".into()],
+                privacy_mode: "no-storage".into(),
+                summarization_binding_id: "android-host-inference:same-provider".into(),
+            },
+        }
+    }
+
+    #[test]
+    fn root_management_tools_are_not_inherited_by_generated_child() {
+        let root = tempfile::tempdir().unwrap();
+        let owner = Arc::new(Mutex::new(
+            DurableSubagentOwner::open(root.path().join("subagents.json"), 1).unwrap(),
+        ));
+        let bridge = SubagentToolBridge::new(Arc::clone(&owner));
+        let context = context();
+        assert!(
+            context.frozen_turn.tool_names.is_empty(),
+            "child-executable projection starts empty until real child tool adapters are wired"
+        );
+
+        let parent = build_parent_subagent_routed_tools(
+            AndroidHostMode::Test,
+            None,
+            Arc::clone(&owner),
+            bridge.clone(),
+            Arc::new(Mutex::new(VecDeque::new())),
+            context.clone(),
+        );
+        let parent_names = parent
+            .list_tools()
+            .unwrap()
+            .into_iter()
+            .filter_map(|tool| tool.get("name").and_then(Value::as_str).map(str::to_string))
+            .collect::<BTreeSet<_>>();
+        assert_eq!(
+            parent_names,
+            [
+                super::super::TASK_TOOL_NAME.to_string(),
+                super::super::CHECK_SUBAGENT_TOOL_NAME.to_string(),
+                super::super::MESSAGE_SUBAGENT_TOOL_NAME.to_string(),
+                super::super::STOP_SUBAGENT_TOOL_NAME.to_string(),
+            ]
+            .into_iter()
+            .collect::<BTreeSet<_>>(),
+            "root turn keeps Task and generated-subagent management"
+        );
+
+        let child = GeneratedSubagentRoutedTools {
+            bridge,
+            context,
+            allowed_names: BTreeSet::new(),
+        };
+        assert!(child.list_tools().unwrap().is_empty());
+        assert!(
+            child
+                .call_tool(
+                    super::super::CHECK_SUBAGENT_TOOL_NAME,
+                    json!({}),
+                    "child-check",
+                )
+                .unwrap_err()
+                .contains("unavailable"),
+            "generated child must not gain root subagent-management authority"
+        );
     }
 }
