@@ -478,6 +478,113 @@ mod tests {
     }
 
     #[test]
+    fn cancellation_fails_before_agent_management_side_effect() {
+        let root = std::env::temp_dir().join(format!(
+            "fabushi-agent-management-cancel-{}-{}",
+            std::process::id(),
+            now_ms_i64()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        let roster = Arc::new(Mutex::new(AndroidAgentRoster::open(root.join("agents.json")).unwrap()));
+        let messaging = Arc::new(Mutex::new(AndroidMessagingService::open(&root).unwrap()));
+        let live = Arc::new(Mutex::new(Some("acct:a".into())));
+        let cancelled = Arc::new(AtomicBool::new(true));
+        let tools = with_agent_management_tools(
+            Arc::new(EmptyTools),
+            Arc::clone(&roster),
+            messaging,
+            live,
+            "acct:a",
+            "agent-root",
+            cancelled,
+        );
+        assert!(tools
+            .call_tool(CREATE_AGENT_TOOL_NAME, json!({"name":"Blocked"}), "cancelled-call")
+            .unwrap_err()
+            .contains("cancelled before side effects"));
+        assert_eq!(roster.lock().unwrap().count(), 0);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn group_send_uses_canonical_group_conversation_and_ignores_priority() {
+        let root = std::env::temp_dir().join(format!(
+            "fabushi-agent-management-group-{}-{}",
+            std::process::id(),
+            now_ms_i64()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        let roster_path = root.join("agents.json");
+        let mut roster_seed = AndroidAgentRoster::open(&roster_path).unwrap();
+        let group = roster_seed.create("Group", "group").unwrap();
+        drop(roster_seed);
+        let mut roster_json: Value =
+            serde_json::from_slice(&fs::read(&roster_path).unwrap()).unwrap();
+        roster_json["agents"][0]["isGroup"] = json!(true);
+        fs::write(&roster_path, serde_json::to_vec_pretty(&roster_json).unwrap()).unwrap();
+
+        let roster = Arc::new(Mutex::new(AndroidAgentRoster::open(&roster_path).unwrap()));
+        let messaging = Arc::new(Mutex::new(AndroidMessagingService::open(&root).unwrap()));
+        let request = json!({
+            "requestId":"group-seed",
+            "envelope":{
+                "protocolVersion":2,
+                "context":{
+                    "requestId":"group-seed",
+                    "deviceId":"android:test",
+                    "actorId":"agent-root",
+                    "sessionId":"session:test",
+                    "sentAtMs":1
+                },
+                "command":{
+                    "type":"createConversation",
+                    "conversation":{
+                        "id":group.id,
+                        "kind":"group",
+                        "ownerId":"agent-root",
+                        "participants":[
+                            {"actorId":"agent-root","role":"owner","joinedAtMs":1},
+                            {"actorId":group.id,"role":"member","joinedAtMs":1}
+                        ],
+                        "permissions":{"canSendMessages":true,"canSendMedia":true}
+                    }
+                }
+            }
+        });
+        messaging.lock().unwrap().execute(&request, "agent-root", 1).unwrap();
+
+        let live = Arc::new(Mutex::new(Some("acct:a".into())));
+        let tools = with_agent_management_tools(
+            Arc::new(EmptyTools),
+            roster,
+            Arc::clone(&messaging),
+            live,
+            "acct:a",
+            "agent-root",
+            Arc::new(AtomicBool::new(false)),
+        );
+        let result = tools.call_tool(
+            SEND_TO_AGENT_TOOL_NAME,
+            json!({"target_id":group.id,"message":"group message","priority":true}),
+            "group-send",
+        ).unwrap();
+        assert!(result.as_str().unwrap().contains("ignored priority"));
+
+        let stored: Value =
+            serde_json::from_slice(&fs::read(root.join("messaging-repository.json")).unwrap()).unwrap();
+        let found_priority = stored["messages"]
+            .get(&group.id)
+            .and_then(Value::as_object)
+            .and_then(|messages| messages.values().next())
+            .and_then(|message| message.get("content"))
+            .and_then(|content| content.get("data"))
+            .and_then(|data| data.get("agentPriority"))
+            .and_then(Value::as_bool);
+        assert_eq!(found_priority, Some(false));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn image_scheme_validation_accepts_https_and_absolute_file() {
         assert!(validate_image_url("https://example.com/a.png").is_ok());
         assert!(validate_image_url("file:///tmp/a.png").is_ok());
