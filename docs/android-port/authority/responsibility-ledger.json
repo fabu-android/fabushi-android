@@ -2730,6 +2730,74 @@
       "artifact": null,
       "verification_status": "not-verified",
       "notes": "Implemented but intentionally not verified until same final exact HEAD CI/package/device gates succeed."
+    },
+    {
+      "responsibility_id": "GOVERNANCE-SPEC-FIRST-ANDROID-001",
+      "domain": "operations",
+      "desktop_sources": [
+        {
+          "path": "AGENTS.md",
+          "blob_sha": "f0e01c5814472398f770ab053700c92bd1968988",
+          "symbols": [
+            "Spec-first development",
+            "Build and test execution environment",
+            "FBCP-001"
+          ]
+        }
+      ],
+      "source_commit": "3bc92400826cc4ca7ac665b467708e22261edc61",
+      "responsibility": "Keep AI-assisted product changes spec-first, exact-source grounded, fail-closed, and verified only in authorized CI environments while preserving canonical owner boundaries.",
+      "source_owner": "Repository development governance",
+      "direct_callers": [
+        "AI/engineering development sessions",
+        "repository review and CI workflows"
+      ],
+      "downstream_dependencies": [
+        "durable specs",
+        "source authority",
+        "GitHub Actions verification",
+        "responsibility evidence"
+      ],
+      "state_owner": "Git repository governance documents",
+      "persistent_state": [
+        "AGENTS.md",
+        "docs/specs",
+        "docs/android-port authority and verification records"
+      ],
+      "protocol_wire_contract": [
+        "Discover → Spec → Architecture/Plan → Implement → Verify → Spec Compliance Review → Integrate/Deliver"
+      ],
+      "visible_effect": "Prevents unreviewed or locally tested migration work from being represented as production parity.",
+      "failure_behavior": [
+        "missing/stale spec or missing exact-head evidence blocks completion claims"
+      ],
+      "cancellation_behavior": "Interrupted work remains incomplete; no completion state is inferred.",
+      "retry_semantics": "Resume from current Git authority and repeat verification for the new exact HEAD.",
+      "idempotency_semantics": "Governance checks are declarative and deterministic for the same repository revision.",
+      "process_death_recovery": "All durable requirements and evidence live in Git/GitHub rather than transient chat state.",
+      "account_fencing": "Repository/account permissions constrain writes and protected acceptance.",
+      "security_boundary": "No secrets in specs/evidence; builds/tests restricted to GitHub Actions for this Android migration.",
+      "android_disposition": "not-applicable-with-replacement",
+      "android_target": [
+        "AGENTS.md",
+        "docs/specs/desktop-main-android-full-parity.md",
+        "docs/specs/spec-first-ai-development.md",
+        "docs/android-port/README.md",
+        ".github/workflows/grok-android-architecture.yml",
+        ".github/workflows/android-parity-full-ci.yml"
+      ],
+      "android_owner": "Android repository governance",
+      "platform_delta": "Desktop-specific project/FBCP/TDRP governance is replaced by Android standalone migration governance while retaining spec-first, exact-head, fail-closed and CI-only requirements.",
+      "implementation_status": "implemented",
+      "production_wiring": "Android root AGENTS.md binds the canonical Desktop-to-Android authority, standalone Android ownership, spec-first lifecycle, fail-closed rules and GitHub-Actions-only verification; the full-parity spec defines exact-head source and final acceptance requirements.",
+      "unit_test": "Not a runtime unit responsibility.",
+      "contract_test": "Android migration documentation and parity/checker workflows validate the durable authority package.",
+      "integration_test": "GitHub Actions exact-head architecture/full-CI workflows enforce source/checker/test/package gates.",
+      "packaged_test": "Not directly applicable to governance; package evidence is downstream.",
+      "device_test": "Not directly applicable to governance; device acceptance is downstream.",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Governance replacement is implemented. Final verification remains blocked by nonzero strict source debt and downstream package/device gates."
     }
   ],
   "traceability": {
