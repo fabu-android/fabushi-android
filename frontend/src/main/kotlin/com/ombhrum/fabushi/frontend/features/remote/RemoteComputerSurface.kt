@@ -67,8 +67,8 @@ fun RemoteComputerSurface(onClose: () -> Unit) {
     val coordinator = remember { CoordinatorClient.presentation() }
     val scope = rememberCoroutineScope()
 
-    var status by remember { mutableStateOf("正在连接我的电脑…") }
-    var loading by remember { mutableStateOf(true) }
+    var status by remember { mutableStateOf("原生远端视图待连接") }
+    var loading by remember { mutableStateOf(false) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
     var reloadToken by remember { mutableStateOf(0) }
 
@@ -310,6 +310,7 @@ fun RemoteComputerSurface(onClose: () -> Unit) {
                         }
                     }.onSuccess {
                         nativeState = it
+                        status = "原生远端视图已开始协商"
                         nativeError = null
                     }.onFailure {
                         // Revoke is locally fail-closed before the remote mutation. Keep the UI
@@ -345,21 +346,9 @@ fun RemoteComputerSurface(onClose: () -> Unit) {
                     nativeBusy = true
                     runCatching {
                         withContext(Dispatchers.IO) {
-                            // Android currently has no independent direct WebRTC data-plane owner.
-                            // Report directAvailable=false so the server must choose an authenticated
-                            // relay or fail closed; never claim a direct path that does not exist.
-                            coordinator.remoteComputerSessionTransport(
+                            coordinator.remoteComputerDataPlaneConnect(
                                 session.deviceId,
                                 session.sessionId,
-                                directAvailable = false,
-                            )
-                            coordinator.remoteComputerSignal(
-                                session.deviceId,
-                                session.sessionId,
-                                "ready",
-                                org.json.JSONObject()
-                                    .put("viewportRevision", session.viewportRevision)
-                                    .put("humanTakeover", session.humanTakeover),
                             )
                             loadNativeState()
                         }
@@ -367,7 +356,7 @@ fun RemoteComputerSurface(onClose: () -> Unit) {
                         nativeState = it
                         nativeError = null
                     }.onFailure {
-                        nativeError = "目标电脑尚未激活会话，或没有可用的认证中继；保持 fail-closed。"
+                        nativeError = "原生远端显示/输入通道未能建立；保持 fail-closed，不回退到网页控制。"
                         runCatching { loadNativeState() }.onSuccess { nativeState = it }
                     }
                     nativeBusy = false
@@ -478,18 +467,14 @@ fun RemoteComputerSurface(onClose: () -> Unit) {
         }
 
         AndroidView(
-            factory = { webView },
-            update = { view ->
-                if (view.tag == reloadToken) return@AndroidView
-                view.tag = reloadToken
-                view.loadUrl(REMOTE_COMPUTER_URL)
-            },
+            factory = { coordinator.remoteComputerViewportView(it) },
             modifier = Modifier.weight(1f).fillMaxWidth().testTag(TestTags.RemoteComputerWebView),
         )
     }
 
-    DisposableEffect(webView) {
+    DisposableEffect(coordinator, webView) {
         onDispose {
+            runCatching { coordinator.remoteComputerDataPlaneDisconnect() }
             webView.stopLoading()
             webView.removeAllViews()
             webView.destroy()
@@ -664,7 +649,7 @@ private fun RemoteComputerNativePanel(
                                 }
                             }
                             Text(
-                                "控制凭据只保存在 Android Coordinator/Keystore；网页视图没有 native credential 或高权限 JS bridge。",
+                                "控制凭据与 ICE/TURN 只保存在 Android Coordinator/Keystore；原生 viewport/input 由唯一 data-plane owner 持有，Presentation 不接触凭据。",
                                 style = MaterialTheme.typography.bodySmall,
                             )
                         }
