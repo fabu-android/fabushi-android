@@ -49,8 +49,11 @@ internal class AgentRosterMutationOwner(
         )
         synchronized(lock) {
             val rows = readLocked().toMutableList()
+            check(rows.size < MAX_PENDING_OPERATIONS) {
+                "Too many Agent roster mutations have unknown outcomes"
+            }
             rows += operation
-            persistLocked(rows.takeLast(MAX_PENDING_OPERATIONS))
+            persistLocked(rows)
         }
         return operation
     }
@@ -73,15 +76,27 @@ internal class AgentRosterMutationOwner(
     private fun readLocked(): List<PendingAgentRosterMutation> {
         val raw = store.read().orEmpty()
         if (raw.isBlank()) return emptyList()
-        val array = runCatching { JSONArray(raw) }.getOrElse { return emptyList() }
+        val array = runCatching { JSONArray(raw) }
+            .getOrElse { error ->
+                throw IllegalStateException("Agent roster mutation journal is corrupt", error)
+            }
         val seen = linkedSetOf<String>()
         return buildList {
             for (index in 0 until array.length()) {
-                val row = array.optJSONObject(index) ?: continue
+                val row = checkNotNull(array.optJSONObject(index)) {
+                    "Agent roster mutation journal row is invalid"
+                }
                 val operationId = row.optString("operationId").trim()
                 val accountFence = row.optString("accountFence").trim()
-                val mutation = row.optJSONObject("mutation") ?: continue
-                if (operationId.isBlank() || accountFence.isBlank() || !seen.add(operationId)) continue
+                val mutation = checkNotNull(row.optJSONObject("mutation")) {
+                    "Agent roster mutation journal payload is invalid"
+                }
+                check(operationId.isNotBlank() && accountFence.isNotBlank()) {
+                    "Agent roster mutation journal identity is invalid"
+                }
+                check(seen.add(operationId)) {
+                    "Agent roster mutation journal contains duplicate operation identity"
+                }
                 add(
                     PendingAgentRosterMutation(
                         operationId = operationId,
