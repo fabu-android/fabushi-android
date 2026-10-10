@@ -2853,7 +2853,8 @@ impl AndroidJsonHost {
                         .map_err(|error| error.message)?
                         {
                             AndroidSubagentReviewDecision::Allow => Ok(None),
-                            AndroidSubagentReviewDecision::Deny(reason) => Ok(Some(reason)),
+                            AndroidSubagentReviewDecision::Block { reason, .. }
+                            | AndroidSubagentReviewDecision::Reject { reason } => Ok(Some(reason)),
                         }
                     },
                 );
@@ -2879,7 +2880,8 @@ impl AndroidJsonHost {
                                 allowed: true,
                                 reason: String::new(),
                             }),
-                            AndroidSubagentReviewDecision::Deny(reason) => Ok(SubagentSteerReview {
+                            AndroidSubagentReviewDecision::Block { reason, .. }
+                            | AndroidSubagentReviewDecision::Reject { reason } => Ok(SubagentSteerReview {
                                 allowed: false,
                                 reason,
                             }),
