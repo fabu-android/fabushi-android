@@ -2798,6 +2798,72 @@
       "artifact": null,
       "verification_status": "not-verified",
       "notes": "Governance replacement is implemented. Final verification remains blocked by nonzero strict source debt and downstream package/device gates."
+    },
+    {
+      "responsibility_id": "AUTHORITY-SOURCE-CLOSURE-REPLACEMENT-001",
+      "domain": "operations",
+      "desktop_sources": [
+        {
+          "path": "DESKTOP_SOURCE_CLOSURE.md",
+          "blob_sha": "d17c9d27f29f0dc97ca36bdeb7439f923ddbe2a9",
+          "symbols": [
+            "Desktop source dependency closure"
+          ]
+        }
+      ],
+      "source_commit": "3bc92400826cc4ca7ac665b467708e22261edc61",
+      "responsibility": "Make source/build dependency closure explicit so shipping builds do not rely on an undeclared sibling checkout or stale historical path list.",
+      "source_owner": "Desktop source-closure provenance document",
+      "direct_callers": [
+        "Desktop build/source audit",
+        "migration authority audit"
+      ],
+      "downstream_dependencies": [
+        "actual Git tree",
+        "build manifests",
+        "recursive source inventory",
+        "standalone repository ownership"
+      ],
+      "state_owner": "Git-tracked authority documents",
+      "persistent_state": [
+        "recursive source inventory",
+        "authority discovery notes"
+      ],
+      "protocol_wire_contract": [
+        "exact commit/tree/blob identity",
+        "declared source roots and build-time dependencies"
+      ],
+      "visible_effect": "Android can build and be audited as a standalone product without hidden source checkout assumptions.",
+      "failure_behavior": [
+        "stale/nonexistent documented paths are treated as drift and must not be copied as facts",
+        "undeclared source dependency keeps closure open"
+      ],
+      "cancellation_behavior": "Interrupted audit remains incomplete.",
+      "retry_semantics": "Re-enumerate current exact authority after source drift.",
+      "idempotency_semantics": "Same exact source tree produces the same recursive source inventory.",
+      "process_death_recovery": "Authority state is persisted in Git and CI artifacts.",
+      "account_fencing": "Repository and exact source commit fence provenance.",
+      "security_boundary": "No secrets or external mutable checkout are accepted as implicit source inputs.",
+      "android_disposition": "not-applicable-with-replacement",
+      "android_target": [
+        "docs/android-port/authority/discovery.md",
+        "docs/android-port/authority/source-inventory-manifest.json",
+        "docs/android-port/authority/source-inventory-ledger.jsonl",
+        "docs/specs/desktop-main-android-full-parity.md",
+        "AGENTS.md"
+      ],
+      "android_owner": "Android migration source authority",
+      "platform_delta": "Desktop's historical restored-file list is not copied because it is already stale against Desktop main. Android replaces it with recursive exact-tree inventory, explicit standalone repository ownership and documented drift/path validation.",
+      "implementation_status": "implemented",
+      "production_wiring": "The Android authority package pins Desktop main, records all 8172 non-tree entries by blob/mode/type, distinguishes inventory from semantic closure, and documents stale Desktop source-closure paths rather than trusting them.",
+      "unit_test": "Not a runtime unit responsibility.",
+      "contract_test": "scripts/check_grok_android_parity.py validates the full source ledger against the frozen manifest and responsibility reverse links.",
+      "integration_test": "Android migration documentation and architecture workflows execute the authority validation at exact HEAD.",
+      "packaged_test": "Downstream package provenance remains required; this authority row does not itself prove packaging.",
+      "device_test": "Not applicable directly; protected device acceptance remains a downstream gate.",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Implemented replacement only. Final verification waits for zero strict source debt and same-final-head package/device acceptance."
     }
   ],
   "traceability": {
