@@ -75,6 +75,7 @@ fun RemoteComputerSurface(onClose: () -> Unit) {
     var nativeState by remember { mutableStateOf(RemoteComputerNativeState.Empty) }
     var nativeBusy by remember { mutableStateOf(false) }
     var nativeError by remember { mutableStateOf<String?>(null) }
+    var rebuildMessage by remember { mutableStateOf<String?>(null) }
     var pairingCode by remember { mutableStateOf("") }
     var pairingLabel by remember { mutableStateOf("Fabushi Android") }
 
@@ -266,6 +267,32 @@ fun RemoteComputerSurface(onClose: () -> Unit) {
                     nativeBusy = false
                 }
             },
+            rebuildMessage = rebuildMessage,
+            onRebuild = rebuild@{ force ->
+                if (nativeBusy) return@rebuild
+                scope.launch {
+                    nativeBusy = true
+                    runCatching {
+                        withContext(Dispatchers.IO) {
+                            coordinator.computerRebuildRequest(
+                                preserveData = !force,
+                                forceRecreate = force,
+                            )
+                        }
+                    }.onSuccess { response ->
+                        rebuildMessage = if (response.optBoolean("accepted", false)) {
+                            if (force) "强制重建已接受；正在等待迁移完成。" else "电脑环境更新已接受；正在等待迁移完成。"
+                        } else {
+                            response.optString("reason").ifBlank { "后端未启动重建。" }
+                        }
+                        nativeError = null
+                    }.onFailure {
+                        rebuildMessage = null
+                        nativeError = "无法启动电脑重建；状态已按结果未知处理，不会自动重复请求。"
+                    }
+                    nativeBusy = false
+                }
+            },
             onRevoke = revoke@{ pairing ->
                 if (nativeBusy) return@revoke
                 scope.launch {
@@ -347,10 +374,12 @@ private fun RemoteComputerNativePanel(
     error: String?,
     pairingCode: String,
     pairingLabel: String,
+    rebuildMessage: String?,
     onPairingCodeChange: (String) -> Unit,
     onPairingLabelChange: (String) -> Unit,
     onRefresh: () -> Unit,
     onPair: () -> Unit,
+    onRebuild: (force: Boolean) -> Unit,
     onRevoke: (RemoteComputerPairing) -> Unit,
 ) {
     Card(
@@ -380,6 +409,33 @@ private fun RemoteComputerNativePanel(
 
             error?.let {
                 Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+            }
+            rebuildMessage?.let {
+                Text(it, style = MaterialTheme.typography.bodySmall)
+            }
+
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(10.dp),
+            ) {
+                Column(
+                    modifier = Modifier.fillMaxWidth().padding(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Text("Fabushi 云电脑维护", style = MaterialTheme.typography.labelMedium)
+                    Text(
+                        "更新会保留数据；强制重建会清理当前云电脑环境。请求一旦结果未知不会自动重发。",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedButton(onClick = { onRebuild(false) }, enabled = !busy) {
+                            Text("更新电脑环境")
+                        }
+                        OutlinedButton(onClick = { onRebuild(true) }, enabled = !busy) {
+                            Text("强制重建")
+                        }
+                    }
+                }
             }
 
             val pairing = state.pairing
