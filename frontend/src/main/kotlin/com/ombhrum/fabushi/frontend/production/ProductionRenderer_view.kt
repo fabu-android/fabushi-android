@@ -194,8 +194,27 @@ internal fun ProductionRenderer(
                             botModel.openBot(targetBot, targetEntryId = message.entryId)
                         }
                     }
+                    val paletteRoutineEntries = commandPaletteRoutineEntries(
+                        routines = botState.paletteRoutines.value,
+                        agentNames = paletteAgentNames,
+                    ) { agentId ->
+                        val targetBot = if (agentId == "mahayana-assistant") {
+                            MobileBotSummaryAndroid(
+                                id = "mahayana-assistant",
+                                name = "Mahayana",
+                                description = "Mahayana multi-step agent",
+                            )
+                        } else {
+                            botState.bots.firstOrNull { it.id == agentId }
+                        }
+                        if (targetBot != null) {
+                            rendererRoute = RendererRoute.GROK_HOME
+                            botModel.openBot(targetBot)
+                        }
+                    }
                     val paletteEntries = buildList {
                         addAll(paletteMessageEntries)
+                        addAll(paletteRoutineEntries)
                         botState.bots.forEach { bot ->
                             add(
                                 CommandPaletteEntry(
@@ -252,6 +271,8 @@ internal fun ProductionRenderer(
                             onOpenAgentNetwork = { rendererRoute = RendererRoute.AGENT_NETWORK },
                             onOpenCommandPalette = {
                                 botModel.resetPaletteMessageSearch()
+                                botModel.resetPaletteRoutines()
+                                botModel.refreshPaletteRoutines()
                                 commandPaletteOpen = true
                             },
                             onRefreshBots = botModel::refreshBots,
@@ -288,6 +309,7 @@ internal fun ProductionRenderer(
                             onQueryChange = botModel::setPaletteMessageQuery,
                             onDismiss = {
                                 botModel.resetPaletteMessageSearch()
+                                botModel.resetPaletteRoutines()
                                 commandPaletteOpen = false
                             },
                         )

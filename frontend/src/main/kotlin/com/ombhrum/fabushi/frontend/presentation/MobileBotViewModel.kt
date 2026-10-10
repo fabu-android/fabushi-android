@@ -45,6 +45,9 @@ data class MobileBotUiState(
     val paletteMessageSearch: CommandPaletteMessageSnapshot = CommandPaletteMessageSnapshot(
         status = CommandPaletteMessageStatus.IDLE,
     ),
+    val paletteRoutines: CommandPaletteRoutineSnapshot = CommandPaletteRoutineSnapshot(
+        status = CommandPaletteRoutineStatus.IDLE,
+    ),
     val error: String? = null,
     val creating: Boolean = false,
     val rosterLoading: Boolean = false,
@@ -58,6 +61,8 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
     private val draftsByBot = mutableMapOf<String, String>()
     private val paletteMessageFence = CommandPaletteMessageRequestFence()
     private var paletteMessageSearchJob: Job? = null
+    private val paletteRoutineFence = CommandPaletteRoutineRequestFence()
+    private var paletteRoutineJob: Job? = null
     private var openBotGeneration = 0L
     val state: StateFlow<MobileBotUiState> = mutableState.asStateFlow()
     private var featureEventSubscription: AutoCloseable? = coordinator.addFeatureEventListener { event ->
@@ -374,6 +379,59 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
         commitState(mutableState.value.copy(draft = value))
     }
 
+    fun resetPaletteRoutines() {
+        paletteRoutineJob?.cancel()
+        paletteRoutineJob = null
+        paletteRoutineFence.cancel()
+        mutableState.value = mutableState.value.copy(
+            paletteRoutines = CommandPaletteRoutineSnapshot(
+                status = CommandPaletteRoutineStatus.IDLE,
+            ),
+        )
+    }
+
+    fun refreshPaletteRoutines() {
+        paletteRoutineJob?.cancel()
+        paletteRoutineJob = null
+        paletteRoutineFence.cancel()
+        val token = paletteRoutineFence.begin()
+        val previous = mutableState.value.paletteRoutines.value
+        mutableState.value = mutableState.value.copy(
+            paletteRoutines = CommandPaletteRoutineSnapshot(
+                status = CommandPaletteRoutineStatus.LOADING,
+                value = previous,
+            ),
+        )
+        paletteRoutineJob = viewModelScope.launch {
+            try {
+                val raw = withContext(Dispatchers.IO) { coordinator.automationList() }
+                val routines = commandPaletteRoutinesFromAutomationList(raw)
+                if (!paletteRoutineFence.accepts(token)) return@launch
+                mutableState.value = mutableState.value.copy(
+                    paletteRoutines = CommandPaletteRoutineSnapshot(
+                        status = if (routines.isEmpty()) {
+                            CommandPaletteRoutineStatus.EMPTY
+                        } else {
+                            CommandPaletteRoutineStatus.READY
+                        },
+                        value = routines,
+                    ),
+                )
+            } catch (error: CancellationException) {
+                throw error
+            } catch (_: Throwable) {
+                if (paletteRoutineFence.accepts(token)) {
+                    mutableState.value = mutableState.value.copy(
+                        paletteRoutines = CommandPaletteRoutineSnapshot(
+                            status = CommandPaletteRoutineStatus.FAILED,
+                            value = previous,
+                        ),
+                    )
+                }
+            }
+        }
+    }
+
     fun resetPaletteMessageSearch() {
         paletteMessageSearchJob?.cancel()
         paletteMessageSearchJob = null
@@ -673,6 +731,9 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
         paletteMessageSearchJob?.cancel()
         paletteMessageSearchJob = null
         paletteMessageFence.cancel()
+        paletteRoutineJob?.cancel()
+        paletteRoutineJob = null
+        paletteRoutineFence.cancel()
         openBotGeneration += 1
         featureEventSubscription?.close()
         featureEventSubscription = null

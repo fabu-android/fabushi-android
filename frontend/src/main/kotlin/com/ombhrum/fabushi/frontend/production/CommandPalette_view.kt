@@ -67,6 +67,7 @@ internal fun CommandPalette(
                         CommandPaletteTab.ALL to "All",
                         CommandPaletteTab.MESSAGES to "Messages",
                         CommandPaletteTab.AGENTS to "Agents",
+                        CommandPaletteTab.ROUTINES to "Routines",
                         CommandPaletteTab.ACTIONS to "Actions",
                     ).forEach { (candidate, label) ->
                         TextButton(onClick = { tab = candidate }) {

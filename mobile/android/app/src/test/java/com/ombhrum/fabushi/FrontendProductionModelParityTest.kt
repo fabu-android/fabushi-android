@@ -491,4 +491,52 @@ class FrontendProductionModelParityTest {
     }
 
 
+    @Test
+    fun commandPaletteRoutinesRequireCanonicalAgentOwnerAndKeepStableIdentity() {
+        val raw = JSONArray()
+            .put(
+                JSONObject()
+                    .put("id", "daily")
+                    .put("name", "Daily brief")
+                    .put("agent_id", "agent-a")
+                    .put("schedule", "0 8 * * *")
+                    .put("trigger_description", "Every day at 8:00 AM")
+                    .put("created_at_ms", 10L)
+                    .put("last_run_at_ms", 20L),
+            )
+            .put(
+                JSONObject()
+                    .put("id", "ownerless")
+                    .put("name", "Legacy ownerless")
+                    .put("schedule", "0 9 * * *")
+                    .put("created_at_ms", 11L),
+            )
+
+        val routines = commandPaletteRoutinesFromAutomationList(raw)
+        assertEquals(1, routines.size)
+        assertEquals("agent-a", routines.single().agentId)
+        assertEquals("daily", routines.single().automationId)
+
+        var opened: String? = null
+        val entries = commandPaletteRoutineEntries(
+            routines = routines,
+            agentNames = mapOf("agent-a" to "Research"),
+            onOpenAgent = { opened = it },
+        )
+        assertEquals(listOf("routine:agent-a:daily"), entries.map { it.id })
+        assertTrue(activateCommandPaletteEntry(entries, 0))
+        assertEquals("agent-a", opened)
+    }
+
+    @Test
+    fun commandPaletteRoutineFenceRejectsLateRefresh() {
+        val fence = CommandPaletteRoutineRequestFence()
+        val first = fence.begin()
+        val second = fence.begin()
+        assertFalse(fence.accepts(first))
+        assertTrue(fence.accepts(second))
+        fence.cancel()
+        assertFalse(fence.accepts(second))
+    }
+
 }
