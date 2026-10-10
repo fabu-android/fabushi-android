@@ -2864,6 +2864,71 @@
       "artifact": null,
       "verification_status": "not-verified",
       "notes": "Implemented replacement only. Final verification waits for zero strict source debt and same-final-head package/device acceptance."
+    },
+    {
+      "responsibility_id": "AUTHORITY-CANONICAL-MIGRATION-SOURCE-001",
+      "domain": "operations",
+      "desktop_sources": [
+        {
+          "path": "MIGRATION_SOURCE.md",
+          "blob_sha": "d91bdfd50f9d16df823b0cb64c51b12b945d5c5f",
+          "symbols": [
+            "Migration source"
+          ]
+        }
+      ],
+      "source_commit": "3bc92400826cc4ca7ac665b467708e22261edc61",
+      "responsibility": "Distinguish historical repository-export provenance from the current canonical Desktop-to-Android source authority, and bind migration evidence to the latter exact commit/tree.",
+      "source_owner": "Desktop historical export provenance marker",
+      "direct_callers": [
+        "repository provenance audit",
+        "migration authority selection"
+      ],
+      "downstream_dependencies": [
+        "Desktop canonical main",
+        "Android full-parity spec",
+        "authority baseline/inventory"
+      ],
+      "state_owner": "Git-tracked provenance and authority documents",
+      "persistent_state": [
+        "historical export marker",
+        "current exact Desktop authority metadata"
+      ],
+      "protocol_wire_contract": [
+        "historical source repository/commit/target boundary",
+        "current canonical source repository/commit/tree"
+      ],
+      "visible_effect": "Migration work follows current Desktop shipping source rather than silently reverting to an older platform-export baseline.",
+      "failure_behavior": [
+        "historical marker disagreement never overrides the current canonical authority",
+        "authority drift requires explicit rebaseline"
+      ],
+      "cancellation_behavior": "An interrupted rebaseline leaves previous authority evidence stale, not accepted.",
+      "retry_semantics": "Re-read current Desktop main and regenerate changed-path/source evidence.",
+      "idempotency_semantics": "Same exact source authority produces stable identity metadata.",
+      "process_death_recovery": "Authority is persisted in Git and CI artifacts.",
+      "account_fencing": "Repository identity and exact SHA fence provenance.",
+      "security_boundary": "Provenance files contain no credentials and cannot authorize runtime access.",
+      "android_disposition": "not-applicable-with-replacement",
+      "android_target": [
+        "ANDROID_PORT.md",
+        "docs/specs/desktop-main-android-full-parity.md",
+        "docs/android-port/authority/discovery.md",
+        "docs/android-port/authority/source-inventory-manifest.json",
+        "MIGRATION_SOURCE.md"
+      ],
+      "android_owner": "Android canonical migration authority",
+      "platform_delta": "Both Desktop and Android MIGRATION_SOURCE.md files are historical platform-export markers. The Android migration product authority is explicitly replaced by current Desktop canonical main plus the full-parity authority package; the historical markers are retained only as provenance.",
+      "implementation_status": "implemented",
+      "production_wiring": "ANDROID_PORT.md and the full-parity spec route all implementation/verification to the pinned current Desktop main and existing PR #3, while discovery/inventory record the exact recursive source authority.",
+      "unit_test": "Not a runtime unit responsibility.",
+      "contract_test": "Source authority/checker workflows validate the pinned full-source manifest and current ledgers.",
+      "integration_test": "Exact-head GitHub Actions regenerate validation evidence for the Android PR.",
+      "packaged_test": "Package provenance is downstream and remains independently required.",
+      "device_test": "Protected device acceptance is downstream and remains independently required.",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Historical export provenance remains visible but cannot satisfy current parity. Final verification requires zero strict source debt and same-final-head package/device acceptance."
     }
   ],
   "traceability": {
