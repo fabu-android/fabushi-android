@@ -5566,6 +5566,61 @@ export function apply(ctx) {
     }
 
     #[test]
+    fn presentation_roster_mutation_is_account_fenced_and_replays_after_host_reopen() {
+        let root = std::env::temp_dir().join(format!(
+            "fabushi-presentation-roster-mutation-{}",
+            now_ms()
+        ));
+        let mut host = AndroidJsonHost::new(&root, AndroidHostMode::Test);
+        let created = host
+            .dispatch(
+                "createAgent",
+                &json!({"name":"Original","description":"profile"}),
+            )
+            .unwrap();
+        let agent_id = created["agent"]["id"].as_str().unwrap().to_string();
+        let params = json!({
+            "operationId":"presentation-operation-1",
+            "accountFence":"session:test:android",
+            "mutation":{"kind":"duplicate","id":agent_id},
+        });
+        let first = host
+            .dispatch("feature.agent.rosterMutation", &params)
+            .unwrap();
+        assert_eq!(first["status"], "completed");
+        let duplicate_id = first["result"]["agent"]["id"].as_str().unwrap().to_string();
+        let replay = host
+            .dispatch("feature.agent.rosterMutation", &params)
+            .unwrap();
+        assert_eq!(replay["result"]["agent"]["id"], duplicate_id);
+        assert_eq!(host.dispatch("countAgents", &json!({})).unwrap(), json!(2));
+
+        let stale = host.dispatch(
+            "feature.agent.rosterMutation",
+            &json!({
+                "operationId":"presentation-operation-stale",
+                "accountFence":"session:other-account",
+                "mutation":{"kind":"delete","ids":[agent_id]},
+            }),
+        );
+        assert!(stale.unwrap_err().contains("stale account"));
+        assert_eq!(host.dispatch("countAgents", &json!({})).unwrap(), json!(2));
+        drop(host);
+
+        let mut reopened = AndroidJsonHost::new(&root, AndroidHostMode::Test);
+        let recovered = reopened
+            .dispatch("feature.agent.rosterMutation", &params)
+            .unwrap();
+        assert_eq!(recovered["result"]["agent"]["id"], duplicate_id);
+        assert_eq!(
+            reopened.dispatch("countAgents", &json!({})).unwrap(),
+            json!(2),
+            "Host restart must replay the committed operation instead of duplicating twice",
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn agent_roster_projects_canonical_transcript_run_and_durable_relationships() {
         let root = std::env::temp_dir().join(format!(
             "fabushi-agent-roster-projection-{}",
