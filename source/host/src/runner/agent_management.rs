@@ -586,6 +586,56 @@ mod tests {
     }
 
     #[test]
+    fn priority_direct_send_interrupts_only_the_live_target_turn() {
+        let root = std::env::temp_dir().join(format!(
+            "fabushi-agent-management-priority-{}-{}",
+            std::process::id(),
+            now_ms_i64()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        let roster = Arc::new(Mutex::new(AndroidAgentRoster::open(root.join("agents.json")).unwrap()));
+        let target = roster.lock().unwrap().create("Target", "target").unwrap();
+        let messaging = Arc::new(Mutex::new(AndroidMessagingService::open(&root).unwrap()));
+        let live = Arc::new(Mutex::new(Some("acct:a".into())));
+        let target_cancelled = Arc::new(AtomicBool::new(false));
+        let unrelated_cancelled = Arc::new(AtomicBool::new(false));
+        let interruptions = Arc::new(AgentTurnInterruptionRegistry::default());
+        interruptions.register(
+            &target.id,
+            "operation-target",
+            "acct:a",
+            Arc::clone(&target_cancelled),
+        ).unwrap();
+        interruptions.register(
+            "agent-unrelated",
+            "operation-unrelated",
+            "acct:a",
+            Arc::clone(&unrelated_cancelled),
+        ).unwrap();
+        let tools = with_agent_management_tools(
+            Arc::new(EmptyTools),
+            roster,
+            messaging,
+            live,
+            "acct:a",
+            "agent-root",
+            Arc::new(AtomicBool::new(false)),
+            Arc::clone(&interruptions),
+        );
+        tools.call_tool(
+            SEND_TO_AGENT_TOOL_NAME,
+            json!({"target_id":target.id,"message":"STOP the old work and do this","priority":true}),
+            "priority-direct",
+        ).unwrap();
+        assert!(target_cancelled.load(Ordering::Acquire));
+        assert!(!unrelated_cancelled.load(Ordering::Acquire));
+        assert!(interruptions.has_active_turn(&target.id, "acct:a"));
+        interruptions.unregister_operation("operation-target");
+        assert!(!interruptions.has_active_turn(&target.id, "acct:a"));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn group_send_uses_canonical_group_conversation_and_ignores_priority() {
         let root = std::env::temp_dir().join(format!(
             "fabushi-agent-management-group-{}-{}",
