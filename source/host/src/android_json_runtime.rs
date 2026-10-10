@@ -902,6 +902,7 @@ impl AndroidJsonHost {
             "feature.agent.turn.reconcile" => self.agent_turn_reconcile(params),
             "feature.agent.subagent.tool" => self.agent_subagent_tool(params),
             "feature.agent.subagent.reconcile" => self.agent_subagent_reconcile(params),
+            "feature.agent.asyncTasks" => self.agent_async_tasks(params),
             "feature.agent.rosterMutation" => self.agent_roster_mutation(params),
             "feature.agent.sidebarSections" => self.agent_sidebar_sections(),
             "feature.agent.upgradeQuiesce" => self.agent_upgrade_quiesce(params),
@@ -1066,6 +1067,33 @@ impl AndroidJsonHost {
         }
     }
 
+
+    fn agent_async_tasks(&self, params: &Value) -> Result<Value, String> {
+        let parent_agent_id = required_string(params, "id")?;
+        let account_fence = self.current_turn_account_fence()?;
+        let records = self
+            .subagent_owner
+            .lock()
+            .map_err(|_| "durable subagent owner lock poisoned".to_string())?
+            .list_running_for_parent(parent_agent_id);
+        Ok(Value::Array(
+            records
+                .into_iter()
+                .filter(|record| record.account_fence == account_fence)
+                .map(|record| {
+                    json!({
+                        "kind":"subagent",
+                        "id":record.subagent_id,
+                        "label":record.title,
+                        "status":"running",
+                        "startedAtMs":record.started_at_ms,
+                        "detail":record.box_id,
+                        "subagentType":record.subagent_type,
+                    })
+                })
+                .collect(),
+        ))
+    }
 
     fn project_agent_roster(&self) -> Result<Vec<Value>, String> {
         let agents = self
@@ -5471,6 +5499,58 @@ mod tests {
         assert_eq!(
             project_fabushi_sand_access(false),
             json!({"state":"unknown","reason":"unspecified"})
+        );
+    }
+
+    #[test]
+    fn async_tasks_projection_uses_durable_parent_and_account_fenced_subagent_truth() {
+        let root = tempfile::tempdir().unwrap();
+        let mut host = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+        let frozen = SubagentFrozenTurnConfig {
+            provider_id: "test-provider".into(),
+            model_id: "test-model".into(),
+            tool_names: vec![],
+            allowed_subagent_types: vec!["executor".into()],
+            privacy_mode: "default".into(),
+            summarization_binding_id: "test-summary".into(),
+        };
+        let launch = host
+            .subagent_owner
+            .lock()
+            .unwrap()
+            .launch(
+                "agent-parent",
+                SubagentLineage::default(),
+                "box-1",
+                "executor",
+                "tool-call-1",
+                "Inspect repository state",
+                "session:test:android",
+                None,
+                frozen,
+                123,
+            )
+            .unwrap();
+
+        let tasks = host
+            .dispatch("feature.agent.asyncTasks", &json!({"id":"agent-parent"}))
+            .unwrap();
+        assert_eq!(tasks.as_array().unwrap().len(), 1);
+        assert_eq!(tasks[0]["kind"], "subagent");
+        assert_eq!(tasks[0]["id"], launch.record.subagent_id);
+        assert_eq!(tasks[0]["label"], "Inspect repository state");
+        assert_eq!(tasks[0]["status"], "running");
+        assert_eq!(tasks[0]["startedAtMs"], 123);
+        assert_eq!(tasks[0]["subagentType"], "executor");
+
+        drop(host);
+        let mut reopened = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+        let after_process_death = reopened
+            .dispatch("feature.agent.asyncTasks", &json!({"id":"agent-parent"}))
+            .unwrap();
+        assert!(
+            after_process_death.as_array().unwrap().is_empty(),
+            "process reopen converts unresolved running child work to outcome-unknown instead of presenting it as running",
         );
     }
 
