@@ -24,6 +24,30 @@ pub const CHECK_SUBAGENT_TOOL_NAME: &str = "CheckSubagent";
 pub const MESSAGE_SUBAGENT_TOOL_NAME: &str = "MessageSubagent";
 pub const STOP_SUBAGENT_TOOL_NAME: &str = "StopSubagent";
 
+pub fn build_turn_subagent_types(
+    is_subagent_runner: bool,
+    multitask_enabled: bool,
+    remote_box_available: bool,
+    remote_box_has_desktop: bool,
+    browser_use_enabled: bool,
+) -> Option<Vec<String>> {
+    if is_subagent_runner {
+        return None;
+    }
+    let mut types = vec![if multitask_enabled {
+        "executor".to_string()
+    } else {
+        "general-purpose".to_string()
+    }];
+    if remote_box_available && remote_box_has_desktop {
+        types.push("computeruse".to_string());
+        if browser_use_enabled {
+            types.push("browseruse".to_string());
+        }
+    }
+    Some(types)
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SubagentToolContext {
     pub parent_agent_id: String,
@@ -69,8 +93,9 @@ impl SubagentToolBridge {
 
     pub fn tool_definitions(&self, context: &SubagentToolContext) -> Vec<Value> {
         let allowed = &context.frozen_turn.allowed_subagent_types;
-        vec![
-            json!({
+        let mut definitions = Vec::new();
+        if !allowed.is_empty() {
+            definitions.push(json!({
                 "name": TASK_TOOL_NAME,
                 "description": "Delegate a self-contained task to a background subagent.",
                 "inputSchema": {
@@ -82,7 +107,9 @@ impl SubagentToolBridge {
                         "subagent_type":{"type":"string","enum":allowed},
                     }
                 }
-            }),
+            }));
+        }
+        definitions.extend([
             json!({
                 "name":CHECK_SUBAGENT_TOOL_NAME,
                 "inputSchema":{"type":"object","additionalProperties":false,"properties":{"subagent_id":{"type":"string"}}}
@@ -95,7 +122,8 @@ impl SubagentToolBridge {
                 "name":STOP_SUBAGENT_TOOL_NAME,
                 "inputSchema":{"type":"object","required":["subagent_id"],"additionalProperties":false,"properties":{"subagent_id":{"type":"string","minLength":1}}}
             }),
-        ]
+        ]);
+        definitions
     }
 
     pub fn owner(&self) -> Arc<Mutex<DurableSubagentOwner>> {
@@ -359,6 +387,27 @@ mod tests {
                 summarization_binding_id: "android-host-inference:same-provider".into(),
             },
         }
+    }
+
+    #[test]
+    fn desktop_equivalent_subagent_type_projection_is_capability_scoped() {
+        assert_eq!(
+            build_turn_subagent_types(false, false, false, false, false),
+            Some(vec!["general-purpose".to_string()])
+        );
+        assert_eq!(
+            build_turn_subagent_types(false, true, true, true, true),
+            Some(vec![
+                "executor".to_string(),
+                "computeruse".to_string(),
+                "browseruse".to_string(),
+            ])
+        );
+        assert_eq!(
+            build_turn_subagent_types(true, true, true, true, true),
+            None,
+            "generated children must not inherit arbitrary Task delegation"
+        );
     }
 
     #[test]
