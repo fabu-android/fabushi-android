@@ -69,6 +69,8 @@ fun GrokHomeSurface(
     onOpenCommandPalette: () -> Unit,
     onRefreshBots: () -> Unit,
     onCreateBot: (String, String, (() -> Unit)?) -> Unit,
+    onCreateGroup: (String, String, List<String>, (() -> Unit)?) -> Unit,
+    onSetGroupMembers: (String, List<String>) -> Unit,
     onOpenBot: (MobileBotSummaryAndroid) -> Unit,
     onRenameBot: (String, String) -> Unit,
     onHideBot: (String) -> Unit,
@@ -102,6 +104,12 @@ fun GrokHomeSurface(
     var query by remember { mutableStateOf("") }
     var addOpen by remember { mutableStateOf(false) }
     var createOpen by remember { mutableStateOf(false) }
+    var createGroupOpen by remember { mutableStateOf(false) }
+    var groupName by remember { mutableStateOf("") }
+    var groupDescription by remember { mutableStateOf("") }
+    var groupMemberIds by remember { mutableStateOf(setOf<String>()) }
+    var editingGroup by remember { mutableStateOf<MobileBotSummaryAndroid?>(null) }
+    var editingGroupMemberIds by remember { mutableStateOf(setOf<String>()) }
     var botName by remember { mutableStateOf("") }
     var botDescription by remember { mutableStateOf("") }
     var editingBotId by remember { mutableStateOf<String?>(null) }
@@ -112,6 +120,12 @@ fun GrokHomeSurface(
         query,
         addOpen,
         createOpen,
+        createGroupOpen,
+        groupName,
+        groupDescription,
+        groupMemberIds,
+        editingGroup,
+        editingGroupMemberIds,
         botName,
         botDescription,
         botState.creating,
@@ -225,6 +239,19 @@ fun GrokHomeSurface(
                         "New Bot",
                         action = FabushiAppAgentSurface.Action(setOf("invoke")) { addOpen = false; createOpen = true },
                     )
+                    element(
+                        "grok-mobile-new-agent-group",
+                        "menuitem",
+                        "New Agent group",
+                        enabled = botState.bots.any { !it.isGroup },
+                        action = FabushiAppAgentSurface.Action(setOf("invoke")) {
+                            if (botState.bots.any { !it.isGroup }) {
+                                addOpen = false
+                                createGroupOpen = true
+                                groupMemberIds = emptySet()
+                            }
+                        },
+                    )
                     for ((id, name) in listOf(
                         "grok-mobile-new-message" to "New message",
                         "grok-mobile-new-group" to "New group",
@@ -298,6 +325,89 @@ fun GrokHomeSurface(
         )
     }
 
+    if (createGroupOpen) {
+        val candidates = botState.bots.filter { !it.isGroup }
+        AlertDialog(
+            onDismissRequest = { if (!botState.creating) createGroupOpen = false },
+            title = { Text("New Agent group") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(groupName, { groupName = it }, label = { Text("Group name") }, singleLine = true)
+                    OutlinedTextField(groupDescription, { groupDescription = it }, label = { Text("Description") }, minLines = 2, maxLines = 4)
+                    Text("Members ${groupMemberIds.size}/6", color = GrokMobileMuted, fontSize = 12.sp)
+                    candidates.take(100).forEach { candidate ->
+                        val selected = candidate.id in groupMemberIds
+                        TextButton(
+                            onClick = {
+                                groupMemberIds = if (selected) groupMemberIds - candidate.id
+                                else if (groupMemberIds.size < 6) groupMemberIds + candidate.id
+                                else groupMemberIds
+                            },
+                            modifier = Modifier.fillMaxWidth().testTag("agent-group-member-${candidate.id}"),
+                        ) {
+                            Text(if (selected) "✓ ${candidate.name}" else candidate.name)
+                        }
+                    }
+                    botState.error?.let { Text(it, color = Color(0xFFD14343), fontSize = 12.sp) }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        onCreateGroup(groupName, groupDescription, groupMemberIds.toList()) {
+                            groupName = ""
+                            groupDescription = ""
+                            groupMemberIds = emptySet()
+                            createGroupOpen = false
+                        }
+                    },
+                    enabled = groupName.isNotBlank() && groupMemberIds.isNotEmpty() && !botState.creating,
+                    modifier = Modifier.testTag("create-agent-group-submit"),
+                ) { Text(if (botState.creating) "Creating…" else "Create group") }
+            },
+            dismissButton = { TextButton(onClick = { createGroupOpen = false }, enabled = !botState.creating) { Text("Cancel") } },
+        )
+    }
+
+    editingGroup?.let { group ->
+        val candidates = botState.bots.filter { !it.isGroup }
+        AlertDialog(
+            onDismissRequest = { editingGroup = null },
+            title = { Text("Members · ${group.name}") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text("Select 1–6 Agents", color = GrokMobileMuted, fontSize = 12.sp)
+                    candidates.take(100).forEach { candidate ->
+                        val selected = candidate.id in editingGroupMemberIds
+                        TextButton(
+                            onClick = {
+                                editingGroupMemberIds = if (selected) editingGroupMemberIds - candidate.id
+                                else if (editingGroupMemberIds.size < 6) editingGroupMemberIds + candidate.id
+                                else editingGroupMemberIds
+                            },
+                            modifier = Modifier.fillMaxWidth().testTag("edit-agent-group-member-${candidate.id}"),
+                        ) {
+                            Text(if (selected) "✓ ${candidate.name}" else candidate.name)
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        if (editingGroupMemberIds.isNotEmpty()) {
+                            onSetGroupMembers(group.id, editingGroupMemberIds.toList())
+                            editingGroup = null
+                        }
+                    },
+                    enabled = editingGroupMemberIds.isNotEmpty(),
+                    modifier = Modifier.testTag("edit-agent-group-submit"),
+                ) { Text("Save") }
+            },
+            dismissButton = { TextButton(onClick = { editingGroup = null }) { Text("Cancel") } },
+        )
+    }
+
     Box(Modifier.fillMaxSize().background(GrokMobileBackground).testTag("grok-mobile-home")) {
         LazyColumn(Modifier.fillMaxSize()) {
             item {
@@ -333,6 +443,11 @@ fun GrokHomeSurface(
                         Text("+", fontSize = 31.sp, color = GrokMobileInk, modifier = Modifier.padding(horizontal = 8.dp).clickable { addOpen = true }.testTag("grok-mobile-add"))
                         DropdownMenu(expanded = addOpen, onDismissRequest = { addOpen = false }) {
                             DropdownMenuItem(text = { Text("New Bot") }, onClick = { addOpen = false; createOpen = true })
+                            DropdownMenuItem(
+                                text = { Text("New Agent group") },
+                                enabled = botState.bots.any { !it.isGroup },
+                                onClick = { addOpen = false; createGroupOpen = true; groupMemberIds = emptySet() },
+                            )
                             DropdownMenuItem(text = { Text("New message") }, onClick = { addOpen = false; onOpenMessaging() })
                             DropdownMenuItem(text = { Text("New group") }, onClick = { addOpen = false; onOpenMessaging() })
                             DropdownMenuItem(text = { Text("New channel") }, onClick = { addOpen = false; onOpenMessaging() })
@@ -437,7 +552,17 @@ fun GrokHomeSurface(
                             editingBotId = null
                         },
                         trailing = {
-                            AgentRowActions(
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                if (bot.isGroup) {
+                                    TextButton(
+                                        onClick = {
+                                            editingGroup = bot
+                                            editingGroupMemberIds = bot.memberIds.toSet()
+                                        },
+                                        modifier = Modifier.testTag("agent-group-members-${bot.id}"),
+                                    ) { Text("Members", fontSize = 11.sp) }
+                                }
+                                AgentRowActions(
                                 agentId = bot.id,
                                 agentName = bot.name,
                                 isGroup = bot.isGroup,
@@ -450,7 +575,8 @@ fun GrokHomeSurface(
                                 onTogglePin = onSetBotPinned,
                                 onSetAgentUnread = onSetBotUnread,
                                 onRequestDelete = { deleteTarget = it },
-                            )
+                                )
+                            }
                         },
                     )
                 }

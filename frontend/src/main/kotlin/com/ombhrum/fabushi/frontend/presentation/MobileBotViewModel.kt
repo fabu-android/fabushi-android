@@ -200,6 +200,42 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
+    fun createGroup(name: String, description: String, memberIds: List<String>, onCreated: (() -> Unit)? = null) {
+        val cleanName = name.replace(Regex("\\s+"), " ").trim().take(72)
+        val members = memberIds.map(String::trim).filter(String::isNotEmpty).distinct().take(6)
+        if (cleanName.isBlank() || members.isEmpty() || mutableState.value.creating) return
+        mutableState.value = mutableState.value.copy(creating = true, error = null)
+        viewModelScope.launch {
+            runCatching {
+                withContext(Dispatchers.IO) {
+                    coordinator.agentCreateGroup(cleanName, description.trim().take(240), members)
+                }
+            }.onSuccess {
+                mutableState.value = mutableState.value.copy(creating = false)
+                refreshBots()
+                onCreated?.invoke()
+            }.onFailure { error ->
+                mutableState.value = mutableState.value.copy(creating = false, error = error.message ?: "Agent group creation failed")
+            }
+        }
+    }
+
+    fun setGroupMembers(groupId: String, memberIds: List<String>) {
+        val members = memberIds.map(String::trim).filter(String::isNotEmpty).distinct().take(6)
+        if (groupId.isBlank() || members.isEmpty()) return
+        viewModelScope.launch {
+            runCatching {
+                withContext(Dispatchers.IO) {
+                    coordinator.agentSetGroupMembers(groupId, members)
+                }
+            }.onSuccess {
+                refreshBots()
+            }.onFailure { error ->
+                mutableState.value = mutableState.value.copy(error = error.message ?: "Agent group member update failed")
+            }
+        }
+    }
+
     fun createBot(name: String, description: String, onCreated: (() -> Unit)? = null) {
         val cleanName = name.replace(Regex("\\s+"), " ").trim().take(72)
         if (cleanName.isBlank() || mutableState.value.creating) return
