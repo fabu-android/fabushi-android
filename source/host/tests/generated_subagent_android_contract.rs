@@ -13,6 +13,7 @@ fn shipping_host_routes_generated_subagent_tools_through_one_rust_owner() {
         "parentAgentId":"parent-agent",
         "parentRequestId":"parent-turn-1",
         "rootParentRequestId":"root-turn-1",
+        "model":"default",
         "boxId":"android-local",
         "arguments":{
             "prompt":"research the durable lifecycle",
