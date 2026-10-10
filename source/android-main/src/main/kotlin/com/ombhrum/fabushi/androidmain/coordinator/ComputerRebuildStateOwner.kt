@@ -178,6 +178,7 @@ internal class ComputerRebuildStateOwner(
         operationId: String,
         kind: ComputerRebuildKind,
     ): ComputerRebuildSnapshot {
+        requireCurrentAccount(accountEpoch)
         require(kind == ComputerRebuildKind.UPDATE || kind == ComputerRebuildKind.RESET) {
             "backend request may start only update/reset rebuild"
         }
@@ -192,6 +193,7 @@ internal class ComputerRebuildStateOwner(
 
     @Synchronized
     fun markRequestOutcomeUnknown(accountEpoch: Long, requestId: String): ComputerRebuildSnapshot {
+        requireCurrentAccount(accountEpoch)
         val current = requireSnapshot(accountEpoch)
         require(current.requestId == requestId) { "stale computer rebuild request identity" }
         return persist(current.copy(pending = false, outcomeUnknown = true))
@@ -199,6 +201,7 @@ internal class ComputerRebuildStateOwner(
 
     @Synchronized
     fun rejectRequest(accountEpoch: Long, requestId: String): ComputerRebuildSnapshot {
+        requireCurrentAccount(accountEpoch)
         val current = requireSnapshot(accountEpoch)
         require(current.requestId == requestId) { "stale computer rebuild request identity" }
         return clear(current, ComputerRebuildResolution.FAILED)
@@ -210,6 +213,7 @@ internal class ComputerRebuildStateOwner(
         operationId: String?,
         offsetKey: String,
     ): ComputerRebuildSnapshot {
+        requireCurrentAccount(accountEpoch)
         val current = requireSnapshot(accountEpoch)
         require(offsetKey.length <= 4096 && offsetKey.none(Char::isISOControl)) {
             "computer rebuild migration offset is invalid"
