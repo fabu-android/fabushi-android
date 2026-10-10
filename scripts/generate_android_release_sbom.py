@@ -61,33 +61,39 @@ def rust_components(metadata: dict) -> tuple[list[dict], list[dict]]:
     return components, licenses
 
 
-def pom_licenses(cache: Path, group: str, name: str, version: str) -> list[dict]:
-    root = cache / group / name / version
-    candidates = sorted(root.glob("*/*.pom"))
+def _pom_candidates(cache: Path, group: str, name: str, version: str) -> list[Path]:
+    return sorted((cache / group / name / version).glob("*/*.pom"))
+
+
+def _pom_prefix(project: ET.Element) -> str:
+    if project.tag.startswith("{"):
+        return project.tag.split("}", 1)[0] + "}"
+    return ""
+
+
+def _pom_text(node: ET.Element | None, tag: str, prefix: str) -> str:
+    if node is None:
+        return ""
+    child = node.find(f"{prefix}{tag}")
+    return (child.text or "").strip() if child is not None else ""
+
+
+def _declared_licenses(project: ET.Element, prefix: str) -> list[dict]:
+    node = project.find(f"{prefix}licenses")
+    if node is None:
+        return []
     licenses: list[dict] = []
-    for pom in candidates:
-        try:
-            tree = ET.parse(pom)
-        except ET.ParseError:
-            continue
-        project = tree.getroot()
-        prefix = ""
-        if project.tag.startswith("{"):
-            prefix = project.tag.split("}", 1)[0] + "}"
-        node = project.find(f"{prefix}licenses")
-        if node is None:
-            continue
-        for item in node.findall(f"{prefix}license"):
-            name_node = item.find(f"{prefix}name")
-            url_node = item.find(f"{prefix}url")
-            license_name = (name_node.text or "").strip() if name_node is not None else ""
-            license_url = (url_node.text or "").strip() if url_node is not None else ""
-            if license_name or license_url:
-                licenses.append({"name": license_name or None, "url": license_url or None})
-        if licenses:
-            break
-    unique = []
-    seen = set()
+    for item in node.findall(f"{prefix}license"):
+        license_name = _pom_text(item, "name", prefix)
+        license_url = _pom_text(item, "url", prefix)
+        if license_name or license_url:
+            licenses.append({"name": license_name or None, "url": license_url or None})
+    return licenses
+
+
+def _dedupe_licenses(licenses: list[dict]) -> list[dict]:
+    unique: list[dict] = []
+    seen: set[tuple[str | None, str | None]] = set()
     for item in licenses:
         key = (item.get("name"), item.get("url"))
         if key not in seen:
@@ -95,6 +101,57 @@ def pom_licenses(cache: Path, group: str, name: str, version: str) -> list[dict]
             seen.add(key)
     return unique
 
+
+def pom_licenses(
+    cache: Path,
+    group: str,
+    name: str,
+    version: str,
+    visited: set[tuple[str, str, str]] | None = None,
+) -> list[dict]:
+    """Return declared Maven licenses, following cached parent POM inheritance.
+
+    Maven child POMs may omit <licenses> and inherit them from a parent. We only
+    trust parent POMs that are actually present in the Gradle cache. Missing,
+    malformed, cyclic, or property-dependent parent coordinates remain
+    unresolved; no coordinate-to-license lookup table is used.
+    """
+    identity = (group, name, version)
+    visited = set() if visited is None else set(visited)
+    if identity in visited:
+        return []
+    visited.add(identity)
+
+    for pom in _pom_candidates(cache, group, name, version):
+        try:
+            project = ET.parse(pom).getroot()
+        except ET.ParseError:
+            continue
+        prefix = _pom_prefix(project)
+        declared = _declared_licenses(project, prefix)
+        if declared:
+            return _dedupe_licenses(declared)
+
+        parent = project.find(f"{prefix}parent")
+        if parent is None:
+            continue
+        parent_group = _pom_text(parent, "groupId", prefix)
+        parent_name = _pom_text(parent, "artifactId", prefix)
+        parent_version = _pom_text(parent, "version", prefix)
+        if not parent_group or not parent_name or not parent_version:
+            continue
+        if any("$" + "{" in value for value in (parent_group, parent_name, parent_version)):
+            continue
+        inherited = pom_licenses(
+            cache,
+            parent_group,
+            parent_name,
+            parent_version,
+            visited,
+        )
+        if inherited:
+            return inherited
+    return []
 
 def gradle_components(report: str, cache: Path) -> tuple[list[dict], list[dict]]:
     seen: set[tuple[str, str, str]] = set()
