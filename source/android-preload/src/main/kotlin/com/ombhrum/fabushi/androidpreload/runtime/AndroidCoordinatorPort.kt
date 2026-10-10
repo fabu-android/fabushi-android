@@ -80,9 +80,12 @@ interface AndroidCoordinatorPort {
         id: String,
         name: String,
         description: String,
+        title: String?,
         avatarShape: String?,
         avatarColor: String?,
     ): JSONObject = agentUpdate(id, name, description)
+    fun agentSetNotifyOnUpdates(id: String, isEnabled: Boolean): JSONObject =
+        error("Agent notification settings are unavailable on this Coordinator port")
     fun agentSetHidden(id: String, isHidden: Boolean): JSONObject
     fun agentSetUnread(id: String, isUnread: Boolean): JSONObject
     fun agentDuplicate(id: String): JSONObject
