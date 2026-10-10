@@ -44,6 +44,10 @@ struct MessagingRepositoryState {
     request_results: BTreeMap<String, Value>,
     #[serde(default)]
     request_order: Vec<String>,
+    #[serde(default)]
+    agent_delivery_calls: BTreeMap<String, Value>,
+    #[serde(default)]
+    agent_delivery_call_order: Vec<String>,
 }
 
 impl Default for MessagingRepositoryState {
@@ -61,6 +65,8 @@ impl Default for MessagingRepositoryState {
             poll_votes: BTreeMap::new(),
             request_results: BTreeMap::new(),
             request_order: Vec::new(),
+            agent_delivery_calls: BTreeMap::new(),
+            agent_delivery_call_order: Vec::new(),
         }
     }
 }
@@ -172,7 +178,18 @@ impl AndroidMessagingService {
             }
         };
 
-        self.remember_result(replay_key, result.clone());
+        self.state.agent_delivery_calls.insert(
+            replay_key.clone(),
+            json!({"args":replay_args,"result":result.clone()}),
+        );
+        self.state.agent_delivery_call_order.retain(|key| key != &replay_key);
+        self.state.agent_delivery_call_order.push(replay_key.clone());
+        while self.state.agent_delivery_call_order.len() > MAX_REPLAY_RESULTS {
+            if let Some(expired) = self.state.agent_delivery_call_order.first().cloned() {
+                self.state.agent_delivery_call_order.remove(0);
+                self.state.agent_delivery_calls.remove(&expired);
+            }
+        }
         if let Err(error) = self.persist() {
             self.state = previous;
             return Err(format!("failed to persist canonical Android messaging repository: {error}"));
@@ -615,8 +632,22 @@ impl AndroidMessagingService {
                 format!("{account_fence}\n{sender_id}\n{tool_call_id}").as_bytes()
             )
         );
-        if let Some(result) = self.state.request_results.get(&replay_key) {
-            return Ok(result.clone());
+        let replay_args = json!({
+            "senderId":sender_id,
+            "targetId":target_id,
+            "targetIsGroup":target_is_group,
+            "message":message,
+            "images":images,
+            "priority":priority
+        });
+        if let Some(call) = self.state.agent_delivery_calls.get(&replay_key) {
+            if call.get("args") != Some(&replay_args) {
+                return Err("SendToAgent tool_call_id was reused with mismatched arguments".into());
+            }
+            return call
+                .get("result")
+                .cloned()
+                .ok_or_else(|| "durable Agent delivery replay result is missing".to_string());
         }
 
         let previous = self.state.clone();
