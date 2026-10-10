@@ -34,6 +34,33 @@ class RemoteControlSessionCredentialPolicyTest {
     }
 
     @Test
+    fun createOutcomeRecoveryIdentitySurvivesSecretRoundTripWithoutPublicProjection() {
+        val requestId = "android-remote-0123456789abcdef"
+        val ice = """[{"urls":["turns:relay.example.com"],"username":"u","credential":"c"}]"""
+        val credential = RemoteControlSessionCredential(
+            deviceId = "computer-1",
+            clientId = "remote-client-1",
+            sessionId = "remote-session-1",
+            mobileToken = validToken,
+            requestId = requestId,
+            iceServersJson = ice,
+            accountFence = "session:account-1",
+            accountEpoch = 7,
+            expiresAt = 2_000_000_000,
+            processGeneration = 14,
+            lifecycle = RemoteControlSessionLifecycle.PENDING,
+        )
+
+        val restored = RemoteControlSessionCredential.parse(credential.toSecretJson())
+        assertEquals(requestId, restored.requestId)
+        assertEquals(ice, restored.iceServersJson)
+        assertEquals(14L, restored.processGeneration)
+        assertFalse(restored.publicProjection().has("requestId"))
+        assertFalse(restored.publicProjection().has("iceServersJson"))
+        assertFalse(restored.publicProjection().has("mobileToken"))
+    }
+
+    @Test
     fun rejectsCredentialPlaneConfusionAndUnknownSecretFields() {
         val base = JSONObject()
             .put("deviceId", "computer-1")
