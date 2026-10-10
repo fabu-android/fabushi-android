@@ -16,6 +16,7 @@ const MAX_OUTPUT_BYTES: usize = 8 * 1024 * 1024;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RemoteRequestIdentity {
+    pub credential_id: String,
     pub operation_id: String,
     pub request_id: String,
     pub account_fence: String,
@@ -26,6 +27,7 @@ pub struct RemoteRequestIdentity {
 
 impl RemoteRequestIdentity {
     fn validate(&self) -> Result<(), ExecutionError> {
+        validate_identity("credential", &self.credential_id)?;
         validate_identity("operation", &self.operation_id)?;
         validate_identity("request", &self.request_id)?;
         validate_identity("account fence", &self.account_fence)?;
@@ -117,6 +119,8 @@ enum StoredState {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct StoredRecord {
+    #[serde(default)]
+    credential_id: String,
     operation_id: String,
     request_id: String,
     capability_id: String,
@@ -137,6 +141,7 @@ struct StoredRecord {
 impl StoredRecord {
     fn identity(&self) -> RemoteRequestIdentity {
         RemoteRequestIdentity {
+            credential_id: self.credential_id.clone(),
             operation_id: self.operation_id.clone(),
             request_id: self.request_id.clone(),
             account_fence: self.account_fence.clone(),
@@ -156,7 +161,8 @@ impl StoredRecord {
     }
 
     fn matches_execute(&self, request: &ExecuteWireRequest) -> bool {
-        self.operation_id == request.operation_id
+        self.credential_id == request.credential_id
+            && self.operation_id == request.operation_id
             && self.request_id == request.request_id
             && self.capability_id == request.capability_id
             && self.input_json == request.input_json
@@ -179,6 +185,7 @@ struct StoreSnapshot {
 #[serde(rename_all = "camelCase")]
 struct ExecuteWireRequest {
     version: u32,
+    credential_id: String,
     operation_id: String,
     request_id: String,
     device_id: String,
@@ -194,6 +201,7 @@ struct ExecuteWireRequest {
 #[serde(rename_all = "camelCase")]
 struct IdentityWireRequest {
     version: u32,
+    credential_id: String,
     operation_id: String,
     request_id: String,
     device_id: String,
@@ -379,6 +387,7 @@ impl<A: RemoteExecutionAuthorizer, B: RemoteExecutionBackend> RemoteExecutionSer
             return error_response(400, "unsupported remote execution wire version");
         }
         let identity = RemoteRequestIdentity {
+            credential_id: request.credential_id.clone(),
             operation_id: request.operation_id.clone(),
             request_id: request.request_id.clone(),
             account_fence: request.account_fence.clone(),
@@ -414,6 +423,7 @@ impl<A: RemoteExecutionAuthorizer, B: RemoteExecutionBackend> RemoteExecutionSer
         self.records.insert(
             request.operation_id.clone(),
             StoredRecord {
+                credential_id: request.credential_id.clone(),
                 operation_id: request.operation_id.clone(),
                 request_id: request.request_id.clone(),
                 capability_id: request.capability_id.clone(),
@@ -684,6 +694,7 @@ fn validate_identity_request(
         return Err(error_response(400, "unsupported remote execution wire version"));
     }
     let identity = RemoteRequestIdentity {
+        credential_id: request.credential_id,
         operation_id: request.operation_id,
         request_id: request.request_id,
         account_fence: request.account_fence,
@@ -701,6 +712,7 @@ fn validate_http_identity(
     identity: &RemoteRequestIdentity,
 ) -> Result<String, RemoteHttpResponse> {
     identity.validate().map_err(request_error)?;
+    require_header(headers, "X-Fabushi-Credential-Id", &identity.credential_id)?;
     require_header(headers, "X-Fabushi-Account-Fence", &identity.account_fence)?;
     require_header(
         headers,
@@ -859,6 +871,7 @@ fn wire_response(
 fn stable_ack_id(identity: &RemoteRequestIdentity) -> String {
     let mut hash = 0xcbf29ce484222325_u64;
     for value in [
+        identity.credential_id.as_str(),
         identity.operation_id.as_str(),
         identity.request_id.as_str(),
         identity.account_fence.as_str(),
@@ -949,7 +962,10 @@ mod tests {
             if bearer != "remote-secret-token-1234" {
                 return Err(ExecutionError::InvalidRequest("credential rejected".into()));
             }
-            if identity.account_fence != "session:abc123" || identity.device_id != "device-1" {
+            if identity.credential_id != "runner-credential-1"
+                || identity.account_fence != "session:abc123"
+                || identity.device_id != "device-1"
+            {
                 return Err(ExecutionError::InvalidRequest("identity rejected".into()));
             }
             Ok(())
@@ -1034,6 +1050,7 @@ mod tests {
     fn headers() -> BTreeMap<String, String> {
         BTreeMap::from([
             ("Authorization".into(), "Bearer remote-secret-token-1234".into()),
+            ("X-Fabushi-Credential-Id".into(), "runner-credential-1".into()),
             ("X-Fabushi-Account-Fence".into(), "session:abc123".into()),
             ("X-Fabushi-Account-Epoch".into(), "7".into()),
             ("X-Fabushi-Operation-Id".into(), "op-1".into()),
@@ -1047,7 +1064,7 @@ mod tests {
         RemoteHttpRequest {
             path: EXECUTE_PATH.into(),
             headers: headers(),
-            body: r#"{"version":1,"operationId":"op-1","requestId":"req-1","deviceId":"device-1","capabilityId":"computer.use","inputJson":"{\"action\":\"click\",\"x\":10,\"y\":20}","timeoutMs":30000,"accountFence":"session:abc123","accountEpoch":7,"permissionGrantId":"grant-1"}"#.into(),
+            body: r#"{"version":1,"credentialId":"runner-credential-1","operationId":"op-1","requestId":"req-1","deviceId":"device-1","capabilityId":"computer.use","inputJson":"{\"action\":\"click\",\"x\":10,\"y\":20}","timeoutMs":30000,"accountFence":"session:abc123","accountEpoch":7,"permissionGrantId":"grant-1"}"#.into(),
         }
     }
 
@@ -1055,7 +1072,7 @@ mod tests {
         RemoteHttpRequest {
             path: path.into(),
             headers: headers(),
-            body: r#"{"version":1,"operationId":"op-1","requestId":"req-1","deviceId":"device-1","accountFence":"session:abc123","accountEpoch":7,"permissionGrantId":"grant-1"}"#.into(),
+            body: r#"{"version":1,"credentialId":"runner-credential-1","operationId":"op-1","requestId":"req-1","deviceId":"device-1","accountFence":"session:abc123","accountEpoch":7,"permissionGrantId":"grant-1"}"#.into(),
         }
     }
 
