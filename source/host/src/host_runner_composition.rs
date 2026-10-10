@@ -580,6 +580,7 @@ mod tests {
 
     fn context(operation_id: &str) -> RemoteExecutionContext {
         RemoteExecutionContext {
+            credential_id: "runner-credential-1".into(),
             bearer: RemoteBearerCredential::new("remote-test-token-long-enough").unwrap(),
             account_fence: "session:account-a".into(),
             account_epoch: 7,
