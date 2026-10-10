@@ -107,6 +107,7 @@ dependencies {
     implementation 'androidx.lifecycle:lifecycle-viewmodel-ktx:2.10.0'
     implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2'
     implementation 'com.squareup.okhttp3:okhttp:5.4.0'
+    implementation 'io.github.webrtc-sdk:android:150.7871.01'
     implementation 'com.android.billingclient:billing-ktx:9.1.0'
 
     debugImplementation 'androidx.compose.ui:ui-tooling'
