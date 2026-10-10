@@ -5268,6 +5268,83 @@ mod tests {
     }
 
     #[test]
+    fn pending_subagent_review_restart_is_outcome_unknown_and_old_approval_is_stale() {
+        let root = tempfile::tempdir().unwrap();
+        let mut first = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+        let accepted = first
+            .dispatch(
+                "feature.execute",
+                &json!({"command":{
+                    "type":"chat.send",
+                    "requestId":"restart-pending-review",
+                    "agentId":"mahayana-assistant",
+                    "text":"[[tool:Task]]{\"prompt\":\"[[review:block]] hold before launch\",\"subagent_type\":\"general-purpose\"}"
+                }}),
+            )
+            .expect("root turn accepted");
+        let operation_id = accepted["operationId"].as_str().unwrap().to_string();
+
+        let approval = (0..80)
+            .find_map(|_| {
+                let event = first.dispatch("feature.receive", &json!({})).ok()?;
+                if event["type"] == "approval.requested"
+                    && event["capability"] == "agent.subagent.review"
+                {
+                    Some(event)
+                } else {
+                    thread::sleep(Duration::from_millis(5));
+                    None
+                }
+            })
+            .expect("subagent auto-review approval requested");
+        let approval_id = approval["approvalId"].as_str().unwrap().to_string();
+        assert_eq!(approval["operationId"], operation_id);
+        assert!(approval["expiresAtMs"].is_null(), "root turn approvals must be parked");
+
+        let mut reopened = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+        let recovered = reopened
+            .turn_journal
+            .lock()
+            .unwrap()
+            .record("restart-pending-review")
+            .cloned()
+            .expect("durable root turn survives process restart");
+        assert_eq!(recovered.state, DurableTurnState::OutcomeUnknown);
+        assert_eq!(recovered.operation_id, operation_id);
+
+        let stale = reopened.dispatch(
+            "feature.approval.resolve",
+            &json!({"approvalId":approval_id,"approved":true}),
+        );
+        assert!(stale.is_err(), "pre-restart approval must never be reusable");
+
+        let children = reopened.subagent_owner.lock().unwrap().list_for_parent(
+            "mahayana-assistant",
+            "restart-pending-review",
+        );
+        assert!(
+            children.is_empty(),
+            "blocked Task must not launch before a fresh reconciled approval"
+        );
+
+        let replay = reopened.dispatch(
+            "feature.execute",
+            &json!({"command":{
+                "type":"chat.send",
+                "requestId":"restart-pending-review",
+                "agentId":"mahayana-assistant",
+                "text":"[[tool:Task]]{\"prompt\":\"[[review:block]] hold before launch\",\"subagent_type\":\"general-purpose\"}"
+            }}),
+        );
+        assert!(
+            replay.is_err(),
+            "outcome-unknown root turn must reconcile before any blind replay"
+        );
+
+        drop(first);
+    }
+
+    #[test]
     fn deterministic_test_journey_covers_auth_stream_approval_and_interrupt() {
         let app_data = tempfile::tempdir().unwrap();
         let mut host = AndroidJsonHost::new(app_data.path(), AndroidHostMode::Test);
