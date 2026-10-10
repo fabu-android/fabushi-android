@@ -77,7 +77,7 @@ fun GrokHomeSurface(
     onRefreshBots: () -> Unit,
     onCreateBot: (String, String, (() -> Unit)?) -> Unit,
     onCreateGroup: (String, String, List<String>, (() -> Unit)?) -> Unit,
-    onSetGroupMembers: (String, List<String>) -> Unit,
+    onSetGroupMembers: (String, List<String>, (() -> Unit)?) -> Unit,
     onOpenBot: (MobileBotSummaryAndroid) -> Unit,
     onRenameBot: (String, String) -> Unit,
     onUpdateBotProfile: (String, String, String) -> Unit,
@@ -384,8 +384,9 @@ fun GrokHomeSurface(
 
     editingGroup?.let { group ->
         val candidates = botState.bots.filter { !it.isGroup }
+        val groupMembersPending = botState.groupMembersUpdatingId == group.id
         AlertDialog(
-            onDismissRequest = { editingGroup = null },
+            onDismissRequest = { if (!groupMembersPending) editingGroup = null },
             title = { Text("Members · ${group.name}") },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -408,16 +409,22 @@ fun GrokHomeSurface(
             confirmButton = {
                 Button(
                     onClick = {
-                        if (editingGroupMemberIds.isNotEmpty()) {
-                            onSetGroupMembers(group.id, editingGroupMemberIds.toList())
-                            editingGroup = null
+                        if (editingGroupMemberIds.isNotEmpty() && !groupMembersPending) {
+                            onSetGroupMembers(group.id, editingGroupMemberIds.toList()) {
+                                editingGroup = null
+                            }
                         }
                     },
-                    enabled = editingGroupMemberIds.isNotEmpty(),
+                    enabled = editingGroupMemberIds.isNotEmpty() && !groupMembersPending,
                     modifier = Modifier.testTag("edit-agent-group-submit"),
-                ) { Text("Save") }
+                ) { Text(if (groupMembersPending) "Saving…" else "Save") }
             },
-            dismissButton = { TextButton(onClick = { editingGroup = null }) { Text("Cancel") } },
+            dismissButton = {
+                TextButton(
+                    onClick = { editingGroup = null },
+                    enabled = !groupMembersPending,
+                ) { Text("Cancel") }
+            },
         )
     }
 
