@@ -13,7 +13,7 @@ use crate::mcp_auth::{
     McpAuthBackendPort, McpAuthOwnerEvent, McpAuthenticateResult,
     SandPrivacyMode as BackendSandPrivacyMode,
 };
-use crate::extensions::transcript::{AsyncTask, SandPendingWakeStore, TranscriptStore, merge_async_tasks};
+use crate::extensions::transcript::{AsyncTask, PENDING_WAKE_STALE_MAX_AGE_MS, SandPendingWakeStore, TranscriptStore, merge_async_tasks};
 use crate::extensions::webauthn_proxy::{
     WebAuthnBridgeError, WebAuthnProxyExtension, WebAuthnProxyExtensionConfig,
 };
@@ -1092,6 +1092,12 @@ impl AndroidJsonHost {
                 subagent_type: Some(record.subagent_type),
             })
             .collect::<Vec<_>>();
+        self.pending_wake_store.prune_stale_for(
+            &account_fence,
+            parent_agent_id,
+            PENDING_WAKE_STALE_MAX_AGE_MS,
+            now_ms(),
+        );
         let durable = self
             .pending_wake_store
             .list_pending_for(&account_fence, parent_agent_id);
@@ -5520,12 +5526,13 @@ mod tests {
         let mut host = AndroidJsonHost::new(&root, AndroidHostMode::Test);
         host.logged_in = true;
         let account_fence = host.current_turn_account_fence().unwrap();
+        let fresh_marked_at = now_ms();
         assert!(host.pending_wake_store.mark_pending(DurablePendingWakeMarker {
             account_fence: account_fence.clone(),
             agent_id: "agent-a".into(),
             kind: PendingWakeKind::Shell,
             work_id: "shell-a".into(),
-            marked_at_ms: 10,
+            marked_at_ms: fresh_marked_at,
             quiet_origin: None,
             title: Some("Long build".into()),
             subagent_type: None,
@@ -5536,9 +5543,20 @@ mod tests {
             agent_id: "agent-a".into(),
             kind: PendingWakeKind::CloudAgent,
             work_id: "cloud-secret".into(),
-            marked_at_ms: 11,
+            marked_at_ms: fresh_marked_at,
             quiet_origin: None,
             title: None,
+            subagent_type: None,
+            interrupted_by_recreate: false,
+        }));
+        assert!(host.pending_wake_store.mark_pending(DurablePendingWakeMarker {
+            account_fence: account_fence.clone(),
+            agent_id: "agent-a".into(),
+            kind: PendingWakeKind::Shell,
+            work_id: "stale-shell".into(),
+            marked_at_ms: fresh_marked_at.saturating_sub(PENDING_WAKE_STALE_MAX_AGE_MS + 1),
+            quiet_origin: None,
+            title: Some("Stale build".into()),
             subagent_type: None,
             interrupted_by_recreate: false,
         }));
@@ -5562,6 +5580,14 @@ mod tests {
                 .list_pending_for(&account_fence, "agent-a")
                 .len(),
             1
+        );
+        assert_eq!(
+            reopened
+                .pending_wake_store
+                .list_pending_for("other-account:epoch-9", "agent-a")
+                .len(),
+            1,
+            "projection pruning must not delete another account's durable marker",
         );
         let _ = std::fs::remove_dir_all(root);
     }

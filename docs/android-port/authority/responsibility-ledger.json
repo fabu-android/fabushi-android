@@ -5791,6 +5791,14 @@
             "createGroupMembersProvider",
             "projectGroupMemberAgent"
           ]
+        },
+        {
+          "path": "frontend/src/recovered/features/agent-info-members.contract.test.ts",
+          "blob_sha": "6ab80574f37262307124c9ce80d546acb4bad344",
+          "symbols": [
+            "group member projection is strict and provider derives candidates/mutations",
+            "group bridge validates RPC payloads/replies and drops stale generations"
+          ]
         }
       ],
       "source_commit": "92fcc2b0f64b6b8f8f8829305b30874b558d6b35",
@@ -6144,7 +6152,7 @@
       "android_owner": "Rust Host running-task projection + typed Coordinator transport; MobileBotViewModel/Compose own transient snapshot and display only.",
       "platform_delta": "Desktop useSyncExternalStore provider and browser interval become Kotlin StateFlow/coroutine/Compose lifecycle. Android must preserve provider semantics rather than the DOM implementation mechanism.",
       "implementation_status": "mapped",
-      "production_wiring": "Partial production wiring exists: AndroidJsonHost exposes feature.agent.asyncTasks; typed AndroidCoordinatorPort/Runtime carries it; Host merges account-fenced durable pending wakes with live subagent truth; subagent launch/terminal invalidations and Coordinator resync refresh drive the shipping ViewModel/Compose surface. The platform-neutral background-work watcher owner is now Rust-to-Rust ported and the pending-wake rearm state machine is Android-adapted with mandatory account fencing. Shipping Cloud Agent and background-shell producer/await-completion composition is still absent, so this responsibility deliberately remains mapped.",
+      "production_wiring": "Partial shipping production wiring exists: AndroidJsonHost exposes feature.agent.asyncTasks; typed AndroidCoordinatorPort/Runtime carries it; Host merges account-fenced durable pending wakes with live subagent truth; subagent launch/terminal invalidations and Coordinator resync refresh drive the shipping ViewModel/Compose surface. The shipping projection now prunes stale durable wakes only for the current account + current Agent before merge. Platform-neutral background-work watcher ownership and account-fenced rearm are ported, but shipping Cloud Agent and authorized Remote Runner background-shell producer/await-completion composition remains absent, so this responsibility remains mapped.",
       "unit_test": "AgentAsyncTasksParityTest covers task kinds, malformed/settled rejection, Desktop relative-time thresholds and labels; exact-head CI is required after this mapping commit.",
       "contract_test": "Rust source contains account-fenced durable pending-wake persistence, async-task union/dedupe, Desktop-equivalent watcher ownership, and account-fenced rearm tests including cross-account isolation, Cloud watcher ownership verification, recreate-interrupted Shell behavior, and stale pruning. tests/test_agent_async_tasks_wiring.py covers typed event/resync wiring. Same-exact-HEAD GitHub Actions are required, and real shell/cloud producer contracts remain open.",
       "integration_test": "Typed Host -> Coordinator -> ViewModel -> Compose path exists, but full Desktop provider lifecycle semantics are not yet integration-complete.",

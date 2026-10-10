@@ -292,6 +292,41 @@ impl SandPendingWakeStore {
         }
     }
 
+    pub fn prune_stale_for(
+        &self,
+        account_fence: &str,
+        agent_id: &str,
+        max_age_ms: u64,
+        now_ms: u64,
+    ) -> Vec<DurablePendingWakeMarker> {
+        if account_fence.trim().is_empty() || agent_id.trim().is_empty() {
+            return Vec::new();
+        }
+        let _guard = self.lock.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let existing = self.read_pending_unlocked();
+        let mut pruned = Vec::new();
+        let mut remaining = Vec::new();
+        for entry in existing {
+            if entry.account_fence == account_fence
+                && entry.agent_id == agent_id
+                && now_ms.saturating_sub(entry.marked_at_ms) > max_age_ms
+            {
+                pruned.push(entry);
+            } else {
+                remaining.push(entry);
+            }
+        }
+        if pruned.is_empty() {
+            return Vec::new();
+        }
+        if remaining.is_empty() {
+            let _ = self.delete_unlocked();
+        } else {
+            let _ = self.write_unlocked(&remaining);
+        }
+        pruned
+    }
+
     pub fn prune_stale_for_account(
         &self,
         account_fence: &str,
