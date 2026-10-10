@@ -304,6 +304,27 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
+    fun updateBotProfile(botId: String, name: String, description: String) {
+        val bot = mutableState.value.bots.firstOrNull { it.id == botId } ?: return
+        val committed = committedAgentProfile(
+            initialName = bot.name,
+            initialDescription = bot.description,
+            draftName = name,
+            draftDescription = description,
+        ) ?: return
+        viewModelScope.launch {
+            runCatching {
+                withContext(Dispatchers.IO) {
+                    coordinator.agentUpdate(botId, committed.name, committed.description)
+                }
+            }.onSuccess {
+                refreshBots()
+            }.onFailure { error ->
+                mutableState.value = mutableState.value.copy(error = error.message ?: "Agent profile update failed")
+            }
+        }
+    }
+
     fun hideBot(botId: String) {
         mutateAgent(botId, "Hide agent failed") { coordinator.agentSetHidden(botId, true) }
     }
