@@ -181,7 +181,10 @@ impl AgentManagementRoutedTools {
         let object = require_object(&args, SEND_TO_AGENT_TOOL_NAME)?;
         reject_unknown(object, &["target_id", "message", "images", "priority"], SEND_TO_AGENT_TOOL_NAME)?;
         let target_id = required_field(object, "target_id", SEND_TO_AGENT_TOOL_NAME)?;
-        let message = required_field(object, "message", SEND_TO_AGENT_TOOL_NAME)?;
+        let message = clamp_agent_message(required_field(object, "message", SEND_TO_AGENT_TOOL_NAME)?);
+        if message.is_empty() {
+            return Err("message is required for SendToAgent".into());
+        }
         if target_id == self.self_agent_id {
             return Ok(Value::String(SELF_SEND_REJECTION.into()));
         }
@@ -206,7 +209,7 @@ impl AgentManagementRoutedTools {
                 &self.self_agent_id,
                 target_id,
                 target.is_group,
-                message,
+                &message,
                 &images,
                 priority,
                 required(tool_call_id, "SendToAgent tool_call_id")?,
@@ -359,6 +362,24 @@ fn update_definition() -> Value {
             "properties":{"agent_id":{"type":"string","minLength":1},"name":{"type":"string"},"description":{"type":"string"}}
         }
     })
+}
+
+fn clamp_agent_message(raw: &str) -> String {
+    const MAX_UTF16_UNITS: usize = 8_000;
+    let trimmed = raw.trim();
+    let mut used = 0usize;
+    trimmed
+        .chars()
+        .take_while(|character| {
+            let next = used.saturating_add(character.len_utf16());
+            if next > MAX_UTF16_UNITS {
+                false
+            } else {
+                used = next;
+                true
+            }
+        })
+        .collect()
 }
 
 fn parse_images(value: Option<&Value>) -> Result<Vec<Value>, String> {
@@ -712,6 +733,15 @@ mod tests {
             .and_then(Value::as_bool);
         assert_eq!(found_priority, Some(false));
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn message_clamp_matches_desktop_utf16_limit() {
+        assert_eq!(clamp_agent_message("  hello  "), "hello");
+        let ascii = "a".repeat(8_100);
+        assert_eq!(clamp_agent_message(&ascii).encode_utf16().count(), 8_000);
+        let astral = "😀".repeat(4_100);
+        assert_eq!(clamp_agent_message(&astral).encode_utf16().count(), 8_000);
     }
 
     #[test]
