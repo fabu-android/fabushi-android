@@ -85,10 +85,39 @@ impl AndroidHostInferenceProvider {
         })
     }
 
+    pub fn resolve_model_id(requested_model: &str) -> String {
+        let requested_model = requested_model.trim();
+        if requested_model.is_empty() || requested_model == "default" {
+            DEFAULT_DEEPSEEK_MODEL.to_string()
+        } else {
+            requested_model.to_string()
+        }
+    }
+
     pub fn run_summarization_prompt(
         mode: AndroidInferenceMode,
         bearer_token: Option<String>,
         cancelled: Arc<AtomicBool>,
+        system_prompt: &str,
+        user_prompt: &str,
+        should_cancel: &dyn Fn() -> bool,
+    ) -> Result<String, ProviderFailure> {
+        Self::run_summarization_prompt_with_model(
+            mode,
+            bearer_token,
+            cancelled,
+            DEFAULT_DEEPSEEK_MODEL,
+            system_prompt,
+            user_prompt,
+            should_cancel,
+        )
+    }
+
+    pub fn run_summarization_prompt_with_model(
+        mode: AndroidInferenceMode,
+        bearer_token: Option<String>,
+        cancelled: Arc<AtomicBool>,
+        model_id: &str,
         system_prompt: &str,
         user_prompt: &str,
         should_cancel: &dyn Fn() -> bool,
@@ -107,13 +136,11 @@ impl AndroidHostInferenceProvider {
                 )?
             }
         };
-        let prompt = format!(
-            "{system_prompt}\n\n{user_prompt}"
-        );
+        let prompt = format!("{system_prompt}\n\n{user_prompt}");
         let input = StreamAttemptInput {
             operation_id: "summarization".into(),
             agent_id: "mahayana-summarizer".into(),
-            model: provider.default_model.clone(),
+            model: Self::resolve_model_id(model_id),
             prompt,
             resume_checkpoint_available: false,
         };
@@ -263,11 +290,8 @@ Fail closed when uncertain. Target: {target}"
             .as_deref()
             .filter(|value| valid_bearer_token(value))
             .ok_or_else(|| ProviderFailure::new("provider_credentials_unavailable"))?;
-        let model = if input.model.trim().is_empty() || input.model == "default" {
-            self.default_model.as_str()
-        } else {
-            input.model.as_str()
-        };
+        let resolved_model = Self::resolve_model_id(&input.model);
+        let model = resolved_model.as_str();
         let endpoint = format!("{}/responses", self.base_url.trim_end_matches('/'));
         let agent = ureq::AgentBuilder::new()
             .timeout_connect(Duration::from_secs(20))
