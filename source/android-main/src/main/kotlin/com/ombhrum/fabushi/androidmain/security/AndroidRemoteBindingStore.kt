@@ -23,6 +23,7 @@ internal class AndroidRemoteBindingStore(context: Context) {
     private val applicationContext = context.applicationContext
     private val bindingFile = File(applicationContext.noBackupFilesDir, FILE_NAME)
 
+    @Synchronized
     fun readBindingJson(): String? {
         val encoded = runCatching { bindingFile.readText(StandardCharsets.UTF_8) }.getOrNull()
             ?: return null
@@ -52,10 +53,14 @@ internal class AndroidRemoteBindingStore(context: Context) {
      * binding is destroyed before it can be reinstalled after login, token
      * refresh, account switch, or process restart.
      */
+    @Synchronized
     fun readBindingJsonForAccountFence(currentAccountFence: String): String? {
         require(currentAccountFence.isNotBlank()) { "current account fence must not be blank" }
         val value = readBindingJson() ?: return null
-        if (!RemoteBindingFencePolicy.matches(value, currentAccountFence)) {
+        if (
+            !RemoteBindingFencePolicy.matches(value, currentAccountFence) ||
+            !RemoteBindingLifecyclePolicy.isActive(value, System.currentTimeMillis())
+        ) {
             clear()
             return null
         }
@@ -63,8 +68,18 @@ internal class AndroidRemoteBindingStore(context: Context) {
     }
 
     /** Protected pairing boundary only; no presentation-facing owner calls this. */
+    @Synchronized
     fun writeBindingJson(value: String) {
         RemoteBindingCredentialContract.validate(value)
+        val nowMs = System.currentTimeMillis()
+        require(RemoteBindingLifecyclePolicy.isActive(value, nowMs)) {
+            "Remote binding credential is not currently active"
+        }
+        readBindingJson()?.let { existing ->
+            require(RemoteBindingRotationPolicy.canReplace(existing, value)) {
+                "Remote binding credential is stale, conflicting, or crosses an account fence"
+            }
+        }
         require(value.toByteArray(StandardCharsets.UTF_8).size <= MAX_BINDING_BYTES) {
             "Remote binding exceeds bounded secret payload"
         }
@@ -92,6 +107,7 @@ internal class AndroidRemoteBindingStore(context: Context) {
         }
     }
 
+    @Synchronized
     fun clear() {
         runCatching { bindingFile.delete() }
     }
@@ -139,6 +155,9 @@ internal object RemoteBindingCredentialContract {
         val json = JSONObject(value)
         val allowedKeys = setOf(
             "credentialPlane",
+            "credentialId",
+            "issuedAtMs",
+            "expiresAtMs",
             "endpoint",
             "bearerCredential",
             "deviceId",
@@ -166,13 +185,17 @@ internal object RemoteBindingCredentialContract {
         ) {
             "Remote binding credential is invalid"
         }
-        for (key in listOf("deviceId", "accountFence")) {
+        for (key in listOf("credentialId", "deviceId", "accountFence")) {
             val identity = json.getString(key)
             require(identity.isNotBlank() && identity.length <= 512 && identity.none(Char::isISOControl)) {
                 "Remote binding $key is invalid"
             }
         }
         require(json.getLong("accountEpoch") > 0L) { "Remote binding account epoch must be positive" }
+        val issuedAtMs = json.getLong("issuedAtMs")
+        val expiresAtMs = json.getLong("expiresAtMs")
+        require(issuedAtMs > 0L) { "Remote binding issuedAtMs must be positive" }
+        require(expiresAtMs > issuedAtMs) { "Remote binding expiresAtMs must follow issuance" }
         val allowedExecutors = setOf(
             "shell",
             "read",
@@ -207,5 +230,69 @@ internal object RemoteBindingFencePolicy {
             val binding = JSONObject(bindingJson)
             binding.getString("accountFence") == currentAccountFence
         }.getOrDefault(false)
+    }
+}
+
+/**
+ * Credential validity is checked independently from account fencing so an already-installed
+ * binding cannot remain usable after expiry while the process stays alive.
+ */
+internal object RemoteBindingLifecyclePolicy {
+    fun isActive(bindingJson: String, nowMs: Long): Boolean {
+        if (nowMs <= 0L) return false
+        return runCatching {
+            RemoteBindingCredentialContract.validate(bindingJson)
+            val binding = JSONObject(bindingJson)
+            val issuedAtMs = binding.getLong("issuedAtMs")
+            val expiresAtMs = binding.getLong("expiresAtMs")
+            nowMs >= issuedAtMs && nowMs < expiresAtMs
+        }.getOrDefault(false)
+    }
+}
+
+/**
+ * Prevents protected-storage rollback to an older executor credential. Exact duplicates are
+ * idempotent; a reused credentialId with changed material, same/older issuance with a new id, or
+ * cross-account replacement is rejected. Account switching must clear the old binding first.
+ */
+internal object RemoteBindingRotationPolicy {
+    fun canReplace(currentJson: String, incomingJson: String): Boolean =
+        runCatching {
+            RemoteBindingCredentialContract.validate(currentJson)
+            RemoteBindingCredentialContract.validate(incomingJson)
+            val current = JSONObject(currentJson)
+            val incoming = JSONObject(incomingJson)
+            val currentFence = current.getString("accountFence")
+            val incomingFence = incoming.getString("accountFence")
+            if (currentFence != incomingFence || current.getLong("accountEpoch") != incoming.getLong("accountEpoch")) {
+                return@runCatching false
+            }
+            val currentId = current.getString("credentialId")
+            val incomingId = incoming.getString("credentialId")
+            if (currentId == incomingId) {
+                return@runCatching sameCredentialDocument(current, incoming)
+            }
+            incoming.getLong("issuedAtMs") > current.getLong("issuedAtMs")
+        }.getOrDefault(false)
+
+    private fun sameCredentialDocument(left: JSONObject, right: JSONObject): Boolean {
+        for (key in listOf(
+            "credentialPlane",
+            "credentialId",
+            "endpoint",
+            "bearerCredential",
+            "deviceId",
+            "accountFence",
+        )) {
+            if (left.getString(key) != right.getString(key)) return false
+        }
+        for (key in listOf("accountEpoch", "issuedAtMs", "expiresAtMs")) {
+            if (left.getLong(key) != right.getLong(key)) return false
+        }
+        fun executors(value: JSONObject): Set<String> {
+            val array = value.getJSONArray("executors")
+            return (0 until array.length()).mapTo(linkedSetOf()) { index -> array.getString(index) }
+        }
+        return executors(left) == executors(right)
     }
 }
