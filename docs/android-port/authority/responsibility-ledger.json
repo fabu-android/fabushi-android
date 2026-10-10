@@ -5,7 +5,7 @@
     "desktop_commit": "3bc92400826cc4ca7ac665b467708e22261edc61",
     "android_repository": "fabu-android/fabushi-android",
     "android_pr": 3,
-    "android_head_at_update": "4cdb10a80c73c4ecb988d494210746fd101c18b1",
+    "android_head_at_update": "9c4c997e651b00761d0f32c9e293480e5478f57d",
     "status": "incomplete",
     "note": "Persistent human-reviewed responsibility ledger for Desktop main. Rows are responsibility-level source facts; mapped/implemented never imply verified. Verification requires same-exact-HEAD source implementation, production wiring, CI/package and device evidence."
   },
@@ -3479,6 +3479,75 @@
       "artifact": null,
       "verification_status": "not-verified",
       "notes": "The source responsibility is implemented with an Android-native replacement, but exact-head build/package/device evidence is not yet complete."
+    },
+    {
+      "responsibility_id": "AGENT-SIDEBAR-LAYOUT-001",
+      "domain": "agent",
+      "desktop_sources": [
+        {
+          "path": "desktop/e2e/grok-parity.spec.ts",
+          "blob_sha": "278b22f5c5707650b0005cd7b5d4417450e3302f",
+          "symbols": [
+            "Account sidebar CAS preserves concurrent cross-device edits",
+            "Agent sidebar supports modifier selection and account-scoped sections"
+          ]
+        }
+      ],
+      "source_commit": "3bc92400826cc4ca7ac665b467708e22261edc61",
+      "responsibility": "Own account-scoped Agent sidebar pin order, named sections, section membership/collapse state, modifier selection and conflict-safe cross-device merge without moving canonical layout truth into presentation.",
+      "source_owner": "Desktop Agent workspace account sidebar layout state",
+      "direct_callers": [
+        "Agent sidebar",
+        "Agent selection/move-section actions",
+        "account persistence synchronization"
+      ],
+      "downstream_dependencies": [
+        "Agent roster identity",
+        "account-scoped settings persistence",
+        "cross-device synchronization"
+      ],
+      "state_owner": "Desktop account sidebar layout store; Android canonical owner still to be implemented outside Compose.",
+      "persistent_state": [
+        "pinned order",
+        "named Agent sections",
+        "section membership",
+        "collapsed state",
+        "revision/CAS identity"
+      ],
+      "protocol_wire_contract": [
+        "account-scoped layout read",
+        "compare-and-swap update",
+        "conflict merge/retry"
+      ],
+      "visible_effect": "Users can pin/reorder Agents, organize them into named sections, and keep concurrent edits from multiple devices without one device silently overwriting the other.",
+      "failure_behavior": [
+        "stale revisions must merge/retry or fail visibly",
+        "unknown/deleted Agent ids are pruned",
+        "presentation must not invent canonical section truth"
+      ],
+      "cancellation_behavior": "cancelled edits must not partially mutate durable layout.",
+      "retry_semantics": "CAS conflict retries must merge independent local/remote edits rather than blind last-write-wins.",
+      "idempotency_semantics": "replaying the same revision+mutation is stable and does not duplicate section membership.",
+      "process_death_recovery": "reopen must restore the last committed account-scoped layout and not recover an uncommitted UI selection as canonical state.",
+      "account_fencing": "layout is scoped to the authenticated Fabushi account and must not leak across account switch/logout.",
+      "security_boundary": "only typed account/layout mutations may persist state; Compose selection state is not authority.",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/production/sidebar-model.kt",
+        "source/host/src/android_agent_roster.rs"
+      ],
+      "android_owner": "pending canonical account-scoped Rust/Coordinator layout owner",
+      "platform_delta": "Android already projects pinned order natively, but named sections and cross-device CAS merge are not yet owned by a durable account-scoped runtime. Compose-only state is insufficient and will not be treated as parity.",
+      "implementation_status": "mapped",
+      "production_wiring": "Pinned ordering exists in the current native sidebar projection. Durable named sections, CAS revision/merge and account-fenced production bridge remain to be implemented.",
+      "unit_test": "Current sidebar ordering helpers cover local pin order only; CAS/section merge tests are still required.",
+      "contract_test": "Desktop grok-parity aggregate contract read at Desktop 3bc9240; Android contract pending.",
+      "integration_test": "pending",
+      "packaged_test": "required on final exact-head APK/AAB",
+      "device_test": "required across account restart and simulated concurrent revision conflict",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "This narrow responsibility is intentionally mapped, not implemented, because current Android has no canonical durable section/CAS owner."
     }
   ],
   "traceability": {
