@@ -561,6 +561,7 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
         id: String,
         name: String,
         description: String,
+        title: String?,
         avatarShape: String?,
         avatarColor: String?,
     ): JSONObject =
@@ -570,8 +571,17 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
                 .put("id", id)
                 .put("name", name)
                 .put("description", description)
+                .put("title", title ?: JSONObject.NULL)
                 .put("avatarShape", avatarShape ?: JSONObject.NULL)
                 .put("avatarColor", avatarColor ?: JSONObject.NULL),
+        ) as? JSONObject ?: JSONObject()
+
+    override fun agentSetNotifyOnUpdates(id: String, isEnabled: Boolean): JSONObject =
+        durableAgentRosterMutation(
+            JSONObject()
+                .put("kind", "notifications")
+                .put("id", id)
+                .put("value", isEnabled),
         ) as? JSONObject ?: JSONObject()
 
     override fun agentSetHidden(id: String, isHidden: Boolean): JSONObject =
