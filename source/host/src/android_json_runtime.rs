@@ -2473,6 +2473,9 @@ impl AndroidJsonHost {
         let subagent_events = Arc::clone(&self.subagent_events);
         let subagent_tools = self.subagent_tools.clone();
         let multitask_todos = Arc::clone(&self.multitask_todos);
+        let agent_roster = Arc::clone(&self.agents);
+        let agent_messaging = Arc::clone(&self.messaging);
+        let live_account_fence = Arc::clone(&self.live_account_fence);
         let frozen_privacy = match self.mode {
             AndroidHostMode::Test => ProductionTurnPrivacyMode::NoStorage,
             AndroidHostMode::Production => self
@@ -2601,6 +2604,18 @@ impl AndroidJsonHost {
                         frozen_turn: frozen_subagent_turn.clone(),
                         child_capabilities: subagent_capabilities,
                     },
+                );
+                // Desktop root turns expose Agent management through the same
+                // canonical roster and messaging owners. Generated child runners
+                // never receive this wrapper, so root management authority is not inherited.
+                let routed_subagent_tools = with_agent_management_tools(
+                    routed_subagent_tools,
+                    Arc::clone(&agent_roster),
+                    Arc::clone(&agent_messaging),
+                    Arc::clone(&live_account_fence),
+                    &account_fence_owned,
+                    &conversation_id_owned,
+                    Arc::clone(&cancelled),
                 );
                 // Desktop exposes TodoWrite only on a root non-subagent turn when
                 // multitask is enabled. Keep it outside GeneratedChildToolRegistry
