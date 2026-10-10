@@ -21,7 +21,9 @@ use crate::runner::{
     ProductionTurnAgentOwner, ProductionTurnAgentStaticConfig, ProductionTurnEvent,
     ProductionDiskPressureLevel, ProductionTurnInput, ProductionTurnLifecycleStore,
     ProductionTurnPrivacyMode, ProductionTurnProfileAnnouncementCommit, SAND_AGENT_TOKEN_LIMIT,
-    DurableSubagentOwner, SubagentRunOutcome, SubagentToolBridge, SubagentToolContext,
+    build_turn_subagent_types, DurableSubagentOwner, SubagentFrozenTurnConfig,
+    SubagentRunOutcome, SubagentSteerReview, SubagentTaskReviewCallback,
+    SubagentSteerReviewCallback, SubagentToolBridge, SubagentToolContext,
     spawn_generated_subagent,
 };
 use fabushi_constants::composer::text_size_allowed;
@@ -396,7 +398,34 @@ impl AndroidJsonHost {
             DurableSubagentOwner::open(app_data_dir.join("generated-subagents.json"), now_ms())
                 .unwrap_or_else(|error| panic!("failed to open durable generated-subagent owner: {error}")),
         ));
-        let subagent_tools = SubagentToolBridge::new(Arc::clone(&subagent_owner));
+        let task_review: SubagentTaskReviewCallback = Arc::new(
+            |prompt, subagent_type, tool_call_id| {
+                if prompt.trim().is_empty()
+                    || subagent_type.trim().is_empty()
+                    || tool_call_id.trim().is_empty()
+                {
+                    return Err("generated subagent Task review input is invalid".into());
+                }
+                Ok(None)
+            },
+        );
+        let steer_review: SubagentSteerReviewCallback = Arc::new(
+            |subagent_id, message, tool_call_id| {
+                if subagent_id.trim().is_empty()
+                    || message.trim().is_empty()
+                    || tool_call_id.trim().is_empty()
+                {
+                    return Err("generated subagent steer review input is invalid".into());
+                }
+                Ok(SubagentSteerReview {
+                    allowed: true,
+                    reason: String::new(),
+                })
+            },
+        );
+        let subagent_tools = SubagentToolBridge::new(Arc::clone(&subagent_owner))
+            .with_task_review(task_review)
+            .with_steer_review(steer_review);
         let subagent_events = Arc::new(Mutex::new(VecDeque::new()));
         Self {
             mode,
@@ -1191,6 +1220,53 @@ impl AndroidJsonHost {
             return Err("arguments must be a JSON object".into());
         }
         let account_fence = self.current_turn_account_fence()?;
+        let is_subagent_runner = parent_agent_id.starts_with("generated:");
+        let allowed_subagent_types = build_turn_subagent_types(
+            is_subagent_runner,
+            false,
+            false,
+            false,
+            false,
+        )
+        .unwrap_or_default();
+        let model_id = if tool_name == crate::runner::TASK_TOOL_NAME {
+            required_string(params, "model")?.to_string()
+        } else {
+            params
+                .get("model")
+                .and_then(Value::as_str)
+                .filter(|value| !value.trim().is_empty())
+                .unwrap_or("management-only")
+                .to_string()
+        };
+        let privacy_mode = match self.mode {
+            AndroidHostMode::Test => "no-storage".to_string(),
+            AndroidHostMode::Production => self
+                .mcp_dashboard_backend
+                .as_ref()
+                .and_then(|backend| backend.resolve_sand_privacy_mode())
+                .map(|mode| match mode {
+                    BackendSandPrivacyMode::Unspecified => "unspecified",
+                    BackendSandPrivacyMode::NoStorage => "no-storage",
+                    BackendSandPrivacyMode::NoTraining => "no-training",
+                    BackendSandPrivacyMode::UsageDataTrainingAllowed => "usage-data-training-allowed",
+                    BackendSandPrivacyMode::UsageCodebaseTrainingAllowed => "usage-codebase-training-allowed",
+                })
+                .unwrap_or("unspecified")
+                .to_string(),
+        };
+        let frozen_turn = SubagentFrozenTurnConfig {
+            provider_id: "android-host-inference".into(),
+            model_id,
+            tool_names: vec![
+                crate::runner::CHECK_SUBAGENT_TOOL_NAME.into(),
+                crate::runner::MESSAGE_SUBAGENT_TOOL_NAME.into(),
+                crate::runner::STOP_SUBAGENT_TOOL_NAME.into(),
+            ],
+            allowed_subagent_types,
+            privacy_mode,
+            summarization_binding_id: "android-host-inference:same-provider".into(),
+        };
         let context = SubagentToolContext {
             parent_agent_id: parent_agent_id.to_string(),
             parent_request_id: parent_request_id.to_string(),
@@ -1210,6 +1286,7 @@ impl AndroidJsonHost {
                 .and_then(Value::as_str)
                 .filter(|value| !value.trim().is_empty())
                 .map(str::to_string),
+            frozen_turn,
         };
         let result = self
             .subagent_tools
