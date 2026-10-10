@@ -4,27 +4,67 @@ pub mod cli;
 #[allow(special_module_name)]
 pub mod main;
 pub mod server;
+pub mod transport;
 
-use fabushi_android_shared::{ExecutionError, ExecutionRequest, ExecutionResult};
+use fabushi_android_shared::{ExecutionError, ExecutionRequest};
+pub use transport::{
+    AuthenticatedRemoteHttpTransport, RemoteBearerCredential, RemoteCancelOutcome,
+    RemoteDispatchOutcome, RemoteExecutionContext, RemoteExecutionTransport,
+    RemoteReconcileOutcome, RemoteTransportPolicy,
+};
 
-pub trait RemoteExecutionTransport {
-    fn execute(&mut self, request: &ExecutionRequest) -> Result<ExecutionResult, ExecutionError>;
-    fn cancel(&mut self, operation_id: &str) -> Result<(), ExecutionError>;
+pub struct RemoteRunner<T: RemoteExecutionTransport> {
+    transport: T,
 }
 
-pub struct RemoteRunner<T: RemoteExecutionTransport> { transport: T }
-
 impl<T: RemoteExecutionTransport> RemoteRunner<T> {
-    pub fn new(transport: T) -> Self { Self { transport } }
-    pub fn execute(&mut self, request: ExecutionRequest) -> Result<ExecutionResult, ExecutionError> {
+    pub fn new(transport: T) -> Self {
+        Self { transport }
+    }
+
+    pub fn execute(
+        &mut self,
+        context: &RemoteExecutionContext,
+        request: ExecutionRequest,
+    ) -> Result<RemoteDispatchOutcome, ExecutionError> {
         request.validate()?;
-        self.transport.execute(&request)
+        context.validate()?;
+        self.transport.execute(context, &request)
     }
-    pub fn cancel(&mut self, operation_id: &str) -> Result<(), ExecutionError> {
-        if operation_id.trim().is_empty() { return Err(ExecutionError::InvalidRequest("operation_id must not be empty".into())); }
-        self.transport.cancel(operation_id)
+
+    pub fn reconcile(
+        &mut self,
+        context: &RemoteExecutionContext,
+        operation_id: &str,
+        request_id: &str,
+    ) -> Result<RemoteReconcileOutcome, ExecutionError> {
+        context.validate()?;
+        if operation_id.trim().is_empty() || request_id.trim().is_empty() {
+            return Err(ExecutionError::InvalidRequest(
+                "remote reconciliation requires operation_id and request_id".into(),
+            ));
+        }
+        self.transport.reconcile(context, operation_id, request_id)
     }
-    pub fn into_transport(self) -> T { self.transport }
+
+    pub fn cancel(
+        &mut self,
+        context: &RemoteExecutionContext,
+        operation_id: &str,
+        request_id: &str,
+    ) -> Result<RemoteCancelOutcome, ExecutionError> {
+        context.validate()?;
+        if operation_id.trim().is_empty() || request_id.trim().is_empty() {
+            return Err(ExecutionError::InvalidRequest(
+                "remote cancellation requires operation_id and request_id".into(),
+            ));
+        }
+        self.transport.cancel(context, operation_id, request_id)
+    }
+
+    pub fn into_transport(self) -> T {
+        self.transport
+    }
 }
 
 pub fn remote_viewer_ports() -> (u16, u16) {
