@@ -1,7 +1,7 @@
 use super::stream_attempt::{
     ProviderFailure, StreamAttemptInput, StreamGeneration, TurnStreamProvider,
 };
-use serde_json::{json, Value};
+use serde_json::{json, Map, Value};
 use std::{
     io::{BufRead, BufReader},
     sync::{
@@ -21,6 +21,11 @@ pub enum AndroidInferenceMode {
     Test,
 }
 
+pub trait AndroidRoutedToolBridge: Send + Sync {
+    fn list_tools(&self) -> Result<Vec<Value>, String>;
+    fn call_tool(&self, name: &str, args: Value, tool_call_id: &str) -> Result<Value, String>;
+}
+
 #[derive(Clone)]
 pub struct AndroidHostInferenceProvider {
     mode: AndroidInferenceMode,
@@ -28,11 +33,18 @@ pub struct AndroidHostInferenceProvider {
     base_url: String,
     default_model: String,
     cancelled: Arc<AtomicBool>,
+    routed_tools: Option<Arc<dyn AndroidRoutedToolBridge>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum ProviderSseEvent {
     Delta(String),
+    ResponseId(String),
+    ToolCall {
+        call_id: String,
+        name: String,
+        arguments: Value,
+    },
     Completed,
     Failed(String),
     Ignore,
@@ -46,6 +58,7 @@ impl AndroidHostInferenceProvider {
             base_url: DEFAULT_DACHENG_RESPONSES_BASE_URL.into(),
             default_model: DEFAULT_DEEPSEEK_MODEL.into(),
             cancelled: Arc::new(AtomicBool::new(false)),
+            routed_tools: None,
         }
     }
 
@@ -62,6 +75,7 @@ impl AndroidHostInferenceProvider {
             base_url: DEFAULT_DACHENG_RESPONSES_BASE_URL.into(),
             default_model: DEFAULT_DEEPSEEK_MODEL.into(),
             cancelled,
+            routed_tools: None,
         })
     }
 
@@ -120,7 +134,13 @@ impl AndroidHostInferenceProvider {
             base_url,
             default_model: DEFAULT_DEEPSEEK_MODEL.into(),
             cancelled,
+            routed_tools: None,
         }
+    }
+
+    pub fn with_routed_tools(mut self, bridge: Arc<dyn AndroidRoutedToolBridge>) -> Self {
+        self.routed_tools = Some(bridge);
+        self
     }
 
     fn run_stream(
@@ -134,6 +154,30 @@ impl AndroidHostInferenceProvider {
         self.cancelled.store(false, Ordering::Release);
 
         if self.mode == AndroidInferenceMode::Test {
+            if let Some(bridge) = self.routed_tools.as_ref() {
+                if let Some(script) = input.prompt.strip_prefix("[[tool:") {
+                    if let Some((name, rest)) = script.split_once("]]") {
+                        let args = rest.trim();
+                        let args = if args.is_empty() {
+                            json!({})
+                        } else {
+                            serde_json::from_str(args).map_err(|_| {
+                                ProviderFailure::new("test routed tool arguments are invalid JSON")
+                            })?
+                        };
+                        let result = bridge
+                            .call_tool(name.trim(), args, "test-tool-call-1")
+                            .map_err(ProviderFailure::new)?;
+                        let text = format!("tool_result:{}", result);
+                        on_chunk(&text).map_err(ProviderFailure::new)?;
+                        return Ok(StreamGeneration {
+                            first_token_delay_ms: 1,
+                            chunks: vec![text],
+                            finish_reason: "stop".into(),
+                        });
+                    }
+                }
+            }
             let text = "自动化测试状态正常。";
             on_chunk(text).map_err(ProviderFailure::new)?;
             return Ok(StreamGeneration {
@@ -159,130 +203,192 @@ impl AndroidHostInferenceProvider {
             .timeout_read(Duration::from_secs(180))
             .timeout_write(Duration::from_secs(30))
             .build();
-        let started = Instant::now();
-        let response = agent
-            .post(&endpoint)
-            .set("Accept", "text/event-stream")
-            .set("Authorization", &format!("Bearer {token}"))
-            .send_json(json!({
-                "model": model,
-                "input": input.prompt,
-                "stream": true,
-            }));
-
-        let response = match response {
-            Ok(response) => response,
-            Err(ureq::Error::Status(status, response)) => {
-                let retry_after_ms = response
-                    .header("Retry-After")
-                    .and_then(parse_retry_after_ms);
-                let message = if status == 429 || status >= 500 {
-                    format!("provider overloaded http_{status}")
-                } else {
-                    format!("provider_http_{status}")
-                };
-                return Err(ProviderFailure {
-                    message,
-                    retry_after_ms,
-                    first_token_stall: false,
-                    stream_output_produced: false,
-                });
-            }
-            Err(ureq::Error::Transport(error)) => {
-                return Err(ProviderFailure {
-                    message: format!("network error: {}", safe_transport_kind(&error)),
-                    retry_after_ms: None,
-                    first_token_stall: false,
-                    stream_output_produced: false,
-                });
-            }
+        let tool_definitions = match self.routed_tools.as_ref() {
+            Some(bridge) => bridge.list_tools().map_err(ProviderFailure::new)?,
+            None => Vec::new(),
         };
-
-        let mut reader = BufReader::new(response.into_reader());
-        let mut line = String::new();
-        let mut chunks = Vec::new();
+        let started = Instant::now();
+        let mut all_chunks = Vec::new();
         let mut first_token_delay_ms = None;
-        let mut completed = false;
+        let mut previous_response_id: Option<String> = None;
+        let mut next_input = Value::String(input.prompt.clone());
 
-        loop {
+        for _tool_step in 0..8 {
             if self.cancelled.load(Ordering::Acquire) {
                 return Err(ProviderFailure {
                     message: "cancelled".into(),
                     retry_after_ms: None,
                     first_token_stall: false,
-                    stream_output_produced: !chunks.is_empty(),
+                    stream_output_produced: !all_chunks.is_empty(),
                 });
             }
-            line.clear();
-            let bytes = reader.read_line(&mut line).map_err(|_| ProviderFailure {
-                message: "network error: stream read failed".into(),
-                retry_after_ms: None,
-                first_token_stall: false,
-                stream_output_produced: !chunks.is_empty(),
-            })?;
-            if bytes == 0 {
-                break;
+            let mut body = Map::new();
+            body.insert("model".into(), Value::String(model.to_string()));
+            body.insert("input".into(), next_input);
+            body.insert("stream".into(), Value::Bool(true));
+            if !tool_definitions.is_empty() {
+                body.insert("tools".into(), Value::Array(tool_definitions.clone()));
             }
-            let trimmed = line.trim_end_matches(['\r', '\n']);
-            let Some(data) = trimmed.strip_prefix("data:") else {
-                continue;
-            };
-            let data = data.trim();
-            if data.is_empty() {
-                continue;
+            if let Some(previous) = previous_response_id.as_ref() {
+                body.insert("previous_response_id".into(), Value::String(previous.clone()));
             }
-            match parse_sse_data(data) {
-                Ok(ProviderSseEvent::Delta(delta)) => {
-                    if delta.is_empty() {
-                        continue;
-                    }
-                    if first_token_delay_ms.is_none() {
-                        first_token_delay_ms =
-                            Some(started.elapsed().as_millis().min(u128::from(u64::MAX)) as u64);
-                    }
-                    on_chunk(&delta).map_err(|message| ProviderFailure {
+            let response = agent
+                .post(&endpoint)
+                .set("Accept", "text/event-stream")
+                .set("Authorization", &format!("Bearer {token}"))
+                .send_json(Value::Object(body));
+
+            let response = match response {
+                Ok(response) => response,
+                Err(ureq::Error::Status(status, response)) => {
+                    let retry_after_ms = response
+                        .header("Retry-After")
+                        .and_then(parse_retry_after_ms);
+                    let message = if status == 429 || status >= 500 {
+                        format!("provider overloaded http_{status}")
+                    } else {
+                        format!("provider_http_{status}")
+                    };
+                    return Err(ProviderFailure {
                         message,
+                        retry_after_ms,
+                        first_token_stall: false,
+                        stream_output_produced: !all_chunks.is_empty(),
+                    });
+                }
+                Err(ureq::Error::Transport(error)) => {
+                    return Err(ProviderFailure {
+                        message: format!("network error: {}", safe_transport_kind(&error)),
                         retry_after_ms: None,
                         first_token_stall: false,
-                        stream_output_produced: !chunks.is_empty(),
-                    })?;
-                    chunks.push(delta);
+                        stream_output_produced: !all_chunks.is_empty(),
+                    });
                 }
-                Ok(ProviderSseEvent::Completed) => {
-                    completed = true;
+            };
+
+            let mut reader = BufReader::new(response.into_reader());
+            let mut line = String::new();
+            let mut completed = false;
+            let mut response_id = previous_response_id.clone();
+            let mut tool_calls = Vec::new();
+
+            loop {
+                if self.cancelled.load(Ordering::Acquire) {
+                    return Err(ProviderFailure {
+                        message: "cancelled".into(),
+                        retry_after_ms: None,
+                        first_token_stall: false,
+                        stream_output_produced: !all_chunks.is_empty(),
+                    });
+                }
+                line.clear();
+                let bytes = reader.read_line(&mut line).map_err(|_| ProviderFailure {
+                    message: "network error: stream read failed".into(),
+                    retry_after_ms: None,
+                    first_token_stall: false,
+                    stream_output_produced: !all_chunks.is_empty(),
+                })?;
+                if bytes == 0 {
                     break;
                 }
-                Ok(ProviderSseEvent::Failed(message)) => {
-                    return Err(ProviderFailure {
-                        message,
-                        retry_after_ms: None,
-                        first_token_stall: false,
-                        stream_output_produced: !chunks.is_empty(),
-                    });
+                let trimmed = line.trim_end_matches(['\r', '\n']);
+                let Some(data) = trimmed.strip_prefix("data:") else {
+                    continue;
+                };
+                let data = data.trim();
+                if data.is_empty() {
+                    continue;
                 }
-                Ok(ProviderSseEvent::Ignore) => {}
-                Err(message) => {
-                    return Err(ProviderFailure {
-                        message,
-                        retry_after_ms: None,
-                        first_token_stall: false,
-                        stream_output_produced: !chunks.is_empty(),
-                    });
+                match parse_sse_data(data) {
+                    Ok(ProviderSseEvent::Delta(delta)) => {
+                        if delta.is_empty() {
+                            continue;
+                        }
+                        if first_token_delay_ms.is_none() {
+                            first_token_delay_ms = Some(
+                                started.elapsed().as_millis().min(u128::from(u64::MAX)) as u64
+                            );
+                        }
+                        on_chunk(&delta).map_err(|message| ProviderFailure {
+                            message,
+                            retry_after_ms: None,
+                            first_token_stall: false,
+                            stream_output_produced: !all_chunks.is_empty(),
+                        })?;
+                        all_chunks.push(delta);
+                    }
+                    Ok(ProviderSseEvent::ResponseId(id)) => response_id = Some(id),
+                    Ok(ProviderSseEvent::ToolCall { call_id, name, arguments }) => {
+                        tool_calls.push((call_id, name, arguments));
+                    }
+                    Ok(ProviderSseEvent::Completed) => {
+                        completed = true;
+                        break;
+                    }
+                    Ok(ProviderSseEvent::Failed(message)) => {
+                        return Err(ProviderFailure {
+                            message,
+                            retry_after_ms: None,
+                            first_token_stall: false,
+                            stream_output_produced: !all_chunks.is_empty(),
+                        });
+                    }
+                    Ok(ProviderSseEvent::Ignore) => {}
+                    Err(message) => {
+                        return Err(ProviderFailure {
+                            message,
+                            retry_after_ms: None,
+                            first_token_stall: false,
+                            stream_output_produced: !all_chunks.is_empty(),
+                        });
+                    }
                 }
             }
+
+            if !completed && all_chunks.is_empty() && tool_calls.is_empty() {
+                return Err(ProviderFailure::new(
+                    "network error: provider stream closed before output",
+                ));
+            }
+            if tool_calls.is_empty() {
+                return Ok(StreamGeneration {
+                    first_token_delay_ms: first_token_delay_ms.unwrap_or_else(|| {
+                        started.elapsed().as_millis().min(u128::from(u64::MAX)) as u64
+                    }),
+                    chunks: all_chunks,
+                    finish_reason: if completed { "stop" } else { "eof" }.into(),
+                });
+            }
+            let bridge = self.routed_tools.as_ref().ok_or_else(|| {
+                ProviderFailure::new("provider requested a tool but no routed tool bridge is bound")
+            })?;
+            let mut outputs = Vec::with_capacity(tool_calls.len());
+            for (call_id, name, arguments) in tool_calls {
+                if self.cancelled.load(Ordering::Acquire) {
+                    return Err(ProviderFailure::new("cancelled"));
+                }
+                let result = bridge
+                    .call_tool(&name, arguments, &call_id)
+                    .map_err(ProviderFailure::new)?;
+                outputs.push(json!({
+                    "type":"function_call_output",
+                    "call_id":call_id,
+                    "output": if result.is_string() {
+                        result.as_str().unwrap_or_default().to_string()
+                    } else {
+                        result.to_string()
+                    }
+                }));
+            }
+            previous_response_id = response_id.ok_or_else(|| {
+                ProviderFailure::new("provider tool call response omitted response identity")
+            })?;
+            next_input = Value::Array(outputs);
         }
 
-        if !completed && chunks.is_empty() {
-            return Err(ProviderFailure::new(
-                "network error: provider stream closed before output",
-            ));
-        }
-        Ok(StreamGeneration {
-            first_token_delay_ms: first_token_delay_ms
-                .unwrap_or_else(|| started.elapsed().as_millis().min(u128::from(u64::MAX)) as u64),
-            chunks,
-            finish_reason: if completed { "stop" } else { "eof" }.into(),
-        })
+        Err(ProviderFailure::new(
+            "provider exceeded routed tool-call step limit",
+        ))
     }
 }
 
@@ -341,6 +447,39 @@ fn parse_sse_data(data: &str) -> Result<ProviderSseEvent, String> {
         serde_json::from_str(data).map_err(|_| "provider stream returned invalid JSON".to_string())?;
     let event_type = value.get("type").and_then(Value::as_str).unwrap_or_default();
     match event_type {
+        "response.created" | "response.in_progress" => Ok(value
+            .pointer("/response/id")
+            .and_then(Value::as_str)
+            .map(|id| ProviderSseEvent::ResponseId(id.to_string()))
+            .unwrap_or(ProviderSseEvent::Ignore)),
+        "response.output_item.done" => {
+            let item = value.get("item").unwrap_or(&Value::Null);
+            if item.get("type").and_then(Value::as_str) == Some("function_call") {
+                let call_id = item
+                    .get("call_id")
+                    .and_then(Value::as_str)
+                    .filter(|value| !value.trim().is_empty())
+                    .ok_or_else(|| "provider tool call omitted call_id".to_string())?;
+                let name = item
+                    .get("name")
+                    .and_then(Value::as_str)
+                    .filter(|value| !value.trim().is_empty())
+                    .ok_or_else(|| "provider tool call omitted name".to_string())?;
+                let raw = item
+                    .get("arguments")
+                    .and_then(Value::as_str)
+                    .unwrap_or("{}");
+                let arguments = serde_json::from_str(raw)
+                    .map_err(|_| "provider tool call arguments were invalid JSON".to_string())?;
+                Ok(ProviderSseEvent::ToolCall {
+                    call_id: call_id.to_string(),
+                    name: name.to_string(),
+                    arguments,
+                })
+            } else {
+                Ok(ProviderSseEvent::Ignore)
+            }
+        }
         "response.output_text.delta" => Ok(ProviderSseEvent::Delta(
             value
                 .get("delta")
@@ -348,7 +487,14 @@ fn parse_sse_data(data: &str) -> Result<ProviderSseEvent, String> {
                 .unwrap_or_default()
                 .to_string(),
         )),
-        "response.completed" => Ok(ProviderSseEvent::Completed),
+        "response.completed" => {
+            if let Some(id) = value.pointer("/response/id").and_then(Value::as_str) {
+                if !id.trim().is_empty() {
+                    return Ok(ProviderSseEvent::ResponseId(id.to_string()));
+                }
+            }
+            Ok(ProviderSseEvent::Completed)
+        },
         "response.failed" | "response.incomplete" => {
             let message = value
                 .pointer("/response/error/message")
@@ -409,6 +555,48 @@ mod tests {
         .unwrap_err()
         .message
         .contains("cancelled"));
+    }
+
+    struct EchoTools;
+
+    impl AndroidRoutedToolBridge for EchoTools {
+        fn list_tools(&self) -> Result<Vec<Value>, String> {
+            Ok(vec![json!({
+                "type":"function",
+                "name":"Echo",
+                "description":"Echo a value",
+                "parameters":{"type":"object","properties":{"value":{"type":"string"}}}
+            })])
+        }
+
+        fn call_tool(&self, name: &str, args: Value, tool_call_id: &str) -> Result<Value, String> {
+            if name != "Echo" || tool_call_id.trim().is_empty() {
+                return Err("unexpected test tool".into());
+            }
+            Ok(json!({"echo":args.get("value").cloned().unwrap_or(Value::Null)}))
+        }
+    }
+
+    #[test]
+    fn test_routed_provider_calls_tools_and_feeds_results_back_into_turn_output() {
+        let mut provider = AndroidHostInferenceProvider::new(AndroidInferenceMode::Test)
+            .with_routed_tools(Arc::new(EchoTools));
+        let mut live = String::new();
+        let output = provider
+            .start_stream_with_sink(
+                &StreamAttemptInput {
+                    prompt: "[[tool:Echo]] {\"value\":\"ok\"}".into(),
+                    ..input()
+                },
+                1,
+                &mut |delta| {
+                    live.push_str(delta);
+                    Ok(())
+                },
+            )
+            .unwrap();
+        assert!(output.chunks.concat().contains("\"echo\":\"ok\""));
+        assert_eq!(live, output.chunks.concat());
     }
 
     #[test]
