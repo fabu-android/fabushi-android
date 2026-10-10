@@ -710,13 +710,19 @@ impl AndroidJsonHost {
         let (actor_id, mutation) = self.current_messaging_identity()?;
         let result = self
             .messaging
+            .lock()
+            .map_err(|_| "canonical Android messaging owner lock poisoned".to_string())?
             .execute(params, &actor_id, i64::try_from(now_ms()).unwrap_or(i64::MAX))?;
         Ok(with_account_session_mutation(result, mutation))
     }
 
     fn messaging_blob_read(&mut self, params: &Value) -> Result<Value, String> {
         let (actor_id, mutation) = self.current_messaging_identity()?;
-        let result = self.messaging.read_blob_range(params, &actor_id)?;
+        let result = self
+            .messaging
+            .lock()
+            .map_err(|_| "canonical Android messaging owner lock poisoned".to_string())?
+            .read_blob_range(params, &actor_id)?;
         Ok(with_account_session_mutation(result, mutation))
     }
 
@@ -2144,7 +2150,13 @@ impl AndroidJsonHost {
 
         match kind {
             "bot.list" => {
-                let bots = self.agents.list().into_iter().map(|agent| agent.as_json()).collect::<Vec<_>>();
+                let bots = self.agents
+                    .lock()
+                    .map_err(|_| "canonical Android Agent roster lock poisoned".to_string())?
+                    .list()
+                    .into_iter()
+                    .map(|agent| agent.as_json())
+                    .collect::<Vec<_>>();
                 self.events.push_back(json!({
                     "type":"bot.listed",
                     "operationId":operation_id,
@@ -2156,7 +2168,11 @@ impl AndroidJsonHost {
             "bot.create" => {
                 let name = required_string(&command, "name")?;
                 let description = command.get("description").and_then(Value::as_str).unwrap_or("");
-                let agent = self.agents.create(name, description).map_err(|error| error.to_string())?;
+                let agent = self.agents
+                    .lock()
+                    .map_err(|_| "canonical Android Agent roster lock poisoned".to_string())?
+                    .create(name, description)
+                    .map_err(|error| error.to_string())?;
                 self.events.push_back(json!({
                     "type":"bot.created",
                     "operationId":operation_id,
@@ -2377,7 +2393,10 @@ impl AndroidJsonHost {
             .map_err(|_| "turn journal lock poisoned".to_string())?
             .begin(request_id, operation_id, &account_fence, now_ms())?;
 
-        let profile = self.agents.get(&agent_id);
+        let profile = self.agents
+            .lock()
+            .map_err(|_| "canonical Android Agent roster lock poisoned".to_string())?
+            .get(&agent_id);
         let profile_revision = profile.as_ref().map(|profile| {
             crate::sha256::sha256_hex(
                 format!(
