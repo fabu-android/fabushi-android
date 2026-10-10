@@ -91,12 +91,12 @@ impl<T: RemoteExecutionTransport> AuthenticatedRemoteHostRunner<T> {
         }
     }
 
-    pub fn execute_authorized(
+    pub fn prepare_authorized(
         &mut self,
         context: &RemoteExecutionContext,
         request: &ExecutionRequest,
         now_ms: u64,
-    ) -> Result<ExecutionResult, ExecutionError> {
+    ) -> Result<(), ExecutionError> {
         request.validate()?;
         context.validate()?;
         if context.operation_id != request.operation_id {
@@ -117,26 +117,16 @@ impl<T: RemoteExecutionTransport> AuthenticatedRemoteHostRunner<T> {
                     "remote operation identity conflicts with durable journal".into(),
                 ));
             }
-            return match existing.state {
-                RemoteExecutionState::Completed => Ok(ExecutionResult {
-                    operation_id: existing.operation_id.clone(),
-                    output_json: existing.terminal_output_json.clone().unwrap_or_default(),
-                }),
+            return Err(ExecutionError::Transport(match existing.state {
+                RemoteExecutionState::Pending => "remote_operation_already_prepared",
+                RemoteExecutionState::Completed => "remote_operation_already_completed",
                 RemoteExecutionState::OutcomeUnknown
                 | RemoteExecutionState::Sent
-                | RemoteExecutionState::Acked => Err(ExecutionError::Transport(
-                    "remote_outcome_unknown_reconcile_required".into(),
-                )),
-                RemoteExecutionState::Rejected => Err(ExecutionError::Transport(
-                    "remote_execution_rejected".into(),
-                )),
-                RemoteExecutionState::Cancelled => Err(ExecutionError::Transport(
-                    "remote_execution_cancelled".into(),
-                )),
-                RemoteExecutionState::Pending => Err(ExecutionError::Transport(
-                    "remote_pending_dispatch_requires_original_owner".into(),
-                )),
-            };
+                | RemoteExecutionState::Acked => "remote_outcome_unknown_reconcile_required",
+                RemoteExecutionState::Rejected => "remote_execution_rejected",
+                RemoteExecutionState::Cancelled => "remote_execution_cancelled",
+            }
+            .into()));
         }
 
         self.journal
@@ -154,7 +144,72 @@ impl<T: RemoteExecutionTransport> AuthenticatedRemoteHostRunner<T> {
                 remote_ack_id: None,
                 terminal_output_json: None,
             })
-            .map_err(ExecutionError::Transport)?;
+            .map_err(ExecutionError::Transport)
+    }
+
+    pub fn cancel_prepared_authorized(
+        &mut self,
+        context: &RemoteExecutionContext,
+        now_ms: u64,
+    ) -> Result<(), ExecutionError> {
+        context.validate()?;
+        let record = self
+            .journal
+            .record(&context.operation_id)
+            .cloned()
+            .ok_or_else(|| ExecutionError::InvalidRequest("remote operation is unknown".into()))?;
+        if record.request_id != context.request_id
+            || record.account_fence != context.account_fence
+            || record.account_epoch != context.account_epoch
+            || record.permission_grant_id != context.permission_grant_id
+            || record.device_id != context.device_id
+        {
+            return Err(ExecutionError::InvalidRequest(
+                "remote prepared operation identity conflicts with durable journal".into(),
+            ));
+        }
+        self.journal
+            .cancel_before_dispatch(&context.operation_id, now_ms)
+            .map_err(ExecutionError::Transport)
+    }
+
+    pub fn dispatch_prepared_authorized(
+        &mut self,
+        context: &RemoteExecutionContext,
+        request: &ExecutionRequest,
+        now_ms: u64,
+    ) -> Result<ExecutionResult, ExecutionError> {
+        request.validate()?;
+        context.validate()?;
+        if context.operation_id != request.operation_id {
+            return Err(ExecutionError::InvalidRequest(
+                "remote authorization operation does not match request".into(),
+            ));
+        }
+        let record = self
+            .journal
+            .record(&request.operation_id)
+            .cloned()
+            .ok_or_else(|| ExecutionError::InvalidRequest("remote operation was not prepared".into()))?;
+        if record.request_id != context.request_id
+            || record.capability_id != request.capability_id
+            || record.account_fence != context.account_fence
+            || record.account_epoch != context.account_epoch
+            || record.permission_grant_id != context.permission_grant_id
+            || record.device_id != context.device_id
+        {
+            return Err(ExecutionError::InvalidRequest(
+                "remote prepared dispatch identity conflicts with durable journal".into(),
+            ));
+        }
+        if record.state != RemoteExecutionState::Pending {
+            return Err(ExecutionError::Transport(
+                "remote prepared dispatch is no longer pending".into(),
+            ));
+        }
+
+        // Persist the maybe-sent boundary before crossing the Remote transport. A crash before
+        // this point reopens as Cancelled; a crash after it reopens as OutcomeUnknown.
         self.journal
             .mark_sent(
                 &request.operation_id,
@@ -213,6 +268,58 @@ impl<T: RemoteExecutionTransport> AuthenticatedRemoteHostRunner<T> {
                 )))
             }
         }
+    }
+
+    pub fn execute_authorized(
+        &mut self,
+        context: &RemoteExecutionContext,
+        request: &ExecutionRequest,
+        now_ms: u64,
+    ) -> Result<ExecutionResult, ExecutionError> {
+        request.validate()?;
+        context.validate()?;
+        if context.operation_id != request.operation_id {
+            return Err(ExecutionError::InvalidRequest(
+                "remote authorization operation does not match request".into(),
+            ));
+        }
+
+        if let Some(existing) = self.journal.record(&request.operation_id) {
+            if existing.request_id != context.request_id
+                || existing.capability_id != request.capability_id
+                || existing.account_fence != context.account_fence
+                || existing.account_epoch != context.account_epoch
+                || existing.permission_grant_id != context.permission_grant_id
+                || existing.device_id != context.device_id
+            {
+                return Err(ExecutionError::InvalidRequest(
+                    "remote operation identity conflicts with durable journal".into(),
+                ));
+            }
+            return match existing.state {
+                RemoteExecutionState::Completed => Ok(ExecutionResult {
+                    operation_id: existing.operation_id.clone(),
+                    output_json: existing.terminal_output_json.clone().unwrap_or_default(),
+                }),
+                RemoteExecutionState::OutcomeUnknown
+                | RemoteExecutionState::Sent
+                | RemoteExecutionState::Acked => Err(ExecutionError::Transport(
+                    "remote_outcome_unknown_reconcile_required".into(),
+                )),
+                RemoteExecutionState::Rejected => Err(ExecutionError::Transport(
+                    "remote_execution_rejected".into(),
+                )),
+                RemoteExecutionState::Cancelled => Err(ExecutionError::Transport(
+                    "remote_execution_cancelled".into(),
+                )),
+                RemoteExecutionState::Pending => Err(ExecutionError::Transport(
+                    "remote_pending_dispatch_requires_original_owner".into(),
+                )),
+            };
+        }
+
+        self.prepare_authorized(context, request, now_ms)?;
+        self.dispatch_prepared_authorized(context, request, now_ms)
     }
 
     pub fn reconcile_authorized(
@@ -625,6 +732,94 @@ mod tests {
             composition.remote().journal().record("remote-unknown").unwrap().state,
             RemoteExecutionState::Completed
         );
+    }
+
+    #[test]
+    fn consumed_grant_before_dispatch_process_death_stays_never_sent() {
+        use crate::capability_broker::CapabilityBroker;
+        use serde_json::json;
+
+        let root = tempfile::tempdir().unwrap();
+        let journal_path = root.path().join("remote.json");
+        let broker_path = root.path().join("broker.json");
+        let journal = RemoteExecutionJournal::open(&journal_path, 1).unwrap();
+        let mut remote =
+            AuthenticatedRemoteHostRunner::new(RecordingRemoteTransport::default(), journal);
+        let ctx = context("prepared-crash");
+        let req = request("prepared-crash");
+
+        remote.prepare_authorized(&ctx, &req, 2).unwrap();
+        assert_eq!(
+            remote.journal().record("prepared-crash").unwrap().state,
+            RemoteExecutionState::Pending
+        );
+
+        let mut broker = CapabilityBroker::open(&broker_path, 2).unwrap();
+        broker
+            .request_remote_approval(
+                &ctx.permission_grant_id,
+                &ctx.request_id,
+                &ctx.operation_id,
+                &req.capability_id,
+                json!({"deviceId":ctx.device_id.clone()}),
+                &ctx.account_fence,
+                ctx.account_epoch,
+                &ctx.device_id,
+                3,
+            )
+            .unwrap();
+        broker
+            .resolve_approval(&ctx.permission_grant_id, true, &ctx.account_fence, 4)
+            .unwrap();
+        broker
+            .consume_remote_approval_for_dispatch(
+                &ctx.permission_grant_id,
+                &ctx.operation_id,
+                &ctx.request_id,
+                &req.capability_id,
+                &ctx.account_fence,
+                ctx.account_epoch,
+                &ctx.device_id,
+                5,
+            )
+            .unwrap();
+
+        drop(remote);
+        drop(broker);
+
+        let reopened = RemoteExecutionJournal::open(&journal_path, 99).unwrap();
+        assert_eq!(
+            reopened.record("prepared-crash").unwrap().state,
+            RemoteExecutionState::Cancelled,
+            "process death after grant consume but before mark_sent must stay never-sent",
+        );
+        let reopened_broker = CapabilityBroker::open(&broker_path, 99).unwrap();
+        assert_eq!(
+            reopened_broker.approval_state(&ctx.permission_grant_id),
+            Some("consumed"),
+            "one-time approval remains consumed while unsent work is terminally cancelled",
+        );
+    }
+
+    #[test]
+    fn prepared_remote_dispatch_can_be_cancelled_before_side_effect() {
+        let root = tempfile::tempdir().unwrap();
+        let journal =
+            RemoteExecutionJournal::open(root.path().join("remote.json"), 1).unwrap();
+        let mut remote =
+            AuthenticatedRemoteHostRunner::new(RecordingRemoteTransport::default(), journal);
+        let ctx = context("prepared-cancel");
+        let req = request("prepared-cancel");
+
+        remote.prepare_authorized(&ctx, &req, 2).unwrap();
+        remote.cancel_prepared_authorized(&ctx, 3).unwrap();
+        assert_eq!(
+            remote.journal().record("prepared-cancel").unwrap().state,
+            RemoteExecutionState::Cancelled
+        );
+        assert!(remote
+            .dispatch_prepared_authorized(&ctx, &req, 4)
+            .is_err());
     }
 
     #[test]
