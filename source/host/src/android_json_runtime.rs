@@ -2419,7 +2419,6 @@ impl AndroidJsonHost {
             provider_id: "android-host-inference".into(),
             model_id: model.clone(),
             tool_names: vec![
-                crate::runner::TASK_TOOL_NAME.into(),
                 crate::runner::CHECK_SUBAGENT_TOOL_NAME.into(),
                 crate::runner::MESSAGE_SUBAGENT_TOOL_NAME.into(),
                 crate::runner::STOP_SUBAGENT_TOOL_NAME.into(),
@@ -5252,7 +5251,17 @@ export function apply(ctx) {
         let frozen = records[0].frozen_turn.as_ref().expect("frozen child turn");
         assert_eq!(frozen.model_id, "deepseek-chat");
         assert_eq!(frozen.allowed_subagent_types, vec!["general-purpose"]);
-        assert!(frozen.tool_names.iter().any(|name| name == crate::runner::TASK_TOOL_NAME));
+        assert!(
+            !frozen.tool_names.iter().any(|name| name == crate::runner::TASK_TOOL_NAME),
+            "Task is a parent-only launcher and must not be frozen as a child capability"
+        );
+        for expected in [
+            crate::runner::CHECK_SUBAGENT_TOOL_NAME,
+            crate::runner::MESSAGE_SUBAGENT_TOOL_NAME,
+            crate::runner::STOP_SUBAGENT_TOOL_NAME,
+        ] {
+            assert!(frozen.tool_names.iter().any(|name| name == expected));
+        }
         assert_eq!(
             frozen.summarization_binding_id,
             "android-host-inference:same-provider"
