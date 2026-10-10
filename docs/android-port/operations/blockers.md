@@ -23,3 +23,13 @@ Current exact evidence at Android HEAD 140a971b7bb7cc32ed657b868a1c42fad6da288a:
 - Gmail thread 1a1218d568460e79 already notified 1315518325@qq.com; as of this update it has no reply confirming configuration. Do not send a duplicate notice.
 
 This blocks only protected authenticated emulator/device journeys. It does not permit weakening package, architecture, source-closure, Rust/Kotlin, release-security, or unauthenticated gates; continue all independent work.
+
+
+## RELEASE-SIGNING-001 — GitHub release signing secrets unavailable
+
+- Status: **blocked / user-action-required**.
+- Current exact-head observation: Android Parity Full CI run `38051418454`, job `114211145593`, on `a82bba3cab2d234391f4f1f6ed5ec707a0402cb3` stopped at mandatory release signing preparation after the arm64-v8a/x86_64 Rust/JNI release builds completed.
+- Missing protected Actions secrets: `ANDROID_RELEASE_KEYSTORE_BASE64`, `ANDROID_RELEASE_KEYSTORE_PASSWORD`, `ANDROID_RELEASE_KEY_ALIAS`, and `ANDROID_RELEASE_KEY_PASSWORD`.
+- Product rule: do not weaken the release gate, substitute a CI test key, or allow unsigned/public `githubRelease` artifacts to count as production acceptance.
+- Notification: the same blocker was already emailed to `1315518325@qq.com` in Gmail thread `1a124e8a981230ff`; do not send duplicate mail while it remains unresolved.
+- Parallel progress: source/responsibility closure, Rust/architecture work, and other non-signing tasks remain ready and must continue.

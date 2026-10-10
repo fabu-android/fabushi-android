@@ -5465,6 +5465,101 @@
       "artifact": null,
       "verification_status": "not-verified",
       "notes": "Responsibility intentionally remains mapped/not-verified. Message and routine provider subresponsibilities have same-SHA compile/unit evidence; files/media and links are materially incomplete, so no aggregate verification upgrade is claimed."
+    },
+    {
+      "responsibility_id": "COORDINATOR-PRESENTATION-CLIENT-ANDROID-001",
+      "domain": "runtime-bridge",
+      "desktop_sources": [
+        {
+          "path": "frontend/src/production/coordinator-client.ts",
+          "blob_sha": "f120b9f600861560409d9a9cac6487cb5ec79e63",
+          "symbols": [
+            "createCoordinatorClient",
+            "ProductionCoordinatorClient",
+            "CoordinatorCallError",
+            "COORDINATOR_PROTOCOL_VERSION",
+            "COORDINATOR_TRANSPORT_STATE_FAMILY"
+          ]
+        },
+        {
+          "path": "frontend/src/production/ProductionRenderer.tsx",
+          "blob_sha": "af8a83a8dd7cf1444474889ce3e64fe796a7d458",
+          "symbols": [
+            "callCoordinatorWithAbort",
+            "ProductionRenderer createCoordinatorClient composition"
+          ]
+        },
+        {
+          "path": "source/shared/rpc/coordinator.ts",
+          "blob_sha": "72b5adc91432fc208731cee9b11a2fe1e21ea10d",
+          "symbols": [
+            "COORDINATOR_METHOD_TABLE",
+            "validateCoordinatorReply"
+          ]
+        }
+      ],
+      "source_commit": "3bc92400826cc4ca7ac665b467708e22261edc61",
+      "responsibility": "Provide the shipping presentation-to-Coordinator client boundary: reject malformed/protocol-incompatible transport state, correlate requests, reject duplicate or stale lifecycle state, surface typed failures, reconnect projections without blindly replaying side effects, and dispose presentation transport without taking ownership of canonical run state.",
+      "source_owner": "Desktop production Coordinator client; canonical request/run truth remains Coordinator-owned",
+      "direct_callers": [
+        "frontend/src/production/ProductionRenderer.tsx: ProductionRenderer constructs createCoordinatorClient(coordinatorPort)",
+        "frontend/src/production/ProductionRenderer.tsx: callCoordinatorWithAbort and domain providers call ProductionCoordinatorClient.call/subscribe"
+      ],
+      "downstream_dependencies": [
+        "CoordinatorPortBridge / transferred desktop port",
+        "source/shared/rpc/coordinator.ts reply validation and method table",
+        "Coordinator request registry and event replay",
+        "root resilience connection-state providers",
+        "Agent, conversation, automation, MCP and sharing projections"
+      ],
+      "state_owner": "Android Rust MahayanaCoordinator owns canonical request registry/generation/replay; AndroidCoordinatorRuntime owns only process-local projection subscriptions/event cursor; Compose/ViewModels own no canonical request truth.",
+      "persistent_state": [
+        "Desktop coordinator-client transport state is ephemeral",
+        "Android MahayanaCoordinator persists generation/pending request metadata/replay events in coordinator-state.json",
+        "Android process generation is advanced from process-scoped persistent epoch storage"
+      ],
+      "protocol_wire_contract": [
+        "Desktop MessagePort hello/ready protocol version 1 is an Electron transport mechanism, not a second Android protocol owner",
+        "Android typed port/JNI uses the same Coordinator protocol version through CoordinatorRequest",
+        "request IDs are unique while active and duplicate requests fail closed",
+        "resync requires the current generation and monotonically advances event sequence",
+        "process-death pending requests become outcome-unknown instead of being resent"
+      ],
+      "visible_effect": "Native Android screens call the same Coordinator-owned product runtime through a typed process bridge; reconnect/process recreation restores projections and durable run truth without duplicating user messages, tools, purchases, uploads or workflow side effects.",
+      "failure_behavior": [
+        "closed/missing Android runtime fails visibly rather than falling back to a legacy/web Host path",
+        "unknown Host methods and malformed requests fail closed",
+        "stale generation resync is rejected",
+        "durable terminal-state persistence failure is reported as outcome unknown"
+      ],
+      "cancellation_behavior": "Presentation cancellation stops waiting/UI work only; product cancellation uses typed interrupt/runtime cancellation paths owned below the UI. Closing the final MahayanaHost signals all native runtime calls before destroying the handle.",
+      "retry_semantics": "Android event reception may resync the current generation after transport/read failure; it must not blind-replay side-effecting requests.",
+      "idempotency_semantics": "Rust Coordinator owns active request IDs, rejects duplicates, binds deferred operations to request IDs and durably settles terminal state.",
+      "process_death_recovery": "Persistent Coordinator state advances generation on reopen and materializes previously pending requests as operation.outcome-unknown events for reconciliation.",
+      "account_fencing": "Account/session mutations stay Host/Coordinator-owned; logout retires account-scoped client-side tool relay state and presentation never stores a second account truth.",
+      "security_boundary": "Compose reaches Host only through AndroidCoordinatorPort -> AndroidCoordinatorRuntime -> MahayanaHost -> JNI -> Rust Coordinator. No arbitrary WebView/renderer object receives Host authority.",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "source/android-preload/src/main/kotlin/com/ombhrum/fabushi/androidpreload/runtime/AndroidCoordinatorPort.kt",
+        "source/android-preload/src/main/kotlin/com/ombhrum/fabushi/androidpreload/runtime/AndroidCoordinatorBridge.kt",
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/FabushiApplication.kt",
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/coordinator/AndroidCoordinatorRuntime.kt",
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/core/MahayanaHost.kt",
+        "source/android-host-jni/src/lib.rs",
+        "source/mahayana-agent-coordinator/src/main.rs"
+      ],
+      "android_owner": "Rust MahayanaCoordinator for canonical request/replay state; process-scoped AndroidCoordinatorRuntime/MahayanaHost for Android lifecycle and JNI adaptation",
+      "platform_delta": "Electron transferred MessagePort claim/replace/hello-ready mechanics are replaced by a single in-process typed Android port and one generation-bound JNI Host handle. The user-visible/correctness semantics remain in Rust: request correlation/deduplication, typed failures, generation fencing, replay/resync, cancellation, durable settlement and outcome-unknown recovery.",
+      "implementation_status": "implemented",
+      "production_wiring": "FabushiApplication creates one process-scoped runtime; AndroidCoordinatorPorts resolves AndroidCoordinatorRuntime; AndroidCoordinatorBridge exposes only AndroidCoordinatorPort to presentation; AndroidCoordinatorRuntime delegates to MahayanaHost; MahayanaHost nativeDispatch loads libmahayana_app_host; android-host-jni creates CoordinatorRequest and calls MahayanaCoordinator before Host execution.",
+      "unit_test": "Rust workspace tests cover Coordinator duplicate/settlement/generation/replay and JNI routing; Android CoordinatorArchitectureTest covers persistent process generation and stale resync. These must rerun on the descendant exact HEAD before verification.",
+      "contract_test": "android-host-jni tests cover process-death outcome-unknown, active streaming request settlement/replay, interrupt/cancel and unknown-method fail-closed; architecture gate checks typed bridge/no presentation bypass.",
+      "integration_test": "Current production composition routes Kotlin -> JNI -> Rust Coordinator -> Host; descendant exact-HEAD Actions evidence is required before verification.",
+      "packaged_test": "Open: signed APK/AAB acceptance must prove this same production route after release signing becomes available.",
+      "device_test": "Open: same-head instrumentation/device process-death/restart and user journeys remain required for final product verification.",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Source responsibility is implemented, not verified. The predecessor HEAD a82bba3cab2d234391f4f1f6ed5ec707a0402cb3 had focused Rust tests green, but exact-head policy requires rerunning the descendant commit created by this ledger update before any verified claim."
     }
   ],
   "traceability": {
