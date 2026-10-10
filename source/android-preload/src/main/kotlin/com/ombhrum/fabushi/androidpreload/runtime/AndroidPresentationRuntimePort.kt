@@ -19,6 +19,8 @@ internal interface AndroidPresentationRuntimePort {
 
     fun launchExternalAuth(url: String): Boolean
 
+    fun launchExternalUrl(url: String): Boolean
+
     fun handlePlatformDeepLink(link: AndroidDeepLink): Boolean
 
     fun attachInteractiveActivity(activity: ComponentActivity)
