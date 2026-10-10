@@ -245,6 +245,95 @@ class ComputerRebuildStateOwnerTest {
     }
 
     @Test
+    fun requestIdentityOffsetAndProcessRecoveryNeverReplaySideEffect() {
+        val store = MemoryStore()
+        val owner = ComputerRebuildStateOwner(store, processGeneration = 70)
+        owner.observeAccount(70)
+        val reserved = owner.reserveRequest(70, "request-70")
+        assertTrue(reserved.pending)
+        assertEquals("request-70", reserved.requestId)
+
+        val accepted = owner.acceptRequest(
+            accountEpoch = 70,
+            requestId = "request-70",
+            operationId = "operation-70",
+            kind = ComputerRebuildKind.UPDATE,
+        )
+        assertFalse(accepted.pending)
+        assertTrue(accepted.acknowledged)
+        assertEquals("operation-70", accepted.operationId)
+
+        val offset = owner.recordMigrationOffset(70, "operation-70", "cursor-11")
+        assertEquals("cursor-11", offset.migrationOffsetKey)
+
+        val reopened = ComputerRebuildStateOwner(store, processGeneration = 71)
+        val recovered = reopened.snapshot(70)
+        assertEquals("request-70", recovered.requestId)
+        assertEquals("operation-70", recovered.operationId)
+        assertEquals("cursor-11", recovered.migrationOffsetKey)
+        assertTrue(recovered.outcomeUnknown)
+        assertThrows(IllegalArgumentException::class.java) {
+            reopened.reserveRequest(70, "request-new")
+        }
+
+        val reconciled = reopened.observeMigration(
+            70,
+            "operation-70",
+            ComputerRebuildMigrationPhase.CREATING,
+        )
+        assertFalse(reconciled.outcomeUnknown)
+    }
+
+    @Test
+    fun staleOperationCannotAdvanceMigrationCursorOrSettleRequest() {
+        val owner = ComputerRebuildStateOwner(MemoryStore(), processGeneration = 80)
+        owner.observeAccount(80)
+        owner.reserveRequest(80, "request-80")
+        owner.acceptRequest(80, "request-80", "operation-80", ComputerRebuildKind.RESET)
+
+        val staleOffset = owner.recordMigrationOffset(80, "operation-other", "cursor-stale")
+        assertEquals("", staleOffset.migrationOffsetKey)
+        val staleDone = owner.observeMigration(
+            80,
+            "operation-other",
+            ComputerRebuildMigrationPhase.DONE,
+        )
+        assertEquals("operation-80", staleDone.operationId)
+        assertFalse(staleDone.terminalMigration)
+
+        owner.recordMigrationOffset(80, "operation-80", "cursor-good")
+        val done = owner.observeMigration(80, "operation-80", ComputerRebuildMigrationPhase.DONE)
+        assertEquals("cursor-good", done.migrationOffsetKey)
+        assertTrue(done.terminalMigration)
+        val settled = owner.deactivate(80)
+        assertNull(settled.requestId)
+        assertEquals("", settled.migrationOffsetKey)
+        assertEquals(ComputerRebuildResolution.SETTLED, settled.lastResolution)
+    }
+
+    @Test
+    fun backendRejectionAndUnknownOutcomeRemainDistinctAndAccountFenced() {
+        val rejected = ComputerRebuildStateOwner(MemoryStore())
+        rejected.observeAccount(90)
+        rejected.reserveRequest(90, "request-rejected")
+        val rejectedState = rejected.rejectRequest(90, "request-rejected")
+        assertNull(rejectedState.requestId)
+        assertFalse(rejectedState.outcomeUnknown)
+        assertEquals(ComputerRebuildResolution.FAILED, rejectedState.lastResolution)
+
+        val unknownStore = MemoryStore()
+        val unknown = ComputerRebuildStateOwner(unknownStore)
+        unknown.observeAccount(91)
+        unknown.reserveRequest(91, "request-unknown")
+        val unknownState = unknown.markRequestOutcomeUnknown(91, "request-unknown")
+        assertEquals("request-unknown", unknownState.requestId)
+        assertTrue(unknownState.outcomeUnknown)
+        assertThrows(IllegalArgumentException::class.java) {
+            unknown.markRequestOutcomeUnknown(92, "request-unknown")
+        }
+    }
+
+    @Test
     fun failedMigrationIsTerminalAndDoesNotPretendSuccess() {
         val store = MemoryStore()
         val owner = ComputerRebuildStateOwner(store)

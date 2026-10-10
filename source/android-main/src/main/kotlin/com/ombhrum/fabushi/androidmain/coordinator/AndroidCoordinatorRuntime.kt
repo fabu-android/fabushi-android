@@ -26,6 +26,7 @@ import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
+import java.util.UUID
 
 /**
  * Process-scoped Android owner of the native Mahayana Host.
@@ -68,6 +69,10 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
     private val computerRebuildEventExecutor = Executors.newSingleThreadExecutor { runnable ->
         Thread(runnable, "fabushi-computer-rebuild-events").apply { isDaemon = true }
     }
+    private val computerRebuildMigrationExecutor = Executors.newSingleThreadExecutor { runnable ->
+        Thread(runnable, "fabushi-computer-rebuild-migration").apply { isDaemon = true }
+    }
+    private val computerRebuildMigrationRunning = AtomicBoolean(false)
     private val storagePressureExecutor = Executors.newSingleThreadScheduledExecutor { runnable ->
         Thread(runnable, "fabushi-storage-pressure").apply { isDaemon = true }
     }
@@ -75,6 +80,7 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
     init {
         computerRebuildOwner.observeAccount(accountAccessOwner.currentProjection().accountEpoch)
         startComputerRebuildEventPump()
+        resumeComputerRebuildMigrationIfNeeded()
         runCatching { reconcileAgentRosterMutations() }
         storagePressureExecutor.scheduleWithFixedDelay(
             {
@@ -921,6 +927,67 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
         )
     }
 
+    override fun computerRebuildRequest(
+        preserveData: Boolean,
+        forceRecreate: Boolean,
+    ): JSONObject {
+        val accountEpoch = accountAccessOwner.currentProjection().accountEpoch
+        require(accountEpoch > 0L) { "Computer rebuild requires a settled account epoch" }
+        val requestId = "android-rebuild-$processGeneration-" + UUID.randomUUID().toString()
+        computerRebuildOwner.reserveRequest(accountEpoch, requestId)
+        val reply = try {
+            host.requestComputerRebuild(
+                requestId = requestId,
+                preserveData = preserveData,
+                forceRecreate = forceRecreate,
+            )
+        } catch (error: Throwable) {
+            runCatching { computerRebuildOwner.markRequestOutcomeUnknown(accountEpoch, requestId) }
+            throw error
+        }
+        if (!reply.optBoolean("started", false)) {
+            computerRebuildOwner.rejectRequest(accountEpoch, requestId)
+            return JSONObject(reply.toString())
+                .put("requestId", requestId)
+                .put("accepted", false)
+        }
+        val operationId = reply.optString("operationId").trim()
+        if (operationId.isEmpty()) {
+            computerRebuildOwner.markRequestOutcomeUnknown(accountEpoch, requestId)
+            error("Computer rebuild started without a stable operation identity")
+        }
+        computerRebuildOwner.acceptRequest(
+            accountEpoch = accountEpoch,
+            requestId = requestId,
+            operationId = operationId,
+            kind = if (forceRecreate || !preserveData) {
+                ComputerRebuildKind.RESET
+            } else {
+                ComputerRebuildKind.UPDATE
+            },
+        )
+        resumeComputerRebuildMigrationIfNeeded()
+        return JSONObject(reply.toString())
+            .put("requestId", requestId)
+            .put("accepted", true)
+    }
+
+    override fun computerRebuildStatus(): JSONObject {
+        val accountEpoch = accountAccessOwner.currentProjection().accountEpoch
+        val snapshot = computerRebuildOwner.snapshot(accountEpoch)
+        return JSONObject()
+            .put("accountEpoch", snapshot.accountEpoch)
+            .put("processGeneration", snapshot.processGeneration)
+            .put("requestId", snapshot.requestId ?: JSONObject.NULL)
+            .put("operationId", snapshot.operationId ?: JSONObject.NULL)
+            .put("migrationOffsetKey", snapshot.migrationOffsetKey)
+            .put("pending", snapshot.pending)
+            .put("acknowledged", snapshot.acknowledged)
+            .put("outcomeUnknown", snapshot.outcomeUnknown)
+            .put("kind", snapshot.kind?.name?.lowercase() ?: JSONObject.NULL)
+            .put("lastResolution", snapshot.lastResolution?.name?.lowercase() ?: JSONObject.NULL)
+    }
+
     private fun requireRemoteControlSession(
         deviceId: String,
         sessionId: String,
@@ -1139,8 +1206,80 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
         }
     }
 
+    private fun resumeComputerRebuildMigrationIfNeeded() {
+        val accountEpoch = accountAccessOwner.currentProjection().accountEpoch
+        val snapshot = runCatching { computerRebuildOwner.snapshot(accountEpoch) }.getOrNull() ?: return
+        if (snapshot.operationId == null || snapshot.requestId == null || snapshot.kind == null) return
+        if (!computerRebuildMigrationRunning.compareAndSet(false, true)) return
+        val expectedEpoch = accountEpoch
+        val expectedGeneration = processGeneration
+        computerRebuildMigrationExecutor.execute {
+            try {
+                while (true) {
+                    val currentEpoch = accountAccessOwner.currentProjection().accountEpoch
+                    if (currentEpoch != expectedEpoch) break
+                    val current = runCatching { computerRebuildOwner.snapshot(expectedEpoch) }.getOrNull() ?: break
+                    if (
+                        current.processGeneration != expectedGeneration ||
+                        current.operationId == null ||
+                        current.requestId == null ||
+                        current.kind == null
+                    ) {
+                        break
+                    }
+                    val event = try {
+                        host.watchComputerRebuildOnce(
+                            requestId = current.requestId + "-watch",
+                            fromOffsetKey = current.migrationOffsetKey,
+                        )
+                    } catch (_: Throwable) {
+                        if (accountAccessOwner.currentProjection().accountEpoch != expectedEpoch) break
+                        Thread.sleep(COMPUTER_REBUILD_RECONNECT_MS)
+                        continue
+                    }
+                    if (accountAccessOwner.currentProjection().accountEpoch != expectedEpoch) break
+                    val operationId = event.optString("operationId").trim().takeIf(String::isNotEmpty)
+                    if (operationId != current.operationId) {
+                        // The backend stream is account-wide. Stale/other operation events advance
+                        // no durable cursor for this episode, so a crash cannot skip our own event.
+                        continue
+                    }
+                    val offsetKey = event.optString("offsetKey")
+                    val phase = parseComputerRebuildMigrationPhase(event.optString("phase")) ?: continue
+                    computerRebuildOwner.recordMigrationOffset(expectedEpoch, operationId, offsetKey)
+                    val after = computerRebuildOwner.observeMigration(expectedEpoch, operationId, phase)
+                    if (phase == ComputerRebuildMigrationPhase.DONE && after.terminalMigration) {
+                        computerRebuildOwner.deactivate(expectedEpoch)
+                        break
+                    }
+                    if (phase == ComputerRebuildMigrationPhase.FAILED) break
+                }
+            } finally {
+                computerRebuildMigrationRunning.set(false)
+                val epoch = accountAccessOwner.currentProjection().accountEpoch
+                val pending = runCatching { computerRebuildOwner.snapshot(epoch) }.getOrNull()
+                if (pending?.operationId != null && pending.kind != null) {
+                    resumeComputerRebuildMigrationIfNeeded()
+                }
+            }
+        }
+    }
+
+    private fun parseComputerRebuildMigrationPhase(value: String): ComputerRebuildMigrationPhase? =
+        when (value) {
+            "backing-up" -> ComputerRebuildMigrationPhase.BACKING_UP
+            "creating" -> ComputerRebuildMigrationPhase.CREATING
+            "moving" -> ComputerRebuildMigrationPhase.MOVING
+            "cleaning-up" -> ComputerRebuildMigrationPhase.CLEANING_UP
+            "wiping" -> ComputerRebuildMigrationPhase.WIPING
+            "done" -> ComputerRebuildMigrationPhase.DONE
+            "failed" -> ComputerRebuildMigrationPhase.FAILED
+            else -> null
+        }
+
     companion object {
         private const val STORAGE_PRESSURE_SAMPLE_SECONDS = 60L
+        private const val COMPUTER_REBUILD_RECONNECT_MS = 3_000L
         @Volatile private var instance: AndroidCoordinatorRuntime? = null
 
         fun get(application: Application): AndroidCoordinatorRuntime =

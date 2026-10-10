@@ -132,6 +132,12 @@ interface AndroidCoordinatorPort {
     ): JSONObject = error("remote_computer_signal_acknowledge_not_implemented")
     fun remoteComputerSessionClose(deviceId: String, sessionId: String): JSONObject =
         error("remote_computer_session_close_not_implemented")
+    fun computerRebuildRequest(
+        preserveData: Boolean = true,
+        forceRecreate: Boolean = false,
+    ): JSONObject = error("computer_rebuild_request_not_implemented")
+    fun computerRebuildStatus(): JSONObject =
+        error("computer_rebuild_status_not_implemented")
     fun webAuthnRegisterProvider(): JSONObject
     fun webAuthnUnregisterProvider(params: JSONObject): JSONObject
     fun webAuthnPollRequest(params: JSONObject): JSONObject

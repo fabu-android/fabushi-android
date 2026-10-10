@@ -17,6 +17,8 @@ internal data class ComputerRebuildSnapshot(
     val processGeneration: Long = 0L,
     val kind: ComputerRebuildKind? = null,
     val operationId: String? = null,
+    val requestId: String? = null,
+    val migrationOffsetKey: String = "",
     val source: ComputerRebuildSource? = null,
     val lockBoxId: String? = null,
     val pending: Boolean = false,
@@ -50,6 +52,8 @@ internal class SharedPreferencesComputerRebuildStateStore(context: Context) : Co
                 processGeneration = value.optLong("processGeneration", 0L),
                 kind = value.optString("kind").takeIf(String::isNotBlank)?.let { ComputerRebuildKind.valueOf(it) },
                 operationId = value.optString("operationId").takeIf(String::isNotBlank),
+                requestId = value.optString("requestId").takeIf(String::isNotBlank),
+                migrationOffsetKey = value.optString("migrationOffsetKey"),
                 source = value.optString("source").takeIf(String::isNotBlank)?.let { ComputerRebuildSource.valueOf(it) },
                 lockBoxId = value.optString("lockBoxId").takeIf(String::isNotBlank),
                 pending = value.optBoolean("pending", false),
@@ -83,6 +87,8 @@ internal class SharedPreferencesComputerRebuildStateStore(context: Context) : Co
             .put("processGeneration", snapshot.processGeneration)
             .put("kind", snapshot.kind?.name ?: "")
             .put("operationId", snapshot.operationId ?: "")
+            .put("requestId", snapshot.requestId ?: "")
+            .put("migrationOffsetKey", snapshot.migrationOffsetKey)
             .put("source", snapshot.source?.name ?: "")
             .put("lockBoxId", snapshot.lockBoxId ?: "")
             .put("pending", snapshot.pending)
@@ -139,6 +145,81 @@ internal class ComputerRebuildStateOwner(
     }
 
     @Synchronized
+    fun reserveRequest(accountEpoch: Long, requestId: String): ComputerRebuildSnapshot {
+        requireCurrentAccount(accountEpoch)
+        val normalized = requestId.trim()
+        require(normalized.isNotEmpty() && normalized.length <= 240 && normalized.none(Char::isISOControl)) {
+            "computer rebuild request identity is invalid"
+        }
+        val current = requireSnapshot(accountEpoch)
+        if (current.requestId != null) {
+            require(current.requestId == normalized) { "computer rebuild request already active" }
+            return current
+        }
+        require(current.kind == null && !current.pending && !current.outcomeUnknown) {
+            "computer rebuild episode is not settled"
+        }
+        return persist(
+            current.copy(
+                requestId = normalized,
+                migrationOffsetKey = "",
+                pending = true,
+                acknowledged = false,
+                outcomeUnknown = false,
+                lastResolution = null,
+            ),
+        )
+    }
+
+    @Synchronized
+    fun acceptRequest(
+        accountEpoch: Long,
+        requestId: String,
+        operationId: String,
+        kind: ComputerRebuildKind,
+    ): ComputerRebuildSnapshot {
+        require(kind == ComputerRebuildKind.UPDATE || kind == ComputerRebuildKind.RESET) {
+            "backend request may start only update/reset rebuild"
+        }
+        val current = requireSnapshot(accountEpoch)
+        require(current.requestId == requestId) { "stale computer rebuild request identity" }
+        val normalizedOperation = operationId.trim()
+        require(normalizedOperation.isNotEmpty()) { "computer rebuild backend omitted operation identity" }
+        begin(accountEpoch, kind, normalizedOperation, ComputerRebuildSource.REQUEST)
+        acknowledge(accountEpoch, normalizedOperation)
+        return persist(requireSnapshot(accountEpoch).copy(pending = false, outcomeUnknown = false))
+    }
+
+    @Synchronized
+    fun markRequestOutcomeUnknown(accountEpoch: Long, requestId: String): ComputerRebuildSnapshot {
+        val current = requireSnapshot(accountEpoch)
+        require(current.requestId == requestId) { "stale computer rebuild request identity" }
+        return persist(current.copy(pending = false, outcomeUnknown = true))
+    }
+
+    @Synchronized
+    fun rejectRequest(accountEpoch: Long, requestId: String): ComputerRebuildSnapshot {
+        val current = requireSnapshot(accountEpoch)
+        require(current.requestId == requestId) { "stale computer rebuild request identity" }
+        return clear(current, ComputerRebuildResolution.FAILED)
+    }
+
+    @Synchronized
+    fun recordMigrationOffset(
+        accountEpoch: Long,
+        operationId: String?,
+        offsetKey: String,
+    ): ComputerRebuildSnapshot {
+        val current = requireSnapshot(accountEpoch)
+        require(offsetKey.length <= 4096 && offsetKey.none(Char::isISOControl)) {
+            "computer rebuild migration offset is invalid"
+        }
+        val normalizedOperation = operationId?.trim()?.takeIf(String::isNotEmpty)
+        if (current.operationId != null && current.operationId != normalizedOperation) return current
+        return persist(current.copy(migrationOffsetKey = offsetKey))
+    }
+
+    @Synchronized
     fun begin(
         accountEpoch: Long,
         kind: ComputerRebuildKind,
@@ -165,7 +246,7 @@ internal class ComputerRebuildStateOwner(
                 kind = kind,
                 operationId = when {
                     kind == ComputerRebuildKind.RESET || kind == ComputerRebuildKind.RECOVER -> normalizedOperation
-                    kind == ComputerRebuildKind.UPDATE && source == ComputerRebuildSource.MIGRATION -> normalizedOperation
+                    kind == ComputerRebuildKind.UPDATE && source != ComputerRebuildSource.AUTO -> normalizedOperation
                     else -> null
                 },
                 source = if (kind == ComputerRebuildKind.UPDATE) source else null,
@@ -185,7 +266,7 @@ internal class ComputerRebuildStateOwner(
                 kind = kind,
                 operationId = when {
                     kind == ComputerRebuildKind.RESET || kind == ComputerRebuildKind.RECOVER -> normalizedOperation
-                    kind == ComputerRebuildKind.UPDATE && source == ComputerRebuildSource.MIGRATION -> normalizedOperation
+                    kind == ComputerRebuildKind.UPDATE && source != ComputerRebuildSource.AUTO -> normalizedOperation
                     else -> null
                 },
                 source = if (kind == ComputerRebuildKind.UPDATE) source else null,
@@ -293,8 +374,12 @@ internal class ComputerRebuildStateOwner(
         phase: ComputerRebuildMigrationPhase,
     ): ComputerRebuildSnapshot {
         requireCurrentAccount(accountEpoch)
-        val current = requireSnapshot(accountEpoch)
+        var current = requireSnapshot(accountEpoch)
         val normalized = operationId?.trim()?.takeIf(String::isNotEmpty)
+        if (current.operationId != null && current.operationId != normalized) return current
+        if (current.outcomeUnknown && normalized != null) {
+            current = persist(current.copy(outcomeUnknown = false))
+        }
         if (phase == ComputerRebuildMigrationPhase.FAILED) {
             if (current.kind == null) return current
             if (current.operationId != null && current.operationId != normalized) return current
@@ -361,6 +446,8 @@ internal class ComputerRebuildStateOwner(
         current.copy(
             kind = null,
             operationId = null,
+            requestId = null,
+            migrationOffsetKey = "",
             source = null,
             lockBoxId = null,
             pending = false,
