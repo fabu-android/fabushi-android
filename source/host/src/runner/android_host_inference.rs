@@ -45,7 +45,7 @@ enum ProviderSseEvent {
         name: String,
         arguments: Value,
     },
-    Completed,
+    Completed(Option<String>),
     Failed(String),
     Ignore,
 }
@@ -321,7 +321,10 @@ impl AndroidHostInferenceProvider {
                     Ok(ProviderSseEvent::ToolCall { call_id, name, arguments }) => {
                         tool_calls.push((call_id, name, arguments));
                     }
-                    Ok(ProviderSseEvent::Completed) => {
+                    Ok(ProviderSseEvent::Completed(id)) => {
+                        if let Some(id) = id {
+                            response_id = Some(id);
+                        }
                         completed = true;
                         break;
                     }
@@ -487,14 +490,13 @@ fn parse_sse_data(data: &str) -> Result<ProviderSseEvent, String> {
                 .unwrap_or_default()
                 .to_string(),
         )),
-        "response.completed" => {
-            if let Some(id) = value.pointer("/response/id").and_then(Value::as_str) {
-                if !id.trim().is_empty() {
-                    return Ok(ProviderSseEvent::ResponseId(id.to_string()));
-                }
-            }
-            Ok(ProviderSseEvent::Completed)
-        },
+        "response.completed" => Ok(ProviderSseEvent::Completed(
+            value
+                .pointer("/response/id")
+                .and_then(Value::as_str)
+                .filter(|id| !id.trim().is_empty())
+                .map(str::to_string),
+        )),
         "response.failed" | "response.incomplete" => {
             let message = value
                 .pointer("/response/error/message")
