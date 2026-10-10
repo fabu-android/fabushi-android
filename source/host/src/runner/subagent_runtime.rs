@@ -18,6 +18,19 @@ pub struct SubagentLineage {
     pub parent_agent_tool_call_id: Option<String>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SubagentFrozenTurnConfig {
+    pub provider_id: String,
+    pub model_id: String,
+    #[serde(default)]
+    pub tool_names: Vec<String>,
+    #[serde(default)]
+    pub allowed_subagent_types: Vec<String>,
+    pub privacy_mode: String,
+    pub summarization_binding_id: String,
+}
+
 pub fn compute_subagent_request_id(tool_call_id: &str) -> String {
     let tool_call_id = tool_call_id.trim();
     if tool_call_id.is_empty() {
@@ -86,6 +99,8 @@ pub struct DurableSubagentRecord {
     pub pending_steer: Option<String>,
     pub completion_result: Option<String>,
     pub completion_error: Option<String>,
+    #[serde(default)]
+    pub frozen_turn: Option<SubagentFrozenTurnConfig>,
     #[serde(default)]
     pub snapshot: SubagentSessionSnapshot,
 }
@@ -229,6 +244,7 @@ impl DurableSubagentOwner {
         prompt: &str,
         account_fence: &str,
         quiet_origin: Option<&str>,
+        frozen_turn: SubagentFrozenTurnConfig,
         now_ms: u64,
     ) -> Result<SubagentLaunch, String> {
         let parent_agent_id = required(parent_agent_id, "parentAgentId")?;
@@ -250,7 +266,8 @@ impl DurableSubagentOwner {
                 && existing.subagent_type == subagent_type
                 && existing.prompt == prompt
                 && existing.account_fence == account_fence
-                && existing.lineage == lineage;
+                && existing.lineage == lineage
+                && existing.frozen_turn.as_ref() == Some(&frozen_turn);
             if !same_identity {
                 return Err("duplicate subagent request identity has mismatched frozen launch input".into());
             }
@@ -286,6 +303,7 @@ impl DurableSubagentOwner {
             pending_steer: None,
             completion_result: None,
             completion_error: None,
+            frozen_turn: Some(frozen_turn),
             snapshot: SubagentSessionSnapshot::default(),
         };
         self.state
@@ -748,6 +766,21 @@ mod tests {
         }
     }
 
+    fn frozen_config(model_id: &str) -> SubagentFrozenTurnConfig {
+        SubagentFrozenTurnConfig {
+            provider_id: "android-host-inference".into(),
+            model_id: model_id.into(),
+            tool_names: vec![
+                "CheckSubagent".into(),
+                "MessageSubagent".into(),
+                "StopSubagent".into(),
+            ],
+            allowed_subagent_types: vec!["general-purpose".into()],
+            privacy_mode: "no-storage".into(),
+            summarization_binding_id: "android-host-inference:same-provider".into(),
+        }
+    }
+
     #[test]
     fn stable_identity_duplicate_and_mismatch_fail_closed() {
         let path = root("duplicate");
@@ -755,7 +788,7 @@ mod tests {
         let first = owner
             .launch(
                 "parent", lineage("req"), "box", "general-purpose", "call-1", "work",
-                "acct", None, 11,
+                "acct", None, frozen_config("default"), 11,
             )
             .unwrap();
         assert!(!first.duplicate);
@@ -763,7 +796,7 @@ mod tests {
         let duplicate = owner
             .launch(
                 "parent", lineage("req"), "box", "general-purpose", "call-1", "work",
-                "acct", None, 12,
+                "acct", None, frozen_config("default"), 12,
             )
             .unwrap();
         assert!(duplicate.duplicate);
@@ -771,7 +804,14 @@ mod tests {
         assert!(owner
             .launch(
                 "parent", lineage("req"), "box", "general-purpose", "call-1", "different",
-                "acct", None, 13,
+                "acct", None, frozen_config("default"), 13,
+            )
+            .unwrap_err()
+            .contains("mismatched"));
+        assert!(owner
+            .launch(
+                "parent", lineage("req"), "box", "general-purpose", "call-1", "work",
+                "acct", None, frozen_config("other-model"), 14,
             )
             .unwrap_err()
             .contains("mismatched"));
@@ -785,7 +825,7 @@ mod tests {
         let launch = owner
             .launch(
                 "parent", lineage("req"), "box", "general-purpose", "call-2", "work",
-                "acct", None, 11,
+                "acct", None, frozen_config("default"), 11,
             )
             .unwrap();
         let epoch = owner.process_epoch();
@@ -842,7 +882,7 @@ mod tests {
             id = owner
                 .launch(
                     "parent", lineage("parent-run"), "box", "computer-use", "call-3", "inspect",
-                    "acct-a", None, 11,
+                    "acct-a", None, frozen_config("default"), 11,
                 )
                 .unwrap()
                 .record
@@ -889,7 +929,7 @@ mod tests {
         let a = owner
             .launch(
                 "parent-a", lineage("req-a"), "box-a", "computeruse", "call-a", "inspect",
-                "acct", None, 11,
+                "acct", None, frozen_config("default"), 11,
             )
             .unwrap()
             .record
@@ -897,7 +937,7 @@ mod tests {
         let b = owner
             .launch(
                 "parent-b", lineage("req-b"), "box-b", "general-purpose", "call-b", "work",
-                "acct", None, 12,
+                "acct", None, frozen_config("default"), 12,
             )
             .unwrap()
             .record
