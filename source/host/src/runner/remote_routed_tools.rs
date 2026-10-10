@@ -108,6 +108,9 @@ fn remote_browser_tool_definitions() -> Vec<Value> {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct RemoteDispatchBinding {
     pub(crate) credential_plane: String,
+    pub(crate) credential_id: String,
+    pub(crate) issued_at_ms: u64,
+    pub(crate) expires_at_ms: u64,
     pub(crate) endpoint: String,
     pub(crate) bearer_credential: String,
     pub(crate) device_id: String,
@@ -134,7 +137,11 @@ impl RemoteDispatchBinding {
         if self.account_epoch == 0 {
             return Err("remote binding account epoch must be positive".into());
         }
+        if self.issued_at_ms == 0 || self.expires_at_ms <= self.issued_at_ms {
+            return Err("remote binding credential lifetime is invalid".into());
+        }
         for (label, value) in [
+            ("remote credential", self.credential_id.as_str()),
             ("remote device", self.device_id.as_str()),
             ("remote account fence", self.account_fence.as_str()),
         ] {
@@ -160,6 +167,16 @@ impl RemoteDispatchBinding {
         ];
         if let Some(executor) = self.executors.iter().find(|value| !ALLOWED_EXECUTORS.contains(&value.as_str())) {
             return Err(format!("remote binding executor is unsupported: {executor}"));
+        }
+        Ok(())
+    }
+
+    fn active_at(&self, now_ms: u64) -> Result<(), String> {
+        if now_ms < self.issued_at_ms {
+            return Err("trusted Remote credential is not active yet".into());
+        }
+        if now_ms >= self.expires_at_ms {
+            return Err("trusted Remote credential is expired".into());
         }
         Ok(())
     }
@@ -698,6 +715,7 @@ impl RemoteRoutedTools {
         if current_fence.as_deref() != Some(binding.account_fence.as_str()) {
             return Err("trusted Remote binding is fenced by current account identity".into());
         }
+        binding.active_at(now_ms())?;
         Ok(binding)
     }
 }
@@ -1242,6 +1260,9 @@ mod tests {
     fn binding_rejects_wrong_epoch_and_untrusted_plaintext_endpoint() {
         let invalid_epoch = json!({
             "credentialPlane":"authorized-remote-runner-v1",
+            "credentialId":"runner-credential-1",
+            "issuedAtMs":1,
+            "expiresAtMs":4102444800000,
             "endpoint":"https://remote.example.com",
             "bearerCredential":"long-enough-credential",
             "deviceId":"device-1",
@@ -1253,6 +1274,9 @@ mod tests {
 
         let plaintext = json!({
             "credentialPlane":"authorized-remote-runner-v1",
+            "credentialId":"runner-credential-1",
+            "issuedAtMs":1,
+            "expiresAtMs":4102444800000,
             "endpoint":"http://remote.example.com",
             "bearerCredential":"long-enough-credential",
             "deviceId":"device-1",
@@ -1261,6 +1285,26 @@ mod tests {
             "executors":["shell","read","computer","screenshot","external-shell","external-read"]
         }).to_string();
         assert!(RemoteDispatchBinding::parse(&plaintext).is_err());
+    }
+
+    #[test]
+    fn binding_rejects_expired_or_not_yet_active_credential() {
+        let binding = RemoteDispatchBinding::parse(&json!({
+            "credentialPlane":"authorized-remote-runner-v1",
+            "credentialId":"runner-credential-1",
+            "issuedAtMs":100,
+            "expiresAtMs":200,
+            "endpoint":"https://remote.example.com",
+            "bearerCredential":"long-enough-credential",
+            "deviceId":"device-1",
+            "accountFence":"session:a",
+            "accountEpoch":7,
+            "executors":["computer"]
+        }).to_string()).unwrap();
+        assert!(binding.active_at(99).is_err());
+        assert!(binding.active_at(100).is_ok());
+        assert!(binding.active_at(199).is_ok());
+        assert!(binding.active_at(200).is_err());
     }
 
     #[test]
@@ -1273,6 +1317,9 @@ mod tests {
         ] {
             let raw = json!({
                 "credentialPlane":credential_plane,
+                "credentialId":"runner-credential-1",
+                "issuedAtMs":1,
+                "expiresAtMs":4102444800000,
                 "endpoint":"https://remote.example.com",
                 "bearerCredential":"long-enough-credential",
                 "deviceId":"device-1",
@@ -1291,6 +1338,9 @@ mod tests {
     fn binding_requires_explicit_known_executor_capabilities() {
         let missing = json!({
             "credentialPlane":"authorized-remote-runner-v1",
+            "credentialId":"runner-credential-1",
+            "issuedAtMs":1,
+            "expiresAtMs":4102444800000,
             "endpoint":"https://remote.example.com",
             "bearerCredential":"long-enough-credential",
             "deviceId":"device-1",
@@ -1302,6 +1352,9 @@ mod tests {
 
         let unknown = json!({
             "credentialPlane":"authorized-remote-runner-v1",
+            "credentialId":"runner-credential-1",
+            "issuedAtMs":1,
+            "expiresAtMs":4102444800000,
             "endpoint":"https://remote.example.com",
             "bearerCredential":"long-enough-credential",
             "deviceId":"device-1",
@@ -1313,6 +1366,9 @@ mod tests {
 
         let scoped = RemoteDispatchBinding::parse(&json!({
             "credentialPlane":"authorized-remote-runner-v1",
+            "credentialId":"runner-credential-1",
+            "issuedAtMs":1,
+            "expiresAtMs":4102444800000,
             "endpoint":"https://remote.example.com",
             "bearerCredential":"long-enough-credential",
             "deviceId":"device-1",
