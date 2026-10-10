@@ -835,15 +835,21 @@ impl AndroidJsonHost {
         match binding {
             Some(binding) if ready => json!({
                 "ready": true,
-                // The authenticated Remote execution owner now routes Computer/Screenshot and
-                // ExternalMachine tools only when this protected binding proves desktop ownership.
-                "hasDesktop": binding.has_desktop,
+                // Coarse presentation status is derived from the explicit executor contract.
+                // Individual tool exposure remains executor-specific inside RemoteRoutedTools.
+                "hasDesktop":
+                    binding.supports("computer")
+                    || binding.supports("screenshot")
+                    || binding.supports("external-shell")
+                    || binding.supports("external-read"),
+                "executors": binding.executors.iter().cloned().collect::<Vec<_>>(),
                 "deviceId": binding.device_id,
                 "accountEpoch": binding.account_epoch,
             }),
             _ => json!({
                 "ready": false,
                 "hasDesktop": false,
+                "executors": [],
                 "deviceId": Value::Null,
                 "accountEpoch": Value::Null,
             }),

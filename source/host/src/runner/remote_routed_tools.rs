@@ -10,7 +10,7 @@ use fabushi_android_box_exec_daemon::{
 use fabushi_android_shared::{ExecutionError, ExecutionRequest};
 use serde::Deserialize;
 use serde_json::{json, Value};
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc, Condvar, Mutex,
@@ -30,8 +30,7 @@ pub(crate) struct RemoteDispatchBinding {
     pub(crate) device_id: String,
     pub(crate) account_fence: String,
     pub(crate) account_epoch: u64,
-    #[serde(default)]
-    pub(crate) has_desktop: bool,
+    pub(crate) executors: BTreeSet<String>,
 }
 
 impl RemoteDispatchBinding {
@@ -58,7 +57,25 @@ impl RemoteDispatchBinding {
             .map_err(|error| format!("remote credential rejected: {error:?}"))?;
         AuthenticatedRemoteHttpTransport::new(&self.endpoint, RemoteTransportPolicy::default())
             .map_err(|error| format!("remote endpoint rejected: {error:?}"))?;
+        if self.executors.is_empty() {
+            return Err("remote binding must declare at least one executor".into());
+        }
+        const ALLOWED_EXECUTORS: &[&str] = &[
+            "shell",
+            "read",
+            "computer",
+            "screenshot",
+            "external-shell",
+            "external-read",
+        ];
+        if let Some(executor) = self.executors.iter().find(|value| !ALLOWED_EXECUTORS.contains(&value.as_str())) {
+            return Err(format!("remote binding executor is unsupported: {executor}"));
+        }
         Ok(())
+    }
+
+    pub(crate) fn supports(&self, executor: &str) -> bool {
+        self.executors.contains(executor)
     }
 
     fn context(
@@ -203,7 +220,8 @@ impl AndroidRoutedToolBridge for RemoteRoutedTools {
                     | Some("ExternalShell") | Some("ExternalRead")
             )
         });
-        tools.push(json!({
+        if binding.supports("shell") {
+            tools.push(json!({
             "type":"function",
             "name":"Shell",
             "description":"Run a bounded shell command on the currently paired trusted Remote desktop. Requires one-time user approval before dispatch.",
@@ -217,7 +235,9 @@ impl AndroidRoutedToolBridge for RemoteRoutedTools {
                 }
             }
         }));
-        tools.push(json!({
+        }
+        if binding.supports("read") {
+            tools.push(json!({
             "type":"function",
             "name":"Read",
             "description":"Read a bounded file path on the currently paired trusted Remote desktop. Requires one-time user approval before dispatch.",
@@ -232,7 +252,8 @@ impl AndroidRoutedToolBridge for RemoteRoutedTools {
                 }
             }
         }));
-        if binding.has_desktop {
+        }
+        if binding.supports("computer") {
             tools.push(json!({
                 "type":"function",
                 "name":"Computer",
@@ -260,6 +281,8 @@ impl AndroidRoutedToolBridge for RemoteRoutedTools {
                     }
                 }
             }));
+        }
+        if binding.supports("screenshot") {
             tools.push(json!({
                 "type":"function",
                 "name":"Screenshot",
@@ -270,6 +293,8 @@ impl AndroidRoutedToolBridge for RemoteRoutedTools {
                     "properties":{}
                 }
             }));
+        }
+        if binding.supports("external-shell") {
             tools.push(json!({
                 "type":"function",
                 "name":"ExternalShell",
@@ -284,6 +309,8 @@ impl AndroidRoutedToolBridge for RemoteRoutedTools {
                     }
                 }
             }));
+        }
+        if binding.supports("external-read") {
             tools.push(json!({
                 "type":"function",
                 "name":"ExternalRead",
@@ -336,10 +363,17 @@ impl AndroidRoutedToolBridge for RemoteRoutedTools {
             _ => unreachable!("unsupported Remote routed tool was delegated"),
         };
         let binding = self.current_binding()?;
-        if matches!(name, "Computer" | "Screenshot" | "ExternalShell" | "ExternalRead")
-            && !binding.has_desktop
-        {
-            return Err("trusted Remote binding does not own a desktop".into());
+        let required_executor = match name {
+            "Shell" => "shell",
+            "Read" => "read",
+            "Computer" => "computer",
+            "Screenshot" => "screenshot",
+            "ExternalShell" => "external-shell",
+            "ExternalRead" => "external-read",
+            _ => unreachable!("unsupported Remote routed tool was delegated"),
+        };
+        if !binding.supports(required_executor) {
+            return Err(format!("trusted Remote binding does not declare executor {required_executor}"));
         }
         let context = binding.context(&operation_id, &request_id, &approval_id)?;
         let request = ExecutionRequest {
@@ -855,7 +889,7 @@ mod tests {
             "deviceId":"device-1",
             "accountFence":"session:a",
             "accountEpoch":0,
-            "hasDesktop":true
+            "executors":["shell","read","computer","screenshot","external-shell","external-read"]
         }).to_string();
         assert!(RemoteDispatchBinding::parse(&invalid_epoch).is_err());
 
@@ -865,9 +899,45 @@ mod tests {
             "deviceId":"device-1",
             "accountFence":"session:a",
             "accountEpoch":7,
-            "hasDesktop":true
+            "executors":["shell","read","computer","screenshot","external-shell","external-read"]
         }).to_string();
         assert!(RemoteDispatchBinding::parse(&plaintext).is_err());
+    }
+
+    #[test]
+    fn binding_requires_explicit_known_executor_capabilities() {
+        let missing = json!({
+            "endpoint":"https://remote.example.com",
+            "bearerCredential":"long-enough-credential",
+            "deviceId":"device-1",
+            "accountFence":"session:a",
+            "accountEpoch":7,
+            "executors":[]
+        }).to_string();
+        assert!(RemoteDispatchBinding::parse(&missing).is_err());
+
+        let unknown = json!({
+            "endpoint":"https://remote.example.com",
+            "bearerCredential":"long-enough-credential",
+            "deviceId":"device-1",
+            "accountFence":"session:a",
+            "accountEpoch":7,
+            "executors":["computer","browser"]
+        }).to_string();
+        assert!(RemoteDispatchBinding::parse(&unknown).is_err());
+
+        let scoped = RemoteDispatchBinding::parse(&json!({
+            "endpoint":"https://remote.example.com",
+            "bearerCredential":"long-enough-credential",
+            "deviceId":"device-1",
+            "accountFence":"session:a",
+            "accountEpoch":7,
+            "executors":["computer","screenshot"]
+        }).to_string()).unwrap();
+        assert!(scoped.supports("computer"));
+        assert!(scoped.supports("screenshot"));
+        assert!(!scoped.supports("shell"));
+        assert!(!scoped.supports("external-shell"));
     }
 
     #[test]

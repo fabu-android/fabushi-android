@@ -98,6 +98,17 @@ internal class AndroidRemoteBindingStore(context: Context) {
     private fun validateBindingJson(value: String) {
         require(value.isNotBlank()) { "Remote binding must not be blank" }
         val json = JSONObject(value)
+        val allowedKeys = setOf(
+            "endpoint",
+            "bearerCredential",
+            "deviceId",
+            "accountFence",
+            "accountEpoch",
+            "executors",
+        )
+        require(json.keys().asSequence().toSet() == allowedKeys) {
+            "Remote binding must contain only the canonical executor credential contract"
+        }
         val endpoint = URI(json.getString("endpoint"))
         val loopback = endpoint.host == "127.0.0.1" || endpoint.host == "::1" || endpoint.host == "localhost"
         require(endpoint.scheme.equals("https", true) || (endpoint.scheme.equals("http", true) && loopback)) {
@@ -115,7 +126,22 @@ internal class AndroidRemoteBindingStore(context: Context) {
             }
         }
         require(json.getLong("accountEpoch") > 0L) { "Remote binding account epoch must be positive" }
-        json.getBoolean("hasDesktop")
+        val allowedExecutors = setOf(
+            "shell",
+            "read",
+            "computer",
+            "screenshot",
+            "external-shell",
+            "external-read",
+        )
+        val executors = json.getJSONArray("executors")
+        require(executors.length() in 1..allowedExecutors.size) { "Remote binding must declare bounded executors" }
+        val observedExecutors = mutableSetOf<String>()
+        repeat(executors.length()) { index ->
+            val executor = executors.getString(index)
+            require(executor in allowedExecutors) { "Remote binding executor is unsupported" }
+            require(observedExecutors.add(executor)) { "Remote binding executor is duplicated" }
+        }
     }
 
     private fun secretKey(): SecretKey {

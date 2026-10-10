@@ -13,7 +13,7 @@ class RemoteBindingFencePolicyTest {
           "deviceId":"desktop-1",
           "accountFence":"$accountFence",
           "accountEpoch":7,
-          "hasDesktop":true
+          "executors":["computer","screenshot"]
         }
         """.trimIndent()
 
