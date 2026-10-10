@@ -3,6 +3,12 @@ package com.ombhrum.fabushi.androidpreload.runtime
 import org.json.JSONArray
 import org.json.JSONObject
 
+data class AndroidSidebarSection(
+    val id: String,
+    val name: String,
+    val agentIds: List<String>,
+)
+
 data class AndroidMcpOAuthCompletion(
     val provider: String,
     val state: String,
@@ -70,6 +76,8 @@ interface AndroidCoordinatorPort {
     fun agentDuplicate(id: String): JSONObject
     fun agentDelete(id: String): JSONObject
     fun agentSetPinned(ids: List<String>): List<String>
+    fun agentSidebarSections(): List<AndroidSidebarSection>
+    fun agentSetSidebarSections(sections: List<AndroidSidebarSection>): List<AndroidSidebarSection>
 
     fun marketplaceBrowse(params: JSONObject): JSONObject
     fun marketplaceRelease(params: JSONObject): JSONObject
