@@ -12,7 +12,7 @@ class AgentNetworkModelTest {
         members: List<String> = emptyList(),
         partners: List<String> = emptyList(),
         running: Boolean = false,
-        waiting: Boolean = false,
+        waiting: Boolean? = null,
         updatedAt: Long = 0L,
     ) = AgentNetworkNode(
         id = id,
@@ -51,6 +51,7 @@ class AgentNetworkModelTest {
         val message = edges.single { it.kind == AgentNetworkEdgeKind.MESSAGE }
         assertEquals(AgentNetworkEdgeActivity.TALKING, agentNetworkEdgeActivity(message, nodes.associateBy { it.id }, 110_000))
         assertEquals(AgentNetworkActivity.WAITING, agentNetworkActivity(nodes.last()))
+        assertEquals(AgentNetworkActivity.WORKING, agentNetworkActivity(nodes.first()))
         assertEquals("2 agents · 1 group · 1 message link", agentNetworkSummary(nodes, edges))
     }
 
