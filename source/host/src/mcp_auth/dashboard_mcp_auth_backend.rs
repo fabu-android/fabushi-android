@@ -37,7 +37,7 @@ const REFRESH_LEEWAY_MS: u64 = 60_000;
 const MAX_RPC_RESPONSE_BYTES: usize = 4 * 1024 * 1024;
 const PRIVACY_MODE_CACHE_MAX_AGE_MS: u64 = 5 * 60_000;
 const PRIVACY_MODE_FALLBACK_CACHE_MAX_AGE_MS: u64 = 10_000;
-const PRIVACY_MODE_FETCH_TIMEOUT_MS: u64 = 3_000;
+const PRIVACY_MODE_FETCH_TIMEOUT_MS: u64 = 10_000;
 static REQUEST_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1116,6 +1116,10 @@ mod tests {
 
     #[test]
     fn privacy_mode_wire_values_and_ghost_mode_match_desktop_contract() {
+        assert_eq!(
+            PRIVACY_MODE_FETCH_TIMEOUT_MS, 10_000,
+            "Desktop cursorAccount.getPrivacyModeEnabled uses the 10s Dashboard profile RPC contract"
+        );
         assert_eq!(SandPrivacyMode::from_proto(0), Some(SandPrivacyMode::Unspecified));
         assert_eq!(SandPrivacyMode::from_proto(1), Some(SandPrivacyMode::NoStorage));
         assert_eq!(SandPrivacyMode::from_proto(2), Some(SandPrivacyMode::NoTraining));
