@@ -6161,6 +6161,115 @@
       "artifact": null,
       "verification_status": "not-verified",
       "notes": "Desktop 92fcc2b0 semantic audit now includes async_task_union, sand_pending_wake_store, production_runtime get_async_tasks/recreate semantics, pending_wake_rearm and runner/background_work. Android ports platform-neutral watcher ownership and adapts durable recovery to its account-shared Host root; unfenced/cross-account work fails closed. Deliberately remains mapped/not-verified until real Cloud Agent and authorized Remote Runner background-shell producers are composed, then same-exact-HEAD integration/package/device evidence closes."
+    },
+    {
+      "responsibility_id": "AGENT-AVATAR-EDITOR-ANDROID-001",
+      "domain": "agent",
+      "desktop_sources": [
+        {
+          "path": "frontend/src/recovered/features/agent-info/avatar-editor/controller.ts",
+          "blob_sha": "6beb45368c7dc61bfdb7ffab3817d87c67e3552d",
+          "symbols": [
+            "createAvatarEditorController",
+            "AvatarEditorController",
+            "AvatarEditorSnapshot",
+            "AvatarEditorRoster"
+          ]
+        },
+        {
+          "path": "frontend/src/recovered/features/agent-info/avatar-editor/model.ts",
+          "blob_sha": "8bd80652d49866af085cd62682919dce5b52367e",
+          "symbols": [
+            "browserAvatarImageCodec",
+            "AvatarImageCodec",
+            "AvatarCrop",
+            "AVATAR_SOURCE_MAX_BYTES",
+            "AVATAR_OUTPUT_SIZE",
+            "AVATAR_SHAPES",
+            "AVATAR_COLORS"
+          ]
+        },
+        {
+          "path": "frontend/src/recovered/features/agent-info/avatar-editor/production-adapter.ts",
+          "blob_sha": "9b82de018f0d6779b2379874e394968b47d4edbf",
+          "symbols": [
+            "createAvatarEditorProductionAdapter",
+            "AvatarEditorProductionAdapter",
+            "AvatarEditorProductionScope"
+          ]
+        },
+        {
+          "path": "frontend/src/recovered/features/agent-info/avatar-editor/view.tsx",
+          "blob_sha": "502caace3bdad7e69093faf3e50fcedb233cb545",
+          "symbols": [
+            "AvatarEditorView",
+            "CharacterChooser"
+          ]
+        }
+      ],
+      "source_commit": "92fcc2b0f64b6b8f8f8829305b30874b558d6b35",
+      "responsibility": "Own the shipping Agent/group avatar editor state machine: choose or generate an image, validate/normalize it, crop a bounded square to canonical PNG, select/reset character shape/color where applicable, preserve image-versus-character replacement semantics, fence stale async work, and commit only through the canonical roster owner.",
+      "source_owner": "Desktop recovered AvatarEditor adapter/controller/model/view over DesktopBridge and RawPortCoordinatorSource",
+      "direct_callers": [
+        "AvatarEditorView -> AvatarEditorController",
+        "AvatarEditorController -> DesktopBridge.pickAvatarFile / generateAgentAvatarImage",
+        "AvatarEditorController -> RawPortCoordinatorSource.setAgentAvatarBytes / updateAgent via production adapter",
+        "Recovered renderer evidence anchors the shipping leaf; no outer named caller was independently recovered, so none is invented"
+      ],
+      "downstream_dependencies": [
+        "DesktopBridge avatar picker",
+        "generated-avatar provider",
+        "canonical Agent roster mutation",
+        "browser image decode/canvas encoding",
+        "account/Agent scope projection"
+      ],
+      "state_owner": "Controller owns transient editor state only; canonical avatar bytes/shape/color belong to the roster/Coordinator Agent owner",
+      "persistent_state": [
+        "canonical Agent avatar PNG or absence",
+        "avatar shape",
+        "avatar color"
+      ],
+      "protocol_wire_contract": [
+        "setAgentAvatarBytes({id,pngBase64},{signal?}); null clears",
+        "updateAgent({id,avatarShape?,avatarColor?})",
+        "pickAvatarFile()",
+        "generateAgentAvatarImage(description)",
+        "source <=25 MiB; normalize longest dimension <=1024 px; output 256x256 PNG; zoom 1..5"
+      ],
+      "visible_effect": "User can choose built-in character, generate, or upload an Agent avatar with deterministic crop/reset behavior; groups omit character/Bot mode.",
+      "failure_behavior": [
+        "signed-out/missing-Agent/missing bridge never becomes ready",
+        "oversize image rejected before decode",
+        "decode/read/export/generation/roster errors surface without partial canonical commit",
+        "stale async completion rejected by generation",
+        "dispose invalidates and aborts active mutation"
+      ],
+      "cancellation_behavior": "Desktop save/clear uses AbortController and generation fencing; Android must preserve lifecycle cancellation/stale-result fencing.",
+      "retry_semantics": "Image preparation can retry from explicit intent; canonical mutations must not blindly retry unknown outcomes and must reuse durable mutation identity.",
+      "idempotency_semantics": "Presentation crop edits are local; canonical set/clear/update needs stable operation identity and reconciliation.",
+      "process_death_recovery": "Restore committed avatar truth from canonical Host roster; pending mutation must resume/reconcile with the same AgentRosterMutationOwner operation identity.",
+      "account_fencing": "Scope change invalidates old editor; Android must carry current account fence and reject prior-account/Agent callbacks.",
+      "security_boundary": "Compose owns transient state only; Android picker/ContentResolver and bounded bitmap codec must not grant arbitrary filesystem access; generation stays behind Host/Coordinator boundaries.",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/production/AgentProfileEditor_view.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/presentation/MobileBotViewModel.kt",
+        "source/android-preload/src/main/kotlin/com/ombhrum/fabushi/androidpreload/runtime/AndroidCoordinatorPort.kt",
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/coordinator/AndroidCoordinatorRuntime.kt",
+        "source/host/src/android_agent_roster.rs"
+      ],
+      "android_owner": "Compose AgentProfileEditor transient UI; AndroidCoordinatorRuntime + AgentRosterMutationOwner durable dispatch; Rust AndroidAgentRoster canonical state; Android media adapter picker/codec; Host/provider generation boundary",
+      "platform_delta": "Use Android Photo Picker/ContentResolver plus bounded bitmap decode/crop/PNG encoding instead of FileReader/Canvas/drop. Preserve Desktop limits/replacement semantics and lifecycle fencing. Current Android has no production avatar picker/codec/generation owner or canonical avatar fields.",
+      "implementation_status": "mapped",
+      "production_wiring": "Not implemented at audit parent 610289ca736f7dd0cd1b079599c5adf02e3eda11: AgentProfileEditor edits name/description only; MobileBotSummaryAndroid has no avatarDataUrl/avatarShape/avatarColor; AndroidCoordinatorPort has no avatar mutation; AndroidCoordinatorRuntime updates name/description only; AndroidAgentRoster has no avatar fields/mutations. Generic durable AgentRosterMutationOwner is reusable but is not avatar wiring.",
+      "unit_test": "Existing AgentProfileEditorTest covers name/description only and AgentRosterMutationOwnerTest covers generic durable mutation identity; avatar limit/crop/character/cancellation tests are missing.",
+      "contract_test": "Required typed Coordinator/Host avatar set-clear-character contract with account fence and unknown-outcome reconciliation; no exact-head avatar contract evidence yet.",
+      "integration_test": "Required Compose -> Android media/generation adapter -> Coordinator -> Rust Host roster path including close/account-switch stale fencing.",
+      "packaged_test": "Required on final production package: picker/generate/upload/crop/reset with no test/session backdoor.",
+      "device_test": "Required on supported emulator/physical device with picker/ContentResolver, process death/account switch, large/invalid image and offline/error cases.",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Fresh semantic audit of four Desktop 92fcc2b0 avatar-editor blobs. This intentionally records a real missing Android responsibility; do not upgrade until production wiring and same-head CI/package/device evidence exist."
     }
   ],
   "traceability": {
