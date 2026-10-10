@@ -23,6 +23,8 @@ pub struct RemoteExecutionRecord {
     pub account_fence: String,
     pub account_epoch: u64,
     pub permission_grant_id: String,
+    #[serde(default)]
+    pub device_id: String,
     pub state: RemoteExecutionState,
     pub created_at_ms: u64,
     pub updated_at_ms: u64,
@@ -77,6 +79,7 @@ impl RemoteExecutionJournal {
         validate_identity("capability", &record.capability_id)?;
         validate_identity("account fence", &record.account_fence)?;
         validate_identity("permission grant", &record.permission_grant_id)?;
+        validate_identity("device", &record.device_id)?;
         if record.account_epoch == 0 {
             return Err("account epoch must be positive".into());
         }
@@ -545,6 +548,7 @@ mod tests {
             account_fence: "account-a:epoch-7".into(),
             account_epoch: 7,
             permission_grant_id: "grant-1".into(),
+            device_id: "device-1".into(),
             state: RemoteExecutionState::Pending,
             created_at_ms: 1,
             updated_at_ms: 1,
