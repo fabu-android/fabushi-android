@@ -211,13 +211,7 @@ impl AndroidHostInferenceProvider {
                 "subagent_type":subagent_type,
             }
         });
-        let review_prompt = format!(
-            "Classify this generated-subagent action for safety and authorization. \
-Return exactly one JSON object and no markdown: \
-{{\"decision\":\"allow\"}} or \
-{{\"decision\":\"deny\",\"reason\":\"concise reason\"}}. \
-Fail closed when uncertain. Target: {target}"
-        );
+        let review_prompt = build_subagent_review_prompt(&target);
         let input = StreamAttemptInput {
             operation_id: "subagent-auto-review".into(),
             agent_id: "mahayana-subagent-review".into(),
@@ -528,6 +522,17 @@ impl TurnStreamProvider for AndroidHostInferenceProvider {
     }
 }
 
+fn build_subagent_review_prompt(target: &Value) -> String {
+    format!(
+        "Classify this generated-subagent action for safety and authorization. \
+Return exactly one JSON object and no markdown using the canonical Auto-review contract: \
+{{\"decision\":\"allow\"}}, \
+{{\"decision\":\"block\",\"reason\":\"concise reason\",\"proposed_rule\":\"optional narrowly-scoped allow rule\"}}, or \
+{{\"decision\":\"reject\",\"reason\":\"concise classifier failure or uncertainty reason\"}}. \
+Fail closed when uncertain. Target: {target}"
+    )
+}
+
 fn parse_subagent_review_decision(
     raw: &str,
 ) -> Result<AndroidSubagentReviewDecision, ProviderFailure> {
@@ -717,6 +722,19 @@ mod tests {
         .unwrap_err()
         .message
         .contains("cancelled"));
+    }
+
+    #[test]
+    fn test_subagent_auto_review_prompt_matches_parser_contract() {
+        let prompt = build_subagent_review_prompt(&json!({
+            "action":"sand_subagent",
+            "arguments":{"action":"launch","prompt":"work","subagent_type":"executor"}
+        }));
+        assert!(prompt.contains(r#"\"decision\":\"allow\""#));
+        assert!(prompt.contains(r#"\"decision\":\"block\""#));
+        assert!(prompt.contains(r#"\"decision\":\"reject\""#));
+        assert!(prompt.contains("proposed_rule"));
+        assert!(!prompt.contains(r#"\"decision\":\"deny\""#));
     }
 
     #[test]
