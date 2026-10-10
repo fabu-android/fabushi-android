@@ -84,6 +84,8 @@ fun GrokHomeSurface(
     onDuplicateBot: (String) -> Unit,
     onDeleteBot: suspend (String) -> Unit,
     onSetBotPinned: (String, Boolean) -> Unit,
+    onMoveBotToSection: (String, String) -> Unit,
+    onMoveBotToNewSection: (String) -> Unit,
     onCloseBot: () -> Unit,
     onDraftChange: (String) -> Unit,
     onSend: () -> Unit,
@@ -590,6 +592,10 @@ fun GrokHomeSurface(
                                         modifier = Modifier.testTag("agent-group-members-${bot.id}"),
                                     ) { Text("Members", fontSize = 11.sp) }
                                 }
+                                val currentSectionId = currentAgentSidebarSectionId(
+                                    botState.sidebarSections,
+                                    bot.id,
+                                )
                                 AgentRowActions(
                                 agentId = bot.id,
                                 agentName = bot.name,
@@ -601,6 +607,10 @@ fun GrokHomeSurface(
                                 onEditProfile = { profileTarget = bot },
                                 onShowFullConversation = { onOpenBot(bot) },
                                 onShowAsyncTasks = { onShowBotAsyncTasks(bot) },
+                                sections = botState.sidebarSections,
+                                currentSectionId = currentSectionId,
+                                onMoveToSection = onMoveBotToSection,
+                                onMoveToNewSection = onMoveBotToNewSection,
                                 onHideFromSidebar = onHideBot,
                                 onDuplicateAgent = onDuplicateBot,
                                 onTogglePin = onSetBotPinned,
