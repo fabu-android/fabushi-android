@@ -300,6 +300,231 @@ impl AndroidAgentRoster {
         Ok(Some(updated))
     }
 
+    /// Apply a presentation-originated roster mutation with durable operation identity.
+    ///
+    /// The mutation and its result/rejection are committed in the same canonical roster file.
+    /// Replaying the same account-fenced operation id therefore cannot repeat side effects after
+    /// Coordinator/Host process death. Reusing an operation id with different arguments is rejected.
+    pub fn apply_presentation_operation(
+        &mut self,
+        account_fence: &str,
+        operation_id: &str,
+        mutation: &Value,
+    ) -> Result<Value, String> {
+        let key = management_call_key(account_fence, "android-presentation", operation_id)?;
+        let args = json!({
+            "tool":"PresentationMutation",
+            "mutation":mutation,
+        });
+        if let Some(call) = self.state.management_calls.get(&key) {
+            if call.get("args") != Some(&args) {
+                return Err(
+                    "presentation operation id was reused with mismatched arguments".into(),
+                );
+            }
+            return call
+                .get("result")
+                .cloned()
+                .ok_or_else(|| "presentation durable replay result is missing".to_string());
+        }
+
+        let kind = mutation
+            .get("kind")
+            .and_then(Value::as_str)
+            .ok_or_else(|| "presentation mutation kind is required".to_string())?;
+        let mut next = self.state.clone();
+        let outcome: Result<Value, String> = (|| match kind {
+            "update" => {
+                let id = mutation
+                    .get("id")
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .ok_or_else(|| "presentation update id is required".to_string())?;
+                let index = next
+                    .agents
+                    .iter()
+                    .position(|agent| agent.id == id)
+                    .ok_or_else(|| "agent not found".to_string())?;
+                let current = next.agents[index].clone();
+                let name = mutation
+                    .get("name")
+                    .and_then(Value::as_str)
+                    .map(normalize_name)
+                    .transpose()
+                    .map_err(|error| error.to_string())?
+                    .unwrap_or(current.name);
+                let description = mutation
+                    .get("description")
+                    .and_then(Value::as_str)
+                    .map(normalize_description)
+                    .unwrap_or(current.description);
+                next.agents[index].name = name;
+                next.agents[index].description = description;
+                next.agents[index].updated_at = now_ms();
+                Ok(next.agents[index].as_json())
+            }
+            "hidden" | "unread" => {
+                let id = mutation
+                    .get("id")
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .ok_or_else(|| format!("presentation {kind} id is required"))?;
+                let value = mutation
+                    .get("value")
+                    .and_then(Value::as_bool)
+                    .ok_or_else(|| format!("presentation {kind} value is required"))?;
+                let agent = next
+                    .agents
+                    .iter_mut()
+                    .find(|agent| agent.id == id)
+                    .ok_or_else(|| "agent not found".to_string())?;
+                if kind == "hidden" {
+                    agent.is_hidden_from_sidebar = value;
+                } else {
+                    agent.has_unread = value;
+                }
+                agent.updated_at = now_ms();
+                Ok(agent.as_json())
+            }
+            "duplicate" => {
+                let id = mutation
+                    .get("id")
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .ok_or_else(|| "presentation duplicate id is required".to_string())?;
+                let source = next
+                    .agents
+                    .iter()
+                    .find(|agent| agent.id == id)
+                    .cloned()
+                    .ok_or_else(|| "agent not found".to_string())?;
+                next.next_id = next.next_id.saturating_add(1);
+                let duplicate = AndroidAgentRecord {
+                    id: format!("agent-{:08}", next.next_id),
+                    name: duplicate_name(&source.name),
+                    description: source.description,
+                    is_group: source.is_group,
+                    member_ids: source.member_ids,
+                    is_hidden_from_sidebar: false,
+                    has_unread: false,
+                    is_pinned: false,
+                    updated_at: now_ms(),
+                };
+                next.agents.push(duplicate.clone());
+                Ok(json!({"agent":duplicate.as_json()}))
+            }
+            "delete" => {
+                let ids = mutation
+                    .get("ids")
+                    .and_then(Value::as_array)
+                    .ok_or_else(|| "presentation delete ids are required".to_string())?
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(str::to_string)
+                    .collect::<BTreeSet<_>>();
+                let before = next.agents.len();
+                next.agents.retain(|agent| !ids.contains(&agent.id));
+                next.pinned_agent_ids.retain(|id| !ids.contains(id));
+                for agent in &mut next.agents {
+                    if agent.is_group {
+                        agent.member_ids.retain(|member_id| !ids.contains(member_id));
+                    }
+                }
+                let deleted = if next.agents.len() == before {
+                    Vec::new()
+                } else {
+                    ids.into_iter()
+                        .filter(|id| !next.agents.iter().any(|agent| agent.id == *id))
+                        .collect::<Vec<_>>()
+                };
+                Ok(json!({"deletedIds":deleted}))
+            }
+            "pinned" => {
+                let ids = mutation
+                    .get("ids")
+                    .and_then(Value::as_array)
+                    .ok_or_else(|| "presentation pinned ids are required".to_string())?
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .map(str::to_string)
+                    .collect::<Vec<_>>();
+                let existing = next
+                    .agents
+                    .iter()
+                    .map(|agent| agent.id.as_str())
+                    .collect::<BTreeSet<_>>();
+                let mut seen = BTreeSet::new();
+                let ordered = ids
+                    .into_iter()
+                    .filter(|id| existing.contains(id.as_str()) && seen.insert(id.clone()))
+                    .collect::<Vec<_>>();
+                let pinned = ordered.iter().cloned().collect::<BTreeSet<_>>();
+                next.pinned_agent_ids = ordered.clone();
+                for agent in &mut next.agents {
+                    agent.is_pinned = pinned.contains(&agent.id);
+                }
+                Ok(json!({"ids":ordered}))
+            }
+            "group-members" => {
+                let id = mutation
+                    .get("id")
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .ok_or_else(|| "presentation group-members id is required".to_string())?;
+                let member_ids = mutation
+                    .get("memberIds")
+                    .and_then(Value::as_array)
+                    .ok_or_else(|| "presentation group-members memberIds are required".to_string())?
+                    .iter()
+                    .map(|value| {
+                        value
+                            .as_str()
+                            .ok_or_else(|| "presentation group member ids must be strings".to_string())
+                            .map(str::to_string)
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                let current = next
+                    .agents
+                    .iter()
+                    .find(|agent| agent.id == id)
+                    .cloned()
+                    .ok_or_else(|| "agent group not found".to_string())?;
+                if !current.is_group {
+                    return Err("group-members target must be a group".into());
+                }
+                let members = validate_group_members(&next, Some(id), &member_ids)
+                    .map_err(|error| error.to_string())?;
+                let agent = next
+                    .agents
+                    .iter_mut()
+                    .find(|agent| agent.id == id)
+                    .ok_or_else(|| "agent group not found".to_string())?;
+                agent.member_ids = members;
+                agent.updated_at = now_ms();
+                Ok(agent.as_json())
+            }
+            other => Err(format!("unsupported presentation roster mutation: {other}")),
+        })();
+
+        let durable_result = match outcome {
+            Ok(result) => json!({"status":"completed","result":result}),
+            Err(error) => json!({"status":"rejected","error":error}),
+        };
+        record_management_call(
+            &mut next,
+            key,
+            json!({"args":args,"result":durable_result.clone()}),
+        );
+        self.commit(next).map_err(|error| error.to_string())?;
+        Ok(durable_result)
+    }
+
     pub fn update_profile(
         &mut self,
         id: &str,
