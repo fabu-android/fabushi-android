@@ -51,12 +51,211 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::path::PathBuf;
 use std::sync::{
     atomic::{AtomicBool, Ordering},
-    Arc, Mutex,
+    Arc, Condvar, Mutex,
 };
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 const ASSISTANT_READ_MARKER_ID: &str = "projection:mahayana-assistant:last-read";
+
+const SUBAGENT_REVIEW_APPROVAL_TTL_MS: u64 = 10 * 60 * 1_000;
+const SUBAGENT_REVIEW_MAX_PENDING_PER_AGENT: usize = 4;
+
+#[derive(Default)]
+struct SubagentReviewApprovalRegistry {
+    pending: Mutex<BTreeMap<String, SubagentReviewApprovalWaiter>>,
+}
+
+struct SubagentReviewApprovalWaiter {
+    parent_agent_id: String,
+    signal: Arc<(Mutex<Option<bool>>, Condvar)>,
+}
+
+impl SubagentReviewApprovalRegistry {
+    fn register(
+        &self,
+        approval_id: &str,
+        parent_agent_id: &str,
+    ) -> Result<Arc<(Mutex<Option<bool>>, Condvar)>, String> {
+        let mut pending = self
+            .pending
+            .lock()
+            .map_err(|_| "subagent review approval registry lock poisoned".to_string())?;
+        if pending.contains_key(approval_id) {
+            return Err("subagent review approval identity is duplicate".into());
+        }
+        let count = pending
+            .values()
+            .filter(|entry| entry.parent_agent_id == parent_agent_id)
+            .count();
+        if count >= SUBAGENT_REVIEW_MAX_PENDING_PER_AGENT {
+            return Err("too many pending subagent review approvals for agent".into());
+        }
+        let signal = Arc::new((Mutex::new(None), Condvar::new()));
+        pending.insert(
+            approval_id.to_string(),
+            SubagentReviewApprovalWaiter {
+                parent_agent_id: parent_agent_id.to_string(),
+                signal: Arc::clone(&signal),
+            },
+        );
+        Ok(signal)
+    }
+
+    fn contains(&self, approval_id: &str) -> bool {
+        self.pending
+            .lock()
+            .is_ok_and(|pending| pending.contains_key(approval_id))
+    }
+
+    fn resolve(&self, approval_id: &str, approved: bool) -> Result<(), String> {
+        let signal = self
+            .pending
+            .lock()
+            .map_err(|_| "subagent review approval registry lock poisoned".to_string())?
+            .get(approval_id)
+            .map(|entry| Arc::clone(&entry.signal))
+            .ok_or("subagent review approval waiter is unknown")?;
+        let (state, wake) = &*signal;
+        let mut state = state
+            .lock()
+            .map_err(|_| "subagent review approval waiter lock poisoned".to_string())?;
+        if state.is_some() {
+            return Err("subagent review approval was already resolved".into());
+        }
+        *state = Some(approved);
+        wake.notify_all();
+        Ok(())
+    }
+
+    fn remove(&self, approval_id: &str) {
+        if let Ok(mut pending) = self.pending.lock() {
+            pending.remove(approval_id);
+        }
+    }
+}
+
+fn wait_for_subagent_review_approval(
+    broker: &SharedCapabilityBroker,
+    registry: &SubagentReviewApprovalRegistry,
+    turn_events: &Arc<Mutex<VecDeque<Value>>>,
+    cancelled: &Arc<AtomicBool>,
+    parent_agent_id: &str,
+    parent_request_id: &str,
+    account_fence: &str,
+    process_epoch: u64,
+    tool_call_id: &str,
+    action: &str,
+    prompt: &str,
+    subagent_id: Option<&str>,
+    subagent_type: Option<&str>,
+    reason: &str,
+    proposed_rule: Option<&str>,
+) -> Result<bool, String> {
+    if cancelled.load(Ordering::Acquire) {
+        return Err("cancelled".into());
+    }
+    let fingerprint = crate::sha256::sha256_hex(
+        format!(
+            "{account_fence}\n{process_epoch}\n{parent_request_id}\n{tool_call_id}\n{action}\n{prompt}\n{}\n{}",
+            subagent_id.unwrap_or_default(),
+            subagent_type.unwrap_or_default(),
+        )
+        .as_bytes(),
+    );
+    let identity = &fingerprint[..32];
+    let approval_id = format!("approval-subagent-review-{identity}");
+    let request_id = format!("subagent-review-request-{identity}");
+    let operation_id = format!("subagent-review-operation-{identity}");
+    let capability = "agent.subagent.review";
+    let target = json!({
+        "action":"sand_subagent",
+        "arguments":{
+            "action":action,
+            "prompt":prompt,
+            "subagent_id":subagent_id,
+            "subagent_type":subagent_type,
+        },
+        "reason":reason,
+        "proposedRule":proposed_rule,
+    });
+    let signal = registry.register(&approval_id, parent_agent_id)?;
+    if let Err(error) = broker.request_approval(
+        &approval_id,
+        &request_id,
+        &operation_id,
+        capability,
+        target.clone(),
+        account_fence,
+        now_ms(),
+    ) {
+        registry.remove(&approval_id);
+        return Err(error);
+    }
+    if let Err(error) = turn_events
+        .lock()
+        .map_err(|_| "turn event queue lock poisoned".to_string())
+        .map(|mut events| {
+            events.push_back(json!({
+                "type":"approval.requested",
+                "approvalId":approval_id,
+                "operationId":operation_id,
+                "requestId":request_id,
+                "capability":capability,
+                "target":target,
+                "accountFence":account_fence,
+                "reason":reason,
+                "autoReview":true,
+                "expiresAtMs":now_ms().saturating_add(SUBAGENT_REVIEW_APPROVAL_TTL_MS),
+            }));
+        })
+    {
+        let _ = broker.cancel_approval_operation(&operation_id, "approval event unavailable", now_ms());
+        registry.remove(&approval_id);
+        return Err(error);
+    }
+
+    let deadline = now_ms().saturating_add(SUBAGENT_REVIEW_APPROVAL_TTL_MS);
+    let (state, wake) = &*signal;
+    let mut state = state
+        .lock()
+        .map_err(|_| "subagent review approval waiter lock poisoned".to_string())?;
+    loop {
+        if let Some(approved) = *state {
+            drop(state);
+            if approved {
+                broker.consume_approval_for_dispatch(
+                    &approval_id,
+                    &operation_id,
+                    &request_id,
+                    capability,
+                    account_fence,
+                    now_ms(),
+                )?;
+            }
+            registry.remove(&approval_id);
+            return Ok(approved);
+        }
+        if cancelled.load(Ordering::Acquire) {
+            drop(state);
+            let _ = broker.cancel_approval_operation(&operation_id, "turn cancelled", now_ms());
+            registry.remove(&approval_id);
+            return Err("cancelled".into());
+        }
+        let now = now_ms();
+        if now >= deadline {
+            drop(state);
+            let _ = broker.cancel_approval_operation(&operation_id, "approval expired", now);
+            registry.remove(&approval_id);
+            return Ok(false);
+        }
+        let wait_ms = deadline.saturating_sub(now).min(100);
+        let (next, _) = wake
+            .wait_timeout(state, Duration::from_millis(wait_ms))
+            .map_err(|_| "subagent review approval waiter lock poisoned".to_string())?;
+        state = next;
+    }
+}
 
 #[cfg(feature = "ci-account-session-import")]
 mod ci_account_session {
@@ -321,6 +520,7 @@ pub struct AndroidJsonHost {
     subagent_owner: Arc<Mutex<DurableSubagentOwner>>,
     subagent_tools: SubagentToolBridge,
     subagent_events: Arc<Mutex<VecDeque<Value>>>,
+    subagent_review_approvals: Arc<SubagentReviewApprovalRegistry>,
     installed_plugins: BTreeSet<String>,
     plugin_installer: PluginInstaller,
     plugin_permissions: PermissionManager,
@@ -425,6 +625,7 @@ impl AndroidJsonHost {
         ));
         let subagent_tools = SubagentToolBridge::new(Arc::clone(&subagent_owner));
         let subagent_events = Arc::new(Mutex::new(VecDeque::new()));
+        let subagent_review_approvals = Arc::new(SubagentReviewApprovalRegistry::default());
         Self {
             mode,
             account,
@@ -472,6 +673,7 @@ impl AndroidJsonHost {
             subagent_owner,
             subagent_tools,
             subagent_events,
+            subagent_review_approvals,
             installed_plugins: BTreeSet::new(),
             plugin_installer,
             plugin_permissions,
