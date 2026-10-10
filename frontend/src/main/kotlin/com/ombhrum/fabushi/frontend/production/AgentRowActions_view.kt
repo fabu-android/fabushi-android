@@ -29,6 +29,7 @@ internal fun AgentRowActions(
     isHidden: Boolean = false,
     onEditName: ((String) -> Unit)? = null,
     onShowFullConversation: ((String) -> Unit)? = null,
+    onShowAsyncTasks: ((String) -> Unit)? = null,
     onHideFromSidebar: (String) -> Unit,
     onCopyConversationId: ((String) -> Unit)? = null,
     onDuplicateAgent: ((String) -> Unit)? = null,
@@ -49,7 +50,10 @@ internal fun AgentRowActions(
         includePin = onTogglePin != null,
     )
 
-    if (isHidden || (actions.isEmpty() && onEditName == null && onShowFullConversation == null)) return
+    if (
+        isHidden ||
+        (actions.isEmpty() && onEditName == null && onShowFullConversation == null && onShowAsyncTasks == null)
+    ) return
 
     Box(modifier) {
         TextButton(
@@ -77,6 +81,15 @@ internal fun AgentRowActions(
                     onClick = {
                         expanded = false
                         onShowFullConversation(agentId)
+                    },
+                )
+            }
+            if (onShowAsyncTasks != null) {
+                DropdownMenuItem(
+                    text = { Text("Show async tasks") },
+                    onClick = {
+                        expanded = false
+                        onShowAsyncTasks(agentId)
                     },
                 )
             }
