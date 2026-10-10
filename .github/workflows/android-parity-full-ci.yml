@@ -78,11 +78,56 @@ jobs:
           test -s mobile/android/app/src/main/jniLibs/x86_64/libmahayana_app_host.so
           test -s mobile/android/app/src/ciAcceptance/jniLibs/arm64-v8a/libmahayana_app_host.so
           test -s mobile/android/app/src/ciAcceptance/jniLibs/x86_64/libmahayana_app_host.so
+      - name: Prepare mandatory release signing material
+        env:
+          ANDROID_RELEASE_KEYSTORE_BASE64: ${{ secrets.ANDROID_RELEASE_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_RELEASE_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_RELEASE_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_RELEASE_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          mkdir -p evidence/release
+          if [ -z "$ANDROID_RELEASE_KEYSTORE_BASE64" ] || [ -z "$ANDROID_KEYSTORE_PASSWORD" ] || [ -z "$ANDROID_KEY_ALIAS" ] || [ -z "$ANDROID_KEY_PASSWORD" ]; then
+            printf 'status=blocked\nreason=missing-release-signing-secrets\nhead=%s\n' "$SOURCE_SHA" > evidence/release/signing-prerequisite.txt
+            echo "githubRelease requires ANDROID_RELEASE_KEYSTORE_BASE64, ANDROID_RELEASE_KEYSTORE_PASSWORD, ANDROID_RELEASE_KEY_ALIAS and ANDROID_RELEASE_KEY_PASSWORD" >&2
+            exit 1
+          fi
+          KEYSTORE_PATH="$RUNNER_TEMP/fabushi-android-release.keystore"
+          printf '%s' "$ANDROID_RELEASE_KEYSTORE_BASE64" | base64 --decode > "$KEYSTORE_PATH"
+          chmod 600 "$KEYSTORE_PATH"
+          test -s "$KEYSTORE_PATH"
+          printf 'status=available\nhead=%s\n' "$SOURCE_SHA" > evidence/release/signing-prerequisite.txt
+          echo "ANDROID_KEYSTORE_PATH=$KEYSTORE_PATH" >> "$GITHUB_ENV"
+          echo "ANDROID_KEYSTORE_PASSWORD=$ANDROID_KEYSTORE_PASSWORD" >> "$GITHUB_ENV"
+          echo "ANDROID_KEY_ALIAS=$ANDROID_KEY_ALIAS" >> "$GITHUB_ENV"
+          echo "ANDROID_KEY_PASSWORD=$ANDROID_KEY_PASSWORD" >> "$GITHUB_ENV"
       - name: Compile, unit-test, lint, and assemble production-path acceptance APKs
         working-directory: mobile/android
         run: |
           set -eu
           ./gradlew --no-daemon clean             assembleDebug             assembleCiAcceptance             assembleCiAcceptanceAndroidTest             assembleGithubRelease             bundleGithubRelease             testCiAcceptanceUnitTest             lintDebug
+      - name: Generate release SBOM and license inventory
+        working-directory: mobile/android
+        run: |
+          set -euo pipefail
+          cargo metadata --format-version 1 --manifest-path ../../Cargo.toml > release-cargo-metadata.json
+          ./gradlew --no-daemon app:dependencies --configuration githubReleaseRuntimeClasspath > github-release-runtime-dependencies.txt
+          python ../../scripts/generate_android_release_sbom.py \
+            --cargo-metadata release-cargo-metadata.json \
+            --gradle-dependencies github-release-runtime-dependencies.txt \
+            --gradle-cache "$HOME/.gradle/caches/modules-2/files-2.1" \
+            --source-sha "$SOURCE_SHA" \
+            --sbom-out android-release-sbom.cdx.json \
+            --licenses-out android-release-license-inventory.json
+          python - <<'PY'
+          import json
+          data=json.load(open("android-release-license-inventory.json", encoding="utf-8"))
+          unresolved=[x for x in data["components"] if x.get("license_status") == "unresolved"]
+          if unresolved:
+              for item in unresolved:
+                  print("unresolved release dependency license:", item["ecosystem"], item["name"], item["version"])
+              raise SystemExit("release license inventory contains unresolved dependency metadata")
+          PY
       - name: Verify public GitHub release strips CI account bootstrap
         working-directory: mobile/android
         run: |
@@ -118,6 +163,54 @@ jobs:
           cp "$GITHUB_AAB" "$RELEASE_AAB"
           printf 'head=%s\ngithub_release_ci_import=absent\n' "$SOURCE_SHA" > github-release-security.txt
           sha256sum "$RELEASE_APK" "$RELEASE_AAB" >> github-release-security.txt
+      - name: Verify githubRelease signature ABI native 16KB and provenance
+        working-directory: mobile/android
+        run: |
+          set -euo pipefail
+          RELEASE_APK="fabushi-android-github-release-${SOURCE_SHA}.apk"
+          RELEASE_AAB="fabushi-android-github-release-${SOURCE_SHA}.aab"
+          test -s "$RELEASE_APK"
+          test -s "$RELEASE_AAB"
+          BUILD_TOOLS="$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n1)"
+          APKSIGNER="$BUILD_TOOLS/apksigner"
+          ZIPALIGN="$BUILD_TOOLS/zipalign"
+          READELF="$ANDROID_HOME/ndk/28.2.13676358/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf"
+          test -x "$APKSIGNER"
+          test -x "$ZIPALIGN"
+          test -x "$READELF"
+          "$APKSIGNER" verify --verbose --print-certs "$RELEASE_APK" > github-release-apk-signing.txt
+          jarsigner -verify -strict -certs "$RELEASE_AAB" > github-release-aab-signing.txt
+          "$ZIPALIGN" -c -P 16 -v 4 "$RELEASE_APK" > github-release-zipalign-16k.txt
+          for ABI in arm64-v8a x86_64; do
+            unzip -l "$RELEASE_APK" "lib/$ABI/libmahayana_app_host.so" | grep -F "lib/$ABI/libmahayana_app_host.so"
+            unzip -l "$RELEASE_AAB" "base/lib/$ABI/libmahayana_app_host.so" | grep -F "base/lib/$ABI/libmahayana_app_host.so"
+            unzip -p "$RELEASE_APK" "lib/$ABI/libmahayana_app_host.so" > "/tmp/libmahayana_app_host-$ABI.so"
+            python - "$READELF" "/tmp/libmahayana_app_host-$ABI.so" "$ABI" <<'PY'
+          import re,subprocess,sys
+          readelf,path,abi=sys.argv[1:]
+          text=subprocess.check_output([readelf,"-lW",path], text=True)
+          aligns=[]
+          for line in text.splitlines():
+              if line.lstrip().startswith("LOAD"):
+                  m=re.search(r"(0x[0-9a-fA-F]+)\s*$", line)
+                  if m:
+                      aligns.append(int(m.group(1),16))
+          if not aligns:
+              raise SystemExit(f"{abi}: no ELF LOAD alignment records")
+          if min(aligns) < 16384:
+              raise SystemExit(f"{abi}: ELF LOAD alignment below 16KB: {aligns}")
+          print(f"{abi}: 16KB-compatible LOAD alignments {aligns}")
+          PY
+          done > github-release-native-16k.txt
+          {
+            printf 'head=%s\nrun_id=%s\nrun_attempt=%s\n' "$SOURCE_SHA" "${{ github.run_id }}" "${{ github.run_attempt }}"
+            printf 'android_gradle_plugin=9.3.0\nndk=28.2.13676358\n'
+            java -version 2>&1 | head -n1
+            rustc --version
+            cargo --version
+            "$BUILD_TOOLS/apksigner" version
+            sha256sum "$RELEASE_APK" "$RELEASE_AAB" android-release-sbom.cdx.json android-release-license-inventory.json
+          } > github-release-provenance.txt
       - name: Record exact-HEAD APK identities
         working-directory: mobile/android
         run: |
@@ -139,6 +232,12 @@ jobs:
           cat native-jni.sha256 >> artifact-identity.txt
           cat ci-native-jni.sha256 >> artifact-identity.txt
       - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: android-release-blocker-evidence-${{ env.SOURCE_SHA }}
+          path: evidence/release
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
         with:
           name: android-exact-head-apks-${{ env.SOURCE_SHA }}
           path: |
@@ -150,6 +249,15 @@ jobs:
             mobile/android/native-jni.sha256
             mobile/android/ci-native-jni.sha256
             mobile/android/github-release-security.txt
+            mobile/android/github-release-apk-signing.txt
+            mobile/android/github-release-aab-signing.txt
+            mobile/android/github-release-zipalign-16k.txt
+            mobile/android/github-release-native-16k.txt
+            mobile/android/github-release-provenance.txt
+            mobile/android/android-release-sbom.cdx.json
+            mobile/android/android-release-license-inventory.json
+            mobile/android/github-release-runtime-dependencies.txt
+            mobile/android/release-cargo-metadata.json
             mobile/android/fabushi-android-github-release-${{ env.SOURCE_SHA }}.apk
             mobile/android/fabushi-android-github-release-${{ env.SOURCE_SHA }}.aab
           if-no-files-found: error
