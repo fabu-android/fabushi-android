@@ -4,6 +4,7 @@ pub mod durable_turn_journal;
 pub mod multitask_todo;
 pub mod production_turn_agent_owner;
 pub mod production_turn_lifecycle;
+pub mod remote_routed_tools;
 pub mod stream_attempt;
 pub mod subagent_runtime;
 pub mod subagent_tool_bridge;
@@ -47,6 +48,10 @@ pub use agent_management::{
 pub use turn_run_shell::{ActiveRun, TurnCancellation, TurnRunLease, TurnRunShell, TurnRunShellError};
 
 pub use durable_turn_journal::{DurableTurnJournal, DurableTurnRecord, DurableTurnState};
+
+pub(crate) use remote_routed_tools::{
+    with_remote_routed_tools, RemoteApprovalRegistry, RemoteDispatchBinding,
+};
 
 pub use multitask_todo::{
     with_multitask_todo_tools, DurableMultitaskTodoStore, MultitaskTodoItem,

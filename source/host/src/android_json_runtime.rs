@@ -28,7 +28,8 @@ use crate::runner::{
     SubagentRunOutcome, SubagentSteerReview, SubagentTaskReviewCallback,
     SubagentSteerReviewCallback, SubagentToolBridge, SubagentToolContext,
     build_parent_subagent_routed_tools, spawn_generated_subagent,
-    with_agent_management_tools, with_multitask_todo_tools, AgentTurnInterruptionRegistry,
+    with_agent_management_tools, with_multitask_todo_tools, with_remote_routed_tools,
+    AgentTurnInterruptionRegistry, RemoteApprovalRegistry, RemoteDispatchBinding,
     DurableMultitaskTodoStore,
 };
 use fabushi_constants::composer::text_size_allowed;
@@ -41,11 +42,10 @@ use fabushi_android_shared::webauthn_gateway::{
     WebAuthnStageOutcome,
 };
 use mahayana_js_runtime::{DeepSeekJsHost, HostEvent};
-use fabushi_android_box_exec_daemon::{AuthenticatedRemoteHttpTransport, RemoteBearerCredential, RemoteTransportPolicy};
+use fabushi_android_box_exec_daemon::{AuthenticatedRemoteHttpTransport, RemoteTransportPolicy};
 use mahayana_plugin_runtime::{
     ExternalReleaseManifest, PermissionManager, PluginInstaller,
 };
-use serde::Deserialize;
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::path::PathBuf;
@@ -285,39 +285,6 @@ impl RuntimeCallCancellationRegistry {
     }
 }
 
-#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct RemoteOutboundBinding {
-    endpoint: String,
-    bearer_credential: String,
-    device_id: String,
-    account_fence: String,
-    account_epoch: u64,
-    #[serde(default)]
-    has_desktop: bool,
-}
-
-impl RemoteOutboundBinding {
-    fn validate(&self) -> Result<(), String> {
-        if self.account_epoch == 0 {
-            return Err("remote binding account epoch must be positive".into());
-        }
-        for (label, value) in [
-            ("remote device", self.device_id.as_str()),
-            ("remote account fence", self.account_fence.as_str()),
-        ] {
-            if value.trim().is_empty() || value.len() > 512 || value.chars().any(char::is_control) {
-                return Err(format!("{label} identity is invalid"));
-            }
-        }
-        RemoteBearerCredential::new(self.bearer_credential.clone())
-            .map_err(|error| format!("remote credential rejected: {error:?}"))?;
-        AuthenticatedRemoteHttpTransport::new(&self.endpoint, RemoteTransportPolicy::default())
-            .map_err(|error| format!("remote endpoint rejected: {error:?}"))?;
-        Ok(())
-    }
-}
-
 pub struct AndroidJsonHost {
     mode: AndroidHostMode,
     account: AndroidAccountService,
@@ -341,6 +308,7 @@ pub struct AndroidJsonHost {
     events: VecDeque<Value>,
     active_operations: BTreeSet<String>,
     pending_approvals: BTreeMap<String, String>,
+    remote_approvals: RemoteApprovalRegistry,
     turn_events: Arc<Mutex<VecDeque<Value>>>,
     turn_cancellations: BTreeMap<String, Arc<AtomicBool>>,
     turn_journal: Arc<Mutex<DurableTurnJournal>>,
@@ -361,7 +329,7 @@ pub struct AndroidJsonHost {
     runtime_generations: BTreeMap<String, u64>,
     runtime_call_cancellations: Arc<RuntimeCallCancellationRegistry>,
     capability_broker: SharedCapabilityBroker,
-    remote_binding: Arc<Mutex<Option<RemoteOutboundBinding>>>,
+    remote_binding: Arc<Mutex<Option<RemoteDispatchBinding>>>,
     remote_runner: Arc<Mutex<Option<AuthenticatedRemoteHostRunner<AuthenticatedRemoteHttpTransport>>>>,
     remote_journal_path: PathBuf,
     automation_runtime: AutomationRuntime,
@@ -480,6 +448,7 @@ impl AndroidJsonHost {
             events: VecDeque::new(),
             active_operations: BTreeSet::new(),
             pending_approvals: BTreeMap::new(),
+            remote_approvals: RemoteApprovalRegistry::default(),
             turn_events: Arc::new(Mutex::new(VecDeque::new())),
             turn_cancellations: BTreeMap::new(),
             turn_journal: Arc::new(Mutex::new(
@@ -529,9 +498,7 @@ impl AndroidJsonHost {
             *self.remote_runner.lock().map_err(|_| "remote runner lock poisoned".to_string())? = None;
             return Ok(());
         }
-        let binding: RemoteOutboundBinding = serde_json::from_str(raw.unwrap())
-            .map_err(|error| format!("invalid protected remote binding: {error}"))?;
-        binding.validate()?;
+        let binding = RemoteDispatchBinding::parse(raw.unwrap())?;
         let current_fence = self.current_turn_account_fence()?;
         if current_fence != binding.account_fence {
             return Err("protected remote binding is fenced to a different account session".into());
@@ -2603,6 +2570,10 @@ impl AndroidJsonHost {
         let agent_messaging = Arc::clone(&self.messaging);
         let live_account_fence = Arc::clone(&self.live_account_fence);
         let agent_turn_interruptions = Arc::clone(&self.agent_turn_interruptions);
+        let remote_capability_broker = self.capability_broker.clone();
+        let remote_binding = Arc::clone(&self.remote_binding);
+        let remote_runner = Arc::clone(&self.remote_runner);
+        let remote_approvals = self.remote_approvals.clone();
         let frozen_privacy = match self.mode {
             AndroidHostMode::Test => ProductionTurnPrivacyMode::NoStorage,
             AndroidHostMode::Production => self
@@ -2754,6 +2725,22 @@ impl AndroidJsonHost {
                         Arc::clone(&multitask_todos),
                         &account_fence_owned,
                         &conversation_id_owned,
+                    )
+                } else {
+                    routed_subagent_tools
+                };
+                let routed_subagent_tools = if subagent_capabilities.remote_box_available {
+                    with_remote_routed_tools(
+                        routed_subagent_tools,
+                        remote_capability_broker.clone(),
+                        Arc::clone(&remote_binding),
+                        Arc::clone(&remote_runner),
+                        remote_approvals.clone(),
+                        Arc::clone(&live_account_fence),
+                        Arc::clone(&turn_events),
+                        &operation_id_owned,
+                        &request_id_owned,
+                        Arc::clone(&cancelled),
                     )
                 } else {
                     routed_subagent_tools
@@ -3579,6 +3566,32 @@ impl AndroidJsonHost {
             .get("approved")
             .and_then(Value::as_bool)
             .ok_or("approved is required")?;
+        let account_fence = self.current_turn_account_fence()?;
+        if let Some(resolution) = self.remote_approvals.resolve_from_ui(
+            &self.capability_broker,
+            &approval_id,
+            approved,
+            &account_fence,
+            now_ms(),
+        )? {
+            self.events.push_back(json!({
+                "type":"approval.resolved",
+                "approvalId":approval_id,
+                "operationId":resolution.remote_operation_id,
+                "parentOperationId":resolution.parent_operation_id,
+                "capability":resolution.capability,
+                "approved":approved,
+                "remoteDispatch":true,
+            }));
+            return Ok(json!({
+                "status":"resolved",
+                "approved":approved,
+                "operationId":resolution.remote_operation_id,
+                "parentOperationId":resolution.parent_operation_id,
+                "capability":resolution.capability,
+                "execution": if approved { "dispatch-unlocked" } else { "denied" },
+            }));
+        }
         let operation_id = self
             .pending_approvals
             .get(&approval_id)
@@ -3587,7 +3600,6 @@ impl AndroidJsonHost {
         if !self.active_operations.contains(&operation_id) {
             return Err("approval operation is no longer active".into());
         }
-        let account_fence = self.current_turn_account_fence()?;
         let resolved = self.capability_broker.resolve_approval(
             &approval_id,
             approved,

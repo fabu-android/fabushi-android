@@ -111,8 +111,16 @@ impl CapabilityBroker {
                 recovered.push(pending.clone());
             }
         }
+        let mut recovered_approvals = Vec::new();
+        for approval in state.approvals.values_mut() {
+            if approval.state == "pending" || approval.state == "allowed_once" {
+                approval.state = "cancelled".into();
+                approval.resolved_at_ms = Some(now_ms);
+                recovered_approvals.push(approval.clone());
+            }
+        }
         let mut broker = Self { path, state };
-        if !recovered.is_empty() {
+        if !recovered.is_empty() || !recovered_approvals.is_empty() {
             for item in recovered {
                 broker.state.audit.push(CapabilityAuditRecord {
                     request_id: item.request_id.clone(), plugin_id: item.plugin_id.clone(),
@@ -120,6 +128,20 @@ impl CapabilityBroker {
                     account_fence: item.account_fence.clone(), runtime_generation: item.runtime_generation,
                     decision: CapabilityDecision::Deny, outcome: "outcome_unknown".into(),
                     reason: Some("Host restarted with an in-flight side effect; reconciliation required before replay".into()),
+                    at_ms: now_ms,
+                });
+            }
+            for approval in recovered_approvals {
+                broker.state.audit.push(CapabilityAuditRecord {
+                    request_id: approval.request_id.clone(),
+                    plugin_id: "feature".into(),
+                    capability: approval.capability.clone(),
+                    tool: "capability.request".into(),
+                    account_fence: approval.account_fence.clone(),
+                    runtime_generation: 0,
+                    decision: CapabilityDecision::Deny,
+                    outcome: "approval_cancelled_on_restart".into(),
+                    reason: Some("Host restarted before the one-time approval was consumed; a new user approval is required".into()),
                     at_ms: now_ms,
                 });
             }
@@ -744,9 +766,8 @@ mod tests {
         b.request_approval("a3", "r3", "o3", "microphone", json!({"source":"mic"}), "acct-1", 7).unwrap();
         drop(b);
         let mut reopened = CapabilityBroker::open(d.path().join("broker.json"), 8).unwrap();
-        assert_eq!(reopened.approval_state("a3"), Some("pending"));
-        assert!(reopened.cancel_approval_operation("o3", "user cancelled", 9).unwrap());
         assert_eq!(reopened.approval_state("a3"), Some("cancelled"));
+        assert!(!reopened.cancel_approval_operation("o3", "user cancelled", 9).unwrap());
         assert!(reopened.resolve_approval("a3", true, "acct-1", 10).is_err());
     }
 
@@ -779,6 +800,37 @@ mod tests {
         assert_eq!(consumed.state, "consumed");
         assert!(b.consume_remote_approval_for_dispatch(
             "remote-a1","remote-o1","remote-r1","remote.shell","acct-1",7,"device-1",5
+        ).is_err());
+    }
+
+    #[test]
+    fn remote_allowed_once_does_not_survive_process_restart() {
+        let (d, mut b) = broker();
+        b.request_remote_approval(
+            "remote-restart-a1",
+            "remote-restart-r1",
+            "remote-restart-o1",
+            "remote.shell",
+            json!({"deviceId":"device-1"}),
+            "acct-1",
+            9,
+            "device-1",
+            1,
+        ).unwrap();
+        b.resolve_approval("remote-restart-a1", true, "acct-1", 2).unwrap();
+        drop(b);
+
+        let mut reopened = CapabilityBroker::open(d.path().join("broker.json"), 3).unwrap();
+        assert_eq!(reopened.approval_state("remote-restart-a1"), Some("cancelled"));
+        assert!(reopened.consume_remote_approval_for_dispatch(
+            "remote-restart-a1",
+            "remote-restart-o1",
+            "remote-restart-r1",
+            "remote.shell",
+            "acct-1",
+            9,
+            "device-1",
+            4,
         ).is_err());
     }
 
