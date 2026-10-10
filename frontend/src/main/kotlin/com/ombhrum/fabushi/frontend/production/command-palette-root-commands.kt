@@ -61,9 +61,9 @@ internal fun commandPaletteRootCommands(
                 CommandPaletteEntry(
                     id = "update:computer",
                     kind = CommandPaletteEntryKind.COMMAND,
-                    label = "Update Grok Bot's Computer",
+                    label = "Update Fabushi's Computer",
                     detail = "Updates",
-                    searchText = "Update Grok Bot Computer box image machine recreate latest shared Updates",
+                    searchText = "Update Fabushi Computer box image machine recreate latest shared Updates",
                     activate = { openComputerUpdateConfirm(action) },
                 ),
             )

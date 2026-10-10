@@ -189,6 +189,21 @@ class FrontendProductionModelParityTest {
             listOf(CommandPaletteInfoSection.MEMBERS, CommandPaletteInfoSection.SETTINGS),
             opened,
         )
+
+        var requestedComputerAction: CommandPaletteComputerUpdateAction? = null
+        val withComputerUpdate = commandPaletteRootCommands(
+            activeAgentIsGroup = false,
+            activeAgentIsSharedRoom = false,
+            hasChannels = false,
+            openInfoSection = opened::add,
+            computerUpdateAction = CommandPaletteComputerUpdateAction.READY,
+            openComputerUpdateConfirm = { requestedComputerAction = it },
+        )
+        val computer = withComputerUpdate.single { it.id == "update:computer" }
+        assertEquals("Update Fabushi's Computer", computer.label)
+        assertFalse(computer.label.contains("Grok", ignoreCase = true))
+        computer.activate()
+        assertEquals(CommandPaletteComputerUpdateAction.READY, requestedComputerAction)
     }
 
     @Test
