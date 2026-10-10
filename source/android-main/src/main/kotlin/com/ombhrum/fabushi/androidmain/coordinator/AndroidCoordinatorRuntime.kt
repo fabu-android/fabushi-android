@@ -155,6 +155,31 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
         }
 
         val failures = mutableListOf<String>()
+        var sandAccessState = AccountAccessState.UNKNOWN
+        var sandAccessBlockReason = AccountAccessBlockReason.UNSPECIFIED
+        runCatching { host.request("feature.account.sandAccess") }.onSuccess { access ->
+            sandAccessState = when (access.optString("state")) {
+                "checking" -> AccountAccessState.CHECKING
+                "granted" -> AccountAccessState.GRANTED
+                "unavailable" -> AccountAccessState.UNAVAILABLE
+                "paymentRequired" -> AccountAccessState.PAYMENT_REQUIRED
+                else -> AccountAccessState.UNKNOWN
+            }
+            sandAccessBlockReason = when (access.optString("reason")) {
+                "none" -> AccountAccessBlockReason.NONE
+                "teamPrivacyMode" -> AccountAccessBlockReason.TEAM_PRIVACY_MODE
+                "teamSetupRequired" -> AccountAccessBlockReason.TEAM_SETUP_REQUIRED
+                "teamAccessRequired" -> AccountAccessBlockReason.TEAM_ACCESS_REQUIRED
+                "notOffered" -> AccountAccessBlockReason.NOT_OFFERED
+                "freeTrialAvailable" -> AccountAccessBlockReason.FREE_TRIAL_AVAILABLE
+                "paywallIndividual" -> AccountAccessBlockReason.PAYWALL_INDIVIDUAL
+                "paywallTeamMember" -> AccountAccessBlockReason.PAYWALL_TEAM_MEMBER
+                "paywallTeamAdmin" -> AccountAccessBlockReason.PAYWALL_TEAM_ADMIN
+                else -> AccountAccessBlockReason.UNSPECIFIED
+            }
+        }.onFailure { error ->
+            failures += "sand-access:" + (error.message ?: error::class.java.simpleName)
+        }
         val privacyMode = runCatching {
             host.request("feature.account.privacyMode").optString("mode", "unknown")
         }.getOrElse { error ->
@@ -231,10 +256,12 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
             token,
             AccountAccessFacts(
                 loggedIn = true,
-                // Desktop GetSandAccessStatus and full team-policy projection are not yet wired.
-                // Unknown stays fail-closed rather than being inferred from login/payment.
-                sandAccessState = AccountAccessState.UNKNOWN,
-                blockReason = AccountAccessBlockReason.UNSPECIFIED,
+                // Current Desktop Fabushi shipping composition owns Sand access in the
+                // product account adapter; the Host exposes that canonical policy over JNI.
+                sandAccessState = sandAccessState,
+                blockReason = sandAccessBlockReason,
+                // Descriptor-account authorization and managed-team policy remain separate
+                // owners and stay unknown until their exact shipping contracts are wired.
                 authorizationState = AccountTruthState.UNKNOWN,
                 paymentState = paymentState,
                 entitlementState = entitlementState,
