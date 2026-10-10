@@ -444,7 +444,7 @@ fn safe_transport_kind(error: &ureq::Transport) -> &'static str {
 
 fn parse_sse_data(data: &str) -> Result<ProviderSseEvent, String> {
     if data == "[DONE]" {
-        return Ok(ProviderSseEvent::Completed);
+        return Ok(ProviderSseEvent::Completed(None));
     }
     let value: Value =
         serde_json::from_str(data).map_err(|_| "provider stream returned invalid JSON".to_string())?;
@@ -626,7 +626,11 @@ mod tests {
         );
         assert_eq!(
             parse_sse_data(r#"{"type":"response.completed"}"#).unwrap(),
-            ProviderSseEvent::Completed
+            ProviderSseEvent::Completed(None)
+        );
+        assert_eq!(
+            parse_sse_data(r#"{"type":"response.completed","response":{"id":"resp-1"}}"#).unwrap(),
+            ProviderSseEvent::Completed(Some("resp-1".into()))
         );
         assert_eq!(
             parse_sse_data(
