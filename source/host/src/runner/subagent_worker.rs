@@ -452,11 +452,9 @@ mod tests {
             "root turn keeps Task and generated-subagent management"
         );
 
-        let child = GeneratedSubagentRoutedTools {
-            bridge,
-            context,
-            allowed_names: BTreeSet::new(),
-        };
+        let child = bridge
+            .generated_child_routed_tools(&context.frozen_turn.tool_names)
+            .expect("empty frozen child projection is valid");
         assert!(child.list_tools().unwrap().is_empty());
         assert!(
             child
@@ -466,7 +464,7 @@ mod tests {
                     "child-check",
                 )
                 .unwrap_err()
-                .contains("unavailable"),
+                .contains("outside the frozen projection"),
             "generated child must not gain root subagent-management authority"
         );
     }
