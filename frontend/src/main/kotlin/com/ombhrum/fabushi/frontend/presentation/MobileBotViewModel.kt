@@ -128,6 +128,7 @@ data class MobileBotUiState(
     val asyncTasks: List<MobileAsyncTask> = emptyList(),
     val asyncTasksLoading: Boolean = false,
     val asyncTasksError: String? = null,
+    val groupMembersUpdatingId: String? = null,
 )
 
 class MobileBotViewModel(application: Application) : AndroidViewModel(application) {
@@ -149,6 +150,7 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
     private var openBotGeneration = 0L
     private var asyncTasksGeneration = 0L
     private var asyncTasksJob: Job? = null
+    private var groupMembersGeneration = 0L
     val state: StateFlow<MobileBotUiState> = mutableState.asStateFlow()
     private var featureEventSubscription: AutoCloseable? = coordinator.addFeatureEventListener { event ->
         viewModelScope.launch { handleOperationEvent(event) }
@@ -364,18 +366,50 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
-    fun setGroupMembers(groupId: String, memberIds: List<String>) {
+    fun setGroupMembers(
+        groupId: String,
+        memberIds: List<String>,
+        onUpdated: (() -> Unit)? = null,
+    ) {
         val members = memberIds.map(String::trim).filter(String::isNotEmpty).distinct().take(6)
-        if (groupId.isBlank() || members.isEmpty()) return
+        val group = mutableState.value.bots.firstOrNull { it.id == groupId && it.isGroup } ?: return
+        if (
+            groupId.isBlank() ||
+            members.isEmpty() ||
+            mutableState.value.groupMembersUpdatingId != null ||
+            members == group.memberIds
+        ) {
+            return
+        }
+        val generation = ++groupMembersGeneration
+        mutableState.value = mutableState.value.copy(
+            groupMembersUpdatingId = groupId,
+            error = null,
+        )
         viewModelScope.launch {
             runCatching {
                 withContext(Dispatchers.IO) {
                     coordinator.agentSetGroupMembers(groupId, members)
                 }
             }.onSuccess {
-                refreshBots()
+                if (
+                    generation == groupMembersGeneration &&
+                    mutableState.value.groupMembersUpdatingId == groupId
+                ) {
+                    mutableState.value = mutableState.value.copy(groupMembersUpdatingId = null)
+                    refreshBots()
+                    onUpdated?.invoke()
+                }
             }.onFailure { error ->
-                mutableState.value = mutableState.value.copy(error = error.message ?: "Agent group member update failed")
+                if (
+                    generation == groupMembersGeneration &&
+                    mutableState.value.groupMembersUpdatingId == groupId
+                ) {
+                    mutableState.value = mutableState.value.copy(
+                        groupMembersUpdatingId = null,
+                        error = error.message ?: "Agent group member update failed",
+                    )
+                }
             }
         }
     }
@@ -635,6 +669,7 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
         asyncTasksGeneration += 1
         asyncTasksJob?.cancel()
         asyncTasksJob = null
+        groupMembersGeneration += 1
         messagesByBot.clear()
         draftsByBot.clear()
         commitState(MobileBotUiState())
@@ -1108,6 +1143,7 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
         asyncTasksGeneration += 1
         asyncTasksJob?.cancel()
         asyncTasksJob = null
+        groupMembersGeneration += 1
         rosterSelection.dispose()
         featureEventSubscription?.close()
         featureEventSubscription = null
