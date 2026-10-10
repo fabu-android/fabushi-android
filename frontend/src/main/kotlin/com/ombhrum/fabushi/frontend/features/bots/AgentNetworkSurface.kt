@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.weight
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
@@ -53,7 +54,10 @@ internal fun AgentNetworkSurface(
 ) {
     val nodes = remember(bots) { bots.filterNot { it.isHidden }.map { it.toAgentNetworkNode() } }
     val edges = remember(nodes) { buildAgentNetworkEdges(nodes) }
-    var selectedId by remember(nodes) { mutableStateOf(reconcileAgentNetworkSelection(null, nodes)) }
+    var selectedId by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(nodes) {
+        selectedId = reconcileAgentNetworkSelection(selectedId, nodes)
+    }
     val selected = nodes.firstOrNull { it.id == selectedId }
     val botsById = remember(bots) { bots.associateBy { it.id } }
 
