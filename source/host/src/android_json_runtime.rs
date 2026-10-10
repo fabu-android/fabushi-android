@@ -22,7 +22,8 @@ use crate::runner::{
     ProductionTurnAgentOwner, ProductionTurnAgentStaticConfig, ProductionTurnEvent,
     ProductionDiskPressureLevel, ProductionTurnInput, ProductionTurnLifecycleStore,
     ProductionTurnPrivacyMode, ProductionTurnProfileAnnouncementCommit, SAND_AGENT_TOKEN_LIMIT,
-    build_turn_subagent_types, DurableSubagentOwner, SubagentFrozenTurnConfig,
+    build_turn_subagent_types, parse_turn_subagent_capability_projection,
+    COORDINATOR_SUBAGENT_CAPABILITIES_FIELD, DurableSubagentOwner, SubagentFrozenTurnConfig,
     SubagentRunOutcome, SubagentSteerReview, SubagentTaskReviewCallback,
     SubagentSteerReviewCallback, SubagentToolBridge, SubagentToolContext,
     build_parent_subagent_routed_tools, spawn_generated_subagent,
@@ -1195,12 +1196,15 @@ impl AndroidJsonHost {
         }
         let account_fence = self.current_turn_account_fence()?;
         let is_subagent_runner = parent_agent_id.starts_with("generated:");
+        let subagent_capabilities = parse_turn_subagent_capability_projection(
+            params.get(COORDINATOR_SUBAGENT_CAPABILITIES_FIELD),
+        )?;
         let allowed_subagent_types = build_turn_subagent_types(
             is_subagent_runner,
-            false,
-            false,
-            false,
-            false,
+            subagent_capabilities.multitask_enabled,
+            subagent_capabilities.remote_box_available,
+            subagent_capabilities.remote_box_has_desktop,
+            subagent_capabilities.browser_use_enabled,
         )
         .unwrap_or_default();
         let model_id = if tool_name == crate::runner::TASK_TOOL_NAME {
@@ -2277,6 +2281,9 @@ impl AndroidJsonHost {
                 .filter(|value| !value.trim().is_empty())
                 .unwrap_or("default"),
         );
+        let subagent_capabilities = parse_turn_subagent_capability_projection(
+            command.get(COORDINATOR_SUBAGENT_CAPABILITIES_FIELD),
+        )?;
 
         if self.turn_upgrade_quiescing.load(Ordering::Acquire) {
             return Err("Agent turns are quiescing for upgrade; new dispatch is fenced.".into());
@@ -2364,10 +2371,10 @@ impl AndroidJsonHost {
         .to_string();
         let allowed_subagent_types = build_turn_subagent_types(
             false,
-            false,
-            false,
-            false,
-            false,
+            subagent_capabilities.multitask_enabled,
+            subagent_capabilities.remote_box_available,
+            subagent_capabilities.remote_box_has_desktop,
+            subagent_capabilities.browser_use_enabled,
         )
         .unwrap_or_default();
         let frozen_subagent_turn = SubagentFrozenTurnConfig {
