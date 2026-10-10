@@ -5,7 +5,7 @@
     "desktop_commit": "3bc92400826cc4ca7ac665b467708e22261edc61",
     "android_repository": "fabu-android/fabushi-android",
     "android_pr": 3,
-    "android_head_at_update": "b61cee69b1691c5d1c09de8b216b72bbb53b0666",
+    "android_head_at_update": "36e750692d2cae0835322d7e75a254cc65b21283",
     "status": "incomplete",
     "note": "Persistent human-reviewed responsibility ledger for Desktop main. Rows are responsibility-level source facts; mapped/implemented never imply verified. Verification requires same-exact-HEAD source implementation, production wiring, CI/package and device evidence."
   },
@@ -4963,6 +4963,151 @@
       "artifact": null,
       "verification_status": "not-verified",
       "notes": "Mapped only; source helper presence does not prove Android flashcard product completion."
+    },
+    {
+      "responsibility_id": "DEV-RENDERER-INSPECTION-ANDROID-REPLACEMENT-001",
+      "domain": "development-diagnostics",
+      "desktop_sources": [
+        {
+          "path": "frontend/src/dev/DevShell.tsx",
+          "blob_sha": "e90b7636fb0c7a051bd431a1162f01bf2c69cf11",
+          "symbols": [
+            "DevShell",
+            "/__sand_control",
+            "recovered-source previews"
+          ]
+        },
+        {
+          "path": "frontend/src/dev/dom-inspector.ts",
+          "blob_sha": "c0ea0dde8c2198c59508173488420e59b315b9ef",
+          "symbols": [
+            "attachDomInspector",
+            "describeElement",
+            "selectorFor"
+          ]
+        }
+      ],
+      "source_commit": "3bc92400826cc4ca7ac665b467708e22261edc61",
+      "responsibility": "Provide development-only renderer inspection, source-preview and fault-control capability without shipping Chromium DOM/Electron reconstruction controls in the Android production product.",
+      "source_owner": "Desktop reconstruction/dev renderer only",
+      "direct_callers": [
+        "development renderer bootstrap / developer shortcut"
+      ],
+      "downstream_dependencies": [
+        "Chromium DOM",
+        "desktop preload bridge",
+        "development control server",
+        "recovered UI fixtures"
+      ],
+      "state_owner": "development-only ephemeral UI state; no product canonical state",
+      "persistent_state": [
+        "none"
+      ],
+      "protocol_wire_contract": [
+        "development control endpoints and DOM selector inspection are Desktop reconstruction mechanisms, not user product protocols"
+      ],
+      "visible_effect": "Developers can inspect/fault-test representative UI during authorized debug/CI workflows; end users see no developer panel in release Android.",
+      "failure_behavior": [
+        "diagnostic tooling failure must not affect production runtime",
+        "release package must not expose development control endpoints or fixture mutation"
+      ],
+      "cancellation_behavior": "inspector listener disposal removes development event handlers",
+      "retry_semantics": "manual/debug only",
+      "idempotency_semantics": "diagnostic controls must not be used as product side-effect owners",
+      "process_death_recovery": "debug tooling may restart fresh; production state is recovered by real Android domain owners",
+      "account_fencing": "live diagnostic views must not bypass account/runtime ownership",
+      "security_boundary": "development/fault controls are excluded from public release and cannot expose arbitrary DOM/preload privilege.",
+      "android_disposition": "not-applicable-with-replacement",
+      "android_target": [
+        "mobile/android/app/src/androidTest/java/com/ombhrum/fabushi/PackagedProductionAcceptanceTest.kt",
+        ".github/workflows/android-parity-full-ci.yml",
+        "docs/android-port/verification/acceptance.md"
+      ],
+      "android_owner": "GitHub Actions instrumentation/package acceptance and Android debug diagnostics, never production Compose state",
+      "platform_delta": "Chromium DOM inspection and Electron reconstruction controls cannot exist on native Compose; equivalent engineering validation uses Android instrumentation/semantics/debug tooling and CI fault scenarios.",
+      "implementation_status": "mapped",
+      "production_wiring": "Replacement is verification/debug infrastructure; public release must contain no DevShell/control endpoint.",
+      "unit_test": "not applicable for DOM implementation; Android diagnostics contracts are tested in their native owners",
+      "contract_test": "release gate must prove no production dev-control backdoor",
+      "integration_test": "GitHub Actions instrumentation/debug diagnostics where needed",
+      "packaged_test": "required to prove release excludes dev controls",
+      "device_test": "instrumentation semantics inspection/fault scenarios where applicable",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "N/A with replacement because Chromium DOM/createPortal/desktop preload/control-server mechanisms do not exist in native Android. Original user/product capability is engineering inspectability/fault validation, replaced by Android semantics/instrumentation/CI; no end-user feature is removed."
+    },
+    {
+      "responsibility_id": "UI-NATIVE-BOOTSTRAP-ANDROID-001",
+      "domain": "ui-runtime-bootstrap",
+      "desktop_sources": [
+        {
+          "path": "frontend/src/env.d.ts",
+          "blob_sha": "d5acaeb34b4c2cb056afb6c11dda9b372779f10d",
+          "symbols": [
+            "Window.desktop",
+            "Window.coordinatorPort",
+            "__grokDevRoot"
+          ]
+        },
+        {
+          "path": "frontend/src/main.tsx",
+          "blob_sha": "ccb3e932cb9b017742c7d6a6ecb77c2faf5814d7",
+          "symbols": [
+            "ProductionRenderer bootstrap",
+            "acquireProductionRendererRuntime",
+            "mountProductionRenderer",
+            "health report"
+          ]
+        }
+      ],
+      "source_commit": "3bc92400826cc4ca7ac665b467708e22261edc61",
+      "responsibility": "Bootstrap the shipping native Android UI against the single typed Android runtime bridge, fail visibly when production runtime composition is unavailable, and keep development health instrumentation out of canonical application state.",
+      "source_owner": "Desktop production renderer bootstrap/window bridge declarations",
+      "direct_callers": [
+        "renderer entrypoint"
+      ],
+      "downstream_dependencies": [
+        "ProductionRenderer",
+        "Desktop preload/Coordinator port",
+        "root error boundary"
+      ],
+      "state_owner": "Android Activity/Compose presentation lifecycle; canonical product state remains Coordinator/Host-owned",
+      "persistent_state": [
+        "none at bootstrap; domain owners persist canonical state"
+      ],
+      "protocol_wire_contract": [
+        "typed AndroidCoordinatorPort/MahayanaHost JNI bridge replaces Window.desktop/coordinatorPort"
+      ],
+      "visible_effect": "App launches the native production surface and connects to the real Coordinator/Host rather than a web renderer or fixture shell.",
+      "failure_behavior": [
+        "missing runtime bridge fails production startup/feature call visibly; no fallback legacy web product path"
+      ],
+      "cancellation_behavior": "Activity/process lifecycle tears down presentation subscriptions without cancelling unrelated durable canonical runs",
+      "retry_semantics": "runtime reconnection/recovery follows Coordinator/Host contracts, not UI blind replay",
+      "idempotency_semantics": "bootstrap does not duplicate canonical sends/tool calls",
+      "process_death_recovery": "Android process recreates presentation and reconnects to durable Coordinator/Host state",
+      "account_fencing": "runtime projections are current-account scoped by Host/Coordinator",
+      "security_boundary": "JNI/typed bridge is the formal native boundary; arbitrary webpage/window objects cannot invoke Host.",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "mobile/android/app/src/main/java/com/ombhrum/fabushi/MainActivity.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/production/ProductionRenderer_view.kt",
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/coordinator/AndroidCoordinatorRuntime.kt",
+        "source/android-preload/src/main/kotlin/com/ombhrum/fabushi/androidpreload/runtime/AndroidCoordinatorPort.kt",
+        "source/android-host-jni/src/lib.rs"
+      ],
+      "android_owner": "Android Activity/Compose + typed Kotlin/JNI runtime bridge",
+      "platform_delta": "ReactDOM/window preload bootstrap becomes Android Activity/Compose lifecycle and typed JNI; reconstruction-only health endpoint/HMR are not release mechanisms.",
+      "implementation_status": "implemented",
+      "production_wiring": "Native production renderer and AndroidCoordinatorRuntime/JNI path exist; exact-head packaged/device acceptance still pending.",
+      "unit_test": "existing Android production model/runtime bridge tests",
+      "contract_test": "architecture gate forbids bypass/legacy production path",
+      "integration_test": "Android unit/instrumentation runtime composition",
+      "packaged_test": "required from final signed APK/AAB",
+      "device_test": "required install/launch/login/restart",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Implemented source composition, not yet verified because current exact-head signed package/device gates are unavailable."
     }
   ],
   "traceability": {
