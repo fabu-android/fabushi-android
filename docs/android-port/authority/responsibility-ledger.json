@@ -5,7 +5,7 @@
     "desktop_commit": "3bc92400826cc4ca7ac665b467708e22261edc61",
     "android_repository": "fabu-android/fabushi-android",
     "android_pr": 3,
-    "android_head_at_update": "016f6138ba3108d5971aa8d3eb18b122d68b8ad3",
+    "android_head_at_update": "7fd6969f7adaa8d393a568c61aff04e9c92e3089",
     "status": "incomplete",
     "note": "Persistent human-reviewed responsibility ledger for Desktop main. Rows are responsibility-level source facts; mapped/implemented never imply verified. Verification requires same-exact-HEAD source implementation, production wiring, CI/package and device evidence."
   },
@@ -343,6 +343,14 @@
             "SubagentTaskToolBridge",
             "SubagentTaskSink"
           ]
+        },
+        {
+          "path": "docs/fabu-agent-architecture-parity.md",
+          "blob_sha": "c813a1b059d0e4382bf01071df77e844bef1cfb5",
+          "symbols": [
+            "Fabu Agent architecture parity ownership matrix",
+            "latency/refactor boundary"
+          ]
         }
       ],
       "source_commit": "3bc92400826cc4ca7ac665b467708e22261edc61",
@@ -397,7 +405,7 @@
       "device_test": "required on emulator/physical device as applicable",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Umbrella remains mapped/not-verified. Current slice now includes frozen child identity, pre-mutation review ordering, type scoping, same-provider summarization, and a bounded provider tool/result loop; full Desktop tool graph breadth, auto-review classifier/approval parity, source closure, final APK/AAB provenance and protected device acceptance remain open."
+      "notes": "Umbrella remains mapped/not-verified. Current slice now includes frozen child identity, pre-mutation review ordering, type scoping, same-provider summarization, and a bounded provider tool/result loop; full Desktop tool graph breadth, auto-review classifier/approval parity, source closure, final APK/AAB provenance and protected device acceptance remain open. docs/fabu-agent-architecture-parity.md is an architecture/reference authority rather than shipping production code; it reinforces per-Agent ownership, bounded inference context over durable transcript, per-turn runner lifetime, independent subagent lineage and no renderer-global canonical run truth. Keep non-verified until the concrete shipping responsibilities and exact-head evidence close."
     },
     {
       "responsibility_id": "AGENT-GENERATED-SUBAGENT-001",
@@ -430,6 +438,14 @@
             "SubagentTaskToolBridge",
             "SubagentTaskSink",
             "Task"
+          ]
+        },
+        {
+          "path": "docs/fabu-agent-architecture-parity.md",
+          "blob_sha": "c813a1b059d0e4382bf01071df77e844bef1cfb5",
+          "symbols": [
+            "Fabu Agent architecture parity ownership matrix",
+            "latency/refactor boundary"
           ]
         }
       ],
@@ -497,7 +513,7 @@
       "device_test": "required after protected account secrets are configured",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Implemented durable generated-subagent lifecycle and fail-closed registry semantics only. Current child executable projection remains empty because no proven Host-side outbound Remote Runner/desktop adapter is registered. Desktop current-main now proves explicit TurnToolset executor injection plus remote pairing/session/signaling control-plane endpoints, but not the side-effectful command/ack/reconciliation client wire or its production credential binding. verification_status remains not-verified until the real production path and same-exact-HEAD CI/package/device evidence exist."
+      "notes": "Implemented durable generated-subagent lifecycle and fail-closed registry semantics only. Current child executable projection remains empty because no proven Host-side outbound Remote Runner/desktop adapter is registered. Desktop current-main now proves explicit TurnToolset executor injection plus remote pairing/session/signaling control-plane endpoints, but not the side-effectful command/ack/reconciliation client wire or its production credential binding. verification_status remains not-verified until the real production path and same-exact-HEAD CI/package/device evidence exist. docs/fabu-agent-architecture-parity.md is an architecture/reference authority rather than shipping production code; it reinforces per-Agent ownership, bounded inference context over durable transcript, per-turn runner lifetime, independent subagent lineage and no renderer-global canonical run truth. Keep non-verified until the concrete shipping responsibilities and exact-head evidence close."
     },
     {
       "responsibility_id": "TOOLS-CAPABILITY-BROKER-001",
@@ -1604,6 +1620,14 @@
             "record_run",
             "recoverable turn state"
           ]
+        },
+        {
+          "path": "docs/fabu-agent-architecture-parity.md",
+          "blob_sha": "c813a1b059d0e4382bf01071df77e844bef1cfb5",
+          "symbols": [
+            "Fabu Agent architecture parity ownership matrix",
+            "latency/refactor boundary"
+          ]
         }
       ],
       "source_commit": "3bc92400826cc4ca7ac665b467708e22261edc61",
@@ -1664,7 +1688,7 @@
       "device_test": "Blocked on protected-account emulator journey until Actions secrets are configured.",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Implemented source/production wiring, intentionally not verified until same exact-head CI plus packaged process-death evidence. Coordinator pending/event replay remains an adjacent open responsibility."
+      "notes": "Implemented source/production wiring, intentionally not verified until same exact-head CI plus packaged process-death evidence. Coordinator pending/event replay remains an adjacent open responsibility. docs/fabu-agent-architecture-parity.md is an architecture/reference authority rather than shipping production code; it reinforces per-Agent ownership, bounded inference context over durable transcript, per-turn runner lifetime, independent subagent lineage and no renderer-global canonical run truth. Keep non-verified until the concrete shipping responsibilities and exact-head evidence close."
     },
     {
       "responsibility_id": "REMOTE-COMMAND-JOURNAL-001",
