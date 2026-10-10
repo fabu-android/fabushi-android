@@ -65,6 +65,7 @@ fun GrokHomeSurface(
     botState: MobileBotUiState,
     appAgentSurface: FabushiAppAgentSurface,
     onOpenMessaging: () -> Unit,
+    onOpenAgentNetwork: () -> Unit,
     onOpenCommandPalette: () -> Unit,
     onRefreshBots: () -> Unit,
     onCreateBot: (String, String, (() -> Unit)?) -> Unit,
@@ -187,6 +188,15 @@ fun GrokHomeSurface(
                     action = FabushiAppAgentSurface.Action(setOf("invoke")) { onOpenMessaging() },
                 )
                 element(
+                    "grok-mobile-agent-network",
+                    "button",
+                    "Agent network",
+                    enabled = botState.bots.isNotEmpty(),
+                    action = FabushiAppAgentSurface.Action(setOf("invoke")) {
+                        if (botState.bots.isNotEmpty()) onOpenAgentNetwork()
+                    },
+                )
+                element(
                     "grok-mobile-search-toggle",
                     "button",
                     if (query.isEmpty()) "打开搜索" else "关闭搜索",
@@ -298,6 +308,15 @@ fun GrokHomeSurface(
                         contentAlignment = Alignment.Center,
                     ) { Text(accountName.take(1).uppercase().ifBlank { "F" }, color = GrokMobileInk, fontWeight = FontWeight.Bold) }
                     Spacer(Modifier.weight(1f))
+                    Text(
+                        "◇",
+                        fontSize = 22.sp,
+                        color = if (botState.bots.isNotEmpty()) GrokMobileInk else GrokMobileMuted.copy(alpha = 0.35f),
+                        modifier = Modifier
+                            .padding(horizontal = 8.dp)
+                            .clickable(enabled = botState.bots.isNotEmpty(), onClick = onOpenAgentNetwork)
+                            .testTag("agent-network-open"),
+                    )
                     Text("⌕", fontSize = 29.sp, color = GrokMobileInk, modifier = Modifier.padding(horizontal = 10.dp).clickable { query = if (query.isEmpty()) " " else "" })
                     Text(
                         "⌘",
