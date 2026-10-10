@@ -258,6 +258,44 @@ class RemoteControlSessionCredentialPolicyTest {
     }
 
     @Test
+    fun authenticatedSignalDrainSettlesReconnectAndRemoteCloseStaysOutcomeUnknown() {
+        val base = RemoteControlSessionCredential(
+            deviceId = "computer-1",
+            clientId = "remote-client-1",
+            sessionId = "remote-session-1",
+            mobileToken = validToken,
+            accountFence = "session:account-1",
+            accountEpoch = 7,
+            expiresAt = 2_000_000_000,
+            processGeneration = 12,
+            viewportRevision = 8,
+            provider = "fabushi-webrtc",
+            routePolicy = "direct-preferred",
+            selectedRoute = "relay",
+            transportUpdatedAt = 100,
+            lifecycle = RemoteControlSessionLifecycle.RECONNECTING,
+            reconcileRequired = true,
+        )
+        val ready = RemoteControlSessionStatePolicy.reconcileAfterDrain(
+            base,
+            sawReady = true,
+            sawClose = false,
+        )
+        assertEquals(RemoteControlSessionLifecycle.READY, ready.lifecycle)
+        assertFalse(ready.reconcileRequired)
+        assertEquals(8L, ready.viewportRevision)
+
+        val remoteClose = RemoteControlSessionStatePolicy.reconcileAfterDrain(
+            ready,
+            sawReady = false,
+            sawClose = true,
+        )
+        assertEquals(RemoteControlSessionLifecycle.OUTCOME_UNKNOWN, remoteClose.lifecycle)
+        assertTrue(remoteClose.reconcileRequired)
+        assertEquals(9L, remoteClose.viewportRevision)
+    }
+
+    @Test
     fun closeFailureRemainsDurableOutcomeUnknownInsteadOfDeletingTruth() {
         val base = RemoteControlSessionCredential(
             deviceId = "computer-1",
