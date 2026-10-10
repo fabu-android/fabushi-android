@@ -28,7 +28,7 @@ data class MobileBotSummaryAndroid(
     val isGroup: Boolean = false,
     val memberIds: List<String> = emptyList(),
     val conversationPartnerIds: List<String> = emptyList(),
-    val awaitingUserResponse: Boolean = false,
+    val awaitingUserResponse: Boolean? = null,
     val isRunning: Boolean = false,
     val lastMessage: String = "",
     val updatedAt: Long = 0L,
@@ -182,9 +182,14 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
                                 }
                             }
                         }.orEmpty(),
-                        awaitingUserResponse = row.opt("awaitingUserResponse") != null &&
-                            row.opt("awaitingUserResponse") != JSONObject.NULL &&
-                            row.optBoolean("awaitingUserResponse", true),
+                        awaitingUserResponse = if (
+                            row.opt("awaitingUserResponse") == null ||
+                            row.opt("awaitingUserResponse") == JSONObject.NULL
+                        ) {
+                            null
+                        } else {
+                            true
+                        },
                         isRunning = row.optBoolean("isRunning"),
                         lastMessage = row.optString("lastMessage"),
                         updatedAt = row.optLong("updatedAt"),
