@@ -34,6 +34,14 @@ run 进入等待人工接管时，暂停 Agent 新控制命令，释放或转移
 
 Android 进程死亡后只恢复持久任务和连接意图，不恢复旧网络句柄或旧页面 nonce。foreground 通知可以说明仍有用户主动发起的任务，但前台服务使用必须符合系统条件；不能承诺通过保持通知就永久运行任何任务。
 
+## 当前 main 的远程执行 authority 边界（2026-10-10）
+
+对 Desktop `3bc92400826cc4ca7ac665b467708e22261edc61` 的实际 shipping Rust 复核后，已经确认两层事实。Host/Runner 层的 `TurnToolsetDependencies` 与 `ProductionTurnAgentOwner` 只在显式注入 `RunnerBoxResourcePort`、`BrowserToolExecutor`、`ComputerToolExecutor`、`ExternalMachineExecutor` 时暴露对应执行能力；`RemoteBoxResourceCoordinator` 还要求 ready connection、monitor ownership，并在 delegate 前后执行 auto-review、导航基线、busy lease、审计和 finally probe。模型侧工具名本身不构成执行授权。
+
+服务端 `worker_api.rs` / `remote_computer.rs` 已证明真实 remote-computer control plane：`/v1/computers` 的 register/heartbeat/pair，client revoke，session list/create/activate/transport/close，以及 signals/drain；设备 secret、client token、mobile token 都有身份校验，pairing 默认 10 分钟，control session 默认 2 小时。这个证据足以定义配对、撤销、session 与 signaling 责任，但**尚不足以定义 Android Host 的 outbound side-effect command executor**：当前复核还没有找到把 Box/External/Computer/Browser 动作编码成远端命令、绑定哪一种 session credential、如何 ack/progress/result、如何对 commandId 重复和 process-death outcome-unknown 做 reconcile 的 production client wire。
+
+因此 Android 当前必须保持 fail closed。现有 `FabushiRemoteDeviceGateway` 是 Android 设备接受 `fabushi.app.*` semantic calls 的**入站** surface，不能被注册成 Host→远程电脑的 outbound executor。Rust `GeneratedChildToolRegistry` 已具备 adapter 注册、冻结 tool projection、执行前 re-resolve 与 revoke 后 fail-closed 机制，但 `AndroidJsonHost` 仍以默认空 registry 构造 `SubagentToolBridge`；在找到并验证上述 outbound command authority 前，不得伪造 `with_adapter(...)` transport，也不得把 capability 名称存在当作 capability 已交付。
+
 ## 端到端验证
 
 两台受控测试端：Android 与已授权桌面/测试 Runner。验证正确目标的配对、拒绝错误账户/过期配对码、重连与撤销、变更分辨率后的坐标正确性、远端已执行但响应丢失时不盲重放、重复 commandId 行为、human takeover 停止 Agent 输入、Android 重启后结果核对、远端版本不兼容时 fail closed。
