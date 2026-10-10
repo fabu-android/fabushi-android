@@ -158,6 +158,93 @@ class ComputerRebuildStateOwnerTest {
     }
 
     @Test
+    fun requestAckCancelAndMismatchRemainOperationFenced() {
+        val owner = ComputerRebuildStateOwner(MemoryStore(), processGeneration = 9)
+        owner.observeAccount(41)
+        owner.setPending(41, true)
+        owner.begin(41, ComputerRebuildKind.RESET, "reset-a", null)
+
+        val mismatch = owner.acknowledge(41, "reset-b")
+        assertFalse(mismatch.acknowledged)
+        assertTrue(mismatch.pending)
+        assertEquals(AccountRebuildState.RECONNECTING, owner.accountProjection(41))
+
+        val acknowledged = owner.acknowledge(41, "reset-a")
+        assertTrue(acknowledged.acknowledged)
+        owner.setPending(41, false)
+        val cancelled = owner.deactivate(41)
+        assertNull(cancelled.kind)
+        assertFalse(cancelled.pending)
+        assertEquals(ComputerRebuildResolution.CANCELLED, cancelled.lastResolution)
+        assertEquals(AccountRebuildState.IDLE, owner.accountProjection(41))
+    }
+
+    @Test
+    fun terminalMigrationRejectsStaleOperationAndDeactivationSettlesToIdle() {
+        val owner = ComputerRebuildStateOwner(MemoryStore(), processGeneration = 12)
+        owner.observeAccount(51)
+        owner.begin(51, ComputerRebuildKind.RESET, "migration-a", null)
+        owner.observeConnection(51, false)
+        owner.observeBox(51, "box-a", "off")
+        owner.observeConnection(51, true)
+
+        val stale = owner.observeMigration(51, "migration-b", ComputerRebuildMigrationPhase.DONE)
+        assertEquals("migration-a", stale.operationId)
+        assertFalse(stale.terminalMigration)
+
+        val terminal = owner.observeMigration(51, "migration-a", ComputerRebuildMigrationPhase.DONE)
+        assertTrue(terminal.terminalMigration)
+        val settled = owner.deactivate(51)
+        assertNull(settled.kind)
+        assertEquals(ComputerRebuildResolution.SETTLED, settled.lastResolution)
+        assertEquals(AccountRebuildState.IDLE, owner.accountProjection(51))
+    }
+
+    @Test
+    fun processRestartRebindsGenerationAndKeepsUnsettledOutcomeUnknown() {
+        val store = MemoryStore(
+            ComputerRebuildSnapshot(
+                accountEpoch = 61,
+                processGeneration = 4,
+                kind = ComputerRebuildKind.UPDATE,
+                source = ComputerRebuildSource.REQUEST,
+                pending = true,
+            ),
+        )
+        val reopened = ComputerRebuildStateOwner(store, processGeneration = 5)
+        val snapshot = reopened.snapshot(61)
+        assertEquals(5L, snapshot.processGeneration)
+        assertTrue(snapshot.outcomeUnknown)
+        assertEquals(AccountRebuildState.OUTCOME_UNKNOWN, reopened.accountProjection(61))
+    }
+
+    @Test
+    fun migrationAndDevSignalAdaptersMatchDesktopWireShapesAndFailClosed() {
+        val migration = projectBoxMigrationRebuildEvent(
+            JSONObject(
+                """{"type":"box-migration","payload":{"operationId":{"value":"op-1"},"phase":"creating","detail":"boot"}}""",
+            ),
+        )
+        assertEquals("op-1", migration?.operationId)
+        assertEquals(ComputerRebuildMigrationPhase.CREATING, migration?.phase)
+        assertNull(
+            projectBoxMigrationRebuildEvent(
+                JSONObject("""{"type":"box-migration","payload":{"operationId":"forged","phase":"done"}}"""),
+            ),
+        )
+        assertTrue(
+            isDevBoxRebuildStartEvent(
+                JSONObject("""{"type":"dev-box-rebuild","payload":{"type":"start"}}"""),
+            ),
+        )
+        assertFalse(
+            isDevBoxRebuildStartEvent(
+                JSONObject("""{"type":"dev-box-rebuild","payload":{"type":"other"}}"""),
+            ),
+        )
+    }
+
+    @Test
     fun failedMigrationIsTerminalAndDoesNotPretendSuccess() {
         val store = MemoryStore()
         val owner = ComputerRebuildStateOwner(store)

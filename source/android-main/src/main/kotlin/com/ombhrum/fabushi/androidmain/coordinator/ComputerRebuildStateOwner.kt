@@ -14,6 +14,7 @@ internal enum class ComputerRebuildMigrationPhase {
 
 internal data class ComputerRebuildSnapshot(
     val accountEpoch: Long,
+    val processGeneration: Long = 0L,
     val kind: ComputerRebuildKind? = null,
     val operationId: String? = null,
     val source: ComputerRebuildSource? = null,
@@ -46,6 +47,7 @@ internal class SharedPreferencesComputerRebuildStateStore(context: Context) : Co
             val value = JSONObject(raw)
             ComputerRebuildSnapshot(
                 accountEpoch = value.getLong("accountEpoch"),
+                processGeneration = value.optLong("processGeneration", 0L),
                 kind = value.optString("kind").takeIf(String::isNotBlank)?.let { ComputerRebuildKind.valueOf(it) },
                 operationId = value.optString("operationId").takeIf(String::isNotBlank),
                 source = value.optString("source").takeIf(String::isNotBlank)?.let { ComputerRebuildSource.valueOf(it) },
@@ -78,6 +80,7 @@ internal class SharedPreferencesComputerRebuildStateStore(context: Context) : Co
         }
         val value = JSONObject()
             .put("accountEpoch", snapshot.accountEpoch)
+            .put("processGeneration", snapshot.processGeneration)
             .put("kind", snapshot.kind?.name ?: "")
             .put("operationId", snapshot.operationId ?: "")
             .put("source", snapshot.source?.name ?: "")
@@ -106,16 +109,19 @@ internal class SharedPreferencesComputerRebuildStateStore(context: Context) : Co
  */
 internal class ComputerRebuildStateOwner(
     private val store: ComputerRebuildStateStore,
+    private val processGeneration: Long = 1L,
 ) {
     private var snapshot: ComputerRebuildSnapshot? = store.read()?.let { persisted ->
-        if (persisted.kind != null || persisted.pending) {
-            persisted.copy(outcomeUnknown = true)
+        val rebound = persisted.copy(processGeneration = processGeneration)
+        if (persisted.kind != null || persisted.pending || persisted.outcomeUnknown) {
+            rebound.copy(outcomeUnknown = true)
         } else {
-            persisted
+            rebound
         }
     }
 
     init {
+        require(processGeneration > 0L) { "process generation must be positive" }
         snapshot?.let(store::write)
     }
 
@@ -124,7 +130,10 @@ internal class ComputerRebuildStateOwner(
         require(accountEpoch >= 0L)
         val current = snapshot
         if (current == null || current.accountEpoch != accountEpoch) {
-            snapshot = ComputerRebuildSnapshot(accountEpoch = accountEpoch)
+            snapshot = ComputerRebuildSnapshot(
+                accountEpoch = accountEpoch,
+                processGeneration = processGeneration,
+            )
             store.write(snapshot)
         }
     }
@@ -137,7 +146,10 @@ internal class ComputerRebuildStateOwner(
         source: ComputerRebuildSource?,
     ): ComputerRebuildSnapshot {
         requireCurrentAccount(accountEpoch)
-        val current = snapshot ?: ComputerRebuildSnapshot(accountEpoch)
+        val current = snapshot ?: ComputerRebuildSnapshot(
+            accountEpoch = accountEpoch,
+            processGeneration = processGeneration,
+        )
         val normalizedOperation = operationId?.trim()?.takeIf(String::isNotEmpty)
         if ((kind == ComputerRebuildKind.RESET || kind == ComputerRebuildKind.RECOVER) && normalizedOperation == null) {
             throw IllegalArgumentException("reset/recover rebuild requires operation identity")
@@ -151,7 +163,11 @@ internal class ComputerRebuildStateOwner(
         val next = if (replacesActive || current.kind == null) {
             current.copy(
                 kind = kind,
-                operationId = if (kind == ComputerRebuildKind.RESET || kind == ComputerRebuildKind.RECOVER) normalizedOperation else null,
+                operationId = when {
+                    kind == ComputerRebuildKind.RESET || kind == ComputerRebuildKind.RECOVER -> normalizedOperation
+                    kind == ComputerRebuildKind.UPDATE && source == ComputerRebuildSource.MIGRATION -> normalizedOperation
+                    else -> null
+                },
                 source = if (kind == ComputerRebuildKind.UPDATE) source else null,
                 lockBoxId = current.observedBoxId,
                 acknowledged = false,
@@ -167,7 +183,11 @@ internal class ComputerRebuildStateOwner(
         } else if (current.kind == ComputerRebuildKind.RECONNECTING && kind != ComputerRebuildKind.RECONNECTING) {
             current.copy(
                 kind = kind,
-                operationId = normalizedOperation,
+                operationId = when {
+                    kind == ComputerRebuildKind.RESET || kind == ComputerRebuildKind.RECOVER -> normalizedOperation
+                    kind == ComputerRebuildKind.UPDATE && source == ComputerRebuildSource.MIGRATION -> normalizedOperation
+                    else -> null
+                },
                 source = if (kind == ComputerRebuildKind.UPDATE) source else null,
                 lockBoxId = current.observedBoxId,
                 outcomeUnknown = false,
@@ -198,7 +218,7 @@ internal class ComputerRebuildStateOwner(
         requireCurrentAccount(accountEpoch)
         val current = requireSnapshot(accountEpoch)
         val normalized = operationId?.trim()?.takeIf(String::isNotEmpty)
-        if (normalized != null && current.operationId != null && normalized != current.operationId) return current
+        if (normalized != current.operationId && (normalized != null || current.operationId != null)) return current
         if (current.kind == null) return current
         return persist(current.copy(acknowledged = true, outcomeUnknown = false))
     }
@@ -276,7 +296,9 @@ internal class ComputerRebuildStateOwner(
         val current = requireSnapshot(accountEpoch)
         val normalized = operationId?.trim()?.takeIf(String::isNotEmpty)
         if (phase == ComputerRebuildMigrationPhase.FAILED) {
-            return if (current.kind == null) current else clear(current, ComputerRebuildResolution.FAILED)
+            if (current.kind == null) return current
+            if (current.operationId != null && current.operationId != normalized) return current
+            return clear(current, ComputerRebuildResolution.FAILED)
         }
         if (phase == ComputerRebuildMigrationPhase.DONE) {
             val eligible =
@@ -284,7 +306,7 @@ internal class ComputerRebuildStateOwner(
                     current.kind == ComputerRebuildKind.RECOVER ||
                     (current.kind == ComputerRebuildKind.UPDATE && current.source == ComputerRebuildSource.MIGRATION)
             if (!eligible || current.terminalMigration) return current
-            if (current.operationId != null && normalized != null && current.operationId != normalized) return current
+            if (current.operationId != null && current.operationId != normalized) return current
             return persist(current.copy(terminalMigration = true, leftHealthy = true, outcomeUnknown = false))
         }
         if (phase == ComputerRebuildMigrationPhase.WIPING) {
@@ -327,7 +349,7 @@ internal class ComputerRebuildStateOwner(
         val current = requireSnapshot(accountEpoch)
         return when {
             current.outcomeUnknown -> AccountRebuildState.OUTCOME_UNKNOWN
-            current.kind != null -> AccountRebuildState.RECONNECTING
+            current.kind != null || current.pending -> AccountRebuildState.RECONNECTING
             else -> AccountRebuildState.IDLE
         }
     }
@@ -341,6 +363,7 @@ internal class ComputerRebuildStateOwner(
             operationId = null,
             source = null,
             lockBoxId = null,
+            pending = false,
             acknowledged = false,
             leftHealthy = false,
             teardown = ComputerRebuildTeardown.NONE,
@@ -357,7 +380,10 @@ internal class ComputerRebuildStateOwner(
     }
 
     private fun requireSnapshot(accountEpoch: Long): ComputerRebuildSnapshot =
-        snapshot ?: ComputerRebuildSnapshot(accountEpoch = accountEpoch).also {
+        snapshot ?: ComputerRebuildSnapshot(
+            accountEpoch = accountEpoch,
+            processGeneration = processGeneration,
+        ).also {
             snapshot = it
             store.write(it)
         }
@@ -386,4 +412,36 @@ internal fun projectForeverBoxRebuildEvent(value: JSONObject): Pair<String, Stri
         else -> "off"
     }
     return boxId to phase
+}
+
+
+internal data class ComputerRebuildMigrationIngress(
+    val operationId: String?,
+    val phase: ComputerRebuildMigrationPhase,
+)
+
+internal fun projectBoxMigrationRebuildEvent(value: JSONObject): ComputerRebuildMigrationIngress? {
+    val payload = value.optJSONObject("payload") ?: value
+    val phase = when (payload.optString("phase")) {
+        "backing-up" -> ComputerRebuildMigrationPhase.BACKING_UP
+        "creating" -> ComputerRebuildMigrationPhase.CREATING
+        "moving" -> ComputerRebuildMigrationPhase.MOVING
+        "cleaning-up" -> ComputerRebuildMigrationPhase.CLEANING_UP
+        "wiping" -> ComputerRebuildMigrationPhase.WIPING
+        "done" -> ComputerRebuildMigrationPhase.DONE
+        "failed" -> ComputerRebuildMigrationPhase.FAILED
+        else -> return null
+    }
+    val rawOperation = payload.opt("operationId")
+    val operationId = when (rawOperation) {
+        null, JSONObject.NULL -> null
+        is JSONObject -> rawOperation.optString("value").trim().takeIf(String::isNotEmpty) ?: return null
+        else -> return null
+    }
+    return ComputerRebuildMigrationIngress(operationId = operationId, phase = phase)
+}
+
+internal fun isDevBoxRebuildStartEvent(value: JSONObject): Boolean {
+    val payload = value.optJSONObject("payload") ?: return false
+    return payload.optString("type") == "start"
 }

@@ -48,6 +48,7 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
     )
     private val computerRebuildOwner = ComputerRebuildStateOwner(
         SharedPreferencesComputerRebuildStateStore(application),
+        processGeneration = processGeneration,
     )
     private val agentRosterMutationOwner = AgentRosterMutationOwner(
         SharedPreferencesAgentRosterMutationStore(application),
@@ -736,10 +737,35 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
     }
 
     private fun observeComputerRebuildEvent(event: JSONObject) {
-        if (event.optString("type") != "forever-box") return
-        val (boxId, phase) = projectForeverBoxRebuildEvent(event) ?: return
         val epoch = accountAccessOwner.currentProjection().accountEpoch
-        runCatching { computerRebuildOwner.observeBox(epoch, boxId, phase) }
+        when (event.optString("type")) {
+            "forever-box" -> {
+                val (boxId, phase) = projectForeverBoxRebuildEvent(event) ?: return
+                runCatching { computerRebuildOwner.observeBox(epoch, boxId, phase) }
+            }
+            "dev-box-rebuild" -> {
+                if (!isDevBoxRebuildStartEvent(event)) return
+                runCatching {
+                    computerRebuildOwner.setPending(epoch, true)
+                    computerRebuildOwner.begin(
+                        accountEpoch = epoch,
+                        kind = ComputerRebuildKind.RECONNECTING,
+                        operationId = null,
+                        source = null,
+                    )
+                }
+            }
+            "box-migration" -> {
+                val migration = projectBoxMigrationRebuildEvent(event) ?: return
+                runCatching {
+                    computerRebuildOwner.observeMigration(
+                        accountEpoch = epoch,
+                        operationId = migration.operationId,
+                        phase = migration.phase,
+                    )
+                }
+            }
+        }
     }
 
     companion object {
