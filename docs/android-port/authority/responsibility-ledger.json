@@ -6068,6 +6068,24 @@
             "production_runtime_projects_durable_pending_wakes",
             "async_task_union_contract"
           ]
+        },
+        {
+          "path": "source/host/src/extensions/transcript/pending_wake_rearm.rs",
+          "blob_sha": "7520306135c9210bde37f59cdee6a5584c516410",
+          "symbols": [
+            "PendingWakeRearm",
+            "PendingWakeRuntimePort",
+            "rearm_pending_wakes"
+          ]
+        },
+        {
+          "path": "source/host/src/runner/background_work.rs",
+          "blob_sha": "85df5a9b8636e77e08678dac1de4756073b4da91",
+          "symbols": [
+            "RunnerCloudAgentWatches",
+            "RunnerBackgroundShellWatches",
+            "BackgroundAsyncTaskSnapshot"
+          ]
         }
       ],
       "source_commit": "92fcc2b0f64b6b8f8f8829305b30874b558d6b35",
@@ -6119,20 +6137,22 @@
         "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/production/AgentAsyncTasksPanel_view.kt",
         "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/production/ProductionRenderer_view.kt",
         "mobile/android/app/src/test/java/com/ombhrum/fabushi/AgentAsyncTasksParityTest.kt",
-        "tests/test_agent_async_tasks_wiring.py"
+        "tests/test_agent_async_tasks_wiring.py",
+        "source/host/src/extensions/transcript/pending_wake_rearm.rs",
+        "source/host/src/runner/background_work.rs"
       ],
       "android_owner": "Rust Host running-task projection + typed Coordinator transport; MobileBotViewModel/Compose own transient snapshot and display only.",
       "platform_delta": "Desktop useSyncExternalStore provider and browser interval become Kotlin StateFlow/coroutine/Compose lifecycle. Android must preserve provider semantics rather than the DOM implementation mechanism.",
       "implementation_status": "mapped",
-      "production_wiring": "Partial production wiring exists: AndroidJsonHost exposes feature.agent.asyncTasks; typed AndroidCoordinatorPort/Runtime carries it; Host now merges account-fenced durable pending wakes with live subagent truth; subagent launch/terminal invalidations and Coordinator resync refresh drive the shipping ViewModel/Compose surface. Desktop-equivalent background shell and cloud-agent producer owners are still not closed, so this responsibility remains mapped.",
+      "production_wiring": "Partial production wiring exists: AndroidJsonHost exposes feature.agent.asyncTasks; typed AndroidCoordinatorPort/Runtime carries it; Host merges account-fenced durable pending wakes with live subagent truth; subagent launch/terminal invalidations and Coordinator resync refresh drive the shipping ViewModel/Compose surface. The platform-neutral background-work watcher owner is now Rust-to-Rust ported and the pending-wake rearm state machine is Android-adapted with mandatory account fencing. Shipping Cloud Agent and background-shell producer/await-completion composition is still absent, so this responsibility deliberately remains mapped.",
       "unit_test": "AgentAsyncTasksParityTest covers task kinds, malformed/settled rejection, Desktop relative-time thresholds and labels; exact-head CI is required after this mapping commit.",
-      "contract_test": "Rust source now contains account-fenced durable pending-wake persistence, union/dedupe/recreate-detail tests and Host projection tests; tests/test_agent_async_tasks_wiring.py covers typed event/resync wiring. Same-exact-HEAD CI after the wire-shape fix is still required, and shell/cloud-agent producer contracts remain open.",
+      "contract_test": "Rust source contains account-fenced durable pending-wake persistence, async-task union/dedupe, Desktop-equivalent watcher ownership, and account-fenced rearm tests including cross-account isolation, Cloud watcher ownership verification, recreate-interrupted Shell behavior, and stale pruning. tests/test_agent_async_tasks_wiring.py covers typed event/resync wiring. Same-exact-HEAD GitHub Actions are required, and real shell/cloud producer contracts remain open.",
       "integration_test": "Typed Host -> Coordinator -> ViewModel -> Compose path exists, but full Desktop provider lifecycle semantics are not yet integration-complete.",
       "packaged_test": "required after semantic gaps close on final exact-head APK/AAB",
       "device_test": "required for live running subagent/shell/cloud-agent updates, reconnect/account switch and process recreation",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Fresh Desktop 92fcc2b0 semantic audit extended to Host async_task_union, sand_pending_wake_store, ProductionTranscriptRuntime get_async_tasks/recreate responsibilities and union contract. Android adds accountFence to durable markers because its Host data root spans account sessions; unfenced legacy rows fail closed. Deliberately remains mapped/not-verified until shell/cloud-agent source owners plus exact-head package/device evidence close."
+      "notes": "Desktop 92fcc2b0 semantic audit now includes async_task_union, sand_pending_wake_store, production_runtime get_async_tasks/recreate semantics, pending_wake_rearm and runner/background_work. Android ports platform-neutral watcher ownership and adapts durable recovery to its account-shared Host root; unfenced/cross-account work fails closed. Deliberately remains mapped/not-verified until real Cloud Agent and authorized Remote Runner background-shell producers are composed, then same-exact-HEAD integration/package/device evidence closes."
     }
   ],
   "traceability": {

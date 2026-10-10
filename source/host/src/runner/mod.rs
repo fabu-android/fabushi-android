@@ -1,5 +1,6 @@
 pub mod agent_management;
 pub mod android_host_inference;
+pub mod background_work;
 pub mod durable_turn_journal;
 pub mod multitask_todo;
 pub mod production_turn_agent_owner;

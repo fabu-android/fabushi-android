@@ -1,4 +1,5 @@
 pub mod async_task_union;
+pub mod pending_wake_rearm;
 pub mod sand_pending_wake_store;
 pub mod transcript_store;
 
