@@ -396,7 +396,9 @@ impl CapabilityBroker {
         now_ms: u64,
     ) -> Result<bool, String> {
         let approval_id = self.state.approvals.iter().find_map(|(id, approval)| {
-            (approval.operation_id == operation_id && approval.state == "pending").then_some(id.clone())
+            (approval.operation_id == operation_id
+                && matches!(approval.state.as_str(), "pending" | "allowed_once"))
+            .then_some(id.clone())
         });
         let Some(approval_id) = approval_id else { return Ok(false); };
         let approval = self.state.approvals.get_mut(&approval_id).expect("located approval");
@@ -801,6 +803,50 @@ mod tests {
         assert!(b.consume_remote_approval_for_dispatch(
             "remote-a1","remote-o1","remote-r1","remote.shell","acct-1",7,"device-1",5
         ).is_err());
+    }
+
+    #[test]
+    fn allowed_once_remote_approval_can_be_cancelled_before_dispatch() {
+        let (_root, mut b) = broker();
+        b.request_remote_approval(
+            "remote-cancel-a1",
+            "remote-cancel-r1",
+            "remote-cancel-o1",
+            "remote.shell",
+            json!({"deviceId":"device-1"}),
+            "acct-1",
+            11,
+            "device-1",
+            1,
+        )
+        .unwrap();
+        b.resolve_approval("remote-cancel-a1", true, "acct-1", 2)
+            .unwrap();
+        assert_eq!(b.approval_state("remote-cancel-a1"), Some("allowed_once"));
+
+        assert!(b
+            .cancel_approval_operation(
+                "remote-cancel-o1",
+                "dispatch precondition changed after approval",
+                3,
+            )
+            .unwrap());
+        assert_eq!(b.approval_state("remote-cancel-a1"), Some("cancelled"));
+        assert!(!b
+            .cancel_approval_operation("remote-cancel-o1", "duplicate cancellation", 4)
+            .unwrap());
+        assert!(b
+            .consume_remote_approval_for_dispatch(
+                "remote-cancel-a1",
+                "remote-cancel-o1",
+                "remote-cancel-r1",
+                "remote.shell",
+                "acct-1",
+                11,
+                "device-1",
+                5,
+            )
+            .is_err());
     }
 
     #[test]

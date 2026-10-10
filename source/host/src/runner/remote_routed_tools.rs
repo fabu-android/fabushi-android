@@ -468,14 +468,28 @@ impl AndroidRoutedToolBridge for RemoteRoutedTools {
 
         // Freeze exact protected binding across approval. Endpoint/credential/device/account
         // rotation after the card was shown invalidates this dispatch instead of silently
-        // changing its execution target.
-        let current_binding = self.current_binding()?;
+        // changing its execution target. The already-approved one-time grant is explicitly
+        // cancelled before returning so it cannot survive as an unused privilege in this Host.
+        let current_binding = match self.current_binding() {
+            Ok(binding) => binding,
+            Err(error) => {
+                return Err(abandon_unconsumed_remote_approval(
+                    &self.broker,
+                    &operation_id,
+                    &error,
+                ));
+            }
+        };
         if current_binding != binding {
-            return Err("trusted Remote binding changed after approval".into());
+            return Err(abandon_unconsumed_remote_approval(
+                &self.broker,
+                &operation_id,
+                "trusted Remote binding changed after approval",
+            ));
         }
         // Persist a never-sent Remote operation before consuming the one-time grant. A process
         // death before mark_sent can then be proven not to have crossed the Remote boundary.
-        {
+        let prepare_result = (|| -> Result<(), String> {
             let mut guard = self
                 .runner
                 .lock()
@@ -483,7 +497,14 @@ impl AndroidRoutedToolBridge for RemoteRoutedTools {
             let runner = guard.as_mut().ok_or("trusted Remote runner is unavailable")?;
             runner
                 .prepare_authorized(&context, &request, now_ms())
-                .map_err(remote_execution_error)?;
+                .map_err(remote_execution_error)
+        })();
+        if let Err(error) = prepare_result {
+            return Err(abandon_unconsumed_remote_approval(
+                &self.broker,
+                &operation_id,
+                &format!("trusted Remote dispatch could not be prepared after approval: {error}"),
+            ));
         }
 
         if let Err(error) = self.broker.consume_remote_approval_for_dispatch(
@@ -573,6 +594,22 @@ pub(crate) fn with_remote_routed_tools(
         parent_request_id: parent_request_id.to_string(),
         cancelled,
     })
+}
+
+fn abandon_unconsumed_remote_approval(
+    broker: &SharedCapabilityBroker,
+    operation_id: &str,
+    reason: &str,
+) -> String {
+    match broker.cancel_approval_operation(operation_id, reason, now_ms()) {
+        Ok(true) => reason.to_string(),
+        Ok(false) => format!(
+            "{reason}; Remote one-time approval was no longer cancellable before dispatch"
+        ),
+        Err(error) => format!(
+            "{reason}; failed to cancel unconsumed Remote one-time approval: {error}"
+        ),
+    }
 }
 
 fn validate_remote_tool_input(name: &str, args: &Value) -> Result<u64, String> {
@@ -880,6 +917,49 @@ mod tests {
             .is_err());
     }
 
+
+    #[test]
+    fn pre_dispatch_failure_cancels_allowed_once_remote_grant() {
+        let root = tempfile::tempdir().unwrap();
+        let broker = SharedCapabilityBroker::open(root.path().join("broker.json"), 1).unwrap();
+        broker
+            .request_remote_approval(
+                "approval-cancel",
+                "request-cancel",
+                "remote-op-cancel",
+                "remote.shell",
+                json!({"deviceId":"device-1"}),
+                "session:account-a",
+                7,
+                "device-1",
+                1,
+            )
+            .unwrap();
+        broker
+            .resolve_approval("approval-cancel", true, "session:account-a", 2)
+            .unwrap();
+
+        assert_eq!(
+            abandon_unconsumed_remote_approval(
+                &broker,
+                "remote-op-cancel",
+                "binding changed after approval",
+            ),
+            "binding changed after approval"
+        );
+        assert!(broker
+            .consume_remote_approval_for_dispatch(
+                "approval-cancel",
+                "remote-op-cancel",
+                "request-cancel",
+                "remote.shell",
+                "session:account-a",
+                7,
+                "device-1",
+                4,
+            )
+            .is_err());
+    }
 
     #[test]
     fn external_machine_validation_matches_desktop_contract() {
