@@ -374,6 +374,7 @@ fn publish_settlement(
         super::SubagentStatus::OutcomeUnknown => "subagent.outcome-unknown",
         super::SubagentStatus::Running => "subagent.running",
     };
+    let parent_agent_id = record.parent_agent_id.clone();
     if let Ok(mut queue) = events.lock() {
         queue.push_back(json!({
             "type": family,
@@ -390,7 +391,7 @@ fn publish_settlement(
         }));
         queue.push_back(json!({
             "type":"agent.async-tasks.changed",
-            "parentAgentId":record.parent_agent_id,
+            "parentAgentId":parent_agent_id,
         }));
         if let Some(usage) = settlement.computer_use_usage {
             queue.push_back(json!({
