@@ -8,6 +8,7 @@
 | PRODUCT-BASELINE-001 | open | 旧 Grok 级 ledger 不能证明当前 Desktop 全量 parity | 完整 inventory 与逐职责复核、production wiring + exact HEAD evidence | 已确定域的源审计与实现规划 |
 | RELEASE-001 | open | 真机、签名、商店、授权账户证据本轮未取得 | 受保护 Actions 环境及云设备完成真实验收 | 不依赖生产凭据的合同和静态检查 |
 | CI-AUTH-001 | open | Android emulator protected-account instrumentation 在准备 session 前因 `FABUSHI_CI_TEST_USERNAME` / `FABUSHI_CI_TEST_PASSWORD` 为空而失败；不影响无凭据 Rust/Gradle/静态/包级工作 | 在仓库或受保护 Environment 配置两项 Actions secret，并由新 exact HEAD 重新运行 emulator journey | Rust、架构、release package、安全门、source/responsibility audit |
+| REMOTE-RUNNER-ENROLLMENT-001 | open | Authorized Remote Runner 仍没有 server-side enrollment / executor bearer issuance-redemption 的真实环境证据；Android outbound Runner 必须继续 fail-closed | 服务端签发独立 executor bearer，并在受保护测试环境完成 enrollment、redeem、revoke/rotation、process-death/reconcile journey | Remote Computer control/display/input、本地 Rust/Coordinator、source closure、非 Runner 功能 |
 
 DOC-WRITE-001 曾向用户指定邮箱通知，threadId `1a1215529c220244`；目前正常 GitHub 写入已完成，已核实 PR #3 的 `docs/android-port/features/01–12` 全部存在。后续不能把历史 safety-block / CI 失败错误地当作仍未入库；但只有新 exact-HEAD Actions 全绿，才能将文档 CI 标为通过。无需对此主题再次发送同样的邮件。
 
@@ -33,3 +34,19 @@ This blocks only protected authenticated emulator/device journeys. It does not p
 - Product rule: do not weaken the release gate, substitute a CI test key, or allow unsigned/public `githubRelease` artifacts to count as production acceptance.
 - Notification: the same blocker was already emailed to `1315518325@qq.com` in Gmail thread `1a124e8a981230ff`; do not send duplicate mail while it remains unresolved.
 - Parallel progress: source/responsibility closure, Rust/architecture work, and other non-signing tasks remain ready and must continue.
+
+
+## REMOTE-RUNNER-ENROLLMENT-001 — Authorized Remote Runner enrollment unavailable
+
+- Status: **blocked / user-or-service-action-required**.
+- Gmail thread `1a1278165ac2adad` was checked again on 2026-10-11 and still contains no external reply or concrete server-side enrollment/bearer evidence. Do not send a duplicate notice while this remains unresolved.
+- Security rule: `clientToken`, `mobileToken`, `deviceSecret` and TURN credentials from Remote Computer are never accepted as Runner bearer credentials.
+- Parallel progress remains available: native Remote Computer viewport/input, session reconciliation, Coordinator/Host code, source/responsibility audit and all non-credential CI gates.
+
+## REMOTE-COMPUTER-CREATE-RECONCILIATION — resolved protocol dependency
+
+- Status: **resolved at Desktop protocol/source level; Android verification still pending**.
+- Desktop PR #60 merged as `bhrumom/fabushi-desktop@92fcc2b0f64b6b8f8f8829305b30874b558d6b35`.
+- Exact-head pre-merge Rust desktop runtime run `38086460210` completed successfully; `platform-worker` job `114313923647` executed the new host-side mobile-session reconciliation/schema/router contract tests and wasm check.
+- The shipping service now has a stable mobile `requestId`, database uniqueness for concurrent duplicate create, current paired-client-token-generation fencing, deterministic recoverable session-scoped mobile credentials without raw-token persistence, and `POST /v1/computers/:device_id/sessions/reconcile`.
+- Android has been incrementally rebased to Desktop main `92fcc2b0...`; its native data-plane and create/reconcile implementation remain **not verified** until descendant exact-head Android compile/unit/package/device evidence succeeds.
