@@ -17,7 +17,7 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 
 GRADLE_COMPONENT = re.compile(
-    r"(?:---|\\---)\\s+([A-Za-z0-9_.-]+):([A-Za-z0-9_.-]+):([^\\s()]+)"
+    r"(?:\+---|\\---)\s+([A-Za-z0-9_.-]+):([A-Za-z0-9_.-]+):([^\s()]+)"
 )
 
 
