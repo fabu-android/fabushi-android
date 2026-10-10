@@ -49,6 +49,39 @@ class AccountAccessProjectionOwnerTest {
         assertTrue(shown.mayShowAccessNotice); assertTrue(shown.complete); assertFalse(shown.isAwaitingFirstBox)
     }
 
+    @Test fun accessNoticeCopyMatchesDesktopActionsAndFallbacks() {
+        fun projection(
+            reason: AccountAccessBlockReason,
+            state: AccountAccessState = AccountAccessState.PAYMENT_REQUIRED,
+        ) = AccountAccessProjection.initial(1L).copy(
+            loggedIn = true,
+            sandAccessState = state,
+            blockReason = reason,
+        )
+
+        assertEquals("See Details", accountAccessNoticeCopy(projection(AccountAccessBlockReason.TEAM_PRIVACY_MODE)).action)
+        assertEquals("See Details", accountAccessNoticeCopy(projection(AccountAccessBlockReason.TEAM_SETUP_REQUIRED)).action)
+        assertEquals("Request Access", accountAccessNoticeCopy(projection(AccountAccessBlockReason.TEAM_ACCESS_REQUIRED)).action)
+        assertNull(accountAccessNoticeCopy(projection(AccountAccessBlockReason.NOT_OFFERED)).action)
+        assertEquals("Start Trial", accountAccessNoticeCopy(projection(AccountAccessBlockReason.FREE_TRIAL_AVAILABLE)).action)
+        assertEquals("Upgrade", accountAccessNoticeCopy(projection(AccountAccessBlockReason.PAYWALL_INDIVIDUAL)).action)
+        assertEquals("Request Access", accountAccessNoticeCopy(projection(AccountAccessBlockReason.PAYWALL_TEAM_MEMBER)).action)
+        assertEquals("Manage Seats", accountAccessNoticeCopy(projection(AccountAccessBlockReason.PAYWALL_TEAM_ADMIN)).action)
+        assertEquals(
+            "Check Access",
+            accountAccessNoticeCopy(
+                projection(AccountAccessBlockReason.UNSPECIFIED, AccountAccessState.UNAVAILABLE),
+            ).action,
+        )
+        assertEquals(
+            "Check Access",
+            accountAccessNoticeCopy(
+                projection(AccountAccessBlockReason.NONE, AccountAccessState.PAYMENT_REQUIRED),
+            ).action,
+        )
+        assertEquals("https://fabushi.ombhrum.com/", ACCESS_ONBOARDING_URL)
+    }
+
     @Test fun staleAccountEpochIsFenced() {
         val owner = AccountAccessProjectionOwner(MemoryStore()); owner.observeAuth(true, "a")
         val stale = owner.beginRefresh(); owner.observeAuth(true, "b")
