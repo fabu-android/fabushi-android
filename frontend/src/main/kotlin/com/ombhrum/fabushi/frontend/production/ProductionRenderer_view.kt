@@ -298,6 +298,9 @@ internal fun ProductionRenderer(
                             appAgentSurface = appAgentSurface,
                             onOpenMessaging = { rendererRoute = RendererRoute.MESSAGING },
                             onRefreshAccess = model::refreshAccountAccess,
+                            onOpenAccessOnboarding = {
+                                runtimePort.launchExternalUrl(ACCESS_ONBOARDING_URL)
+                            },
                             onOpenAgentNetwork = { rendererRoute = RendererRoute.AGENT_NETWORK },
                             onOpenCommandPalette = {
                                 commandPaletteAgentFilter = null
