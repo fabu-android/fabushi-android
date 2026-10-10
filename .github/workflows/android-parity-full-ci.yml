@@ -87,7 +87,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p evidence/release
-          if [ -z "$ANDROID_RELEASE_KEYSTORE_BASE64" ] || [ -z "$ANDROID_KEYSTORE_PASSWORD" ] || [ -z "$ANDROID_KEY_ALIAS" ] || [ -z "$ANDROID_KEY_PASSWORD" ]; then
+          if [ -z "$ANDROID_RELEASE_KEYSTORE_BASE64" ] || [ -z "$ANDROID_RELEASE_KEYSTORE_PASSWORD" ] || [ -z "$ANDROID_RELEASE_KEY_ALIAS" ] || [ -z "$ANDROID_RELEASE_KEY_PASSWORD" ]; then
             printf 'status=blocked\nreason=missing-release-signing-secrets\nhead=%s\n' "$SOURCE_SHA" > evidence/release/signing-prerequisite.txt
             echo "githubRelease requires ANDROID_RELEASE_KEYSTORE_BASE64, ANDROID_RELEASE_KEYSTORE_PASSWORD, ANDROID_RELEASE_KEY_ALIAS and ANDROID_RELEASE_KEY_PASSWORD" >&2
             exit 1
