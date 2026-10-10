@@ -5049,6 +5049,128 @@ mod tests {
     use super::*;
 
     #[test]
+    fn subagent_review_block_waits_for_durable_broker_approval_and_consumes_once() {
+        let app_data = tempfile::tempdir().unwrap();
+        let broker = SharedCapabilityBroker::open(
+            app_data.path().join("review-capabilities.json"),
+            now_ms(),
+        )
+        .unwrap();
+        let registry = Arc::new(SubagentReviewApprovalRegistry::default());
+        let events = Arc::new(Mutex::new(VecDeque::new()));
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let worker_broker = broker.clone();
+        let worker_registry = Arc::clone(&registry);
+        let worker_events = Arc::clone(&events);
+        let worker_cancelled = Arc::clone(&cancelled);
+        let worker = thread::spawn(move || {
+            wait_for_subagent_review_approval(
+                &worker_broker,
+                &worker_registry,
+                &worker_events,
+                &worker_cancelled,
+                "agent-parent",
+                "parent-request",
+                "session:account-a",
+                7,
+                "tool-call-1",
+                "launch",
+                "sensitive task",
+                None,
+                Some("executor"),
+                "manual approval required",
+                Some("allow this task"),
+            )
+        });
+
+        let approval = loop {
+            if let Some(event) = events.lock().unwrap().pop_front() {
+                break event;
+            }
+            thread::sleep(Duration::from_millis(5));
+        };
+        assert_eq!(approval["type"], "approval.requested");
+        assert_eq!(approval["capability"], "agent.subagent.review");
+        assert_eq!(approval["autoReview"], true);
+        let approval_id = approval["approvalId"].as_str().unwrap().to_string();
+        let resolved = broker
+            .resolve_approval(
+                &approval_id,
+                true,
+                "session:account-a",
+                now_ms(),
+            )
+            .unwrap();
+        assert_eq!(resolved.state, "allowed_once");
+        registry.resolve(&approval_id, true).unwrap();
+        assert_eq!(worker.join().unwrap().unwrap(), true);
+        assert!(
+            broker
+                .resolve_approval(
+                    &approval_id,
+                    true,
+                    "session:account-a",
+                    now_ms(),
+                )
+                .is_err(),
+            "one-time auto-review approval must not be reusable"
+        );
+    }
+
+    #[test]
+    fn subagent_review_approval_denial_cancel_and_pending_bound_fail_closed() {
+        let registry = SubagentReviewApprovalRegistry::default();
+        let mut signals = Vec::new();
+        for index in 0..SUBAGENT_REVIEW_MAX_PENDING_PER_AGENT {
+            signals.push(
+                registry
+                    .register(&format!("approval-{index}"), "agent-parent")
+                    .unwrap(),
+            );
+        }
+        assert!(
+            registry
+                .register("approval-overflow", "agent-parent")
+                .unwrap_err()
+                .contains("too many pending")
+        );
+        registry.resolve("approval-0", false).unwrap();
+        let (state, _) = &*signals[0];
+        assert_eq!(*state.lock().unwrap(), Some(false));
+        for index in 0..SUBAGENT_REVIEW_MAX_PENDING_PER_AGENT {
+            registry.remove(&format!("approval-{index}"));
+        }
+
+        let app_data = tempfile::tempdir().unwrap();
+        let broker = SharedCapabilityBroker::open(
+            app_data.path().join("review-cancel.json"),
+            now_ms(),
+        )
+        .unwrap();
+        let events = Arc::new(Mutex::new(VecDeque::new()));
+        let cancelled = Arc::new(AtomicBool::new(true));
+        let result = wait_for_subagent_review_approval(
+            &broker,
+            &registry,
+            &events,
+            &cancelled,
+            "agent-parent",
+            "parent-request",
+            "session:account-a",
+            8,
+            "tool-call-cancelled",
+            "steer",
+            "cancelled steer",
+            Some("generated:child"),
+            None,
+            "manual approval required",
+            None,
+        );
+        assert!(result.unwrap_err().contains("cancelled"));
+        assert!(events.lock().unwrap().is_empty());
+    }
+
+    #[test]
     fn deterministic_test_journey_covers_auth_stream_approval_and_interrupt() {
         let app_data = tempfile::tempdir().unwrap();
         let mut host = AndroidJsonHost::new(app_data.path(), AndroidHostMode::Test);
