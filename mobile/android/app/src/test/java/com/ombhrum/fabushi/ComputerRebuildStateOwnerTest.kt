@@ -339,6 +339,39 @@ class ComputerRebuildStateOwnerTest {
     }
 
     @Test
+    fun requestedUpdateSettlesOnMatchingMigrationDone() {
+        val owner = ComputerRebuildStateOwner(MemoryStore(), processGeneration = 101)
+        owner.observeAccount(101)
+        owner.reserveRequest(101, "request-update")
+        owner.acceptRequest(
+            accountEpoch = 101,
+            requestId = "request-update",
+            operationId = "operation-update",
+            kind = ComputerRebuildKind.UPDATE,
+        )
+
+        val creating = owner.observeMigration(
+            101,
+            "operation-update",
+            ComputerRebuildMigrationPhase.CREATING,
+        )
+        assertEquals(ComputerRebuildSource.REQUEST, creating.source)
+        assertFalse(creating.terminalMigration)
+
+        val done = owner.observeMigration(
+            101,
+            "operation-update",
+            ComputerRebuildMigrationPhase.DONE,
+        )
+        assertTrue(done.terminalMigration)
+        val settled = owner.deactivate(101)
+        assertNull(settled.operationId)
+        assertNull(settled.requestId)
+        assertEquals(ComputerRebuildResolution.SETTLED, settled.lastResolution)
+        assertEquals(AccountRebuildState.IDLE, owner.accountProjection(101))
+    }
+
+    @Test
     fun failedMigrationIsTerminalAndDoesNotPretendSuccess() {
         val store = MemoryStore()
         val owner = ComputerRebuildStateOwner(store)
