@@ -49,7 +49,9 @@ pub use subagent_runtime::{
     SubagentSettlement, SubagentStatus,
 };
 pub use subagent_tool_bridge::{
-    build_turn_subagent_types, SubagentSteerReview, SubagentSteerReviewCallback,
+    build_turn_subagent_types, parse_turn_subagent_capability_projection,
+    COORDINATOR_SUBAGENT_CAPABILITIES_FIELD, TurnSubagentCapabilityProjection,
+    SubagentSteerReview, SubagentSteerReviewCallback,
     SubagentTaskReviewCallback, SubagentToolBridge, SubagentToolContext, SubagentToolResult,
     TASK_TOOL_NAME, CHECK_SUBAGENT_TOOL_NAME, MESSAGE_SUBAGENT_TOOL_NAME, STOP_SUBAGENT_TOOL_NAME,
 };
