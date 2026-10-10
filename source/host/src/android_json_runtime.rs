@@ -3049,6 +3049,7 @@ impl AndroidJsonHost {
 
         if let Err(error) = spawn {
             self.turn_cancellations.remove(operation_id);
+            self.agent_turn_interruptions.unregister_operation(operation_id);
             self.active_operations.remove(operation_id);
             let _ = self
                 .turn_journal
