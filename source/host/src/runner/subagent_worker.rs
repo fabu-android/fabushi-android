@@ -96,12 +96,18 @@ pub fn build_parent_subagent_routed_tools(
     events: Arc<Mutex<VecDeque<Value>>>,
     context: SubagentToolContext,
 ) -> Arc<dyn AndroidRoutedToolBridge> {
-    let allowed_names = context
+    // The durable frozen tool projection describes the child turn, not the
+    // parent-only Task launcher. Parent Task exposure is derived from the same
+    // frozen allowed-type projection and never persisted as a child capability.
+    let mut allowed_names = context
         .frozen_turn
         .tool_names
         .iter()
         .cloned()
         .collect::<BTreeSet<_>>();
+    if !context.frozen_turn.allowed_subagent_types.is_empty() {
+        allowed_names.insert(super::TASK_TOOL_NAME.to_string());
+    }
     Arc::new(ParentSubagentRoutedTools {
         mode,
         bearer_token,
