@@ -5,7 +5,7 @@
     "desktop_commit": "3bc92400826cc4ca7ac665b467708e22261edc61",
     "android_repository": "fabu-android/fabushi-android",
     "android_pr": 3,
-    "android_head_at_update": "11fc53b6f037b96d45cd265b2abb896d1df7a101",
+    "android_head_at_update": "512eb71af4e47e9fa35c705843153c2a347341fd",
     "status": "incomplete",
     "note": "Persistent human-reviewed responsibility ledger for Desktop main. Rows are responsibility-level source facts; mapped/implemented never imply verified. Verification requires same-exact-HEAD source implementation, production wiring, CI/package and device evidence."
   },
@@ -5764,6 +5764,139 @@
       "artifact": null,
       "verification_status": "not-verified",
       "notes": "Implemented but intentionally not verified. Same-exact-HEAD Android regression/packaged/device evidence is required; Agent Network relationship/activity parity also has separate open fields beyond memberIds."
+    },
+    {
+      "responsibility_id": "COMPUTER-REBUILD-ANDROID-001",
+      "domain": "remote",
+      "desktop_sources": [
+        {
+          "path": "source/electron-main/box/box-recreate-commands.ts",
+          "blob_sha": "85785ce48c9b912e209baa9739900b1b6a4af6b7",
+          "symbols": [
+            "createRecreateComputerCommands",
+            "triggerRecreate",
+            "recreateComputer",
+            "forceRecreateComputer"
+          ]
+        },
+        {
+          "path": "source/electron-main/box/box-migration-watcher.ts",
+          "blob_sha": "dc9a16350ad5eaaa45d4977a30fdd569cb247186",
+          "symbols": [
+            "watchSandBoxMigration",
+            "offset resume",
+            "3 second reconnect",
+            "30 second stall watchdog"
+          ]
+        },
+        {
+          "path": "source/electron-main/box/box-recovery.ts",
+          "blob_sha": "64ac7d314ecf952b4cd34ee4278472aa85ce66c9",
+          "symbols": [
+            "recovery/reconcile composition"
+          ]
+        },
+        {
+          "path": "source/shared/node/cursor-backend/cursor-inference.ts",
+          "blob_sha": "296eeb02b7b0bc37256fc0d89b5c215d7cd1d501",
+          "symbols": [
+            "createSandCursorBackendClient",
+            "GrokBotService"
+          ]
+        },
+        {
+          "path": "frontend/src/recovered/features/access/cover/computer-rebuild-box-store.ts",
+          "blob_sha": "71a5ee313a6ad236952451ce7a8a854373ff4740",
+          "symbols": [
+            "createComputerRebuildBoxStore",
+            "projectForeverBoxPhase"
+          ]
+        },
+        {
+          "path": "frontend/src/recovered/features/access/cover/computer-rebuild-migration-store.ts",
+          "blob_sha": "8d869d07849783966f859c3162bfa2e16ee1ecef",
+          "symbols": [
+            "createComputerRebuildMigrationStore",
+            "parseBoxMigrationEvent"
+          ]
+        },
+        {
+          "path": "frontend/src/recovered/features/access/cover/computer-rebuild-transport-store.ts",
+          "blob_sha": "10b420511d4bf0653b01cbe0f2401b695ce01a37",
+          "symbols": [
+            "createComputerRebuildTransportStore"
+          ]
+        },
+        {
+          "path": "frontend/src/recovered/features/access/cover/rebuild-signal.ts",
+          "blob_sha": "463a96a6a0a41c893f37e624276b3f98db8a9536",
+          "symbols": [
+            "createDevBoxRebuildSignalStore"
+          ]
+        }
+      ],
+      "source_commit": "3bc92400826cc4ca7ac665b467708e22261edc61",
+      "responsibility": "Own Computer Rebuild from one durable recreate/forceRecreate request through canonical GrokBotService migration settlement without blind side-effect replay.",
+      "source_owner": "Desktop GrokBotService connector + renderer rebuild state composition",
+      "direct_callers": [
+        "Desktop createRecreateComputerCommands through BrokeredHostConnector/GrokBotService; recovered access cover consumes Forever Box, transport and migration projections."
+      ],
+      "downstream_dependencies": [
+        "Sand/Cursor backend credential plane",
+        "Forever Box status",
+        "GrokBotService WatchSandBoxMigration",
+        "account access cover composition"
+      ],
+      "state_owner": "Android Coordinator ComputerRebuildStateOwner; Rust Host owns backend RPC client",
+      "persistent_state": [
+        "account epoch",
+        "process generation",
+        "stable requestId",
+        "operationId",
+        "migration offset key",
+        "pending/ack/outcome-unknown",
+        "box/transport teardown/reconnect",
+        "terminal settlement"
+      ],
+      "protocol_wire_contract": [
+        "GrokBotService RecreateSandBox / ForceRecreateSandBox returns started/reason/operationId.",
+        "WatchSandBoxMigration resumes from offset, includeFinished=true, reconnects after 3 seconds, fences operationId, treats 30 seconds without an event as stalled, and settles only done/failed.",
+        "Android must not substitute /v1/computers or clientToken/mobileToken/deviceSecret for the Sand backend credential plane."
+      ],
+      "visible_effect": "Android users can request preserve-data computer environment update or force rebuild from the native Remote Computer surface and observe a single durable rebuild episode through restart/reconnect.",
+      "failure_behavior": [
+        "Backend rejection settles failed; ambiguous request outcome becomes outcome-unknown and is reconciled instead of blindly replayed.",
+        "Malformed/missing operation identity fails closed."
+      ],
+      "cancellation_behavior": "Watcher reconnect can stop on account/process fencing; terminal failure/cancel cannot be converted to success.",
+      "retry_semantics": "Only migration watch is reconnectable; recreate side effect is never automatically repeated after ambiguous outcome.",
+      "idempotency_semantics": "Stable requestId is persisted before the side effect; backend operationId fences all subsequent migration state.",
+      "process_death_recovery": "Persist requestId/operationId/offset and resume the migration watcher after cold process restart; do not resend recreate.",
+      "account_fencing": "Every mutation requires current account epoch; stale callbacks cannot mutate the new account.",
+      "security_boundary": "Rust Host uses dedicated Sand credential renewal and GrokBotService; Presentation has no bearer/token authority and invokes only typed Coordinator methods.",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "source/host/src/box_rebuild_backend.rs",
+        "source/android-host-jni/src/lib.rs",
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/core/MahayanaHost.kt",
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/coordinator/ComputerRebuildStateOwner.kt",
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/coordinator/AndroidCoordinatorRuntime.kt",
+        "source/android-preload/src/main/kotlin/com/ombhrum/fabushi/androidpreload/runtime/AndroidCoordinatorPort.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/features/remote/RemoteComputerSurface.kt",
+        "mobile/android/app/src/test/java/com/ombhrum/fabushi/ComputerRebuildStateOwnerTest.kt"
+      ],
+      "android_owner": "Rust AndroidBoxRebuildBackend + Coordinator ComputerRebuildStateOwner",
+      "platform_delta": "Electron bridge/store fan-out becomes typed native Coordinator/JNI/Host ownership; no renderer-side canonical rebuild owner exists on Android.",
+      "implementation_status": "implemented",
+      "production_wiring": "Implemented through native Compose Remote Computer controls -> AndroidCoordinatorPort -> AndroidCoordinatorRuntime durable request owner -> MahayanaHost -> android-host-jni -> Rust AndroidBoxRebuildBackend -> GrokBotService. Migration settlement resumes through a dedicated watcher executor with durable cursor and account/process fencing.",
+      "unit_test": "512eb71af4e47e9fa35c705843153c2a347341fd: Grok Android Architecture existing-android-regression job 114300197025 success",
+      "contract_test": "512eb71af4e47e9fa35c705843153c2a347341fd: rust-runtime-foundation job 114300196999 success; Full CI Rust contract/runtime tests in job 114300196817 success",
+      "integration_test": "Native JNI Host exact-HEAD build succeeded in Full CI job 114300196934 before signing blocker; final packaged integration remains open.",
+      "packaged_test": "blocked by missing mandatory release signing secrets on exact HEAD 512eb71af4e47e9fa35c705843153c2a347341fd",
+      "device_test": "required after signed githubRelease artifact exists",
+      "artifact": "architecture evidence 11681070363; signing blocker evidence 11680662837",
+      "verification_status": "not-verified",
+      "notes": "Implemented but intentionally not verified. Exact-head 512eb71af4e47e9fa35c705843153c2a347341fd architecture run 38081842127 succeeded; Full CI 38081842136 built the exact-head native Host then stopped at the mandatory signing gate. Packaging/device settlement and strict full-source closure remain open."
     }
   ],
   "traceability": {
