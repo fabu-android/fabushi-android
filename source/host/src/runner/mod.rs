@@ -3,6 +3,9 @@ pub mod durable_turn_journal;
 pub mod production_turn_agent_owner;
 pub mod production_turn_lifecycle;
 pub mod stream_attempt;
+pub mod subagent_runtime;
+pub mod subagent_tool_bridge;
+pub mod subagent_worker;
 pub mod transient_stream_error;
 pub mod turn_settle;
 pub mod turn_run_shell;
@@ -34,3 +37,16 @@ pub use android_host_inference::{AndroidHostInferenceProvider, AndroidInferenceM
 pub use turn_run_shell::{ActiveRun, TurnCancellation, TurnRunLease, TurnRunShell, TurnRunShellError};
 
 pub use durable_turn_journal::{DurableTurnJournal, DurableTurnRecord, DurableTurnState};
+
+
+pub use subagent_runtime::{
+    compute_subagent_request_id, status_label, ComputerUseAuditRecord, ComputerUseUsageEvent,
+    ComputerUseUsageSnapshot, DurableSubagentOwner, DurableSubagentRecord, SubagentContinuation,
+    SubagentLaunch, SubagentLineage, SubagentRunOutcome, SubagentSessionSnapshot,
+    SubagentSettlement, SubagentStatus,
+};
+pub use subagent_tool_bridge::{
+    SubagentToolBridge, SubagentToolContext, SubagentToolResult, TASK_TOOL_NAME,
+    CHECK_SUBAGENT_TOOL_NAME, MESSAGE_SUBAGENT_TOOL_NAME, STOP_SUBAGENT_TOOL_NAME,
+};
+pub use subagent_worker::spawn_generated_subagent;

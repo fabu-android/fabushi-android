@@ -21,6 +21,8 @@ use crate::runner::{
     ProductionTurnAgentOwner, ProductionTurnAgentStaticConfig, ProductionTurnEvent,
     ProductionDiskPressureLevel, ProductionTurnInput, ProductionTurnLifecycleStore,
     ProductionTurnPrivacyMode, ProductionTurnProfileAnnouncementCommit, SAND_AGENT_TOKEN_LIMIT,
+    DurableSubagentOwner, SubagentRunOutcome, SubagentToolBridge, SubagentToolContext,
+    spawn_generated_subagent,
 };
 use fabushi_constants::composer::text_size_allowed;
 use fabushi_android_shared::node::mcp::mcp_auth_watch_lifecycle::{
@@ -300,6 +302,9 @@ pub struct AndroidJsonHost {
     turn_journal: Arc<Mutex<DurableTurnJournal>>,
     turn_lifecycle: Arc<Mutex<ProductionTurnLifecycleStore>>,
     turn_upgrade_quiescing: Arc<AtomicBool>,
+    subagent_owner: Arc<Mutex<DurableSubagentOwner>>,
+    subagent_tools: SubagentToolBridge,
+    subagent_events: Arc<Mutex<VecDeque<Value>>>,
     installed_plugins: BTreeSet<String>,
     plugin_installer: PluginInstaller,
     plugin_permissions: PermissionManager,
@@ -387,6 +392,12 @@ impl AndroidJsonHost {
             .unwrap_or((None, None));
         #[cfg(not(feature = "ci-account-session-import"))]
         let logged_in = false;
+        let subagent_owner = Arc::new(Mutex::new(
+            DurableSubagentOwner::open(app_data_dir.join("generated-subagents.json"), now_ms())
+                .unwrap_or_else(|error| panic!("failed to open durable generated-subagent owner: {error}")),
+        ));
+        let subagent_tools = SubagentToolBridge::new(Arc::clone(&subagent_owner));
+        let subagent_events = Arc::new(Mutex::new(VecDeque::new()));
         Self {
             mode,
             account,
@@ -426,6 +437,9 @@ impl AndroidJsonHost {
                 }),
             )),
             turn_upgrade_quiescing: Arc::new(AtomicBool::new(false)),
+            subagent_owner,
+            subagent_tools,
+            subagent_events,
             installed_plugins: BTreeSet::new(),
             plugin_installer,
             plugin_permissions,
@@ -481,6 +495,8 @@ impl AndroidJsonHost {
             "feature.agent.diskPressure.observe" => self.agent_disk_pressure_observe(params),
             "feature.agent.diskPressure.record" => self.agent_disk_pressure_record(params),
             "feature.agent.turn.reconcile" => self.agent_turn_reconcile(params),
+            "feature.agent.subagent.tool" => self.agent_subagent_tool(params),
+            "feature.agent.subagent.reconcile" => self.agent_subagent_reconcile(params),
             "feature.agent.upgradeQuiesce" => self.agent_upgrade_quiesce(params),
             "feature.automation.upsert" => self.automation_upsert(params),
             "feature.automation.list" => self.automation_list(),
@@ -790,6 +806,15 @@ impl AndroidJsonHost {
                 reason.unwrap_or("cancelled"),
                 now_ms(),
             )?;
+        let _ = self
+            .subagent_owner
+            .lock()
+            .map_err(|_| "subagent owner lock poisoned".to_string())?
+            .abort_for_parent_request(
+                operation_id,
+                reason.unwrap_or("parent-cancelled"),
+                now_ms(),
+            )?;
         self.pending_approvals.retain(|_, pending_operation| pending_operation != operation_id);
         self.capability_broker.cancel_approval_operation(
             operation_id,
@@ -969,6 +994,25 @@ impl AndroidJsonHost {
             .lock()
             .map_err(|_| "turn lifecycle lock poisoned".to_string())?
             .mark_account_outcome_unknown(previous_fence, now)?;
+        let subagent_fenced = self
+            .subagent_owner
+            .lock()
+            .map_err(|_| "subagent owner lock poisoned".to_string())?
+            .mark_account_outcome_unknown(previous_fence, reason, now)?;
+        if !subagent_fenced.is_empty() {
+            let mut events = self
+                .subagent_events
+                .lock()
+                .map_err(|_| "subagent event queue lock poisoned".to_string())?;
+            for subagent_id in subagent_fenced {
+                events.push_back(json!({
+                    "type":"subagent.outcome-unknown",
+                    "subagentId":subagent_id,
+                    "reason":reason,
+                    "accountFence":previous_fence,
+                }));
+            }
+        }
 
         for record in fenced {
             if let Some(cancelled) = self.turn_cancellations.remove(&record.operation_id) {
@@ -1134,6 +1178,134 @@ impl AndroidJsonHost {
             "operationId":reconciled.operation_id,
             "state":format!("{:?}", reconciled.state).to_ascii_lowercase(),
             "diskPressureReconciled":disk_reconciled,
+        }))
+    }
+
+    fn agent_subagent_tool(&mut self, params: &Value) -> Result<Value, String> {
+        let tool_name = required_string(params, "toolName")?;
+        let tool_call_id = required_string(params, "toolCallId")?;
+        let parent_agent_id = required_string(params, "parentAgentId")?;
+        let parent_request_id = required_string(params, "parentRequestId")?;
+        let args = params.get("arguments").cloned().unwrap_or_else(|| json!({}));
+        if !args.is_object() {
+            return Err("arguments must be a JSON object".into());
+        }
+        let account_fence = self.current_turn_account_fence()?;
+        let context = SubagentToolContext {
+            parent_agent_id: parent_agent_id.to_string(),
+            parent_request_id: parent_request_id.to_string(),
+            root_parent_request_id: params
+                .get("rootParentRequestId")
+                .and_then(Value::as_str)
+                .filter(|value| !value.trim().is_empty())
+                .map(str::to_string),
+            account_fence: account_fence.clone(),
+            box_id: params
+                .get("boxId")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string(),
+            quiet_origin: params
+                .get("quietOrigin")
+                .and_then(Value::as_str)
+                .filter(|value| !value.trim().is_empty())
+                .map(str::to_string),
+        };
+        let result = self
+            .subagent_tools
+            .call(tool_name, &args, tool_call_id, &context, now_ms())?;
+        let Some(launch) = result.launch else {
+            return Ok(result.value);
+        };
+
+        let (bearer_token, mutation) = match self.bearer_token_for_turn() {
+            Ok(value) => value,
+            Err(error) => {
+                let epoch = self
+                    .subagent_owner
+                    .lock()
+                    .map_err(|_| "subagent owner lock poisoned".to_string())?
+                    .process_epoch();
+                let _ = self
+                    .subagent_owner
+                    .lock()
+                    .map_err(|_| "subagent owner lock poisoned".to_string())?
+                    .settle(
+                        &launch.record.subagent_id,
+                        &account_fence,
+                        epoch,
+                        SubagentRunOutcome::Failed(error.clone()),
+                        now_ms(),
+                    );
+                return Err(error);
+            }
+        };
+        if let Err(error) = spawn_generated_subagent(
+            self.mode,
+            bearer_token,
+            Arc::clone(&self.subagent_owner),
+            Arc::clone(&self.subagent_events),
+            launch.clone(),
+        ) {
+            let epoch = self
+                .subagent_owner
+                .lock()
+                .map_err(|_| "subagent owner lock poisoned".to_string())?
+                .process_epoch();
+            let _ = self
+                .subagent_owner
+                .lock()
+                .map_err(|_| "subagent owner lock poisoned".to_string())?
+                .settle(
+                    &launch.record.subagent_id,
+                    &account_fence,
+                    epoch,
+                    SubagentRunOutcome::Failed(error.clone()),
+                    now_ms(),
+                );
+            return Err(error);
+        }
+        Ok(with_account_session_mutation(result.value, mutation))
+    }
+
+    fn agent_subagent_reconcile(&mut self, params: &Value) -> Result<Value, String> {
+        let subagent_id = required_string(params, "subagentId")?;
+        let outcome = required_string(params, "outcome")?;
+        let account_fence = self.current_turn_account_fence()?;
+        let outcome = match outcome {
+            "completed" => SubagentRunOutcome::Completed(
+                params
+                    .get("result")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_string(),
+            ),
+            "failed" => SubagentRunOutcome::Failed(
+                params
+                    .get("reason")
+                    .and_then(Value::as_str)
+                    .unwrap_or("externally reconciled failure")
+                    .to_string(),
+            ),
+            "aborted" => SubagentRunOutcome::Aborted,
+            _ => return Err("outcome must be completed, failed, or aborted".into()),
+        };
+        let record = self
+            .subagent_owner
+            .lock()
+            .map_err(|_| "subagent owner lock poisoned".to_string())?
+            .reconcile_outcome_unknown(
+                subagent_id,
+                &account_fence,
+                outcome,
+                now_ms(),
+            )?;
+        Ok(json!({
+            "subagentId":record.subagent_id,
+            "subagentRequestId":record.subagent_request_id,
+            "status":crate::runner::status_label(record.status),
+            "result":record.completion_result,
+            "error":record.completion_error,
         }))
     }
 
@@ -2678,6 +2850,14 @@ impl AndroidJsonHost {
         if let Some(event) = self.events.pop_front() {
             return Ok(event);
         }
+        if let Some(event) = self
+            .subagent_events
+            .lock()
+            .map_err(|_| "subagent event queue lock poisoned".to_string())?
+            .pop_front()
+        {
+            return Ok(event);
+        }
 
         for wait in 0..=10 {
             let event = self
@@ -3529,7 +3709,7 @@ fn required_u64(value: &Value, key: &str) -> Result<u64, String> {
     value.get(key).and_then(Value::as_u64).ok_or_else(|| format!("{key} is required"))
 }
 
-fn now_ms() -> u64 {
+pub(crate) fn now_ms() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()

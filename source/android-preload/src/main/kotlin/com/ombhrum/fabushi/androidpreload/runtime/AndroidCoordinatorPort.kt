@@ -53,6 +53,8 @@ interface AndroidCoordinatorPort {
     fun featureExecute(params: JSONObject): JSONObject
     fun featureInterrupt(params: JSONObject): JSONObject
     fun transcriptSnapshot(): JSONArray
+    fun agentSubagentTool(params: JSONObject): JSONObject
+    fun agentSubagentReconcile(params: JSONObject): JSONObject
 
     fun agentList(): JSONArray
     fun agentCreate(name: String, description: String): JSONObject

@@ -301,6 +301,34 @@
             "run_routed_provider_with_projected_turn_input",
             "dispose"
           ]
+        },
+        {
+          "path": "source/host/src/runner/subagent_runtime.rs",
+          "blob_sha": "72d4400eabe8a59643a8861f30feb5578202b01b",
+          "symbols": [
+            "SubagentRuntime",
+            "compute_subagent_request_id",
+            "settle_background_subagent_turn"
+          ]
+        },
+        {
+          "path": "source/host/src/runner/tools/sand_subagent_management_tools.rs",
+          "blob_sha": "42c1a0bced05eccfdfc9584389aa7c20d4eb522f",
+          "symbols": [
+            "CheckSubagent",
+            "MessageSubagent",
+            "StopSubagent",
+            "SubagentManagementToolBridge"
+          ]
+        },
+        {
+          "path": "source/host/src/runner/tools/sand_task_subagent_tool.rs",
+          "blob_sha": "1e0c000f6c116e63f6efd164c09dbdc2c295200c",
+          "symbols": [
+            "Task",
+            "SubagentTaskToolBridge",
+            "SubagentTaskSink"
+          ]
         }
       ],
       "source_commit": "3bc92400826cc4ca7ac665b467708e22261edc61",
@@ -334,20 +362,124 @@
         "source/host/src/runner/production_turn_agent_owner.rs",
         "source/mahayana-agent-coordinator/src/lib.rs",
         "source/host/src/mcp_auth/dashboard_mcp_auth_backend.rs",
-        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/coordinator/AndroidCoordinatorRuntime.kt"
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/coordinator/AndroidCoordinatorRuntime.kt",
+        "source/host/src/runner/subagent_runtime.rs",
+        "source/host/src/runner/subagent_tool_bridge.rs",
+        "source/host/src/runner/subagent_worker.rs",
+        "source/host/src/android_json_runtime.rs",
+        "source/android-preload/src/main/kotlin/com/ombhrum/fabushi/androidpreload/runtime/AndroidCoordinatorPort.kt",
+        "source/android-host-jni/src/lib.rs"
       ],
       "android_owner": "source/host/src/runner/production_turn_agent_owner.rs",
       "platform_delta": "Android uses native Compose/platform adapters + typed JNI while preserving canonical Rust owners where platform-independent.",
       "implementation_status": "mapped",
-      "production_wiring": "Partial production closure, still intentionally mapped/not-verified: Android ProductionTurnAgentOwner is wired by the shipping Host chat.send worker with frozen per-turn static config/projection, one-shot Desktop-equivalent Sand privacy-mode negotiation through the same process-owned Cursor Dashboard backend used by MCP (dedicated Sand credential, machine identity, privacy-safe fallback/cache), same-provider summarization binding, durable disk-pressure claim/commit/release callbacks, durable profile-announcement commit, dispose/Drop release, and shared upgrade-quiesce fencing. AndroidCoordinatorRuntime now owns the real platform storage producer: it samples the app-data volume with StatFs on a process-scoped 60-second cadence and sends raw total/available bytes through MahayanaHost/JNI; Rust preserves the Desktop 8/2 GiB + 15%/5% thresholds, 10/3 GiB + 20%/8% hysteresis, durable pressure episode identity, per-turn claim/commit/release, process-reopen outcome-unknown, and account fencing. The production worker checks durable request/operation/account/generation identity before streamed callbacks, transcript mutation, and terminal settlement. Account logout/switch fences old in-flight turns and pressure episodes and requires explicit account-fenced reconcile instead of blind replay. Remaining parity debt includes broader Agent/tool/generated-subagent lifecycle coverage, complete full-source responsibility closure, and same-head packaged/protected-device evidence.",
-      "unit_test": "Focused Rust tests cover frozen static/privacy resolution, Desktop privacy wire enum/ghost-mode mapping, summarization cancellation, platform disk-pressure thresholds/hysteresis, real-sample episode enrollment, successful disk/profile commit, failure/dispose release, upgrade quiesce, frozen-model drift, durable reminder process reopen, account-switch stale callback fencing, account-fenced outcome-unknown reconciliation, and Android Host production-path chat lifecycle wiring. Host-JNI contract coverage exercises lifecycle control through Coordinator/Host dispatch plus existing durable Coordinator reopen/cancel recovery. Exact-head GitHub Actions are still required before any verified claim.",
-      "contract_test": "required on same exact HEAD",
-      "integration_test": "required on same exact HEAD",
+      "production_wiring": "Partial production closure, still intentionally mapped/not-verified: Android ProductionTurnAgentOwner remains the canonical parent-turn owner. This slice adds a single durable Rust generated-subagent owner at source/host/src/runner/subagent_runtime.rs plus the Host-owned Task/CheckSubagent/MessageSubagent/StopSubagent bridge and background worker. Stable subagent request identity, parent/root-parent/tool-call lineage, per-process epoch fencing, account fence, pending wake, steering continuation, abort-wins race behavior, parent-request cancellation, process-reopen outcome-unknown, explicit reconciliation, session snapshots and computer-use usage/audit projection are Rust-owned and persisted under the Host app-data root. The shipping Android typed port routes feature.agent.subagent.tool and feature.agent.subagent.reconcile through AndroidCoordinatorRuntime -> MahayanaHost -> android-host-jni -> MahayanaCoordinator -> AndroidJsonHost; Compose/ViewModel has no canonical subagent registry. Account logout/switch marks prior-account running children outcome-unknown rather than replaying them. The parent Agent provider is still a streaming Android provider rather than Desktop's complete routed-provider/tool-call loop, so the umbrella remains mapped and this generated-subagent slice remains not-verified until exact-head CI, packaged APK/AAB and device/protected acceptance prove the full production path.",
+      "unit_test": "Focused Rust tests now cover stable request identity, duplicate/mismatched launch fencing, steer continuation with the same request id, abort/completion race, parent-scoped cancellation, process reopen -> outcome-unknown, account fence, stale process epoch callbacks, explicit outcome reconciliation, session snapshot and computer-use usage/audit. SubagentToolBridge unit coverage exercises Task/CheckSubagent/MessageSubagent/StopSubagent against one owner. Integration contract coverage exercises shipping AndroidJsonHost dispatch and textual typed-port/JNI/Coordinator composition. Exact-head GitHub Actions are still required before any verified claim.",
+      "contract_test": "source/host/tests/generated_subagent_android_contract.rs plus same-head GitHub Actions required",
+      "integration_test": "shipping AndroidJsonHost -> Coordinator/JNI typed-port contract added; same-head GitHub Actions and packaged/device evidence required",
       "packaged_test": "required on final minified release artifact",
       "device_test": "required on emulator/physical device as applicable",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Umbrella remains mapped/not-verified rather than being painted green. This change closes the two previously explicit lifecycle-slice gaps by reusing the process-owned dedicated Sand Dashboard backend for authoritative Desktop-equivalent privacy negotiation and by adding a real process-scoped Android StatFs storage-pressure producer whose threshold/episode semantics remain Rust-owned. It still does not claim complete AGENT-RUN-LIFECYCLE-001 parity: broader Agent/tool/generated-subagent responsibilities, full source-inventory closure, and same-exact-head packaged/protected-device proof remain open. AGENT-DURABLE-RUN-JOURNAL-001 remains the narrower durable-run slice."
+      "notes": "Umbrella remains mapped/not-verified. Generated-subagent lifecycle source and production wiring are implemented in Rust/Host for this slice, but Desktop full routed-provider/tool-loop parity, full source-inventory closure, final APK/AAB provenance and protected device acceptance are still open."
+    },
+    {
+      "responsibility_id": "AGENT-GENERATED-SUBAGENT-001",
+      "domain": "agent",
+      "desktop_sources": [
+        {
+          "path": "source/host/src/runner/subagent_runtime.rs",
+          "blob_sha": "72d4400eabe8a59643a8861f30feb5578202b01b",
+          "symbols": [
+            "SubagentRuntime",
+            "compute_subagent_request_id",
+            "dispatch_background_subagent",
+            "settle_background_subagent_turn"
+          ]
+        },
+        {
+          "path": "source/host/src/runner/tools/sand_subagent_management_tools.rs",
+          "blob_sha": "42c1a0bced05eccfdfc9584389aa7c20d4eb522f",
+          "symbols": [
+            "SubagentManagementToolBridge",
+            "CheckSubagent",
+            "MessageSubagent",
+            "StopSubagent"
+          ]
+        },
+        {
+          "path": "source/host/src/runner/tools/sand_task_subagent_tool.rs",
+          "blob_sha": "1e0c000f6c116e63f6efd164c09dbdc2c295200c",
+          "symbols": [
+            "SubagentTaskToolBridge",
+            "SubagentTaskSink",
+            "Task"
+          ]
+        }
+      ],
+      "source_commit": "3bc92400826cc4ca7ac665b467708e22261edc61",
+      "responsibility": "Own generated/background subagent launch, stable lineage, control, recovery, completion revival and computer-use usage/audit without a second UI truth.",
+      "source_owner": "Desktop Rust Host/Runner",
+      "direct_callers": [
+        "shipping Runner Task tool bridge",
+        "shipping generated-subagent management tool bridge"
+      ],
+      "downstream_dependencies": [
+        "Host Runner composition",
+        "provider/inference runtime",
+        "session snapshot/transcript projection",
+        "parent completion revival"
+      ],
+      "state_owner": "Rust Host/Runner generated-subagent runtime",
+      "persistent_state": [
+        "stable request/tool lineage",
+        "status",
+        "pending wake",
+        "steer/abort intent",
+        "session snapshot",
+        "account/process epoch fence"
+      ],
+      "protocol_wire_contract": [
+        "Task",
+        "CheckSubagent",
+        "MessageSubagent",
+        "StopSubagent",
+        "subagent completion/outcome-unknown projection"
+      ],
+      "visible_effect": "Parent Agents can launch, inspect, redirect and stop durable background subagents and receive one fenced terminal result.",
+      "failure_behavior": [
+        "duplicate mismatched launch fails closed",
+        "stale account/epoch callback ignored",
+        "uncertain process-reopen outcome requires reconciliation"
+      ],
+      "cancellation_behavior": "Abort wins late completion; parent cancellation targets only children with the matching parent request and disarms pending wake.",
+      "retry_semantics": "No blind replay after process death or outcome uncertainty; steering continues the same stable subagent request.",
+      "idempotency_semantics": "Task identity is stable from the parent tool-call id; exact duplicate launch is idempotent and mismatched reuse fails closed.",
+      "process_death_recovery": "Running children reopen as outcome-unknown, with pending wake disarmed, until explicit account-fenced reconciliation.",
+      "account_fencing": "Every mutation/settlement is fenced by current account identity plus durable process epoch.",
+      "security_boundary": "Rust Host/Runner owns canonical subagent state; Presentation has only typed projection/control methods.",
+      "android_disposition": "direct-port",
+      "android_target": [
+        "source/host/src/runner/subagent_runtime.rs",
+        "source/host/src/runner/subagent_tool_bridge.rs",
+        "source/host/src/runner/subagent_worker.rs",
+        "source/host/src/android_json_runtime.rs",
+        "source/android-preload/src/main/kotlin/com/ombhrum/fabushi/androidpreload/runtime/AndroidCoordinatorPort.kt",
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/coordinator/AndroidCoordinatorRuntime.kt",
+        "source/android-host-jni/src/lib.rs"
+      ],
+      "android_owner": "source/host/src/runner/subagent_runtime.rs",
+      "platform_delta": "Android keeps the platform-independent lifecycle in Rust and exposes only typed Coordinator/Host control to Kotlin; process death is explicit and cannot replay unknown child effects.",
+      "implementation_status": "implemented",
+      "production_wiring": "Rust owner and tool bridge are wired into shipping AndroidJsonHost and the typed Android Coordinator surface. New Task launches use the Android Host background Agent worker; Check/Message/Stop share the same owner. The current Android provider still lacks Desktop's complete routed-provider tool-call loop, so this row is not verified and broader provider/tool-loop parity remains open.",
+      "unit_test": "subagent_runtime and subagent_tool_bridge focused Rust tests",
+      "contract_test": "source/host/tests/generated_subagent_android_contract.rs; exact-head GitHub Actions pending",
+      "integration_test": "AndroidJsonHost typed subagent dispatch plus Coordinator/JNI composition contract; exact-head GitHub Actions pending",
+      "packaged_test": "required on final exact-head APK/AAB",
+      "device_test": "required after protected account secrets are configured",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Implemented source slice only. Do not mark verified until same exact HEAD has source, production wiring, required GitHub Actions, final APK/AAB identity/provenance and device/protected acceptance."
     },
     {
       "responsibility_id": "TOOLS-CAPABILITY-BROKER-001",
