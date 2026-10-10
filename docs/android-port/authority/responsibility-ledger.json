@@ -5,7 +5,7 @@
     "desktop_commit": "3bc92400826cc4ca7ac665b467708e22261edc61",
     "android_repository": "fabu-android/fabushi-android",
     "android_pr": 3,
-    "android_head_at_update": "1517895838e311a76c8855abebcd4c61973d9220",
+    "android_head_at_update": "016f6138ba3108d5971aa8d3eb18b122d68b8ad3",
     "status": "incomplete",
     "note": "Persistent human-reviewed responsibility ledger for Desktop main. Rows are responsibility-level source facts; mapped/implemented never imply verified. Verification requires same-exact-HEAD source implementation, production wiring, CI/package and device evidence."
   },
@@ -3840,6 +3840,14 @@
           "symbols": [
             "Human call surface exposes the shipping WebRTC and Electron media bridge"
           ]
+        },
+        {
+          "path": "docs/adr/FBCP-ADR-003-call-session-signaling.md",
+          "blob_sha": "9693a27376effc7d3231c76df7c4a26be6c97f55",
+          "symbols": [
+            "CallSession/Signaling owner decision",
+            "signaling lifecycle/reconnect/security requirements"
+          ]
         }
       ],
       "source_commit": "3bc92400826cc4ca7ac665b467708e22261edc61",
@@ -3894,7 +3902,7 @@
       "device_test": "required on physical Android hardware for microphone/camera permission, voice/video media and lifecycle recovery",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Registered from the Desktop Mahayana workbench source audit only; this does not claim the missing Android call runtime is implemented."
+      "notes": "Registered from the Desktop Mahayana workbench source audit only; this does not claim the missing Android call runtime is implemented. FBCP-ADR-003 explicitly says the canonical call/signaling owner is still proposed and must be separate from Computer, Transcript and Coordinator. Current Android native recorder/player and conversation call surface do not yet implement offer/answer sequencing, reconnect generation fencing, participant/device session truth, or durable terminal call metadata; keep mapped/not-verified."
     },
     {
       "responsibility_id": "UI-I18N-A11Y-IME-ANDROID-001",
