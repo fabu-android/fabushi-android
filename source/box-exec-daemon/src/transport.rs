@@ -43,6 +43,7 @@ impl fmt::Debug for RemoteBearerCredential {
 
 #[derive(Clone, PartialEq, Eq)]
 pub struct RemoteExecutionContext {
+    pub credential_id: String,
     pub bearer: RemoteBearerCredential,
     pub account_fence: String,
     pub account_epoch: u64,
@@ -56,6 +57,7 @@ impl fmt::Debug for RemoteExecutionContext {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("RemoteExecutionContext")
+            .field("credential_id", &self.credential_id)
             .field("bearer", &self.bearer)
             .field("account_fence", &self.account_fence)
             .field("account_epoch", &self.account_epoch)
@@ -69,6 +71,7 @@ impl fmt::Debug for RemoteExecutionContext {
 
 impl RemoteExecutionContext {
     pub fn validate(&self) -> Result<(), ExecutionError> {
+        validate_identity("credential", &self.credential_id)?;
         validate_identity("account fence", &self.account_fence)?;
         if self.account_epoch == 0 {
             return Err(ExecutionError::InvalidRequest(
@@ -213,6 +216,7 @@ impl AuthenticatedRemoteHttpTransport {
             .set("Authorization", &authorization)
             .set("Content-Type", "application/json")
             .set("Accept", "application/json")
+            .set("X-Fabushi-Credential-Id", &context.credential_id)
             .set("X-Fabushi-Account-Fence", &context.account_fence)
             .set("X-Fabushi-Account-Epoch", &account_epoch)
             .set("X-Fabushi-Operation-Id", &context.operation_id)
@@ -267,6 +271,7 @@ impl RemoteExecutionTransport for AuthenticatedRemoteHttpTransport {
             version: 1,
             operation_id: &context.operation_id,
             request_id: &context.request_id,
+            credential_id: &context.credential_id,
             device_id: &context.device_id,
             capability_id: &request.capability_id,
             input_json: &request.input_json,
@@ -465,6 +470,7 @@ struct ExecuteWireRequest<'a> {
     version: u32,
     operation_id: &'a str,
     request_id: &'a str,
+    credential_id: &'a str,
     device_id: &'a str,
     capability_id: &'a str,
     input_json: &'a str,
@@ -480,6 +486,7 @@ struct IdentityWireRequest<'a> {
     version: u32,
     operation_id: &'a str,
     request_id: &'a str,
+    credential_id: &'a str,
     device_id: &'a str,
     account_fence: &'a str,
     account_epoch: u64,
@@ -650,6 +657,7 @@ mod tests {
         )
         .unwrap();
         let context = RemoteExecutionContext {
+            credential_id: "runner-credential-1".into(),
             bearer: RemoteBearerCredential::new("real-enough-secret-token-for-test").unwrap(),
             account_fence: "session:abc123".into(),
             account_epoch: 7,
@@ -743,6 +751,7 @@ mod tests {
         handle.join().unwrap();
         let request = captured.lock().unwrap().join("\n");
         assert!(request.contains("Authorization: Bearer real-enough-secret-token-for-test"));
+        assert!(request.contains("X-Fabushi-Credential-Id: runner-credential-1"));
         assert!(request.contains("X-Fabushi-Account-Fence: session:abc123"));
         assert!(request.contains("X-Fabushi-Account-Epoch: 7"));
         assert!(request.contains("X-Fabushi-Operation-Id: op-1"));
