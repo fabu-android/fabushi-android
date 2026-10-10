@@ -7,6 +7,15 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class FrontendProductionModelParityTest {
+    @Test
+    fun miniAppAndUnknownConversationKindsAreNotProjectedAsChats() {
+        assertEquals(ConversationKind.DIRECT, conversationKindFromWire("direct"))
+        assertEquals(ConversationKind.GROUP, conversationKindFromWire("group"))
+        assertNull(conversationKindFromWire("miniapp"))
+        assertNull(conversationKindFromWire("future-kind"))
+        assertNull(conversationKindFromWire(""))
+    }
+
     private data class Agent(
         override val id: String,
         override val isPinned: Boolean,
