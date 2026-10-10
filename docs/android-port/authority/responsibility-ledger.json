@@ -4143,6 +4143,81 @@
       "artifact": null,
       "verification_status": "not-verified",
       "notes": "Implemented source slice only; verification remains not-verified pending same-head CI/package/device evidence. Group delivery requires a canonical group conversation/membership. Remote/Computer remains independently not-verified."
+    },
+    {
+      "responsibility_id": "ACCEPTANCE-MESSENGER-E2E-001",
+      "domain": "release-acceptance",
+      "desktop_sources": [
+        {
+          "path": "desktop/e2e/messenger.spec.ts",
+          "blob_sha": "af7aa06ade37e180d12e3ce1054893949fb8be41",
+          "symbols": [
+            "desktop Messenger navigation/search/settings/messaging/channel/group/Mini App/logout/startup acceptance"
+          ]
+        }
+      ],
+      "source_commit": "3bc92400826cc4ca7ac665b467708e22261edc61",
+      "responsibility": "Prove the shipping Android product preserves the broad Messenger user journey represented by Desktop packaged E2E: authenticated startup, native navigation/search, Human and Agent conversations, canonical message mutations, account-scoped cache cleanup, settings, local-first restart, channel/group collaboration, Mini App marketplace/opening and packaged production runtime behavior.",
+      "source_owner": "Desktop Playwright packaged Messenger acceptance over shipping Electron + Host composition",
+      "direct_callers": [
+        "Desktop packaged/E2E CI",
+        "shipping Messenger renderer",
+        "fabushiNative/mahayana Host bridge"
+      ],
+      "downstream_dependencies": [
+        "account session owner",
+        "canonical messaging owner",
+        "Agent runtime",
+        "native navigation/search",
+        "settings",
+        "Mini App/marketplace",
+        "packaged release composition"
+      ],
+      "state_owner": "Acceptance responsibility owns no product state; each asserted state remains owned by its canonical Android account/messaging/Agent/plugin/settings/runtime owner.",
+      "persistent_state": [
+        "account session",
+        "messaging projection/transcript/drafts",
+        "conversation/channel/group state",
+        "settings",
+        "installed Mini Apps/plugins"
+      ],
+      "protocol_wire_contract": [
+        "typed Android Coordinator/Host bridge only",
+        "messaging.execute canonical envelopes",
+        "feature.execute Agent turns",
+        "native Android login/navigation",
+        "packaged production composition"
+      ],
+      "visible_effect": "A real installed Android product can complete the same user-level Messenger journeys without an Electron/WebView shell or test-only duplicate state.",
+      "failure_behavior": [
+        "fail if any journey is fixture-only, debug-only, missing production wiring, stale after restart/account switch, or depends on CI-only bootstrap in public release"
+      ],
+      "cancellation_behavior": "Interactive operations must use the canonical runtime cancellation semantics; acceptance must not retry unknown side effects from UI fixtures.",
+      "retry_semantics": "Acceptance may retry observation/polling only; product side effects must use canonical stable identities and reconciliation.",
+      "idempotency_semantics": "Tests must assert durable product state rather than reissuing side effects to obtain green results.",
+      "process_death_recovery": "Acceptance must cover Android process death/restart and local-first restoration without duplicating messages, tools, purchases or other side effects.",
+      "account_fencing": "Every account-scoped journey must reject stale account callbacks and clear/rebind account-scoped presentation caches on logout/switch.",
+      "security_boundary": "Public release must exclude CI account-session bootstrap; Mini App/remote/tool actions remain behind their native capability/auth boundaries.",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "mobile/android/app/src/androidTest/java/com/ombhrum/fabushi/FabushiScreenTest.kt",
+        "mobile/android/app/src/androidTest/java/com/ombhrum/fabushi/PackagedProductionAcceptanceTest.kt",
+        ".github/workflows/android-parity-full-ci.yml",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend",
+        "source/host/src/android_json_runtime.rs"
+      ],
+      "android_owner": "Android instrumentation + packaged acceptance over shipping Compose/Coordinator/Host composition",
+      "platform_delta": "Desktop Playwright/Electron launch and DOM selectors are replaced by Android instrumentation/Compose semantics and installed APK/AAB execution. The asserted user capabilities remain required; platform mechanics do not waive them.",
+      "implementation_status": "mapped",
+      "production_wiring": "Partial only: FabushiScreenTest covers several native Compose surfaces and PackagedProductionAcceptanceTest covers authenticated production Host streaming/cancel/MCP/WebAuthn/logout, but there is not yet one exact-head packaged/device journey covering all Desktop messenger.spec.ts responsibilities.",
+      "unit_test": "Existing JVM/Compose tests cover individual surfaces; insufficient for this packaged responsibility.",
+      "contract_test": "Existing Host/messaging contracts cover underlying owners; insufficient to prove full user journey.",
+      "integration_test": "Partial Android instrumentation exists; missing complete equivalent journey across Human/Agent chat, search/settings, channel/group, Mini App, restart/process death/offline/upgrade.",
+      "packaged_test": "not complete; current packaged acceptance does not cover the entire Desktop messenger.spec.ts journey",
+      "device_test": "not complete; protected-account emulator/device acceptance remains required",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Source row intentionally advanced only from unreviewed to mapped. Do not mark implemented/verified until the missing packaged/device journeys actually execute on the same exact HEAD."
     }
   ],
   "traceability": {
