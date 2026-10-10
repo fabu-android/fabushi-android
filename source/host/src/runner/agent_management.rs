@@ -91,6 +91,7 @@ pub struct AgentManagementRoutedTools {
     account_fence: String,
     self_agent_id: String,
     cancelled: Arc<AtomicBool>,
+    turn_interruptions: Arc<AgentTurnInterruptionRegistry>,
 }
 
 impl AgentManagementRoutedTools {
