@@ -1,5 +1,6 @@
 package com.ombhrum.fabushi.androidmain.security
 
+import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -58,6 +59,19 @@ class RemoteBindingFencePolicyTest {
             .apply { remove("credentialPlane") }
             .toString()
         assertFalse(runCatching { RemoteBindingCredentialContract.validate(missingPlane) }.isSuccess)
+    }
+
+    @Test
+    fun browserExecutorRequiresTheCanonicalRemoteRunnerCredentialPlane() {
+        val browser = JSONObject(binding("session:stable"))
+            .put("executors", JSONArray().put("browser"))
+            .toString()
+        RemoteBindingCredentialContract.validate(browser)
+
+        val unknown = JSONObject(binding("session:stable"))
+            .put("executors", JSONArray().put("clipboard"))
+            .toString()
+        assertFalse(runCatching { RemoteBindingCredentialContract.validate(unknown) }.isSuccess)
     }
 
     @Test

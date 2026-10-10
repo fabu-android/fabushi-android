@@ -5,9 +5,10 @@ import org.json.JSONObject
 internal data class RemoteBoxCapabilitySnapshot(
     val available: Boolean,
     val hasDesktop: Boolean,
+    val hasBrowser: Boolean = false,
 ) {
     companion object {
-        val Unavailable = RemoteBoxCapabilitySnapshot(false, false)
+        val Unavailable = RemoteBoxCapabilitySnapshot(false, false, false)
 
         /**
          * Project only capabilities backed by the exact protected Remote executor set.
@@ -30,8 +31,10 @@ internal data class RemoteBoxCapabilitySnapshot(
             }
             return RemoteBoxCapabilitySnapshot(
                 available = true,
-                // screenshot/external-shell/external-read are not a Computer executor.
+                // screenshot/external-shell/external-read/browser are not a Computer executor.
                 hasDesktop = "computer" in executors,
+                // Browser is a separate Desktop BrowserToolExecutor replacement.
+                hasBrowser = "browser" in executors,
             )
         }
     }
@@ -71,6 +74,6 @@ internal object AgentTurnCapabilityProjection {
             .put("multitaskEnabled", availableProcessors.coerceAtLeast(1) > 1)
             .put("remoteBoxAvailable", remoteBox.available)
             .put("remoteBoxHasDesktop", remoteBox.available && remoteBox.hasDesktop)
-            // A paired desktop does not imply a registered Browser adapter.
-            .put("browserUseEnabled", false)
+            // A paired desktop or Computer executor does not imply a Browser executor.
+            .put("browserUseEnabled", remoteBox.available && remoteBox.hasBrowser)
 }

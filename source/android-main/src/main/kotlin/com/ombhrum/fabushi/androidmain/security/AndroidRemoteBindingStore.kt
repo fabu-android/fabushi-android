@@ -178,6 +178,7 @@ internal object RemoteBindingCredentialContract {
             "read",
             "computer",
             "screenshot",
+            "browser",
             "external-shell",
             "external-read",
         )

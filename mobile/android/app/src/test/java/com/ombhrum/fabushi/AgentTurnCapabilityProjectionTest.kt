@@ -85,6 +85,24 @@ class AgentTurnCapabilityProjectionTest {
         )
         assertTrue(computer.available)
         assertTrue(computer.hasDesktop)
+        assertFalse(computer.hasBrowser)
+
+        val browser = RemoteBoxCapabilitySnapshot.fromBindingStatus(
+            JSONObject()
+                .put("ready", true)
+                .put("hasDesktop", true)
+                .put("executors", JSONArray().put("browser")),
+        )
+        assertTrue(browser.available)
+        assertFalse(browser.hasDesktop)
+        assertTrue(browser.hasBrowser)
+        val browserCapabilities = AgentTurnCapabilityProjection.forSubagentTool(
+            JSONObject(),
+            1,
+            browser,
+        ).getJSONObject(AgentTurnCapabilityProjection.FieldName)
+        assertFalse(browserCapabilities.getBoolean("remoteBoxHasDesktop"))
+        assertTrue(browserCapabilities.getBoolean("browserUseEnabled"))
 
         val notReady = RemoteBoxCapabilitySnapshot.fromBindingStatus(
             JSONObject()

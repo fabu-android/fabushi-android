@@ -22,6 +22,87 @@ const APPROVAL_POLL: Duration = Duration::from_millis(250);
 const MAX_SHELL_COMMAND: usize = 32 * 1024;
 const MAX_READ_PATH: usize = 4096;
 
+const REMOTE_BROWSER_TOOL_NAMES: &[&str] = &[
+    "browser_navigate",
+    "browser_snapshot",
+    "browser_click",
+    "browser_mouse_click_xy",
+    "browser_type",
+    "browser_fill",
+    "browser_select_option",
+    "browser_press_key",
+    "browser_scroll",
+    "browser_drag",
+    "browser_get_bounding_box",
+    "browser_highlight",
+    "browser_cdp",
+    "browser_tabs",
+    "browser_take_screenshot",
+];
+
+#[derive(Clone, Copy)]
+struct RemoteBrowserToolSpec {
+    name: &'static str,
+    description: &'static str,
+    required: &'static [&'static str],
+}
+
+fn remote_browser_specs() -> Vec<RemoteBrowserToolSpec> {
+    vec![
+        RemoteBrowserToolSpec { name: "browser_navigate", description: "Navigate the box browser to a URL. By default reuses your tab; set newTab: true to open in a new tab. Returns the resulting page state with a screenshot.", required: &["url"] },
+        RemoteBrowserToolSpec { name: "browser_snapshot", description: "Capture a structured snapshot of the current page with ref handles for interactive elements.", required: &[] },
+        RemoteBrowserToolSpec { name: "browser_click", description: "Click an element by ref from browser_snapshot.", required: &["ref"] },
+        RemoteBrowserToolSpec { name: "browser_mouse_click_xy", description: "Click at viewport coordinates.", required: &["x", "y"] },
+        RemoteBrowserToolSpec { name: "browser_type", description: "Type text into an editable element by ref.", required: &["ref", "text"] },
+        RemoteBrowserToolSpec { name: "browser_fill", description: "Set the value of an editable element by ref.", required: &["ref", "value"] },
+        RemoteBrowserToolSpec { name: "browser_select_option", description: "Select one or more options in a select element by ref.", required: &["ref", "values"] },
+        RemoteBrowserToolSpec { name: "browser_press_key", description: "Press a key in the browser page.", required: &["key"] },
+        RemoteBrowserToolSpec { name: "browser_scroll", description: "Scroll the page or scroll an element into view.", required: &[] },
+        RemoteBrowserToolSpec { name: "browser_drag", description: "Drag an element by ref to another ref or viewport coordinates.", required: &["sourceRef"] },
+        RemoteBrowserToolSpec { name: "browser_get_bounding_box", description: "Get the viewport bounding box for an element ref.", required: &["ref"] },
+        RemoteBrowserToolSpec { name: "browser_highlight", description: "Highlight an element by ref for visual grounding.", required: &["ref"] },
+        RemoteBrowserToolSpec { name: "browser_cdp", description: "Send a Chrome DevTools Protocol command to the target browser tab.", required: &["method"] },
+        RemoteBrowserToolSpec { name: "browser_tabs", description: "List, create, close, or select a browser tab.", required: &["action"] },
+        RemoteBrowserToolSpec { name: "browser_take_screenshot", description: "Take a screenshot of the current page.", required: &[] },
+    ]
+}
+
+fn is_remote_browser_tool(name: &str) -> bool {
+    REMOTE_BROWSER_TOOL_NAMES.contains(&name)
+}
+
+fn remote_browser_tool_definitions() -> Vec<Value> {
+    remote_browser_specs()
+        .into_iter()
+        .map(|spec| {
+            let mut properties = serde_json::Map::new();
+            for key in spec.required {
+                properties.insert((*key).to_string(), json!({}));
+            }
+            properties
+                .entry("viewId".to_string())
+                .or_insert_with(|| json!({"type":"string"}));
+            if spec.name == "browser_tabs" {
+                properties.insert(
+                    "action".to_string(),
+                    json!({"type":"string","enum":["list","new","close","select"]}),
+                );
+            }
+            json!({
+                "type":"function",
+                "name":spec.name,
+                "description":spec.description,
+                "parameters":{
+                    "type":"object",
+                    "required":spec.required,
+                    "additionalProperties":true,
+                    "properties":properties
+                }
+            })
+        })
+        .collect()
+}
+
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct RemoteDispatchBinding {
@@ -72,6 +153,7 @@ impl RemoteDispatchBinding {
             "read",
             "computer",
             "screenshot",
+            "browser",
             "external-shell",
             "external-read",
         ];
@@ -221,11 +303,13 @@ impl AndroidRoutedToolBridge for RemoteRoutedTools {
             Err(_) => return Ok(tools),
         };
         tools.retain(|tool| {
+            let Some(name) = tool.get("name").and_then(Value::as_str) else {
+                return true;
+            };
             !matches!(
-                tool.get("name").and_then(Value::as_str),
-                Some("Shell") | Some("Read") | Some("Computer") | Some("Screenshot")
-                    | Some("ExternalShell") | Some("ExternalRead")
-            )
+                name,
+                "Shell" | "Read" | "Computer" | "Screenshot" | "ExternalShell" | "ExternalRead"
+            ) && !is_remote_browser_tool(name)
         });
         if binding.supports("shell") {
             tools.push(json!({
@@ -301,6 +385,9 @@ impl AndroidRoutedToolBridge for RemoteRoutedTools {
                 }
             }));
         }
+        if binding.supports("browser") {
+            tools.extend(remote_browser_tool_definitions());
+        }
         if binding.supports("external-shell") {
             tools.push(json!({
                 "type":"function",
@@ -339,10 +426,11 @@ impl AndroidRoutedToolBridge for RemoteRoutedTools {
     }
 
     fn call_tool(&self, name: &str, args: Value, tool_call_id: &str) -> Result<Value, String> {
+        let browser_tool = is_remote_browser_tool(name);
         if !matches!(
             name,
             "Shell" | "Read" | "Computer" | "Screenshot" | "ExternalShell" | "ExternalRead"
-        ) {
+        ) && !browser_tool {
             return self.delegate.call_tool(name, args, tool_call_id);
         }
         if self.cancelled.load(Ordering::Acquire) {
@@ -367,6 +455,7 @@ impl AndroidRoutedToolBridge for RemoteRoutedTools {
             "Shell" | "ExternalShell" => "remote.shell",
             "Read" | "ExternalRead" => "remote.read",
             "Computer" | "Screenshot" => "computer.use",
+            _ if browser_tool => "browser.use",
             _ => unreachable!("unsupported Remote routed tool was delegated"),
         };
         let binding = self.current_binding()?;
@@ -375,6 +464,7 @@ impl AndroidRoutedToolBridge for RemoteRoutedTools {
             "Read" => "read",
             "Computer" => "computer",
             "Screenshot" => "screenshot",
+            _ if browser_tool => "browser",
             "ExternalShell" => "external-shell",
             "ExternalRead" => "external-read",
             _ => unreachable!("unsupported Remote routed tool was delegated"),
@@ -725,6 +815,7 @@ fn validate_remote_tool_input(name: &str, args: &Value) -> Result<u64, String> {
             }
             Ok(30_000)
         }
+        name if is_remote_browser_tool(name) => validate_remote_browser_tool_input(name, args),
         "ExternalRead" => {
             const KEYS: &[&str] = &["path", "offset", "limit", "encodingHint"];
             if let Some(key) = object.keys().find(|key| !KEYS.contains(&key.as_str())) {
@@ -765,6 +856,39 @@ fn validate_remote_tool_input(name: &str, args: &Value) -> Result<u64, String> {
         }
         _ => Err("unsupported Remote routed tool".into()),
     }
+}
+
+fn validate_remote_browser_tool_input(name: &str, args: &Value) -> Result<u64, String> {
+    let object = args
+        .as_object()
+        .ok_or("Remote Browser arguments must be an object")?;
+    let spec = remote_browser_specs()
+        .into_iter()
+        .find(|spec| spec.name == name)
+        .ok_or("unsupported Remote Browser tool")?;
+    for key in spec.required {
+        let value = object
+            .get(*key)
+            .ok_or_else(|| format!("Remote Browser {name} requires {key}"))?;
+        if value.is_null() || value.as_str() == Some("") {
+            return Err(format!("Remote Browser {name} requires {key}"));
+        }
+    }
+    if let Some(view_id) = object.get("viewId") {
+        if !view_id.is_string() {
+            return Err("Remote Browser viewId must be a string".into());
+        }
+    }
+    if name == "browser_tabs" {
+        let action = object
+            .get("action")
+            .and_then(Value::as_str)
+            .ok_or("Remote Browser tabs action is required")?;
+        if !matches!(action, "list" | "new" | "close" | "select") {
+            return Err("Remote Browser tabs action is unsupported".into());
+        }
+    }
+    Ok(30_000)
 }
 
 
@@ -957,7 +1081,7 @@ mod tests {
             "deviceId":"device-1",
             "accountFence":"session:a",
             "accountEpoch":7,
-            "executors":["computer","browser"]
+            "executors":["computer","clipboard"]
         }).to_string();
         assert!(RemoteDispatchBinding::parse(&unknown).is_err());
 
@@ -1065,6 +1189,41 @@ mod tests {
                 4,
             )
             .is_err());
+    }
+
+    #[test]
+    fn browser_executor_matches_desktop_tool_names_and_required_contracts() {
+        let definitions = remote_browser_tool_definitions();
+        let names = definitions
+            .iter()
+            .filter_map(|tool| tool.get("name").and_then(Value::as_str))
+            .collect::<BTreeSet<_>>();
+        assert_eq!(names.len(), REMOTE_BROWSER_TOOL_NAMES.len());
+        assert!(REMOTE_BROWSER_TOOL_NAMES.iter().all(|name| names.contains(name)));
+
+        assert_eq!(
+            validate_remote_tool_input(
+                "browser_navigate",
+                &json!({"url":"https://example.com","newTab":true}),
+            )
+            .unwrap(),
+            30_000,
+        );
+        assert!(validate_remote_tool_input("browser_navigate", &json!({})).is_err());
+        assert_eq!(
+            validate_remote_tool_input("browser_tabs", &json!({"action":"list"})).unwrap(),
+            30_000,
+        );
+        assert!(
+            validate_remote_tool_input("browser_tabs", &json!({"action":"destroy"})).is_err()
+        );
+        assert!(
+            validate_remote_tool_input(
+                "browser_click",
+                &json!({"ref":"ref-1","viewId":42}),
+            )
+            .is_err()
+        );
     }
 
     #[test]
