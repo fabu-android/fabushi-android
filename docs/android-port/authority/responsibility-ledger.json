@@ -6270,6 +6270,100 @@
       "artifact": null,
       "verification_status": "not-verified",
       "notes": "Fresh semantic audit of four Desktop 92fcc2b0 avatar-editor blobs. This intentionally records a real missing Android responsibility; do not upgrade until production wiring and same-head CI/package/device evidence exist."
+    },
+    {
+      "responsibility_id": "AGENT-CHANNEL-CONNECTIONS-ANDROID-001",
+      "domain": "agent",
+      "desktop_sources": [
+        {
+          "path": "frontend/src/recovered/features/agent-info/channels/model.ts",
+          "blob_sha": "26b1e5c7aa40e7a171f1b89354a3bddf8cc72d33",
+          "symbols": [
+            "createAgentInfoChannelsController",
+            "projectAgentInfoChannelsView",
+            "createAgentInfoChannelsSource",
+            "agentInfoChannelRowStatus"
+          ]
+        },
+        {
+          "path": "frontend/src/recovered/features/agent-info/channels/view.tsx",
+          "blob_sha": "16bb4ca2324bdc4bec42987affe99c33869daf53",
+          "symbols": [
+            "AgentInfoChannelsPanel",
+            "AgentInfoChannelRow",
+            "ChannelGuideDialog",
+            "mountAgentInfoChannels"
+          ]
+        },
+        {
+          "path": "frontend/src/recovered/features/agent-info/channels/view.css",
+          "blob_sha": "2c96af5794d756d69878953538f9154fcc021e21",
+          "symbols": [
+            "shipping Channels tab styles"
+          ]
+        }
+      ],
+      "source_commit": "92fcc2b0f64b6b8f8f8829305b30874b558d6b35",
+      "responsibility": "Expose an Agent-scoped messaging-platform Channels surface with strict manifest/connection projection, secure credential submission, connect/reconnect/refresh/disconnect lifecycle, setup guidance, and stale Agent/lifecycle request fencing.",
+      "source_owner": "Desktop recovered Agent-info Channels controller/view over RawPortCoordinatorSource channel methods",
+      "direct_callers": [
+        "AgentInfoChannelsPanel -> AgentInfoChannelsController",
+        "controller -> getAgentChannels/connectChannel/disconnectChannel/refreshChannel",
+        "mountAgentInfoChannels mounts the shipping Channels tab"
+      ],
+      "downstream_dependencies": [
+        "channel manifest catalog",
+        "secure channel credential storage/connection owner",
+        "Agent identity",
+        "Coordinator RPC",
+        "channel connection status projection"
+      ],
+      "state_owner": "Controller owns transient tab loading/pending/error state; canonical connection/credential truth stays behind Coordinator/Host channel owner and is never stored in the view.",
+      "persistent_state": [
+        "platform connection identity/status",
+        "secure platform credential or revocation state owned outside Presentation"
+      ],
+      "protocol_wire_contract": [
+        "getAgentChannels({id}) -> {manifests,connections}",
+        "connectChannel({id,platform,token})",
+        "disconnectChannel({id,platform})",
+        "refreshChannel({id,platform})",
+        "malformed manifest/connection rows fail closed"
+      ],
+      "visible_effect": "Users can see available/coming-soon messaging platforms, connect an Agent with a credential, inspect setup steps, refresh, reconnect or disconnect, and see connected/error/connecting status.",
+      "failure_behavior": [
+        "malformed channel reply fails closed",
+        "blank platform or connect token is rejected",
+        "failed loads/mutations surface failure while prior valid projection may remain visible",
+        "coming-soon cannot open credential connection path",
+        "stale Agent/tab lifecycle results are ignored"
+      ],
+      "cancellation_behavior": "Desktop invalidates in-flight results using lifecycleGeneration/requestGeneration on close, Agent switch and dispose; Android must preserve equivalent lifecycle/account fencing.",
+      "retry_semantics": "Load has explicit retry. Connection mutations require explicit user action; do not replay credential-bearing or disconnect side effects after unknown outcome without reconciliation.",
+      "idempotency_semantics": "Refresh/read may be retried subject to stable Agent/platform identity; connect/disconnect require durable operation identity and server reconciliation when outcome is unknown.",
+      "process_death_recovery": "Android must restore canonical connection state from Host/service after restart rather than persisting plaintext credential in Compose/ViewModel; pending side effects reconcile by durable operation identity.",
+      "account_fencing": "Agent id alone is insufficient on Android; all channel calls and callbacks must be fenced to current authenticated account/epoch and Agent generation.",
+      "security_boundary": "Credential text is transient password input and must cross only typed Coordinator/Host APIs into protected storage/connector owner; never log, persist in Compose state beyond active entry, expose to Agent transcript, or WebView.",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/features/bots/GrokHomeSurface.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/presentation/MobileBotViewModel.kt",
+        "source/android-preload/src/main/kotlin/com/ombhrum/fabushi/androidpreload/runtime/AndroidCoordinatorPort.kt",
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/coordinator/AndroidCoordinatorRuntime.kt",
+        "source/host/src/android_json_runtime.rs"
+      ],
+      "android_owner": "Future native Agent Channels Compose surface + MobileBotViewModel transient projection; AndroidCoordinatorRuntime typed channel bridge; Rust Host/connector channel owner for credentials and canonical connection state",
+      "platform_delta": "Replace Desktop renderer tab with native Compose and Android lifecycle cancellation. Keep secrets behind typed bridge/protected storage and preserve strict reply projection/state semantics. Current Android exact parent exposes no Agent-channel APIs or UI.",
+      "implementation_status": "mapped",
+      "production_wiring": "Not implemented at audit parent 2df2cb0208304e615cfe7f8a6fde490821194978. Searches of AndroidCoordinatorPort, AndroidCoordinatorRuntime and AndroidJsonHost show no getAgentChannels/connectChannel/disconnectChannel/refreshChannel production methods; current GrokHomeSurface has no Agent Channels surface.",
+      "unit_test": "No focused Android Agent Channels unit coverage exists yet.",
+      "contract_test": "Required: typed channel list/connect/disconnect/refresh contract, malformed response rejection, secret handling, account/Agent fencing and unknown-outcome reconciliation.",
+      "integration_test": "Required: Compose Agent Channels -> Coordinator -> Host connector owner with real controlled channel test backend and lifecycle/account-switch fencing.",
+      "packaged_test": "Required on final production package, proving credential entry is not logged/test-injected and channel status survives restart.",
+      "device_test": "Required on emulator/device for connect/error/reconnect/refresh/disconnect, process death, account switch and offline/network interruption.",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Fresh semantic audit of the three Desktop 92fcc2b0 Agent-info Channels files. This records a missing Android product responsibility; it does not claim the existing MCP/connector surfaces are equivalent because Desktop explicitly separates this Channels surface from MCP server/tool UI."
     }
   ],
   "traceability": {
