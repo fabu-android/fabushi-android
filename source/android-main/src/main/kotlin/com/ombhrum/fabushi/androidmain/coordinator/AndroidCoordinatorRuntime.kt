@@ -271,11 +271,10 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
                 remoteReady = remoteReady,
                 remoteHasDesktop = remoteHasDesktop,
                 sessionSettled = true,
-                rebuildState = when {
-                    remote == null -> AccountRebuildState.OUTCOME_UNKNOWN
-                    remoteReady -> AccountRebuildState.IDLE
-                    else -> AccountRebuildState.UNKNOWN
-                },
+                // Remote Runner binding state is not the Computer Rebuild owner.
+                // Keep this fail-closed until request/ack, migration, transport, teardown,
+                // reconnect and settlement are wired from the canonical rebuild state machine.
+                rebuildState = AccountRebuildState.UNKNOWN,
                 recoveryState = when {
                     failures.isNotEmpty() -> AccountRecoveryState.OUTCOME_UNKNOWN
                     remoteReady -> AccountRecoveryState.READY
