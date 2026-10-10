@@ -1299,6 +1299,7 @@ impl AndroidJsonHost {
                 .filter(|value| !value.trim().is_empty())
                 .map(str::to_string),
             frozen_turn,
+            child_capabilities: subagent_capabilities,
         };
         let review_required = tool_name == crate::runner::TASK_TOOL_NAME
             || tool_name == crate::runner::MESSAGE_SUBAGENT_TOOL_NAME;
@@ -2504,6 +2505,7 @@ impl AndroidJsonHost {
                         box_id: String::new(),
                         quiet_origin: request_source.clone(),
                         frozen_turn: frozen_subagent_turn.clone(),
+                        child_capabilities: subagent_capabilities,
                     },
                 );
 
@@ -5260,7 +5262,7 @@ export function apply(ctx) {
         assert_eq!(frozen.allowed_subagent_types, vec!["general-purpose"]);
         assert!(
             frozen.tool_names.is_empty(),
-            "root Task/CheckSubagent/MessageSubagent/StopSubagent control tools are parent-only and must not be frozen into the generated child"
+            "no outbound child adapter is currently registered, so role-derived child execution must fail closed while parent controls remain parent-only"
         );
         assert_eq!(
             frozen.summarization_binding_id,
