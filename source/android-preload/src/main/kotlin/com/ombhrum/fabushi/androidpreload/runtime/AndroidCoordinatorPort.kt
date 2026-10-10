@@ -1,5 +1,8 @@
 package com.ombhrum.fabushi.androidpreload.runtime
 
+import android.content.Context
+import android.view.View
+
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -141,6 +144,12 @@ interface AndroidCoordinatorPort {
         sessionId: String,
         expectedViewportRevision: Long,
     ): JSONObject = error("remote_computer_viewport_advance_not_implemented")
+    fun remoteComputerDataPlaneConnect(deviceId: String, sessionId: String): JSONObject =
+        error("remote_computer_data_plane_connect_not_implemented")
+    fun remoteComputerViewportView(context: Context): View =
+        error("remote_computer_viewport_view_not_implemented")
+    fun remoteComputerDataPlaneDisconnect(): JSONObject =
+        error("remote_computer_data_plane_disconnect_not_implemented")
     fun remoteComputerSessionClose(deviceId: String, sessionId: String): JSONObject =
         error("remote_computer_session_close_not_implemented")
     fun computerRebuildRequest(
