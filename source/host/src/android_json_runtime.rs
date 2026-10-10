@@ -27,7 +27,7 @@ use crate::runner::{
     SubagentRunOutcome, SubagentSteerReview, SubagentTaskReviewCallback,
     SubagentSteerReviewCallback, SubagentToolBridge, SubagentToolContext,
     build_parent_subagent_routed_tools, spawn_generated_subagent,
-    with_multitask_todo_tools, DurableMultitaskTodoStore,
+    with_agent_management_tools, with_multitask_todo_tools, DurableMultitaskTodoStore,
 };
 use fabushi_constants::composer::text_size_allowed;
 use fabushi_android_shared::node::mcp::mcp_auth_watch_lifecycle::{
@@ -284,9 +284,9 @@ impl RuntimeCallCancellationRegistry {
 pub struct AndroidJsonHost {
     mode: AndroidHostMode,
     account: AndroidAccountService,
-    agents: AndroidAgentRoster,
+    agents: Arc<Mutex<AndroidAgentRoster>>,
     transcript: Arc<Mutex<TranscriptStore>>,
-    messaging: AndroidMessagingService,
+    messaging: Arc<Mutex<AndroidMessagingService>>,
     mcp_auth_watches: Arc<Mutex<AndroidMcpAuthWatchManager>>,
     mcp_auth_owner: Option<AndroidMcpAuthWatchOwner>,
     mcp_dashboard_backend: Option<Arc<CursorDashboardMcpAuthBackend>>,
@@ -309,6 +309,7 @@ pub struct AndroidJsonHost {
     turn_journal: Arc<Mutex<DurableTurnJournal>>,
     turn_lifecycle: Arc<Mutex<ProductionTurnLifecycleStore>>,
     turn_upgrade_quiescing: Arc<AtomicBool>,
+    live_account_fence: Arc<Mutex<Option<String>>>,
     multitask_todos: Arc<Mutex<DurableMultitaskTodoStore>>,
     subagent_owner: Arc<Mutex<DurableSubagentOwner>>,
     subagent_tools: SubagentToolBridge,
@@ -348,14 +349,18 @@ impl AndroidJsonHost {
             app_data_dir.join("account-oauth-attempt.json"),
         )
         .unwrap_or_else(|error| panic!("failed to initialize Android account service: {error}"));
-        let agents = AndroidAgentRoster::open(app_data_dir.join("agents.json"))
-            .unwrap_or_else(|error| panic!("failed to open canonical Android agent roster: {error}"));
+        let agents = Arc::new(Mutex::new(
+            AndroidAgentRoster::open(app_data_dir.join("agents.json"))
+                .unwrap_or_else(|error| panic!("failed to open canonical Android agent roster: {error}")),
+        ));
         let transcript = Arc::new(Mutex::new(
             TranscriptStore::open(app_data_dir.join("transcript.json"))
                 .unwrap_or_else(|error| panic!("failed to open canonical Android transcript: {error}")),
         ));
-        let messaging = AndroidMessagingService::open(&app_data_dir)
-            .unwrap_or_else(|error| panic!("failed to open canonical Android messaging repository: {error}"));
+        let messaging = Arc::new(Mutex::new(
+            AndroidMessagingService::open(&app_data_dir)
+                .unwrap_or_else(|error| panic!("failed to open canonical Android messaging repository: {error}")),
+        ));
         let mcp_auth_watches = Arc::new(Mutex::new(
             AndroidMcpAuthWatchManager::open(
                 app_data_dir.join("mcp-auth-watches.json"),
@@ -449,6 +454,7 @@ impl AndroidJsonHost {
                 }),
             )),
             turn_upgrade_quiescing: Arc::new(AtomicBool::new(false)),
+            live_account_fence: Arc::new(Mutex::new(None)),
             multitask_todos,
             subagent_owner,
             subagent_tools,
