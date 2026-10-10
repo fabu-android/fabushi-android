@@ -435,6 +435,8 @@ impl AndroidAgentRoster {
                     is_hidden_from_sidebar: false,
                     has_unread: false,
                     is_pinned: false,
+                    avatar_shape: source.avatar_shape,
+                    avatar_color: source.avatar_color,
                     updated_at: now_ms(),
                 };
                 next.agents.push(duplicate.clone());
@@ -959,7 +961,16 @@ mod tests {
         let path = temp_path("presentation-replay");
         let first_id = {
             let mut roster = AndroidAgentRoster::open(&path).unwrap();
-            roster.create("Agent", "description").unwrap().id
+            let created = roster.create("Agent", "description").unwrap();
+            let persona = roster
+                .apply_presentation_operation(
+                    "session:account-a",
+                    "persona-before-duplicate",
+                    &json!({"kind":"update","id":created.id,"avatarShape":"squircle","avatarColor":"#336699"}),
+                )
+                .unwrap();
+            assert_eq!(persona["status"], "completed");
+            created.id
         };
         let mutation = json!({"kind":"duplicate","id":first_id});
         let first_result = {
@@ -969,6 +980,8 @@ mod tests {
                 .unwrap()
         };
         assert_eq!(first_result["status"], "completed");
+        assert_eq!(first_result["result"]["agent"]["avatarShape"], "squircle");
+        assert_eq!(first_result["result"]["agent"]["avatarColor"], "#336699");
         let duplicate_id = first_result["result"]["agent"]["id"]
             .as_str()
             .unwrap()
@@ -985,6 +998,9 @@ mod tests {
         assert_eq!(replay["result"]["agent"]["id"], duplicate_id);
 
         let mut reopened = AndroidAgentRoster::open(&path).unwrap();
+        let durable_duplicate = reopened.get(&duplicate_id).unwrap();
+        assert_eq!(durable_duplicate.avatar_shape.as_deref(), Some("squircle"));
+        assert_eq!(durable_duplicate.avatar_color.as_deref(), Some("#336699"));
         let mismatch = reopened.apply_presentation_operation(
             "session:account-a",
             "operation-1",
@@ -996,6 +1012,46 @@ mod tests {
                 .contains("reused with mismatched arguments")
         );
         assert_eq!(reopened.count(), 2);
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn legacy_persisted_agent_without_avatar_persona_uses_serde_defaults() {
+        let path = temp_path("legacy-avatar-defaults");
+        fs::write(
+            &path,
+            serde_json::to_vec_pretty(&json!({
+                "schemaVersion": ROSTER_SCHEMA_VERSION,
+                "nextId": 1,
+                "pinnedAgentIds": [],
+                "agents": [{
+                    "id": "agent-00000001",
+                    "name": "Legacy Agent",
+                    "description": "persisted before avatar persona fields",
+                    "isGroup": false,
+                    "memberIds": [],
+                    "isHiddenFromSidebar": false,
+                    "hasUnread": false,
+                    "isPinned": false,
+                    "updatedAt": 1
+                }]
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+
+        let mut roster = AndroidAgentRoster::open(&path).unwrap();
+        let restored = roster.get("agent-00000001").unwrap();
+        assert_eq!(restored.avatar_shape, None);
+        assert_eq!(restored.avatar_color, None);
+
+        roster.set_unread("agent-00000001", true).unwrap();
+        drop(roster);
+        let reopened = AndroidAgentRoster::open(&path).unwrap();
+        let restored = reopened.get("agent-00000001").unwrap();
+        assert!(restored.has_unread);
+        assert_eq!(restored.avatar_shape, None);
+        assert_eq!(restored.avatar_color, None);
         let _ = fs::remove_file(path);
     }
 
