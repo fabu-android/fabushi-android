@@ -27,6 +27,10 @@ pub struct AndroidAgentRecord {
     pub has_unread: bool,
     #[serde(default)]
     pub is_pinned: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub avatar_shape: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub avatar_color: Option<String>,
     pub updated_at: u64,
 }
 
@@ -41,6 +45,8 @@ impl AndroidAgentRecord {
             "isHiddenFromSidebar": self.is_hidden_from_sidebar,
             "hasUnread": self.has_unread,
             "isPinned": self.is_pinned,
+            "avatarShape": self.avatar_shape,
+            "avatarColor": self.avatar_color,
             "updatedAt": self.updated_at,
         }))
     }
@@ -138,6 +144,8 @@ impl AndroidAgentRoster {
             is_hidden_from_sidebar: false,
             has_unread: false,
             is_pinned: false,
+            avatar_shape: None,
+            avatar_color: None,
             updated_at: now_ms(),
         };
         next.agents.push(record.clone());
@@ -165,6 +173,8 @@ impl AndroidAgentRoster {
             is_hidden_from_sidebar: false,
             has_unread: false,
             is_pinned: false,
+            avatar_shape: None,
+            avatar_color: None,
             updated_at: now_ms(),
         };
         next.agents.push(record.clone());
@@ -231,6 +241,8 @@ impl AndroidAgentRoster {
             is_hidden_from_sidebar: false,
             has_unread: false,
             is_pinned: false,
+            avatar_shape: None,
+            avatar_color: None,
             updated_at: now_ms(),
         };
         next.agents.push(created.clone());
@@ -359,8 +371,20 @@ impl AndroidAgentRoster {
                     .and_then(Value::as_str)
                     .map(normalize_description)
                     .unwrap_or(current.description);
+                let avatar_shape = if mutation.get("avatarShape").is_some() {
+                    parse_avatar_shape(mutation.get("avatarShape"))?
+                } else {
+                    current.avatar_shape
+                };
+                let avatar_color = if mutation.get("avatarColor").is_some() {
+                    parse_avatar_color(mutation.get("avatarColor"))?
+                } else {
+                    current.avatar_color
+                };
                 next.agents[index].name = name;
                 next.agents[index].description = description;
+                next.agents[index].avatar_shape = avatar_shape;
+                next.agents[index].avatar_color = avatar_color;
                 next.agents[index].updated_at = now_ms();
                 Ok(next.agents[index].as_json())
             }
@@ -566,6 +590,8 @@ impl AndroidAgentRoster {
             is_hidden_from_sidebar: false,
             has_unread: false,
             is_pinned: false,
+            avatar_shape: source.avatar_shape,
+            avatar_color: source.avatar_color,
             updated_at: now_ms(),
         };
         next.agents.push(duplicate.clone());
@@ -781,6 +807,35 @@ fn normalize_description(value: &str) -> String {
     value.trim().chars().take(240).collect()
 }
 
+fn parse_avatar_shape(value: Option<&Value>) -> Result<Option<String>, String> {
+    match value {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::String(raw)) => {
+            let shape = raw.trim().to_ascii_lowercase();
+            match shape.as_str() {
+                "circle" | "square" | "squircle" => Ok(Some(shape)),
+                _ => Err("avatarShape must be circle, square, squircle, or null".into()),
+            }
+        }
+        Some(_) => Err("avatarShape must be a string or null".into()),
+    }
+}
+
+fn parse_avatar_color(value: Option<&Value>) -> Result<Option<String>, String> {
+    match value {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::String(raw)) => {
+            let color = raw.trim();
+            let bytes = color.as_bytes();
+            if bytes.len() != 7 || bytes[0] != b'#' || !bytes[1..].iter().all(u8::is_ascii_hexdigit) {
+                return Err("avatarColor must be #RRGGBB or null".into());
+            }
+            Ok(Some(color.to_ascii_uppercase()))
+        }
+        Some(_) => Err("avatarColor must be a string or null".into()),
+    }
+}
+
 fn duplicate_name(value: &str) -> String {
     let base = value.trim();
     let candidate = if base.is_empty() {
@@ -941,6 +996,49 @@ mod tests {
                 .contains("reused with mismatched arguments")
         );
         assert_eq!(reopened.count(), 2);
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn avatar_persona_update_is_durable_replayable_resettable_and_validated() {
+        let path = temp_path("avatar-persona");
+        let agent_id = {
+            let mut roster = AndroidAgentRoster::open(&path).unwrap();
+            roster.create("Agent", "description").unwrap().id
+        };
+        let mutation = json!({"kind":"update","id":agent_id,"avatarShape":"circle","avatarColor":"#1a2b3c"});
+        let first = {
+            let mut roster = AndroidAgentRoster::open(&path).unwrap();
+            roster.apply_presentation_operation("session:account-a", "avatar-op-1", &mutation).unwrap()
+        };
+        assert_eq!(first["status"], "completed");
+        assert_eq!(first["result"]["avatarShape"], "circle");
+        assert_eq!(first["result"]["avatarColor"], "#1A2B3C");
+        let mut reopened = AndroidAgentRoster::open(&path).unwrap();
+        let replay = reopened.apply_presentation_operation("session:account-a", "avatar-op-1", &mutation).unwrap();
+        assert_eq!(replay, first);
+        let duplicate = reopened.duplicate(&agent_id).unwrap();
+        assert_eq!(duplicate.avatar_shape.as_deref(), Some("circle"));
+        assert_eq!(duplicate.avatar_color.as_deref(), Some("#1A2B3C"));
+        let rejected = reopened.apply_presentation_operation(
+            "session:account-a",
+            "avatar-op-bad",
+            &json!({"kind":"update","id":agent_id,"avatarShape":"triangle","avatarColor":"red"}),
+        ).unwrap();
+        assert_eq!(rejected["status"], "rejected");
+        assert_eq!(reopened.get(&agent_id).unwrap().avatar_shape.as_deref(), Some("circle"));
+        let reset = reopened.apply_presentation_operation(
+            "session:account-a",
+            "avatar-op-reset",
+            &json!({"kind":"update","id":agent_id,"avatarShape":null,"avatarColor":null}),
+        ).unwrap();
+        assert_eq!(reset["status"], "completed");
+        assert!(reset["result"].get("avatarShape").is_none());
+        assert!(reset["result"].get("avatarColor").is_none());
+        drop(reopened);
+        let reopened = AndroidAgentRoster::open(&path).unwrap();
+        assert_eq!(reopened.get(&agent_id).unwrap().avatar_shape, None);
+        assert_eq!(reopened.get(&agent_id).unwrap().avatar_color, None);
         let _ = fs::remove_file(path);
     }
 

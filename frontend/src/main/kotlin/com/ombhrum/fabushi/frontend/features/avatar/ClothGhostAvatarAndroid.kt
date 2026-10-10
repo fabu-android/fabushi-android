@@ -66,12 +66,29 @@ internal fun ghostColor(identity: String): Color {
 internal fun avatarAnimationDurationMillis(active: Boolean): Int? =
     if (active) 1200 else null
 
+internal fun avatarPersonaColor(value: String?): Color? {
+    val normalized = normalizeAgentAvatarColor(value) ?: return null
+    return runCatching {
+        val rgb = normalized.removePrefix("#").toLong(16)
+        Color(0xFF000000L or rgb)
+    }.getOrNull()
+}
+
+internal fun avatarPersonaShape(value: String?): androidx.compose.ui.graphics.Shape =
+    when (normalizeAgentAvatarShape(value)) {
+        "circle" -> CircleShape
+        "square" -> RoundedCornerShape(0.dp)
+        else -> RoundedCornerShape(28.dp)
+    }
+
 @Composable
 fun ClothGhostAvatarAndroid(
     botId: String,
     size: Dp = 46.dp,
     active: Boolean = false,
     badge: Color? = null,
+    avatarShape: String? = null,
+    avatarColor: String? = null,
     modifier: Modifier = Modifier,
 ) {
     val animationDurationMillis = avatarAnimationDurationMillis(active)
@@ -90,8 +107,12 @@ fun ClothGhostAvatarAndroid(
     } else {
         0f
     }
-    val base = ghostColor(botId)
-    Box(modifier.size(size), contentAlignment = Alignment.Center) {
+    val base = avatarPersonaColor(avatarColor) ?: ghostColor(botId)
+    val containerShape = avatarPersonaShape(avatarShape)
+    Box(
+        modifier.size(size).background(base.copy(alpha = 0.08f), containerShape),
+        contentAlignment = Alignment.Center,
+    ) {
         Canvas(Modifier.fillMaxSize().testTag("cloth-ghost-avatar")) {
             val w = this.size.width
             val h = this.size.height

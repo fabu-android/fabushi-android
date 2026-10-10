@@ -76,6 +76,13 @@ interface AndroidCoordinatorPort {
     fun agentCreateGroup(name: String, description: String, memberIds: List<String>): JSONObject
     fun agentSetGroupMembers(id: String, memberIds: List<String>): JSONObject
     fun agentUpdate(id: String, name: String, description: String): JSONObject
+    fun agentUpdateProfile(
+        id: String,
+        name: String,
+        description: String,
+        avatarShape: String?,
+        avatarColor: String?,
+    ): JSONObject = agentUpdate(id, name, description)
     fun agentSetHidden(id: String, isHidden: Boolean): JSONObject
     fun agentSetUnread(id: String, isUnread: Boolean): JSONObject
     fun agentDuplicate(id: String): JSONObject

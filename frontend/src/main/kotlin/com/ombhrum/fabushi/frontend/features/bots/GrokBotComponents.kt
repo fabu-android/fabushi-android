@@ -78,7 +78,13 @@ internal fun GrokBotRowAndroid(
             .padding(horizontal = 18.dp, vertical = 9.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        ClothGhostAvatarAndroid(bot.id, 47.dp, badge = Color(0xFF20B967))
+        ClothGhostAvatarAndroid(
+            botId = bot.id,
+            size = 47.dp,
+            badge = Color(0xFF20B967),
+            avatarShape = bot.avatarShape,
+            avatarColor = bot.avatarColor,
+        )
         Column(Modifier.weight(1f).padding(start = 12.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 if (editingName && onNameCommit != null && onNameExit != null) {

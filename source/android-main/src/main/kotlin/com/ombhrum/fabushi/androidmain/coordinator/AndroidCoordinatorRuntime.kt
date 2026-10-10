@@ -557,6 +557,23 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
                 .put("description", description),
         ) as? JSONObject ?: JSONObject()
 
+    override fun agentUpdateProfile(
+        id: String,
+        name: String,
+        description: String,
+        avatarShape: String?,
+        avatarColor: String?,
+    ): JSONObject =
+        durableAgentRosterMutation(
+            JSONObject()
+                .put("kind", "update")
+                .put("id", id)
+                .put("name", name)
+                .put("description", description)
+                .put("avatarShape", avatarShape ?: JSONObject.NULL)
+                .put("avatarColor", avatarColor ?: JSONObject.NULL),
+        ) as? JSONObject ?: JSONObject()
+
     override fun agentSetHidden(id: String, isHidden: Boolean): JSONObject =
         durableAgentRosterMutation(
             JSONObject()

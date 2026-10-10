@@ -43,6 +43,40 @@ class AgentProfileEditorTest {
     }
 
     @Test
+    fun avatarPersonaChangeCreatesCanonicalProfileMutation() {
+        val projected = committedAgentProfile(
+            initialName = "Agent",
+            initialDescription = "description",
+            draftName = "Agent",
+            draftDescription = "description",
+            initialAvatarShape = null,
+            initialAvatarColor = null,
+            draftAvatarShape = " Circle ",
+            draftAvatarColor = "#1a2b3c",
+        )
+        requireNotNull(projected)
+        assertEquals("circle", projected.avatarShape)
+        assertEquals("#1A2B3C", projected.avatarColor)
+    }
+
+    @Test
+    fun avatarPersonaResetIsRepresentedAsNull() {
+        val projected = committedAgentProfile(
+            initialName = "Agent",
+            initialDescription = "description",
+            draftName = "Agent",
+            draftDescription = "description",
+            initialAvatarShape = "squircle",
+            initialAvatarColor = "#1685F7",
+            draftAvatarShape = null,
+            draftAvatarColor = null,
+        )
+        requireNotNull(projected)
+        assertNull(projected.avatarShape)
+        assertNull(projected.avatarColor)
+    }
+
+    @Test
     fun descriptionOnlyChangeCreatesCanonicalMutation() {
         val projected = committedAgentProfile(
             initialName = "Agent",

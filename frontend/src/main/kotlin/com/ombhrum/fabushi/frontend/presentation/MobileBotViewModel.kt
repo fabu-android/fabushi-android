@@ -21,6 +21,8 @@ data class MobileBotSummaryAndroid(
     val id: String,
     val name: String,
     val description: String = "",
+    val avatarShape: String? = null,
+    val avatarColor: String? = null,
     val miniAppId: String? = null,
     val menuButtonText: String? = null,
     val isPinned: Boolean = false,
@@ -270,6 +272,8 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
                         id = id,
                         name = row.optString("name").ifBlank { row.optString("displayName").ifBlank { id } },
                         description = row.optString("description"),
+                        avatarShape = row.optString("avatarShape").takeIf(String::isNotBlank),
+                        avatarColor = row.optString("avatarColor").takeIf(String::isNotBlank),
                         miniAppId = row.optString("miniAppId").takeIf(String::isNotBlank),
                         menuButtonText = row.optString("menuButtonText").takeIf(String::isNotBlank),
                         isPinned = row.optBoolean("isPinned"),
@@ -449,18 +453,31 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
-    fun updateBotProfile(botId: String, name: String, description: String) {
+    fun updateBotProfile(
+        botId: String,
+        name: String,
+        description: String,
+        avatarShape: String?,
+        avatarColor: String?,
+    ) {
         val bot = mutableState.value.bots.firstOrNull { it.id == botId } ?: return
         val committed = committedAgentProfile(
             initialName = bot.name,
             initialDescription = bot.description,
             draftName = name,
             draftDescription = description,
+            initialAvatarShape = bot.avatarShape,
+            initialAvatarColor = bot.avatarColor,
+            draftAvatarShape = avatarShape,
+            draftAvatarColor = avatarColor,
         ) ?: return
         viewModelScope.launch {
             runCatching {
                 withContext(Dispatchers.IO) {
-                    coordinator.agentUpdate(botId, committed.name, committed.description)
+                    coordinator.agentUpdateProfile(
+                        botId, committed.name, committed.description,
+                        committed.avatarShape, committed.avatarColor,
+                    )
                 }
             }.onSuccess {
                 refreshBots()
