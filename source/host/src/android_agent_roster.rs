@@ -17,6 +17,10 @@ pub struct AndroidAgentRecord {
     pub name: String,
     #[serde(default)]
     pub description: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(default)]
+    pub notify_on_updates_enabled: bool,
     #[serde(default)]
     pub is_group: bool,
     #[serde(default)]
@@ -40,6 +44,8 @@ impl AndroidAgentRecord {
             "id": self.id,
             "name": self.name,
             "description": self.description,
+            "title": self.title,
+            "notifyOnUpdatesEnabled": self.notify_on_updates_enabled,
             "isGroup": self.is_group,
             "memberIds": self.member_ids,
             "isHiddenFromSidebar": self.is_hidden_from_sidebar,
@@ -139,6 +145,8 @@ impl AndroidAgentRoster {
             id: format!("agent-{:08}", next.next_id),
             name,
             description,
+            title: None,
+            notify_on_updates_enabled: false,
             is_group: false,
             member_ids: Vec::new(),
             is_hidden_from_sidebar: false,
@@ -168,6 +176,8 @@ impl AndroidAgentRoster {
             id: format!("group-{:08}", next.next_id),
             name,
             description,
+            title: None,
+            notify_on_updates_enabled: false,
             is_group: true,
             member_ids: members,
             is_hidden_from_sidebar: false,
@@ -371,6 +381,11 @@ impl AndroidAgentRoster {
                     .and_then(Value::as_str)
                     .map(normalize_description)
                     .unwrap_or(current.description);
+                let title = if mutation.get("title").is_some() {
+                    normalize_title(mutation.get("title").and_then(Value::as_str))
+                } else {
+                    current.title
+                };
                 let avatar_shape = if mutation.get("avatarShape").is_some() {
                     parse_avatar_shape(mutation.get("avatarShape"))?
                 } else {
@@ -383,12 +398,13 @@ impl AndroidAgentRoster {
                 };
                 next.agents[index].name = name;
                 next.agents[index].description = description;
+                next.agents[index].title = title;
                 next.agents[index].avatar_shape = avatar_shape;
                 next.agents[index].avatar_color = avatar_color;
                 next.agents[index].updated_at = now_ms();
                 Ok(next.agents[index].as_json())
             }
-            "hidden" | "unread" => {
+            "hidden" | "unread" | "notifications" => {
                 let id = mutation
                     .get("id")
                     .and_then(Value::as_str)
@@ -406,8 +422,13 @@ impl AndroidAgentRoster {
                     .ok_or_else(|| "agent not found".to_string())?;
                 if kind == "hidden" {
                     agent.is_hidden_from_sidebar = value;
-                } else {
+                } else if kind == "unread" {
                     agent.has_unread = value;
+                } else {
+                    if agent.is_group {
+                        return Err("Agent group notifications are not supported".into());
+                    }
+                    agent.notify_on_updates_enabled = value;
                 }
                 agent.updated_at = now_ms();
                 Ok(agent.as_json())
@@ -430,6 +451,8 @@ impl AndroidAgentRoster {
                     id: format!("agent-{:08}", next.next_id),
                     name: duplicate_name(&source.name),
                     description: source.description,
+                    title: source.title,
+                    notify_on_updates_enabled: source.notify_on_updates_enabled,
                     is_group: source.is_group,
                     member_ids: source.member_ids,
                     is_hidden_from_sidebar: false,
@@ -809,6 +832,13 @@ fn normalize_description(value: &str) -> String {
     value.trim().chars().take(240).collect()
 }
 
+fn normalize_title(value: Option<&str>) -> Option<String> {
+    value
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| value.chars().take(120).collect())
+}
+
 fn parse_avatar_shape(value: Option<&Value>) -> Result<Option<String>, String> {
     match value {
         None | Some(Value::Null) => Ok(None),
@@ -1016,6 +1046,42 @@ mod tests {
     }
 
     #[test]
+    fn settings_profile_title_and_notifications_are_durable_and_duplicate_preserves_them() {
+        let path = temp_path("settings-profile");
+        let mut roster = AndroidAgentRoster::open(&path).unwrap();
+        let agent = roster.create("Agent", "description").unwrap();
+        let updated = roster
+            .apply_presentation_operation(
+                "session:account-a",
+                "settings-title",
+                &json!({"kind":"update","id":agent.id,"title":"  Research lead  "}),
+            )
+            .unwrap();
+        assert_eq!(updated["status"], "completed");
+        assert_eq!(updated["result"]["title"], "Research lead");
+        let notified = roster
+            .apply_presentation_operation(
+                "session:account-a",
+                "settings-notifications",
+                &json!({"kind":"notifications","id":agent.id,"value":true}),
+            )
+            .unwrap();
+        assert_eq!(notified["status"], "completed");
+        assert_eq!(notified["result"]["notifyOnUpdatesEnabled"], true);
+
+        let duplicate = roster.duplicate(&agent.id).unwrap();
+        assert_eq!(duplicate.title.as_deref(), Some("Research lead"));
+        assert!(duplicate.notify_on_updates_enabled);
+        drop(roster);
+
+        let reopened = AndroidAgentRoster::open(&path).unwrap();
+        let restored = reopened.get(&agent.id).unwrap();
+        assert_eq!(restored.title.as_deref(), Some("Research lead"));
+        assert!(restored.notify_on_updates_enabled);
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
     fn legacy_persisted_agent_without_avatar_persona_uses_serde_defaults() {
         let path = temp_path("legacy-avatar-defaults");
         fs::write(
@@ -1044,6 +1110,8 @@ mod tests {
         let restored = roster.get("agent-00000001").unwrap();
         assert_eq!(restored.avatar_shape, None);
         assert_eq!(restored.avatar_color, None);
+        assert_eq!(restored.title, None);
+        assert!(!restored.notify_on_updates_enabled);
 
         roster.set_unread("agent-00000001", true).unwrap();
         drop(roster);
