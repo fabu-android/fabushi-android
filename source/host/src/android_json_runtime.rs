@@ -1262,10 +1262,8 @@ impl AndroidJsonHost {
                 .map(str::to_string),
             frozen_turn,
         };
-        let review_required = matches!(
-            tool_name,
-            crate::runner::TASK_TOOL_NAME | crate::runner::MESSAGE_SUBAGENT_TOOL_NAME
-        );
+        let review_required = tool_name == crate::runner::TASK_TOOL_NAME
+            || tool_name == crate::runner::MESSAGE_SUBAGENT_TOOL_NAME;
         let (bearer_token, mutation) = if review_required {
             self.bearer_token_for_turn()?
         } else {
