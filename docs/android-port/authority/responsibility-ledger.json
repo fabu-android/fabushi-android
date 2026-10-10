@@ -5,7 +5,7 @@
     "desktop_commit": "3bc92400826cc4ca7ac665b467708e22261edc61",
     "android_repository": "fabu-android/fabushi-android",
     "android_pr": 3,
-    "android_head_at_update": "bbb2e778e8eceb38b6e097ff4c0752ebb0ea4da0",
+    "android_head_at_update": "b61cee69b1691c5d1c09de8b216b72bbb53b0666",
     "status": "incomplete",
     "note": "Persistent human-reviewed responsibility ledger for Desktop main. Rows are responsibility-level source facts; mapped/implemented never imply verified. Verification requires same-exact-HEAD source implementation, production wiring, CI/package and device evidence."
   },
@@ -3715,6 +3715,15 @@
             "schemaVersion",
             "features"
           ]
+        },
+        {
+          "path": "frontend/packages/shared/src/mahayana-host-features.ts",
+          "blob_sha": "b443131f7f78f58452ae0db8b7a12549c343f7ac",
+          "symbols": [
+            "mahayanaHostJourneyContract",
+            "mahayanaHostFeatures",
+            "MahayanaHostFeatureId"
+          ]
         }
       ],
       "source_commit": "3bc92400826cc4ca7ac665b467708e22261edc61",
@@ -4790,6 +4799,170 @@
       "artifact": null,
       "verification_status": "not-verified",
       "notes": "Mapped from the Desktop structured-log facade audit. Do not infer parity from module presence or old Desktop exact-head evidence; Android must independently close producer semantics."
+    },
+    {
+      "responsibility_id": "PRODUCT-SHARED-EXPERIENCE-ANDROID-001",
+      "domain": "product-experience",
+      "desktop_sources": [
+        {
+          "path": "frontend/packages/shared/src/app-experience.ts",
+          "blob_sha": "77371f856121e6afd02114ce012b6032cbd69287",
+          "symbols": [
+            "appExperienceStats",
+            "appDesignTokens",
+            "appModules",
+            "sutraLibrary",
+            "practicePlan",
+            "miniProgramParity"
+          ]
+        },
+        {
+          "path": "frontend/packages/shared/src/brand.ts",
+          "blob_sha": "d931bf052666f4f7d1ef55d8d15310b5c9f00433",
+          "symbols": [
+            "brand"
+          ]
+        },
+        {
+          "path": "frontend/packages/shared/src/business.ts",
+          "blob_sha": "4984e91c0fc8405f65aed8175dc74a6cc42ab143",
+          "symbols": [
+            "formatBytes",
+            "formatMinutes"
+          ]
+        },
+        {
+          "path": "frontend/packages/shared/src/copy.ts",
+          "blob_sha": "01f616e95e334005dcd3b443b2c69474004ef33f",
+          "symbols": [
+            "homeHighlights",
+            "homeUseCases",
+            "primaryNavigation",
+            "faqItems",
+            "contactChannels",
+            "betaApplicationTracks"
+          ]
+        },
+        {
+          "path": "frontend/packages/shared/src/index.ts",
+          "blob_sha": "6abc80ab5edc505a7d0790bb40fef93bf0c460fb",
+          "symbols": [
+            "shared product barrel exports"
+          ]
+        }
+      ],
+      "source_commit": "3bc92400826cc4ca7ac665b467708e22261edc61",
+      "responsibility": "Preserve Fabushi brand/product copy, Dharma/practice module information architecture, support/download navigation, display formatting and shared experience constants as native Android-owned presentation resources without turning static presentation data into canonical runtime state.",
+      "source_owner": "Desktop shared frontend product-experience package",
+      "direct_callers": [
+        "Desktop/web product surfaces",
+        "download/support/FAQ surfaces",
+        "shared home/application experience consumers"
+      ],
+      "downstream_dependencies": [
+        "brand/copy constants",
+        "navigation/presentation composition",
+        "release/beta support entrypoints"
+      ],
+      "state_owner": "Presentation/static resource owner only; no canonical account, transcript, Agent or commerce state.",
+      "persistent_state": [
+        "none in source package; user progress/content state remains owned by domain repositories"
+      ],
+      "protocol_wire_contract": [
+        "none for static copy; hyperlinks/support channels and product identifiers must remain valid where shipping"
+      ],
+      "visible_effect": "Android users see equivalent Fabushi brand, product modules, support/download guidance, Dharma/practice information architecture and human-readable sizes/durations.",
+      "failure_behavior": [
+        "missing/incorrect static data degrades the relevant surface but must not fabricate runtime/domain state",
+        "invalid external/support links are treated as presentation defects"
+      ],
+      "cancellation_behavior": "not applicable to static presentation data",
+      "retry_semantics": "not applicable",
+      "idempotency_semantics": "pure/static formatting and constants are deterministic for the same input",
+      "process_death_recovery": "native resources/constants reload; canonical progress/state recovers from domain owners",
+      "account_fencing": "static copy is account-neutral; any personalized progress/data remains account-fenced in its domain owner",
+      "security_boundary": "static product resources must not contain secrets/session material; external links still pass Android URL policy.",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/production/ProductionRenderer_view.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/features/navigation/SectionSurfaces.kt",
+        "mobile/android/app/src/main/AndroidManifest.xml"
+      ],
+      "android_owner": "Native Kotlin/Compose presentation and Android resource/navigation layer",
+      "platform_delta": "Desktop/web TypeScript constants become native Android resources/models and platform-safe links; Electron/mini-program-only UI mechanics are not copied.",
+      "implementation_status": "mapped",
+      "production_wiring": "Partial native Fabushi navigation/product surfaces exist, but exact static-content parity for all Dharma/practice/download/FAQ constants has not been proven.",
+      "unit_test": "required for pure format/model conversions where retained",
+      "contract_test": "required for brand/navigation/support identifiers that are release-visible",
+      "integration_test": "required through native production renderer/navigation surfaces",
+      "packaged_test": "required for release-visible product/support/download navigation",
+      "device_test": "required for links/accessibility/layout where applicable",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Mapped conservatively; no assumption that web/mini-program static copy is already reproduced one-for-one on Android."
+    },
+    {
+      "responsibility_id": "PRODUCT-DHARMA-CHAT-EXPERIENCE-ANDROID-001",
+      "domain": "product-experience",
+      "desktop_sources": [
+        {
+          "path": "frontend/packages/shared/src/chat-experience.ts",
+          "blob_sha": "a82d3c348d2c34b248bf046f7bd418ad886ad8c3",
+          "symbols": [
+            "dachengBrand",
+            "dachengToolEntries",
+            "dachengHeroChips",
+            "makeDachengFlashcards",
+            "nextDachengFlashcardDue",
+            "buildGlobalDharmaChecklist"
+          ]
+        }
+      ],
+      "source_commit": "3bc92400826cc4ca7ac665b467708e22261edc61",
+      "responsibility": "Preserve shipping Dharma-oriented quick prompts, Global Dharma lightweight checklist behavior and flashcard creation/review semantics when those experiences are exposed on Android, while keeping Agent chat/transcript and spaced-review state with their canonical owners.",
+      "source_owner": "Desktop shared chat-experience package",
+      "direct_callers": [
+        "Desktop/web chat/home experience surfaces"
+      ],
+      "downstream_dependencies": [
+        "Global Dharma experience",
+        "flashcard experience",
+        "Agent prompt surface"
+      ],
+      "state_owner": "Static/pure helper layer; persistent flashcard/review/transcript state must be owned by Android domain repositories, not these helpers.",
+      "persistent_state": [
+        "none in source helper itself"
+      ],
+      "protocol_wire_contract": [
+        "Dacheng/Fabushi tool ids and rating labels where shipping"
+      ],
+      "visible_effect": "Quick prompts, Global Dharma checklist text and flashcard generation/review labels behave consistently on Android where these product modules ship.",
+      "failure_behavior": [
+        "invalid/empty content falls back only where source contract defines it; no fabricated canonical review/transcript state"
+      ],
+      "cancellation_behavior": "pure helpers have no asynchronous cancellation owner",
+      "retry_semantics": "not applicable",
+      "idempotency_semantics": "pure transformations are deterministic except source createDachengId, whose persistent identity must be replaced by domain-owned stable IDs on Android",
+      "process_death_recovery": "domain-owned persisted flashcard/review state reloads independently of helper regeneration",
+      "account_fencing": "personalized cards/reviews must be account-scoped by their Android repository; static prompts/regions are account-neutral",
+      "security_boundary": "user text is transformed locally and must not be sent to a provider solely by these helpers.",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/features/chat/AgentChatSurfaces.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/presentation/MobileBotViewModel.kt"
+      ],
+      "android_owner": "Native chat/product presentation plus domain repositories",
+      "platform_delta": "TypeScript homepage helpers become native product models; random/time-based transient IDs cannot substitute for stable persisted Android domain identity.",
+      "implementation_status": "mapped",
+      "production_wiring": "Android Agent chat and Global Dharma surfaces exist, but flashcard/checklist helper parity is not yet proven as shipping composition.",
+      "unit_test": "required for flashcard/checklist/rating transforms retained on Android",
+      "contract_test": "required for shipping tool identifiers and domain ownership",
+      "integration_test": "required for user-visible Global Dharma/flashcard entrypoints",
+      "packaged_test": "required if exposed in final release",
+      "device_test": "required for relevant native flow",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Mapped only; source helper presence does not prove Android flashcard product completion."
     }
   ],
   "traceability": {
