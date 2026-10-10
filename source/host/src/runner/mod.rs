@@ -42,11 +42,12 @@ pub use durable_turn_journal::{DurableTurnJournal, DurableTurnRecord, DurableTur
 pub use subagent_runtime::{
     compute_subagent_request_id, status_label, ComputerUseAuditRecord, ComputerUseUsageEvent,
     ComputerUseUsageSnapshot, DurableSubagentOwner, DurableSubagentRecord, SubagentContinuation,
-    SubagentLaunch, SubagentLineage, SubagentRunOutcome, SubagentSessionSnapshot,
+    SubagentFrozenTurnConfig, SubagentLaunch, SubagentLineage, SubagentRunOutcome, SubagentSessionSnapshot,
     SubagentSettlement, SubagentStatus,
 };
 pub use subagent_tool_bridge::{
-    SubagentToolBridge, SubagentToolContext, SubagentToolResult, TASK_TOOL_NAME,
-    CHECK_SUBAGENT_TOOL_NAME, MESSAGE_SUBAGENT_TOOL_NAME, STOP_SUBAGENT_TOOL_NAME,
+    build_turn_subagent_types, SubagentSteerReview, SubagentSteerReviewCallback,
+    SubagentTaskReviewCallback, SubagentToolBridge, SubagentToolContext, SubagentToolResult,
+    TASK_TOOL_NAME, CHECK_SUBAGENT_TOOL_NAME, MESSAGE_SUBAGENT_TOOL_NAME, STOP_SUBAGENT_TOOL_NAME,
 };
 pub use subagent_worker::spawn_generated_subagent;
