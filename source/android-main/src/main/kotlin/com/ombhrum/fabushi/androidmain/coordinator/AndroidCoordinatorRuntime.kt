@@ -750,6 +750,13 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
         relayRegion: String?,
     ): JSONObject {
         val session = requireRemoteControlSession(deviceId, sessionId)
+        if (
+            session.selectedRoute == "relay" &&
+            session.routePolicy == "direct-preferred" &&
+            directAvailable
+        ) {
+            error("Remote control session is locked to relay after direct transport fallback")
+        }
         val region = relayRegion?.trim()?.takeIf(String::isNotEmpty)
         if (region != null) {
             require(region.length <= 32 && region.all { it.isLetterOrDigit() || it == '-' || it == '_' }) {
@@ -762,11 +769,39 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
             .put("mobileToken", session.mobileToken)
             .put("directAvailable", directAvailable)
         region?.let { body.put("relayRegion", it) }
-        return authenticatedRemotePlatformRequest(
+        val response = authenticatedRemotePlatformRequest(
             "POST",
             "/v1/computers/" + session.deviceId + "/sessions/" + session.sessionId + "/transport",
             body,
         )
+        require(
+            boundedRemoteIdentifier(response.getString("sessionId"), "sessionId") == session.sessionId,
+        ) {
+            "Remote control transport session identity mismatch"
+        }
+        val provider = boundedRemoteIdentifier(response.getString("provider"), "provider")
+        val routePolicy = response.getString("routePolicy")
+        val selectedRoute = response.getString("selectedRoute")
+        val returnedRegion = if (response.isNull("relayRegion")) {
+            null
+        } else {
+            response.optString("relayRegion").trim().takeIf(String::isNotEmpty)
+        }
+        val transportUpdatedAt = response.getLong("transportUpdatedAt")
+        val (currentFence, currentEpoch) = currentRemoteAccountFence()
+        val updated = remoteControlSessionStore.recordTransport(
+            currentFence,
+            currentEpoch,
+            session.sessionId,
+            provider,
+            routePolicy,
+            selectedRoute,
+            returnedRegion,
+            transportUpdatedAt,
+        )
+        return JSONObject(response.toString())
+            .put("selectedRoute", updated.selectedRoute)
+            .put("relayRegion", updated.relayRegion ?: JSONObject.NULL)
     }
 
     override fun remoteComputerSignal(

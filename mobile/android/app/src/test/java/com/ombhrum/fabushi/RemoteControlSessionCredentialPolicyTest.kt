@@ -57,6 +57,85 @@ class RemoteControlSessionCredentialPolicyTest {
     }
 
     @Test
+    fun transportRouteAllowsDirectFallbackButNeverRelayUpgrade() {
+        val base = RemoteControlSessionCredential(
+            deviceId = "computer-1",
+            clientId = "remote-client-1",
+            sessionId = "remote-session-1",
+            mobileToken = validToken,
+            accountFence = "session:account-1",
+            accountEpoch = 7,
+            expiresAt = 2_000_000_000,
+        )
+        val direct = RemoteControlTransportPolicy.record(
+            base,
+            "remote-session-1",
+            "fabushi-webrtc",
+            "direct-preferred",
+            "direct",
+            null,
+            100,
+        )
+        val relay = RemoteControlTransportPolicy.record(
+            direct,
+            "remote-session-1",
+            "fabushi-webrtc",
+            "direct-preferred",
+            "relay",
+            "us-west",
+            101,
+        )
+        assertEquals("relay", relay.selectedRoute)
+        assertEquals("us-west", relay.relayRegion)
+        assertThrows(IllegalArgumentException::class.java) {
+            RemoteControlTransportPolicy.record(
+                relay,
+                "remote-session-1",
+                "fabushi-webrtc",
+                "direct-preferred",
+                "direct",
+                null,
+                102,
+            )
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            RemoteControlTransportPolicy.record(
+                relay,
+                "remote-session-1",
+                "other-provider",
+                "direct-preferred",
+                "relay",
+                "us-west",
+                102,
+            )
+        }
+    }
+
+    @Test
+    fun relayOnlyTransportCannotRecordDirectRoute() {
+        val base = RemoteControlSessionCredential(
+            deviceId = "computer-1",
+            clientId = "remote-client-1",
+            sessionId = "remote-session-1",
+            mobileToken = validToken,
+            accountFence = "session:account-1",
+            accountEpoch = 7,
+            expiresAt = 2_000_000_000,
+        )
+        assertThrows(IllegalArgumentException::class.java) {
+            RemoteControlTransportPolicy.record(
+                base,
+                "remote-session-1",
+                "fabushi-webrtc",
+                "relay-only",
+                "direct",
+                null,
+                100,
+            )
+        }
+    }
+
+    @Test
     fun legacyCredentialMigratesWithZeroSignalCursors() {
         val legacy = JSONObject()
             .put("deviceId", "computer-1")

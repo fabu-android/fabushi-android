@@ -24,6 +24,11 @@ internal data class RemoteControlSessionCredential(
     val expiresAt: Long,
     val lastAcknowledgedSignalId: Long = 0L,
     val highestDrainedSignalId: Long = 0L,
+    val provider: String? = null,
+    val routePolicy: String? = null,
+    val selectedRoute: String? = null,
+    val relayRegion: String? = null,
+    val transportUpdatedAt: Long = 0L,
 ) {
     fun toSecretJson(): String = JSONObject()
         .put("deviceId", deviceId)
@@ -35,6 +40,11 @@ internal data class RemoteControlSessionCredential(
         .put("expiresAt", expiresAt)
         .put("lastAcknowledgedSignalId", lastAcknowledgedSignalId)
         .put("highestDrainedSignalId", highestDrainedSignalId)
+        .put("provider", provider ?: JSONObject.NULL)
+        .put("routePolicy", routePolicy ?: JSONObject.NULL)
+        .put("selectedRoute", selectedRoute ?: JSONObject.NULL)
+        .put("relayRegion", relayRegion ?: JSONObject.NULL)
+        .put("transportUpdatedAt", transportUpdatedAt)
         .toString()
 
     fun publicProjection(): JSONObject = JSONObject()
@@ -45,6 +55,11 @@ internal data class RemoteControlSessionCredential(
         .put("expiresAt", expiresAt)
         .put("lastAcknowledgedSignalId", lastAcknowledgedSignalId)
         .put("highestDrainedSignalId", highestDrainedSignalId)
+        .put("provider", provider ?: JSONObject.NULL)
+        .put("routePolicy", routePolicy ?: JSONObject.NULL)
+        .put("selectedRoute", selectedRoute ?: JSONObject.NULL)
+        .put("relayRegion", relayRegion ?: JSONObject.NULL)
+        .put("transportUpdatedAt", transportUpdatedAt)
 
     companion object {
         fun parse(value: String): RemoteControlSessionCredential {
@@ -58,12 +73,23 @@ internal data class RemoteControlSessionCredential(
                 "accountEpoch",
                 "expiresAt",
             )
-            val currentKeys = legacyKeys + setOf(
+            val cursorKeys = legacyKeys + setOf(
                 "lastAcknowledgedSignalId",
                 "highestDrainedSignalId",
             )
+            val currentKeys = cursorKeys + setOf(
+                "provider",
+                "routePolicy",
+                "selectedRoute",
+                "relayRegion",
+                "transportUpdatedAt",
+            )
             val observedKeys = json.keys().asSequence().toSet()
-            require(observedKeys == legacyKeys || observedKeys == currentKeys) {
+            require(
+                observedKeys == legacyKeys ||
+                    observedKeys == cursorKeys ||
+                    observedKeys == currentKeys
+            ) {
                 "Remote control session credential contains unsupported fields"
             }
             fun identity(key: String, max: Int): String =
@@ -88,6 +114,32 @@ internal data class RemoteControlSessionCredential(
             require(highestDrainedSignalId >= lastAcknowledgedSignalId) {
                 "Remote control drained signal cursor must not precede acknowledged cursor"
             }
+            fun optionalIdentity(key: String, max: Int): String? {
+                if (!json.has(key) || json.isNull(key)) return null
+                return json.getString(key).trim().also {
+                    require(it.isNotEmpty() && it.length <= max && it.none(Char::isISOControl)) {
+                        "Remote control session " + key + " is invalid"
+                    }
+                }
+            }
+            val provider = optionalIdentity("provider", 80)
+            val routePolicy = optionalIdentity("routePolicy", 40)
+            require(routePolicy == null || routePolicy in setOf("direct-preferred", "relay-only")) {
+                "Remote control route policy is invalid"
+            }
+            val selectedRoute = optionalIdentity("selectedRoute", 20)
+            require(selectedRoute == null || selectedRoute in setOf("direct", "relay")) {
+                "Remote control selected route is invalid"
+            }
+            val relayRegion = optionalIdentity("relayRegion", 32)
+            require(selectedRoute == "relay" || relayRegion == null) {
+                "Remote control relay region requires relay route"
+            }
+            val transportUpdatedAt = json.optLong("transportUpdatedAt", 0L)
+            require(transportUpdatedAt >= 0L) { "Remote control transport timestamp is invalid" }
+            require(selectedRoute == null || transportUpdatedAt > 0L) {
+                "Remote control selected route requires a transport timestamp"
+            }
             return RemoteControlSessionCredential(
                 deviceId = identity("deviceId", 160),
                 clientId = identity("clientId", 160),
@@ -98,8 +150,66 @@ internal data class RemoteControlSessionCredential(
                 expiresAt = expiresAt,
                 lastAcknowledgedSignalId = lastAcknowledgedSignalId,
                 highestDrainedSignalId = highestDrainedSignalId,
+                provider = provider,
+                routePolicy = routePolicy,
+                selectedRoute = selectedRoute,
+                relayRegion = relayRegion,
+                transportUpdatedAt = transportUpdatedAt,
             )
         }
+    }
+}
+
+internal object RemoteControlTransportPolicy {
+    fun record(
+        value: RemoteControlSessionCredential,
+        sessionId: String,
+        provider: String,
+        routePolicy: String,
+        selectedRoute: String,
+        relayRegion: String?,
+        transportUpdatedAt: Long,
+    ): RemoteControlSessionCredential {
+        require(value.sessionId == sessionId) { "Remote control transport session changed" }
+        require(provider.isNotBlank() && provider.length <= 80 && provider.none(Char::isISOControl)) {
+            "Remote control provider is invalid"
+        }
+        require(routePolicy in setOf("direct-preferred", "relay-only")) {
+            "Remote control route policy is invalid"
+        }
+        require(selectedRoute in setOf("direct", "relay")) {
+            "Remote control selected route is invalid"
+        }
+        require(selectedRoute == "relay" || relayRegion == null) {
+            "Remote control direct route must not retain relay region"
+        }
+        require(
+            relayRegion == null ||
+                (relayRegion.length <= 32 &&
+                    relayRegion.all { it.isLetterOrDigit() || it == '-' || it == '_' }),
+        ) { "Remote control relay region is invalid" }
+        require(transportUpdatedAt > 0L && transportUpdatedAt >= value.transportUpdatedAt) {
+            "Remote control transport timestamp regressed"
+        }
+        require(value.provider == null || value.provider == provider) {
+            "Remote control provider changed during session"
+        }
+        require(value.routePolicy == null || value.routePolicy == routePolicy) {
+            "Remote control route policy changed during session"
+        }
+        require(!(value.selectedRoute == "relay" && selectedRoute == "direct")) {
+            "Remote control relay route cannot upgrade back to direct"
+        }
+        if (routePolicy == "relay-only") {
+            require(selectedRoute == "relay") { "Relay-only session selected a direct route" }
+        }
+        return value.copy(
+            provider = provider,
+            routePolicy = routePolicy,
+            selectedRoute = selectedRoute,
+            relayRegion = relayRegion,
+            transportUpdatedAt = transportUpdatedAt,
+        )
     }
 }
 
@@ -160,6 +270,32 @@ internal class AndroidRemoteControlSessionStore(context: Context) {
             return null
         }
         return value
+    }
+
+    @Synchronized
+    fun recordTransport(
+        currentAccountFence: String,
+        currentAccountEpoch: Long,
+        sessionId: String,
+        provider: String,
+        routePolicy: String,
+        selectedRoute: String,
+        relayRegion: String?,
+        transportUpdatedAt: Long,
+    ): RemoteControlSessionCredential {
+        val current = readForAccountFence(currentAccountFence, currentAccountEpoch)
+            ?: error("Remote control session is unavailable")
+        val updated = RemoteControlTransportPolicy.record(
+            current,
+            sessionId,
+            provider,
+            routePolicy,
+            selectedRoute,
+            relayRegion,
+            transportUpdatedAt,
+        )
+        write(updated)
+        return updated
     }
 
     @Synchronized
