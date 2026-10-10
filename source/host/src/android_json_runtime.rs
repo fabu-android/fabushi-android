@@ -793,6 +793,7 @@ impl AndroidJsonHost {
             })),
             "feature.auth.status" => self.account_status(),
             "feature.account.fence" => Ok(json!({"accountFence":self.current_turn_account_fence()?})),
+            "feature.account.sandAccess" => self.account_sand_access(),
             "feature.account.privacyMode" => Ok(self.account_privacy_mode()),
             "feature.remote.binding.status" => Ok(self.remote_binding_status()),
             "feature.auth.deviceAgentSession" => Ok(self.device_agent_session()),
@@ -1393,6 +1394,13 @@ impl AndroidJsonHost {
         }
         let (status, mutation) = self.account.public_status()?;
         Ok(with_account_session_mutation(status, mutation))
+    }
+
+    fn account_sand_access(&mut self) -> Result<Value, String> {
+        let status = self.account_status()?;
+        Ok(project_fabushi_sand_access(
+            status.get("loggedIn").and_then(Value::as_bool) == Some(true),
+        ))
     }
 
     fn account_privacy_mode(&self) -> Value {
@@ -4911,6 +4919,14 @@ fn with_account_session_mutation(
     result
 }
 
+fn project_fabushi_sand_access(logged_in: bool) -> Value {
+    if logged_in {
+        json!({"state":"granted","reason":"none"})
+    } else {
+        json!({"state":"unknown","reason":"unspecified"})
+    }
+}
+
 fn push_turn_event(events: &Arc<Mutex<VecDeque<Value>>>, event: Value) {
     if let Ok(mut queue) = events.lock() {
         queue.push_back(event);
@@ -5094,6 +5110,18 @@ fn encode_api_path_segment(value: &str) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn fabushi_shipping_sand_access_is_owned_by_authenticated_product_policy() {
+        assert_eq!(
+            project_fabushi_sand_access(true),
+            json!({"state":"granted","reason":"none"})
+        );
+        assert_eq!(
+            project_fabushi_sand_access(false),
+            json!({"state":"unknown","reason":"unspecified"})
+        );
+    }
 
     #[test]
     fn subagent_review_expiry_policy_matches_desktop_turn_contract() {
