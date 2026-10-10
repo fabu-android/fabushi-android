@@ -5,7 +5,7 @@
     "desktop_commit": "3bc92400826cc4ca7ac665b467708e22261edc61",
     "android_repository": "fabu-android/fabushi-android",
     "android_pr": 3,
-    "android_head_at_update": "147a59739720f89a4d26674d7df6d0693ee75173",
+    "android_head_at_update": "a54ecd6dbcae987c199bc97f7c117b471c37fe5d",
     "status": "incomplete",
     "note": "Persistent human-reviewed responsibility ledger for Desktop main. Rows are responsibility-level source facts; mapped/implemented never imply verified. Verification requires same-exact-HEAD source implementation, production wiring, CI/package and device evidence."
   },
@@ -3093,6 +3093,17 @@
             "call",
             "status"
           ]
+        },
+        {
+          "path": "desktop/e2e/fcm-010-13-assistant-projection.spec.ts",
+          "blob_sha": "f263733bf1d599e33de93e5265083f20d4d4e19b",
+          "symbols": [
+            "assistantAgentId",
+            "assistantUnreadAgentId",
+            "findAssistant",
+            "findAssistantUnread",
+            "active assistant projection journey"
+          ]
         }
       ],
       "source_commit": "3bc92400826cc4ca7ac665b467708e22261edc61",
@@ -3140,13 +3151,16 @@
         "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/remote/FabushiRemoteDeviceGateway.kt",
         "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/remote/RemoteCommandJournal.kt",
         "mobile/android/app/src/test/java/com/ombhrum/fabushi/FabushiAppAgentSurfaceTest.kt",
-        "mobile/android/app/src/test/java/com/ombhrum/fabushi/RemoteCommandJournalTest.kt"
+        "mobile/android/app/src/test/java/com/ombhrum/fabushi/RemoteCommandJournalTest.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/features/conversations/FabushiMessagingSurface.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/features/conversations/ConversationSurfaces.kt",
+        "mobile/android/app/src/test/java/com/ombhrum/fabushi/MahayanaAssistantSemanticProjectionTest.kt"
       ],
       "android_owner": "source/android-preload/src/main/kotlin/com/ombhrum/fabushi/androidpreload/semantic/FabushiAppAgentSurface.kt",
       "platform_delta": "Desktop uses a private local loopback HTTP discovery file/token for an external Node client. Android has no reason to publish a private filesystem discovery endpoint; it replaces that mechanism with a native semantic surface exposed through the existing authenticated account-scoped device gateway. The user capability and six semantic operations are preserved, while transport/discovery are Android-adapted.",
       "implementation_status": "implemented",
-      "production_wiring": "FabushiRemoteDeviceGateway registers exactly FabushiAppAgentSurface.ToolNames after obtaining the typed account-scoped device Agent session. Calls are admitted through RemoteCommandJournal, dispatched on the Android main thread to the native semantic surface, and terminal results are journaled before wire reply. Surface action requires exact generation, stable agentId/ref and an allowlisted action; semantic elements do not carry sensitive values.",
-      "unit_test": "FabushiAppAgentSurfaceTest covers tool names, stale generation, sensitive write rejection, find/assert/wait; RemoteCommandJournalTest covers terminal duplicate replay, session mismatch, process-restart outcome-unknown and disconnect settlement.",
+      "production_wiring": "FabushiRemoteDeviceGateway registers exactly FabushiAppAgentSurface.ToolNames after obtaining the typed account-scoped device Agent session. Calls are admitted through RemoteCommandJournal, dispatched on the Android main thread to the native semantic surface, and terminal results are journaled before wire reply. Surface action requires exact generation, stable agentId/ref and an allowlisted action; semantic elements do not carry sensitive values. The Android messaging shell now keeps the same native App Surface owner while projecting a stable Mahayana Assistant semantic id on the chats list and active Assistant chat, removes it from Channels and regular-conversation contexts, and exposes the Desktop-compatible unread-none semantic node only while the Assistant is inactive on the chats list. The child ConversationHome reports only presentation context back to the parent publisher and does not create a second semantic owner.",
+      "unit_test": "FabushiAppAgentSurfaceTest covers tool names, stale generation, sensitive write rejection, find/assert/wait; RemoteCommandJournalTest covers terminal duplicate replay, session mismatch, process-restart outcome-unknown and disconnect settlement. MahayanaAssistantSemanticProjectionTest covers Assistant visibility on chats/active chat, hiding on Channels and regular conversations, inactive-only unread-none projection, and stable Desktop-compatible semantic ids; FabushiAppAgentSurfaceTest continues to cover generation fencing/action semantics.",
       "contract_test": "Desktop app-agent-surface client + packaged E2E contract was read at Desktop 3bc9240; Android exact-head Gradle/Rust architecture gates pending.",
       "integration_test": "Android gateway invokes the native surface and publishes the six exact fabushi.app.* names; protected end-to-end device gateway acceptance remains pending.",
       "packaged_test": "required on final exact-head minified APK/AAB",
