@@ -1,5 +1,6 @@
 package com.ombhrum.fabushi.androidmain.security
 
+import org.json.JSONObject
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -53,8 +54,9 @@ class RemoteBindingFencePolicyTest {
             assertFalse(runCatching { RemoteBindingCredentialContract.validate(wrong) }.isSuccess)
         }
 
-        val missingPlane = binding("session:stable")
-            .replace("          \"credentialPlane\":\"authorized-remote-runner-v1\",\n", "")
+        val missingPlane = JSONObject(binding("session:stable"))
+            .apply { remove("credentialPlane") }
+            .toString()
         assertFalse(runCatching { RemoteBindingCredentialContract.validate(missingPlane) }.isSuccess)
     }
 
