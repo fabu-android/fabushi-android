@@ -1,3 +1,4 @@
+pub mod agent_management;
 pub mod android_host_inference;
 pub mod durable_turn_journal;
 pub mod multitask_todo;
@@ -36,6 +37,11 @@ pub use transient_stream_error::{
 pub use android_host_inference::{
     AndroidHostInferenceProvider, AndroidInferenceMode, AndroidRoutedToolBridge,
     AndroidSubagentReviewDecision,
+};
+
+pub use agent_management::{
+    with_agent_management_tools, CREATE_AGENT_TOOL_NAME, SEND_TO_AGENT_TOOL_NAME,
+    UPDATE_AGENT_TOOL_NAME,
 };
 
 pub use turn_run_shell::{ActiveRun, TurnCancellation, TurnRunLease, TurnRunShell, TurnRunShellError};
