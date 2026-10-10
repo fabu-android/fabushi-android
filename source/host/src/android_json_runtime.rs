@@ -794,6 +794,10 @@ impl AndroidJsonHost {
         }
 
         let account_fence = self.current_turn_account_fence().ok();
+        let known_agent_ids = agents
+            .iter()
+            .map(|agent| agent.id.clone())
+            .collect::<BTreeSet<_>>();
         let messaging = self
             .messaging
             .lock()
@@ -822,6 +826,7 @@ impl AndroidJsonHost {
                         .map(|fence| messaging.agent_conversation_partner_ids(fence, &agent.id))
                         .unwrap_or_default()
                         .into_iter()
+                        .filter(|partner_id| known_agent_ids.contains(partner_id))
                         .map(Value::String)
                         .collect();
                     object.insert("conversationPartnerIds".into(), Value::Array(partners));
