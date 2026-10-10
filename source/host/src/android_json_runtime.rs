@@ -1037,11 +1037,30 @@ impl AndroidJsonHost {
 
     fn automation_upsert(&mut self, params: &Value) -> Result<Value, String> {
         let account_fence = self.current_turn_account_fence()?;
+        let agent_id = required_string(params, "agentId")?.trim();
+        if agent_id != "mahayana-assistant" {
+            let agents = self
+                .agents
+                .lock()
+                .map_err(|_| "canonical Android Agent roster lock poisoned".to_string())?;
+            if agents.get(agent_id).is_none() {
+                return Err("automation agent owner not found".into());
+            }
+        }
+        let schedule = required_string(params, "schedule")?.to_string();
+        let trigger_description = params
+            .get("triggerDescription")
+            .and_then(Value::as_str)
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or(schedule.as_str())
+            .to_string();
         let spec = AutomationSpec {
             id: required_string(params, "id")?.to_string(),
             name: required_string(params, "name")?.to_string(),
             prompt: required_string(params, "prompt")?.to_string(),
-            schedule: required_string(params, "schedule")?.to_string(),
+            schedule,
+            agent_id: agent_id.to_string(),
+            trigger_description,
             enabled: params.get("enabled").and_then(Value::as_bool).unwrap_or(true),
             account_fence,
             created_at_ms: params.get("createdAtMs").and_then(Value::as_u64).unwrap_or_else(now_ms),

@@ -21,6 +21,10 @@ pub struct AutomationSpec {
     pub name: String,
     pub prompt: String,
     pub schedule: String,
+    #[serde(default)]
+    pub agent_id: String,
+    #[serde(default)]
+    pub trigger_description: String,
     pub enabled: bool,
     pub account_fence: String,
     pub created_at_ms: u64,
@@ -352,6 +356,12 @@ fn validate_spec(spec: &AutomationSpec) -> Result<(), String> {
     if spec.schedule.trim().is_empty() || spec.schedule.len() > 512 {
         return Err("automation schedule is invalid".into());
     }
+    if spec.agent_id.trim().is_empty() || spec.agent_id.len() > 160 {
+        return Err("automation agent owner is required".into());
+    }
+    if spec.trigger_description.len() > 512 {
+        return Err("automation trigger description is invalid".into());
+    }
     if spec.account_fence.trim().is_empty() {
         return Err("automation account fence is required".into());
     }
@@ -372,12 +382,57 @@ mod tests {
             name: "Daily brief".into(),
             prompt: "Summarize updates".into(),
             schedule: "0 8 * * *".into(),
+            agent_id: "agent-a".into(),
+            trigger_description: "Every day at 8:00 AM".into(),
             enabled: true,
             account_fence: account.into(),
             created_at_ms: 1,
             last_run_at_ms: None,
             next_run_at_ms: Some(100),
         }
+    }
+
+    #[test]
+    fn automation_owner_survives_restart_and_account_projection() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("automation.json");
+        let mut runtime = AutomationRuntime::open(&path, 1).unwrap();
+        runtime.upsert_spec(spec("acct-a")).unwrap();
+        drop(runtime);
+
+        let recovered = AutomationRuntime::open(&path, 2).unwrap();
+        let listed = recovered.list_for_account("acct-a");
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].get("agent_id").and_then(Value::as_str), Some("agent-a"));
+        assert_eq!(
+            listed[0].get("trigger_description").and_then(Value::as_str),
+            Some("Every day at 8:00 AM")
+        );
+        assert!(recovered.list_for_account("acct-b").is_empty());
+    }
+
+    #[test]
+    fn ownerless_legacy_record_loads_but_cannot_be_rewritten_as_valid_spec() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("automation.json");
+        fs::write(
+            &path,
+            r#"{
+              "next_generation":0,
+              "specs":{"legacy":{"id":"legacy","name":"Legacy","prompt":"p","schedule":"0 8 * * *","enabled":true,"account_fence":"acct-a","created_at_ms":1,"last_run_at_ms":null,"next_run_at_ms":null}},
+              "runs":{},
+              "request_to_run":{}
+            }"#,
+        )
+        .unwrap();
+        let mut runtime = AutomationRuntime::open(&path, 2).unwrap();
+        let legacy = runtime.list_for_account("acct-a");
+        assert_eq!(legacy.len(), 1);
+        assert_eq!(legacy[0].get("agent_id").and_then(Value::as_str), Some(""));
+        let mut replacement = spec("acct-a");
+        replacement.id = "legacy".into();
+        replacement.agent_id.clear();
+        assert!(runtime.upsert_spec(replacement).is_err());
     }
 
     #[test]
