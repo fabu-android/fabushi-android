@@ -445,7 +445,28 @@ mod tests {
         assert_eq!(denied.value["status"], "review-denied");
         assert!(owner.lock().unwrap().all_records().is_empty());
 
-        let allow = SubagentToolBridge::new(Arc::clone(&owner));
+        let task_review_error: SubagentTaskReviewCallback =
+            Arc::new(|_, _, _| Err("task review unavailable".into()));
+        let error_bridge =
+            SubagentToolBridge::new(Arc::clone(&owner)).with_task_review(task_review_error);
+        assert!(error_bridge
+            .call(
+                TASK_TOOL_NAME,
+                &json!({"prompt":"research"}),
+                "tool-review-error",
+                &context(),
+                3,
+            )
+            .unwrap_err()
+            .contains("task review unavailable"));
+        assert!(
+            owner.lock().unwrap().all_records().is_empty(),
+            "Task review errors must not mutate the durable owner"
+        );
+
+        let task_review_allow: SubagentTaskReviewCallback = Arc::new(|_, _, _| Ok(None));
+        let allow =
+            SubagentToolBridge::new(Arc::clone(&owner)).with_task_review(task_review_allow);
         let launched = allow
             .call(TASK_TOOL_NAME, &json!({"prompt":"research"}), "tool-ok", &context(), 3)
             .unwrap();
