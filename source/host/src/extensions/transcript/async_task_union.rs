@@ -11,7 +11,7 @@ pub struct AsyncTask {
     pub id: String,
     pub label: String,
     pub status: String,
-    pub started_at_ms: f64,
+    pub started_at_ms: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub detail: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -105,7 +105,7 @@ pub fn merge_async_tasks(
 mod tests {
     use super::*;
 
-    fn marker(kind: PendingWakeKind, work_id: &str, started: f64) -> DurablePendingWakeMarker {
+    fn marker(kind: PendingWakeKind, work_id: &str, started: u64) -> DurablePendingWakeMarker {
         DurablePendingWakeMarker {
             account_fence: "acct-a".into(),
             agent_id: "agent-a".into(),
@@ -122,9 +122,9 @@ mod tests {
     #[test]
     fn union_projects_all_background_kinds_and_stable_defaults() {
         let markers = vec![
-            marker(PendingWakeKind::CloudAgent, "cloud-1", 30.0),
-            marker(PendingWakeKind::Shell, "shell-1", 20.0),
-            marker(PendingWakeKind::Subagent, "sub-1", 10.0),
+            marker(PendingWakeKind::CloudAgent, "cloud-1", 30),
+            marker(PendingWakeKind::Shell, "shell-1", 20),
+            marker(PendingWakeKind::Subagent, "sub-1", 10),
         ];
         let tasks = merge_async_tasks(&[], &markers);
         assert_eq!(
@@ -143,11 +143,11 @@ mod tests {
             id: "shell-1".into(),
             label: "Live shell".into(),
             status: "running".into(),
-            started_at_ms: 1.0,
+            started_at_ms: 1,
             detail: None,
             subagent_type: None,
         }];
-        let mut durable = marker(PendingWakeKind::Shell, "shell-1", 2.0);
+        let mut durable = marker(PendingWakeKind::Shell, "shell-1", 2);
         durable.interrupted_by_recreate = true;
         let tasks = merge_async_tasks(&live, &[durable]);
         assert_eq!(tasks.len(), 1);
