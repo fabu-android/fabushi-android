@@ -202,6 +202,90 @@ class RemoteControlSessionCredentialPolicyTest {
     }
 
     @Test
+    fun processRestartFencesViewportAndRequiresReconciliation() {
+        val base = RemoteControlSessionCredential(
+            deviceId = "computer-1",
+            clientId = "remote-client-1",
+            sessionId = "remote-session-1",
+            mobileToken = validToken,
+            accountFence = "session:account-1",
+            accountEpoch = 7,
+            expiresAt = 2_000_000_000,
+            processGeneration = 10,
+            viewportRevision = 4,
+            lifecycle = RemoteControlSessionLifecycle.READY,
+        )
+
+        val recovered = RemoteControlSessionStatePolicy.bindProcess(base, 11)
+        assertEquals(11L, recovered.processGeneration)
+        assertEquals(5L, recovered.viewportRevision)
+        assertEquals(1, recovered.reconnectCount)
+        assertEquals(RemoteControlSessionLifecycle.RECONNECTING, recovered.lifecycle)
+        assertTrue(recovered.reconcileRequired)
+        assertFalse(recovered.humanTakeover)
+    }
+
+    @Test
+    fun humanTakeoverIsRevisionFencedAndBumpsViewportOnEachLeaseTransfer() {
+        val base = RemoteControlSessionCredential(
+            deviceId = "computer-1",
+            clientId = "remote-client-1",
+            sessionId = "remote-session-1",
+            mobileToken = validToken,
+            accountFence = "session:account-1",
+            accountEpoch = 7,
+            expiresAt = 2_000_000_000,
+            processGeneration = 9,
+            viewportRevision = 12,
+            selectedRoute = "direct",
+            provider = "fabushi-webrtc",
+            routePolicy = "direct-preferred",
+            transportUpdatedAt = 100,
+            lifecycle = RemoteControlSessionLifecycle.NEGOTIATING,
+        )
+
+        val takeover = RemoteControlSessionStatePolicy.setHumanTakeover(base, 12, true)
+        assertTrue(takeover.humanTakeover)
+        assertEquals(13L, takeover.viewportRevision)
+        assertEquals(RemoteControlSessionLifecycle.HUMAN_TAKEOVER, takeover.lifecycle)
+        assertThrows(IllegalArgumentException::class.java) {
+            RemoteControlSessionStatePolicy.setHumanTakeover(takeover, 12, false)
+        }
+        val handedBack = RemoteControlSessionStatePolicy.setHumanTakeover(takeover, 13, false)
+        assertFalse(handedBack.humanTakeover)
+        assertEquals(14L, handedBack.viewportRevision)
+        assertEquals(RemoteControlSessionLifecycle.NEGOTIATING, handedBack.lifecycle)
+    }
+
+    @Test
+    fun closeFailureRemainsDurableOutcomeUnknownInsteadOfDeletingTruth() {
+        val base = RemoteControlSessionCredential(
+            deviceId = "computer-1",
+            clientId = "remote-client-1",
+            sessionId = "remote-session-1",
+            mobileToken = validToken,
+            accountFence = "session:account-1",
+            accountEpoch = 7,
+            expiresAt = 2_000_000_000,
+            processGeneration = 3,
+            viewportRevision = 2,
+            lifecycle = RemoteControlSessionLifecycle.READY,
+        )
+        val closing = RemoteControlSessionStatePolicy.beginClosing(base)
+        assertEquals(RemoteControlSessionLifecycle.CLOSING, closing.lifecycle)
+        assertTrue(closing.reconcileRequired)
+        assertEquals(3L, closing.viewportRevision)
+
+        val unknown = RemoteControlSessionStatePolicy.markCloseOutcomeUnknown(closing)
+        assertEquals(RemoteControlSessionLifecycle.OUTCOME_UNKNOWN, unknown.lifecycle)
+        assertTrue(unknown.reconcileRequired)
+        assertFalse(unknown.humanTakeover)
+        assertThrows(IllegalArgumentException::class.java) {
+            RemoteControlSessionStatePolicy.advanceViewport(unknown, unknown.viewportRevision)
+        }
+    }
+
+    @Test
     fun rejectsInvalidEpochExpiryAndControlCharacters() {
         val credential = RemoteControlSessionCredential(
             deviceId = "computer-1",
