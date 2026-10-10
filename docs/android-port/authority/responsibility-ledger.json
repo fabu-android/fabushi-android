@@ -2929,6 +2929,75 @@
       "artifact": null,
       "verification_status": "not-verified",
       "notes": "Historical export provenance remains visible but cannot satisfy current parity. Final verification requires zero strict source debt and same-final-head package/device acceptance."
+    },
+    {
+      "responsibility_id": "GOVERNANCE-REPOSITORY-BOUNDARY-001",
+      "domain": "operations",
+      "desktop_sources": [
+        {
+          "path": "README.md",
+          "blob_sha": "8bf6cead37f04223dcd22864edfb7f7bddf381f8b",
+          "symbols": [
+            "Fabushi desktop",
+            "Fabushi native communication capability absorption"
+          ]
+        }
+      ],
+      "source_commit": "3bc92400826cc4ca7ac665b467708e22261edc61",
+      "responsibility": "Document the standalone product repository boundary, current canonical migration authority, runtime ownership boundaries, provenance, and verification limits without treating stale historical path lists as current source facts.",
+      "source_owner": "Desktop repository overview and migration entrypoint",
+      "direct_callers": [
+        "engineers",
+        "AI implementation sessions",
+        "release/source auditors"
+      ],
+      "downstream_dependencies": [
+        "AGENTS.md",
+        "full-parity spec",
+        "authority ledgers",
+        "current Git tree"
+      ],
+      "state_owner": "Git-tracked repository documentation",
+      "persistent_state": [
+        "README.md",
+        "authority/spec documents"
+      ],
+      "protocol_wire_contract": [
+        "canonical source repository/commit",
+        "native owner boundaries",
+        "exact-head verification requirement"
+      ],
+      "visible_effect": "Implementers enter the correct native Android architecture and do not mistake historical extraction provenance or stale path lists for completion.",
+      "failure_behavior": [
+        "stale README path claims are subordinate to current Git/source authority",
+        "completion remains blocked without exact-head gates"
+      ],
+      "cancellation_behavior": "Incomplete migration remains explicitly in progress.",
+      "retry_semantics": "README authority is refreshed when canonical source or architecture changes.",
+      "idempotency_semantics": "Documentation reflects one canonical product architecture and source authority.",
+      "process_death_recovery": "Durable repository docs survive session/process loss.",
+      "account_fencing": "Repository identity and PR exact HEAD scope implementation evidence.",
+      "security_boundary": "README must not include credentials or authorize cross-repository source coupling.",
+      "android_disposition": "not-applicable-with-replacement",
+      "android_target": [
+        "README.md",
+        "AGENTS.md",
+        "ANDROID_PORT.md",
+        "docs/specs/desktop-main-android-full-parity.md",
+        "docs/android-port/authority/source-inventory-ledger.jsonl"
+      ],
+      "android_owner": "Android repository overview/governance",
+      "platform_delta": "Desktop-specific Electron/FBCP/TDRP overview is replaced by Android standalone native architecture and Desktop-main parity authority. Historical Android platform-export provenance is retained but explicitly non-authoritative.",
+      "implementation_status": "implemented",
+      "production_wiring": "Android README now identifies current Desktop canonical authority, existing PR #3, native Compose→typed bridge→JNI→Coordinator→Host/Runner composition, GitHub-Actions-only verification, and explicit in-progress completion gates.",
+      "unit_test": "Not a runtime unit responsibility.",
+      "contract_test": "README links to durable authority/spec documents; documentation workflow validates the current documentation package.",
+      "integration_test": "Exact-head architecture/full-CI workflows enforce the referenced source and product gates.",
+      "packaged_test": "README does not itself prove packaged behavior.",
+      "device_test": "README does not itself prove device acceptance.",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Repository-boundary documentation is implemented. Full product verification remains gated by strict source closure and same-final-head package/device acceptance."
     }
   ],
   "traceability": {
