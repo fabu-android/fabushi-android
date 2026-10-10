@@ -5,7 +5,7 @@
     "desktop_commit": "3bc92400826cc4ca7ac665b467708e22261edc61",
     "android_repository": "fabu-android/fabushi-android",
     "android_pr": 3,
-    "android_head_at_update": "512eb71af4e47e9fa35c705843153c2a347341fd",
+    "android_head_at_update": "8a78b205185226f10e4e800241a83feb2a9319af",
     "status": "incomplete",
     "note": "Persistent human-reviewed responsibility ledger for Desktop main. Rows are responsibility-level source facts; mapped/implemented never imply verified. Verification requires same-exact-HEAD source implementation, production wiring, CI/package and device evidence."
   },
@@ -1088,20 +1088,23 @@
         "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/security/AndroidRemoteBindingStore.kt",
         "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/remote/FabushiRemoteDeviceGateway.kt",
         "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/remote/RemoteCommandJournal.kt",
-        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/coordinator/AccountAccessProjectionOwner.kt"
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/coordinator/AccountAccessProjectionOwner.kt",
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/security/AndroidRemoteControlSessionStore.kt",
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/coordinator/AndroidCoordinatorRuntime.kt",
+        "source/android-preload/src/main/kotlin/com/ombhrum/fabushi/androidpreload/runtime/AndroidCoordinatorPort.kt"
       ],
       "android_owner": "Rust Host RemoteRoutedTools + AuthenticatedRemoteHostRunner for outbound execution; FabushiRemoteDeviceGateway remains the separate inbound Android-device owner",
       "platform_delta": "Android uses native Compose/platform adapters + typed JNI while preserving canonical Rust owners where platform-independent.",
       "implementation_status": "mapped",
-      "production_wiring": "Partial and intentionally not verified. Android now has a distinct outbound owner: Host RemoteRoutedTools -> Capability Broker one-time approval/grant consumption -> AuthenticatedRemoteHostRunner -> authenticated fabushi.remote.v1 ExecutionService transport, with protected Keystore-backed RemoteDispatchBinding, stable tool-call/request/operation identities, durable pending/sent/acked/completed/rejected/cancelled/outcome-unknown journal state and explicit reconciliation instead of blind replay. Remote Shell/Read are routed through this owner, and Desktop-current-main Computer/Screenshot contracts are now exposed only when the protected binding proves hasDesktop; Computer validates the Desktop action/count/drag/path/wait/follow-up bounds and uses the already-proven computer.use execution capability. FabushiRemoteDeviceGateway remains a separate inbound Android-device surface and is not treated as the outbound executor. Browser and ExternalMachine breadth, complete pair/revoke UX, viewport/revision fencing, human takeover, reconnect/device acceptance and final packaged evidence remain open.",
-      "unit_test": "required",
+      "production_wiring": "Partial and intentionally not verified. In addition to the fail-closed outbound Remote Runner owner, Android now ships a Coordinator-owned Remote Computer control-session lifecycle through the typed AndroidCoordinatorPort. Pairing creates an accountFence/accountEpoch-bound session credential in Android Keystore; create/status/transport/signal/drain/acknowledge/human-takeover/viewport/close are consumed by the native RemoteComputerSurface without projecting mobileToken, clientToken, deviceSecret, TURN credential material, or any privileged object into WebView. The durable session owner persists processGeneration, signal cursor, route lock, viewportRevision, human-takeover lease, reconnect count and reconcileRequired. Process restart rebinds generation and forces RECONNECTING; authenticated desktop ready/close signals settle or fence recovery; close failure remains OUTCOME_UNKNOWN instead of deleting local truth. The hosted WebView remains HTTPS-origin restricted with no JavaScriptInterface/WebMessage credential bridge. Full responsibility remains open because a native remote display/input data-plane, Authorized Remote Runner server-side bearer enrollment, full Browser/ExternalMachine execution breadth, packaged/device acceptance and final release evidence are not yet proven.",
+      "unit_test": "RemoteControlSessionCredentialPolicyTest covers credential-plane separation, route lock, signal cursor, process-generation recovery, viewport stale fencing, human-takeover lease transfer, close outcome-unknown and authenticated signal reconciliation. RemoteComputerPresentationPolicyTest covers public-only projections, account/pairing identity fencing and nested secret rejection. Same exact-head Actions are required.",
       "contract_test": "required on same exact HEAD",
-      "integration_test": "required on same exact HEAD",
+      "integration_test": "Native RemoteComputerSurface now exercises control-plane create/transport/ready-signal/drain/ack/takeover/close through the typed Coordinator. Still required: live paired desktop activation, relay/direct data-plane, viewport-to-input revision enforcement, Runner crash/restart and process-death reconciliation on emulator/physical device.",
       "packaged_test": "required on final minified release artifact",
       "device_test": "required on emulator/physical device as applicable",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Still mapped/not-verified. The Android outbound wire is no longer hypothetical: current production code owns authenticated Execute/Reconcile/Cancel requests, bearer/account epoch/operation/request/grant/device headers, no-blind-replay outcome-unknown semantics and protected binding identity. Current Desktop source was re-read for Computer/Screenshot schema before wiring those tools; no new endpoint was invented. Remaining parity includes Browser/ExternalMachine executor breadth, pair/revoke product flow, viewport revision fencing, human takeover, reconnect/process-death packaged acceptance and same-exact-HEAD release/device evidence. Access projection's independent Desktop-equivalent Computer Rebuild lifecycle remains open."
+      "notes": "Still mapped/not-verified. Current Android production code closes the previously identified UI/session-owner gap for the Remote Computer control plane without turning the WebView into a privileged second owner. Control-plane success must not be treated as display/input data-plane parity. Authorized Remote Runner remains fail-closed until a separate server-issued executor bearer exists; clientToken/mobileToken/deviceSecret are explicitly not accepted as executor credentials. Same-exact-HEAD compile/unit/package/device evidence is still required before any verified promotion."
     },
     {
       "responsibility_id": "COMMERCE-LIFECYCLE-001",
