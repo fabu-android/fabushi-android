@@ -32,7 +32,7 @@ pub use transient_stream_error::{
     DEFAULT_FIRST_TOKEN_STALL_DEADLINE_MS,
 };
 
-pub use android_host_inference::{AndroidHostInferenceProvider, AndroidInferenceMode};
+pub use android_host_inference::{AndroidHostInferenceProvider, AndroidInferenceMode, AndroidRoutedToolBridge};
 
 pub use turn_run_shell::{ActiveRun, TurnCancellation, TurnRunLease, TurnRunShell, TurnRunShellError};
 
