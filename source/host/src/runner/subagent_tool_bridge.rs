@@ -24,6 +24,60 @@ pub const CHECK_SUBAGENT_TOOL_NAME: &str = "CheckSubagent";
 pub const MESSAGE_SUBAGENT_TOOL_NAME: &str = "MessageSubagent";
 pub const STOP_SUBAGENT_TOOL_NAME: &str = "StopSubagent";
 
+pub const COORDINATOR_SUBAGENT_CAPABILITIES_FIELD: &str = "coordinatorSubagentCapabilities";
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct TurnSubagentCapabilityProjection {
+    pub multitask_enabled: bool,
+    pub remote_box_available: bool,
+    pub remote_box_has_desktop: bool,
+    pub browser_use_enabled: bool,
+}
+
+pub fn parse_turn_subagent_capability_projection(
+    value: Option<&Value>,
+) -> Result<TurnSubagentCapabilityProjection, String> {
+    let Some(value) = value else {
+        return Ok(TurnSubagentCapabilityProjection::default());
+    };
+    let object = value
+        .as_object()
+        .ok_or_else(|| "coordinator subagent capability projection must be an object".to_string())?;
+    const ALLOWED: [&str; 4] = [
+        "multitaskEnabled",
+        "remoteBoxAvailable",
+        "remoteBoxHasDesktop",
+        "browserUseEnabled",
+    ];
+    if let Some(key) = object.keys().find(|key| !ALLOWED.contains(&key.as_str())) {
+        return Err(format!(
+            "coordinator subagent capability projection contains unsupported field: {key}"
+        ));
+    }
+    let read_flag = |key: &str| -> Result<bool, String> {
+        match object.get(key) {
+            None => Ok(false),
+            Some(Value::Bool(value)) => Ok(*value),
+            Some(_) => Err(format!(
+                "coordinator subagent capability projection field must be boolean: {key}"
+            )),
+        }
+    };
+    let projection = TurnSubagentCapabilityProjection {
+        multitask_enabled: read_flag("multitaskEnabled")?,
+        remote_box_available: read_flag("remoteBoxAvailable")?,
+        remote_box_has_desktop: read_flag("remoteBoxHasDesktop")?,
+        browser_use_enabled: read_flag("browserUseEnabled")?,
+    };
+    if projection.remote_box_has_desktop && !projection.remote_box_available {
+        return Err("remoteBoxHasDesktop requires an available trusted remote box for this turn".into());
+    }
+    if projection.browser_use_enabled && !projection.remote_box_has_desktop {
+        return Err("browserUseEnabled requires a trusted remote box with desktop capability".into());
+    }
+    Ok(projection)
+}
+
 pub fn build_turn_subagent_types(
     is_subagent_runner: bool,
     multitask_enabled: bool,
@@ -408,6 +462,34 @@ mod tests {
             None,
             "generated children must not inherit arbitrary Task delegation"
         );
+    }
+
+    #[test]
+    fn trusted_coordinator_capability_projection_is_strict_and_fail_closed() {
+        let projected = parse_turn_subagent_capability_projection(Some(&json!({
+            "multitaskEnabled": true,
+            "remoteBoxAvailable": true,
+            "remoteBoxHasDesktop": true,
+            "browserUseEnabled": true
+        }))).unwrap();
+        assert_eq!(
+            build_turn_subagent_types(
+                false,
+                projected.multitask_enabled,
+                projected.remote_box_available,
+                projected.remote_box_has_desktop,
+                projected.browser_use_enabled,
+            ),
+            Some(vec!["executor".to_string(), "computeruse".to_string(), "browseruse".to_string()])
+        );
+        assert_eq!(
+            parse_turn_subagent_capability_projection(None).unwrap(),
+            TurnSubagentCapabilityProjection::default()
+        );
+        assert!(parse_turn_subagent_capability_projection(Some(&json!({"multitaskEnabled":"yes"}))).is_err());
+        assert!(parse_turn_subagent_capability_projection(Some(&json!({"remoteBoxAvailable":false,"remoteBoxHasDesktop":true}))).is_err());
+        assert!(parse_turn_subagent_capability_projection(Some(&json!({"remoteBoxAvailable":true,"remoteBoxHasDesktop":false,"browserUseEnabled":true}))).is_err());
+        assert!(parse_turn_subagent_capability_projection(Some(&json!({"unexpectedElevation":true}))).is_err());
     }
 
     #[test]
