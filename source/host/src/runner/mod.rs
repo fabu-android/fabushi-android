@@ -40,8 +40,8 @@ pub use android_host_inference::{
 };
 
 pub use agent_management::{
-    with_agent_management_tools, CREATE_AGENT_TOOL_NAME, SEND_TO_AGENT_TOOL_NAME,
-    UPDATE_AGENT_TOOL_NAME,
+    with_agent_management_tools, AgentTurnInterruptionRegistry, CREATE_AGENT_TOOL_NAME,
+    SEND_TO_AGENT_TOOL_NAME, UPDATE_AGENT_TOOL_NAME,
 };
 
 pub use turn_run_shell::{ActiveRun, TurnCancellation, TurnRunLease, TurnRunShell, TurnRunShellError};
