@@ -2,6 +2,7 @@ use crate::account_service::{AccountSessionMutation, AndroidAccountService};
 use crate::capability_broker::{CapabilityDecision, PendingCapabilityCall, SharedCapabilityBroker};
 use crate::automation_runtime::{run_json as automation_run_json, AutomationRuntime, AutomationSpec};
 use crate::android_agent_roster::AndroidAgentRoster;
+use crate::android_sidebar_sections::{AndroidSidebarSection, AndroidSidebarSections};
 use crate::host_secret_store::get_or_create_host_machine_id;
 use crate::host_runner_composition::AuthenticatedRemoteHostRunner;
 use crate::messaging_service::AndroidMessagingService;
@@ -521,6 +522,7 @@ pub struct AndroidJsonHost {
     mode: AndroidHostMode,
     account: AndroidAccountService,
     agents: Arc<Mutex<AndroidAgentRoster>>,
+    sidebar_sections: Arc<Mutex<AndroidSidebarSections>>,
     transcript: Arc<Mutex<TranscriptStore>>,
     messaging: Arc<Mutex<AndroidMessagingService>>,
     mcp_auth_watches: Arc<Mutex<AndroidMcpAuthWatchManager>>,
@@ -596,6 +598,10 @@ impl AndroidJsonHost {
             AndroidAgentRoster::open(app_data_dir.join("agents.json"))
                 .unwrap_or_else(|error| panic!("failed to open canonical Android agent roster: {error}")),
         ));
+        let sidebar_sections = Arc::new(Mutex::new(
+            AndroidSidebarSections::open(app_data_dir.join("sidebar-sections.json"))
+                .unwrap_or_else(|error| panic!("failed to open canonical Android sidebar sections: {error}")),
+        ));
         let transcript = Arc::new(Mutex::new(
             TranscriptStore::open(app_data_dir.join("transcript.json"))
                 .unwrap_or_else(|error| panic!("failed to open canonical Android transcript: {error}")),
@@ -663,6 +669,7 @@ impl AndroidJsonHost {
             mode,
             account,
             agents,
+            sidebar_sections,
             transcript,
             messaging,
             mcp_auth_watches,
@@ -823,6 +830,7 @@ impl AndroidJsonHost {
             "feature.agent.subagent.tool" => self.agent_subagent_tool(params),
             "feature.agent.subagent.reconcile" => self.agent_subagent_reconcile(params),
             "feature.agent.rosterMutation" => self.agent_roster_mutation(params),
+            "feature.agent.sidebarSections" => self.agent_sidebar_sections(),
             "feature.agent.upgradeQuiesce" => self.agent_upgrade_quiesce(params),
             "feature.automation.upsert" => self.automation_upsert(params),
             "feature.automation.list" => self.automation_list(),
@@ -1663,6 +1671,37 @@ impl AndroidJsonHost {
             .get("mutation")
             .filter(|value| value.is_object())
             .ok_or("presentation roster mutation payload is required")?;
+
+        if mutation.get("kind").and_then(Value::as_str) == Some("sidebar-sections") {
+            let sections = mutation
+                .get("sections")
+                .and_then(Value::as_array)
+                .ok_or("sidebar sections array is required")?
+                .iter()
+                .cloned()
+                .map(serde_json::from_value::<AndroidSidebarSection>)
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|error| format!("invalid sidebar section payload: {error}"))?;
+            let known_agent_ids = self
+                .agents
+                .lock()
+                .map_err(|_| "canonical Android Agent roster lock poisoned".to_string())?
+                .list()
+                .into_iter()
+                .map(|agent| agent.id)
+                .collect::<BTreeSet<_>>();
+            return self
+                .sidebar_sections
+                .lock()
+                .map_err(|_| "canonical Android sidebar sections lock poisoned".to_string())?
+                .set(
+                    &current_account_fence,
+                    operation_id,
+                    &sections,
+                    &known_agent_ids,
+                );
+        }
+
         self.agents
             .lock()
             .map_err(|_| "canonical Android Agent roster lock poisoned".to_string())?
@@ -1671,6 +1710,24 @@ impl AndroidJsonHost {
                 operation_id,
                 mutation,
             )
+    }
+
+    fn agent_sidebar_sections(&mut self) -> Result<Value, String> {
+        let account_fence = self.current_turn_account_fence()?;
+        let known_agent_ids = self
+            .agents
+            .lock()
+            .map_err(|_| "canonical Android Agent roster lock poisoned".to_string())?
+            .list()
+            .into_iter()
+            .map(|agent| agent.id)
+            .collect::<BTreeSet<_>>();
+        let sections = self
+            .sidebar_sections
+            .lock()
+            .map_err(|_| "canonical Android sidebar sections lock poisoned".to_string())?
+            .get(&account_fence, &known_agent_ids);
+        Ok(json!({"sections":sections}))
     }
 
     fn agent_disk_pressure_observe(&mut self, params: &Value) -> Result<Value, String> {
