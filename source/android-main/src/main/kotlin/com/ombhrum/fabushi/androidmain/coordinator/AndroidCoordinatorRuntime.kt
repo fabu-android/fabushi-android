@@ -163,6 +163,29 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
         val remoteReady = remote?.optBoolean("ready", false) == true
         val remoteHasDesktop = remoteReady && remote?.optBoolean("hasDesktop", false) == true
 
+        var rosterLoadState = AccountRosterLoadState.LOADING
+        var rosterFailureCode: String? = null
+        var rosterFailureTransportKind: String? = null
+        runCatching { host.requestValue("listAgents") }.onSuccess { value ->
+            rosterLoadState = if (value is JSONArray) {
+                AccountRosterLoadState.READY
+            } else {
+                failures += "roster:invalid-payload"
+                rosterFailureCode = "roster-invalid-payload"
+                AccountRosterLoadState.ERROR
+            }
+        }.onFailure { error ->
+            val message = error.message.orEmpty().lowercase()
+            rosterLoadState = AccountRosterLoadState.ERROR
+            rosterFailureTransportKind = when {
+                "dns" in message -> "dns"
+                "network" in message || "connect" in message || "timeout" in message -> "network"
+                else -> null
+            }
+            rosterFailureCode = "roster-load-failed"
+            failures += "roster:" + (error.message ?: error::class.java.simpleName)
+        }
+
         var entitlementState = AccountEntitlementState.UNKNOWN
         var entitlementReason: String? = null
         var paymentState = AccountPaymentState.UNKNOWN
@@ -226,6 +249,13 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
                     remoteReady -> AccountRecoveryState.READY
                     else -> AccountRecoveryState.UNKNOWN
                 },
+                rosterLoadState = rosterLoadState,
+                rosterFailureCode = rosterFailureCode,
+                rosterFailureTransportKind = rosterFailureTransportKind,
+                // Restored-roster is not inferred from a successful durable Host roster read.
+                // It remains false until the canonical Host exposes an explicit restored snapshot.
+                isShowingRestoredRoster = false,
+                isRosterFetching = false,
                 detail = failures.takeIf { it.isNotEmpty() }?.joinToString("; ")?.take(240),
             ),
         )
