@@ -111,6 +111,7 @@ impl<T: RemoteExecutionTransport> AuthenticatedRemoteHostRunner<T> {
                 || existing.account_fence != context.account_fence
                 || existing.account_epoch != context.account_epoch
                 || existing.permission_grant_id != context.permission_grant_id
+                || existing.device_id != context.device_id
             {
                 return Err(ExecutionError::InvalidRequest(
                     "remote operation identity conflicts with durable journal".into(),
@@ -146,6 +147,7 @@ impl<T: RemoteExecutionTransport> AuthenticatedRemoteHostRunner<T> {
                 account_fence: context.account_fence.clone(),
                 account_epoch: context.account_epoch,
                 permission_grant_id: context.permission_grant_id.clone(),
+                device_id: context.device_id.clone(),
                 state: RemoteExecutionState::Pending,
                 created_at_ms: now_ms,
                 updated_at_ms: now_ms,
@@ -479,6 +481,39 @@ mod tests {
             permission_grant_id: "grant-1".into(),
             device_id: "device-1".into(),
         }
+    }
+
+    #[test]
+    fn remote_operation_identity_is_fenced_by_device() {
+        let root = tempfile::tempdir().unwrap();
+        let journal =
+            RemoteExecutionJournal::open(root.path().join("remote.json"), 1).unwrap();
+        let remote = AuthenticatedRemoteHostRunner::new(
+            RecordingRemoteTransport::default(),
+            journal,
+        );
+        let mut composition =
+            AuthorizedHostRunnerComposition::new(RecordingRunner::default(), remote);
+        composition
+            .run(
+                ExecutionTarget::RemoteBox,
+                &request("remote-device-op"),
+                Some(&context("remote-device-op")),
+                2,
+            )
+            .unwrap();
+
+        let mut wrong_device = context("remote-device-op");
+        wrong_device.device_id = "device-2".into();
+        let error = composition
+            .run(
+                ExecutionTarget::RemoteBox,
+                &request("remote-device-op"),
+                Some(&wrong_device),
+                3,
+            )
+            .unwrap_err();
+        assert!(matches!(error, ExecutionError::InvalidRequest(_)));
     }
 
     #[test]
