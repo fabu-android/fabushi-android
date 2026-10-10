@@ -73,6 +73,10 @@ pub struct PendingCapabilityApproval {
     #[serde(default)]
     pub target: Value,
     pub account_fence: String,
+    #[serde(default)]
+    pub account_epoch: Option<u64>,
+    #[serde(default)]
+    pub device_id: Option<String>,
     pub state: String,
     pub created_at_ms: u64,
     pub resolved_at_ms: Option<u64>,
@@ -184,6 +188,8 @@ impl CapabilityBroker {
                 capability: capability.into(),
                 target,
                 account_fence: account_fence.into(),
+                account_epoch: None,
+                device_id: None,
                 state: "pending".into(),
                 created_at_ms: now_ms,
                 resolved_at_ms: None,
@@ -201,6 +207,41 @@ impl CapabilityBroker {
             reason: Some("capability requires explicit one-time user approval".into()),
             at_ms: now_ms,
         });
+        self.persist()
+    }
+
+    pub fn request_remote_approval(
+        &mut self,
+        approval_id: &str,
+        request_id: &str,
+        operation_id: &str,
+        capability: &str,
+        target: Value,
+        account_fence: &str,
+        account_epoch: u64,
+        device_id: &str,
+        now_ms: u64,
+    ) -> Result<(), String> {
+        if account_epoch == 0 {
+            return Err("remote approval account epoch must be positive".into());
+        }
+        validate_identity("device", device_id)?;
+        self.request_approval(
+            approval_id,
+            request_id,
+            operation_id,
+            capability,
+            target,
+            account_fence,
+            now_ms,
+        )?;
+        let approval = self
+            .state
+            .approvals
+            .get_mut(approval_id)
+            .ok_or("remote approval disappeared after persistence")?;
+        approval.account_epoch = Some(account_epoch);
+        approval.device_id = Some(device_id.to_string());
         self.persist()
     }
 
@@ -289,6 +330,41 @@ impl CapabilityBroker {
         });
         self.persist()?;
         Ok(consumed)
+    }
+
+    pub fn consume_remote_approval_for_dispatch(
+        &mut self,
+        approval_id: &str,
+        operation_id: &str,
+        request_id: &str,
+        capability: &str,
+        current_account_fence: &str,
+        account_epoch: u64,
+        device_id: &str,
+        now_ms: u64,
+    ) -> Result<PendingCapabilityApproval, String> {
+        if account_epoch == 0 {
+            return Err("remote dispatch account epoch must be positive".into());
+        }
+        validate_identity("device", device_id)?;
+        let approval = self
+            .state
+            .approvals
+            .get(approval_id)
+            .ok_or("approval is unknown, stale, cancelled, or already consumed")?;
+        if approval.account_epoch != Some(account_epoch)
+            || approval.device_id.as_deref() != Some(device_id)
+        {
+            return Err("remote approval account epoch or device identity mismatch".into());
+        }
+        self.consume_approval_for_dispatch(
+            approval_id,
+            operation_id,
+            request_id,
+            capability,
+            current_account_fence,
+            now_ms,
+        )
     }
 
     pub fn cancel_approval_operation(
@@ -526,6 +602,54 @@ impl SharedCapabilityBroker {
         )
     }
 
+    pub fn request_remote_approval(
+        &self,
+        approval_id: &str,
+        request_id: &str,
+        operation_id: &str,
+        capability: &str,
+        target: Value,
+        account_fence: &str,
+        account_epoch: u64,
+        device_id: &str,
+        now_ms: u64,
+    ) -> Result<(), String> {
+        self.lock()?.request_remote_approval(
+            approval_id,
+            request_id,
+            operation_id,
+            capability,
+            target,
+            account_fence,
+            account_epoch,
+            device_id,
+            now_ms,
+        )
+    }
+
+    pub fn consume_remote_approval_for_dispatch(
+        &self,
+        approval_id: &str,
+        operation_id: &str,
+        request_id: &str,
+        capability: &str,
+        current_account_fence: &str,
+        account_epoch: u64,
+        device_id: &str,
+        now_ms: u64,
+    ) -> Result<PendingCapabilityApproval, String> {
+        self.lock()?.consume_remote_approval_for_dispatch(
+            approval_id,
+            operation_id,
+            request_id,
+            capability,
+            current_account_fence,
+            account_epoch,
+            device_id,
+            now_ms,
+        )
+    }
+
     pub fn cancel_approval_operation(
         &self,
         operation_id: &str,
@@ -624,6 +748,38 @@ mod tests {
         assert!(reopened.cancel_approval_operation("o3", "user cancelled", 9).unwrap());
         assert_eq!(reopened.approval_state("a3"), Some("cancelled"));
         assert!(reopened.resolve_approval("a3", true, "acct-1", 10).is_err());
+    }
+
+    #[test]
+    fn remote_allowed_once_is_fenced_by_account_epoch_and_device() {
+        let (_root, mut b) = broker();
+        b.request_remote_approval(
+            "remote-a1",
+            "remote-r1",
+            "remote-o1",
+            "remote.shell",
+            json!({"deviceId":"device-1"}),
+            "acct-1",
+            7,
+            "device-1",
+            1,
+        ).unwrap();
+        b.resolve_approval("remote-a1", true, "acct-1", 2).unwrap();
+
+        assert!(b.consume_remote_approval_for_dispatch(
+            "remote-a1","remote-o1","remote-r1","remote.shell","acct-1",8,"device-1",3
+        ).is_err());
+        assert!(b.consume_remote_approval_for_dispatch(
+            "remote-a1","remote-o1","remote-r1","remote.shell","acct-1",7,"device-2",3
+        ).is_err());
+
+        let consumed = b.consume_remote_approval_for_dispatch(
+            "remote-a1","remote-o1","remote-r1","remote.shell","acct-1",7,"device-1",4
+        ).unwrap();
+        assert_eq!(consumed.state, "consumed");
+        assert!(b.consume_remote_approval_for_dispatch(
+            "remote-a1","remote-o1","remote-r1","remote.shell","acct-1",7,"device-1",5
+        ).is_err());
     }
 
     #[test]
