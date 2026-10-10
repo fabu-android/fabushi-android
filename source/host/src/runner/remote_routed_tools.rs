@@ -389,7 +389,20 @@ impl AndroidRoutedToolBridge for RemoteRoutedTools {
         if current_binding != binding {
             return Err("trusted Remote binding changed after approval".into());
         }
-        self.broker.consume_remote_approval_for_dispatch(
+        // Persist a never-sent Remote operation before consuming the one-time grant. A process
+        // death before mark_sent can then be proven not to have crossed the Remote boundary.
+        {
+            let mut guard = self
+                .runner
+                .lock()
+                .map_err(|_| "remote runner lock poisoned".to_string())?;
+            let runner = guard.as_mut().ok_or("trusted Remote runner is unavailable")?;
+            runner
+                .prepare_authorized(&context, &request, now_ms())
+                .map_err(remote_execution_error)?;
+        }
+
+        if let Err(error) = self.broker.consume_remote_approval_for_dispatch(
             &approval_id,
             &operation_id,
             &request_id,
@@ -398,8 +411,20 @@ impl AndroidRoutedToolBridge for RemoteRoutedTools {
             binding.account_epoch,
             &binding.device_id,
             now_ms(),
-        )?;
+        ) {
+            if let Ok(mut guard) = self.runner.lock() {
+                if let Some(runner) = guard.as_mut() {
+                    let _ = runner.cancel_prepared_authorized(&context, now_ms());
+                }
+            }
+            return Err(error);
+        }
         if self.cancelled.load(Ordering::Acquire) {
+            if let Ok(mut guard) = self.runner.lock() {
+                if let Some(runner) = guard.as_mut() {
+                    let _ = runner.cancel_prepared_authorized(&context, now_ms());
+                }
+            }
             return Err("remote tool dispatch cancelled before side effect".into());
         }
 
@@ -408,7 +433,7 @@ impl AndroidRoutedToolBridge for RemoteRoutedTools {
             .lock()
             .map_err(|_| "remote runner lock poisoned".to_string())?;
         let runner = guard.as_mut().ok_or("trusted Remote runner is unavailable")?;
-        match runner.execute_authorized(&context, &request, now_ms()) {
+        match runner.dispatch_prepared_authorized(&context, &request, now_ms()) {
             Ok(result) => Ok(parse_remote_output(&result.output_json)),
             Err(ExecutionError::Transport(message))
                 if message.contains("remote_outcome_unknown") =>
@@ -560,6 +585,53 @@ mod tests {
             "hasDesktop":true
         }).to_string();
         assert!(RemoteDispatchBinding::parse(&plaintext).is_err());
+    }
+
+    #[test]
+    fn remote_approval_callback_rejects_wrong_account_and_duplicate_resolution() {
+        let root = tempfile::tempdir().unwrap();
+        let broker = SharedCapabilityBroker::open(root.path().join("broker.json"), 1).unwrap();
+        broker
+            .request_remote_approval(
+                "approval-1",
+                "request-1",
+                "remote-op-1",
+                "remote.shell",
+                json!({"deviceId":"device-1"}),
+                "session:account-a",
+                7,
+                "device-1",
+                1,
+            )
+            .unwrap();
+        let registry = RemoteApprovalRegistry::default();
+        registry
+            .register(
+                "approval-1",
+                RemoteApprovalWait {
+                    parent_operation_id: "parent-op".into(),
+                    remote_operation_id: "remote-op-1".into(),
+                    request_id: "request-1".into(),
+                    capability: "remote.shell".into(),
+                    account_fence: "session:account-a".into(),
+                    account_epoch: 7,
+                    device_id: "device-1".into(),
+                    signal: Arc::new((Mutex::new(None), Condvar::new())),
+                },
+            )
+            .unwrap();
+
+        assert!(registry
+            .resolve_from_ui(&broker, "approval-1", true, "session:account-b", 2)
+            .is_err());
+        let resolved = registry
+            .resolve_from_ui(&broker, "approval-1", true, "session:account-a", 3)
+            .unwrap()
+            .unwrap();
+        assert!(resolved.approved);
+        assert!(registry
+            .resolve_from_ui(&broker, "approval-1", true, "session:account-a", 4)
+            .is_err());
     }
 
     #[test]
