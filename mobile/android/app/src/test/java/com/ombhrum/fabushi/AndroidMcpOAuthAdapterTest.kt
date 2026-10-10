@@ -67,6 +67,15 @@ class AndroidMcpOAuthAdapterTest {
     }
 
     @Test
+    fun accountAccessOnboardingUsesGenericHttpsBoundaryNotAccountOAuthPrivilege() {
+        val sanitized = AndroidExternalUrlAdapter.sanitizeExternalHttpsUrl(ACCESS_ONBOARDING_URL)
+        requireNotNull(sanitized)
+        assertEquals("https", sanitized.scheme)
+        assertEquals("fabushi.ombhrum.com", sanitized.host)
+        assertNull(AndroidAccountOAuthAdapter.validateExternalAuthUrl(ACCESS_ONBOARDING_URL))
+    }
+
+    @Test
     fun accountAuthPrivilegeRemainsFirstPartyOnly() {
         assertNull(
             AndroidAccountOAuthAdapter.validateExternalAuthUrl(
