@@ -2471,6 +2471,27 @@
             "exact-source package",
             "signed/notarized packaged acceptance"
           ]
+        },
+        {
+          "path": "desktop/resources/mac/entitlements.plist",
+          "blob_sha": "9ab52e13b3361ee89590f7a92976258ae205b484",
+          "symbols": [
+            "macOS hardened-runtime JIT/unsigned executable-memory entitlements"
+          ]
+        },
+        {
+          "path": "desktop/resources/mas/entitlements.mas.inherit.plist",
+          "blob_sha": "96fce341a4b2fef8de4e28168d07e1423ad1e573",
+          "symbols": [
+            "MAS inherited child sandbox/JIT entitlements"
+          ]
+        },
+        {
+          "path": "desktop/resources/mas/entitlements.mas.plist",
+          "blob_sha": "b27cc6cf93c6a746b717f98bb609d201ccd134d2",
+          "symbols": [
+            "MAS app sandbox/network/files/microphone/camera entitlements"
+          ]
         }
       ],
       "source_commit": "3bc92400826cc4ca7ac665b467708e22261edc61",
