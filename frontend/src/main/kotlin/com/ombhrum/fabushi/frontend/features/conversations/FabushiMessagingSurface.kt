@@ -128,6 +128,30 @@ object TestTags {
 
 private enum class MobileDestination { HOME, MARKETPLACE, REMOTE_COMPUTER }
 internal enum class AndroidMobileSection(val label: String) { CONTACTS("联系人"), BOTS("Bots"), GROUPS("群组"), CHANNELS("频道"), SAVED("收藏"), ARCHIVE("归档"), CALLS("通话"), FOLDERS("文件夹"), SETTINGS("设置") }
+
+internal object MahayanaAssistantSemanticProjection {
+    const val AgentId = "test:peer-legacy:conversation:mahayana-ai:agent:assistant"
+    const val UnreadAgentId = "peer-unread:legacy:conversation:mahayana-ai:agent:assistant"
+    const val UnreadNoneName = "unread-none"
+
+    fun visible(
+        destinationIsHome: Boolean,
+        activeSection: AndroidMobileSection?,
+        regularConversationOpen: Boolean,
+        assistantOpen: Boolean,
+    ): Boolean =
+        destinationIsHome &&
+            (assistantOpen || (activeSection == null && !regularConversationOpen))
+
+    fun unreadVisible(
+        destinationIsHome: Boolean,
+        activeSection: AndroidMobileSection?,
+        regularConversationOpen: Boolean,
+        assistantOpen: Boolean,
+    ): Boolean =
+        visible(destinationIsHome, activeSection, regularConversationOpen, assistantOpen) &&
+            !assistantOpen
+}
 internal val homeBackground = Color(0xFF0B0B0C)
 internal val homeSurface = Color(0xFF151516)
 internal val homeBorder = Color(0xFF29292B)
@@ -204,6 +228,8 @@ fun FabushiMessagingSurface(
     var showHomeSearch by remember { mutableStateOf(false) }
     var homeSearchQuery by remember { mutableStateOf("") }
     var showComposeMenu by remember { mutableStateOf(false) }
+    var semanticSection by remember { mutableStateOf<AndroidMobileSection?>(null) }
+    var semanticConversationOpen by remember { mutableStateOf(false) }
 
     if (authGateEnabled && state.onboardingStep < 3) {
         MobileOnboarding(state.onboardingStep, onAdvanceOnboarding, onSkipOnboarding)
@@ -217,12 +243,19 @@ fun FabushiMessagingSurface(
         MobileLogin(state, onBeginBrowserLogin, onReopenBrowserLogin, onCancelBrowserLogin)
         return
     }
-    if (showAgentChat) {
-        MobileAgentChat(state, onChatDraftChange, onSendChat, onStopChat, onOpenGeneratedMiniApp) { showAgentChat = false }
-        return
-    }
-
-    LaunchedEffect(destination, showAddMenu, showHomeSearch, homeSearchQuery, showComposeMenu, state, updateState.phase, appAgentSurface) {
+    LaunchedEffect(
+        destination,
+        showAgentChat,
+        semanticSection,
+        semanticConversationOpen,
+        showAddMenu,
+        showHomeSearch,
+        homeSearchQuery,
+        showComposeMenu,
+        state,
+        updateState.phase,
+        appAgentSurface,
+    ) {
         val elements = mutableListOf<FabushiAppAgentSurface.Element>()
         val actions = linkedMapOf<String, FabushiAppAgentSurface.Action>()
         fun element(
@@ -245,7 +278,28 @@ fun FabushiMessagingSurface(
             )
             if (action != null) actions[normalizedId] = action
         }
-        val screen = when (destination) {
+        val assistantVisible = MahayanaAssistantSemanticProjection.visible(
+            destinationIsHome = destination == MobileDestination.HOME,
+            activeSection = semanticSection,
+            regularConversationOpen = semanticConversationOpen,
+            assistantOpen = showAgentChat,
+        )
+        val assistantUnreadVisible = MahayanaAssistantSemanticProjection.unreadVisible(
+            destinationIsHome = destination == MobileDestination.HOME,
+            activeSection = semanticSection,
+            regularConversationOpen = semanticConversationOpen,
+            assistantOpen = showAgentChat,
+        )
+        val screen = if (showAgentChat) {
+            if (assistantVisible) {
+                element(
+                    MahayanaAssistantSemanticProjection.AgentId,
+                    "button",
+                    "大乘助手",
+                )
+            }
+            "assistant-chat"
+        } else when (destination) {
             MobileDestination.HOME -> {
                 element(
                     TestTags.AppShell,
@@ -275,6 +329,21 @@ fun FabushiMessagingSurface(
                 }
                 element(TestTags.ProfileAvatar, "button", "个人菜单", action = FabushiAppAgentSurface.Action(setOf("invoke")) { showAddMenu = true })
                 element(TestTags.AddButton, "button", "新建对话", action = FabushiAppAgentSurface.Action(setOf("invoke")) { showComposeMenu = true })
+                if (assistantVisible) {
+                    element(
+                        MahayanaAssistantSemanticProjection.AgentId,
+                        "button",
+                        "大乘助手",
+                        action = FabushiAppAgentSurface.Action(setOf("invoke")) { showAgentChat = true },
+                    )
+                }
+                if (assistantUnreadVisible) {
+                    element(
+                        MahayanaAssistantSemanticProjection.UnreadAgentId,
+                        "img",
+                        MahayanaAssistantSemanticProjection.UnreadNoneName,
+                    )
+                }
                 if (showAddMenu) {
                     element(
                         TestTags.MarketplaceEntry,
@@ -371,6 +440,17 @@ fun FabushiMessagingSurface(
         onDispose { appAgentSurface?.clear() }
     }
 
+    if (showAgentChat) {
+        MobileAgentChat(
+            state,
+            onChatDraftChange,
+            onSendChat,
+            onStopChat,
+            onOpenGeneratedMiniApp,
+        ) { showAgentChat = false }
+        return
+    }
+
     state.permissionRequest?.let { request ->
         AlertDialog(
             modifier = Modifier.testTag(TestTags.PermissionDialog),
@@ -448,6 +528,10 @@ fun FabushiMessagingSurface(
             onDeleteFolder = onDeleteFolder,
             onOpenAgentChat = { showAgentChat = true },
             onLogout = onLogout,
+            onSemanticContextChanged = { section, conversationOpen ->
+                semanticSection = section
+                semanticConversationOpen = conversationOpen
+            },
         )
         MobileDestination.MARKETPLACE -> MarketplaceContent(
             state = state,
