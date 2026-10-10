@@ -56,11 +56,18 @@ impl RemoteExecutionJournal {
 
         let mut changed = false;
         for record in state.operations.values_mut() {
-            if matches!(
-                record.state,
-                RemoteExecutionState::Sent | RemoteExecutionState::Acked
-            ) {
-                record.state = RemoteExecutionState::OutcomeUnknown;
+            let recovered_state = match record.state {
+                // Pending is persisted before the one-time approval is consumed and before
+                // mark_sent. A process death here proves that no Remote side effect was sent.
+                RemoteExecutionState::Pending => Some(RemoteExecutionState::Cancelled),
+                // Sent/Acked may already have crossed the Remote boundary. Never replay them.
+                RemoteExecutionState::Sent | RemoteExecutionState::Acked => {
+                    Some(RemoteExecutionState::OutcomeUnknown)
+                }
+                _ => None,
+            };
+            if let Some(recovered_state) = recovered_state {
+                record.state = recovered_state;
                 record.updated_at_ms = now_ms;
                 changed = true;
             }
@@ -677,20 +684,27 @@ mod tests {
     }
 
     #[test]
-    fn process_reopen_fences_inflight_remote_side_effect() {
+    fn process_reopen_distinguishes_prepared_from_maybe_sent_remote_work() {
         let root = tempfile::tempdir().unwrap();
         let path = root.path().join("remote.json");
         {
             let mut journal = RemoteExecutionJournal::open(&path, 1).unwrap();
-            journal.begin(record("op-1", "req-1")).unwrap();
+            journal.begin(record("op-prepared", "req-prepared")).unwrap();
+            journal.begin(record("op-sent", "req-sent")).unwrap();
             journal
-                .mark_sent("op-1", "account-a:epoch-7", 7, "grant-1", 2)
+                .mark_sent("op-sent", "account-a:epoch-7", 7, "grant-1", 2)
                 .unwrap();
         }
         let reopened = RemoteExecutionJournal::open(&path, 99).unwrap();
         assert_eq!(
-            reopened.record("op-1").unwrap().state,
-            RemoteExecutionState::OutcomeUnknown
+            reopened.record("op-prepared").unwrap().state,
+            RemoteExecutionState::Cancelled,
+            "prepared-but-never-sent Remote work must not become outcome-unknown",
+        );
+        assert_eq!(
+            reopened.record("op-sent").unwrap().state,
+            RemoteExecutionState::OutcomeUnknown,
+            "maybe-sent Remote work must reconcile rather than replay",
         );
     }
 
