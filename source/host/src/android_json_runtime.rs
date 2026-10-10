@@ -108,6 +108,14 @@ impl SubagentReviewApprovalRegistry {
             .is_ok_and(|pending| pending.contains_key(approval_id))
     }
 
+    fn has_pending_for_agent(&self, parent_agent_id: &str) -> bool {
+        self.pending.lock().is_ok_and(|pending| {
+            pending
+                .values()
+                .any(|entry| entry.parent_agent_id == parent_agent_id)
+        })
+    }
+
     fn resolve(&self, approval_id: &str, approved: bool) -> Result<(), String> {
         let signal = self
             .pending
@@ -3056,6 +3064,9 @@ impl AndroidJsonHost {
                     move |prompt, subagent_type, tool_call_id| {
                         if tool_call_id.trim().is_empty() {
                             return Err("generated subagent Task review input is invalid".into());
+                        }
+                        if task_review_approvals.has_pending_for_agent(&task_review_parent_agent) {
+                            return Err("a subagent approval is already pending for this agent".into());
                         }
                         match AndroidHostInferenceProvider::run_subagent_review(
                             review_mode,
