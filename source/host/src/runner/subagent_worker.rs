@@ -254,13 +254,14 @@ pub fn spawn_generated_subagent(
                     AndroidHostMode::Test => AndroidInferenceMode::Test,
                     AndroidHostMode::Production => AndroidInferenceMode::Production,
                 };
+                let summarization_model = model.clone();
                 let summarization: super::ProductionTurnSummarizationPrompt = Arc::new(
                     move |system, user, should_cancel| {
                         AndroidHostInferenceProvider::run_summarization_prompt_with_model(
                             summarization_mode,
                             summarization_token.clone(),
                             Arc::clone(&summarization_cancelled),
-                            &model,
+                            &summarization_model,
                             system,
                             user,
                             should_cancel,
