@@ -130,6 +130,17 @@ interface AndroidCoordinatorPort {
         sessionId: String,
         lastSignalId: Long,
     ): JSONObject = error("remote_computer_signal_acknowledge_not_implemented")
+    fun remoteComputerHumanTakeover(
+        deviceId: String,
+        sessionId: String,
+        expectedViewportRevision: Long,
+        active: Boolean,
+    ): JSONObject = error("remote_computer_human_takeover_not_implemented")
+    fun remoteComputerViewportAdvance(
+        deviceId: String,
+        sessionId: String,
+        expectedViewportRevision: Long,
+    ): JSONObject = error("remote_computer_viewport_advance_not_implemented")
     fun remoteComputerSessionClose(deviceId: String, sessionId: String): JSONObject =
         error("remote_computer_session_close_not_implemented")
     fun computerRebuildRequest(
