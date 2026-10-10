@@ -1321,6 +1321,7 @@ impl AndroidJsonHost {
             self.mode,
             bearer_token,
             Arc::clone(&self.subagent_owner),
+            self.subagent_tools.clone(),
             Arc::clone(&self.subagent_events),
             launch.clone(),
         ) {
