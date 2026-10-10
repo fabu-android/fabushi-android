@@ -40,6 +40,7 @@ jobs:
           mkdir -p evidence
           printf 'head=%s\nstrict_outcome=%s\n' "$SOURCE_SHA" "${{ steps.strict.outcome }}" > evidence/architecture-gate.txt
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: architecture-contract-evidence-${{ env.SOURCE_SHA }}
           path: evidence/architecture-gate.txt
@@ -177,6 +178,13 @@ jobs:
           test -s "exact-head-apk/fabushi-android-ci-acceptance-test-${SOURCE_SHA}.apk"
           (cd exact-head-apk && sha256sum -c exact-head-apks.sha256)
           grep -F "head=${SOURCE_SHA}" exact-head-apk/artifact-identity.txt
+      - name: Record emulator acceptance provenance
+        run: |
+          set -eu
+          mkdir -p evidence/emulator
+          printf 'head=%s\nrun_id=%s\nrun_attempt=%s\npackage_artifact=%s\n' \
+            "$SOURCE_SHA" "${{ github.run_id }}" "${{ github.run_attempt }}" \
+            "android-exact-head-apks-${SOURCE_SHA}" > evidence/emulator/provenance.txt
       - name: Prepare bounded authenticated App session
         env:
           FABUSHI_CI_TEST_USERNAME: ${{ secrets.FABUSHI_CI_TEST_USERNAME }}
@@ -187,8 +195,12 @@ jobs:
           FABUSHI_CI_ACCOUNT_SESSION_FILE: ${{ runner.temp }}/fabushi-android-ci/session.json
         run: |
           set -euo pipefail
-          test -n "$FABUSHI_CI_TEST_USERNAME"
-          test -n "$FABUSHI_CI_TEST_PASSWORD"
+          if [ -z "$FABUSHI_CI_TEST_USERNAME" ] || [ -z "$FABUSHI_CI_TEST_PASSWORD" ]; then
+            printf 'status=blocked\nreason=missing-protected-account-secrets\nhead=%s\n' "$SOURCE_SHA" > evidence/emulator/account-prerequisite.txt
+            echo "protected Android acceptance requires FABUSHI_CI_TEST_USERNAME and FABUSHI_CI_TEST_PASSWORD" >&2
+            exit 1
+          fi
+          printf 'status=available\nhead=%s\n' "$SOURCE_SHA" > evidence/emulator/account-prerequisite.txt
           python scripts/prepare_ci_android_account_session.py
           test -s "$FABUSHI_CI_ACCOUNT_SESSION_FILE"
           test "$(stat -c '%a' "$FABUSHI_CI_ACCOUNT_SESSION_FILE")" = 600
@@ -220,4 +232,4 @@ jobs:
         with:
           name: android-emulator-evidence-${{ env.SOURCE_SHA }}
           path: evidence/emulator
-          if-no-files-found: warn
+          if-no-files-found: error
