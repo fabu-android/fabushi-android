@@ -95,6 +95,7 @@ data class MarketplaceUiState(
     val chatMessages: List<MobileChatMessage> = emptyList(),
     val chatBusy: Boolean = false,
     val activeOperationId: String? = null,
+    val assistantHasUnread: Boolean = false,
 )
 
 class MarketplaceViewModel(application: Application) : AndroidViewModel(application) {
@@ -332,6 +333,7 @@ class MarketplaceViewModel(application: Application) : AndroidViewModel(applicat
                     chatBusy = false,
                     activeOperationId = null,
                 )
+                refreshAssistantProjection()
             }.onFailure { error ->
                 mutableState.value = mutableState.value.copy(
                     message = "会话恢复失败：${error.message ?: error::class.java.simpleName}",
@@ -392,6 +394,7 @@ class MarketplaceViewModel(application: Application) : AndroidViewModel(applicat
             "chat.message" -> if (eventOperationId == operationId && event.optString("role") == "assistant") {
                 removeChatThinking(operationId)
                 upsertAssistantMessage(operationId, event.optString("text"), append = false)
+                refreshAssistantProjection()
             }
             "chat.delta" -> if (eventOperationId == operationId) {
                 removeChatThinking(operationId)
@@ -408,6 +411,28 @@ class MarketplaceViewModel(application: Application) : AndroidViewModel(applicat
                 mutableState.value = mutableState.value.copy(chatBusy = false, activeOperationId = null, message = event.optString("message").ifBlank { "本次任务失败" })
             }
         }
+    }
+
+    fun markAssistantRead() {
+        viewModelScope.launch {
+            runCatching {
+                withContext(Dispatchers.IO) { coordinator.assistantMarkRead() }
+            }.onSuccess(::applyAssistantProjection)
+        }
+    }
+
+    private fun refreshAssistantProjection() {
+        viewModelScope.launch {
+            runCatching {
+                withContext(Dispatchers.IO) { coordinator.assistantProjection() }
+            }.onSuccess(::applyAssistantProjection)
+        }
+    }
+
+    private fun applyAssistantProjection(projection: JSONObject) {
+        mutableState.value = mutableState.value.copy(
+            assistantHasUnread = projection.optBoolean("hasUnread", false),
+        )
     }
 
     private fun appendChatMessage(entry: MobileChatMessage) {
