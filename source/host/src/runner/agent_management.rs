@@ -2,7 +2,7 @@ use super::AndroidRoutedToolBridge;
 use crate::android_agent_roster::AndroidAgentRoster;
 use crate::messaging_service::AndroidMessagingService;
 use serde_json::{json, Map, Value};
-use std::path::Path;
+use std::{collections::BTreeMap, path::Path};
 use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc, Mutex,
@@ -15,6 +15,74 @@ pub const UPDATE_AGENT_TOOL_NAME: &str = "UpdateAgent";
 
 const SELF_SEND_REJECTION: &str =
     "You can't message yourself with SendToAgent. Use SendMessage to talk to the user, or pick a different target id.";
+
+#[derive(Clone)]
+struct ActiveAgentTurn {
+    operation_id: String,
+    account_fence: String,
+    cancelled: Arc<AtomicBool>,
+    turn_interruptions: Arc<AgentTurnInterruptionRegistry>,
+}
+
+#[derive(Default)]
+pub struct AgentTurnInterruptionRegistry {
+    active: Mutex<BTreeMap<String, ActiveAgentTurn>>,
+}
+
+impl AgentTurnInterruptionRegistry {
+    pub fn register(
+        &self,
+        agent_id: &str,
+        operation_id: &str,
+        account_fence: &str,
+        cancelled: Arc<AtomicBool>,
+    ) -> Result<(), String> {
+        let mut active = self
+            .active
+            .lock()
+            .map_err(|_| "Agent turn interruption registry lock poisoned".to_string())?;
+        active.insert(
+            agent_id.to_string(),
+            ActiveAgentTurn {
+                operation_id: operation_id.to_string(),
+                account_fence: account_fence.to_string(),
+                cancelled,
+            },
+        );
+        Ok(())
+    }
+
+    pub fn unregister_operation(&self, operation_id: &str) {
+        if let Ok(mut active) = self.active.lock() {
+            active.retain(|_, turn| turn.operation_id != operation_id);
+        }
+    }
+
+    pub fn has_active_turn(&self, agent_id: &str, account_fence: &str) -> bool {
+        self.active
+            .lock()
+            .ok()
+            .and_then(|active| active.get(agent_id).cloned())
+            .is_some_and(|turn| turn.account_fence == account_fence)
+    }
+
+    pub fn interrupt_priority(
+        &self,
+        agent_id: &str,
+        account_fence: &str,
+    ) -> Result<Option<String>, String> {
+        let active = self
+            .active
+            .lock()
+            .map_err(|_| "Agent turn interruption registry lock poisoned".to_string())?;
+        let Some(turn) = active.get(agent_id) else { return Ok(None); };
+        if turn.account_fence != account_fence {
+            return Ok(None);
+        }
+        turn.cancelled.store(true, Ordering::Release);
+        Ok(Some(turn.operation_id.clone()))
+    }
+}
 
 pub struct AgentManagementRoutedTools {
     delegate: Arc<dyn AndroidRoutedToolBridge>,
@@ -35,6 +103,7 @@ impl AgentManagementRoutedTools {
         account_fence: &str,
         self_agent_id: &str,
         cancelled: Arc<AtomicBool>,
+        turn_interruptions: Arc<AgentTurnInterruptionRegistry>,
     ) -> Self {
         Self {
             delegate,
@@ -44,6 +113,7 @@ impl AgentManagementRoutedTools {
             account_fence: account_fence.to_string(),
             self_agent_id: self_agent_id.to_string(),
             cancelled,
+            turn_interruptions,
         }
     }
 
@@ -151,6 +221,11 @@ impl AgentManagementRoutedTools {
                     error
                 }
             })?;
+        if priority && !target.is_group {
+            let _ = self
+                .turn_interruptions
+                .interrupt_priority(target_id, &self.account_fence)?;
+        }
         self.post_commit_outcome(SEND_TO_AGENT_TOOL_NAME)?;
         let priority_note = if target.is_group && priority {
             " Group delivery ignored priority as required."
@@ -229,6 +304,7 @@ pub fn with_agent_management_tools(
     account_fence: &str,
     self_agent_id: &str,
     cancelled: Arc<AtomicBool>,
+    turn_interruptions: Arc<AgentTurnInterruptionRegistry>,
 ) -> Arc<dyn AndroidRoutedToolBridge> {
     Arc::new(AgentManagementRoutedTools::new(
         delegate,
@@ -238,6 +314,7 @@ pub fn with_agent_management_tools(
         account_fence,
         self_agent_id,
         cancelled,
+        turn_interruptions,
     ))
 }
 
@@ -420,6 +497,7 @@ mod tests {
             "acct:a",
             "agent-root",
             Arc::new(AtomicBool::new(false)),
+            Arc::new(AgentTurnInterruptionRegistry::default()),
         );
         (tools, roster, messaging, live, root)
     }
@@ -497,6 +575,7 @@ mod tests {
             "acct:a",
             "agent-root",
             cancelled,
+            Arc::new(AgentTurnInterruptionRegistry::default()),
         );
         assert!(tools
             .call_tool(CREATE_AGENT_TOOL_NAME, json!({"name":"Blocked"}), "cancelled-call")
@@ -562,6 +641,7 @@ mod tests {
             "acct:a",
             "agent-root",
             Arc::new(AtomicBool::new(false)),
+            Arc::new(AgentTurnInterruptionRegistry::default()),
         );
         let result = tools.call_tool(
             SEND_TO_AGENT_TOOL_NAME,
