@@ -12,12 +12,15 @@ The preserved user capability is: Agent work that requires a desktop OS executio
 
 Desktop \`source/box-exec-daemon/src/main.rs\` starts a token-authenticated box-local server and owns its shutdown lifecycle. Desktop Host computer execution is separately gated by real injected executor resources and monitor ownership; tool names alone do not create execution capability.
 
-Android shipping composition is different:
+Android intentionally reuses part of the Remote execution crate without adopting that deployment shape:
 
-- \`source/android-host-jni/Cargo.toml\` links the Android Coordinator/Host/shared runtime, not \`source/box-exec-daemon\`.
-- Android Full CI packages only \`fabushi-android-host-jni\` into \`jniLibs\` for \`arm64-v8a\` and \`x86_64\`.
-- \`mobile/android/app/build.gradle\` does not package or launch a box-exec daemon binary.
-- \`source/box-exec-daemon\` therefore remains a workspace-tested protocol/service implementation and Remote Runner reference boundary, not an in-APK listener.
+- \`source/host/Cargo.toml\` **does** depend transitively on \`fabushi-android-box-exec-daemon\`; the shipping Host uses its \`AuthenticatedRemoteHttpTransport\` client types from \`remote_routed_tools.rs\`.
+- Android \`source/box-exec-daemon/Cargo.toml\` defines a library target and no daemon \`[[bin]]\` target.
+- shipping Host/JNI code does not reference \`RemoteExecutionService\`, \`server::\`, a socket listener, or a box-exec entrypoint.
+- Android Full CI packages only the \`fabushi-android-host-jni\` cdylib into \`jniLibs\` for \`arm64-v8a\` and \`x86_64\`; it does not package a box-exec daemon executable.
+- \`mobile/android/app/build.gradle\` does not launch or package a box-exec listener.
+
+So the crate is part of the native dependency closure as a **client transport / protocol and reference service library**, while a Desktop-style server/listener is not part of the Android application composition.
 
 These facts are enforced by \`tests/test_remote_runner_deployment_contract.py\` and by the Rust contract in \`source/box-exec-daemon/src/deployment_contract.rs\`.
 
@@ -45,7 +48,7 @@ Desktop can host its own local box-exec listener because it owns a desktop execu
 This contract may be considered **implemented** when the source contract and tests exist. It must not be promoted to **verified** until the same exact PR HEAD passes:
 
 1. Rust workspace tests, including the deployment contract;
-2. architecture checker tests proving the box-exec daemon is absent from the APK native dependency/build closure;
+2. architecture checker tests proving the Android Host consumes only the intended Remote client transport and does not compose/package a listener;
 3. executor-specific Host gating and protected-binding tests;
 4. packaged/device acceptance proving the Android product can use an actually authorized Remote Runner without a hidden in-APK listener.
 
