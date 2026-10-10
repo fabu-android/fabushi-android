@@ -19,9 +19,25 @@ internal data class PendingAgentRosterMutation(
  * before the reply reaches Kotlin, the same operation id is replayed and the Host roster journal
  * returns the already committed result instead of repeating the side effect.
  */
-internal class AgentRosterMutationOwner(application: Application) {
+internal interface AgentRosterMutationStore {
+    fun read(): String?
+    fun write(value: String): Boolean
+}
+
+internal class SharedPreferencesAgentRosterMutationStore(application: Application) :
+    AgentRosterMutationStore {
     private val preferences =
         application.getSharedPreferences("fabushi-agent-roster-mutations", 0)
+
+    override fun read(): String? = preferences.getString("pending", null)
+
+    override fun write(value: String): Boolean =
+        preferences.edit().putString("pending", value).commit()
+}
+
+internal class AgentRosterMutationOwner(
+    private val store: AgentRosterMutationStore,
+) {
     private val lock = Any()
 
     fun begin(accountFence: String, mutation: JSONObject): PendingAgentRosterMutation {
@@ -55,7 +71,7 @@ internal class AgentRosterMutationOwner(application: Application) {
     }
 
     private fun readLocked(): List<PendingAgentRosterMutation> {
-        val raw = preferences.getString(KEY_PENDING, null).orEmpty()
+        val raw = store.read().orEmpty()
         if (raw.isBlank()) return emptyList()
         val array = runCatching { JSONArray(raw) }.getOrElse { return emptyList() }
         val seen = linkedSetOf<String>()
@@ -87,13 +103,12 @@ internal class AgentRosterMutationOwner(application: Application) {
                     .put("mutation", JSONObject(row.mutation.toString())),
             )
         }
-        check(preferences.edit().putString(KEY_PENDING, array.toString()).commit()) {
+        check(store.write(array.toString())) {
             "Failed to persist Agent roster mutation journal"
         }
     }
 
     private companion object {
-        const val KEY_PENDING = "pending"
         const val MAX_PENDING_OPERATIONS = 64
     }
 }
