@@ -67,6 +67,44 @@ internal fun projectPendingAgentApproval(
     )
 }
 
+data class MobileAsyncTask(
+    val kind: String,
+    val id: String,
+    val label: String,
+    val startedAtMs: Long,
+    val detail: String? = null,
+    val subagentType: String? = null,
+)
+
+internal fun projectMobileAsyncTasks(rows: org.json.JSONArray): List<MobileAsyncTask> =
+    buildList {
+        for (index in 0 until rows.length()) {
+            val row = rows.optJSONObject(index)
+                ?: throw IllegalStateException("Async task row $index is not an object")
+            val kind = row.optString("kind")
+            check(kind in setOf("subagent", "shell", "cloud-agent")) {
+                "Async task row $index has unsupported kind"
+            }
+            val id = row.optString("id").trim()
+            val label = row.optString("label").trim()
+            val status = row.optString("status")
+            val startedAtMs = row.optLong("startedAtMs", -1L)
+            check(id.isNotEmpty() && label.isNotEmpty() && status == "running" && startedAtMs >= 0L) {
+                "Async task row $index is malformed"
+            }
+            add(
+                MobileAsyncTask(
+                    kind = kind,
+                    id = id,
+                    label = label,
+                    startedAtMs = startedAtMs,
+                    detail = row.optString("detail").trim().takeIf(String::isNotEmpty),
+                    subagentType = row.optString("subagentType").trim().takeIf(String::isNotEmpty),
+                ),
+            )
+        }
+    }
+
 data class MobileBotUiState(
     val bots: List<MobileBotSummaryAndroid> = emptyList(),
     val sidebarSections: List<AndroidSidebarSection> = emptyList(),
@@ -86,6 +124,10 @@ data class MobileBotUiState(
     val error: String? = null,
     val creating: Boolean = false,
     val rosterLoading: Boolean = false,
+    val asyncTasksAgent: MobileBotSummaryAndroid? = null,
+    val asyncTasks: List<MobileAsyncTask> = emptyList(),
+    val asyncTasksLoading: Boolean = false,
+    val asyncTasksError: String? = null,
 )
 
 class MobileBotViewModel(application: Application) : AndroidViewModel(application) {
@@ -105,6 +147,8 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
     private val paletteRoutineFence = CommandPaletteRoutineRequestFence()
     private var paletteRoutineJob: Job? = null
     private var openBotGeneration = 0L
+    private var asyncTasksGeneration = 0L
+    private var asyncTasksJob: Job? = null
     val state: StateFlow<MobileBotUiState> = mutableState.asStateFlow()
     private var featureEventSubscription: AutoCloseable? = coordinator.addFeatureEventListener { event ->
         viewModelScope.launch { handleOperationEvent(event) }
@@ -588,9 +632,74 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
         rosterSelection.reset()
         rosterSelectionAccountSlot = null
         openBotGeneration += 1
+        asyncTasksGeneration += 1
+        asyncTasksJob?.cancel()
+        asyncTasksJob = null
         messagesByBot.clear()
         draftsByBot.clear()
         commitState(MobileBotUiState())
+    }
+
+    fun openAsyncTasks(bot: MobileBotSummaryAndroid) {
+        asyncTasksGeneration += 1
+        asyncTasksJob?.cancel()
+        asyncTasksJob = null
+        commitState(
+            mutableState.value.copy(
+                asyncTasksAgent = bot,
+                asyncTasks = emptyList(),
+                asyncTasksLoading = true,
+                asyncTasksError = null,
+            ),
+        )
+        refreshAsyncTasks()
+    }
+
+    fun closeAsyncTasks() {
+        asyncTasksGeneration += 1
+        asyncTasksJob?.cancel()
+        asyncTasksJob = null
+        commitState(
+            mutableState.value.copy(
+                asyncTasksAgent = null,
+                asyncTasks = emptyList(),
+                asyncTasksLoading = false,
+                asyncTasksError = null,
+            ),
+        )
+    }
+
+    fun refreshAsyncTasks() {
+        val agent = mutableState.value.asyncTasksAgent ?: return
+        val generation = asyncTasksGeneration
+        asyncTasksJob?.cancel()
+        asyncTasksJob = viewModelScope.launch {
+            val result = withContext(Dispatchers.IO) {
+                runCatching { projectMobileAsyncTasks(coordinator.agentAsyncTasks(agent.id)) }
+            }
+            if (
+                generation != asyncTasksGeneration ||
+                mutableState.value.asyncTasksAgent?.id != agent.id
+            ) {
+                return@launch
+            }
+            result.onSuccess { tasks ->
+                commitState(
+                    mutableState.value.copy(
+                        asyncTasks = tasks,
+                        asyncTasksLoading = false,
+                        asyncTasksError = null,
+                    ),
+                )
+            }.onFailure { error ->
+                commitState(
+                    mutableState.value.copy(
+                        asyncTasksLoading = false,
+                        asyncTasksError = error.message ?: "Async tasks refresh failed",
+                    ),
+                )
+            }
+        }
     }
 
     fun setDraft(value: String) {
@@ -996,6 +1105,9 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
         paletteRoutineJob = null
         paletteRoutineFence.cancel()
         openBotGeneration += 1
+        asyncTasksGeneration += 1
+        asyncTasksJob?.cancel()
+        asyncTasksJob = null
         rosterSelection.dispose()
         featureEventSubscription?.close()
         featureEventSubscription = null
