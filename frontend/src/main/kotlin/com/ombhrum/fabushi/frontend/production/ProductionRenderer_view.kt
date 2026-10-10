@@ -158,16 +158,6 @@ internal fun ProductionRenderer(
                     val miniAppBot = botState.activeBot?.takeIf { !it.miniAppId.isNullOrBlank() }
                     val miniAppPlugin = miniAppBot?.miniAppId?.let { id -> state.plugins.firstOrNull { it.pluginId == id } }
                     LaunchedEffect(miniAppBot?.id, miniAppPlugin?.pluginId, miniAppBot?.menuButtonText) {
-                        botState.asyncTasksAgent?.let { agent ->
-                            AgentAsyncTasksPanel(
-                                agent = agent,
-                                tasks = botState.asyncTasks,
-                                loading = botState.asyncTasksLoading,
-                                error = botState.asyncTasksError,
-                                onClose = botModel::closeAsyncTasks,
-                                onRefresh = botModel::refreshAsyncTasks,
-                            )
-                        }
                         if (miniAppBot != null) {
                             appAgentSurface.setOverlay(
                                 key = "miniapp-bot-menu",
@@ -192,6 +182,16 @@ internal fun ProductionRenderer(
                         } else {
                             appAgentSurface.clearOverlay("miniapp-bot-menu")
                         }
+                    }
+                    botState.asyncTasksAgent?.let { agent ->
+                        AgentAsyncTasksPanel(
+                            agent = agent,
+                            tasks = botState.asyncTasks,
+                            loading = botState.asyncTasksLoading,
+                            error = botState.asyncTasksError,
+                            onClose = botModel::closeAsyncTasks,
+                            onRefresh = botModel::refreshAsyncTasks,
+                        )
                     }
                     val paletteAgentNames = buildMap {
                         put("mahayana-assistant", "Mahayana")
