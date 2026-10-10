@@ -1,17 +1,5 @@
 package com.ombhrum.fabushi
 
-import android.annotation.SuppressLint
-import android.graphics.Bitmap
-import android.net.Uri
-import android.net.http.SslError
-import android.webkit.CookieManager
-import android.webkit.SslErrorHandler
-import android.webkit.WebResourceError
-import android.webkit.WebResourceRequest
-import android.webkit.WebResourceResponse
-import android.webkit.WebSettings
-import android.webkit.WebView
-import android.webkit.WebViewClient
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -51,16 +39,12 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-private const val REMOTE_COMPUTER_ORIGIN = "fabushi.ombhrum.com"
-private const val REMOTE_COMPUTER_URL = "https://fabushi.ombhrum.com/remote-computer"
-
 /**
  * Restricted browser surface for human-operated remote computer sessions.
  *
  * The native panel owns account-scoped list/pair/revoke through the typed Coordinator contract.
  * The hosted viewport deliberately receives no native bridge and no pairing/session/executor secret.
  */
-@SuppressLint("SetJavaScriptEnabled")
 @Composable
 fun RemoteComputerSurface(onClose: () -> Unit) {
     val context = LocalContext.current
@@ -68,9 +52,6 @@ fun RemoteComputerSurface(onClose: () -> Unit) {
     val scope = rememberCoroutineScope()
 
     var status by remember { mutableStateOf("原生远端视图待连接") }
-    var loading by remember { mutableStateOf(false) }
-    var errorMessage by remember { mutableStateOf<String?>(null) }
-    var reloadToken by remember { mutableStateOf(0) }
 
     var nativeState by remember { mutableStateOf(RemoteComputerNativeState.Empty) }
     var nativeBusy by remember { mutableStateOf(false) }
@@ -116,91 +97,7 @@ fun RemoteComputerSurface(onClose: () -> Unit) {
         nativeBusy = false
     }
 
-    fun isAllowedUrl(uri: Uri): Boolean =
-        uri.scheme.equals("https", ignoreCase = true) &&
-            uri.host.equals(REMOTE_COMPUTER_ORIGIN, ignoreCase = true) &&
-            uri.userInfo == null &&
-            (uri.port == -1 || uri.port == 443)
-
-    val webView = remember {
-        WebView(context).apply {
-            settings.javaScriptEnabled = true
-            settings.domStorageEnabled = true
-            settings.databaseEnabled = false
-            settings.allowFileAccess = false
-            settings.allowContentAccess = false
-            settings.javaScriptCanOpenWindowsAutomatically = false
-            settings.setSupportMultipleWindows(false)
-            settings.mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
-            settings.safeBrowsingEnabled = true
-            settings.mediaPlaybackRequiresUserGesture = false
-            settings.setGeolocationEnabled(false)
-            settings.builtInZoomControls = true
-            settings.displayZoomControls = false
-
-            CookieManager.getInstance().setAcceptCookie(true)
-            CookieManager.getInstance().setAcceptThirdPartyCookies(this, false)
-
-            // This restricted viewport deliberately has no JavaScriptInterface, WebMessage bridge,
-            // or injected Coordinator object. Pairing and control credentials remain native-only.
-            webViewClient = object : WebViewClient() {
-                override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
-                    val uri = request.url
-                    if (isAllowedUrl(uri)) return false
-                    if (request.isForMainFrame) {
-                        loading = false
-                        status = "已阻止外部导航"
-                        errorMessage = "远程电脑页面只允许访问 https://fabushi.ombhrum.com。"
-                    }
-                    return true
-                }
-
-                override fun onPageStarted(view: WebView, url: String?, favicon: Bitmap?) {
-                    loading = true
-                    errorMessage = null
-                    status = "正在安全连接…"
-                }
-
-                override fun onPageFinished(view: WebView, url: String?) {
-                    loading = false
-                    if (errorMessage == null) status = "已安全连接"
-                }
-
-                override fun onReceivedSslError(view: WebView, handler: SslErrorHandler, error: SslError) {
-                    handler.cancel()
-                    loading = false
-                    status = "安全连接失败"
-                    errorMessage = "无法验证远程电脑服务的安全证书。"
-                }
-
-                override fun onReceivedError(
-                    view: WebView,
-                    request: WebResourceRequest,
-                    error: WebResourceError,
-                ) {
-                    if (!request.isForMainFrame) return
-                    loading = false
-                    status = "连接失败"
-                    errorMessage = error.description.toString().ifBlank { "无法加载远程电脑页面。" }
-                }
-
-                override fun onReceivedHttpError(
-                    view: WebView,
-                    request: WebResourceRequest,
-                    errorResponse: WebResourceResponse,
-                ) {
-                    if (!request.isForMainFrame || errorResponse.statusCode < 400) return
-                    loading = false
-                    status = "连接失败"
-                    errorMessage = "远程电脑服务返回 " + errorResponse.statusCode + "。"
-                }
-            }
-        }
-    }
-
-    BackHandler {
-        if (webView.canGoBack()) webView.goBack() else onClose()
-    }
+    BackHandler { onClose() }
 
     Column(
         modifier = Modifier
@@ -225,7 +122,7 @@ fun RemoteComputerSurface(onClose: () -> Unit) {
                     modifier = Modifier.testTag(TestTags.RemoteComputerStatus),
                 )
             }
-            if (loading || nativeBusy) {
+            if (nativeBusy) {
                 CircularProgressIndicator(
                     modifier = Modifier.size(20.dp).testTag(TestTags.RemoteComputerLoading),
                     strokeWidth = 2.dp,
@@ -354,8 +251,10 @@ fun RemoteComputerSurface(onClose: () -> Unit) {
                         }
                     }.onSuccess {
                         nativeState = it
+                        status = "原生远端视图正在协商"
                         nativeError = null
                     }.onFailure {
+                        status = "原生远端视图连接失败"
                         nativeError = "原生远端显示/输入通道未能建立；保持 fail-closed，不回退到网页控制。"
                         runCatching { loadNativeState() }.onSuccess { nativeState = it }
                     }
@@ -438,48 +337,18 @@ fun RemoteComputerSurface(onClose: () -> Unit) {
             },
         )
 
-        errorMessage?.let { message ->
-            Card(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp)
-                    .testTag(TestTags.RemoteComputerError),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer),
-                shape = RoundedCornerShape(12.dp),
-            ) {
-                Column(
-                    modifier = Modifier.padding(14.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp),
-                ) {
-                    Text("无法打开远程电脑", style = MaterialTheme.typography.titleSmall)
-                    Text(message, style = MaterialTheme.typography.bodySmall)
-                    Button(
-                        onClick = {
-                            errorMessage = null
-                            loading = true
-                            status = "正在重新连接…"
-                            reloadToken += 1
-                        },
-                        modifier = Modifier.testTag(TestTags.RemoteComputerReload),
-                    ) {
-                        Text("重新加载")
-                    }
-                }
-            }
-        }
-
         AndroidView(
             factory = { coordinator.remoteComputerViewportView(it) },
             modifier = Modifier.weight(1f).fillMaxWidth().testTag(TestTags.RemoteComputerWebView),
         )
     }
 
-    DisposableEffect(coordinator, webView) {
+    DisposableEffect(coordinator) {
         onDispose {
             runCatching { coordinator.remoteComputerDataPlaneDisconnect() }
-            webView.stopLoading()
-            webView.removeAllViews()
-            webView.destroy()
         }
     }
+
 }
 
 @Composable
