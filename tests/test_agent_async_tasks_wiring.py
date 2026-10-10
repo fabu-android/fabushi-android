@@ -54,8 +54,9 @@ class AgentAsyncTasksWiringTest(unittest.TestCase):
         self.assertIn('"parentAgentId":parent_agent_id', worker)
         self.assertIn("publish_settlement(&self.events, settlement)", worker)
 
-        async_event = vm.index('if (type == "agent.async-tasks.changed")')
-        chat_gate = vm.index("val operationId = mutableState.value.operationId ?: return")
+        handler = vm.index("private fun handleOperationEvent(event: JSONObject)")
+        async_event = vm.index('if (type == "agent.async-tasks.changed")', handler)
+        chat_gate = vm.index("val operationId = mutableState.value.operationId ?: return", handler)
         self.assertLess(async_event, chat_gate)
         self.assertIn('event.optString("parentAgentId") == visibleAgentId', vm)
         self.assertIn('if (type == "agent.async-tasks.refresh")', vm)
