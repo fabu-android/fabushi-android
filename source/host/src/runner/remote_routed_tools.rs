@@ -192,13 +192,14 @@ pub(crate) struct RemoteRoutedTools {
 impl AndroidRoutedToolBridge for RemoteRoutedTools {
     fn list_tools(&self) -> Result<Vec<Value>, String> {
         let mut tools = self.delegate.list_tools()?;
-        if self.current_binding().is_err() {
-            return Ok(tools);
-        }
+        let binding = match self.current_binding() {
+            Ok(binding) => binding,
+            Err(_) => return Ok(tools),
+        };
         tools.retain(|tool| {
             !matches!(
                 tool.get("name").and_then(Value::as_str),
-                Some("Shell") | Some("Read")
+                Some("Shell") | Some("Read") | Some("Computer")
             )
         });
         tools.push(json!({
@@ -230,11 +231,40 @@ impl AndroidRoutedToolBridge for RemoteRoutedTools {
                 }
             }
         }));
+        if binding.has_desktop {
+            tools.push(json!({
+                "type":"function",
+                "name":"Computer",
+                "description":"Interact with the paired trusted Remote desktop using the Desktop Fabushi Computer contract. Every dispatch requires one-time user approval.",
+                "parameters":{
+                    "type":"object",
+                    "additionalProperties":false,
+                    "required":["action"],
+                    "properties":{
+                        "action":{"type":"string","enum":["screenshot","click","move","drag","type","key","scroll","wait"]},
+                        "x":{"type":"integer"},
+                        "y":{"type":"integer"},
+                        "x2":{"type":"integer"},
+                        "y2":{"type":"integer"},
+                        "path":{"type":"array","items":{"type":"object","additionalProperties":false,"required":["x","y"],"properties":{"x":{"type":"integer"},"y":{"type":"integer"}}}},
+                        "text":{"type":"string"},
+                        "key":{"type":"string"},
+                        "button":{"type":"string","enum":["left","right","middle"]},
+                        "count":{"type":"integer","minimum":1,"maximum":3},
+                        "direction":{"type":"string","enum":["up","down","left","right"]},
+                        "amount":{"type":"integer"},
+                        "durationMs":{"type":"integer","minimum":0,"maximum":30000},
+                        "description":{"type":"string"},
+                        "then":{"type":"array","minItems":1,"maxItems":9,"items":{"type":"object"}}
+                    }
+                }
+            }));
+        }
         Ok(tools)
     }
 
     fn call_tool(&self, name: &str, args: Value, tool_call_id: &str) -> Result<Value, String> {
-        if name != "Shell" && name != "Read" {
+        if !matches!(name, "Shell" | "Read" | "Computer") {
             return self.delegate.call_tool(name, args, tool_call_id);
         }
         if self.cancelled.load(Ordering::Acquire) {
@@ -255,8 +285,16 @@ impl AndroidRoutedToolBridge for RemoteRoutedTools {
         let operation_id = format!("remote-{identity_hash}");
         let request_id = format!("remote-request-{request_hash}");
         let approval_id = format!("remote-approval-{identity_hash}");
-        let capability = if name == "Shell" { "remote.shell" } else { "remote.read" };
+        let capability = match name {
+            "Shell" => "remote.shell",
+            "Read" => "remote.read",
+            "Computer" => "computer.use",
+            _ => unreachable!("unsupported Remote routed tool was delegated"),
+        };
         let binding = self.current_binding()?;
+        if name == "Computer" && !binding.has_desktop {
+            return Err("trusted Remote binding does not own a desktop".into());
+        }
         let context = binding.context(&operation_id, &request_id, &approval_id)?;
         let request = ExecutionRequest {
             operation_id: operation_id.clone(),
@@ -531,8 +569,104 @@ fn validate_remote_tool_input(name: &str, args: &Value) -> Result<u64, String> {
             }
             Ok(30_000)
         }
+        "Computer" => {
+            validate_remote_computer_action(args, true)?;
+            Ok(30_000)
+        }
         _ => Err("unsupported Remote routed tool".into()),
     }
+}
+
+
+fn validate_remote_computer_action(args: &Value, allow_followups: bool) -> Result<(), String> {
+    const ACTIONS: &[&str] = &["screenshot", "click", "move", "drag", "type", "key", "scroll", "wait"];
+    const KEYS: &[&str] = &[
+        "action", "x", "y", "x2", "y2", "path", "text", "key", "button", "count",
+        "direction", "amount", "durationMs", "description", "then",
+    ];
+    let object = args.as_object().ok_or("Remote Computer arguments must be an object")?;
+    if let Some(key) = object.keys().find(|key| !KEYS.contains(&key.as_str())) {
+        return Err(format!("Remote Computer argument is unsupported: {key}"));
+    }
+    let action = object
+        .get("action")
+        .and_then(Value::as_str)
+        .ok_or("Remote Computer action is required")?;
+    if !ACTIONS.contains(&action) {
+        return Err(format!("Remote Computer action is unsupported: {action}"));
+    }
+    for key in ["x", "y", "x2", "y2", "amount"] {
+        if object.get(key).is_some_and(|value| value.as_i64().is_none()) {
+            return Err(format!("Remote Computer {key} must be an integer"));
+        }
+    }
+    if object.get("text").is_some_and(|value| !value.is_string())
+        || object.get("key").is_some_and(|value| !value.is_string())
+        || object.get("description").is_some_and(|value| !value.is_string())
+    {
+        return Err("Remote Computer text/key/description must be strings".into());
+    }
+    if let Some(button) = object.get("button") {
+        if !matches!(button.as_str(), Some("left" | "right" | "middle")) {
+            return Err("Remote Computer button is unsupported".into());
+        }
+    }
+    if let Some(direction) = object.get("direction") {
+        if !matches!(direction.as_str(), Some("up" | "down" | "left" | "right")) {
+            return Err("Remote Computer direction is unsupported".into());
+        }
+    }
+    if let Some(count) = object.get("count") {
+        if !matches!(count.as_u64(), Some(1..=3)) {
+            return Err("Remote Computer count must be between 1 and 3".into());
+        }
+    }
+    if let Some(duration) = object.get("durationMs") {
+        if !matches!(duration.as_u64(), Some(0..=30_000)) {
+            return Err("Remote Computer durationMs must be between 0 and 30000".into());
+        }
+    }
+    let path_valid = object.get("path").map(|value| {
+        value.as_array().is_some_and(|points| {
+            points.len() >= 2 && points.iter().all(|point| {
+                point.as_object().is_some_and(|point| {
+                    point.len() == 2
+                        && point.get("x").and_then(Value::as_i64).is_some()
+                        && point.get("y").and_then(Value::as_i64).is_some()
+                })
+            })
+        })
+    });
+    if object.get("path").is_some() && path_valid != Some(true) {
+        return Err("Remote Computer drag path must contain at least two integer x/y points".into());
+    }
+    if action == "drag"
+        && path_valid != Some(true)
+        && !["x", "y", "x2", "y2"]
+            .iter()
+            .all(|key| object.get(*key).and_then(Value::as_i64).is_some())
+    {
+        return Err("Remote Computer drag requires x/y/x2/y2 or a path".into());
+    }
+    match object.get("then") {
+        None => {}
+        Some(_) if !allow_followups => {
+            return Err("Remote Computer nested then actions are not supported".into());
+        }
+        Some(value) => {
+            let followups = value.as_array().ok_or("Remote Computer then must be an array")?;
+            if followups.is_empty() || followups.len() > 9 {
+                return Err("Remote Computer then must contain between 1 and 9 actions".into());
+            }
+            for followup in followups {
+                if followup.get("action").and_then(Value::as_str) == Some("screenshot") {
+                    return Err("Remote Computer screenshot is not allowed inside then".into());
+                }
+                validate_remote_computer_action(followup, false)?;
+            }
+        }
+    }
+    Ok(())
 }
 
 fn parse_remote_output(output: &str) -> Value {
@@ -632,6 +766,27 @@ mod tests {
         assert!(registry
             .resolve_from_ui(&broker, "approval-1", true, "session:account-a", 4)
             .is_err());
+    }
+
+
+    #[test]
+    fn remote_computer_validation_matches_desktop_action_bounds() {
+        assert!(validate_remote_computer_action(&json!({"action":"screenshot"}), true).is_ok());
+        assert!(validate_remote_computer_action(&json!({
+            "action":"drag",
+            "path":[{"x":1,"y":2},{"x":3,"y":4}],
+            "then":[{"action":"wait","durationMs":30000}]
+        }), true).is_ok());
+        assert!(validate_remote_computer_action(&json!({"action":"drag","x":1,"y":2}), true).is_err());
+        assert!(validate_remote_computer_action(&json!({"action":"click","count":4}), true).is_err());
+        assert!(validate_remote_computer_action(&json!({
+            "action":"click",
+            "then":[{"action":"screenshot"}]
+        }), true).is_err());
+        assert!(validate_remote_computer_action(&json!({
+            "action":"wait",
+            "then":[{"action":"wait","then":[{"action":"wait"}]}]
+        }), true).is_err());
     }
 
     #[test]
