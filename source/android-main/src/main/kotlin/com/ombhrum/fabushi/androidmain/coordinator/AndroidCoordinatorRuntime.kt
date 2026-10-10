@@ -755,39 +755,42 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
         val data = authenticatedRemotePlatformRequest(
             "POST",
             "/v1/computers/" + safeDeviceId + "/sessions",
-            JSONObject()
-                .put("clientId", pairing.clientId)
-                .put("clientToken", pairing.clientToken)
-                .put("requestId", requestId),
+            remoteControlSessionRecoveryBody(pairing, requestId),
         )
-        require(boundedRemoteIdentifier(data.getString("deviceId"), "deviceId") == pairing.deviceId) {
-            "Remote control session device identity mismatch"
-        }
-        require(boundedRemoteIdentifier(data.getString("clientId"), "clientId") == pairing.clientId) {
-            "Remote control session client identity mismatch"
-        }
-        val credential = RemoteControlSessionCredential(
-            deviceId = pairing.deviceId,
-            clientId = pairing.clientId,
-            sessionId = boundedRemoteIdentifier(data.getString("sessionId"), "sessionId"),
-            mobileToken = data.getString("mobileToken"),
+        return persistRemoteControlSessionResponse(
+            pairing = pairing,
+            currentFence = currentFence,
+            currentEpoch = currentEpoch,
             requestId = requestId,
-            iceServersJson = (data.optJSONArray("iceServers")
-                ?: error("Remote control session is missing protected ICE configuration")).toString(),
-            accountFence = currentFence,
-            accountEpoch = currentEpoch,
-            expiresAt = data.getLong("expiresAt"),
-            processGeneration = processGeneration,
-            lifecycle = RemoteControlSessionLifecycle.PENDING,
+            data = data,
         )
-        remoteControlSessionStore.write(RemoteControlSessionCredential.parse(credential.toSecretJson()))
-        clearRemoteControlCreateRequest(requestId)
-        // Do not project mobileToken or TURN credentials into Presentation. Transport details
-        // remain Coordinator-owned until a native Android transport adapter consumes them.
-        return credential.publicProjection()
-            .put("stored", true)
-            .put("state", data.optString("state"))
-            .put("createdAt", data.optLong("createdAt"))
+    }
+
+    override fun remoteComputerSessionReconcile(): JSONObject {
+        val (currentFence, currentEpoch) = currentRemoteAccountFence()
+        val pending = currentRemoteControlCreateRequest(currentEpoch)
+            ?: return remoteComputerSessionStatus()
+        val pairing = remotePairingStore.readForAccountFence(currentFence, currentEpoch)
+            ?: error("Remote Computer create outcome cannot be reconciled without current pairing")
+        require(pairing.deviceId == pending.first) {
+            "Remote Computer create outcome belongs to a different device"
+        }
+        require(remoteCreateIntentPreferences.getString("clientId", null) == pairing.clientId) {
+            "Remote Computer create outcome belongs to a different paired client"
+        }
+        val requestId = pending.second
+        val data = authenticatedRemotePlatformRequest(
+            "POST",
+            "/v1/computers/" + pairing.deviceId + "/sessions/reconcile",
+            remoteControlSessionRecoveryBody(pairing, requestId),
+        )
+        return persistRemoteControlSessionResponse(
+            pairing = pairing,
+            currentFence = currentFence,
+            currentEpoch = currentEpoch,
+            requestId = requestId,
+            data = data,
+        )
     }
 
     override fun remoteComputerSessionStatus(): JSONObject {
@@ -1146,6 +1149,57 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
             .put("outcomeUnknown", snapshot.outcomeUnknown)
             .put("kind", snapshot.kind?.name?.lowercase() ?: JSONObject.NULL)
             .put("lastResolution", snapshot.lastResolution?.name?.lowercase() ?: JSONObject.NULL)
+    }
+
+    private fun remoteControlSessionRecoveryBody(
+        pairing: RemotePairingCredential,
+        requestId: String,
+    ): JSONObject =
+        JSONObject()
+            .put("clientId", pairing.clientId)
+            .put("clientToken", pairing.clientToken)
+            .put("requestId", requestId)
+
+    private fun persistRemoteControlSessionResponse(
+        pairing: RemotePairingCredential,
+        currentFence: String,
+        currentEpoch: Long,
+        requestId: String,
+        data: JSONObject,
+    ): JSONObject {
+        require(boundedRemoteIdentifier(data.getString("deviceId"), "deviceId") == pairing.deviceId) {
+            "Remote control session device identity mismatch"
+        }
+        require(boundedRemoteIdentifier(data.getString("clientId"), "clientId") == pairing.clientId) {
+            "Remote control session client identity mismatch"
+        }
+        val serverState = data.getString("state")
+        val lifecycle = when (serverState) {
+            "pending" -> RemoteControlSessionLifecycle.PENDING
+            "active" -> RemoteControlSessionLifecycle.NEGOTIATING
+            else -> error("Remote control session returned unsupported lifecycle state")
+        }
+        val credential = RemoteControlSessionCredential(
+            deviceId = pairing.deviceId,
+            clientId = pairing.clientId,
+            sessionId = boundedRemoteIdentifier(data.getString("sessionId"), "sessionId"),
+            mobileToken = data.getString("mobileToken"),
+            requestId = requestId,
+            iceServersJson = (data.optJSONArray("iceServers")
+                ?: error("Remote control session is missing protected ICE configuration")).toString(),
+            accountFence = currentFence,
+            accountEpoch = currentEpoch,
+            expiresAt = data.getLong("expiresAt"),
+            processGeneration = processGeneration,
+            lifecycle = lifecycle,
+        )
+        remoteControlSessionStore.write(RemoteControlSessionCredential.parse(credential.toSecretJson()))
+        clearRemoteControlCreateRequest(requestId)
+        return credential.publicProjection()
+            .put("stored", true)
+            .put("state", serverState)
+            .put("createdAt", data.optLong("createdAt"))
+            .put("reconciledCreateOutcome", true)
     }
 
     private fun reserveRemoteControlCreateRequest(
