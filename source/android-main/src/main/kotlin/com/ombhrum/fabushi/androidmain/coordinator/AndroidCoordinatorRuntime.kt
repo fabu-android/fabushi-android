@@ -41,6 +41,7 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
     private val accountAccessOwner = AccountAccessProjectionOwner(
         SharedPreferencesAccountAccessEpochStore(application),
     )
+    private val agentRosterMutationOwner = AgentRosterMutationOwner(application)
     private val featureEventListeners = CopyOnWriteArrayList<(JSONObject) -> Unit>()
     private val eventPumpRunning = AtomicBoolean(false)
     private val lastEventSequence = AtomicLong(0L)
@@ -52,6 +53,7 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
     }
 
     init {
+        runCatching { reconcileAgentRosterMutations() }
         storagePressureExecutor.scheduleWithFixedDelay(
             {
                 runCatching {
@@ -336,8 +338,56 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
     override fun agentSubagentReconcile(params: JSONObject): JSONObject =
         host.request("feature.agent.subagent.reconcile", params)
 
-    override fun agentList(): JSONArray =
-        host.requestValue("listAgents") as? JSONArray ?: JSONArray()
+    override fun agentList(): JSONArray {
+        runCatching { reconcileAgentRosterMutations() }
+        return host.requestValue("listAgents") as? JSONArray ?: JSONArray()
+    }
+
+    private fun currentAgentRosterAccountFence(): String =
+        host.request("feature.account.fence").getString("accountFence")
+
+    private fun sendAgentRosterMutation(
+        operation: PendingAgentRosterMutation,
+    ): JSONObject =
+        host.request(
+            "feature.agent.rosterMutation",
+            JSONObject()
+                .put("operationId", operation.operationId)
+                .put("accountFence", operation.accountFence)
+                .put("mutation", JSONObject(operation.mutation.toString())),
+        )
+
+    private fun reconcileAgentRosterMutations(accountFence: String? = null) {
+        val currentFence = accountFence ?: runCatching { currentAgentRosterAccountFence() }.getOrNull() ?: return
+        agentRosterMutationOwner.pendingFor(currentFence).forEach { operation ->
+            runCatching { sendAgentRosterMutation(operation) }
+                .onSuccess { outcome ->
+                    when (outcome.optString("status")) {
+                        "completed", "rejected" -> agentRosterMutationOwner.settle(operation.operationId)
+                    }
+                }
+        }
+    }
+
+    private fun durableAgentRosterMutation(mutation: JSONObject): Any? {
+        val accountFence = currentAgentRosterAccountFence()
+        reconcileAgentRosterMutations(accountFence)
+        val operation = agentRosterMutationOwner.begin(accountFence, mutation)
+        val outcome = sendAgentRosterMutation(operation)
+        return when (outcome.optString("status")) {
+            "completed" -> {
+                agentRosterMutationOwner.settle(operation.operationId)
+                outcome.opt("result")
+            }
+            "rejected" -> {
+                agentRosterMutationOwner.settle(operation.operationId)
+                throw IllegalStateException(
+                    outcome.optString("error").ifBlank { "Agent roster mutation was rejected" },
+                )
+            }
+            else -> throw IllegalStateException("Agent roster mutation settlement is unknown")
+        }
+    }
 
     override fun agentCreate(name: String, description: String): JSONObject =
         host.request(
@@ -363,58 +413,65 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
     override fun agentSetGroupMembers(id: String, memberIds: List<String>): JSONObject {
         val members = JSONArray()
         memberIds.forEach(members::put)
-        return host.request(
-            "setGroupMembers",
+        return durableAgentRosterMutation(
             JSONObject()
+                .put("kind", "group-members")
                 .put("id", id)
-                .put("memberAgentIds", members),
-        )
+                .put("memberIds", members),
+        ) as? JSONObject ?: JSONObject()
     }
 
     override fun agentUpdate(id: String, name: String, description: String): JSONObject =
-        host.request(
-            "updateAgent",
+        durableAgentRosterMutation(
             JSONObject()
+                .put("kind", "update")
                 .put("id", id)
-                .put(
-                    "profile",
-                    JSONObject()
-                        .put("name", name)
-                        .put("description", description),
-                ),
-        )
+                .put("name", name)
+                .put("description", description),
+        ) as? JSONObject ?: JSONObject()
 
     override fun agentSetHidden(id: String, isHidden: Boolean): JSONObject =
-        host.request(
-            "setAgentHiddenFromSidebar",
-            JSONObject().put("id", id).put("isHidden", isHidden),
-        )
+        durableAgentRosterMutation(
+            JSONObject()
+                .put("kind", "hidden")
+                .put("id", id)
+                .put("value", isHidden),
+        ) as? JSONObject ?: JSONObject()
 
     override fun agentSetUnread(id: String, isUnread: Boolean): JSONObject =
-        host.request(
-            "setAgentUnread",
-            JSONObject().put("id", id).put("isUnread", isUnread),
-        )
+        durableAgentRosterMutation(
+            JSONObject()
+                .put("kind", "unread")
+                .put("id", id)
+                .put("value", isUnread),
+        ) as? JSONObject ?: JSONObject()
 
     override fun agentDuplicate(id: String): JSONObject =
-        host.request("duplicateAgent", JSONObject().put("id", id))
+        durableAgentRosterMutation(
+            JSONObject()
+                .put("kind", "duplicate")
+                .put("id", id),
+        ) as? JSONObject ?: JSONObject()
 
     override fun agentDelete(id: String): JSONObject =
-        host.request(
-            "deleteAgents",
-            JSONObject().put("ids", JSONArray().put(id)),
-        )
+        durableAgentRosterMutation(
+            JSONObject()
+                .put("kind", "delete")
+                .put("ids", JSONArray().put(id)),
+        ) as? JSONObject ?: JSONObject()
 
     override fun agentSetPinned(ids: List<String>): List<String> {
         val values = JSONArray()
         ids.forEach(values::put)
-        val result = host.requestValue(
-            "setPinnedAgents",
-            JSONObject().put("ids", values),
-        ) as? JSONArray ?: JSONArray()
+        val result = durableAgentRosterMutation(
+            JSONObject()
+                .put("kind", "pinned")
+                .put("ids", values),
+        ) as? JSONObject ?: JSONObject()
+        val settled = result.optJSONArray("ids") ?: JSONArray()
         return buildList {
-            for (index in 0 until result.length()) {
-                result.optString(index).takeIf(String::isNotBlank)?.let(::add)
+            for (index in 0 until settled.length()) {
+                settled.optString(index).takeIf(String::isNotBlank)?.let(::add)
             }
         }
     }
