@@ -61,6 +61,22 @@ const ASSISTANT_READ_MARKER_ID: &str = "projection:mahayana-assistant:last-read"
 const SUBAGENT_REVIEW_APPROVAL_TTL_MS: u64 = 10 * 60 * 1_000;
 const SUBAGENT_REVIEW_MAX_PENDING_PER_AGENT: usize = 4;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SubagentReviewApprovalExpiryPolicy {
+    Park,
+    Ttl,
+}
+
+fn subagent_review_approval_expiry_policy(
+    request_source: Option<&str>,
+) -> SubagentReviewApprovalExpiryPolicy {
+    if matches!(request_source, Some("turn" | "handoff-resume")) {
+        SubagentReviewApprovalExpiryPolicy::Park
+    } else {
+        SubagentReviewApprovalExpiryPolicy::Ttl
+    }
+}
+
 #[derive(Default)]
 struct SubagentReviewApprovalRegistry {
     pending: Mutex<BTreeMap<String, SubagentReviewApprovalWaiter>>,
@@ -159,6 +175,7 @@ fn wait_for_subagent_review_approval(
     subagent_type: Option<&str>,
     reason: &str,
     proposed_rule: Option<&str>,
+    expiry_policy: SubagentReviewApprovalExpiryPolicy,
 ) -> Result<bool, String> {
     if cancelled.load(Ordering::Acquire) {
         return Err("cancelled".into());
@@ -214,7 +231,12 @@ fn wait_for_subagent_review_approval(
                 "accountFence":account_fence,
                 "reason":reason,
                 "autoReview":true,
-                "expiresAtMs":now_ms().saturating_add(SUBAGENT_REVIEW_APPROVAL_TTL_MS),
+                "expiresAtMs":match expiry_policy {
+                    SubagentReviewApprovalExpiryPolicy::Park => Value::Null,
+                    SubagentReviewApprovalExpiryPolicy::Ttl => {
+                        json!(now_ms().saturating_add(SUBAGENT_REVIEW_APPROVAL_TTL_MS))
+                    }
+                },
             }));
         })
     {
@@ -223,7 +245,8 @@ fn wait_for_subagent_review_approval(
         return Err(error);
     }
 
-    let deadline = now_ms().saturating_add(SUBAGENT_REVIEW_APPROVAL_TTL_MS);
+    let deadline = matches!(expiry_policy, SubagentReviewApprovalExpiryPolicy::Ttl)
+        .then(|| now_ms().saturating_add(SUBAGENT_REVIEW_APPROVAL_TTL_MS));
     let (state, wake) = &*signal;
     let mut state = state
         .lock()
@@ -251,13 +274,15 @@ fn wait_for_subagent_review_approval(
             return Err("cancelled".into());
         }
         let now = now_ms();
-        if now >= deadline {
+        if deadline.is_some_and(|deadline| now >= deadline) {
             drop(state);
             let _ = broker.cancel_approval_operation(&operation_id, "approval expired", now);
             registry.remove(&approval_id);
             return Ok(false);
         }
-        let wait_ms = deadline.saturating_sub(now).min(100);
+        let wait_ms = deadline
+            .map(|deadline| deadline.saturating_sub(now).min(100))
+            .unwrap_or(100);
         let (next, _) = wake
             .wait_timeout(state, Duration::from_millis(wait_ms))
             .map_err(|_| "subagent review approval waiter lock poisoned".to_string())?;
@@ -3044,6 +3069,8 @@ impl AndroidJsonHost {
             .and_then(Value::as_str)
             .filter(|value| !value.trim().is_empty())
             .map(str::to_string);
+        let subagent_review_expiry_policy =
+            subagent_review_approval_expiry_policy(request_source.as_deref());
 
         let spawn = thread::Builder::new()
             .name(format!("fabushi-turn-{}", operation_id.chars().take(32).collect::<String>()))
@@ -3098,6 +3125,7 @@ impl AndroidJsonHost {
                                     Some(subagent_type),
                                     &reason,
                                     proposed_rule.as_deref(),
+                                    subagent_review_expiry_policy,
                                 )?;
                                 Ok((!approved).then_some(reason))
                             }
@@ -3153,6 +3181,7 @@ impl AndroidJsonHost {
                                     None,
                                     &reason,
                                     proposed_rule.as_deref(),
+                                    subagent_review_expiry_policy,
                                 )?;
                                 Ok(SubagentSteerReview {
                                     allowed: approved,
@@ -5067,6 +5096,26 @@ mod tests {
     use super::*;
 
     #[test]
+    fn subagent_review_expiry_policy_matches_desktop_turn_contract() {
+        assert_eq!(
+            subagent_review_approval_expiry_policy(Some("turn")),
+            SubagentReviewApprovalExpiryPolicy::Park
+        );
+        assert_eq!(
+            subagent_review_approval_expiry_policy(Some("handoff-resume")),
+            SubagentReviewApprovalExpiryPolicy::Park
+        );
+        assert_eq!(
+            subagent_review_approval_expiry_policy(Some("background")),
+            SubagentReviewApprovalExpiryPolicy::Ttl
+        );
+        assert_eq!(
+            subagent_review_approval_expiry_policy(None),
+            SubagentReviewApprovalExpiryPolicy::Ttl
+        );
+    }
+
+    #[test]
     fn subagent_review_block_waits_for_durable_broker_approval_and_consumes_once() {
         let app_data = tempfile::tempdir().unwrap();
         let broker = SharedCapabilityBroker::open(
@@ -5098,6 +5147,7 @@ mod tests {
                 Some("executor"),
                 "manual approval required",
                 Some("allow this task"),
+                SubagentReviewApprovalExpiryPolicy::Ttl,
             )
         });
 
@@ -5183,6 +5233,7 @@ mod tests {
             None,
             "manual approval required",
             None,
+            SubagentReviewApprovalExpiryPolicy::Ttl,
         );
         assert!(result.unwrap_err().contains("cancelled"));
         assert!(events.lock().unwrap().is_empty());
