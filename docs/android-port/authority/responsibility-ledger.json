@@ -3312,6 +3312,82 @@
       "artifact": null,
       "verification_status": "not-verified",
       "notes": "0aed119..9556376 implements the native presentation slice without inventing relationship truth. Keep mapped/not-verified until Host canonical relationship/activity projection, same-head CI, packaged and device acceptance are all successful."
+    },
+    {
+      "responsibility_id": "SECURITY-CREDENTIAL-VAULT-001",
+      "domain": "security",
+      "desktop_sources": [
+        {
+          "path": "desktop/e2e/credential-vault.spec.ts",
+          "blob_sha": "c63f8987f70b05a43ab13c0291b62cf44f4fe340"
+        },
+        {
+          "path": "source/electron-main/secrets/user-secrets-store.ts"
+        },
+        {
+          "path": "source/electron-main/secrets/secret-store.ts"
+        },
+        {
+          "path": "source/electron-main/secrets/secrets-ipc-guard.ts"
+        },
+        {
+          "path": "source/electron-main/secrets/secrets-ipc.ts"
+        }
+      ],
+      "source_commit": "3bc92400826cc4ca7ac665b467708e22261edc61",
+      "responsibility": "Provide an account-scoped credential vault whose secret values are written/rotated/revoked through OS-backed encryption, whose list projection exposes only metadata/configured state and origin binding, and whose UI/API never provides a reveal path for stored plaintext.",
+      "source_owner": "Desktop Electron main secrets stores + guarded IPC; renderer owns only transient input fields.",
+      "direct_callers": [
+        "Credential Vault UI",
+        "connector/tool credential consumers through guarded native APIs"
+      ],
+      "downstream_dependencies": [
+        "OS secure storage",
+        "account identity",
+        "origin binding validation",
+        "connector capability execution"
+      ],
+      "state_owner": "platform secure credential store; presentation must never own persisted plaintext",
+      "persistent_state": [
+        "encrypted secret payload keyed by account/reference",
+        "non-secret metadata/bindings",
+        "created/updated timestamps"
+      ],
+      "protocol_wire_contract": [
+        "list metadata",
+        "upsert/create",
+        "rotate",
+        "revoke",
+        "internal use by authorized consumer; no reveal API"
+      ],
+      "visible_effect": "User can save, rotate and revoke connector credentials and inspect only non-secret metadata; closing an unsaved dialog discards plaintext.",
+      "failure_behavior": [
+        "secure-storage unavailable or encryption/decryption failure fails closed for persistent Vault operations",
+        "plaintext must never appear in list/body/log projection",
+        "invalid origin binding rejected"
+      ],
+      "cancellation_behavior": "dismissed/aborted input is transient and never persisted.",
+      "retry_semantics": "unknown write outcome must not be blindly duplicated; metadata can be re-read/reconciled.",
+      "idempotency_semantics": "stable account + secret reference identity; rotate updates the existing record rather than creating another canonical secret.",
+      "process_death_recovery": "encrypted records remain in platform secure storage; transient plaintext input is lost and never reconstructed into UI.",
+      "account_fencing": "every credential record is scoped to the signed-in account; logout/account switch cannot expose another account's metadata or use path.",
+      "security_boundary": "Android must use Android Keystore (or fail closed); no plaintext file/shared preferences, no public reveal API, and authorized consumers receive values only inside the execution boundary.",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/security/AndroidPluginVariableSecretStore.kt"
+      ],
+      "android_owner": "Android secure-storage layer (incomplete for Credential Vault)",
+      "platform_delta": "Electron safeStorage becomes Android Keystore. Existing AndroidPluginVariableSecretStore proves an AES-GCM/Keystore primitive but is not the Credential Vault product contract and therefore is only a dependency candidate.",
+      "implementation_status": "mapped",
+      "production_wiring": "Not complete. No shipping Android Credential Vault UI/typed command set/list metadata/rotate/revoke/origin-binding projection has been found. Existing plugin-variable secret storage must not be treated as parity.",
+      "unit_test": "required: no plaintext projection, account isolation, rotate/revoke, unavailable/corrupt Keystore fail-closed, bounded metadata/origin validation",
+      "contract_test": "required against Desktop Credential Vault no-reveal semantics",
+      "integration_test": "required through typed Android bridge and authorized connector/tool consumer",
+      "packaged_test": "required on final minified APK/AAB, including plaintext canary absence",
+      "device_test": "required on real/protected Android Keystore device path",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Mapped from the earliest unreviewed packaged E2E after reading Desktop Vault and secure-store responsibilities. Android secure primitive exists, but product/runtime parity remains missing."
     }
   ],
   "traceability": {
