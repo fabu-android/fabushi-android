@@ -172,7 +172,30 @@ internal fun ProductionRenderer(
                             appAgentSurface.clearOverlay("miniapp-bot-menu")
                         }
                     }
+                    val paletteAgentNames = buildMap {
+                        put("mahayana-assistant", "Mahayana")
+                        botState.bots.forEach { bot -> put(bot.id, bot.name) }
+                    }
+                    val paletteMessageEntries = commandPaletteMessageEntries(
+                        messages = botState.paletteMessageSearch.value,
+                        agentNames = paletteAgentNames,
+                    ) { message ->
+                        val targetBot = if (message.agentId == "mahayana-assistant") {
+                            MobileBotSummaryAndroid(
+                                id = "mahayana-assistant",
+                                name = "Mahayana",
+                                description = "Mahayana multi-step agent",
+                            )
+                        } else {
+                            botState.bots.firstOrNull { it.id == message.agentId }
+                        }
+                        if (targetBot != null) {
+                            rendererRoute = RendererRoute.GROK_HOME
+                            botModel.openBot(targetBot, targetEntryId = message.entryId)
+                        }
+                    }
                     val paletteEntries = buildList {
+                        addAll(paletteMessageEntries)
                         botState.bots.forEach { bot ->
                             add(
                                 CommandPaletteEntry(
@@ -227,10 +250,13 @@ internal fun ProductionRenderer(
                             appAgentSurface = appAgentSurface,
                             onOpenMessaging = { rendererRoute = RendererRoute.MESSAGING },
                             onOpenAgentNetwork = { rendererRoute = RendererRoute.AGENT_NETWORK },
-                            onOpenCommandPalette = { commandPaletteOpen = true },
+                            onOpenCommandPalette = {
+                                botModel.resetPaletteMessageSearch()
+                                commandPaletteOpen = true
+                            },
                             onRefreshBots = botModel::refreshBots,
                             onCreateBot = botModel::createBot,
-                            onOpenBot = botModel::openBot,
+                            onOpenBot = { bot -> botModel.openBot(bot) },
                             onRenameBot = botModel::renameBot,
                             onHideBot = botModel::hideBot,
                             onSetBotUnread = botModel::setBotUnread,
@@ -241,6 +267,7 @@ internal fun ProductionRenderer(
                             onDraftChange = botModel::setDraft,
                             onSend = botModel::send,
                             onStop = botModel::stop,
+                            onMessageTargetConsumed = botModel::consumeMessageTarget,
                         )
                         if (miniAppBot != null) {
                             Button(
@@ -257,7 +284,12 @@ internal fun ProductionRenderer(
                         CommandPalette(
                             open = commandPaletteOpen,
                             entries = paletteEntries,
-                            onDismiss = { commandPaletteOpen = false },
+                            messageSearchStatus = botState.paletteMessageSearch.status,
+                            onQueryChange = botModel::setPaletteMessageQuery,
+                            onDismiss = {
+                                botModel.resetPaletteMessageSearch()
+                                commandPaletteOpen = false
+                            },
                         )
                     }
                 } else {
