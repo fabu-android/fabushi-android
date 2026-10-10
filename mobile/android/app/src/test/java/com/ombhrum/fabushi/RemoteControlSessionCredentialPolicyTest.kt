@@ -28,6 +28,8 @@ class RemoteControlSessionCredentialPolicyTest {
         assertEquals("computer-1", projection.getString("deviceId"))
         assertEquals("remote-session-1", projection.getString("sessionId"))
         assertFalse(projection.has("mobileToken"))
+        assertFalse(projection.has("requestId"))
+        assertFalse(projection.has("iceServersJson"))
         assertFalse(projection.has("accountFence"))
     }
 
@@ -293,6 +295,53 @@ class RemoteControlSessionCredentialPolicyTest {
         assertEquals(RemoteControlSessionLifecycle.OUTCOME_UNKNOWN, remoteClose.lifecycle)
         assertTrue(remoteClose.reconcileRequired)
         assertEquals(9L, remoteClose.viewportRevision)
+    }
+
+    @Test
+    fun transportFailureEntersReconnectWithoutReplayingHumanInputLease() {
+        val base = RemoteControlSessionCredential(
+            deviceId = "computer-1",
+            clientId = "remote-client-1",
+            sessionId = "remote-session-1",
+            mobileToken = validToken,
+            requestId = "android-remote-0123456789abcdef",
+            iceServersJson = """[{"urls":["stun:stun.example.com"]}]""",
+            accountFence = "session:account-1",
+            accountEpoch = 7,
+            expiresAt = 2_000_000_000,
+            processGeneration = 12,
+            viewportRevision = 8,
+            provider = "fabushi-webrtc",
+            routePolicy = "direct-preferred",
+            selectedRoute = "direct",
+            transportUpdatedAt = 100,
+            humanTakeover = true,
+            lifecycle = RemoteControlSessionLifecycle.HUMAN_TAKEOVER,
+        )
+        val reconnecting = RemoteControlSessionStatePolicy.markReconnectRequired(
+            base,
+            processGeneration = 12,
+            expectedViewportRevision = 8,
+        )
+        assertEquals(RemoteControlSessionLifecycle.RECONNECTING, reconnecting.lifecycle)
+        assertEquals(1, reconnecting.reconnectCount)
+        assertTrue(reconnecting.reconcileRequired)
+        assertFalse(reconnecting.humanTakeover)
+        assertEquals(8L, reconnecting.viewportRevision)
+        assertThrows(IllegalArgumentException::class.java) {
+            RemoteControlSessionStatePolicy.markReconnectRequired(
+                reconnecting,
+                processGeneration = 13,
+                expectedViewportRevision = 8,
+            )
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            RemoteControlSessionStatePolicy.markReconnectRequired(
+                reconnecting,
+                processGeneration = 12,
+                expectedViewportRevision = 7,
+            )
+        }
     }
 
     @Test
