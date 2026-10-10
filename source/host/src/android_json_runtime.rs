@@ -51,6 +51,8 @@ use std::sync::{
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+const ASSISTANT_READ_MARKER_ID: &str = "projection:mahayana-assistant:last-read";
+
 #[cfg(feature = "ci-account-session-import")]
 mod ci_account_session {
     use super::*;
@@ -589,6 +591,8 @@ impl AndroidJsonHost {
                     .map_err(|_| "transcript lock poisoned".to_string())?
                     .get_transcript(),
             )),
+            "feature.assistant.projection" => self.assistant_projection(),
+            "feature.assistant.markRead" => self.assistant_mark_read(),
             "feature.webauthn.registerProvider" => self.webauthn_register_provider(),
             "feature.webauthn.unregisterProvider" => self.webauthn_unregister_provider(params),
             "feature.webauthn.pollRequest" => self.webauthn_poll_request(params),
@@ -599,6 +603,40 @@ impl AndroidJsonHost {
         }
     }
 
+
+    fn assistant_projection(&self) -> Result<Value, String> {
+        let transcript = self
+            .transcript
+            .lock()
+            .map_err(|_| "transcript lock poisoned".to_string())?;
+        Ok(assistant_projection_from_entries(&transcript.get_transcript()))
+    }
+
+    fn assistant_mark_read(&mut self) -> Result<Value, String> {
+        let mut transcript = self
+            .transcript
+            .lock()
+            .map_err(|_| "transcript lock poisoned".to_string())?;
+        let entries = transcript.get_transcript();
+        if let Some(latest_message_id) = latest_visible_assistant_message_id(&entries) {
+            let marker = json!({
+                "id": ASSISTANT_READ_MARKER_ID,
+                "kind": "assistant-read-marker",
+                "lastReadMessageId": latest_message_id,
+                "timestampMs": now_ms(),
+            });
+            if transcript.contains_id(ASSISTANT_READ_MARKER_ID) {
+                transcript
+                    .update_entry(ASSISTANT_READ_MARKER_ID, |_| marker.clone())
+                    .map_err(|error| format!("failed to persist assistant read marker: {error}"))?;
+            } else {
+                transcript
+                    .append_entry(marker)
+                    .map_err(|error| format!("failed to persist assistant read marker: {error}"))?;
+            }
+        }
+        Ok(assistant_projection_from_entries(&transcript.get_transcript()))
+    }
 
     fn messaging_access_issue(&mut self, params: &Value) -> Result<Value, String> {
         let requested_session = required_string(params, "sessionId")?.to_string();
@@ -4003,6 +4041,48 @@ fn parse_webauthn_response_frame(value: &Value) -> Result<WebAuthnResponseFrame,
     }
 }
 
+fn latest_visible_assistant_message_id(entries: &[Value]) -> Option<String> {
+    let visible_operation_ids = entries
+        .iter()
+        .filter(|entry| {
+            entry.get("kind").and_then(Value::as_str) == Some("message")
+                && entry.get("role").and_then(Value::as_str) == Some("user")
+        })
+        .filter_map(|entry| entry.get("operationId").and_then(Value::as_str))
+        .collect::<BTreeSet<_>>();
+
+    entries
+        .iter()
+        .rev()
+        .find(|entry| {
+            entry.get("kind").and_then(Value::as_str) == Some("message")
+                && entry.get("role").and_then(Value::as_str) == Some("assistant")
+                && entry
+                    .get("operationId")
+                    .and_then(Value::as_str)
+                    .is_some_and(|operation_id| visible_operation_ids.contains(operation_id))
+        })
+        .and_then(|entry| entry.get("id").and_then(Value::as_str))
+        .map(str::to_string)
+}
+
+fn assistant_projection_from_entries(entries: &[Value]) -> Value {
+    let latest_message_id = latest_visible_assistant_message_id(entries);
+    let last_read_message_id = entries
+        .iter()
+        .find(|entry| entry.get("id").and_then(Value::as_str) == Some(ASSISTANT_READ_MARKER_ID))
+        .and_then(|entry| entry.get("lastReadMessageId"))
+        .and_then(Value::as_str)
+        .map(str::to_string);
+    let has_unread = latest_message_id.is_some() && latest_message_id != last_read_message_id;
+    json!({
+        "agentId": "mahayana-assistant",
+        "latestMessageId": latest_message_id,
+        "lastReadMessageId": last_read_message_id,
+        "hasUnread": has_unread,
+    })
+}
+
 fn required_string<'a>(value: &'a Value, key: &str) -> Result<&'a str, String> {
     value
         .get(key)
@@ -4349,6 +4429,71 @@ mod tests {
             assert_eq!(snapshot.as_array().unwrap().len(), 2);
         }
 
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn assistant_projection_refreshes_after_visible_completion_and_survives_reopen() {
+        let root = std::env::temp_dir().join(format!(
+            "fabushi-assistant-projection-{}-{}",
+            std::process::id(),
+            now_ms()
+        ));
+        {
+            let mut host = AndroidJsonHost::new(&root, AndroidHostMode::Test);
+            host.transcript
+                .lock()
+                .unwrap()
+                .append_entry(json!({
+                    "id":"user-visible",
+                    "kind":"message",
+                    "role":"user",
+                    "content":"hello",
+                    "operationId":"operation-visible",
+                    "timestampMs":1
+                }))
+                .unwrap();
+            host.transcript
+                .lock()
+                .unwrap()
+                .append_entry(json!({
+                    "id":"assistant:operation-visible",
+                    "kind":"message",
+                    "role":"assistant",
+                    "content":"reply",
+                    "operationId":"operation-visible",
+                    "timestampMs":2
+                }))
+                .unwrap();
+            host.transcript
+                .lock()
+                .unwrap()
+                .append_entry(json!({
+                    "id":"assistant:hidden-operation",
+                    "kind":"message",
+                    "role":"assistant",
+                    "content":"hidden continuation",
+                    "operationId":"hidden-operation",
+                    "timestampMs":3
+                }))
+                .unwrap();
+
+            let unread = host.dispatch("feature.assistant.projection", &json!({})).unwrap();
+            assert_eq!(unread["latestMessageId"], "assistant:operation-visible");
+            assert_eq!(unread["hasUnread"], true);
+
+            let read = host.dispatch("feature.assistant.markRead", &json!({})).unwrap();
+            assert_eq!(read["lastReadMessageId"], "assistant:operation-visible");
+            assert_eq!(read["hasUnread"], false);
+        }
+
+        let mut reopened = AndroidJsonHost::new(&root, AndroidHostMode::Test);
+        let projection = reopened
+            .dispatch("feature.assistant.projection", &json!({}))
+            .unwrap();
+        assert_eq!(projection["latestMessageId"], "assistant:operation-visible");
+        assert_eq!(projection["lastReadMessageId"], "assistant:operation-visible");
+        assert_eq!(projection["hasUnread"], false);
         let _ = std::fs::remove_dir_all(root);
     }
 
