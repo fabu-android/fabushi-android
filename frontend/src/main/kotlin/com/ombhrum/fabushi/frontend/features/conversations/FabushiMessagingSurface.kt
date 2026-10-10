@@ -133,6 +133,10 @@ internal object MahayanaAssistantSemanticProjection {
     const val AgentId = "test:peer-legacy:conversation:mahayana-ai:agent:assistant"
     const val UnreadAgentId = "peer-unread:legacy:conversation:mahayana-ai:agent:assistant"
     const val UnreadNoneName = "unread-none"
+    const val UnreadPositiveName = "unread-positive"
+
+    fun unreadName(hasUnread: Boolean): String =
+        if (hasUnread) UnreadPositiveName else UnreadNoneName
 
     fun visible(
         destinationIsHome: Boolean,
@@ -220,6 +224,7 @@ fun FabushiMessagingSurface(
     onChatDraftChange: (String) -> Unit = {},
     onSendChat: () -> Unit = {},
     onStopChat: () -> Unit = {},
+    onMarkAssistantRead: () -> Unit = {},
     onOpenGeneratedMiniApp: (MobileChatMessage) -> Unit = {},
 ) {
     var destination by remember { mutableStateOf(MobileDestination.HOME) }
@@ -230,6 +235,13 @@ fun FabushiMessagingSurface(
     var showComposeMenu by remember { mutableStateOf(false) }
     var semanticSection by remember { mutableStateOf<AndroidMobileSection?>(null) }
     var semanticConversationOpen by remember { mutableStateOf(false) }
+    val latestAssistantMessageId = state.chatMessages
+        .lastOrNull { it.kind == MobileChatEntryKind.MESSAGE && it.role == MobileChatRole.ASSISTANT }
+        ?.id
+
+    LaunchedEffect(showAgentChat, latestAssistantMessageId) {
+        if (showAgentChat) onMarkAssistantRead()
+    }
 
     if (authGateEnabled && state.onboardingStep < 3) {
         MobileOnboarding(state.onboardingStep, onAdvanceOnboarding, onSkipOnboarding)
@@ -341,7 +353,7 @@ fun FabushiMessagingSurface(
                     element(
                         MahayanaAssistantSemanticProjection.UnreadAgentId,
                         "img",
-                        MahayanaAssistantSemanticProjection.UnreadNoneName,
+                        MahayanaAssistantSemanticProjection.unreadName(state.assistantHasUnread),
                     )
                 }
                 if (showAddMenu) {
