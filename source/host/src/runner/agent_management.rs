@@ -406,9 +406,9 @@ mod tests {
             std::process::id(),
             now_ms_i64()
         ));
-        fs::create_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
         let roster = Arc::new(Mutex::new(AndroidAgentRoster::open(root.join("agents.json")).unwrap()));
-        let target = roster.lock().unwrap().create("Target", "target");
+        let target = roster.lock().unwrap().create("Target", "target").unwrap();
         assert_eq!(target.id, "agent-00000001");
         let messaging = Arc::new(Mutex::new(AndroidMessagingService::open(&root).unwrap()));
         let live = Arc::new(Mutex::new(Some("acct:a".into())));
@@ -435,7 +435,7 @@ mod tests {
             SEND_TO_AGENT_TOOL_NAME,
             json!({"target_id":"agent-00000001","message":"hello","images":[{"url":"https://example.com/a.png"}],"priority":true}),
             "call-send",
-        );
+        ).unwrap();
         assert!(result.as_str().unwrap().contains("fresh turn"));
         drop(tools);
         assert!(root.join("messaging-repository.json").exists());
@@ -447,7 +447,7 @@ mod tests {
         let (tools, _, _, _, root) = fixture("invalid");
         assert!(tools.call_tool(SEND_TO_AGENT_TOOL_NAME, json!({"target_id":"missing","message":"x"}), "a").is_err());
         assert!(tools.call_tool(SEND_TO_AGENT_TOOL_NAME, json!({"target_id":"agent-00000001","message":"x","images":[{"url":"http://example.com/a.png"}]}), "b").is_err());
-        let self_result = tools.call_tool(SEND_TO_AGENT_TOOL_NAME, json!({"target_id":"agent-root","message":"x"}), "c");
+        let self_result = tools.call_tool(SEND_TO_AGENT_TOOL_NAME, json!({"target_id":"agent-root","message":"x"}), "c").unwrap();
         assert_eq!(self_result, Value::String(SELF_SEND_REJECTION.into()));
         let _ = fs::remove_dir_all(root);
     }
@@ -455,15 +455,15 @@ mod tests {
     #[test]
     fn create_update_duplicates_survive_reopen_and_mismatch_fails_closed() {
         let (tools, roster, _, _, root) = fixture("crud");
-        let created = tools.call_tool(CREATE_AGENT_TOOL_NAME, json!({"name":"New","description":"d"}), "stable-create");
+        let created = tools.call_tool(CREATE_AGENT_TOOL_NAME, json!({"name":"New","description":"d"}), "stable-create").unwrap();
         assert_eq!(created, tools.call_tool(CREATE_AGENT_TOOL_NAME, json!({"name":"New","description":"d"}), "stable-create").unwrap());
         assert!(tools.call_tool(CREATE_AGENT_TOOL_NAME, json!({"name":"Other"}), "stable-create").is_err());
         let id = roster.lock().unwrap().list().into_iter().find(|row| row.name == "New").unwrap().id;
-        let updated = tools.call_tool(UPDATE_AGENT_TOOL_NAME, json!({"agent_id":id,"name":"Renamed"}), "stable-update");
+        let updated = tools.call_tool(UPDATE_AGENT_TOOL_NAME, json!({"agent_id":id,"name":"Renamed"}), "stable-update").unwrap();
         assert_eq!(updated, tools.call_tool(UPDATE_AGENT_TOOL_NAME, json!({"agent_id":id,"name":"Renamed"}), "stable-update").unwrap());
         drop(tools);
         drop(roster);
-        let reopened = AndroidAgentRoster::open(root.join("agents.json"));
+        let reopened = AndroidAgentRoster::open(root.join("agents.json")).unwrap();
         assert_eq!(reopened.list().into_iter().filter(|row| row.name == "Renamed").count(), 1);
         let _ = fs::remove_dir_all(root);
     }
