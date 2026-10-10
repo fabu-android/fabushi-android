@@ -5,7 +5,7 @@
     "desktop_commit": "3bc92400826cc4ca7ac665b467708e22261edc61",
     "android_repository": "fabu-android/fabushi-android",
     "android_pr": 3,
-    "android_head_at_update": "9c4c997e651b00761d0f32c9e293480e5478f57d",
+    "android_head_at_update": "922a236e9391f7c931e2779e788fa1a69ec5ce03",
     "status": "incomplete",
     "note": "Persistent human-reviewed responsibility ledger for Desktop main. Rows are responsibility-level source facts; mapped/implemented never imply verified. Verification requires same-exact-HEAD source implementation, production wiring, CI/package and device evidence."
   },
@@ -3548,6 +3548,74 @@
       "artifact": null,
       "verification_status": "not-verified",
       "notes": "This narrow responsibility is intentionally mapped, not implemented, because current Android has no canonical durable section/CAS owner."
+    },
+    {
+      "responsibility_id": "VERIFICATION-PACKAGED-VISUAL-EVIDENCE-ANDROID-001",
+      "domain": "verification",
+      "desktop_sources": [
+        {
+          "path": "desktop/e2e/grok-visual-evidence.spec.ts",
+          "blob_sha": "eef0853a8eb40e748f3d03db4cea1c17fa43d3d5",
+          "symbols": [
+            "capture Grok parity packaged visual evidence",
+            "attachScreenshot",
+            "screencast"
+          ]
+        }
+      ],
+      "source_commit": "3bc92400826cc4ca7ac665b467708e22261edc61",
+      "responsibility": "Capture reviewable visual evidence from the final packaged Android product for representative authenticated shell/search/settings/Assistant journeys, tied to the exact source and distributable artifact rather than debug-only fixtures.",
+      "source_owner": "Desktop packaged visual-evidence Playwright journey",
+      "direct_callers": [
+        "release/packaged acceptance",
+        "human migration review"
+      ],
+      "downstream_dependencies": [
+        "final APK/AAB",
+        "authenticated native UI journey",
+        "artifact upload/provenance"
+      ],
+      "state_owner": "CI evidence artifact set bound to exact source SHA and packaged artifact digest",
+      "persistent_state": [
+        "screenshots/video or equivalent visual capture",
+        "exact-head metadata",
+        "artifact provenance"
+      ],
+      "protocol_wire_contract": [
+        "exact source SHA",
+        "packaged artifact identity",
+        "named journey checkpoints"
+      ],
+      "visible_effect": "Reviewers can inspect the actual distributed product at stable checkpoints instead of trusting unit-level assertions alone.",
+      "failure_behavior": [
+        "missing visual capture is an acceptance failure and must not be silently ignored",
+        "debug fixture evidence cannot substitute for final packaged evidence"
+      ],
+      "cancellation_behavior": "cancelled capture run remains incomplete and cannot be promoted to verified.",
+      "retry_semantics": "rerun only against the same exact source/artifact identity or record a new evidence set for the new SHA.",
+      "idempotency_semantics": "evidence names/checkpoints are stable; multiple runs remain separately attributable by SHA/run/artifact.",
+      "process_death_recovery": "not a product state owner; packaged journey restarts from the installed artifact and records failures.",
+      "account_fencing": "protected-account captures must use the intended account session and never test-session injection in public release.",
+      "security_boundary": "captures may not expose secrets/tokens; final public release must have CI account bootstrap stripped.",
+      "android_disposition": "not-applicable-with-replacement",
+      "android_target": [
+        ".github/workflows/android-parity-full-ci.yml",
+        "contracts/automation/cross-platform-journeys.json",
+        "docs/android-port/evidence/README.md",
+        "docs/android-port/verification/journeys.md"
+      ],
+      "android_owner": "Android packaged/device acceptance workflow",
+      "platform_delta": "Desktop uses Electron Playwright screenshots and WebM screencast. Android must capture the equivalent native packaged journey from the final installed APK/AAB/device surface; the browser-specific capture implementation is not copied.",
+      "implementation_status": "mapped",
+      "production_wiring": "Cross-platform journey checkpoints are machine-readable, but final packaged Android screenshot/video evidence capture is not yet closed.",
+      "unit_test": "CrossPlatformJourneyContractTest validates the journey contract only; it is not visual evidence.",
+      "contract_test": "Desktop packaged visual checkpoints read at Desktop 3bc9240.",
+      "integration_test": "pending final packaged Android visual capture workflow",
+      "packaged_test": "required",
+      "device_test": "required",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Mapped intentionally. Do not mark implemented/verified until a same-exact-HEAD final APK/AAB journey uploads reviewable visual evidence with provenance."
     }
   ],
   "traceability": {
