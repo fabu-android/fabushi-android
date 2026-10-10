@@ -53,4 +53,4 @@ pub use subagent_tool_bridge::{
     SubagentTaskReviewCallback, SubagentToolBridge, SubagentToolContext, SubagentToolResult,
     TASK_TOOL_NAME, CHECK_SUBAGENT_TOOL_NAME, MESSAGE_SUBAGENT_TOOL_NAME, STOP_SUBAGENT_TOOL_NAME,
 };
-pub use subagent_worker::spawn_generated_subagent;
+pub use subagent_worker::{build_parent_subagent_routed_tools, spawn_generated_subagent};
