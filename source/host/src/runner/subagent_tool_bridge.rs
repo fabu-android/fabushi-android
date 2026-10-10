@@ -587,6 +587,25 @@ mod tests {
             .unwrap_err()
             .contains("review unavailable"));
         assert_eq!(owner.lock().unwrap().get(&id).unwrap().pending_steer, None);
+
+        let allow_steer: SubagentSteerReviewCallback = Arc::new(|_, _, _| {
+            Ok(SubagentSteerReview { allowed: true, reason: String::new() })
+        });
+        let bridge = SubagentToolBridge::new(Arc::clone(&owner)).with_steer_review(allow_steer);
+        let allowed = bridge
+            .call(
+                MESSAGE_SUBAGENT_TOOL_NAME,
+                &json!({"subagent_id":id,"message":"approved redirect"}),
+                "steer-allowed",
+                &context(),
+                6,
+            )
+            .unwrap();
+        assert_eq!(allowed.value["delivered"], true);
+        assert_eq!(
+            owner.lock().unwrap().get(&id).unwrap().pending_steer.as_deref(),
+            Some("approved redirect")
+        );
         let _ = fs::remove_file(path);
     }
 
