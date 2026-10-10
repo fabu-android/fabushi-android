@@ -202,7 +202,14 @@ internal fun ConversationHome(
             onEdit = { messageId, text -> onEditText(conversation.id, messageId, text) },
             onDelete = { messageId -> onDeleteMessage(conversation.id, messageId) },
             onSetMessagePinned = { messageId, pinned -> onSetMessagePinned(conversation.id, messageId, pinned) },
-            onReact = { messageId, reaction -> onSetReaction(conversation.id, messageId, reaction, true) },
+            onReact = { message, reaction ->
+                onSetReaction(
+                    conversation.id,
+                    message.id,
+                    reaction,
+                    desiredReactionEnabled(message, reaction),
+                )
+            },
             onForward = { messageId, destinationIds -> onForwardMessage(conversation.id, messageId, destinationIds) },
             forwardDestinations = conversations.filter { it.id != conversation.id && !it.isArchived },
             typingActorName = messagingState.typingActorByConversation[conversation.id],
@@ -397,7 +404,7 @@ internal fun ConversationDetail(
     onEdit: (String, String) -> Unit,
     onDelete: (String) -> Unit,
     onSetMessagePinned: (String, Boolean) -> Unit,
-    onReact: (String, String) -> Unit,
+    onReact: (ChatMessage, String) -> Unit,
     onForward: (String, List<String>) -> Unit,
     forwardDestinations: List<ConversationSummary>,
     typingActorName: String?,
@@ -597,7 +604,9 @@ internal fun ConversationDetail(
                         forwardingMessage = message
                         selectedMessage = null
                     }) { Text("转发") }
-                    TextButton(onClick = { onReact(message.id, "👍"); selectedMessage = null }) { Text("👍 赞") }
+                    TextButton(onClick = { onReact(message, "👍"); selectedMessage = null }) {
+                        Text(if (message.reactions.any { it.reaction == "👍" && it.chosenByMe }) "👍 取消赞" else "👍 赞")
+                    }
                     if (message.outgoing) TextButton(onClick = { editingMessage = message; replyTarget = null; draft = message.text; selectedMessage = null }) { Text("编辑") }
                     TextButton(onClick = { onSetMessagePinned(message.id, !message.pinned); selectedMessage = null }) { Text(if (message.pinned) "取消置顶消息" else "置顶消息") }
                     TextButton(onClick = { onDelete(message.id); selectedMessage = null }) { Text("删除") }
