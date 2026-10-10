@@ -208,8 +208,7 @@ impl AndroidHostInferenceProvider {
             bearer_token.ok_or_else(|| ProviderFailure::new("provider_credentials_unavailable"))?,
             Arc::clone(&cancelled),
         )?;
-        provider.request_timeout =
-            Some(Duration::from_secs(SAND_AUTO_REVIEW_CLASSIFIER_TIMEOUT_SECS));
+        provider.configure_subagent_review_timeout();
         let target = json!({
             "action":"sand_subagent",
             "arguments":{
@@ -235,17 +234,36 @@ impl AndroidHostInferenceProvider {
             output.push_str(chunk);
             Ok(())
         }) {
-            if cancelled.load(Ordering::Acquire) || error.message == "cancelled" {
-                return Err(error);
-            }
-            return Ok(AndroidSubagentReviewDecision::Reject {
-                reason: SAND_SUBAGENT_CLASSIFIER_ERROR_REASON.into(),
-            });
+            return Self::subagent_review_provider_failure(
+                error,
+                cancelled.load(Ordering::Acquire),
+            );
         }
-        parse_subagent_review_decision(&output).or_else(|_| {
-            Ok(AndroidSubagentReviewDecision::Reject {
+        Ok(Self::parse_subagent_review_fail_closed(&output))
+    }
+
+    fn configure_subagent_review_timeout(&mut self) {
+        self.request_timeout =
+            Some(Duration::from_secs(SAND_AUTO_REVIEW_CLASSIFIER_TIMEOUT_SECS));
+    }
+
+    fn subagent_review_provider_failure(
+        error: ProviderFailure,
+        cancelled: bool,
+    ) -> Result<AndroidSubagentReviewDecision, ProviderFailure> {
+        if cancelled || error.message == "cancelled" {
+            return Err(error);
+        }
+        Ok(AndroidSubagentReviewDecision::Reject {
+            reason: SAND_SUBAGENT_CLASSIFIER_ERROR_REASON.into(),
+        })
+    }
+
+    fn parse_subagent_review_fail_closed(output: &str) -> AndroidSubagentReviewDecision {
+        parse_subagent_review_decision(output).unwrap_or_else(|_| {
+            AndroidSubagentReviewDecision::Reject {
                 reason: SAND_SUBAGENT_CLASSIFIER_ERROR_REASON.into(),
-            })
+            }
         })
     }
 
@@ -749,6 +767,48 @@ mod tests {
         .unwrap_err()
         .message
         .contains("cancelled"));
+    }
+
+    #[test]
+    fn subagent_auto_review_uses_desktop_timeout_and_fails_closed() {
+        let mut provider = AndroidHostInferenceProvider::production(
+            "token-for-review".into(),
+            Arc::new(AtomicBool::new(false)),
+        )
+        .unwrap();
+        assert_eq!(provider.request_timeout, None);
+        provider.configure_subagent_review_timeout();
+        assert_eq!(
+            provider.request_timeout,
+            Some(Duration::from_secs(SAND_AUTO_REVIEW_CLASSIFIER_TIMEOUT_SECS))
+        );
+
+        let rejected = AndroidHostInferenceProvider::subagent_review_provider_failure(
+            ProviderFailure::new("network unavailable"),
+            false,
+        )
+        .unwrap();
+        assert_eq!(
+            rejected,
+            AndroidSubagentReviewDecision::Reject {
+                reason: SAND_SUBAGENT_CLASSIFIER_ERROR_REASON.into(),
+            }
+        );
+        assert!(
+            AndroidHostInferenceProvider::subagent_review_provider_failure(
+                ProviderFailure::new("cancelled"),
+                true,
+            )
+            .unwrap_err()
+            .message
+            .contains("cancelled")
+        );
+        assert_eq!(
+            AndroidHostInferenceProvider::parse_subagent_review_fail_closed("not-json"),
+            AndroidSubagentReviewDecision::Reject {
+                reason: SAND_SUBAGENT_CLASSIFIER_ERROR_REASON.into(),
+            }
+        );
     }
 
     #[test]
