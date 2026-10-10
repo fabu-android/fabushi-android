@@ -80,7 +80,8 @@ fun GrokHomeSurface(
     onSetGroupMembers: (String, List<String>, (() -> Unit)?) -> Unit,
     onOpenBot: (MobileBotSummaryAndroid) -> Unit,
     onRenameBot: (String, String) -> Unit,
-    onUpdateBotProfile: (String, String, String, String?, String?) -> Unit,
+    onUpdateBotProfile: (String, String, String?, String, String?, String?) -> Unit,
+    onSetBotNotifyOnUpdates: (String, Boolean) -> Unit,
     onHideBot: (String) -> Unit,
     onSetBotUnread: (String, Boolean) -> Unit,
     onDuplicateBot: (String) -> Unit,
@@ -690,10 +691,11 @@ fun GrokHomeSurface(
         AgentProfileEditor(
             agent = profileTarget,
             onClose = { profileTarget = null },
-            onConfirm = { id, name, description, avatarShape, avatarColor ->
-                onUpdateBotProfile(id, name, description, avatarShape, avatarColor)
+            onConfirm = { id, name, title, description, avatarShape, avatarColor ->
+                onUpdateBotProfile(id, name, title, description, avatarShape, avatarColor)
                 profileTarget = null
             },
+            onSetNotifications = onSetBotNotifyOnUpdates,
         )
 
         AgentDeleteConfirmation(
