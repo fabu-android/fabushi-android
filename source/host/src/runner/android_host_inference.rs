@@ -14,6 +14,9 @@ use std::{
 pub const DEFAULT_DACHENG_RESPONSES_BASE_URL: &str =
     "https://api.ombhrum.com/codex-deepseek/v1";
 pub const DEFAULT_DEEPSEEK_MODEL: &str = "deepseek-chat";
+const SAND_AUTO_REVIEW_CLASSIFIER_TIMEOUT_SECS: u64 = 10;
+const SAND_SUBAGENT_CLASSIFIER_ERROR_REASON: &str =
+    "An error occurred while classifying this task action. Please review manually.";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AndroidInferenceMode {
@@ -46,6 +49,7 @@ pub struct AndroidHostInferenceProvider {
     default_model: String,
     cancelled: Arc<AtomicBool>,
     routed_tools: Option<Arc<dyn AndroidRoutedToolBridge>>,
+    request_timeout: Option<Duration>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -71,6 +75,7 @@ impl AndroidHostInferenceProvider {
             default_model: DEFAULT_DEEPSEEK_MODEL.into(),
             cancelled: Arc::new(AtomicBool::new(false)),
             routed_tools: None,
+            request_timeout: None,
         }
     }
 
@@ -88,6 +93,7 @@ impl AndroidHostInferenceProvider {
             default_model: DEFAULT_DEEPSEEK_MODEL.into(),
             cancelled,
             routed_tools: None,
+            request_timeout: None,
         })
     }
 
@@ -202,6 +208,8 @@ impl AndroidHostInferenceProvider {
             bearer_token.ok_or_else(|| ProviderFailure::new("provider_credentials_unavailable"))?,
             Arc::clone(&cancelled),
         )?;
+        provider.request_timeout =
+            Some(Duration::from_secs(SAND_AUTO_REVIEW_CLASSIFIER_TIMEOUT_SECS));
         let target = json!({
             "action":"sand_subagent",
             "arguments":{
@@ -220,14 +228,25 @@ impl AndroidHostInferenceProvider {
             resume_checkpoint_available: false,
         };
         let mut output = String::new();
-        provider.run_stream(&input, &mut |chunk| {
+        if let Err(error) = provider.run_stream(&input, &mut |chunk| {
             if cancelled.load(Ordering::Acquire) {
                 return Err("cancelled".into());
             }
             output.push_str(chunk);
             Ok(())
-        })?;
-        parse_subagent_review_decision(&output)
+        }) {
+            if cancelled.load(Ordering::Acquire) || error.message == "cancelled" {
+                return Err(error);
+            }
+            return Ok(AndroidSubagentReviewDecision::Reject {
+                reason: SAND_SUBAGENT_CLASSIFIER_ERROR_REASON.into(),
+            });
+        }
+        parse_subagent_review_decision(&output).or_else(|_| {
+            Ok(AndroidSubagentReviewDecision::Reject {
+                reason: SAND_SUBAGENT_CLASSIFIER_ERROR_REASON.into(),
+            })
+        })
     }
 
     #[cfg(test)]
@@ -243,6 +262,7 @@ impl AndroidHostInferenceProvider {
             default_model: DEFAULT_DEEPSEEK_MODEL.into(),
             cancelled,
             routed_tools: None,
+            request_timeout: None,
         }
     }
 
@@ -301,11 +321,18 @@ impl AndroidHostInferenceProvider {
         let resolved_model = Self::resolve_model_id(&input.model);
         let model = resolved_model.as_str();
         let endpoint = format!("{}/responses", self.base_url.trim_end_matches('/'));
-        let agent = ureq::AgentBuilder::new()
-            .timeout_connect(Duration::from_secs(20))
-            .timeout_read(Duration::from_secs(180))
-            .timeout_write(Duration::from_secs(30))
-            .build();
+        let agent = match self.request_timeout {
+            Some(timeout) => ureq::AgentBuilder::new()
+                .timeout_connect(timeout)
+                .timeout_read(timeout)
+                .timeout_write(timeout)
+                .build(),
+            None => ureq::AgentBuilder::new()
+                .timeout_connect(Duration::from_secs(20))
+                .timeout_read(Duration::from_secs(180))
+                .timeout_write(Duration::from_secs(30))
+                .build(),
+        };
         let tool_definitions = match self.routed_tools.as_ref() {
             Some(bridge) => bridge.list_tools().map_err(ProviderFailure::new)?,
             None => Vec::new(),
