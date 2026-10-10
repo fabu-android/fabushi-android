@@ -3223,6 +3223,95 @@
       "artifact": null,
       "verification_status": "not-verified",
       "notes": "Direct-port is appropriate because this Desktop file is itself a cross-platform acceptance contract. Added in aff95dde..31ba373; same exact-head CI/package/device verification still pending."
+    },
+    {
+      "responsibility_id": "AGENT-NETWORK-ANDROID-001",
+      "domain": "agent",
+      "desktop_sources": [
+        {
+          "path": "desktop/e2e/agent-network-responsive.spec.ts"
+        },
+        {
+          "path": "frontend/src/recovered/features/org-chart/workspace/entrypoint.ts"
+        },
+        {
+          "path": "frontend/src/recovered/features/org-chart/workspace/graph.css"
+        },
+        {
+          "path": "frontend/src/recovered/features/org-chart/workspace/graph.tsx"
+        },
+        {
+          "path": "frontend/src/recovered/features/org-chart/workspace/inspector.tsx"
+        },
+        {
+          "path": "frontend/src/recovered/features/org-chart/workspace/layout.ts"
+        },
+        {
+          "path": "frontend/src/recovered/features/org-chart/workspace/model.ts"
+        },
+        {
+          "path": "frontend/src/recovered/features/org-chart/workspace/network-trigger.ts"
+        },
+        {
+          "path": "frontend/src/recovered/features/org-chart/workspace/view.tsx"
+        }
+      ],
+      "source_commit": "3bc92400826cc4ca7ac665b467708e22261edc61",
+      "responsibility": "Expose the canonical Agent roster as a responsive native Org chart/Agent Network with availability gating, deterministic graph edges/layout, activity projection, node selection, details inspector, open-chat/open-room action, summary counts, resize adaptation, zoom and pan.",
+      "source_owner": "Desktop recovered Org Chart workspace over the canonical Agent roster",
+      "direct_callers": [
+        "shipping Agent workspace/network trigger",
+        "desktop packaged responsive acceptance"
+      ],
+      "downstream_dependencies": [
+        "canonical Agent roster",
+        "group membership",
+        "agent-to-agent conversation partner history",
+        "run/wait activity",
+        "native navigation"
+      ],
+      "state_owner": "Host owns canonical Agent identity/relationship/activity truth; Android Compose owns only ephemeral viewport and selection.",
+      "persistent_state": [
+        "none in presentation; roster/relationships belong to Host/domain persistence"
+      ],
+      "protocol_wire_contract": [
+        "agent list projection with id/name/description/isGroup/memberIds/conversationPartnerIds/awaitingUserResponse/isRunning/lastMessage/updatedAt"
+      ],
+      "visible_effect": "User can open Agent network, inspect agents/groups and their relationships/activity, pinch/drag the responsive graph, and open the selected chat/room.",
+      "failure_behavior": [
+        "network entry disabled on empty roster",
+        "unknown relationship endpoints omitted",
+        "selection reconciled when canonical roster changes",
+        "missing relationship fields produce no fabricated edges"
+      ],
+      "cancellation_behavior": "presentation gestures have no domain side effects; opening an Agent delegates to existing navigation owner.",
+      "retry_semantics": "roster refresh is read-only and remains owned by MobileBotViewModel/typed Coordinator.",
+      "idempotency_semantics": "stable Agent IDs/edge keys prevent duplicate message or membership edges.",
+      "process_death_recovery": "viewport/selection may reset after Activity/process recreation; canonical roster is re-read from Host and no side effect is replayed.",
+      "account_fencing": "MobileBotViewModel reads the account-scoped typed Coordinator roster; no Android-private persistent Agent graph is created.",
+      "security_boundary": "Compose graph consumes only typed canonical projection and exposes semantic App Agent Surface actions; it does not access Host/JNI directly.",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/features/bots/AgentNetworkModel.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/features/bots/AgentNetworkSurface.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/features/bots/GrokHomeSurface.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/presentation/MobileBotViewModel.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/production/ProductionRenderer_view.kt",
+        "mobile/android/app/src/test/java/com/ombhrum/fabushi/AgentNetworkModelTest.kt",
+        "source/host/src/android_agent_roster.rs"
+      ],
+      "android_owner": "Host canonical agent roster + MobileBotViewModel read-only projection + AgentNetworkSurface ephemeral viewport/selection",
+      "platform_delta": "Desktop React/CSS/wheel graph becomes native Compose Canvas/BoxWithConstraints with pinch zoom and drag pan. CSS is not copied. Android App Agent Surface also exposes stable semantic network actions. Presentation never persists a second graph.",
+      "implementation_status": "mapped",
+      "production_wiring": "Native AGENT_NETWORK route, Home trigger, responsive graph, inspector, semantic surface and canonical roster field projection are wired. However current Android Host AndroidAgentRecord does not yet populate/persist memberIds, conversationPartnerIds, awaitingUserResponse, isRunning or lastMessage, so relationship/activity parity is not complete.",
+      "unit_test": "AgentNetworkModelTest added for edge dedupe, unknown endpoint filtering, activity/summary, deterministic responsive layout, viewport bounds and stale selection reconciliation.",
+      "contract_test": "exact-head Android CI pending; Host projection contract for relationship/activity fields still required.",
+      "integration_test": "shipping route is wired; canonical Host relationship/activity production projection and packaged navigation acceptance still required.",
+      "packaged_test": "required on final exact-head APK/AAB",
+      "device_test": "required in protected device acceptance",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "0aed119..9556376 implements the native presentation slice without inventing relationship truth. Keep mapped/not-verified until Host canonical relationship/activity projection, same-head CI, packaged and device acceptance are all successful."
     }
   ],
   "traceability": {
