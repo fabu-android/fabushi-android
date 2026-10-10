@@ -108,6 +108,7 @@ internal class AndroidRemoteComputerDataPlane(
     private val sendSignal: (kind: String, payload: JSONObject) -> Unit,
     private val drainSignals: () -> JSONArray,
     private val acknowledgeSignals: (lastSignalId: Long) -> Unit,
+    private val onReconnectRequired: (RemoteComputerDataPlaneFence) -> Unit,
     private val onRemoteClose: () -> Unit,
 ) : AutoCloseable {
     private val applicationContext = context.applicationContext
@@ -223,9 +224,14 @@ internal class AndroidRemoteComputerDataPlane(
                             .put("viewportRevision", current.viewportRevision),
                     )
                 }
-                if (newState == PeerConnection.PeerConnectionState.FAILED ||
-                    newState == PeerConnection.PeerConnectionState.CLOSED
+                if (newState == PeerConnection.PeerConnectionState.DISCONNECTED ||
+                    newState == PeerConnection.PeerConnectionState.FAILED
                 ) {
+                    val reconnectFence = activeFence
+                    activeFence = null
+                    disconnectInternal()
+                    reconnectFence?.let(onReconnectRequired)
+                } else if (newState == PeerConnection.PeerConnectionState.CLOSED) {
                     activeFence = null
                 }
             }
