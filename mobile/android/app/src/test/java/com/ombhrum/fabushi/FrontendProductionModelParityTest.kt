@@ -60,6 +60,19 @@ class FrontendProductionModelParityTest {
     }
 
     @Test
+    fun nativeAboutVersionInfoUsesUpdaterVersionTruthAndAndroidPlatformLabel() {
+        val state = AndroidUpdateUiState(
+            phase = AndroidUpdatePhase.UP_TO_DATE,
+            currentVersion = "1.2.3",
+            currentVersionCode = 123L,
+        )
+        assertEquals(
+            "Version: 1.2.3\nVersion Code: 123\nOS: Android test",
+            aboutVersionInfo(state, platformLabel = "Android test"),
+        )
+    }
+
+    @Test
     fun miniAppAndUnknownConversationKindsAreNotProjectedAsChats() {
         assertEquals(ConversationKind.DIRECT, conversationKindFromWire("direct"))
         assertEquals(ConversationKind.GROUP, conversationKindFromWire("group"))
