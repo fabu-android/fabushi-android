@@ -51,6 +51,8 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
     private val host = MahayanaHost(application, processGeneration = processGeneration)
     private val remotePairingStore = AndroidRemotePairingStore(application)
     private val remoteControlSessionStore = AndroidRemoteControlSessionStore(application)
+    private val remoteCreateIntentPreferences =
+        application.getSharedPreferences("fabushi-remote-create-intent-v1", 0)
     private val applicationContext = application.applicationContext
     private val remoteComputerDataPlane by lazy {
         AndroidRemoteComputerDataPlane(
@@ -743,12 +745,14 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
         val pairing = remotePairingStore.readForAccountFence(currentFence, currentEpoch)
             ?: error("Remote Computer is not paired for the current account")
         require(pairing.deviceId == safeDeviceId) { "Remote Computer pairing does not match device" }
+        val requestId = reserveRemoteControlCreateRequest(pairing, currentEpoch)
         val data = authenticatedRemotePlatformRequest(
             "POST",
             "/v1/computers/" + safeDeviceId + "/sessions",
             JSONObject()
                 .put("clientId", pairing.clientId)
-                .put("clientToken", pairing.clientToken),
+                .put("clientToken", pairing.clientToken)
+                .put("requestId", requestId),
         )
         require(boundedRemoteIdentifier(data.getString("deviceId"), "deviceId") == pairing.deviceId) {
             "Remote control session device identity mismatch"
@@ -761,6 +765,9 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
             clientId = pairing.clientId,
             sessionId = boundedRemoteIdentifier(data.getString("sessionId"), "sessionId"),
             mobileToken = data.getString("mobileToken"),
+            requestId = requestId,
+            iceServersJson = (data.optJSONArray("iceServers")
+                ?: error("Remote control session is missing protected ICE configuration")).toString(),
             accountFence = currentFence,
             accountEpoch = currentEpoch,
             expiresAt = data.getLong("expiresAt"),
@@ -768,6 +775,7 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
             lifecycle = RemoteControlSessionLifecycle.PENDING,
         )
         remoteControlSessionStore.write(RemoteControlSessionCredential.parse(credential.toSecretJson()))
+        clearRemoteControlCreateRequest(requestId)
         // Do not project mobileToken or TURN credentials into Presentation. Transport details
         // remain Coordinator-owned until a native Android transport adapter consumes them.
         return credential.publicProjection()
@@ -782,7 +790,13 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
             currentFence,
             currentEpoch,
             processGeneration,
-        ) ?: return JSONObject().put("stored", false)
+        ) ?: run {
+            val pending = currentRemoteControlCreateRequest(currentEpoch)
+            return JSONObject()
+                .put("stored", false)
+                .put("createOutcomeUnknown", pending != null)
+                .put("pendingDeviceId", pending?.first ?: JSONObject.NULL)
+        }
         if (session.expiresAt <= System.currentTimeMillis() / 1_000L) {
             remoteControlSessionStore.clear()
             return JSONObject().put("stored", false).put("reason", "expired")
@@ -1126,6 +1140,50 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
             .put("outcomeUnknown", snapshot.outcomeUnknown)
             .put("kind", snapshot.kind?.name?.lowercase() ?: JSONObject.NULL)
             .put("lastResolution", snapshot.lastResolution?.name?.lowercase() ?: JSONObject.NULL)
+    }
+
+    private fun reserveRemoteControlCreateRequest(
+        pairing: RemotePairingCredential,
+        accountEpoch: Long,
+    ): String {
+        val existing = currentRemoteControlCreateRequest(accountEpoch)
+        if (existing != null &&
+            existing.first == pairing.deviceId &&
+            remoteCreateIntentPreferences.getString("clientId", null) == pairing.clientId
+        ) {
+            return existing.second
+        }
+        val requestId = "android-remote-" + UUID.randomUUID().toString()
+        check(
+            remoteCreateIntentPreferences.edit()
+                .clear()
+                .putLong("accountEpoch", accountEpoch)
+                .putString("deviceId", pairing.deviceId)
+                .putString("clientId", pairing.clientId)
+                .putString("requestId", requestId)
+                .commit(),
+        ) { "Unable to persist Remote Computer create request identity" }
+        return requestId
+    }
+
+    private fun currentRemoteControlCreateRequest(accountEpoch: Long): Pair<String, String>? {
+        if (remoteCreateIntentPreferences.getLong("accountEpoch", -1L) != accountEpoch) {
+            remoteCreateIntentPreferences.edit().clear().commit()
+            return null
+        }
+        val deviceId = remoteCreateIntentPreferences.getString("deviceId", null)?.trim()
+            ?.takeIf(String::isNotEmpty) ?: return null
+        val requestId = remoteCreateIntentPreferences.getString("requestId", null)?.trim()
+            ?.takeIf { it.length in 16..160 } ?: return null
+        return deviceId to requestId
+    }
+
+    private fun clearRemoteControlCreateRequest(requestId: String) {
+        if (remoteCreateIntentPreferences.getString("requestId", null) == requestId) {
+            check(remoteCreateIntentPreferences.edit().clear().commit()) {
+                "Unable to clear Remote Computer create request identity"
+            }
+        }
     }
 
     private fun RemoteControlSessionCredential.toDataPlaneFence(): RemoteComputerDataPlaneFence =
