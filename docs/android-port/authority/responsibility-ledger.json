@@ -4135,14 +4135,14 @@
       "platform_delta": "Desktop sink/TurnToolset composition is retained in Rust but adapted to Android Host durable JSON owners and Android process/account lifecycle fencing; no UI or generated-child owner is introduced.",
       "implementation_status": "implemented",
       "production_wiring": "AndroidJsonHost shares one Arc<Mutex<AndroidAgentRoster>> and one Arc<Mutex<AndroidMessagingService>> between Host façade and async provider threads, wraps only the shipping root routed-tool bridge with AgentManagementRoutedTools, registers active Agent turns for priority interruption, and drains durable messaging wakes into hidden fresh Agent turns from feature.receive; generated-child composition remains unchanged.",
-      "unit_test": "Focused Rust tests cover tool exposure, successful durable delivery, invalid/missing/self target, UTF-16 message clamping, image schemes, direct priority target interruption, group priority ignore, Create/Update duplicate and mismatched duplicate, cancellation/account fencing and process reopen; exact-head GitHub Actions pending.",
-      "contract_test": "Desktop tool schemas/return semantics and agent_messaging wake/priority semantics are mirrored; shipping-provider integration drives [[tool:SendToAgent]] through feature.execute and Host reopen while deterministic message/wake identity prevents duplicate side effects; exact-head GitHub Actions pending.",
-      "integration_test": "feature.execute -> queue_chat_turn -> root routed-tool composition -> AndroidHostInferenceProvider -> AgentManagementRoutedTools -> canonical messaging delivery -> durable wake -> later hidden target fresh turn is production-wired; exact-head CI pending.",
+      "unit_test": "Exact-head GitHub Actions run 38039531067 / rust-runtime-foundation job 114176833238 at 395dfc74d5f8300e14d73df82b98e1a4bd5b6361 passed the Host Rust suite 176/176, including Agent-management success, invalid/missing/self target rejection, UTF-16 clamp, file/https image validation, direct-priority target interruption, group-priority ignore, exact duplicate replay, mismatched duplicate fail-closed, cancellation/account fencing and Host reopen.",
+      "contract_test": "Exact-head run 38039531067 job 114176833238 passed the Rust contract/runtime path preserving Desktop SendToAgent/CreateAgent/UpdateAgent schemas and root-only tool exposure; generated-child composition remains without Agent-management authority.",
+      "integration_test": "Exact-head run 38039531067 job 114176833238 passed the shipping feature.execute -> queue_chat_turn -> root routed-tool composition -> AndroidHostInferenceProvider -> AgentManagementRoutedTools -> canonical messaging delivery -> durable wake -> later hidden fresh Agent turn integration, including process reopen and priority interruption.",
       "packaged_test": "required on final exact-head signed APK/AAB",
       "device_test": "required after protected-account and release signing prerequisites are available",
-      "artifact": null,
+      "artifact": "GitHub Actions run 38039531067 / job 114176833238 @ 395dfc74d5f8300e14d73df82b98e1a4bd5b6361: rust-runtime-foundation success; Host Rust tests 176 passed, 0 failed.",
       "verification_status": "not-verified",
-      "notes": "Implemented source slice only; verification remains not-verified pending same-head CI/package/device evidence. Group delivery requires a canonical group conversation/membership. Remote/Computer remains independently not-verified."
+      "notes": "Current-head unit/contract/integration evidence is recorded. Responsibility remains not-verified because the shared turn_toolset.rs source row still carries unresolved Remote/Computer responsibilities and final signed package/protected-device acceptance remains required; the 176/176 Rust result is not used to inflate unrelated source rows."
     },
     {
       "responsibility_id": "ACCEPTANCE-MESSENGER-E2E-001",
