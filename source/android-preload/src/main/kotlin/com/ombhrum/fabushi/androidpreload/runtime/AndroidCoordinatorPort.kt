@@ -68,7 +68,8 @@ interface AndroidCoordinatorPort {
     fun assistantMarkRead(): JSONObject = assistantProjection()
     fun agentSubagentTool(params: JSONObject): JSONObject
     fun agentSubagentReconcile(params: JSONObject): JSONObject
-    fun agentAsyncTasks(id: String): JSONArray
+    fun agentAsyncTasks(id: String): JSONArray =
+        error("Agent async tasks are unavailable on this Coordinator port")
 
     fun agentList(): JSONArray
     fun agentCreate(name: String, description: String): JSONObject
