@@ -2389,6 +2389,49 @@ mod tests {
     }
 
     #[test]
+    fn agent_relationship_projection_is_durable_and_account_fenced() {
+        let root = temp_root("agent-relationships");
+        {
+            let mut service = AndroidMessagingService::open(&root).unwrap();
+            service
+                .deliver_agent_message(
+                    "acct:a",
+                    "agent-a",
+                    "agent-b",
+                    false,
+                    "hello",
+                    &[],
+                    false,
+                    "tool-call-1",
+                    10,
+                )
+                .unwrap();
+            assert_eq!(
+                service.agent_conversation_partner_ids("acct:a", "agent-a"),
+                vec!["agent-b".to_string()]
+            );
+            assert_eq!(
+                service.agent_conversation_partner_ids("acct:a", "agent-b"),
+                vec!["agent-a".to_string()]
+            );
+            assert!(
+                service
+                    .agent_conversation_partner_ids("acct:b", "agent-a")
+                    .is_empty(),
+                "stable direct-conversation identity must fence another account"
+            );
+        }
+
+        let reopened = AndroidMessagingService::open(&root).unwrap();
+        assert_eq!(
+            reopened.agent_conversation_partner_ids("acct:a", "agent-a"),
+            vec!["agent-b".to_string()],
+            "relationship must survive process restart from the canonical messaging repository"
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn child_mutation_requires_canonical_parent_membership_and_survives_reopen() {
         let root = temp_root("child");
         let actor = "human:owner";
