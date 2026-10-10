@@ -727,19 +727,36 @@ impl AndroidJsonHost {
     }
 
     fn current_turn_account_fence(&self) -> Result<String, String> {
-        if self.mode == AndroidHostMode::Test {
-            return Ok("session:test:android".into());
-        }
-        #[cfg(feature = "ci-account-session-import")]
-        if let Some(identity) = self.ci_session_identity.as_ref() {
-            if !self.logged_in {
-                return Err("Sign in to Fabushi to use account-scoped capabilities.".into());
+        let resolved = if self.mode == AndroidHostMode::Test {
+            Ok("session:test:android".to_string())
+        } else {
+            #[cfg(feature = "ci-account-session-import")]
+            if let Some(identity) = self.ci_session_identity.as_ref() {
+                if !self.logged_in {
+                    Err("Sign in to Fabushi to use account-scoped capabilities.".into())
+                } else {
+                    let material = format!("{}\n{}", identity.session_id, identity.device_id);
+                    Ok(format!("session:{}", crate::sha256::sha256_hex(material.as_bytes())))
+                }
+            } else {
+                self.account.session_fence()
+                    .ok_or_else(|| "Sign in to Fabushi to use account-scoped capabilities.".into())
             }
-            let material = format!("{}\n{}", identity.session_id, identity.device_id);
-            return Ok(format!("session:{}", crate::sha256::sha256_hex(material.as_bytes())));
+            #[cfg(not(feature = "ci-account-session-import"))]
+            {
+                self.account.session_fence()
+                    .ok_or_else(|| "Sign in to Fabushi to use account-scoped capabilities.".into())
+            }
+        };
+        if let Ok(fence) = resolved.as_ref() {
+            *self
+                .live_account_fence
+                .lock()
+                .map_err(|_| "live account fence lock poisoned".to_string())? = Some(fence.clone());
+        } else if let Ok(mut live) = self.live_account_fence.lock() {
+            *live = None;
         }
-        self.account.session_fence()
-            .ok_or_else(|| "Sign in to Fabushi to use account-scoped capabilities.".into())
+        resolved
     }
 
     fn current_messaging_identity(
@@ -1501,6 +1518,10 @@ impl AndroidJsonHost {
         }
         self.pending_plugin_variable_writes.clear();
         self.cancel_mcp_auth_watches_for_account_change("account-logout")?;
+        *self
+            .live_account_fence
+            .lock()
+            .map_err(|_| "live account fence lock poisoned".to_string())? = None;
         if self.mode == AndroidHostMode::Test {
             self.logged_in = false;
             return Ok(self.auth_status());
@@ -1548,6 +1569,10 @@ impl AndroidJsonHost {
             .account
             .browser_poll(required_string(params, "attemptId")?)?;
         let current_fence = self.account.session_fence();
+        *self
+            .live_account_fence
+            .lock()
+            .map_err(|_| "live account fence lock poisoned".to_string())? = current_fence.clone();
         if previous_fence.is_some()
             && current_fence.is_some()
             && previous_fence != current_fence
@@ -2111,6 +2136,10 @@ impl AndroidJsonHost {
         let previous_fence = self.account.session_fence();
         let (result, mutation) = self.account.browser_poll(attempt_id)?;
         let current_fence = self.account.session_fence();
+        *self
+            .live_account_fence
+            .lock()
+            .map_err(|_| "live account fence lock poisoned".to_string())? = current_fence.clone();
         if previous_fence.is_some()
             && current_fence.is_some()
             && previous_fence != current_fence
