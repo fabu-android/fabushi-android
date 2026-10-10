@@ -5799,6 +5799,29 @@
             "group member projection is strict and provider derives candidates/mutations",
             "group bridge validates RPC payloads/replies and drops stale generations"
           ]
+        },
+        {
+          "path": "frontend/src/recovered/features/agent-info/group-members/route.ts",
+          "blob_sha": "da39e969a1c3c98cf0c94a7b6a7c203e70dfeb86",
+          "symbols": [
+            "projectGroupInfoPaneRoute",
+            "isCurrentGroupInfoPaneRoute",
+            "isLocalGroupAgent"
+          ]
+        },
+        {
+          "path": "frontend/src/recovered/features/agent-info/group-members/view.tsx",
+          "blob_sha": "8f2416ffdc140869ec1ab8d6645ee745b79e3d04",
+          "symbols": [
+            "GroupMembersPane"
+          ]
+        },
+        {
+          "path": "frontend/src/recovered/features/agent-info/group-members/view.css",
+          "blob_sha": "fd5517e3f08ec4091f59071520525f6516b46815",
+          "symbols": [
+            "shipping group-members footer/layout styles"
+          ]
         }
       ],
       "source_commit": "92fcc2b0f64b6b8f8f8829305b30874b558d6b35",
@@ -5851,15 +5874,15 @@
       "android_owner": "Rust AndroidAgentRoster canonical membership owner + typed Coordinator transport + native ephemeral selection UI",
       "platform_delta": "Desktop React provider/account-generation wrapper becomes native Compose/ViewModel selection over a process-scoped typed Coordinator. Durable membership and validation stay below UI in Rust.",
       "implementation_status": "implemented",
-      "production_wiring": "createGroup/setGroupMembers dispatch into AndroidJsonRuntime and AndroidAgentRoster; MobileBotViewModel invokes only typed agentCreateGroup/agentSetGroupMembers; GrokHomeSurface exposes create/edit members and refreshes canonical roster.",
+      "production_wiring": "createGroup/setGroupMembers dispatch into AndroidJsonRuntime and AndroidAgentRoster; MobileBotViewModel invokes only typed agentCreateGroup/agentSetGroupMembers; GrokHomeSurface exposes create/edit members and refreshes canonical roster. Fresh audit of route/view/CSS confirms canonical membership mutation is implemented, but Android still lacks the Desktop-equivalent account-generation-fenced local-group details route and full member-list/open-member-chat/focus surface; those presentation responsibilities remain mapped/open and prevent treating the whole group-members surface as parity-complete.",
       "unit_test": "Rust AndroidAgentRoster tests cover durable member persistence, duplicate normalization, self/group/unknown fencing via validation path, and delete cleanup; descendant exact-head Android UI regression must rerun after this ledger commit.",
       "contract_test": "Desktop max-six/setGroupMembers contract is represented; typed Android Coordinator contains no arbitrary Host method string at presentation call sites.",
-      "integration_test": "Predecessor 3c0d9edad4246879463ba118234cf7a692d6c2dd Rust foundation passed including group membership tests; descendant exact-head integration still required.",
-      "packaged_test": "required in final packaged Agent group/Agent Network journey",
-      "device_test": "required for create/edit/restart/accessibility on supported Android devices",
+      "integration_test": "Predecessor 3c0d9edad4246879463ba118234cf7a692d6c2dd Rust foundation passed including group membership tests; descendant exact-head integration still required. Dedicated native group-details/open-member-chat/a11y integration coverage remains required in addition to canonical membership mutation coverage.",
+      "packaged_test": "required in final packaged Agent group/Agent Network journey, including group details member list, add/remove, open member chat, account switch and focus/accessibility behavior",
+      "device_test": "required for create/edit/details/open-member-chat/restart/account-switch/accessibility on supported Android devices",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Implemented but intentionally not verified. Same-exact-HEAD Android regression/packaged/device evidence is required; Agent Network relationship/activity parity also has separate open fields beyond memberIds."
+      "notes": "Implemented but intentionally not verified. Same-exact-HEAD Android regression/packaged/device evidence is required; Agent Network relationship/activity parity also has separate open fields beyond memberIds. Fresh 92fcc2b0 route/view/CSS audit mapped the still-open group-details presentation slice; existing implemented canonical mutation status is unchanged and verification remains not-verified."
     },
     {
       "responsibility_id": "COMPUTER-REBUILD-ANDROID-001",
