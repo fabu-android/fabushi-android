@@ -29,6 +29,8 @@ internal data class RemoteControlSessionCredential(
     val clientId: String,
     val sessionId: String,
     val mobileToken: String,
+    val requestId: String? = null,
+    val iceServersJson: String = "[]",
     val accountFence: String,
     val accountEpoch: Long,
     val expiresAt: Long,
@@ -51,6 +53,8 @@ internal data class RemoteControlSessionCredential(
         .put("clientId", clientId)
         .put("sessionId", sessionId)
         .put("mobileToken", mobileToken)
+        .put("requestId", requestId ?: JSONObject.NULL)
+        .put("iceServersJson", iceServersJson)
         .put("accountFence", accountFence)
         .put("accountEpoch", accountEpoch)
         .put("expiresAt", expiresAt)
@@ -120,12 +124,14 @@ internal data class RemoteControlSessionCredential(
                 "reconnectCount",
                 "reconcileRequired",
             )
+            val dataPlaneKeys = lifecycleKeys + setOf("requestId", "iceServersJson")
             val observedKeys = json.keys().asSequence().toSet()
             require(
                 observedKeys == legacyKeys ||
                     observedKeys == cursorKeys ||
                     observedKeys == currentKeys ||
-                    observedKeys == lifecycleKeys
+                    observedKeys == lifecycleKeys ||
+                    observedKeys == dataPlaneKeys
             ) {
                 "Remote control session credential contains unsupported fields"
             }
@@ -138,6 +144,25 @@ internal data class RemoteControlSessionCredential(
             val token = json.getString("mobileToken")
             require(token.length in 48..256 && token.none(Char::isWhitespace) && token.none(Char::isISOControl)) {
                 "Remote control session mobileToken is invalid"
+            }
+            val requestId = if (!json.has("requestId") || json.isNull("requestId")) {
+                null
+            } else {
+                json.getString("requestId").trim().also {
+                    require(
+                        it.length in 16..160 &&
+                            it.all { character ->
+                                character.isLetterOrDigit() || character in setOf('-', '_', ':', '.')
+                            },
+                    ) { "Remote control session requestId is invalid" }
+                }
+            }
+            val iceServersJson = json.optString("iceServersJson", "[]")
+            require(iceServersJson.toByteArray(StandardCharsets.UTF_8).size <= 32 * 1024) {
+                "Remote control ICE configuration exceeds protected-store bounds"
+            }
+            runCatching { org.json.JSONArray(iceServersJson) }.getOrElse {
+                throw IllegalArgumentException("Remote control ICE configuration is invalid", it)
             }
             val epoch = json.getLong("accountEpoch")
             require(epoch > 0L) { "Remote control session account epoch must be positive" }
@@ -193,6 +218,8 @@ internal data class RemoteControlSessionCredential(
                 clientId = identity("clientId", 160),
                 sessionId = identity("sessionId", 160),
                 mobileToken = token,
+                requestId = requestId,
+                iceServersJson = iceServersJson,
                 accountFence = identity("accountFence", 512),
                 accountEpoch = epoch,
                 expiresAt = expiresAt,
