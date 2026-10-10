@@ -232,12 +232,62 @@ impl CapabilityBroker {
             account_fence: resolved.account_fence.clone(),
             runtime_generation: 0,
             decision: if approved { CapabilityDecision::Allow } else { CapabilityDecision::Deny },
-            outcome: if approved { "approval_consumed".into() } else { "approval_denied".into() },
+            outcome: if approved { "approval_allowed_once".into() } else { "approval_denied".into() },
             reason: (!approved).then(|| "user denied the requested capability".into()),
             at_ms: now_ms,
         });
         self.persist()?;
         Ok(resolved)
+    }
+
+    pub fn consume_approval_for_dispatch(
+        &mut self,
+        approval_id: &str,
+        operation_id: &str,
+        request_id: &str,
+        capability: &str,
+        current_account_fence: &str,
+        now_ms: u64,
+    ) -> Result<PendingCapabilityApproval, String> {
+        validate_identity("approval", approval_id)?;
+        validate_identity("operation", operation_id)?;
+        validate_identity("request", request_id)?;
+        validate_identity("capability", capability)?;
+        validate_identity("account fence", current_account_fence)?;
+        let approval = self
+            .state
+            .approvals
+            .get_mut(approval_id)
+            .ok_or("approval is unknown, stale, cancelled, or already consumed")?;
+        if approval.state != "allowed_once" {
+            return Err(format!("approval is not dispatchable from state {}", approval.state));
+        }
+        if approval.operation_id != operation_id
+            || approval.request_id != request_id
+            || approval.capability != capability
+        {
+            return Err("approval identity does not match the remote dispatch".into());
+        }
+        if approval.account_fence != current_account_fence {
+            return Err("stale approval fenced by account identity".into());
+        }
+        approval.state = "consumed".into();
+        approval.resolved_at_ms = Some(now_ms);
+        let consumed = approval.clone();
+        self.state.audit.push(CapabilityAuditRecord {
+            request_id: consumed.request_id.clone(),
+            plugin_id: "feature".into(),
+            capability: consumed.capability.clone(),
+            tool: "capability.dispatch".into(),
+            account_fence: consumed.account_fence.clone(),
+            runtime_generation: 0,
+            decision: CapabilityDecision::Allow,
+            outcome: "approval_consumed".into(),
+            reason: Some("one-time capability grant consumed immediately before dispatch".into()),
+            at_ms: now_ms,
+        });
+        self.persist()?;
+        Ok(consumed)
     }
 
     pub fn cancel_approval_operation(
@@ -409,6 +459,92 @@ mod tests {
         assert!(reopened.cancel_approval_operation("o3", "user cancelled", 9).unwrap());
         assert_eq!(reopened.approval_state("a3"), Some("cancelled"));
         assert!(reopened.resolve_approval("a3", true, "acct-1", 10).is_err());
+    }
+
+    #[test]
+    fn allowed_once_grant_is_consumed_only_at_exact_dispatch_identity() {
+        let (d, mut b) = broker();
+        b.request_approval(
+            "grant-1",
+            "request-1",
+            "operation-1",
+            "computer.use",
+            json!({"executionTarget":"remote_box","deviceId":"device-1"}),
+            "session:account-a",
+            1,
+        )
+        .unwrap();
+        let allowed = b
+            .resolve_approval("grant-1", true, "session:account-a", 2)
+            .unwrap();
+        assert_eq!(allowed.state, "allowed_once");
+        assert_eq!(b.approval_state("grant-1"), Some("allowed_once"));
+
+        assert!(b
+            .consume_approval_for_dispatch(
+                "grant-1",
+                "operation-1",
+                "wrong-request",
+                "computer.use",
+                "session:account-a",
+                3,
+            )
+            .is_err());
+        assert_eq!(b.approval_state("grant-1"), Some("allowed_once"));
+
+        let consumed = b
+            .consume_approval_for_dispatch(
+                "grant-1",
+                "operation-1",
+                "request-1",
+                "computer.use",
+                "session:account-a",
+                4,
+            )
+            .unwrap();
+        assert_eq!(consumed.state, "consumed");
+        assert!(b
+            .consume_approval_for_dispatch(
+                "grant-1",
+                "operation-1",
+                "request-1",
+                "computer.use",
+                "session:account-a",
+                5,
+            )
+            .is_err());
+
+        drop(b);
+        let reopened = CapabilityBroker::open(d.path().join("broker.json"), 6).unwrap();
+        assert_eq!(reopened.approval_state("grant-1"), Some("consumed"));
+    }
+
+    #[test]
+    fn allowed_once_grant_is_fenced_on_account_switch_before_dispatch() {
+        let (_d, mut b) = broker();
+        b.request_approval(
+            "grant-account",
+            "request-account",
+            "operation-account",
+            "computer.use",
+            json!({"executionTarget":"remote_box","deviceId":"device-1"}),
+            "session:account-a",
+            1,
+        )
+        .unwrap();
+        b.resolve_approval("grant-account", true, "session:account-a", 2)
+            .unwrap();
+        assert!(b
+            .consume_approval_for_dispatch(
+                "grant-account",
+                "operation-account",
+                "request-account",
+                "computer.use",
+                "session:account-b",
+                3,
+            )
+            .is_err());
+        assert_eq!(b.approval_state("grant-account"), Some("allowed_once"));
     }
 
     #[test] fn duplicate_and_stale_generation_are_rejected() {
