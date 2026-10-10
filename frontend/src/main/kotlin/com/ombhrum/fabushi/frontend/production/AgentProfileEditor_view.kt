@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -21,10 +22,12 @@ import androidx.compose.ui.unit.dp
 internal fun AgentProfileEditor(
     agent: MobileBotSummaryAndroid?,
     onClose: () -> Unit,
-    onConfirm: (String, String, String, String?, String?) -> Unit,
+    onConfirm: (String, String, String?, String, String?, String?) -> Unit,
+    onSetNotifications: (String, Boolean) -> Unit,
 ) {
     val target = agent ?: return
     var name by remember(target.id, target.name) { mutableStateOf(target.name) }
+    var title by remember(target.id, target.title) { mutableStateOf(target.title.orEmpty()) }
     var description by remember(target.id, target.description) { mutableStateOf(target.description) }
     var avatarShape by remember(target.id, target.avatarShape) { mutableStateOf(target.avatarShape) }
     var avatarColor by remember(target.id, target.avatarColor) { mutableStateOf(target.avatarColor) }
@@ -43,6 +46,17 @@ internal fun AgentProfileEditor(
                         .fillMaxWidth()
                         .testTag("agent-profile-name-${target.id}"),
                 )
+                if (!target.isGroup) {
+                    OutlinedTextField(
+                        value = title,
+                        onValueChange = { title = it },
+                        label = { Text("Title") },
+                        singleLine = true,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("agent-profile-title-${target.id}"),
+                    )
+                }
                 OutlinedTextField(
                     value = description,
                     onValueChange = { description = it },
@@ -89,12 +103,28 @@ internal fun AgentProfileEditor(
                     onClick = { avatarShape = null; avatarColor = null },
                     modifier = Modifier.testTag("agent-profile-avatar-reset-${target.id}"),
                 ) { Text("Use default avatar") }
+                if (!target.isGroup) {
+                    Row(
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("Notifications")
+                            Text("Get notified when this agent finishes or needs input")
+                        }
+                        Switch(
+                            checked = target.notifyOnUpdatesEnabled,
+                            onCheckedChange = { onSetNotifications(target.id, it) },
+                            modifier = Modifier.testTag("agent-profile-notifications-${target.id}"),
+                        )
+                    }
+                }
             }
         },
         confirmButton = {
             TextButton(
                 enabled = name.isNotBlank(),
-                onClick = { onConfirm(target.id, name, description, avatarShape, avatarColor) },
+                onClick = { onConfirm(target.id, name, title.takeIf { !target.isGroup }, description, avatarShape, avatarColor) },
                 modifier = Modifier.testTag("agent-profile-save-${target.id}"),
             ) {
                 Text("Save")
