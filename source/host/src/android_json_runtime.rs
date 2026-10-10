@@ -1334,18 +1334,38 @@ impl AndroidJsonHost {
                 .and_then(Value::as_str)
                 .filter(|value| !value.trim().is_empty())
                 .ok_or("completed reconciliation requires proven assistantText")?;
-            self.transcript
+            let mut transcript = self
+                .transcript
                 .lock()
-                .map_err(|_| "transcript lock poisoned".to_string())?
-                .append_entry_if_absent(json!({
-                    "id":format!("assistant:{}", record.operation_id),
-                    "kind":"message",
-                    "role":"assistant",
-                    "content":assistant_text,
-                    "operationId":record.operation_id,
-                    "timestampMs":now_ms(),
-                    "reconciled":true,
-                }))
+                .map_err(|_| "transcript lock poisoned".to_string())?;
+            let agent_id = transcript
+                .get_transcript()
+                .into_iter()
+                .find(|entry| {
+                    entry.get("role").and_then(Value::as_str) == Some("user")
+                        && entry.get("operationId").and_then(Value::as_str)
+                            == Some(record.operation_id.as_str())
+                })
+                .and_then(|entry| {
+                    entry.get("agentId")
+                        .and_then(Value::as_str)
+                        .filter(|value| !value.trim().is_empty())
+                        .map(str::to_string)
+                });
+            let mut assistant_entry = json!({
+                "id":format!("assistant:{}", record.operation_id),
+                "kind":"message",
+                "role":"assistant",
+                "content":assistant_text,
+                "operationId":record.operation_id,
+                "timestampMs":now_ms(),
+                "reconciled":true,
+            });
+            if let Some(agent_id) = agent_id {
+                assistant_entry["agentId"] = Value::String(agent_id);
+            }
+            transcript
+                .append_entry_if_absent(assistant_entry)
                 .map_err(|error| {
                     format!("failed to persist reconciled assistant transcript entry: {error}")
                 })?;
@@ -2441,6 +2461,12 @@ impl AndroidJsonHost {
             return Err("Agent turns are quiescing for upgrade; new dispatch is fenced.".into());
         }
 
+        let agent_id = command
+            .get("agentId")
+            .and_then(Value::as_str)
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or("mahayana-assistant")
+            .to_string();
         let assistant_entry_id = format!("assistant:{operation_id}");
         if !hidden {
             let mut transcript = self
@@ -2454,6 +2480,7 @@ impl AndroidJsonHost {
                     "role":"user",
                     "content":prompt.clone(),
                     "operationId":operation_id,
+                    "agentId":agent_id.clone(),
                     "timestampMs":now_ms(),
                 }))
                 .map_err(|error| format!("failed to persist user transcript entry: {error}"))?;
@@ -2492,12 +2519,6 @@ impl AndroidJsonHost {
             }
         }
 
-        let agent_id = command
-            .get("agentId")
-            .and_then(Value::as_str)
-            .filter(|value| !value.trim().is_empty())
-            .unwrap_or("mahayana-assistant")
-            .to_string();
         let model = AndroidHostInferenceProvider::resolve_model_id(
             command
                 .get("model")
@@ -3023,6 +3044,7 @@ impl AndroidJsonHost {
                                         "role":"assistant",
                                         "content":final_text.clone(),
                                         "operationId":operation_id_owned,
+                                        "agentId":conversation_id_owned.clone(),
                                         "timestampMs":now_ms(),
                                     }))
                                     .map_err(|error| {
@@ -4822,7 +4844,12 @@ mod tests {
             let snapshot = host
                 .dispatch("feature.transcript.snapshot", &json!({}))
                 .unwrap();
-            assert_eq!(snapshot.as_array().unwrap().len(), 2);
+            let entries = snapshot.as_array().unwrap();
+            assert_eq!(entries.len(), 2);
+            assert!(
+                entries.iter().all(|entry| entry["agentId"] == "mahayana-assistant"),
+                "new canonical transcript entries must persist their owning Agent identity"
+            );
         }
 
         {
@@ -4830,7 +4857,12 @@ mod tests {
             let snapshot = reopened
                 .dispatch("feature.transcript.snapshot", &json!({}))
                 .unwrap();
-            assert_eq!(snapshot.as_array().unwrap().len(), 2);
+            let reopened_entries = snapshot.as_array().unwrap();
+            assert_eq!(reopened_entries.len(), 2);
+            assert!(
+                reopened_entries.iter().all(|entry| entry["agentId"] == "mahayana-assistant"),
+                "Agent identity must survive Host reopen with the canonical transcript"
+            );
 
             reopened
                 .dispatch(
