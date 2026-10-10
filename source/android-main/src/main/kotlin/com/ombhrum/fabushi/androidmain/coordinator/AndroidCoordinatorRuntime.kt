@@ -41,6 +41,9 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
     private val accountAccessOwner = AccountAccessProjectionOwner(
         SharedPreferencesAccountAccessEpochStore(application),
     )
+    private val computerRebuildOwner = ComputerRebuildStateOwner(
+        SharedPreferencesComputerRebuildStateStore(application),
+    )
     private val agentRosterMutationOwner = AgentRosterMutationOwner(
         SharedPreferencesAgentRosterMutationStore(application),
     )
@@ -55,6 +58,7 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
     }
 
     init {
+        computerRebuildOwner.observeAccount(accountAccessOwner.currentProjection().accountEpoch)
         runCatching { reconcileAgentRosterMutations() }
         storagePressureExecutor.scheduleWithFixedDelay(
             {
@@ -315,6 +319,7 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
             loggedIn = auth.optBoolean("loggedIn", false),
             identity = identity,
         )
+        computerRebuildOwner.observeAccount(accountAccessOwner.currentProjection().accountEpoch)
     }
     override fun automationUpsert(params: JSONObject) = host.request("feature.automation.upsert", params)
     override fun automationList(): JSONArray = host.requestValue("feature.automation.list") as? JSONArray ?: JSONArray()
