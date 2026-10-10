@@ -5278,6 +5278,7 @@ mod tests {
                     "type":"chat.send",
                     "requestId":"restart-pending-review",
                     "agentId":"mahayana-assistant",
+                    "requestSource":"turn",
                     "text":"[[tool:Task]]{\"prompt\":\"[[review:block]] hold before launch\",\"subagent_type\":\"general-purpose\"}"
                 }}),
             )
@@ -5348,6 +5349,7 @@ mod tests {
                 "type":"chat.send",
                 "requestId":"restart-pending-review",
                 "agentId":"mahayana-assistant",
+                    "requestSource":"turn",
                 "text":"[[tool:Task]]{\"prompt\":\"[[review:block]] hold before launch\",\"subagent_type\":\"general-purpose\"}"
             }}),
         );
