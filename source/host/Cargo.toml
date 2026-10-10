@@ -12,6 +12,7 @@ ci-account-session-import = []
 [dependencies]
 base64 = "0.22"
 fabushi-android-shared = { path = "../shared" }
+fabushi-android-box-exec-daemon = { path = "../box-exec-daemon" }
 fabushi-constants = { path = "../packages/constants" }
 mahayana-plugin-runtime = { path = "../packages/mahayana-plugin-runtime" }
 mahayana-js-runtime = { path = "../packages/mahayana-js-runtime" }

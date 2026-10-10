@@ -245,6 +245,117 @@ impl RemoteExecutionJournal {
         self.persist()
     }
 
+    pub fn reject_after_dispatch(
+        &mut self,
+        operation_id: &str,
+        request_id: &str,
+        current_account_fence: &str,
+        current_account_epoch: u64,
+        remote_ack_id: Option<&str>,
+        now_ms: u64,
+    ) -> Result<(), String> {
+        if let Some(remote_ack_id) = remote_ack_id {
+            validate_identity("remote acknowledgement", remote_ack_id)?;
+        }
+        let record = self
+            .state
+            .operations
+            .get_mut(operation_id)
+            .ok_or("remote operation is unknown")?;
+        if record.request_id != request_id {
+            return Err("stale or mismatched remote rejection callback".into());
+        }
+        if record.account_fence != current_account_fence
+            || record.account_epoch != current_account_epoch
+        {
+            return Err("stale remote rejection from old account epoch".into());
+        }
+        if !matches!(record.state, RemoteExecutionState::Sent | RemoteExecutionState::Acked) {
+            return Err(format!(
+                "remote rejection is invalid from state {:?}",
+                record.state
+            ));
+        }
+        record.state = RemoteExecutionState::Rejected;
+        if let Some(remote_ack_id) = remote_ack_id {
+            record.remote_ack_id = Some(remote_ack_id.into());
+        }
+        record.updated_at_ms = now_ms;
+        self.persist()
+    }
+
+    pub fn reconcile_rejected(
+        &mut self,
+        operation_id: &str,
+        current_account_fence: &str,
+        current_account_epoch: u64,
+        remote_ack_id: Option<&str>,
+        now_ms: u64,
+    ) -> Result<(), String> {
+        if let Some(remote_ack_id) = remote_ack_id {
+            validate_identity("remote acknowledgement", remote_ack_id)?;
+        }
+        let record = self
+            .state
+            .operations
+            .get_mut(operation_id)
+            .ok_or("remote operation is unknown")?;
+        if record.account_fence != current_account_fence
+            || record.account_epoch != current_account_epoch
+        {
+            return Err("cannot reconcile remote rejection across account epochs".into());
+        }
+        if record.state != RemoteExecutionState::OutcomeUnknown {
+            return Err("only outcome-unknown remote operations can reconcile rejection".into());
+        }
+        record.state = RemoteExecutionState::Rejected;
+        if let Some(remote_ack_id) = remote_ack_id {
+            record.remote_ack_id = Some(remote_ack_id.into());
+        }
+        record.updated_at_ms = now_ms;
+        self.persist()
+    }
+
+    pub fn confirm_cancel_after_dispatch(
+        &mut self,
+        operation_id: &str,
+        current_account_fence: &str,
+        current_account_epoch: u64,
+        remote_ack_id: Option<&str>,
+        now_ms: u64,
+    ) -> Result<(), String> {
+        if let Some(remote_ack_id) = remote_ack_id {
+            validate_identity("remote acknowledgement", remote_ack_id)?;
+        }
+        let record = self
+            .state
+            .operations
+            .get_mut(operation_id)
+            .ok_or("remote operation is unknown")?;
+        if record.account_fence != current_account_fence
+            || record.account_epoch != current_account_epoch
+        {
+            return Err("stale remote cancel confirmation from old account epoch".into());
+        }
+        if !matches!(
+            record.state,
+            RemoteExecutionState::Sent
+                | RemoteExecutionState::Acked
+                | RemoteExecutionState::OutcomeUnknown
+        ) {
+            return Err(format!(
+                "remote cancel confirmation is invalid from state {:?}",
+                record.state
+            ));
+        }
+        record.state = RemoteExecutionState::Cancelled;
+        if let Some(remote_ack_id) = remote_ack_id {
+            record.remote_ack_id = Some(remote_ack_id.into());
+        }
+        record.updated_at_ms = now_ms;
+        self.persist()
+    }
+
     pub fn disconnect(&mut self, now_ms: u64) -> Result<usize, String> {
         let mut changed = 0usize;
         for record in self.state.operations.values_mut() {
