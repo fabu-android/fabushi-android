@@ -88,7 +88,10 @@ internal fun ProductionRenderer(
                         model.refresh()
                         botModel.refreshBots()
                     }
-                    if (!state.loggedIn) rendererRoute = RendererRoute.GROK_HOME
+                    if (!state.loggedIn) {
+                        botModel.resetAccountScope()
+                        rendererRoute = RendererRoute.GROK_HOME
+                    }
                 }
                 LaunchedEffect(rendererRoute, state.loggedIn) {
                     if (state.loggedIn && (rendererRoute == RendererRoute.GROK_HOME || rendererRoute == RendererRoute.AGENT_NETWORK)) {
