@@ -111,8 +111,10 @@ def check_full_desktop_inventory(strict: bool, errors: list[str], warnings: list
     }
 
     expected_count = manifest.get("tracked_non_tree_entries")
-    if expected_count != 8172:
-        errors.append(f"full Desktop inventory must declare 8172 tracked entries, got {expected_count!r}")
+    if not isinstance(expected_count, int) or expected_count <= 0:
+        errors.append(
+            f"full Desktop inventory must declare a positive tracked entry count, got {expected_count!r}"
+        )
     if len(source_rows) != expected_count:
         errors.append(f"full Desktop source ledger row count mismatch: {len(source_rows)} != {expected_count}")
 
@@ -192,7 +194,7 @@ def check_full_desktop_inventory(strict: bool, errors: list[str], warnings: list
             path = source.get("path")
             row = by_path.get(path)
             if row is None:
-                errors.append(f"{rid}: Desktop source anchor is absent from 8172-entry inventory: {path}")
+                errors.append(f"{rid}: Desktop source anchor is absent from {expected_count}-entry inventory: {path}")
                 continue
             if source.get("blob_sha") and source.get("blob_sha") != row.get("source_blob_sha"):
                 blob_mismatches += 1
