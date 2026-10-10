@@ -115,6 +115,42 @@ class FrontendProductionModelParityTest {
     }
 
     @Test
+    fun commandPaletteCanonicalIdentityReplacesStaleRowsWithoutDuplicates() {
+        val stale = CommandPaletteEntry(
+            id = "human:ada",
+            kind = CommandPaletteEntryKind.AGENT,
+            label = "Ada (stale)",
+            detail = "Old row",
+            activate = {},
+        )
+        val other = CommandPaletteEntry(
+            id = "human:grace",
+            kind = CommandPaletteEntryKind.AGENT,
+            label = "Grace",
+            activate = {},
+        )
+        val current = CommandPaletteEntry(
+            id = "human:ada",
+            kind = CommandPaletteEntryKind.AGENT,
+            label = "Ada",
+            detail = "Current row",
+            activate = {},
+        )
+        val canonical = dedupeCommandPaletteEntries(listOf(stale, other, current))
+        assertEquals(listOf("human:ada", "human:grace"), canonical.map { it.id })
+        assertEquals("Ada", canonical.first().label)
+        assertEquals("Current row", canonical.first().detail)
+
+        val results = commandPaletteEntries(
+            listOf(stale, other, current),
+            CommandPaletteTab.AGENTS,
+            "ada",
+        )
+        assertEquals(1, results.count { it.id == "human:ada" })
+        assertEquals("Ada", results.single { it.id == "human:ada" }.label)
+    }
+
+    @Test
     fun commandPaletteRootCommandsAreCurrentChatScoped() {
         val opened = mutableListOf<CommandPaletteInfoSection>()
         assertTrue(
