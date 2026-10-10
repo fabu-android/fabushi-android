@@ -325,6 +325,8 @@ internal fun ProductionRenderer(
                             onDuplicateBot = botModel::duplicateBot,
                             onDeleteBot = botModel::deleteBotAndAwait,
                             onSetBotPinned = botModel::setBotPinned,
+                            onMoveBotToSection = botModel::moveBotToSection,
+                            onMoveBotToNewSection = botModel::moveBotToNewSection,
                             onCloseBot = botModel::closeBot,
                             onDraftChange = botModel::setDraft,
                             onSend = botModel::send,
