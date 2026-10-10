@@ -228,6 +228,7 @@ internal fun ProductionRenderer(
                                     detail = bot.description.takeIf(String::isNotBlank),
                                     searchText = listOf(bot.name, bot.description, "agent bot")
                                         .joinToString(" "),
+                                    isHidden = bot.isHidden,
                                     activate = {
                                         rendererRoute = RendererRoute.GROK_HOME
                                         botModel.openBot(bot)

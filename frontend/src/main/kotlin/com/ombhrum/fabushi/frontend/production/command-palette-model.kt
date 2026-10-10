@@ -16,6 +16,7 @@ internal data class CommandPaletteEntry(
     val label: String,
     val detail: String? = null,
     val searchText: String = listOfNotNull(label, detail).joinToString(" "),
+    val isHidden: Boolean = false,
     val activate: () -> Unit,
 )
 
@@ -84,6 +85,7 @@ internal fun commandPaletteEntries(
     query: String,
 ): List<CommandPaletteEntry> {
     val canonicalEntries = dedupeCommandPaletteEntries(entries)
+    val normalizedQuery = query.trim()
     val filteredByTab = canonicalEntries.filter { entry ->
         when (tab) {
             CommandPaletteTab.ALL -> true
@@ -96,9 +98,21 @@ internal fun commandPaletteEntries(
             CommandPaletteTab.ACTIONS -> entry.kind == CommandPaletteEntryKind.COMMAND
         }
     }
-    if (query.isBlank()) return filteredByTab
+    if (normalizedQuery.isBlank()) {
+        return if (tab == CommandPaletteTab.ALL) {
+            filteredByTab.filter { entry ->
+                !entry.isHidden && (
+                    entry.kind == CommandPaletteEntryKind.AGENT ||
+                        entry.kind == CommandPaletteEntryKind.GROUP ||
+                        entry.kind == CommandPaletteEntryKind.COMMAND
+                    )
+            }
+        } else {
+            filteredByTab.filterNot(CommandPaletteEntry::isHidden)
+        }
+    }
     return filteredByTab.mapNotNull { entry ->
-        fuzzyPaletteScore(query, entry.searchText)?.let { score -> score to entry }
+        fuzzyPaletteScore(normalizedQuery, entry.searchText)?.let { score -> score to entry }
     }.sortedByDescending { it.first }.map { it.second }
 }
 

@@ -126,6 +126,48 @@ class FrontendProductionModelParityTest {
     }
 
     @Test
+    fun commandPaletteBlankAllMatchesDesktopVisibleRootsAndSearchCanFindHiddenAgents() {
+        val visibleAgent = CommandPaletteEntry(
+            id = "agent:visible",
+            kind = CommandPaletteEntryKind.AGENT,
+            label = "Visible",
+            activate = {},
+        )
+        val hiddenAgent = CommandPaletteEntry(
+            id = "agent:hidden",
+            kind = CommandPaletteEntryKind.AGENT,
+            label = "Secret Research",
+            isHidden = true,
+            activate = {},
+        )
+        val routine = CommandPaletteEntry(
+            id = "routine:visible:r1",
+            kind = CommandPaletteEntryKind.ROUTINE,
+            label = "Daily brief",
+            activate = {},
+        )
+        val command = CommandPaletteEntry(
+            id = "command:settings",
+            kind = CommandPaletteEntryKind.COMMAND,
+            label = "Settings",
+            activate = {},
+        )
+        val entries = listOf(visibleAgent, hiddenAgent, routine, command)
+
+        assertEquals(
+            listOf("agent:visible", "command:settings"),
+            commandPaletteEntries(entries, CommandPaletteTab.ALL, "").map { it.id },
+        )
+        assertEquals(
+            listOf("agent:hidden"),
+            commandPaletteEntries(entries, CommandPaletteTab.ALL, "secret research").map { it.id },
+        )
+        assertTrue(
+            commandPaletteEntries(entries, CommandPaletteTab.ROUTINES, "").single().id == "routine:visible:r1",
+        )
+    }
+
+    @Test
     fun commandPaletteSeparatesAgentsAndGroupsByShippingIdentity() {
         val agent = CommandPaletteEntry(
             id = "agent:solo",
