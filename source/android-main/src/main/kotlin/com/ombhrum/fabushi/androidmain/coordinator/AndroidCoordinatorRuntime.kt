@@ -39,6 +39,10 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
     private val processRuntime = CoordinatorProcessRuntime(epochStore)
     val processGeneration: Long = processRuntime.start()
     private val host = MahayanaHost(application, processGeneration = processGeneration)
+    // Independent shared-Host consumer for process-owned rebuild/transport state. MahayanaHost
+    // fans each native event into every registered consumer queue, so this owner may drain
+    // continuously without stealing approvals/chat/tool events from Presentation.
+    private val computerRebuildEventHost = MahayanaHost(application, processGeneration = processGeneration)
     private val accountAccessOwner = AccountAccessProjectionOwner(
         SharedPreferencesAccountAccessEpochStore(application),
     )
@@ -54,12 +58,16 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
     private val eventPumpExecutor = Executors.newSingleThreadExecutor { runnable ->
         Thread(runnable, "fabushi-coordinator-feature-events").apply { isDaemon = true }
     }
+    private val computerRebuildEventExecutor = Executors.newSingleThreadExecutor { runnable ->
+        Thread(runnable, "fabushi-computer-rebuild-events").apply { isDaemon = true }
+    }
     private val storagePressureExecutor = Executors.newSingleThreadScheduledExecutor { runnable ->
         Thread(runnable, "fabushi-storage-pressure").apply { isDaemon = true }
     }
 
     init {
         computerRebuildOwner.observeAccount(accountAccessOwner.currentProjection().accountEpoch)
+        startComputerRebuildEventPump()
         runCatching { reconcileAgentRosterMutations() }
         storagePressureExecutor.scheduleWithFixedDelay(
             {
@@ -638,13 +646,9 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
                         host.request(
                             "feature.receive",
                             JSONObject().put("timeoutMs", 250),
-                        ).also {
-                            observeComputerRebuildTransport(connected = true)
-                        }
+                        )
                     } catch (_: Throwable) {
-                        observeComputerRebuildTransport(connected = false)
                         runCatching { replayCoordinatorEvents() }
-                            .onSuccess { observeComputerRebuildTransport(connected = true) }
                         Thread.sleep(100)
                         continue
                     }
@@ -698,10 +702,31 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
 
     private fun dispatchFeatureEvent(event: JSONObject) {
         if (!acceptCoordinatorEvent(event)) return
-        observeComputerRebuildEvent(event)
         val serialized = event.toString()
         featureEventListeners.forEach { listener ->
             runCatching { listener(JSONObject(serialized)) }
+        }
+    }
+
+    private fun startComputerRebuildEventPump() {
+        computerRebuildEventExecutor.execute {
+            while (true) {
+                val event = try {
+                    computerRebuildEventHost.request(
+                        "feature.receive",
+                        JSONObject().put("timeoutMs", 250),
+                    ).also {
+                        observeComputerRebuildTransport(connected = true)
+                    }
+                } catch (_: Throwable) {
+                    observeComputerRebuildTransport(connected = false)
+                    Thread.sleep(100)
+                    continue
+                }
+                if (event.optString("type").isNotBlank()) {
+                    observeComputerRebuildEvent(event)
+                }
+            }
         }
     }
 
