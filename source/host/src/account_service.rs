@@ -177,6 +177,16 @@ impl AndroidAccountService {
         Some(format!("session:{}", crate::sha256::sha256_hex(&encoded)))
     }
 
+    pub fn account_storage_scope(&self) -> Option<String> {
+        let session = self.session.as_ref()?;
+        let material = json!({
+            "userId": &session.user_id,
+            "deviceId": &session.device_id,
+        });
+        let encoded = serde_json::to_vec(&material).ok()?;
+        Some(format!("account-device:{}", crate::sha256::sha256_hex(&encoded)))
+    }
+
     pub(crate) fn authenticated_api_request(
         &mut self,
         method: &str,
