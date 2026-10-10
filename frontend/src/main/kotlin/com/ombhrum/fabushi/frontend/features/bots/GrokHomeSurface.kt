@@ -80,6 +80,7 @@ fun GrokHomeSurface(
     onDraftChange: (String) -> Unit,
     onSend: () -> Unit,
     onStop: () -> Unit,
+    onMessageTargetConsumed: (String) -> Unit,
 ) {
     LaunchedEffect(Unit) { onRefreshBots() }
     val active = botState.activeBot
@@ -93,6 +94,7 @@ fun GrokHomeSurface(
             onDraftChange,
             onSend,
             onStop,
+            onMessageTargetConsumed,
         )
         return
     }
