@@ -4665,7 +4665,11 @@ mod tests {
 
         drop(host);
         let reopened = AndroidJsonHost::new(&root, AndroidHostMode::Test);
-        let reopened_list = reopened.agents.list();
+        let reopened_list = reopened
+            .agents
+            .lock()
+            .unwrap()
+            .list();
         assert_eq!(reopened_list.len(), 1);
         assert_eq!(reopened_list[0].id, duplicate_id);
         let _ = std::fs::remove_dir_all(root);
@@ -5251,7 +5255,12 @@ export function apply(ctx) {
             now_ms()
         ));
         let mut host = AndroidJsonHost::new(&root, AndroidHostMode::Test);
-        let agent = host.agents.create("Lifecycle Agent", "profile").unwrap();
+        let agent = host
+            .agents
+            .lock()
+            .unwrap()
+            .create("Lifecycle Agent", "profile")
+            .unwrap();
         let account_fence = host.current_turn_account_fence().unwrap();
 
         host.dispatch(
