@@ -50,7 +50,7 @@ pub struct DurablePendingWakeMarker {
     pub agent_id: String,
     pub kind: PendingWakeKind,
     pub work_id: String,
-    pub marked_at_ms: f64,
+    pub marked_at_ms: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub quiet_origin: Option<QuietWakeOrigin>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -101,9 +101,15 @@ pub fn coerce_marker(entry: &Value) -> Option<DurablePendingWakeMarker> {
     let kind = PendingWakeKind::parse(object.get("kind")?.as_str()?)?;
     let marked_at_ms = object
         .get("markedAtMs")
-        .and_then(Value::as_f64)
-        .filter(|value| value.is_finite())
-        .unwrap_or(0.0);
+        .and_then(|value| {
+            value.as_u64().or_else(|| {
+                value.as_f64().and_then(|value| {
+                    (value.is_finite() && value >= 0.0 && value <= u64::MAX as f64)
+                        .then_some(value as u64)
+                })
+            })
+        })
+        .unwrap_or(0);
     let quiet_origin = object.get("quietOrigin").and_then(coerce_quiet_origin);
     let title = object
         .get("title")
@@ -258,14 +264,14 @@ impl SandPendingWakeStore {
 
     pub fn prune_stale(
         &self,
-        max_age_ms: f64,
-        now_ms: f64,
+        max_age_ms: u64,
+        now_ms: u64,
     ) -> Vec<DurablePendingWakeMarker> {
         let _guard = self.lock.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         let existing = self.read_pending_unlocked();
         let (pruned, remaining): (Vec<_>, Vec<_>) = existing
             .into_iter()
-            .partition(|entry| now_ms - entry.marked_at_ms > max_age_ms);
+            .partition(|entry| now_ms.saturating_sub(entry.marked_at_ms) > max_age_ms);
         if pruned.is_empty() {
             return Vec::new();
         }
@@ -343,7 +349,7 @@ mod tests {
             agent_id: agent.into(),
             kind,
             work_id: work.into(),
-            marked_at_ms: 10.0,
+            marked_at_ms: 10,
             quiet_origin: None,
             title: None,
             subagent_type: None,
