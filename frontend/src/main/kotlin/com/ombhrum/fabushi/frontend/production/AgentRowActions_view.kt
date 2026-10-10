@@ -12,6 +12,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
+import com.ombhrum.fabushi.androidpreload.runtime.AndroidSidebarSection
 
 /**
  * Android/Compose counterpart of Grok's production AgentRowActions.
@@ -31,6 +32,10 @@ internal fun AgentRowActions(
     onEditProfile: ((String) -> Unit)? = null,
     onShowFullConversation: ((String) -> Unit)? = null,
     onShowAsyncTasks: ((String) -> Unit)? = null,
+    sections: List<AndroidSidebarSection> = emptyList(),
+    currentSectionId: String? = null,
+    onMoveToSection: ((String, String) -> Unit)? = null,
+    onMoveToNewSection: ((String) -> Unit)? = null,
     onHideFromSidebar: (String) -> Unit,
     onCopyConversationId: ((String) -> Unit)? = null,
     onDuplicateAgent: ((String) -> Unit)? = null,
@@ -53,7 +58,15 @@ internal fun AgentRowActions(
 
     if (
         isHidden ||
-        (actions.isEmpty() && onEditName == null && onEditProfile == null && onShowFullConversation == null && onShowAsyncTasks == null)
+        (
+            actions.isEmpty() &&
+                onEditName == null &&
+                onEditProfile == null &&
+                onShowFullConversation == null &&
+                onShowAsyncTasks == null &&
+                onMoveToSection == null &&
+                onMoveToNewSection == null
+        )
     ) return
 
     Box(modifier) {
@@ -100,6 +113,28 @@ internal fun AgentRowActions(
                     onClick = {
                         expanded = false
                         onShowAsyncTasks(agentId)
+                    },
+                )
+            }
+            if (!isPinned && !isHidden && onMoveToSection != null && sections.isNotEmpty()) {
+                sections
+                    .filter { it.id != currentSectionId }
+                    .forEach { section ->
+                        DropdownMenuItem(
+                            text = { Text("Move to ${section.name.ifBlank { "Unassigned" }}") },
+                            onClick = {
+                                expanded = false
+                                onMoveToSection(agentId, section.id)
+                            },
+                        )
+                    }
+            }
+            if (!isPinned && !isHidden && onMoveToNewSection != null) {
+                DropdownMenuItem(
+                    text = { Text("Move to new section") },
+                    onClick = {
+                        expanded = false
+                        onMoveToNewSection(agentId)
                     },
                 )
             }
