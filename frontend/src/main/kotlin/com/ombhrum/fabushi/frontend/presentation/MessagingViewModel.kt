@@ -20,6 +20,9 @@ enum class ConversationKind(val wire: String, val label: String) {
     SAVED_MESSAGES("savedMessages", "收藏"), SECRET("secret", "加密聊天"),
 }
 
+internal fun conversationKindFromWire(wire: String): ConversationKind? =
+    ConversationKind.entries.firstOrNull { it.wire == wire }
+
 data class ConversationParticipant(val actorId: String, val role: String, val joinedAtMs: Long)
 
 data class ConversationSummary(
@@ -418,7 +421,7 @@ internal class MessagingViewModel(application: Application) : AndroidViewModel(a
 
     private fun parseConversation(raw: JSONObject?): ConversationSummary? {
         raw ?: return null; val id = raw.optString("id"); val title = raw.optString("title"); if (id.isBlank() || title.isBlank()) return null
-        val kind = ConversationKind.entries.firstOrNull { it.wire == raw.optString("kind") } ?: ConversationKind.DIRECT
+        val kind = conversationKindFromWire(raw.optString("kind")) ?: return null
         val mutedUntil = raw.optJSONObject("notificationSettings")?.optLong("mutedUntilMs", 0L) ?: 0L
         val participants = buildList { val values = raw.optJSONArray("participants") ?: JSONArray(); for (i in 0 until values.length()) { val participant = values.optJSONObject(i) ?: continue; val actorId = participant.optString("actorId"); val role = participant.optString("role"); if (actorId.isNotBlank() && role.isNotBlank()) add(ConversationParticipant(actorId, role, participant.optLong("joinedAtMs"))) } }
         val pinnedMessageIds = buildList { val ids = raw.optJSONArray("pinnedMessageIds") ?: JSONArray(); for (i in 0 until ids.length()) ids.optString(i).takeIf { it.isNotBlank() }?.let(::add) }
