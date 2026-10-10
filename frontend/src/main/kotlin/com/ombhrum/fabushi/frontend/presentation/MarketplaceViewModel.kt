@@ -306,28 +306,13 @@ class MarketplaceViewModel(application: Application) : AndroidViewModel(applicat
             runCatching {
                 withContext(Dispatchers.IO) { coordinator.transcriptSnapshot() }
             }.onSuccess { entries ->
-                val restored = buildList {
-                    for (index in 0 until entries.length()) {
-                        val entry = entries.optJSONObject(index) ?: continue
-                        if (entry.optString("kind") != "message") continue
-                        val id = entry.optString("id").trim()
-                        val text = entry.optString("content")
-                        val role = when (entry.optString("role")) {
-                            "user" -> MobileChatRole.USER
-                            "assistant" -> MobileChatRole.ASSISTANT
-                            else -> continue
-                        }
-                        if (id.isBlank()) continue
-                        add(
-                            MobileChatMessage(
-                                id = id,
-                                role = role,
-                                text = text,
-                                operationId = entry.optString("operationId").takeIf(String::isNotBlank),
-                            ),
-                        )
-                    }
-                }.distinctBy(MobileChatMessage::id)
+                // Host owns one canonical transcript across Agents. The shipping Mahayana
+                // surface must project only its explicit Agent identity; never infer ownership
+                // for rows that predate agentId because that can cross conversation boundaries.
+                val restored = canonicalMobileTranscriptForAgent(
+                    entries = entries,
+                    agentId = "mahayana-assistant",
+                )
                 mutableState.value = mutableState.value.copy(
                     chatMessages = restored,
                     chatBusy = false,
