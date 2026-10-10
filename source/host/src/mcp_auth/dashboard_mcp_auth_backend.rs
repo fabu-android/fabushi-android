@@ -20,6 +20,13 @@ pub const DASHBOARD_COMPLETE_MCP_OAUTH_PATH: &str =
     "/aiserver.v1.DashboardService/CompleteMcpOAuth";
 pub const DASHBOARD_GET_USER_PRIVACY_MODE_PATH: &str =
     "/aiserver.v1.DashboardService/GetUserPrivacyMode";
+pub const DASHBOARD_GET_TEAMS_PATH: &str =
+    "/aiserver.v1.DashboardService/GetTeams";
+pub const DASHBOARD_GET_TEAM_RULES_PATH: &str =
+    "/aiserver.v1.DashboardService/GetTeamRules";
+pub const TEAM_RULES_REQUEST_TIMEOUT_MS: u64 = 10_000;
+pub const TEAM_RULE_AGENT_TYPE_ALL: u64 = 1;
+pub const TEAM_RULE_AGENT_TYPE_SAND: u64 = 2;
 pub const DASHBOARD_GET_AVAILABLE_MCP_SERVERS_PATH: &str =
     "/aiserver.v1.DashboardService/GetAvailableMcpServers";
 pub const DASHBOARD_LIST_SAND_MCP_TOOLS_PATH: &str =
@@ -387,6 +394,45 @@ impl CursorDashboardMcpAuthBackend {
                 },
                 disabled_by_team_admin_policy: server.disabled_by_team_admin_policy,
             }))
+    }
+
+    pub fn resolve_sand_team_rules(&self) -> Result<Vec<Value>, String> {
+        let credentials = self.credentials.credentials()?;
+        let ghost_mode = self.resolve_ghost_mode(&credentials);
+        let teams = self.send_unary(
+            &credentials,
+            DASHBOARD_GET_TEAMS_PATH,
+            &[0x08, 0x01],
+            TEAM_RULES_REQUEST_TIMEOUT_MS,
+            ghost_mode,
+        )?;
+        let team_ids = decode_direct_team_ids(&teams)?;
+        if team_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let mut merged = Vec::new();
+        let mut seen = std::collections::BTreeSet::new();
+        for team_id in team_ids {
+            let response = self.send_unary(
+                &credentials,
+                DASHBOARD_GET_TEAM_RULES_PATH,
+                &encode_get_team_rules_request(team_id),
+                TEAM_RULES_REQUEST_TIMEOUT_MS,
+                ghost_mode,
+            )?;
+            for rule in decode_sand_team_rules(&response)? {
+                let path = rule
+                    .get("fullPath")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_string();
+                if !path.is_empty() && seen.insert(path) {
+                    merged.push(rule);
+                }
+            }
+        }
+        Ok(merged)
     }
 
     pub fn resolve_sand_privacy_mode(&self) -> Option<SandPrivacyMode> {
@@ -898,6 +944,96 @@ fn decode_optional_varint_field(
     Ok(None)
 }
 
+fn repeated_message_fields<'a>(
+    input: &'a [u8],
+    wanted_field: u32,
+) -> Result<Vec<&'a [u8]>, String> {
+    let mut cursor = 0usize;
+    let mut values = Vec::new();
+    while cursor < input.len() {
+        let key = read_varint(input, &mut cursor)?;
+        let field = (key >> 3) as u32;
+        let wire = (key & 0x07) as u8;
+        if field == wanted_field && wire == 2 {
+            values.push(read_len_delimited(input, &mut cursor)?);
+        } else {
+            skip_field(input, &mut cursor, wire)?;
+        }
+    }
+    Ok(values)
+}
+
+fn string_fields(input: &[u8], wanted_field: u32) -> Result<Vec<String>, String> {
+    let mut cursor = 0usize;
+    let mut values = Vec::new();
+    while cursor < input.len() {
+        let key = read_varint(input, &mut cursor)?;
+        let field = (key >> 3) as u32;
+        let wire = (key & 0x07) as u8;
+        if field == wanted_field && wire == 2 {
+            let raw = read_len_delimited(input, &mut cursor)?;
+            let value = std::str::from_utf8(raw)
+                .map_err(|_| "MCP backend protobuf string is not UTF-8")?
+                .trim();
+            if !value.is_empty() {
+                values.push(value.to_string());
+            }
+        } else {
+            skip_field(input, &mut cursor, wire)?;
+        }
+    }
+    Ok(values)
+}
+
+fn encode_get_team_rules_request(team_id: u64) -> Vec<u8> {
+    let mut body = vec![0x08, 0x01];
+    encode_key(2, 0, &mut body);
+    encode_varint(team_id, &mut body);
+    body
+}
+
+fn decode_direct_team_ids(response: &[u8]) -> Result<Vec<u64>, String> {
+    let mut ids = Vec::new();
+    for team in repeated_message_fields(response, 1)? {
+        let id = decode_optional_varint_field(team, 2)?.unwrap_or_default();
+        let direct = decode_optional_varint_field(team, 36)?.unwrap_or_default() != 0;
+        if id > 0 && direct {
+            ids.push(id);
+        }
+    }
+    Ok(ids)
+}
+
+fn decode_sand_team_rules(response: &[u8]) -> Result<Vec<Value>, String> {
+    let mut rules = Vec::new();
+    for raw in repeated_message_fields(response, 1)? {
+        let agent_type = decode_optional_varint_field(raw, 7)?.unwrap_or_default();
+        if agent_type != TEAM_RULE_AGENT_TYPE_ALL && agent_type != TEAM_RULE_AGENT_TYPE_SAND {
+            continue;
+        }
+        let Some(full_path) = string_fields(raw, 2)?.into_iter().next() else {
+            continue;
+        };
+        let Some(content) = string_fields(raw, 3)?.into_iter().next() else {
+            continue;
+        };
+        let globs = string_fields(raw, 6)?;
+        let required = decode_optional_varint_field(raw, 5)?.unwrap_or_default() != 0;
+        rules.push(json!({
+            "fullPath": full_path,
+            "content": content,
+            "type": if globs.is_empty() {
+                json!({"kind":"global"})
+            } else {
+                json!({"kind":"fileGlobbed","globs":globs})
+            },
+            "source":"team",
+            "isRequired":required,
+        }));
+    }
+    Ok(rules)
+}
+
 pub fn create_cursor_checksum(machine_id: &str, now_ms: u64) -> String {
     let kilo_seconds = now_ms / 1_000_000;
     let mut bytes = [
@@ -985,6 +1121,59 @@ mod tests {
         let mut value = Vec::new();
         encode_len_delimited(field, payload, &mut value);
         value
+    }
+
+    #[test]
+    fn managed_team_rules_wire_matches_desktop_contract() {
+        assert_eq!(DASHBOARD_GET_TEAMS_PATH, "/aiserver.v1.DashboardService/GetTeams");
+        assert_eq!(
+            DASHBOARD_GET_TEAM_RULES_PATH,
+            "/aiserver.v1.DashboardService/GetTeamRules"
+        );
+        assert_eq!(TEAM_RULES_REQUEST_TIMEOUT_MS, 10_000);
+        assert_eq!(encode_get_team_rules_request(7), vec![0x08, 0x01, 0x10, 0x07]);
+
+        let mut direct_team = Vec::new();
+        encode_key(2, 0, &mut direct_team);
+        encode_varint(7, &mut direct_team);
+        encode_key(36, 0, &mut direct_team);
+        encode_varint(1, &mut direct_team);
+        let mut indirect_team = Vec::new();
+        encode_key(2, 0, &mut indirect_team);
+        encode_varint(9, &mut indirect_team);
+        encode_key(36, 0, &mut indirect_team);
+        encode_varint(0, &mut indirect_team);
+        let mut teams = Vec::new();
+        encode_len_delimited(1, &direct_team, &mut teams);
+        encode_len_delimited(1, &indirect_team, &mut teams);
+        assert_eq!(decode_direct_team_ids(&teams).unwrap(), vec![7]);
+
+        let mut rule = Vec::new();
+        encode_string(2, "security", &mut rule);
+        encode_string(3, "Never publish credentials.", &mut rule);
+        encode_key(5, 0, &mut rule);
+        encode_varint(1, &mut rule);
+        encode_string(6, "**/*.env", &mut rule);
+        encode_key(7, 0, &mut rule);
+        encode_varint(TEAM_RULE_AGENT_TYPE_SAND, &mut rule);
+        let mut ignored = Vec::new();
+        encode_string(2, "cursor-only", &mut ignored);
+        encode_string(3, "Ignore in Sand.", &mut ignored);
+        encode_key(7, 0, &mut ignored);
+        encode_varint(3, &mut ignored);
+        let mut rules = Vec::new();
+        encode_len_delimited(1, &rule, &mut rules);
+        encode_len_delimited(1, &ignored, &mut rules);
+        assert_eq!(
+            decode_sand_team_rules(&rules).unwrap(),
+            vec![json!({
+                "fullPath":"security",
+                "content":"Never publish credentials.",
+                "type":{"kind":"fileGlobbed","globs":["**/*.env"]},
+                "source":"team",
+                "isRequired":true,
+            })]
+        );
     }
 
     #[test]
