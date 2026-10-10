@@ -123,6 +123,10 @@ class FrontendProductionModelParityTest {
         assertTrue(activateCommandPaletteEntry(agentResults, 0))
         assertEquals("agent", activated)
         assertEquals(0, movePaletteHighlight(-1, 1, 1))
+        assertEquals(0, movePaletteHighlight(0, -1, 3))
+        assertEquals(2, movePaletteHighlight(2, 1, 3))
+        assertEquals(1, movePaletteHighlight(0, 1, 3))
+        assertEquals(0, movePaletteHighlight(0, 1, 0))
     }
 
     @Test

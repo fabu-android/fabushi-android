@@ -121,9 +121,9 @@ internal fun movePaletteHighlight(
     delta: Int,
     size: Int,
 ): Int {
-    if (size <= 0) return -1
-    val base = current.takeIf { it in 0 until size } ?: 0
-    return ((base + delta) % size + size) % size
+    if (size <= 0) return 0
+    val bounded = current.coerceIn(0, size - 1)
+    return (bounded + delta).coerceIn(0, size - 1)
 }
 
 internal fun cyclePaletteTab(
