@@ -1,5 +1,6 @@
 pub mod android_host_inference;
 pub mod durable_turn_journal;
+pub mod multitask_todo;
 pub mod production_turn_agent_owner;
 pub mod production_turn_lifecycle;
 pub mod stream_attempt;
@@ -40,6 +41,11 @@ pub use android_host_inference::{
 pub use turn_run_shell::{ActiveRun, TurnCancellation, TurnRunLease, TurnRunShell, TurnRunShellError};
 
 pub use durable_turn_journal::{DurableTurnJournal, DurableTurnRecord, DurableTurnState};
+
+pub use multitask_todo::{
+    with_multitask_todo_tools, DurableMultitaskTodoStore, MultitaskTodoItem,
+    MultitaskTodoStatus, TODO_WRITE_TOOL_NAME,
+};
 
 
 pub use subagent_runtime::{

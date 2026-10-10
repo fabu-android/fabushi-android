@@ -27,6 +27,7 @@ use crate::runner::{
     SubagentRunOutcome, SubagentSteerReview, SubagentTaskReviewCallback,
     SubagentSteerReviewCallback, SubagentToolBridge, SubagentToolContext,
     build_parent_subagent_routed_tools, spawn_generated_subagent,
+    with_multitask_todo_tools, DurableMultitaskTodoStore,
 };
 use fabushi_constants::composer::text_size_allowed;
 use fabushi_android_shared::node::mcp::mcp_auth_watch_lifecycle::{
@@ -308,6 +309,7 @@ pub struct AndroidJsonHost {
     turn_journal: Arc<Mutex<DurableTurnJournal>>,
     turn_lifecycle: Arc<Mutex<ProductionTurnLifecycleStore>>,
     turn_upgrade_quiescing: Arc<AtomicBool>,
+    multitask_todos: Arc<Mutex<DurableMultitaskTodoStore>>,
     subagent_owner: Arc<Mutex<DurableSubagentOwner>>,
     subagent_tools: SubagentToolBridge,
     subagent_events: Arc<Mutex<VecDeque<Value>>>,
@@ -398,6 +400,10 @@ impl AndroidJsonHost {
             .unwrap_or((None, None));
         #[cfg(not(feature = "ci-account-session-import"))]
         let logged_in = false;
+        let multitask_todos = Arc::new(Mutex::new(
+            DurableMultitaskTodoStore::open(app_data_dir.join("multitask-todos.json"))
+                .unwrap_or_else(|error| panic!("failed to open durable multitask todo owner: {error}")),
+        ));
         let subagent_owner = Arc::new(Mutex::new(
             DurableSubagentOwner::open(app_data_dir.join("generated-subagents.json"), now_ms())
                 .unwrap_or_else(|error| panic!("failed to open durable generated-subagent owner: {error}")),
@@ -443,6 +449,7 @@ impl AndroidJsonHost {
                 }),
             )),
             turn_upgrade_quiescing: Arc::new(AtomicBool::new(false)),
+            multitask_todos,
             subagent_owner,
             subagent_tools,
             subagent_events,
@@ -2379,6 +2386,7 @@ impl AndroidJsonHost {
         let subagent_owner = Arc::clone(&self.subagent_owner);
         let subagent_events = Arc::clone(&self.subagent_events);
         let subagent_tools = self.subagent_tools.clone();
+        let multitask_todos = Arc::clone(&self.multitask_todos);
         let frozen_privacy = match self.mode {
             AndroidHostMode::Test => ProductionTurnPrivacyMode::NoStorage,
             AndroidHostMode::Production => self
@@ -2508,6 +2516,19 @@ impl AndroidJsonHost {
                         child_capabilities: subagent_capabilities,
                     },
                 );
+                // Desktop exposes TodoWrite only on a root non-subagent turn when
+                // multitask is enabled. Keep it outside GeneratedChildToolRegistry
+                // so no generated child can inherit root bookkeeping authority.
+                let routed_subagent_tools = if subagent_capabilities.multitask_enabled {
+                    with_multitask_todo_tools(
+                        routed_subagent_tools,
+                        Arc::clone(&multitask_todos),
+                        &account_fence_owned,
+                        &conversation_id_owned,
+                    )
+                } else {
+                    routed_subagent_tools
+                };
 
                 let provider = match mode {
                     AndroidHostMode::Test => {
@@ -5209,6 +5230,68 @@ export function apply(ctx) {
             .unwrap_err()
             .contains("unavailable for this turn"));
         assert!(host.subagent_owner.lock().unwrap().all_records().is_empty());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn parent_multitask_todo_routes_through_shipping_provider_and_survives_reopen() {
+        let root = std::env::temp_dir().join(format!(
+            "fabushi-multitask-todo-{}-{}",
+            std::process::id(),
+            now_ms()
+        ));
+        let mut host = AndroidJsonHost::new(&root, AndroidHostMode::Test);
+        let account_fence = host.current_turn_account_fence().unwrap();
+        let mut command = json!({
+            "type":"chat.send",
+            "requestId":"todo-root-request",
+            "agentId":"mahayana-assistant",
+            "model":"default",
+            "text":"[[tool:TodoWrite]] {\"todos\":[{\"id\":\"a\",\"content\":\"first\",\"status\":\"in_progress\"},{\"id\":\"b\",\"content\":\"second\",\"status\":\"pending\"}],\"merge\":false}"
+        });
+        command[COORDINATOR_SUBAGENT_CAPABILITIES_FIELD] = json!({
+            "multitaskEnabled":true,
+            "remoteBoxAvailable":false,
+            "remoteBoxHasDesktop":false,
+            "browserUseEnabled":false
+        });
+        let accepted = host
+            .dispatch("feature.execute", &json!({"command":command}))
+            .unwrap();
+        let operation_id = accepted["operationId"].as_str().unwrap().to_string();
+
+        let deadline = std::time::Instant::now() + Duration::from_secs(3);
+        let mut completed = false;
+        while std::time::Instant::now() < deadline && !completed {
+            let event = host.dispatch("feature.receive", &json!({})).unwrap();
+            completed = event["type"] == "operation.completed"
+                && event["operationId"] == operation_id;
+            if event.as_object().is_some_and(|object| object.is_empty()) {
+                thread::sleep(Duration::from_millis(10));
+            }
+        }
+        assert!(completed, "root TodoWrite provider turn must settle");
+        let snapshot = host
+            .multitask_todos
+            .lock()
+            .unwrap()
+            .snapshot(&account_fence, "mahayana-assistant");
+        assert_eq!(snapshot.len(), 2);
+        assert_eq!(snapshot[0].id, "a");
+        drop(host);
+
+        let reopened = AndroidJsonHost::new(&root, AndroidHostMode::Test);
+        let reopened_fence = reopened.current_turn_account_fence().unwrap();
+        assert_eq!(
+            reopened
+                .multitask_todos
+                .lock()
+                .unwrap()
+                .snapshot(&reopened_fence, "mahayana-assistant")
+                .len(),
+            2,
+            "process reopen must retain root multitask TODO state"
+        );
         let _ = std::fs::remove_dir_all(root);
     }
 

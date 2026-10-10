@@ -3961,6 +3961,86 @@
       "artifact": null,
       "verification_status": "not-verified",
       "notes": "Mapped from the Desktop regression source. Existing Compose structure is not treated as proof of responsive parity."
+    },
+    {
+      "responsibility_id": "AGENT-MULTITASK-TODO-001",
+      "domain": "agent",
+      "desktop_sources": [
+        {
+          "path": "source/host/src/runner/tools/sand_multitask_todo_tool.rs",
+          "blob_sha": "0c8bccc32cfa8cabb9059795e2915090eba4a6e7",
+          "symbols": [
+            "SandMultitaskTodoToolBridge",
+            "MultitaskTodoState",
+            "apply_multitask_todo_update",
+            "TodoWrite"
+          ]
+        },
+        {
+          "path": "source/host/src/runner/tools/turn_toolset.rs",
+          "blob_sha": "018cd2b6906c6b9b18b7912602139dbba46bdec4",
+          "symbols": [
+            "TurnToolsetDependencies",
+            "build_turn_toolset"
+          ]
+        }
+      ],
+      "source_commit": "3bc92400826cc4ca7ac665b467708e22261edc61",
+      "responsibility": "Own the root Agent multitask task queue as durable state, expose TodoWrite only when the trusted turn capability projection enables multitask, preserve merge/replace and status transitions, and prevent generated subagents from inheriting root bookkeeping authority.",
+      "source_owner": "Desktop Rust Runner TurnToolset + SandAgentDb",
+      "direct_callers": [
+        "root TurnAgentComposition",
+        "build_turn_toolset"
+      ],
+      "downstream_dependencies": [
+        "provider tool projection",
+        "Agent durable state",
+        "multitask dispatcher prompt/behavior"
+      ],
+      "state_owner": "Rust Host durable multitask todo store scoped by account and conversation",
+      "persistent_state": [
+        "todo id",
+        "content",
+        "status",
+        "createdAtMs",
+        "updatedAtMs",
+        "stable tool-call identity and result"
+      ],
+      "protocol_wire_contract": [
+        "TodoWrite(todos, merge)",
+        "pending/in_progress/completed/cancelled",
+        "merge-or-replace semantics"
+      ],
+      "visible_effect": "A multitasking root Agent can keep a durable task queue across turns and process restarts without granting that root bookkeeping tool to generated children.",
+      "failure_behavior": [
+        "invalid schema/status fails before persistence",
+        "mismatched reuse of a stable tool-call id fails closed",
+        "corrupt durable document fails Host initialization rather than silently replacing state"
+      ],
+      "cancellation_behavior": "TodoWrite is a bounded local durable mutation; once atomically committed it is not rolled back by later turn cancellation.",
+      "retry_semantics": "Exact duplicate tool-call identity with identical arguments returns the persisted result; mismatched reuse is rejected.",
+      "idempotency_semantics": "Stable tool_call_id plus exact arguments forms the durable mutation identity within the account+conversation scope.",
+      "process_death_recovery": "Atomic JSON persistence is reopened by AndroidJsonHost; already committed TodoWrite calls and queue state survive process death without replay.",
+      "account_fencing": "Storage scope is derived from the Host account fence plus conversation identity, preventing cross-account and cross-Agent queue bleed.",
+      "security_boundary": "Only the root provider bridge receives TodoWrite when the Coordinator-owned multitask capability is true; GeneratedChildToolRegistry never exposes it.",
+      "android_disposition": "direct-port",
+      "android_target": [
+        "source/host/src/runner/multitask_todo.rs",
+        "source/host/src/runner/mod.rs",
+        "source/host/src/android_json_runtime.rs"
+      ],
+      "android_owner": "source/host/src/runner/multitask_todo.rs",
+      "platform_delta": "Desktop SandAgentDb KV storage is replaced by an Android Host-private atomic durable document; tool behavior and root-only turn placement remain equivalent.",
+      "implementation_status": "implemented",
+      "production_wiring": "AndroidJsonHost opens the durable owner from app_data_dir and wraps the shipping root AndroidHostInferenceProvider routed-tool bridge with TodoWrite only when the trusted Coordinator capability projection enables multitask. Generated child routing remains unchanged and cannot inherit TodoWrite.",
+      "unit_test": "Rust focused tests cover merge/replace, status validation, exact duplicate identity, mismatched duplicate rejection, process reopen, and account/conversation isolation. Exact-head GitHub Actions pending.",
+      "contract_test": "AndroidJsonHost shipping-provider integration test drives [[tool:TodoWrite]] through feature.execute with multitask capability enabled and asserts durable state survives Host reopen. Exact-head GitHub Actions pending.",
+      "integration_test": "Shipping feature.execute -> queue_chat_turn -> root routed-tool composition -> AndroidHostInferenceProvider -> MultitaskTodoRoutedTools -> durable Host store is implemented; exact-head CI pending.",
+      "packaged_test": "required on final exact-head APK/AAB",
+      "device_test": "required after protected-account secrets are configured",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Implemented from Desktop exact blobs without marking verified. This responsibility is independent of the still-blocked outbound Remote Runner transport and release/protected-account secrets."
     }
   ],
   "traceability": {
