@@ -728,20 +728,25 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
             accountFence = currentFence,
             accountEpoch = currentEpoch,
             expiresAt = data.getLong("expiresAt"),
+            processGeneration = processGeneration,
+            lifecycle = RemoteControlSessionLifecycle.PENDING,
         )
         remoteControlSessionStore.write(RemoteControlSessionCredential.parse(credential.toSecretJson()))
+        // Do not project mobileToken or TURN credentials into Presentation. Transport details
+        // remain Coordinator-owned until a native Android transport adapter consumes them.
         return credential.publicProjection()
             .put("stored", true)
             .put("state", data.optString("state"))
             .put("createdAt", data.optLong("createdAt"))
-            .put("permissions", data.optJSONObject("permissions") ?: JSONObject())
-            .put("iceServers", data.optJSONArray("iceServers") ?: JSONArray())
     }
 
     override fun remoteComputerSessionStatus(): JSONObject {
         val (currentFence, currentEpoch) = currentRemoteAccountFence()
-        val session = remoteControlSessionStore.readForAccountFence(currentFence, currentEpoch)
-            ?: return JSONObject().put("stored", false)
+        val session = remoteControlSessionStore.bindProcess(
+            currentFence,
+            currentEpoch,
+            processGeneration,
+        ) ?: return JSONObject().put("stored", false)
         if (session.expiresAt <= System.currentTimeMillis() / 1_000L) {
             remoteControlSessionStore.clear()
             return JSONObject().put("stored", false).put("reason", "expired")
@@ -804,6 +809,7 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
             selectedRoute,
             returnedRegion,
             transportUpdatedAt,
+            processGeneration,
         )
         return JSONObject(response.toString())
             .put("selectedRoute", updated.selectedRoute)
@@ -912,19 +918,63 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
         return updated.publicProjection().put("acknowledged", true)
     }
 
+    override fun remoteComputerHumanTakeover(
+        deviceId: String,
+        sessionId: String,
+        expectedViewportRevision: Long,
+        active: Boolean,
+    ): JSONObject {
+        val session = requireRemoteControlSession(deviceId, sessionId)
+        val (currentFence, currentEpoch) = currentRemoteAccountFence()
+        return remoteControlSessionStore.setHumanTakeover(
+            currentFence,
+            currentEpoch,
+            session.sessionId,
+            expectedViewportRevision,
+            active,
+        ).publicProjection().put("stored", true)
+    }
+
+    override fun remoteComputerViewportAdvance(
+        deviceId: String,
+        sessionId: String,
+        expectedViewportRevision: Long,
+    ): JSONObject {
+        val session = requireRemoteControlSession(deviceId, sessionId)
+        val (currentFence, currentEpoch) = currentRemoteAccountFence()
+        return remoteControlSessionStore.advanceViewport(
+            currentFence,
+            currentEpoch,
+            session.sessionId,
+            expectedViewportRevision,
+        ).publicProjection().put("stored", true)
+    }
+
     override fun remoteComputerSessionClose(deviceId: String, sessionId: String): JSONObject {
         val session = requireRemoteControlSession(deviceId, sessionId)
-        // Closing locally is the security boundary. The captured credential is used only for this
-        // one server mutation; subsequent callers cannot resurrect the session if the network fails.
-        remoteControlSessionStore.clear()
-        return authenticatedRemotePlatformRequest(
-            "POST",
-            "/v1/computers/" + session.deviceId + "/sessions/" + session.sessionId + "/close",
-            JSONObject()
-                .put("role", "mobile")
-                .put("clientId", session.clientId)
-                .put("mobileToken", session.mobileToken),
-        )
+        val (currentFence, currentEpoch) = currentRemoteAccountFence()
+        remoteControlSessionStore.beginClosing(currentFence, currentEpoch, session.sessionId)
+        return try {
+            val response = authenticatedRemotePlatformRequest(
+                "POST",
+                "/v1/computers/" + session.deviceId + "/sessions/" + session.sessionId + "/close",
+                JSONObject()
+                    .put("role", "mobile")
+                    .put("clientId", session.clientId)
+                    .put("mobileToken", session.mobileToken),
+            )
+            remoteControlSessionStore.clear()
+            JSONObject(response.toString())
+                .put("stored", false)
+                .put("reconcileRequired", false)
+        } catch (error: Throwable) {
+            remoteControlSessionStore.markCloseOutcomeUnknown(
+                currentFence,
+                currentEpoch,
+                session.sessionId,
+            )
+            throw error
+        }
     }
 
     override fun computerRebuildRequest(
