@@ -5543,7 +5543,7 @@ export function apply(ctx) {
     }
 
     #[test]
-    fn agent_roster_projects_canonical_transcript_and_live_run_activity() {
+    fn agent_roster_projects_canonical_transcript_run_and_durable_relationships() {
         let root = std::env::temp_dir().join(format!(
             "fabushi-agent-roster-projection-{}",
             now_ms()
@@ -5554,6 +5554,28 @@ export function apply(ctx) {
             .lock()
             .unwrap()
             .create("Projection Agent", "profile")
+            .unwrap();
+        let partner = host
+            .agents
+            .lock()
+            .unwrap()
+            .create("Partner Agent", "profile")
+            .unwrap();
+        let account_fence = host.current_turn_account_fence().unwrap();
+        host.messaging
+            .lock()
+            .unwrap()
+            .deliver_agent_message(
+                &account_fence,
+                &agent.id,
+                &partner.id,
+                false,
+                "relationship message",
+                &[],
+                false,
+                "projection-relationship-call",
+                90,
+            )
             .unwrap();
         host.transcript
             .lock()
@@ -5592,19 +5614,46 @@ export function apply(ctx) {
             .unwrap();
         assert_eq!(row["lastMessage"], "canonical latest message");
         assert_eq!(row["isRunning"], true);
-        assert_eq!(row["conversationPartnerIds"], json!([]));
+        assert_eq!(row["conversationPartnerIds"], json!([partner.id.clone()]));
         assert_eq!(row["awaitingUserResponse"], false);
         assert!(row["updatedAt"].as_u64().unwrap() >= 200);
 
         host.active_operations.remove("projection-op");
-        let settled = host.dispatch("listAgents", &json!({})).unwrap();
-        let row = settled
+        drop(host);
+
+        let mut reopened = AndroidJsonHost::new(&root, AndroidHostMode::Test);
+        let reopened_list = reopened.dispatch("listAgents", &json!({})).unwrap();
+        let reopened_row = reopened_list
             .as_array()
             .unwrap()
             .iter()
             .find(|row| row["id"] == agent.id)
             .unwrap();
-        assert_eq!(row["isRunning"], false);
+        assert_eq!(
+            reopened_row["conversationPartnerIds"],
+            json!([partner.id.clone()]),
+            "canonical relationship must survive Host process restart"
+        );
+        assert_eq!(reopened_row["isRunning"], false);
+
+        reopened
+            .agents
+            .lock()
+            .unwrap()
+            .delete(&[partner.id.clone()])
+            .unwrap();
+        let filtered = reopened.dispatch("listAgents", &json!({})).unwrap();
+        let filtered_row = filtered
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|row| row["id"] == agent.id)
+            .unwrap();
+        assert_eq!(
+            filtered_row["conversationPartnerIds"],
+            json!([]),
+            "relationship endpoint absent from the canonical roster must not be projected"
+        );
         let _ = std::fs::remove_dir_all(root);
     }
 
