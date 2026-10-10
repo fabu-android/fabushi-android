@@ -2254,6 +2254,12 @@ impl AndroidJsonHost {
             .get("hidden")
             .and_then(Value::as_bool)
             .unwrap_or(false);
+        // The Coordinator overwrites this projection with process-owned capability
+        // state. Validate it before *any* durable turn mutation so a malformed or
+        // inconsistent capability snapshot cannot leave a ghost transcript entry.
+        let subagent_capabilities = parse_turn_subagent_capability_projection(
+            command.get(COORDINATOR_SUBAGENT_CAPABILITIES_FIELD),
+        )?;
 
         let assistant_entry_id = format!("assistant:{operation_id}");
         if !hidden {
@@ -2319,10 +2325,6 @@ impl AndroidJsonHost {
                 .filter(|value| !value.trim().is_empty())
                 .unwrap_or("default"),
         );
-        let subagent_capabilities = parse_turn_subagent_capability_projection(
-            command.get(COORDINATOR_SUBAGENT_CAPABILITIES_FIELD),
-        )?;
-
         if self.turn_upgrade_quiescing.load(Ordering::Acquire) {
             return Err("Agent turns are quiescing for upgrade; new dispatch is fenced.".into());
         }

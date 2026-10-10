@@ -48,6 +48,51 @@ fn shipping_host_routes_generated_subagent_tools_through_one_rust_owner() {
 }
 
 #[test]
+fn malformed_turn_capability_projection_is_rejected_before_transcript_persistence() {
+    let root = tempfile::tempdir().unwrap();
+    {
+        let mut host = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+        let error = host
+            .dispatch(
+                "feature.execute",
+                &json!({
+                    "command":{
+                        "type":"chat.send",
+                        "requestId":"malformed-capability-projection",
+                        "agentId":"mahayana-assistant",
+                        "text":"this rejected turn must never become durable",
+                        "coordinatorSubagentCapabilities":{
+                            "remoteBoxAvailable":true,
+                            "remoteBoxHasDesktop":false,
+                            "browserUseEnabled":true
+                        }
+                    }
+                }),
+            )
+            .expect_err("inconsistent coordinator capability projection must fail closed");
+        assert!(
+            error.contains("browserUseEnabled requires a trusted remote box with desktop capability"),
+            "unexpected rejection: {error}"
+        );
+        assert_eq!(
+            host.dispatch("feature.transcript.snapshot", &json!({}))
+                .expect("transcript snapshot"),
+            json!([]),
+            "capability validation must happen before canonical transcript mutation"
+        );
+    }
+
+    let mut reopened = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+    assert_eq!(
+        reopened
+            .dispatch("feature.transcript.snapshot", &json!({}))
+            .expect("reopened transcript snapshot"),
+        json!([]),
+        "rejected capability projection must not leave a durable ghost message"
+    );
+}
+
+#[test]
 fn typed_android_port_and_jni_route_generated_subagent_calls_through_coordinator_host() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let port = fs::read_to_string(
