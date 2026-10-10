@@ -25,6 +25,18 @@ struct ParentSubagentRoutedTools {
     allowed_names: BTreeSet<String>,
 }
 
+fn publish_async_tasks_changed(
+    events: &Arc<Mutex<VecDeque<Value>>>,
+    parent_agent_id: &str,
+) {
+    if let Ok(mut queue) = events.lock() {
+        queue.push_back(json!({
+            "type":"agent.async-tasks.changed",
+            "parentAgentId":parent_agent_id,
+        }));
+    }
+}
+
 impl AndroidRoutedToolBridge for ParentSubagentRoutedTools {
     fn list_tools(&self) -> Result<Vec<Value>, String> {
         Ok(self
@@ -58,6 +70,10 @@ impl AndroidRoutedToolBridge for ParentSubagentRoutedTools {
         let Some(launch) = result.launch else {
             return Ok(result.value);
         };
+        // The durable launch already owns a running task before the worker thread starts.
+        // Notify presentation through the Host event stream rather than making UI poll the
+        // DurableSubagentOwner or infer task state from a chat operation.
+        publish_async_tasks_changed(&self.events, &launch.record.parent_agent_id);
         if let Err(error) = spawn_generated_subagent(
             self.mode,
             self.bearer_token.clone(),
@@ -371,6 +387,10 @@ fn publish_settlement(
             "status": super::status_label(record.status),
             "result": record.completion_result,
             "error": record.completion_error,
+        }));
+        queue.push_back(json!({
+            "type":"agent.async-tasks.changed",
+            "parentAgentId":record.parent_agent_id,
         }));
         if let Some(usage) = settlement.computer_use_usage {
             queue.push_back(json!({
