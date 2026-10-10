@@ -380,9 +380,9 @@ impl AndroidHostInferenceProvider {
                     }
                 }));
             }
-            previous_response_id = response_id.ok_or_else(|| {
+            previous_response_id = Some(response_id.ok_or_else(|| {
                 ProviderFailure::new("provider tool call response omitted response identity")
-            })?;
+            })?);
             next_input = Value::Array(outputs);
         }
 
