@@ -1,5 +1,7 @@
 package com.ombhrum.fabushi.androidmain.coordinator
 
+import com.ombhrum.fabushi.androidpreload.runtime.AccountRebuildState
+import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -37,6 +39,7 @@ class ComputerRebuildStateOwnerTest {
 
         assertEquals(first, duplicate)
         assertEquals("reset-7", duplicate.operationId)
+        assertEquals(AccountRebuildState.RECONNECTING, owner.accountProjection(7))
         assertTrue(duplicate.leftHealthy)
         assertFalse(duplicate.acknowledged)
         assertThrows(IllegalArgumentException::class.java) {
@@ -61,6 +64,7 @@ class ComputerRebuildStateOwnerTest {
         assertEquals("recover-3", recovered.operationId)
         assertTrue(recovered.pending)
         assertTrue(recovered.outcomeUnknown)
+        assertEquals(AccountRebuildState.OUTCOME_UNKNOWN, reopened.accountProjection(3))
     }
 
     @Test
@@ -111,6 +115,46 @@ class ComputerRebuildStateOwnerTest {
         assertNull(switched.kind)
         assertNull(switched.operationId)
         assertFalse(switched.outcomeUnknown)
+    }
+
+    @Test
+    fun foreverBoxAdapterMatchesDesktopPhaseRulesAndFailsClosed() {
+        assertEquals(
+            "box-a" to "pulling",
+            projectForeverBoxRebuildEvent(
+                JSONObject("""{"agentId":"box-a","state":"running","pull":{"percent":10},"vncUrl":"wss://viewer"}"""),
+            ),
+        )
+        assertEquals(
+            "box-a" to "running",
+            projectForeverBoxRebuildEvent(
+                JSONObject("""{"agentId":"box-a","state":"running","vncUrl":"wss://viewer"}"""),
+            ),
+        )
+        assertEquals(
+            "box-a" to "local",
+            projectForeverBoxRebuildEvent(JSONObject("""{"agentId":"box-a","state":"running"}""")),
+        )
+        assertEquals(
+            "box-a" to "sleeping",
+            projectForeverBoxRebuildEvent(
+                JSONObject("""{"payload":{"agentId":"box-a","state":"hibernated"}}"""),
+            ),
+        )
+        assertNull(projectForeverBoxRebuildEvent(JSONObject("""{"state":"running"}""")))
+    }
+
+    @Test
+    fun projectionReturnsIdleOnlyAfterOwnerSettlesTheEpisode() {
+        val owner = ComputerRebuildStateOwner(MemoryStore())
+        owner.observeAccount(29)
+        assertEquals(AccountRebuildState.IDLE, owner.accountProjection(29))
+        owner.begin(29, ComputerRebuildKind.UPDATE, null, ComputerRebuildSource.REQUEST)
+        owner.observeConnection(29, false)
+        owner.observeConnection(29, true)
+        assertEquals(AccountRebuildState.RECONNECTING, owner.accountProjection(29))
+        owner.deactivate(29)
+        assertEquals(AccountRebuildState.IDLE, owner.accountProjection(29))
     }
 
     @Test

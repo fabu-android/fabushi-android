@@ -1,6 +1,7 @@
 package com.ombhrum.fabushi.androidmain.coordinator
 
 import android.content.Context
+import com.ombhrum.fabushi.androidpreload.runtime.AccountRebuildState
 import org.json.JSONObject
 
 internal enum class ComputerRebuildKind { UPDATE, RESET, RECOVER, RECONNECTING }
@@ -316,6 +317,21 @@ internal class ComputerRebuildStateOwner(
         return requireSnapshot(accountEpoch)
     }
 
+    /**
+     * Account/access projection reads rebuild truth only from this durable owner.
+     * Remote binding readiness is deliberately not an input.
+     */
+    @Synchronized
+    fun accountProjection(accountEpoch: Long): AccountRebuildState {
+        requireCurrentAccount(accountEpoch)
+        val current = requireSnapshot(accountEpoch)
+        return when {
+            current.outcomeUnknown -> AccountRebuildState.OUTCOME_UNKNOWN
+            current.kind != null -> AccountRebuildState.RECONNECTING
+            else -> AccountRebuildState.IDLE
+        }
+    }
+
     private fun clear(
         current: ComputerRebuildSnapshot,
         resolution: ComputerRebuildResolution,
@@ -351,4 +367,23 @@ internal class ComputerRebuildStateOwner(
         store.write(next)
         return next
     }
+}
+
+
+/**
+ * Desktop Forever Box -> Android rebuild adapter. Invalid or unrelated payloads are ignored rather
+ * than manufacturing a rebuild transition. A pull takes precedence over the coarse box state.
+ */
+internal fun projectForeverBoxRebuildEvent(value: JSONObject): Pair<String, String>? {
+    val payload = value.optJSONObject("payload") ?: value
+    val boxId = payload.optString("agentId").trim().takeIf(String::isNotEmpty) ?: return null
+    val state = payload.optString("state").trim().takeIf(String::isNotEmpty) ?: return null
+    val phase = when {
+        payload.has("pull") && !payload.isNull("pull") -> "pulling"
+        state == "running" && payload.optString("vncUrl").isNotBlank() -> "running"
+        state == "running" -> "local"
+        state == "hibernated" -> "sleeping"
+        else -> "off"
+    }
+    return boxId to phase
 }

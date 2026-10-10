@@ -270,6 +270,13 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
             paymentState = AccountPaymentState.OUTCOME_UNKNOWN
         }
 
+        val rebuildState = runCatching {
+            computerRebuildOwner.accountProjection(accountAccessOwner.currentProjection().accountEpoch)
+        }.getOrElse { error ->
+            failures += "computer-rebuild:" + (error.message ?: error::class.java.simpleName)
+            AccountRebuildState.UNKNOWN
+        }
+
         return accountAccessOwner.settle(
             token,
             AccountAccessFacts(
@@ -289,10 +296,9 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
                 remoteReady = remoteReady,
                 remoteHasDesktop = remoteHasDesktop,
                 sessionSettled = true,
-                // Remote Runner binding state is not the Computer Rebuild owner.
-                // Keep this fail-closed until request/ack, migration, transport, teardown,
-                // reconnect and settlement are wired from the canonical rebuild state machine.
-                rebuildState = AccountRebuildState.UNKNOWN,
+                // Canonical rebuild state comes only from ComputerRebuildStateOwner. Remote
+                // binding readiness remains a separate execution-capability fact.
+                rebuildState = rebuildState,
                 recoveryState = when {
                     failures.isNotEmpty() -> AccountRecoveryState.OUTCOME_UNKNOWN
                     remoteReady -> AccountRecoveryState.READY
@@ -632,9 +638,13 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
                         host.request(
                             "feature.receive",
                             JSONObject().put("timeoutMs", 250),
-                        )
+                        ).also {
+                            observeComputerRebuildTransport(connected = true)
+                        }
                     } catch (_: Throwable) {
+                        observeComputerRebuildTransport(connected = false)
                         runCatching { replayCoordinatorEvents() }
+                            .onSuccess { observeComputerRebuildTransport(connected = true) }
                         Thread.sleep(100)
                         continue
                     }
@@ -688,10 +698,23 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
 
     private fun dispatchFeatureEvent(event: JSONObject) {
         if (!acceptCoordinatorEvent(event)) return
+        observeComputerRebuildEvent(event)
         val serialized = event.toString()
         featureEventListeners.forEach { listener ->
             runCatching { listener(JSONObject(serialized)) }
         }
+    }
+
+    private fun observeComputerRebuildTransport(connected: Boolean) {
+        val epoch = accountAccessOwner.currentProjection().accountEpoch
+        runCatching { computerRebuildOwner.observeConnection(epoch, connected) }
+    }
+
+    private fun observeComputerRebuildEvent(event: JSONObject) {
+        if (event.optString("type") != "forever-box") return
+        val (boxId, phase) = projectForeverBoxRebuildEvent(event) ?: return
+        val epoch = accountAccessOwner.currentProjection().accountEpoch
+        runCatching { computerRebuildOwner.observeBox(epoch, boxId, phase) }
     }
 
     companion object {
