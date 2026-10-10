@@ -153,6 +153,13 @@
             "normalizeFabushiSession",
             "normalizeFabushiCiSession"
           ]
+        },
+        {
+          "path": "desktop/e2e/messenger-regressions.spec.ts",
+          "blob_sha": "89683feae14ee7a519bc66d55c404e442814a262",
+          "symbols": [
+            "terminal auth classifier distinguishes revoked sessions from transient failures"
+          ]
         }
       ],
       "source_commit": "3bc92400826cc4ca7ac665b467708e22261edc61",
@@ -3432,6 +3439,13 @@
             "data-fab-avatar",
             "data-state"
           ]
+        },
+        {
+          "path": "desktop/e2e/messenger-regressions.spec.ts",
+          "blob_sha": "89683feae14ee7a519bc66d55c404e442814a262",
+          "symbols": [
+            "switching peers keeps dynamic avatars visible and current across conversation selection"
+          ]
         }
       ],
       "source_commit": "3bc92400826cc4ca7ac665b467708e22261edc61",
@@ -3747,6 +3761,135 @@
       "artifact": null,
       "verification_status": "not-verified",
       "notes": "Registered from the Desktop Mahayana workbench source audit only; remains mapped/not-verified and does not claim broad UI parity."
+    },
+    {
+      "responsibility_id": "MINIAPP-CHAT-ROUTING-001",
+      "domain": "miniapp-navigation",
+      "desktop_sources": [
+        {
+          "path": "desktop/e2e/messenger-regressions.spec.ts",
+          "blob_sha": "89683feae14ee7a519bc66d55c404e442814a262",
+          "symbols": [
+            "Electron transport keeps Mini Apps out of chat conversations and routes direct opens to miniapp.open"
+          ]
+        }
+      ],
+      "source_commit": "3bc92400826cc4ca7ac665b467708e22261edc61",
+      "responsibility": "Keep Mini App identities out of canonical Human/Agent conversation projections and route Mini App opens only through the isolated Mini App/App Surface owner.",
+      "source_owner": "Desktop ElectronMahayanaHostTransport conversation normalization plus miniapp.open routing",
+      "direct_callers": [
+        "Messenger conversation list normalization",
+        "direct Mini App open actions"
+      ],
+      "downstream_dependencies": [
+        "canonical conversation projection",
+        "Marketplace/Mini App route",
+        "MiniAppWebMcpSurface isolated load/session bridge"
+      ],
+      "state_owner": "Canonical messaging owner owns chat conversations; Mini App surface owner owns current app load. Presentation may hold only transient open/close selection.",
+      "persistent_state": [
+        "No Mini App may be persisted as a chat conversation merely because an upstream projection labels it as one."
+      ],
+      "protocol_wire_contract": [
+        "Mini App conversation kind is excluded from chat list",
+        "direct app open reaches isolated Mini App surface rather than chat.send/conversation.open"
+      ],
+      "visible_effect": "Mini Apps never appear as ordinary chats and opening one shows the dedicated Mini App surface.",
+      "failure_behavior": [
+        "Unknown or Mini App conversation kinds fail closed from chat projection instead of being coerced to direct chat",
+        "unresolvable Mini App identity is not silently opened as a conversation"
+      ],
+      "cancellation_behavior": "Closing/replacing a Mini App disposes its surface session; chat projection has no Mini App side effect to cancel.",
+      "retry_semantics": "Read-only projection can be repeated; opening a Mini App recreates only the isolated surface and must not duplicate chat state.",
+      "idempotency_semantics": "Conversation projection is deterministic by wire kind; repeated Mini App filtering cannot create canonical chat state.",
+      "process_death_recovery": "Messaging restore re-filters unsupported/Mini App kinds; Mini App load/session is recreated by its own owner and nonce/session fencing.",
+      "account_fencing": "Messaging and Mini App surfaces both consume the current account projection without sharing canonical state ownership.",
+      "security_boundary": "Unknown/untrusted conversation kinds cannot gain chat privileges; Mini App tools remain behind MiniAppWebMcpSurface grants/session fencing.",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/presentation/MessagingViewModel.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/production/ProductionRenderer_view.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/features/miniapp/MiniAppWebMcpSurface.kt",
+        "mobile/android/app/src/test/java/com/ombhrum/fabushi/FrontendProductionModelParityTest.kt"
+      ],
+      "android_owner": "MessagingViewModel read-only conversation projection + ProductionRenderer/MiniAppWebMcpSurface isolated Mini App route",
+      "platform_delta": "Desktop Electron transport miniapp.open becomes native Compose route state that opens MiniAppWebMcpSurface. Android filters unsupported/Mini App wire kinds from chat projection rather than coercing them to DIRECT.",
+      "implementation_status": "implemented",
+      "production_wiring": "MessagingViewModel fail-closes unknown conversation kinds; ProductionRenderer opens installed Mini Apps through dedicated MiniAppWebMcpSurface paths rather than the Human messaging surface.",
+      "unit_test": "FrontendProductionModelParityTest proves known chat kinds resolve and miniapp/unknown/blank kinds are rejected.",
+      "contract_test": "Desktop messenger-regressions Mini App/chat isolation responsibility mapped to native projection/routing; same-head CI required.",
+      "integration_test": "Existing Mini App surface/Marketplace integration plus messaging sync path; packaged exact-head journey still required.",
+      "packaged_test": "required on final minified exact-head APK/AAB",
+      "device_test": "required with authenticated messaging + installed Mini App on protected device",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Implemented source slice only. Do not mark verified until same exact-head JVM/Android build, packaged journey and protected-device evidence succeed."
+    },
+    {
+      "responsibility_id": "UI-CONVERSATION-RESPONSIVE-ANDROID-001",
+      "domain": "ui-conversation",
+      "desktop_sources": [
+        {
+          "path": "desktop/e2e/messenger-regressions.spec.ts",
+          "blob_sha": "89683feae14ee7a519bc66d55c404e442814a262",
+          "symbols": [
+            "Messenger composer remains inside the desktop viewport for chat peers",
+            "switching peers keeps dynamic avatars visible and narrow layouts can open the info panel"
+          ]
+        }
+      ],
+      "source_commit": "3bc92400826cc4ca7ac665b467708e22261edc61",
+      "responsibility": "Keep the active conversation identity stable across native responsive layout changes while the composer remains reachable inside supported window/inset/IME bounds and the conversation info surface reflects the same selected conversation.",
+      "source_owner": "Desktop messenger workspace responsive layout and conversation selection projection",
+      "direct_callers": [
+        "conversation selection",
+        "composer",
+        "conversation header/info toggle",
+        "responsive layout"
+      ],
+      "downstream_dependencies": [
+        "canonical messaging projection",
+        "Compose window/inset/IME layout",
+        "conversation info surface",
+        "avatar identity projection"
+      ],
+      "state_owner": "Host/MessagingViewModel owns canonical conversation identity/data; Compose may own only transient selection, info-open, scroll, focus and layout state.",
+      "persistent_state": [
+        "No new UI persistence owner; canonical conversation state remains in messaging runtime."
+      ],
+      "protocol_wire_contract": [
+        "selected conversation identity projects consistently to header/info/composer",
+        "composer remains usable under supported viewport/inset/IME conditions"
+      ],
+      "visible_effect": "Switching conversations never shows stale identity in header/info, and users can always reach/type/send from the composer on supported phone/tablet/foldable layouts.",
+      "failure_behavior": [
+        "Unsupported or stale selection closes/falls back without mutating canonical messaging state",
+        "layout/inset changes do not trigger duplicate message sends"
+      ],
+      "cancellation_behavior": "Back/dismiss only changes transient presentation state and never cancels or rewrites canonical conversation data.",
+      "retry_semantics": "Recomposition/layout retry is side-effect free; messaging mutations remain stable-id Host operations.",
+      "idempotency_semantics": "Repeated layout/selection projection is read-only and deterministic.",
+      "process_death_recovery": "Canonical conversations restore from Host; transient selected/info/IME state is reconstructed without replaying messages.",
+      "account_fencing": "Selection and callbacks must be discarded when the account-scoped messaging projection changes.",
+      "security_boundary": "Responsive UI cannot create capabilities or bypass messaging/Host authorization.",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/features/conversations/ConversationSurfaces.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/features/avatar/ClothGhostAvatarAndroid.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/presentation/MessagingViewModel.kt"
+      ],
+      "android_owner": "ConversationSurfaces transient native Compose state over MessagingViewModel read-only projections; canonical conversation truth remains Rust Host messaging owner.",
+      "platform_delta": "Desktop CSS viewport/overlay behavior becomes Compose adaptive layout, WindowInsets/IME handling and phone/tablet/foldable navigation.",
+      "implementation_status": "mapped",
+      "production_wiring": "Partial. Current ConversationDetail uses Scaffold + weighted transcript + native composer and a transient info route, but there is no same-head adaptive/inset/IME contract proving composer bounds and selected-identity consistency across supported form factors.",
+      "unit_test": "required: selection/info identity projection and pure adaptive-layout policy",
+      "contract_test": "required against Desktop composer-in-viewport and identity-consistent info-panel regressions",
+      "integration_test": "required Compose semantics/insets/IME tests across compact/medium/expanded widths",
+      "packaged_test": "required on final exact-head minified APK/AAB",
+      "device_test": "required on phone plus tablet/foldable-equivalent API profiles with IME and rotation/recreation",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Mapped from the Desktop regression source. Existing Compose structure is not treated as proof of responsive parity."
     }
   ],
   "traceability": {
