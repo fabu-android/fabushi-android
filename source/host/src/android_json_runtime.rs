@@ -13,7 +13,8 @@ use crate::mcp_auth::{
     McpAuthBackendPort, McpAuthOwnerEvent, McpAuthenticateResult,
     SandPrivacyMode as BackendSandPrivacyMode,
 };
-use crate::extensions::transcript::{AsyncTask, PENDING_WAKE_STALE_MAX_AGE_MS, SandPendingWakeStore, TranscriptStore, merge_async_tasks};
+use crate::extensions::transcript::{AsyncTask, SandPendingWakeStore, TranscriptStore, merge_async_tasks};
+use crate::extensions::transcript::pending_wake_rearm::PENDING_WAKE_STALE_MAX_AGE_MS;
 use crate::extensions::webauthn_proxy::{
     WebAuthnBridgeError, WebAuthnProxyExtension, WebAuthnProxyExtensionConfig,
 };
