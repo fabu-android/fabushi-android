@@ -25,7 +25,7 @@ import com.ombhrum.fabushi.androidpreload.runtime.AndroidPresentationRuntimePort
 import kotlinx.coroutines.flow.SharedFlow
 import org.json.JSONObject
 
-private enum class RendererRoute { GROK_HOME, MESSAGING }
+private enum class RendererRoute { GROK_HOME, AGENT_NETWORK, MESSAGING }
 
 /**
  * Shipping production renderer corresponding to Grok ProductionRenderer.
@@ -55,7 +55,7 @@ internal fun ProductionRenderer(
                 var commandPaletteOpen by remember { mutableStateOf(false) }
                 var deepLinkInfo by remember { mutableStateOf<DeepLinkInfo?>(null) }
 
-                BackHandler(enabled = rendererRoute == RendererRoute.MESSAGING && state.loggedIn) {
+                BackHandler(enabled = rendererRoute != RendererRoute.GROK_HOME && state.loggedIn) {
                     rendererRoute = RendererRoute.GROK_HOME
                 }
 
@@ -83,7 +83,7 @@ internal fun ProductionRenderer(
                     if (!state.loggedIn) rendererRoute = RendererRoute.GROK_HOME
                 }
                 LaunchedEffect(rendererRoute, state.loggedIn) {
-                    if (rendererRoute == RendererRoute.GROK_HOME && state.loggedIn) {
+                    if (state.loggedIn && (rendererRoute == RendererRoute.GROK_HOME || rendererRoute == RendererRoute.AGENT_NETWORK)) {
                         model.refresh()
                         botModel.refreshBots()
                     }
@@ -133,6 +133,16 @@ internal fun ProductionRenderer(
                             )
                         }
                     }
+                } else if (state.onboardingStep >= 3 && state.authResolved && state.loggedIn && rendererRoute == RendererRoute.AGENT_NETWORK) {
+                    AgentNetworkSurface(
+                        bots = botState.bots,
+                        appAgentSurface = appAgentSurface,
+                        onBack = { rendererRoute = RendererRoute.GROK_HOME },
+                        onOpenBot = { bot ->
+                            rendererRoute = RendererRoute.GROK_HOME
+                            botModel.openBot(bot)
+                        },
+                    )
                 } else if (state.onboardingStep >= 3 && state.authResolved && state.loggedIn && rendererRoute == RendererRoute.GROK_HOME) {
                     val miniAppBot = botState.activeBot?.takeIf { !it.miniAppId.isNullOrBlank() }
                     val miniAppPlugin = miniAppBot?.miniAppId?.let { id -> state.plugins.firstOrNull { it.pluginId == id } }
@@ -216,6 +226,7 @@ internal fun ProductionRenderer(
                             botState = botState,
                             appAgentSurface = appAgentSurface,
                             onOpenMessaging = { rendererRoute = RendererRoute.MESSAGING },
+                            onOpenAgentNetwork = { rendererRoute = RendererRoute.AGENT_NETWORK },
                             onOpenCommandPalette = { commandPaletteOpen = true },
                             onRefreshBots = botModel::refreshBots,
                             onCreateBot = botModel::createBot,
