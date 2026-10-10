@@ -160,6 +160,13 @@
           "symbols": [
             "terminal auth classifier distinguishes revoked sessions from transient failures"
           ]
+        },
+        {
+          "path": "desktop/tsconfig.fabushi-product.json",
+          "blob_sha": "758803dc9d4955e085099e916bdef93b3621c507",
+          "symbols": [
+            "reviewed Desktop platform/build/verification contract"
+          ]
         }
       ],
       "source_commit": "3bc92400826cc4ca7ac665b467708e22261edc61",
@@ -2279,6 +2286,20 @@
           "symbols": [
             "import-reference"
           ]
+        },
+        {
+          "path": "desktop/tsconfig.grok-electron.json",
+          "blob_sha": "df86dd60642e621d03ad71fa7c7a11c6127f4ea1",
+          "symbols": [
+            "reviewed Desktop platform/build/verification contract"
+          ]
+        },
+        {
+          "path": "desktop/tsconfig.json",
+          "blob_sha": "bbd1695ae4f24b4002a8f979c78237aa99c009d2",
+          "symbols": [
+            "reviewed Desktop platform/build/verification contract"
+          ]
         }
       ],
       "source_commit": "3bc92400826cc4ca7ac665b467708e22261edc61",
@@ -2512,6 +2533,27 @@
           "blob_sha": "2aa0ce0f9ea0220c5cc6f63cc84a400bb65b8731",
           "symbols": [
             "platform/architecture contract reviewed for Android replacement"
+          ]
+        },
+        {
+          "path": "desktop/scripts/notarize-after-sign.cjs",
+          "blob_sha": "8530f874e873d544c23902c4b07b096f943a1f4d",
+          "symbols": [
+            "reviewed Desktop platform/build/verification contract"
+          ]
+        },
+        {
+          "path": "desktop/scripts/stage-host.mjs",
+          "blob_sha": "9716731f10d58b465a6c54ed4f07faa5939d9fdd",
+          "symbols": [
+            "reviewed Desktop platform/build/verification contract"
+          ]
+        },
+        {
+          "path": "desktop/vite.config.ts",
+          "blob_sha": "62e32ef4499400c8c2f4c5446ddd6ae97b7de3fa",
+          "symbols": [
+            "reviewed Desktop platform/build/verification contract"
           ]
         }
       ],
@@ -3702,6 +3744,20 @@
             "attachScreenshot",
             "screencast"
           ]
+        },
+        {
+          "path": "desktop/scripts/macos-session-recorder.sh",
+          "blob_sha": "7ef7b98c5347620237372b9c0e22a156f56b4d1b",
+          "symbols": [
+            "reviewed Desktop platform/build/verification contract"
+          ]
+        },
+        {
+          "path": "desktop/scripts/macos-session-video.swift",
+          "blob_sha": "9cee416603834fef04ab88fbe8ce59fc43efccdd",
+          "symbols": [
+            "reviewed Desktop platform/build/verification contract"
+          ]
         }
       ],
       "source_commit": "3bc92400826cc4ca7ac665b467708e22261edc61",
@@ -4216,6 +4272,20 @@
           "blob_sha": "5bdac676f2ad1abfd66822918eafe14d70158e99",
           "symbols": [
             "platform/architecture contract reviewed for Android replacement"
+          ]
+        },
+        {
+          "path": "desktop/scripts/diagnose-desktop-bootstrap.mjs",
+          "blob_sha": "432f7824636820c09d7526f7c7668de5dcfe5001",
+          "symbols": [
+            "reviewed Desktop platform/build/verification contract"
+          ]
+        },
+        {
+          "path": "desktop/scripts/test-bot-conversation.cjs",
+          "blob_sha": "815882c4492c6f748c57df4e8d826b0e41c63857",
+          "symbols": [
+            "reviewed Desktop platform/build/verification contract"
           ]
         }
       ],
