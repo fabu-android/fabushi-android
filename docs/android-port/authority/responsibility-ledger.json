@@ -2998,6 +2998,74 @@
       "artifact": null,
       "verification_status": "not-verified",
       "notes": "Repository-boundary documentation is implemented. Full product verification remains gated by strict source closure and same-final-head package/device acceptance."
+    },
+    {
+      "responsibility_id": "AUTHORITY-RUST-RUNTIME-SOURCE-001",
+      "domain": "operations",
+      "desktop_sources": [
+        {
+          "path": "RUST_RUNTIME_SOURCE.md",
+          "blob_sha": "ec1c31b5f1326cbc85dd29c893d13a4d2a9efa5a",
+          "symbols": [
+            "Rust desktop runtime restoration"
+          ]
+        }
+      ],
+      "source_commit": "3bc92400826cc4ca7ac665b467708e22261edc61",
+      "responsibility": "Track the actual shipping Rust runtime/build dependency closure and provenance without treating obsolete restoration paths as current authority.",
+      "source_owner": "Desktop historical Rust restoration provenance",
+      "direct_callers": [
+        "Desktop package/build audit",
+        "Rust migration audit"
+      ],
+      "downstream_dependencies": [
+        "Desktop Cargo/build entrypoints",
+        "Android Cargo workspace",
+        "JNI package composition"
+      ],
+      "state_owner": "Git source/build manifests and authority documents",
+      "persistent_state": [
+        "Cargo manifests",
+        "source inventory",
+        "runtime provenance/evidence"
+      ],
+      "protocol_wire_contract": [
+        "exact source commit/blob",
+        "Cargo path dependency closure",
+        "packaged runtime identity"
+      ],
+      "visible_effect": "Android ships the intended Coordinator/Host/Runner runtime instead of a stale or unrelated restored workspace.",
+      "failure_behavior": [
+        "missing/stale source paths fail authority review",
+        "unpackaged or wrong JNI/runtime output cannot satisfy parity"
+      ],
+      "cancellation_behavior": "Interrupted runtime migration remains not verified.",
+      "retry_semantics": "Re-read current build graph and rerun exact-head Rust/package CI after any source change.",
+      "idempotency_semantics": "Same Cargo/source graph yields the same declared workspace and package inputs.",
+      "process_death_recovery": "Source/runtime authority persists in Git and CI artifacts.",
+      "account_fencing": "Repository/exact SHA fence runtime provenance.",
+      "security_boundary": "Only repository-owned or explicitly provenance-reviewed runtime source enters the Android build.",
+      "android_disposition": "not-applicable-with-replacement",
+      "android_target": [
+        "Cargo.toml",
+        "source/host/Cargo.toml",
+        "source/android-host-jni/Cargo.toml",
+        "docs/android-port/authority/discovery.md",
+        "docs/specs/desktop-main-android-full-parity.md",
+        ".github/workflows/android-parity-full-ci.yml"
+      ],
+      "android_owner": "Android Rust workspace and package composition",
+      "platform_delta": "The Desktop historical restoration document points at obsolete third_party roots. Android instead owns a native Rust workspace under source/** and packages it through android-host-jni for arm64-v8a/x86_64; current Desktop source is audited from its real source/** build graph.",
+      "implementation_status": "implemented",
+      "production_wiring": "Root Cargo.toml declares the Android-owned Rust workspace; Full CI builds fabushi-android-host-jni for supported Android ABIs and verifies the produced native Host is packaged into exact-head APK/AAB variants.",
+      "unit_test": "Grok Android Architecture rust-runtime-foundation cargo test --workspace --all-targets.",
+      "contract_test": "Android Parity Full CI Rust contract/runtime tests plus authority checker.",
+      "integration_test": "android-build-unit-lint builds the exact-head native Host through cargo-ndk before Gradle package assembly.",
+      "packaged_test": "Exact-head APK/AAB identity and JNI hashes are recorded by package CI; final latest-head evidence is still required.",
+      "device_test": "Protected emulator/device acceptance remains a downstream gate.",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Historical Desktop restoration paths are not current source facts. Replacement is implemented but remains not-verified until final exact-head source closure/package/device gates."
     }
   ],
   "traceability": {
