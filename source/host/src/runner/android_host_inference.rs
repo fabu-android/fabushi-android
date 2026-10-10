@@ -730,11 +730,11 @@ mod tests {
             "action":"sand_subagent",
             "arguments":{"action":"launch","prompt":"work","subagent_type":"executor"}
         }));
-        assert!(prompt.contains(r#"\"decision\":\"allow\""#));
-        assert!(prompt.contains(r#"\"decision\":\"block\""#));
-        assert!(prompt.contains(r#"\"decision\":\"reject\""#));
+        assert!(prompt.contains(r#""decision":"allow""#));
+        assert!(prompt.contains(r#""decision":"block""#));
+        assert!(prompt.contains(r#""decision":"reject""#));
         assert!(prompt.contains("proposed_rule"));
-        assert!(!prompt.contains(r#"\"decision\":\"deny\""#));
+        assert!(!prompt.contains(r#""decision":"deny""#));
     }
 
     #[test]
