@@ -5,6 +5,8 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import org.json.JSONArray
+import org.json.JSONObject
 
 class FrontendProductionModelParityTest {
     @Test
@@ -365,5 +367,128 @@ class FrontendProductionModelParityTest {
         )
         assertEquals("HTTPS link", deepLinkSourceLabel(DeepLinkSource.HTTPS))
     }
+
+    @Test
+    fun canonicalAgentTranscriptIsIdentityFencedAndFailClosed() {
+        val transcript = JSONArray()
+            .put(
+                JSONObject()
+                    .put("kind", "message")
+                    .put("id", "a-user")
+                    .put("agentId", "agent-a")
+                    .put("role", "user")
+                    .put("content", "alpha question")
+                    .put("timestampMs", 100L),
+            )
+            .put(
+                JSONObject()
+                    .put("kind", "message")
+                    .put("id", "b-assistant")
+                    .put("agentId", "agent-b")
+                    .put("role", "assistant")
+                    .put("content", "beta answer")
+                    .put("timestampMs", 200L),
+            )
+            .put(
+                JSONObject()
+                    .put("kind", "message")
+                    .put("id", "legacy-without-owner")
+                    .put("role", "assistant")
+                    .put("content", "must not leak"),
+            )
+
+        assertEquals(
+            listOf("a-user"),
+            canonicalMobileTranscriptForAgent(transcript, "agent-a").map { it.id },
+        )
+        assertEquals(
+            listOf("b-assistant"),
+            canonicalMobileTranscriptForAgent(transcript, "agent-b").map { it.id },
+        )
+        assertFalse(
+            canonicalAgentTranscriptMessages(transcript)
+                .any { it.id == "legacy-without-owner" },
+        )
+    }
+
+    @Test
+    fun canonicalTranscriptLateSnapshotPreservesOnlyMessagesArrivingDuringLoad() {
+        val baseline = listOf(
+            MobileChatMessage("old-local", MobileChatRole.USER, "old"),
+        )
+        val current = baseline + MobileChatMessage(
+            "live-during-load",
+            MobileChatRole.ASSISTANT,
+            "new live event",
+        )
+        val canonical = listOf(
+            MobileChatMessage("server-old", MobileChatRole.USER, "server"),
+        )
+
+        val merged = mergeCanonicalMobileTranscript(
+            baselineEntryIds = baseline.mapTo(linkedSetOf(), MobileChatMessage::id),
+            current = current,
+            canonical = canonical,
+        )
+        assertEquals(
+            listOf("server-old", "live-during-load"),
+            merged.map { it.id },
+        )
+    }
+
+    @Test
+    fun commandPaletteMessageSearchCarriesAgentAndStableEntryIdentity() {
+        val transcript = JSONArray()
+            .put(
+                JSONObject()
+                    .put("kind", "message")
+                    .put("id", "entry-1")
+                    .put("agentId", "agent-a")
+                    .put("role", "assistant")
+                    .put("content", "Quarterly launch checklist ready")
+                    .put("timestampMs", 1_000L),
+            )
+            .put(
+                JSONObject()
+                    .put("kind", "message")
+                    .put("id", "entry-2")
+                    .put("agentId", "agent-b")
+                    .put("role", "assistant")
+                    .put("content", "Unrelated note")
+                    .put("timestampMs", 2_000L),
+            )
+
+        val results = commandPaletteMessagesFromTranscript(
+            transcript = transcript,
+            query = "launch checklist",
+        )
+        assertEquals(1, results.size)
+        assertEquals("agent-a", results.single().agentId)
+        assertEquals("entry-1", results.single().entryId)
+
+        var opened: CommandPaletteMessage? = null
+        val entries = commandPaletteMessageEntries(
+            messages = results,
+            agentNames = mapOf("agent-a" to "Research"),
+            nowMs = 61_000L,
+            onOpen = { opened = it },
+        )
+        assertEquals(listOf("message:agent-a:entry-1"), entries.map { it.id })
+        assertTrue(activateCommandPaletteEntry(entries, 0))
+        assertEquals("entry-1", opened?.entryId)
+        assertEquals("agent-a", opened?.agentId)
+    }
+
+    @Test
+    fun commandPaletteMessageRequestFenceRejectsSupersededResults() {
+        val fence = CommandPaletteMessageRequestFence()
+        val first = fence.begin()
+        val second = fence.begin()
+        assertFalse(fence.accepts(first))
+        assertTrue(fence.accepts(second))
+        fence.cancel()
+        assertFalse(fence.accepts(second))
+    }
+
 
 }
