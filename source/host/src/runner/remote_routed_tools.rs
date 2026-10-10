@@ -25,6 +25,7 @@ const MAX_READ_PATH: usize = 4096;
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct RemoteDispatchBinding {
+    pub(crate) credential_plane: String,
     pub(crate) endpoint: String,
     pub(crate) bearer_credential: String,
     pub(crate) device_id: String,
@@ -42,6 +43,12 @@ impl RemoteDispatchBinding {
     }
 
     fn validate(&self) -> Result<(), String> {
+        if self.credential_plane != "authorized-remote-runner-v1" {
+            return Err(
+                "remote binding credential plane is not an authorized Remote Runner enrollment"
+                    .into(),
+            );
+        }
         if self.account_epoch == 0 {
             return Err("remote binding account epoch must be positive".into());
         }
@@ -884,6 +891,7 @@ mod tests {
     #[test]
     fn binding_rejects_wrong_epoch_and_untrusted_plaintext_endpoint() {
         let invalid_epoch = json!({
+            "credentialPlane":"authorized-remote-runner-v1",
             "endpoint":"https://remote.example.com",
             "bearerCredential":"long-enough-credential",
             "deviceId":"device-1",
@@ -894,6 +902,7 @@ mod tests {
         assert!(RemoteDispatchBinding::parse(&invalid_epoch).is_err());
 
         let plaintext = json!({
+            "credentialPlane":"authorized-remote-runner-v1",
             "endpoint":"http://remote.example.com",
             "bearerCredential":"long-enough-credential",
             "deviceId":"device-1",
@@ -905,8 +914,33 @@ mod tests {
     }
 
     #[test]
+    fn binding_rejects_credentials_from_unrelated_remote_control_planes() {
+        for credential_plane in [
+            "computer-client-token-v1",
+            "computer-mobile-token-v1",
+            "computer-device-secret-v1",
+            "codex-remote-control-token-v1",
+        ] {
+            let raw = json!({
+                "credentialPlane":credential_plane,
+                "endpoint":"https://remote.example.com",
+                "bearerCredential":"long-enough-credential",
+                "deviceId":"device-1",
+                "accountFence":"session:a",
+                "accountEpoch":7,
+                "executors":["computer"]
+            }).to_string();
+            assert!(
+                RemoteDispatchBinding::parse(&raw).is_err(),
+                "{credential_plane} must never authorize Remote Runner dispatch",
+            );
+        }
+    }
+
+    #[test]
     fn binding_requires_explicit_known_executor_capabilities() {
         let missing = json!({
+            "credentialPlane":"authorized-remote-runner-v1",
             "endpoint":"https://remote.example.com",
             "bearerCredential":"long-enough-credential",
             "deviceId":"device-1",
@@ -917,6 +951,7 @@ mod tests {
         assert!(RemoteDispatchBinding::parse(&missing).is_err());
 
         let unknown = json!({
+            "credentialPlane":"authorized-remote-runner-v1",
             "endpoint":"https://remote.example.com",
             "bearerCredential":"long-enough-credential",
             "deviceId":"device-1",
@@ -927,6 +962,7 @@ mod tests {
         assert!(RemoteDispatchBinding::parse(&unknown).is_err());
 
         let scoped = RemoteDispatchBinding::parse(&json!({
+            "credentialPlane":"authorized-remote-runner-v1",
             "endpoint":"https://remote.example.com",
             "bearerCredential":"long-enough-credential",
             "deviceId":"device-1",

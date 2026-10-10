@@ -38,7 +38,8 @@ internal class AndroidRemoteBindingStore(context: Context) {
             require(ciphertext.isNotEmpty()) { "empty Remote binding ciphertext" }
             val cipher = Cipher.getInstance(TRANSFORMATION)
             cipher.init(Cipher.DECRYPT_MODE, secretKey(), GCMParameterSpec(GCM_TAG_BITS, iv))
-            String(cipher.doFinal(ciphertext), StandardCharsets.UTF_8).also(::validateBindingJson)
+            String(cipher.doFinal(ciphertext), StandardCharsets.UTF_8)
+                .also(RemoteBindingCredentialContract::validate)
         }.getOrElse {
             clear()
             null
@@ -63,7 +64,7 @@ internal class AndroidRemoteBindingStore(context: Context) {
 
     /** Protected pairing boundary only; no presentation-facing owner calls this. */
     fun writeBindingJson(value: String) {
-        validateBindingJson(value)
+        RemoteBindingCredentialContract.validate(value)
         require(value.toByteArray(StandardCharsets.UTF_8).size <= MAX_BINDING_BYTES) {
             "Remote binding exceeds bounded secret payload"
         }
@@ -95,55 +96,6 @@ internal class AndroidRemoteBindingStore(context: Context) {
         runCatching { bindingFile.delete() }
     }
 
-    private fun validateBindingJson(value: String) {
-        require(value.isNotBlank()) { "Remote binding must not be blank" }
-        val json = JSONObject(value)
-        val allowedKeys = setOf(
-            "endpoint",
-            "bearerCredential",
-            "deviceId",
-            "accountFence",
-            "accountEpoch",
-            "executors",
-        )
-        require(json.keys().asSequence().toSet() == allowedKeys) {
-            "Remote binding must contain only the canonical executor credential contract"
-        }
-        val endpoint = URI(json.getString("endpoint"))
-        val loopback = endpoint.host == "127.0.0.1" || endpoint.host == "::1" || endpoint.host == "localhost"
-        require(endpoint.scheme.equals("https", true) || (endpoint.scheme.equals("http", true) && loopback)) {
-            "Remote binding endpoint must use HTTPS outside loopback"
-        }
-        require(endpoint.userInfo == null && endpoint.fragment == null) { "Remote binding endpoint is invalid" }
-        val credential = json.getString("bearerCredential")
-        require(credential.length in 16..(16 * 1024) && credential.none(Char::isWhitespace) && credential.none(Char::isISOControl)) {
-            "Remote binding credential is invalid"
-        }
-        for (key in listOf("deviceId", "accountFence")) {
-            val identity = json.getString(key)
-            require(identity.isNotBlank() && identity.length <= 512 && identity.none(Char::isISOControl)) {
-                "Remote binding $key is invalid"
-            }
-        }
-        require(json.getLong("accountEpoch") > 0L) { "Remote binding account epoch must be positive" }
-        val allowedExecutors = setOf(
-            "shell",
-            "read",
-            "computer",
-            "screenshot",
-            "external-shell",
-            "external-read",
-        )
-        val executors = json.getJSONArray("executors")
-        require(executors.length() in 1..allowedExecutors.size) { "Remote binding must declare bounded executors" }
-        val observedExecutors = mutableSetOf<String>()
-        repeat(executors.length()) { index ->
-            val executor = executors.getString(index)
-            require(executor in allowedExecutors) { "Remote binding executor is unsupported" }
-            require(observedExecutors.add(executor)) { "Remote binding executor is duplicated" }
-        }
-    }
-
     private fun secretKey(): SecretKey {
         val keyStore = KeyStore.getInstance(ANDROID_KEY_STORE).apply { load(null) }
         (keyStore.getKey(KEY_ALIAS, null) as? SecretKey)?.let { return it }
@@ -169,6 +121,76 @@ internal class AndroidRemoteBindingStore(context: Context) {
         const val FILE_NAME = "fabushi-remote-outbound-binding.v1"
         const val GCM_TAG_BITS = 128
         const val MAX_BINDING_BYTES = 32 * 1024
+    }
+}
+
+/**
+ * Exact credential schema for outbound Remote Runner execution.
+ *
+ * This plane is deliberately distinct from /v1/computers clientToken/mobileToken/deviceSecret
+ * and Codex app-server remote_control_token. Those credentials cannot be relabelled as an
+ * executor bearer without a real Authorized Remote Runner enrollment contract.
+ */
+internal object RemoteBindingCredentialContract {
+    const val EXECUTOR_CREDENTIAL_PLANE = "authorized-remote-runner-v1"
+
+    fun validate(value: String) {
+        require(value.isNotBlank()) { "Remote binding must not be blank" }
+        val json = JSONObject(value)
+        val allowedKeys = setOf(
+            "credentialPlane",
+            "endpoint",
+            "bearerCredential",
+            "deviceId",
+            "accountFence",
+            "accountEpoch",
+            "executors",
+        )
+        require(json.keys().asSequence().toSet() == allowedKeys) {
+            "Remote binding must contain only the canonical executor credential contract"
+        }
+        require(json.getString("credentialPlane") == EXECUTOR_CREDENTIAL_PLANE) {
+            "Remote binding credential plane is not an authorized Remote Runner enrollment"
+        }
+        val endpoint = URI(json.getString("endpoint"))
+        val loopback = endpoint.host == "127.0.0.1" || endpoint.host == "::1" || endpoint.host == "localhost"
+        require(endpoint.scheme.equals("https", true) || (endpoint.scheme.equals("http", true) && loopback)) {
+            "Remote binding endpoint must use HTTPS outside loopback"
+        }
+        require(endpoint.userInfo == null && endpoint.fragment == null) { "Remote binding endpoint is invalid" }
+        val credential = json.getString("bearerCredential")
+        require(
+            credential.length in 16..(16 * 1024) &&
+                credential.none(Char::isWhitespace) &&
+                credential.none(Char::isISOControl),
+        ) {
+            "Remote binding credential is invalid"
+        }
+        for (key in listOf("deviceId", "accountFence")) {
+            val identity = json.getString(key)
+            require(identity.isNotBlank() && identity.length <= 512 && identity.none(Char::isISOControl)) {
+                "Remote binding $key is invalid"
+            }
+        }
+        require(json.getLong("accountEpoch") > 0L) { "Remote binding account epoch must be positive" }
+        val allowedExecutors = setOf(
+            "shell",
+            "read",
+            "computer",
+            "screenshot",
+            "external-shell",
+            "external-read",
+        )
+        val executors = json.getJSONArray("executors")
+        require(executors.length() in 1..allowedExecutors.size) {
+            "Remote binding must declare bounded executors"
+        }
+        val observedExecutors = mutableSetOf<String>()
+        repeat(executors.length()) { index ->
+            val executor = executors.getString(index)
+            require(executor in allowedExecutors) { "Remote binding executor is unsupported" }
+            require(observedExecutors.add(executor)) { "Remote binding executor is duplicated" }
+        }
     }
 }
 
