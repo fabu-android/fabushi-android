@@ -330,6 +330,7 @@ internal fun ProductionRenderer(
                             onOpenBot = { bot -> botModel.openBot(bot) },
                             onRenameBot = botModel::renameBot,
                             onUpdateBotProfile = botModel::updateBotProfile,
+                            onSetBotNotifyOnUpdates = botModel::setBotNotifyOnUpdates,
                             onHideBot = botModel::hideBot,
                             onSetBotUnread = botModel::setBotUnread,
                             onDuplicateBot = botModel::duplicateBot,
