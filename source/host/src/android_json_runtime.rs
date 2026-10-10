@@ -5211,8 +5211,8 @@ mod tests {
         let second_agent = first
             .dispatch("createAgent", &json!({"name":"Two","description":""}))
             .unwrap();
-        let first_id = first_agent["id"].as_str().unwrap().to_string();
-        let second_id = second_agent["id"].as_str().unwrap().to_string();
+        let first_id = first_agent["agent"]["id"].as_str().unwrap().to_string();
+        let second_id = second_agent["agent"]["id"].as_str().unwrap().to_string();
 
         let payload = json!({
             "operationId":"sidebar-op-1",
