@@ -1038,9 +1038,23 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     private fun handleOperationEvent(event: JSONObject) {
+        val type = event.optString("type")
+        if (type == "agent.async-tasks.changed") {
+            val visibleAgentId = mutableState.value.asyncTasksAgent?.id ?: return
+            if (event.optString("parentAgentId") == visibleAgentId) {
+                refreshAsyncTasks()
+            }
+            return
+        }
+        if (type == "agent.async-tasks.refresh") {
+            if (mutableState.value.asyncTasksAgent != null) {
+                refreshAsyncTasks()
+            }
+            return
+        }
+
         val operationId = mutableState.value.operationId ?: return
         if (!mutableState.value.busy) return
-        val type = event.optString("type")
         val eventOperationId = event.optString("operationId").ifBlank { operationId }
         if (type in setOf("chat.message", "chat.delta", "agent.step", "operation.started", "operation.completed", "operation.interrupted", "operation.failed", "model.routed", "approval.requested", "approval.resolved") && eventOperationId != operationId) {
             return
