@@ -568,59 +568,75 @@ fun GrokHomeSurface(
             }
 
             if (visibleBots.isNotEmpty()) {
-                item { SectionLabelAndroid("Bots  ${visibleBots.size}") }
-                items(visibleBots, key = { it.id }) { bot ->
-                    GrokBotRowAndroid(
-                        bot = bot,
-                        badge = "Bot",
-                        onClick = onOpenBot,
-                        editingName = editingBotId == bot.id,
-                        onNameCommit = { nextName ->
-                            onRenameBot(bot.id, nextName)
-                        },
-                        onNameExit = {
-                            editingBotId = null
-                        },
-                        trailing = {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                if (bot.isGroup) {
-                                    TextButton(
-                                        onClick = {
-                                            editingGroup = bot
-                                            editingGroupMemberIds = bot.memberIds.toSet()
-                                        },
-                                        modifier = Modifier.testTag("agent-group-members-${bot.id}"),
-                                    ) { Text("Members", fontSize = 11.sp) }
-                                }
-                                val currentSectionId = currentAgentSidebarSectionId(
-                                    botState.sidebarSections,
-                                    bot.id,
-                                )
-                                AgentRowActions(
-                                agentId = bot.id,
-                                agentName = bot.name,
-                                isGroup = bot.isGroup,
-                                isPinned = bot.isPinned,
-                                hasUnread = bot.hasUnread,
-                                isHidden = bot.isHidden,
-                                onEditName = { editingBotId = it },
-                                onEditProfile = { profileTarget = bot },
-                                onShowFullConversation = { onOpenBot(bot) },
-                                onShowAsyncTasks = { onShowBotAsyncTasks(bot) },
-                                sections = botState.sidebarSections,
-                                currentSectionId = currentSectionId,
-                                onMoveToSection = onMoveBotToSection,
-                                onMoveToNewSection = onMoveBotToNewSection,
-                                onHideFromSidebar = onHideBot,
-                                onDuplicateAgent = onDuplicateBot,
-                                onTogglePin = onSetBotPinned,
-                                onSetAgentUnread = onSetBotUnread,
-                                onRequestDelete = { deleteTarget = it },
-                                )
-                            }
-                        },
-                    )
+                val visibleById = visibleBots.associateBy { it.id }
+                val renderedSections = if (botState.sidebarSections.isEmpty()) {
+                    listOf("Bots" to visibleBots)
+                } else {
+                    botState.sidebarSections.map { section ->
+                        section.name.ifBlank {
+                            if (section.id == AGENT_UNASSIGNED_SECTION_ID) "Unassigned" else "Section"
+                        } to section.agentIds.mapNotNull(visibleById::get)
+                    }
                 }
+                renderedSections
+                    .filter { (_, bots) -> bots.isNotEmpty() || query.isBlank() }
+                    .forEach { (sectionName, sectionBots) ->
+                        item {
+                            SectionLabelAndroid("$sectionName  ${sectionBots.size}")
+                        }
+                        items(sectionBots, key = { it.id }) { bot ->
+                            GrokBotRowAndroid(
+                                bot = bot,
+                                badge = "Bot",
+                                onClick = onOpenBot,
+                                editingName = editingBotId == bot.id,
+                                onNameCommit = { nextName ->
+                                    onRenameBot(bot.id, nextName)
+                                },
+                                onNameExit = {
+                                    editingBotId = null
+                                },
+                                trailing = {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        if (bot.isGroup) {
+                                            TextButton(
+                                                onClick = {
+                                                    editingGroup = bot
+                                                    editingGroupMemberIds = bot.memberIds.toSet()
+                                                },
+                                                modifier = Modifier.testTag("agent-group-members-${bot.id}"),
+                                            ) { Text("Members", fontSize = 11.sp) }
+                                        }
+                                        val currentSectionId = currentAgentSidebarSectionId(
+                                            botState.sidebarSections,
+                                            bot.id,
+                                        )
+                                        AgentRowActions(
+                                            agentId = bot.id,
+                                            agentName = bot.name,
+                                            isGroup = bot.isGroup,
+                                            isPinned = bot.isPinned,
+                                            hasUnread = bot.hasUnread,
+                                            isHidden = bot.isHidden,
+                                            onEditName = { editingBotId = it },
+                                            onEditProfile = { profileTarget = bot },
+                                            onShowFullConversation = { onOpenBot(bot) },
+                                            onShowAsyncTasks = { onShowBotAsyncTasks(bot) },
+                                            sections = botState.sidebarSections,
+                                            currentSectionId = currentSectionId,
+                                            onMoveToSection = onMoveBotToSection,
+                                            onMoveToNewSection = onMoveBotToNewSection,
+                                            onHideFromSidebar = onHideBot,
+                                            onDuplicateAgent = onDuplicateBot,
+                                            onTogglePin = onSetBotPinned,
+                                            onSetAgentUnread = onSetBotUnread,
+                                            onRequestDelete = { deleteTarget = it },
+                                        )
+                                    }
+                                },
+                            )
+                        }
+                    }
             }
             botState.error?.takeIf { it.isNotBlank() }?.let {
                 if (botState.bots.isNotEmpty()) {
