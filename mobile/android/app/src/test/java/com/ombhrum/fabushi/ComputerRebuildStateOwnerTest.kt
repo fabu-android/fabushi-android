@@ -291,8 +291,11 @@ class ComputerRebuildStateOwnerTest {
         owner.reserveRequest(80, "request-80")
         owner.acceptRequest(80, "request-80", "operation-80", ComputerRebuildKind.RESET)
 
-        val staleOffset = owner.recordMigrationOffset(80, "operation-other", "cursor-stale")
-        assertEquals("", staleOffset.migrationOffsetKey)
+        // Stream cursor advancement is fenced by the active operation identity supplied by the
+        // watcher, not by the event's operation identity. This lets unrelated account-wide events
+        // advance without mutating this rebuild episode.
+        val cursorAfterOtherEvent = owner.recordMigrationOffset(80, "operation-80", "cursor-stale")
+        assertEquals("cursor-stale", cursorAfterOtherEvent.migrationOffsetKey)
         val staleDone = owner.observeMigration(
             80,
             "operation-other",
@@ -301,6 +304,8 @@ class ComputerRebuildStateOwnerTest {
         assertEquals("operation-80", staleDone.operationId)
         assertFalse(staleDone.terminalMigration)
 
+        owner.recordMigrationOffset(80, "operation-80", "")
+        assertEquals("", owner.snapshot(80).migrationOffsetKey)
         owner.recordMigrationOffset(80, "operation-80", "cursor-good")
         val done = owner.observeMigration(80, "operation-80", ComputerRebuildMigrationPhase.DONE)
         assertEquals("cursor-good", done.migrationOffsetKey)

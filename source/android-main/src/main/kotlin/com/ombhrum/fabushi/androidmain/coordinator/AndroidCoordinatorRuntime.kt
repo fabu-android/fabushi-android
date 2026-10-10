@@ -1215,6 +1215,7 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
         val expectedGeneration = processGeneration
         computerRebuildMigrationExecutor.execute {
             try {
+                var yieldedAfterResume = false
                 while (true) {
                     val currentEpoch = accountAccessOwner.currentProjection().accountEpoch
                     if (currentEpoch != expectedEpoch) break
@@ -1234,19 +1235,31 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
                         )
                     } catch (_: Throwable) {
                         if (accountAccessOwner.currentProjection().accountEpoch != expectedEpoch) break
+                        if (!yieldedAfterResume && current.migrationOffsetKey.isNotEmpty()) {
+                            // Desktop box-migration-watcher clears a persisted resume cursor only
+                            // when the first resumed attach fails before yielding any event.
+                            computerRebuildOwner.recordMigrationOffset(
+                                expectedEpoch,
+                                current.operationId,
+                                "",
+                            )
+                        }
                         Thread.sleep(COMPUTER_REBUILD_RECONNECT_MS)
                         continue
                     }
                     if (accountAccessOwner.currentProjection().accountEpoch != expectedEpoch) break
                     val operationId = event.optString("operationId").trim().takeIf(String::isNotEmpty)
-                    if (operationId != current.operationId) {
-                        // The backend stream is account-wide. Stale/other operation events advance
-                        // no durable cursor for this episode, so a crash cannot skip our own event.
-                        continue
-                    }
                     val offsetKey = event.optString("offsetKey")
+                    // The migration stream is account-wide. Advancing the durable stream cursor is
+                    // independent from allowing an event to mutate this operation's state.
+                    computerRebuildOwner.recordMigrationOffset(
+                        expectedEpoch,
+                        current.operationId,
+                        offsetKey,
+                    )
+                    yieldedAfterResume = true
+                    if (operationId != current.operationId) continue
                     val phase = parseComputerRebuildMigrationPhase(event.optString("phase")) ?: continue
-                    computerRebuildOwner.recordMigrationOffset(expectedEpoch, operationId, offsetKey)
                     val after = computerRebuildOwner.observeMigration(expectedEpoch, operationId, phase)
                     if (phase == ComputerRebuildMigrationPhase.DONE && after.terminalMigration) {
                         computerRebuildOwner.deactivate(expectedEpoch)
