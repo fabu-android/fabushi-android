@@ -434,6 +434,19 @@ mod tests {
     }
 
     #[test]
+    fn async_task_invalidation_preserves_parent_identity() {
+        let events = Arc::new(Mutex::new(VecDeque::new()));
+        publish_async_tasks_changed(&events, "agent-parent");
+        let event = events
+            .lock()
+            .unwrap()
+            .pop_front()
+            .expect("async task invalidation");
+        assert_eq!(event["type"], "agent.async-tasks.changed");
+        assert_eq!(event["parentAgentId"], "agent-parent");
+    }
+
+    #[test]
     fn root_management_tools_are_not_inherited_by_generated_child() {
         let root = tempfile::tempdir().unwrap();
         let owner = Arc::new(Mutex::new(
