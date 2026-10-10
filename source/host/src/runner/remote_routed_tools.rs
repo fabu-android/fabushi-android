@@ -192,6 +192,7 @@ impl RemoteDispatchBinding {
         approval_id: &str,
     ) -> Result<RemoteExecutionContext, String> {
         Ok(RemoteExecutionContext {
+            credential_id: self.credential_id.clone(),
             bearer: RemoteBearerCredential::new(self.bearer_credential.clone())
                 .map_err(|error| format!("remote credential rejected: {error:?}"))?,
             account_fence: self.account_fence.clone(),
