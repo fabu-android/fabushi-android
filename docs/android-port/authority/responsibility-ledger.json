@@ -2936,7 +2936,7 @@
       "desktop_sources": [
         {
           "path": "README.md",
-          "blob_sha": "8bf6cead37f04223dcd22864edfb7f7bddf381f8b",
+          "blob_sha": "53e560bae4c4a1e5e10677b0089f7bb5e54bc012",
           "symbols": [
             "Fabushi desktop",
             "Fabushi native communication capability absorption"
