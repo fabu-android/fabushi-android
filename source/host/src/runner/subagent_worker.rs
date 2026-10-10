@@ -87,7 +87,7 @@ impl AndroidRoutedToolBridge for ParentSubagentRoutedTools {
                 .lock()
                 .map_err(|_| "subagent owner lock poisoned".to_string())?
                 .process_epoch();
-            let _ = self
+            let settlement = self
                 .owner
                 .lock()
                 .map_err(|_| "subagent owner lock poisoned".to_string())?
@@ -97,7 +97,10 @@ impl AndroidRoutedToolBridge for ParentSubagentRoutedTools {
                     epoch,
                     SubagentRunOutcome::Failed(error.clone()),
                     now_ms(),
-                );
+                )?;
+            if !settlement.ignored_stale_callback {
+                publish_settlement(&self.events, settlement);
+            }
             return Err(error);
         }
         Ok(result.value)
