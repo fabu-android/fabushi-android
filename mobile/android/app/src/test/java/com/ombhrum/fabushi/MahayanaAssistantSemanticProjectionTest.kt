@@ -74,5 +74,8 @@ class MahayanaAssistantSemanticProjectionTest {
         assertTrue(MahayanaAssistantSemanticProjection.AgentId.endsWith(":agent:assistant"))
         assertTrue(MahayanaAssistantSemanticProjection.UnreadAgentId.endsWith(":agent:assistant"))
         assertTrue(MahayanaAssistantSemanticProjection.UnreadNoneName == "unread-none")
+        assertTrue(MahayanaAssistantSemanticProjection.UnreadPositiveName == "unread-positive")
+        assertTrue(MahayanaAssistantSemanticProjection.unreadName(false) == "unread-none")
+        assertTrue(MahayanaAssistantSemanticProjection.unreadName(true) == "unread-positive")
     }
 }
