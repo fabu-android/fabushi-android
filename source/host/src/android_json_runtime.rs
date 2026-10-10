@@ -594,7 +594,7 @@ impl AndroidJsonHost {
             "feature.automation.cancel" => self.automation_cancel(params),
             "feature.automation.settle" => self.automation_settle(params),
             "feature.automation.snapshot" => self.automation_snapshot(params),
-            "listAgents" => Ok(Value::Array(self.project_agent_roster()?))
+            "listAgents" => Ok(Value::Array(self.project_agent_roster()?)),
             "countAgents" => {
                 let agents = self.agents.lock().map_err(|_| "canonical Android Agent roster lock poisoned".to_string())?;
                 Ok(json!(agents.count()))
