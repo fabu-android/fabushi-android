@@ -21,11 +21,17 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
 
-internal fun aboutVersionInfo(state: AndroidUpdateUiState): String =
+internal fun androidPlatformLabel(): String =
+    "Android ${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT})"
+
+internal fun aboutVersionInfo(
+    state: AndroidUpdateUiState,
+    platformLabel: String = androidPlatformLabel(),
+): String =
     listOf(
         "Version: ${state.currentVersion}",
         "Version Code: ${state.currentVersionCode}",
-        "OS: Android ${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT})",
+        "OS: $platformLabel",
     ).joinToString("\n")
 
 @Composable
@@ -54,8 +60,12 @@ internal fun AndroidAboutDialog(
                     modifier = Modifier.padding(top = 8.dp),
                 )
                 Text(
-                    "Android ${Build.VERSION.RELEASE} · API ${Build.VERSION.SDK_INT}",
+                    androidPlatformLabel(),
                     modifier = Modifier.padding(top = 4.dp),
+                )
+                Text(
+                    "Copyright © 2026 Fabushi. All rights reserved.",
+                    modifier = Modifier.padding(top = 8.dp),
                 )
             }
         },
