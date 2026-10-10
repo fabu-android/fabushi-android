@@ -13,7 +13,7 @@ use crate::mcp_auth::{
     McpAuthBackendPort, McpAuthOwnerEvent, McpAuthenticateResult,
     SandPrivacyMode as BackendSandPrivacyMode,
 };
-use crate::extensions::transcript::TranscriptStore;
+use crate::extensions::transcript::{AsyncTask, SandPendingWakeStore, TranscriptStore, merge_async_tasks};
 use crate::extensions::webauthn_proxy::{
     WebAuthnBridgeError, WebAuthnProxyExtension, WebAuthnProxyExtensionConfig,
 };
@@ -621,6 +621,7 @@ pub struct AndroidJsonHost {
     agent_wake_operations: BTreeMap<String, String>,
     multitask_todos: Arc<Mutex<DurableMultitaskTodoStore>>,
     subagent_owner: Arc<Mutex<DurableSubagentOwner>>,
+    pending_wake_store: SandPendingWakeStore,
     subagent_tools: SubagentToolBridge,
     subagent_events: Arc<Mutex<VecDeque<Value>>>,
     subagent_review_approvals: Arc<SubagentReviewApprovalRegistry>,
@@ -730,6 +731,7 @@ impl AndroidJsonHost {
             DurableSubagentOwner::open(app_data_dir.join("generated-subagents.json"), now_ms())
                 .unwrap_or_else(|error| panic!("failed to open durable generated-subagent owner: {error}")),
         ));
+        let pending_wake_store = SandPendingWakeStore::new(&app_data_dir);
         let subagent_tools = SubagentToolBridge::new(Arc::clone(&subagent_owner));
         let subagent_events = Arc::new(Mutex::new(VecDeque::new()));
         let subagent_review_approvals = Arc::new(SubagentReviewApprovalRegistry::default());
@@ -779,6 +781,7 @@ impl AndroidJsonHost {
             agent_wake_operations: BTreeMap::new(),
             multitask_todos,
             subagent_owner,
+            pending_wake_store,
             subagent_tools,
             subagent_events,
             subagent_review_approvals,
@@ -1076,23 +1079,24 @@ impl AndroidJsonHost {
             .lock()
             .map_err(|_| "durable subagent owner lock poisoned".to_string())?
             .list_running_for_parent(parent_agent_id);
-        Ok(Value::Array(
-            records
-                .into_iter()
-                .filter(|record| record.account_fence == account_fence)
-                .map(|record| {
-                    json!({
-                        "kind":"subagent",
-                        "id":record.subagent_id,
-                        "label":record.title,
-                        "status":"running",
-                        "startedAtMs":record.started_at_ms,
-                        "detail":record.box_id,
-                        "subagentType":record.subagent_type,
-                    })
-                })
-                .collect(),
-        ))
+        let live_tasks = records
+            .into_iter()
+            .filter(|record| record.account_fence == account_fence)
+            .map(|record| AsyncTask {
+                kind: "subagent".into(),
+                id: record.subagent_id,
+                label: record.title,
+                status: "running".into(),
+                started_at_ms: record.started_at_ms as f64,
+                detail: Some(record.box_id),
+                subagent_type: Some(record.subagent_type),
+            })
+            .collect::<Vec<_>>();
+        let durable = self
+            .pending_wake_store
+            .list_pending_for(&account_fence, parent_agent_id);
+        serde_json::to_value(merge_async_tasks(&live_tasks, &durable))
+            .map_err(|error| format!("failed to serialize async task projection: {error}"))
     }
 
     fn project_agent_roster(&self) -> Result<Vec<Value>, String> {
@@ -5501,6 +5505,65 @@ mod tests {
             project_fabushi_sand_access(false),
             json!({"state":"unknown","reason":"unspecified"})
         );
+    }
+
+    #[test]
+    fn async_tasks_pending_wakes_are_durable_and_account_fenced() {
+        use crate::extensions::transcript::sand_pending_wake_store::{
+            DurablePendingWakeMarker, PendingWakeKind,
+        };
+
+        let root = std::env::temp_dir().join(format!(
+            "fabushi-agent-async-pending-wake-{}",
+            now_ms()
+        ));
+        let mut host = AndroidJsonHost::new(&root, AndroidHostMode::Test);
+        host.logged_in = true;
+        let account_fence = host.current_turn_account_fence().unwrap();
+        assert!(host.pending_wake_store.mark_pending(DurablePendingWakeMarker {
+            account_fence: account_fence.clone(),
+            agent_id: "agent-a".into(),
+            kind: PendingWakeKind::Shell,
+            work_id: "shell-a".into(),
+            marked_at_ms: 10.0,
+            quiet_origin: None,
+            title: Some("Long build".into()),
+            subagent_type: None,
+            interrupted_by_recreate: true,
+        }));
+        assert!(host.pending_wake_store.mark_pending(DurablePendingWakeMarker {
+            account_fence: "other-account:epoch-9".into(),
+            agent_id: "agent-a".into(),
+            kind: PendingWakeKind::CloudAgent,
+            work_id: "cloud-secret".into(),
+            marked_at_ms: 11.0,
+            quiet_origin: None,
+            title: None,
+            subagent_type: None,
+            interrupted_by_recreate: false,
+        }));
+
+        let value = host
+            .agent_async_tasks(&json!({"id":"agent-a"}))
+            .expect("same-account async task projection");
+        let tasks = value.as_array().unwrap();
+        assert_eq!(tasks.len(), 1);
+        assert_eq!(tasks[0]["kind"], "shell");
+        assert_eq!(tasks[0]["id"], "shell-a");
+        assert_eq!(tasks[0]["label"], "Long build");
+        assert_eq!(tasks[0]["detail"], "reattached after a host restart");
+
+        drop(host);
+        let mut reopened = AndroidJsonHost::new(&root, AndroidHostMode::Test);
+        reopened.logged_in = true;
+        assert_eq!(
+            reopened
+                .pending_wake_store
+                .list_pending_for(&account_fence, "agent-a")
+                .len(),
+            1
+        );
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]
