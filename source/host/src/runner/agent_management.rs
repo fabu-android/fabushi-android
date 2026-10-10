@@ -200,7 +200,7 @@ impl AgentManagementRoutedTools {
             .map_err(|_| "canonical Android Agent roster lock poisoned".to_string())?
             .get(target_id)
             .ok_or_else(|| format!("No agent or group found with id {target_id}."))?;
-        let result = self
+        self
             .messaging
             .lock()
             .map_err(|_| "canonical Android messaging owner lock poisoned".to_string())?
