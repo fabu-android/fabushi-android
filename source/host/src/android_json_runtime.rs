@@ -1204,7 +1204,7 @@ impl AndroidJsonHost {
         )
         .unwrap_or_default();
         let model_id = if tool_name == crate::runner::TASK_TOOL_NAME {
-            required_string(params, "model")?.to_string()
+            AndroidHostInferenceProvider::resolve_model_id(required_string(params, "model")?)
         } else {
             params
                 .get("model")
@@ -1262,40 +1262,85 @@ impl AndroidJsonHost {
                 .map(str::to_string),
             frozen_turn,
         };
-        let result = self
-            .subagent_tools
-            .call(tool_name, &args, tool_call_id, &context, now_ms())?;
-        let Some(launch) = result.launch else {
-            return Ok(result.value);
+        let review_required = matches!(
+            tool_name,
+            crate::runner::TASK_TOOL_NAME | crate::runner::MESSAGE_SUBAGENT_TOOL_NAME
+        );
+        let (bearer_token, mutation) = if review_required {
+            self.bearer_token_for_turn()?
+        } else {
+            (None, None)
         };
-
-        let (bearer_token, mutation) = match self.bearer_token_for_turn() {
-            Ok(value) => value,
-            Err(error) => {
-                let epoch = self
-                    .subagent_owner
-                    .lock()
-                    .map_err(|_| "subagent owner lock poisoned".to_string())?
-                    .process_epoch();
-                let _ = self
-                    .subagent_owner
-                    .lock()
-                    .map_err(|_| "subagent owner lock poisoned".to_string())?
-                    .settle(
-                        &launch.record.subagent_id,
-                        &account_fence,
-                        epoch,
-                        SubagentRunOutcome::Failed(error.clone()),
-                        now_ms(),
-                    );
-                return Err(error);
-            }
+        let review_mode = match self.mode {
+            AndroidHostMode::Test => AndroidInferenceMode::Test,
+            AndroidHostMode::Production => AndroidInferenceMode::Production,
+        };
+        let review_cancelled = Arc::new(AtomicBool::new(false));
+        let task_review_token = bearer_token.clone();
+        let task_review_cancelled = Arc::clone(&review_cancelled);
+        let task_review: SubagentTaskReviewCallback = Arc::new(
+            move |prompt, subagent_type, tool_call_id| {
+                if tool_call_id.trim().is_empty() {
+                    return Err("generated subagent Task review input is invalid".into());
+                }
+                match AndroidHostInferenceProvider::run_subagent_review(
+                    review_mode,
+                    task_review_token.clone(),
+                    Arc::clone(&task_review_cancelled),
+                    "launch",
+                    prompt,
+                    None,
+                    Some(subagent_type),
+                )
+                .map_err(|error| error.message)?
+                {
+                    AndroidSubagentReviewDecision::Allow => Ok(None),
+                    AndroidSubagentReviewDecision::Deny(reason) => Ok(Some(reason)),
+                }
+            },
+        );
+        let steer_review_token = bearer_token.clone();
+        let steer_review: SubagentSteerReviewCallback = Arc::new(
+            move |subagent_id, message, tool_call_id| {
+                if tool_call_id.trim().is_empty() {
+                    return Err("generated subagent steer review input is invalid".into());
+                }
+                match AndroidHostInferenceProvider::run_subagent_review(
+                    review_mode,
+                    steer_review_token.clone(),
+                    Arc::clone(&review_cancelled),
+                    "steer",
+                    message,
+                    Some(subagent_id),
+                    None,
+                )
+                .map_err(|error| error.message)?
+                {
+                    AndroidSubagentReviewDecision::Allow => Ok(SubagentSteerReview {
+                        allowed: true,
+                        reason: String::new(),
+                    }),
+                    AndroidSubagentReviewDecision::Deny(reason) => Ok(SubagentSteerReview {
+                        allowed: false,
+                        reason,
+                    }),
+                }
+            },
+        );
+        let reviewed_tools = self
+            .subagent_tools
+            .clone()
+            .with_task_review(task_review)
+            .with_steer_review(steer_review);
+        let result = reviewed_tools.call(tool_name, &args, tool_call_id, &context, now_ms())?;
+        let Some(launch) = result.launch else {
+            return Ok(with_account_session_mutation(result.value, mutation));
         };
         if let Err(error) = spawn_generated_subagent(
             self.mode,
             bearer_token,
             Arc::clone(&self.subagent_owner),
-            self.subagent_tools.clone(),
+            reviewed_tools,
             Arc::clone(&self.subagent_events),
             launch.clone(),
         ) {
