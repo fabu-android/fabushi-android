@@ -806,6 +806,54 @@ impl AndroidMessagingService {
         Ok(result)
     }
 
+    /// Project canonical one-to-one Agent conversation relationships for the current account.
+    ///
+    /// Relationships are derived from the durable messaging repository itself. The account fence is
+    /// verified by recomputing the stable direct-conversation identity, so another account's
+    /// conversation cannot leak into this projection even though all conversations share one store.
+    pub fn agent_conversation_partner_ids(
+        &self,
+        account_fence: &str,
+        agent_id: &str,
+    ) -> Vec<String> {
+        let account_fence = account_fence.trim();
+        let agent_id = agent_id.trim();
+        if account_fence.is_empty() || agent_id.is_empty() {
+            return Vec::new();
+        }
+        let mut partners = BTreeSet::new();
+        for (conversation_id, conversation) in &self.state.conversations {
+            if conversation.get("kind").and_then(Value::as_str) != Some("direct") {
+                continue;
+            }
+            let Some(participants) = conversation.get("participants").and_then(Value::as_array) else {
+                continue;
+            };
+            let actor_ids = participants
+                .iter()
+                .filter_map(|participant| participant.get("actorId").and_then(Value::as_str))
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .collect::<BTreeSet<_>>();
+            if actor_ids.len() != 2 || !actor_ids.contains(agent_id) {
+                continue;
+            }
+            let Some(partner_id) = actor_ids.iter().copied().find(|value| *value != agent_id) else {
+                continue;
+            };
+            let mut pair = [agent_id, partner_id];
+            pair.sort_unstable();
+            let digest = crate::sha256::sha256_hex(
+                format!("{account_fence}\n{}\n{}", pair[0], pair[1]).as_bytes(),
+            );
+            let expected_id = format!("agent-direct:{}", &digest[..32]);
+            if conversation_id == &expected_id {
+                partners.insert(partner_id.to_string());
+            }
+        }
+        partners.into_iter().collect()
+    }
+
     pub fn pending_agent_wakes(
         &self,
         account_fence: &str,
