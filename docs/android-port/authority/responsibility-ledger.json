@@ -5262,16 +5262,16 @@
       ],
       "android_owner": "Rust AndroidAgentRoster canonical owner + typed AndroidCoordinatorRuntime commands; Compose/ViewModel owns transient interaction state only",
       "platform_delta": "Desktop React DOM alert/context-menu/inline-input focus mechanics become native Compose dialogs/menus/text input and Android accessibility semantics. Product mutation semantics and unique Host ownership remain unchanged.",
-      "implementation_status": "mapped",
-      "production_wiring": "Rust Host already durably owns name/hidden/unread/pinned/duplicate/delete state and typed Coordinator/ViewModel methods call it. Exact native Compose parity for the Desktop delete confirmation, inline rename, complete row-action menu, section movement/profile/full-conversation/async-task entrypoints has not yet been proven, so this responsibility remains mapped.",
-      "unit_test": "AndroidAgentRoster Rust tests cover durable rename/hidden/unread/pin/duplicate/delete/reopen/corrupt-store behavior; same-final-head Actions required.",
-      "contract_test": "required: typed Coordinator/ViewModel command mapping plus no Presentation direct roster write and mutation-failure behavior",
-      "integration_test": "required: native Agent list/row actions drive Host mutation then refresh the canonical projection",
+      "implementation_status": "implemented",
+      "production_wiring": "Rust AndroidAgentRoster remains the sole durable roster owner. Presentation rename/hide/unread/pin/duplicate/delete/group-members now persist a stable operationId in the Coordinator before dispatch, carry the current Host account fence, and execute through feature.agent.rosterMutation. Host atomically records completed/rejected settlement with the roster mutation, so process death after commit replays the same result instead of repeating the side effect; stale account fences fail before mutation, and corrupt/full Coordinator pending journals fail closed rather than forgetting outcome-unknown operations. Native Compose row actions/delete confirmation already route through typed ViewModel/Coordinator commands, but complete section movement/profile/full-conversation/async-task entrypoints and final packaged/device interaction evidence remain open.",
+      "unit_test": "Exact-head bb3305cc Actions run 38065090247: rust-runtime-foundation job 114251004622 succeeded and explicitly ran presentation_duplicate_replays_once_after_reopen_and_rejects_argument_reuse, presentation_rejection_is_durable_and_side_effect_free, and presentation_roster_mutation_is_account_fenced_and_replays_after_host_reopen; Host group reported 209 passed, 0 failed. existing-android-regression job 114251004770 succeeded and ran the Kotlin unit suite containing AgentRosterMutationOwnerTest.",
+      "contract_test": "Same exact-head Host dispatch test proves account-fenced stable operation replay across Host reopen. Kotlin owner tests cover process recreation persistence, cross-account pending filtering, distinct user-intent identities, corrupt-journal fail-closed, and bounded-journal fail-closed. Architecture parity-ledger job 114251004730 succeeded.",
+      "integration_test": "Production path is wired Compose/ViewModel -> typed AndroidCoordinatorRuntime -> Host feature.agent.rosterMutation -> canonical AndroidAgentRoster; final packaged interaction/recreation acceptance remains required.",
       "packaged_test": "required: final release Agent management interactions including destructive confirmation and failure feedback",
       "device_test": "required: focus/accessibility/back/process recreation for native dialogs/menus/input plus durable roster restart",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Mapped conservatively from exact Desktop source. Existing Host/ViewModel mutation methods do not by themselves prove full user-visible Agent row/editor/delete UI parity."
+      "notes": "Implemented durable presentation mutation identity/reconciliation on bb3305cc without upgrading verification. Exact-head Rust/JVM/architecture evidence covers the canonical mutation path; full user-visible Agent row/editor/delete/navigation/accessibility/recreation and signed packaged/device acceptance still remain open. parity."
     },
     {
       "responsibility_id": "MSG-FORWARD-PRESENTATION-ANDROID-001",
