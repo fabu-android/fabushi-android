@@ -1,5 +1,8 @@
 package com.ombhrum.fabushi.androidmain.coordinator
 
+import android.content.Context
+import org.json.JSONObject
+
 internal enum class ComputerRebuildKind { UPDATE, RESET, RECOVER, RECONNECTING }
 internal enum class ComputerRebuildSource { AUTO, REQUEST, MIGRATION }
 internal enum class ComputerRebuildTeardown { NONE, TRANSPORT, BOX }
@@ -31,6 +34,67 @@ internal data class ComputerRebuildSnapshot(
 internal interface ComputerRebuildStateStore {
     fun read(): ComputerRebuildSnapshot?
     fun write(snapshot: ComputerRebuildSnapshot?)
+}
+
+internal class SharedPreferencesComputerRebuildStateStore(context: Context) : ComputerRebuildStateStore {
+    private val preferences = context.applicationContext.getSharedPreferences("fabushi-computer-rebuild", 0)
+
+    override fun read(): ComputerRebuildSnapshot? {
+        val raw = preferences.getString("snapshot", null) ?: return null
+        return runCatching {
+            val value = JSONObject(raw)
+            ComputerRebuildSnapshot(
+                accountEpoch = value.getLong("accountEpoch"),
+                kind = value.optString("kind").takeIf(String::isNotBlank)?.let(ComputerRebuildKind::valueOf),
+                operationId = value.optString("operationId").takeIf(String::isNotBlank),
+                source = value.optString("source").takeIf(String::isNotBlank)?.let(ComputerRebuildSource::valueOf),
+                lockBoxId = value.optString("lockBoxId").takeIf(String::isNotBlank),
+                pending = value.optBoolean("pending", false),
+                acknowledged = value.optBoolean("acknowledged", false),
+                observedBoxId = value.optString("observedBoxId").takeIf(String::isNotBlank),
+                boxPhase = value.optString("boxPhase").takeIf(String::isNotBlank),
+                lastHealthyBoxId = value.optString("lastHealthyBoxId").takeIf(String::isNotBlank),
+                leftHealthy = value.optBoolean("leftHealthy", false),
+                teardown = value.optString("teardown")
+                    .takeIf(String::isNotBlank)
+                    ?.let(ComputerRebuildTeardown::valueOf)
+                    ?: ComputerRebuildTeardown.NONE,
+                reconnectedSinceLeft = value.optBoolean("reconnectedSinceLeft", false),
+                connected = value.optBoolean("connected", true),
+                terminalMigration = value.optBoolean("terminalMigration", false),
+                outcomeUnknown = value.optBoolean("outcomeUnknown", false),
+                lastResolution = value.optString("lastResolution")
+                    .takeIf(String::isNotBlank)
+                    ?.let(ComputerRebuildResolution::valueOf),
+            )
+        }.getOrNull()
+    }
+
+    override fun write(snapshot: ComputerRebuildSnapshot?) {
+        if (snapshot == null) {
+            preferences.edit().remove("snapshot").apply()
+            return
+        }
+        val value = JSONObject()
+            .put("accountEpoch", snapshot.accountEpoch)
+            .put("kind", snapshot.kind?.name ?: "")
+            .put("operationId", snapshot.operationId ?: "")
+            .put("source", snapshot.source?.name ?: "")
+            .put("lockBoxId", snapshot.lockBoxId ?: "")
+            .put("pending", snapshot.pending)
+            .put("acknowledged", snapshot.acknowledged)
+            .put("observedBoxId", snapshot.observedBoxId ?: "")
+            .put("boxPhase", snapshot.boxPhase ?: "")
+            .put("lastHealthyBoxId", snapshot.lastHealthyBoxId ?: "")
+            .put("leftHealthy", snapshot.leftHealthy)
+            .put("teardown", snapshot.teardown.name)
+            .put("reconnectedSinceLeft", snapshot.reconnectedSinceLeft)
+            .put("connected", snapshot.connected)
+            .put("terminalMigration", snapshot.terminalMigration)
+            .put("outcomeUnknown", snapshot.outcomeUnknown)
+            .put("lastResolution", snapshot.lastResolution?.name ?: "")
+        preferences.edit().putString("snapshot", value.toString()).apply()
+    }
 }
 
 /**
