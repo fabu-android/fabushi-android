@@ -5,7 +5,7 @@
     "desktop_commit": "3bc92400826cc4ca7ac665b467708e22261edc61",
     "android_repository": "fabu-android/fabushi-android",
     "android_pr": 3,
-    "android_head_at_update": "36e750692d2cae0835322d7e75a254cc65b21283",
+    "android_head_at_update": "0e46404f9ac2726f7415b9dc6e7bf425c356a4b1",
     "status": "incomplete",
     "note": "Persistent human-reviewed responsibility ledger for Desktop main. Rows are responsibility-level source facts; mapped/implemented never imply verified. Verification requires same-exact-HEAD source implementation, production wiring, CI/package and device evidence."
   },
@@ -5108,6 +5108,96 @@
       "artifact": null,
       "verification_status": "not-verified",
       "notes": "Implemented source composition, not yet verified because current exact-head signed package/device gates are unavailable."
+    },
+    {
+      "responsibility_id": "AGENT-MANAGEMENT-PRESENTATION-ANDROID-001",
+      "domain": "agent-management",
+      "desktop_sources": [
+        {
+          "path": "frontend/src/production/AgentDeleteConfirmation.tsx",
+          "blob_sha": "e74a5820da0ac2a76cae5e1f8f21daed4176533e",
+          "symbols": [
+            "AgentDeleteConfirmation",
+            "deleteDescription",
+            "onConfirm"
+          ]
+        },
+        {
+          "path": "frontend/src/production/AgentNameEditor.tsx",
+          "blob_sha": "0767d63e50df9865f4e8a3ed6666c3df18d6fde8",
+          "symbols": [
+            "AgentNameEditor",
+            "finish",
+            "committedAgentName caller"
+          ]
+        },
+        {
+          "path": "frontend/src/production/AgentRowActions.tsx",
+          "blob_sha": "cfb53200425dd496846a986e1c16c28bfcfffaa8",
+          "symbols": [
+            "AgentRowActions",
+            "context-menu actions",
+            "move/pin/unread/duplicate/hide/delete callbacks"
+          ]
+        }
+      ],
+      "source_commit": "3bc92400826cc4ca7ac665b467708e22261edc61",
+      "responsibility": "Expose native Agent management interactions while keeping canonical Agent roster/name/visibility/unread/pin/duplicate/delete state in the Host-owned durable roster. Presentation owns only transient draft/dialog/menu state, validates user intent, surfaces failures, and invokes typed Coordinator commands without becoming a second Agent truth.",
+      "source_owner": "Desktop production Agent row/editor/delete presentation over canonical Agent runtime commands",
+      "direct_callers": [
+        "shipping Agent/sidebar rows",
+        "Agent management interaction surfaces"
+      ],
+      "downstream_dependencies": [
+        "agent-name-editor-model",
+        "agent-row-actions-model",
+        "canonical Agent roster mutations",
+        "conversation/profile navigation"
+      ],
+      "state_owner": "Desktop presentation owns only rename draft, dialog/menu open and pending/error UI; canonical Agent roster is runtime-owned. Android equivalent canonical owner is Rust AndroidAgentRoster.",
+      "persistent_state": [
+        "Agent id/name/description",
+        "hidden state",
+        "unread state",
+        "pinned set",
+        "duplicate/delete result are durable Host state; no persistent presentation state"
+      ],
+      "protocol_wire_contract": [
+        "typed agentUpdate/agentSetHidden/agentSetUnread/agentDuplicate/agentDelete/agentSetPinned commands",
+        "stable Agent id identity"
+      ],
+      "visible_effect": "Users can rename, hide, mark read/unread, pin/unpin, duplicate and delete Agents with confirmation/error feedback while the roster remains consistent after refresh/restart.",
+      "failure_behavior": [
+        "empty/unchanged rename performs no mutation",
+        "failed rename/delete/mutation surfaces an error without optimistic canonical overwrite",
+        "hidden rows expose no inappropriate row actions",
+        "delete requires explicit destructive confirmation"
+      ],
+      "cancellation_behavior": "Escape/cancel/blur semantics only cancel or commit transient UI intent; they do not cancel unrelated Agent runs. Destructive delete is not retried by Presentation after an uncertain side effect.",
+      "retry_semantics": "Presentation may refresh projection after a successful typed mutation; it must not blindly replay mutating commands on failure/outcome-unknown.",
+      "idempotency_semantics": "Canonical Host mutation identity/state determines durable result; Presentation drafts/dialogs cannot create a second roster truth. Agent-management tool-call paths additionally use durable tool-call identity where applicable.",
+      "process_death_recovery": "Transient menu/dialog/rename draft may close on recreation; durable Agent roster reloads from Rust Host persistence and Presentation reprojects it without replaying mutations.",
+      "account_fencing": "Agent mutations must execute only against the current Coordinator/Host account projection; stale UI callbacks cannot directly mutate storage.",
+      "security_boundary": "Compose/ViewModel cannot bypass the typed Coordinator/Host boundary or write the durable roster directly.",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "source/host/src/android_agent_roster.rs",
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/coordinator/AndroidCoordinatorRuntime.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/presentation/MobileBotViewModel.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/features/bots/AgentNetworkSurface.kt"
+      ],
+      "android_owner": "Rust AndroidAgentRoster canonical owner + typed AndroidCoordinatorRuntime commands; Compose/ViewModel owns transient interaction state only",
+      "platform_delta": "Desktop React DOM alert/context-menu/inline-input focus mechanics become native Compose dialogs/menus/text input and Android accessibility semantics. Product mutation semantics and unique Host ownership remain unchanged.",
+      "implementation_status": "mapped",
+      "production_wiring": "Rust Host already durably owns name/hidden/unread/pinned/duplicate/delete state and typed Coordinator/ViewModel methods call it. Exact native Compose parity for the Desktop delete confirmation, inline rename, complete row-action menu, section movement/profile/full-conversation/async-task entrypoints has not yet been proven, so this responsibility remains mapped.",
+      "unit_test": "AndroidAgentRoster Rust tests cover durable rename/hidden/unread/pin/duplicate/delete/reopen/corrupt-store behavior; same-final-head Actions required.",
+      "contract_test": "required: typed Coordinator/ViewModel command mapping plus no Presentation direct roster write and mutation-failure behavior",
+      "integration_test": "required: native Agent list/row actions drive Host mutation then refresh the canonical projection",
+      "packaged_test": "required: final release Agent management interactions including destructive confirmation and failure feedback",
+      "device_test": "required: focus/accessibility/back/process recreation for native dialogs/menus/input plus durable roster restart",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Mapped conservatively from exact Desktop source. Existing Host/ViewModel mutation methods do not by themselves prove full user-visible Agent row/editor/delete UI parity."
     }
   ],
   "traceability": {
