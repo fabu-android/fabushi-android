@@ -20,7 +20,9 @@ import java.util.UUID
 data class MobileBotSummaryAndroid(
     val id: String,
     val name: String,
+    val title: String? = null,
     val description: String = "",
+    val notifyOnUpdatesEnabled: Boolean = false,
     val avatarShape: String? = null,
     val avatarColor: String? = null,
     val miniAppId: String? = null,
@@ -142,6 +144,7 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
         ),
     )
     private var rosterSelectionAccountSlot: String? = null
+    private var agentSettingsGeneration: Long = 0L
     private val mutableState = MutableStateFlow(MobileBotUiState())
     private val messagesByBot = mutableMapOf<String, List<MobileChatMessage>>()
     private val draftsByBot = mutableMapOf<String, String>()
@@ -271,7 +274,9 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
                     MobileBotSummaryAndroid(
                         id = id,
                         name = row.optString("name").ifBlank { row.optString("displayName").ifBlank { id } },
+                        title = row.optString("title").trim().takeIf(String::isNotEmpty),
                         description = row.optString("description"),
+                        notifyOnUpdatesEnabled = row.optBoolean("notifyOnUpdatesEnabled", false),
                         avatarShape = row.optString("avatarShape").takeIf(String::isNotBlank),
                         avatarColor = row.optString("avatarColor").takeIf(String::isNotBlank),
                         miniAppId = row.optString("miniAppId").takeIf(String::isNotBlank),
@@ -456,6 +461,7 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
     fun updateBotProfile(
         botId: String,
         name: String,
+        title: String?,
         description: String,
         avatarShape: String?,
         avatarColor: String?,
@@ -463,26 +469,58 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
         val bot = mutableState.value.bots.firstOrNull { it.id == botId } ?: return
         val committed = committedAgentProfile(
             initialName = bot.name,
+            initialTitle = bot.title,
             initialDescription = bot.description,
             draftName = name,
+            draftTitle = title,
             draftDescription = description,
             initialAvatarShape = bot.avatarShape,
             initialAvatarColor = bot.avatarColor,
             draftAvatarShape = avatarShape,
             draftAvatarColor = avatarColor,
         ) ?: return
+        agentSettingsGeneration += 1
+        val generation = agentSettingsGeneration
+        val accountSlot = rosterSelectionAccountSlot
         viewModelScope.launch {
             runCatching {
                 withContext(Dispatchers.IO) {
                     coordinator.agentUpdateProfile(
-                        botId, committed.name, committed.description,
+                        botId, committed.name, committed.description, committed.title,
                         committed.avatarShape, committed.avatarColor,
                     )
                 }
             }.onSuccess {
-                refreshBots()
+                if (generation == agentSettingsGeneration && accountSlot == rosterSelectionAccountSlot) {
+                    refreshBots()
+                }
             }.onFailure { error ->
-                mutableState.value = mutableState.value.copy(error = error.message ?: "Agent profile update failed")
+                if (generation == agentSettingsGeneration && accountSlot == rosterSelectionAccountSlot) {
+                    mutableState.value = mutableState.value.copy(error = error.message ?: "Agent profile update failed")
+                }
+            }
+        }
+    }
+
+    fun setBotNotifyOnUpdates(botId: String, isEnabled: Boolean) {
+        val bot = mutableState.value.bots.firstOrNull { it.id == botId && !it.isGroup } ?: return
+        if (bot.notifyOnUpdatesEnabled == isEnabled) return
+        agentSettingsGeneration += 1
+        val generation = agentSettingsGeneration
+        val accountSlot = rosterSelectionAccountSlot
+        viewModelScope.launch {
+            runCatching {
+                withContext(Dispatchers.IO) {
+                    coordinator.agentSetNotifyOnUpdates(botId, isEnabled)
+                }
+            }.onSuccess {
+                if (generation == agentSettingsGeneration && accountSlot == rosterSelectionAccountSlot) {
+                    refreshBots()
+                }
+            }.onFailure { error ->
+                if (generation == agentSettingsGeneration && accountSlot == rosterSelectionAccountSlot) {
+                    mutableState.value = mutableState.value.copy(error = error.message ?: "Agent notification update failed")
+                }
             }
         }
     }
@@ -687,6 +725,7 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
         asyncTasksJob?.cancel()
         asyncTasksJob = null
         groupMembersGeneration += 1
+        agentSettingsGeneration += 1
         messagesByBot.clear()
         draftsByBot.clear()
         commitState(MobileBotUiState())
