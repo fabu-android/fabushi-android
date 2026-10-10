@@ -5335,6 +5335,87 @@ export function apply(ctx) {
     }
 
     #[test]
+    fn root_agent_management_routes_through_feature_execute_provider_and_replays_after_reopen() {
+        let root = std::env::temp_dir().join(format!(
+            "fabushi-agent-management-provider-{}-{}",
+            std::process::id(),
+            now_ms()
+        ));
+        let run_send = |host: &mut AndroidJsonHost, request_id: &str| {
+            let accepted = host
+                .dispatch(
+                    "feature.execute",
+                    &json!({"command":{
+                        "type":"chat.send",
+                        "requestId":request_id,
+                        "agentId":"mahayana-assistant",
+                        "model":"default",
+                        "text":"[[tool:SendToAgent]] {\"target_id\":\"agent-00000001\",\"message\":\"provider delivery\",\"images\":[{\"url\":\"https://example.com/image.png\"}],\"priority\":true}"
+                    }}),
+                )
+                .unwrap();
+            let operation_id = accepted["operationId"].as_str().unwrap().to_string();
+            let deadline = std::time::Instant::now() + Duration::from_secs(3);
+            while std::time::Instant::now() < deadline {
+                let event = host.dispatch("feature.receive", &json!({})).unwrap();
+                if event["type"] == "operation.completed" && event["operationId"] == operation_id {
+                    return;
+                }
+                if event["type"] == "operation.failed" && event["operationId"] == operation_id {
+                    panic!("root Agent management provider turn failed: {event}");
+                }
+                if event.as_object().is_some_and(|object| object.is_empty()) {
+                    thread::sleep(Duration::from_millis(10));
+                }
+            }
+            panic!("root Agent management provider turn did not settle");
+        };
+
+        {
+            let mut host = AndroidJsonHost::new(&root, AndroidHostMode::Test);
+            host.dispatch(
+                "createAgent",
+                &json!({"name":"Target","description":"provider target"}),
+            )
+            .unwrap();
+            run_send(&mut host, "agent-management-provider-1");
+        }
+
+        let first_repository: Value = serde_json::from_slice(
+            &std::fs::read(root.join("messaging-repository.json")).unwrap(),
+        )
+        .unwrap();
+        let first_count = first_repository["messages"]
+            .as_object()
+            .unwrap()
+            .values()
+            .flat_map(|messages| messages.as_object().into_iter().flat_map(|map| map.values()))
+            .count();
+        assert_eq!(first_count, 1, "first provider tool call must commit one message");
+
+        {
+            let mut reopened = AndroidJsonHost::new(&root, AndroidHostMode::Test);
+            run_send(&mut reopened, "agent-management-provider-2");
+        }
+        let replayed_repository: Value = serde_json::from_slice(
+            &std::fs::read(root.join("messaging-repository.json")).unwrap(),
+        )
+        .unwrap();
+        let replayed_count = replayed_repository["messages"]
+            .as_object()
+            .unwrap()
+            .values()
+            .flat_map(|messages| messages.as_object().into_iter().flat_map(|map| map.values()))
+            .count();
+        assert_eq!(
+            replayed_count, 1,
+            "stable provider tool_call_id must replay durable SendToAgent after Host reopen"
+        );
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn parent_multitask_todo_routes_through_shipping_provider_and_survives_reopen() {
         let root = std::env::temp_dir().join(format!(
             "fabushi-multitask-todo-{}-{}",
