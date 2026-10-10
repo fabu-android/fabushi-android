@@ -393,7 +393,13 @@ internal class ComputerRebuildStateOwner(
             val eligible =
                 current.kind == ComputerRebuildKind.RESET ||
                     current.kind == ComputerRebuildKind.RECOVER ||
-                    (current.kind == ComputerRebuildKind.UPDATE && current.source == ComputerRebuildSource.MIGRATION)
+                    (
+                        current.kind == ComputerRebuildKind.UPDATE &&
+                            (
+                                current.source == ComputerRebuildSource.MIGRATION ||
+                                    current.source == ComputerRebuildSource.REQUEST
+                            )
+                    )
             if (!eligible || current.terminalMigration) return current
             if (current.operationId != null && current.operationId != normalized) return current
             return persist(current.copy(terminalMigration = true, leftHealthy = true, outcomeUnknown = false))
