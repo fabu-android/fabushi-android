@@ -10,6 +10,7 @@ internal fun committedAgentName(
 
 internal data class CommittedAgentProfile(
     val name: String,
+    val title: String?,
     val description: String,
     val avatarShape: String?,
     val avatarColor: String?,
@@ -17,8 +18,10 @@ internal data class CommittedAgentProfile(
 
 internal fun committedAgentProfile(
     initialName: String,
+    initialTitle: String? = null,
     initialDescription: String,
     draftName: String,
+    draftTitle: String? = initialTitle,
     draftDescription: String,
     initialAvatarShape: String? = null,
     initialAvatarColor: String? = null,
@@ -27,17 +30,22 @@ internal fun committedAgentProfile(
 ): CommittedAgentProfile? {
     val name = draftName.replace(Regex("\\s+"), " ").trim().take(72)
     if (name.isEmpty()) return null
+    val title = normalizeAgentTitle(draftTitle)
     val description = draftDescription.trim().take(240)
     val avatarShape = normalizeAgentAvatarShape(draftAvatarShape)
     val avatarColor = normalizeAgentAvatarColor(draftAvatarColor)
     if (
         name == initialName &&
+        title == normalizeAgentTitle(initialTitle) &&
         description == initialDescription &&
         avatarShape == normalizeAgentAvatarShape(initialAvatarShape) &&
         avatarColor == normalizeAgentAvatarColor(initialAvatarColor)
     ) return null
-    return CommittedAgentProfile(name, description, avatarShape, avatarColor)
+    return CommittedAgentProfile(name, title, description, avatarShape, avatarColor)
 }
+
+internal fun normalizeAgentTitle(value: String?): String? =
+    value?.trim()?.take(120)?.takeIf(String::isNotEmpty)
 
 internal fun normalizeAgentAvatarShape(value: String?): String? =
     value?.trim()?.lowercase()?.takeIf { it in setOf("circle", "square", "squircle") }
