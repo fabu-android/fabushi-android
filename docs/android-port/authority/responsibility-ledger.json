@@ -5,7 +5,7 @@
     "desktop_commit": "3bc92400826cc4ca7ac665b467708e22261edc61",
     "android_repository": "fabu-android/fabushi-android",
     "android_pr": 3,
-    "android_head_at_update": "21c61c6c6fef40e696688666606256c2839d466c",
+    "android_head_at_update": "cdf60add8d501d37087659c14b427ecde84fff19",
     "status": "incomplete",
     "note": "Persistent human-reviewed responsibility ledger for Desktop main. Rows are responsibility-level source facts; mapped/implemented never imply verified. Verification requires same-exact-HEAD source implementation, production wiring, CI/package and device evidence."
   },
@@ -384,6 +384,16 @@
             "Fabu Agent architecture parity ownership matrix",
             "latency/refactor boundary"
           ]
+        },
+        {
+          "path": "docs/specs/post-1.2.74-agent-architecture-cutover.md",
+          "blob_sha": "02f617fdd6b2d6de27fcf67a61476aacdf449513",
+          "symbols": [
+            "R3 Rust-owned conversation execution",
+            "R4 durable Agent state",
+            "R7 Agent collaboration",
+            "AC-3"
+          ]
         }
       ],
       "source_commit": "3bc92400826cc4ca7ac665b467708e22261edc61",
@@ -589,6 +599,15 @@
           "symbols": [
             "RuntimeStore capability_audit persistence"
           ]
+        },
+        {
+          "path": "docs/specs/post-1.2.74-agent-architecture-cutover.md",
+          "blob_sha": "02f617fdd6b2d6de27fcf67a61476aacdf449513",
+          "symbols": [
+            "R5 capability governance",
+            "R6 computer control lease",
+            "AC-4"
+          ]
         }
       ],
       "source_commit": "3bc92400826cc4ca7ac665b467708e22261edc61",
@@ -740,6 +759,16 @@
             "FBCP sections 4/6/7",
             "FBCP-QA-02..18",
             "FBCP AC-01..50"
+          ]
+        },
+        {
+          "path": "frontend/packages/mcp-app-sdk/src/app-surface-webmcp.ts",
+          "blob_sha": "25d32e2565ff30e67180c227a07bf404b3a2fb1f",
+          "symbols": [
+            "registerAppSurfaceWebMcp",
+            "appSurfaceToolDefinitions",
+            "registerWebMcpTool",
+            "reverse disposer"
           ]
         }
       ],
@@ -955,6 +984,14 @@
             "FBCP sections 4/6/7",
             "FBCP-QA-02..18",
             "FBCP AC-01..50"
+          ]
+        },
+        {
+          "path": "docs/specs/post-1.2.74-agent-architecture-cutover.md",
+          "blob_sha": "02f617fdd6b2d6de27fcf67a61476aacdf449513",
+          "symbols": [
+            "R5 privileged Browser/Remote Computer paths",
+            "R6 human takeover"
           ]
         }
       ],
@@ -2749,6 +2786,14 @@
           "symbols": [
             "reviewed Desktop platform/build/verification contract"
           ]
+        },
+        {
+          "path": "docs/specs/post-1.2.74-agent-architecture-cutover.md",
+          "blob_sha": "02f617fdd6b2d6de27fcf67a61476aacdf449513",
+          "symbols": [
+            "R12-R15 exact-source verification/merge/release gates",
+            "AC-8..12"
+          ]
         }
       ],
       "source_commit": "3bc92400826cc4ca7ac665b467708e22261edc61",
@@ -2971,6 +3016,15 @@
             "recursive-root-authority-shards",
             "recursive-root-authority-gate"
           ]
+        },
+        {
+          "path": "docs/specs/telegram-desktop-rust-equivalence-migration.md",
+          "blob_sha": "439c9a3871a31f007cc914227d4ce5aa5fa87a09",
+          "symbols": [
+            "TDRP-SRC-01..03",
+            "G-INVENTORY",
+            "G-EVIDENCE"
+          ]
         }
       ],
       "source_commit": "3bc92400826cc4ca7ac665b467708e22261edc61",
@@ -3122,6 +3176,15 @@
             "minimum specification structure",
             "spec compliance record"
           ]
+        },
+        {
+          "path": "docs/specs/spec-first-ai-development.md",
+          "blob_sha": "4948ce2700bbf56b6c32bb7acec1a18d5110fe21",
+          "symbols": [
+            "Spec-first / No Spec, No Code",
+            "Stage 0-6 lifecycle",
+            "fail-closed completion rules"
+          ]
         }
       ],
       "source_commit": "3bc92400826cc4ca7ac665b467708e22261edc61",
@@ -3187,6 +3250,16 @@
           "blob_sha": "d17c9d27f29f0dc97ca36bdeb7439f923ddbe2a9",
           "symbols": [
             "Desktop source dependency closure"
+          ]
+        },
+        {
+          "path": "docs/specs/telegram-desktop-rust-equivalence-migration.md",
+          "blob_sha": "439c9a3871a31f007cc914227d4ce5aa5fa87a09",
+          "symbols": [
+            "TDRP-MAP-01..04",
+            "TDRP-MOD-01..05",
+            "G-FILE",
+            "G-TRACEABILITY"
           ]
         }
       ],
@@ -3319,6 +3392,15 @@
           "symbols": [
             "Fabushi desktop",
             "Fabushi native communication capability absorption"
+          ]
+        },
+        {
+          "path": "docs/specs/telegram-desktop-rust-equivalence-migration.md",
+          "blob_sha": "439c9a3871a31f007cc914227d4ce5aa5fa87a09",
+          "symbols": [
+            "TDRP-OWN-01",
+            "TDRP-COMP-01..04",
+            "TDRP-LANG-01..03"
           ]
         }
       ],
@@ -4583,6 +4665,80 @@
       "artifact": null,
       "verification_status": "not-verified",
       "notes": "Source row intentionally advanced only from unreviewed to mapped. Do not mark implemented/verified until the missing packaged/device journeys actually execute on the same exact HEAD."
+    },
+    {
+      "responsibility_id": "OBSERVABILITY-STRUCTURED-LOG-001",
+      "domain": "observability",
+      "desktop_sources": [
+        {
+          "path": "docs/specs/structured-log-facade-audit-20260930.md",
+          "blob_sha": "8a6fe47c5fb6bc98ebe349f98190e442821c509c",
+          "symbols": [
+            "SandStructuredLogTelemetry 90-entry facade audit",
+            "Host-owned structured-log producer/mapper/settlement contracts"
+          ]
+        }
+      ],
+      "source_commit": "3bc92400826cc4ca7ac665b467708e22261edc61",
+      "responsibility": "Preserve one Host-owned structured logging/telemetry boundary for runtime, turn, automation, Box, MCP, WebAuthn, recovery and diagnostic events; require real production producers, bounded/redacted fields, terminal settlement and exact-head evidence instead of treating mapper existence as parity.",
+      "source_owner": "Desktop HostStructuredLogTelemetry / SandStructuredLogTelemetry production facade",
+      "direct_callers": [
+        "Host runtime lifecycle",
+        "turn/provider runtime",
+        "automation runtime",
+        "Box infrastructure",
+        "MCP/connectors",
+        "WebAuthn and diagnostic reporters"
+      ],
+      "downstream_dependencies": [
+        "structured log event constants",
+        "durable/log transport",
+        "redaction/privacy policy",
+        "production lifecycle producers"
+      ],
+      "state_owner": "Host observability service; Coordinator may emit transport-stage telemetry but does not become a second canonical Host log owner",
+      "persistent_state": [
+        "bounded structured log records",
+        "event identity/timestamps",
+        "transport settlement offsets where applicable"
+      ],
+      "protocol_wire_contract": [
+        "typed event names and field schemas",
+        "producer-owned severity/outcome",
+        "settlement/confirmed/dispose semantics where applicable"
+      ],
+      "visible_effect": "Support diagnostics and release evidence reflect real runtime behavior without leaking secrets or inventing successful lifecycle state.",
+      "failure_behavior": [
+        "missing producer does not count as parity",
+        "telemetry write failure must not fabricate product success",
+        "malformed or secret-bearing payloads fail closed or redact according to policy"
+      ],
+      "cancellation_behavior": "Telemetry follows the lifecycle event it observes and must not create an independent retry owner for the underlying product side effect.",
+      "retry_semantics": "Transport retry may redeliver stable log identity; it must not replay the observed product action.",
+      "idempotency_semantics": "Stable event/operation identity and transport settlement prevent duplicate product semantics from duplicated log delivery.",
+      "process_death_recovery": "Durable/transport-backed telemetry may resume delivery, while product state is recovered from its canonical owner rather than reconstructed from logs.",
+      "account_fencing": "Account-scoped diagnostics must be emitted only for the current account/epoch and redact cross-account or stale callback data.",
+      "security_boundary": "Host/Coordinator telemetry owns only bounded diagnostic projections; credentials, tokens, secrets and unrestricted user content are excluded/redacted.",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "source/host/src/extensions/telemetry/mod.rs",
+        "source/host/src/host_diagnostics.rs",
+        "source/mahayana-agent-coordinator/src/telemetry/mod.rs",
+        "source/packages/constants/src/structured_log.rs",
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/coordinator/CoordinatorTelemetry.kt"
+      ],
+      "android_owner": "Rust Host telemetry/diagnostic modules with source-neutral Coordinator transport telemetry",
+      "platform_delta": "Desktop/Electron producer call sites become Android Host/Coordinator producers; OS-specific fields change, but unique ownership, producer evidence, redaction and settlement semantics remain required.",
+      "implementation_status": "mapped",
+      "production_wiring": "Partial: Android has Host crash/WebAuthn diagnostics, Coordinator transport-stage telemetry and structured-log constants. The Desktop audit's complete 90-entry producer surface has not been decomposed and proven against Android shipping composition.",
+      "unit_test": "partial existing telemetry-focused Rust/Kotlin tests; complete 90-entry producer oracle not yet present",
+      "contract_test": "required: event-by-event mapper/producer/owner/redaction contracts on the exact Android HEAD",
+      "integration_test": "required: shipping Host/Coordinator lifecycle producers write through the unique owner without a Presentation duplicate",
+      "packaged_test": "required for release diagnostics/provenance where applicable",
+      "device_test": "required for Android lifecycle/process-death/permission failures that only occur on device",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Mapped from the Desktop structured-log facade audit. Do not infer parity from module presence or old Desktop exact-head evidence; Android must independently close producer semantics."
     }
   ],
   "traceability": {
