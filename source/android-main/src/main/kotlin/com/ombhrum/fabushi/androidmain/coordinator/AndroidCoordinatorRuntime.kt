@@ -1,6 +1,8 @@
 package com.ombhrum.fabushi.androidmain.coordinator
 
 import android.app.Application
+import android.content.Context
+import android.view.View
 import android.os.StatFs
 import com.ombhrum.fabushi.androidpreload.runtime.AccountAccessBlockReason
 import com.ombhrum.fabushi.androidpreload.runtime.AccountAccessProjection
@@ -19,6 +21,8 @@ import com.ombhrum.fabushi.androidmain.security.AndroidRemotePairingStore
 import com.ombhrum.fabushi.androidmain.security.RemoteControlSessionCredential
 import com.ombhrum.fabushi.androidmain.security.RemoteControlSessionLifecycle
 import com.ombhrum.fabushi.androidmain.security.RemotePairingCredential
+import com.ombhrum.fabushi.androidmain.remote.AndroidRemoteComputerDataPlane
+import com.ombhrum.fabushi.androidmain.remote.RemoteComputerDataPlaneFence
 import com.ombhrum.fabushi.core.MahayanaHost
 import org.json.JSONArray
 import org.json.JSONObject
@@ -47,6 +51,37 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
     private val host = MahayanaHost(application, processGeneration = processGeneration)
     private val remotePairingStore = AndroidRemotePairingStore(application)
     private val remoteControlSessionStore = AndroidRemoteControlSessionStore(application)
+    private val applicationContext = application.applicationContext
+    private val remoteComputerDataPlane by lazy {
+        AndroidRemoteComputerDataPlane(
+            context = applicationContext,
+            currentFence = { runCatching { currentRemoteDataPlaneFence() }.getOrNull() },
+            sendSignal = { kind, payload ->
+                val fence = currentRemoteDataPlaneFence()
+                    ?: error("Remote Computer data-plane session is unavailable")
+                remoteComputerSignal(fence.deviceId, fence.sessionId, kind, payload)
+            },
+            drainSignals = {
+                val fence = currentRemoteDataPlaneFence()
+                    ?: error("Remote Computer data-plane session is unavailable")
+                val session = requireRemoteControlSession(fence.deviceId, fence.sessionId)
+                remoteComputerSignalDrain(
+                    fence.deviceId,
+                    fence.sessionId,
+                    session.lastAcknowledgedSignalId,
+                ).optJSONArray("signals") ?: JSONArray()
+            },
+            acknowledgeSignals = { lastSignalId ->
+                val fence = currentRemoteDataPlaneFence()
+                    ?: error("Remote Computer data-plane session is unavailable")
+                remoteComputerSignalAcknowledge(fence.deviceId, fence.sessionId, lastSignalId)
+            },
+            onRemoteClose = {
+                // The authoritative signal-drain path marks the durable session outcome unknown
+                // before this callback. Do not emit another close mutation from the data plane.
+            },
+        )
+    }
     // Independent shared-Host consumer for process-owned rebuild/transport state. MahayanaHost
     // fans each native event into every registered consumer queue, so this owner may drain
     // continuously without stealing approvals/chat/tool events from Presentation.
@@ -936,6 +971,38 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
         return updated.publicProjection().put("acknowledged", true)
     }
 
+    override fun remoteComputerDataPlaneConnect(
+        deviceId: String,
+        sessionId: String,
+    ): JSONObject {
+        val before = requireRemoteControlSession(deviceId, sessionId)
+        remoteComputerSessionTransport(
+            before.deviceId,
+            before.sessionId,
+            directAvailable = true,
+        )
+        val session = requireRemoteControlSession(deviceId, sessionId)
+        require(session.iceServersJson != "[]") {
+            "Remote Computer session has no protected ICE configuration; reconcile or create a fresh session"
+        }
+        val fence = session.toDataPlaneFence()
+        remoteComputerDataPlane.connect(fence, session.iceServersJson)
+        return session.publicProjection()
+            .put("stored", true)
+            .put("dataPlane", "negotiating")
+            .put("nativeViewport", true)
+    }
+
+    override fun remoteComputerViewportView(context: Context): View =
+        remoteComputerDataPlane.createViewport(context)
+
+    override fun remoteComputerDataPlaneDisconnect(): JSONObject {
+        remoteComputerDataPlane.disconnect()
+        return JSONObject()
+            .put("disconnected", true)
+            .put("processGeneration", processGeneration)
+    }
+
     override fun remoteComputerHumanTakeover(
         deviceId: String,
         sessionId: String,
@@ -944,13 +1011,15 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
     ): JSONObject {
         val session = requireRemoteControlSession(deviceId, sessionId)
         val (currentFence, currentEpoch) = currentRemoteAccountFence()
-        return remoteControlSessionStore.setHumanTakeover(
+        val updated = remoteControlSessionStore.setHumanTakeover(
             currentFence,
             currentEpoch,
             session.sessionId,
             expectedViewportRevision,
             active,
-        ).publicProjection().put("stored", true)
+        )
+        remoteComputerDataPlane.updateFence(updated.toDataPlaneFence())
+        return updated.publicProjection().put("stored", true)
     }
 
     override fun remoteComputerViewportAdvance(
@@ -960,18 +1029,21 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
     ): JSONObject {
         val session = requireRemoteControlSession(deviceId, sessionId)
         val (currentFence, currentEpoch) = currentRemoteAccountFence()
-        return remoteControlSessionStore.advanceViewport(
+        val updated = remoteControlSessionStore.advanceViewport(
             currentFence,
             currentEpoch,
             session.sessionId,
             expectedViewportRevision,
-        ).publicProjection().put("stored", true)
+        )
+        remoteComputerDataPlane.updateFence(updated.toDataPlaneFence())
+        return updated.publicProjection().put("stored", true)
     }
 
     override fun remoteComputerSessionClose(deviceId: String, sessionId: String): JSONObject {
         val session = requireRemoteControlSession(deviceId, sessionId)
         val (currentFence, currentEpoch) = currentRemoteAccountFence()
         remoteControlSessionStore.beginClosing(currentFence, currentEpoch, session.sessionId)
+        remoteComputerDataPlane.disconnect()
         return try {
             val response = authenticatedRemotePlatformRequest(
                 "POST",
@@ -1054,6 +1126,25 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
             .put("outcomeUnknown", snapshot.outcomeUnknown)
             .put("kind", snapshot.kind?.name?.lowercase() ?: JSONObject.NULL)
             .put("lastResolution", snapshot.lastResolution?.name?.lowercase() ?: JSONObject.NULL)
+    }
+
+    private fun RemoteControlSessionCredential.toDataPlaneFence(): RemoteComputerDataPlaneFence =
+        RemoteComputerDataPlaneFence(
+            deviceId = deviceId,
+            sessionId = sessionId,
+            processGeneration = processGeneration,
+            viewportRevision = viewportRevision,
+            humanTakeover = humanTakeover,
+            lifecycle = lifecycle.name.lowercase(),
+        )
+
+    private fun currentRemoteDataPlaneFence(): RemoteComputerDataPlaneFence? {
+        val (currentFence, currentEpoch) = currentRemoteAccountFence()
+        val session = remoteControlSessionStore.readForAccountFence(currentFence, currentEpoch)
+            ?: return null
+        if (session.expiresAt <= System.currentTimeMillis() / 1_000L) return null
+        if (session.processGeneration != processGeneration) return null
+        return session.toDataPlaneFence()
     }
 
     private fun requireRemoteControlSession(
