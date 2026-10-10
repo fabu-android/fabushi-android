@@ -52,6 +52,7 @@ class AgentAsyncTasksWiringTest(unittest.TestCase):
         self.assertIn('"type":"agent.async-tasks.changed"', worker)
         self.assertIn('"parentAgentId":parent_agent_id', worker)
         self.assertIn('"parentAgentId":parent_agent_id', worker)
+        self.assertIn("publish_settlement(&self.events, settlement)", worker)
 
         async_event = vm.index('if (type == "agent.async-tasks.changed")')
         chat_gate = vm.index("val operationId = mutableState.value.operationId ?: return")
