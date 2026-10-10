@@ -900,6 +900,73 @@ mod tests {
     }
 
     #[test]
+    fn presentation_duplicate_replays_once_after_reopen_and_rejects_argument_reuse() {
+        let path = temp_path("presentation-replay");
+        let first_id = {
+            let mut roster = AndroidAgentRoster::open(&path).unwrap();
+            roster.create("Agent", "description").unwrap().id
+        };
+        let mutation = json!({"kind":"duplicate","id":first_id});
+        let first_result = {
+            let mut roster = AndroidAgentRoster::open(&path).unwrap();
+            roster
+                .apply_presentation_operation("session:account-a", "operation-1", &mutation)
+                .unwrap()
+        };
+        assert_eq!(first_result["status"], "completed");
+        let duplicate_id = first_result["result"]["agent"]["id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+
+        let replay = {
+            let mut reopened = AndroidAgentRoster::open(&path).unwrap();
+            let replay = reopened
+                .apply_presentation_operation("session:account-a", "operation-1", &mutation)
+                .unwrap();
+            assert_eq!(reopened.count(), 2, "durable replay must not duplicate twice");
+            replay
+        };
+        assert_eq!(replay["result"]["agent"]["id"], duplicate_id);
+
+        let mut reopened = AndroidAgentRoster::open(&path).unwrap();
+        let mismatch = reopened.apply_presentation_operation(
+            "session:account-a",
+            "operation-1",
+            &json!({"kind":"delete","ids":[first_id]}),
+        );
+        assert!(
+            mismatch
+                .unwrap_err()
+                .contains("reused with mismatched arguments")
+        );
+        assert_eq!(reopened.count(), 2);
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn presentation_rejection_is_durable_and_side_effect_free() {
+        let path = temp_path("presentation-rejection");
+        let mutation = json!({"kind":"duplicate","id":"missing-agent"});
+        let first = {
+            let mut roster = AndroidAgentRoster::open(&path).unwrap();
+            roster
+                .apply_presentation_operation("session:account-a", "operation-rejected", &mutation)
+                .unwrap()
+        };
+        assert_eq!(first["status"], "rejected");
+        assert_eq!(first["error"], "agent not found");
+
+        let mut reopened = AndroidAgentRoster::open(&path).unwrap();
+        let replay = reopened
+            .apply_presentation_operation("session:account-a", "operation-rejected", &mutation)
+            .unwrap();
+        assert_eq!(replay, first);
+        assert_eq!(reopened.count(), 0);
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
     fn corrupt_roster_is_quarantined_before_reset() {
         let path = temp_path("corrupt");
         fs::write(&path, "{not-json").unwrap();
