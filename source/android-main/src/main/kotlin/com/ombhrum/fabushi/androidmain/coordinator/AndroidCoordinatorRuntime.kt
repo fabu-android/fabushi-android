@@ -78,6 +78,9 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
                     ?: error("Remote Computer data-plane session is unavailable")
                 remoteComputerSignalAcknowledge(fence.deviceId, fence.sessionId, lastSignalId)
             },
+            onReconnectRequired = { disconnectedFence ->
+                scheduleRemoteComputerReconnect(disconnectedFence)
+            },
             onRemoteClose = {
                 // The authoritative signal-drain path marks the durable session outcome unknown
                 // before this callback. Do not emit another close mutation from the data plane.
@@ -109,6 +112,9 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
     }
     private val computerRebuildMigrationExecutor = Executors.newSingleThreadExecutor { runnable ->
         Thread(runnable, "fabushi-computer-rebuild-migration").apply { isDaemon = true }
+    }
+    private val remoteComputerReconnectExecutor = Executors.newSingleThreadScheduledExecutor { runnable ->
+        Thread(runnable, "fabushi-remote-computer-reconnect").apply { isDaemon = true }
     }
     private val computerRebuildMigrationRunning = AtomicBoolean(false)
     private val storagePressureExecutor = Executors.newSingleThreadScheduledExecutor { runnable ->
@@ -1184,6 +1190,48 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
                 "Unable to clear Remote Computer create request identity"
             }
         }
+    }
+
+    private fun scheduleRemoteComputerReconnect(disconnectedFence: RemoteComputerDataPlaneFence) {
+        val (accountFence, accountEpoch) = runCatching { currentRemoteAccountFence() }.getOrNull() ?: return
+        val reconnecting = runCatching {
+            remoteControlSessionStore.markReconnectRequired(
+                accountFence,
+                accountEpoch,
+                disconnectedFence.sessionId,
+                disconnectedFence.processGeneration,
+                disconnectedFence.viewportRevision,
+            )
+        }.getOrNull() ?: return
+        val delaySeconds = minOf(30L, 1L shl minOf(5, reconnecting.reconnectCount.coerceAtLeast(1) - 1))
+        remoteComputerReconnectExecutor.schedule(
+            {
+                runCatching {
+                    val current = requireRemoteControlSession(
+                        reconnecting.deviceId,
+                        reconnecting.sessionId,
+                    )
+                    require(current.processGeneration == disconnectedFence.processGeneration) {
+                        "Remote Computer reconnect crossed process generation"
+                    }
+                    require(current.viewportRevision == disconnectedFence.viewportRevision) {
+                        "Remote Computer reconnect crossed viewport revision"
+                    }
+                    require(current.lifecycle == RemoteControlSessionLifecycle.RECONNECTING) {
+                        "Remote Computer reconnect intent is no longer current"
+                    }
+                    require(current.expiresAt > System.currentTimeMillis() / 1_000L) {
+                        "Remote Computer session expired before reconnect"
+                    }
+                    remoteComputerDataPlane.connect(
+                        current.toDataPlaneFence(),
+                        current.iceServersJson,
+                    )
+                }
+            },
+            delaySeconds,
+            TimeUnit.SECONDS,
+        )
     }
 
     private fun RemoteControlSessionCredential.toDataPlaneFence(): RemoteComputerDataPlaneFence =
