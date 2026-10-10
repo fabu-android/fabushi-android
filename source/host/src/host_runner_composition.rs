@@ -793,11 +793,27 @@ mod tests {
             RemoteExecutionState::Cancelled,
             "process death after grant consume but before mark_sent must stay never-sent",
         );
-        let reopened_broker = CapabilityBroker::open(&broker_path, 99).unwrap();
-        assert_eq!(
-            reopened_broker.approval_state(&ctx.permission_grant_id),
-            Some("consumed"),
-            "one-time approval remains consumed while unsent work is terminally cancelled",
+        let mut reopened_broker = CapabilityBroker::open(&broker_path, 99).unwrap();
+        assert!(
+            reopened_broker
+                .resolve_approval(&ctx.permission_grant_id, true, &ctx.account_fence, 100)
+                .is_err(),
+            "consumed one-time approval must not become resolvable after restart",
+        );
+        assert!(
+            reopened_broker
+                .consume_remote_approval_for_dispatch(
+                    &ctx.permission_grant_id,
+                    &ctx.operation_id,
+                    &ctx.request_id,
+                    &req.capability_id,
+                    &ctx.account_fence,
+                    ctx.account_epoch,
+                    &ctx.device_id,
+                    101,
+                )
+                .is_err(),
+            "consumed one-time approval must not dispatch twice after restart",
         );
     }
 
