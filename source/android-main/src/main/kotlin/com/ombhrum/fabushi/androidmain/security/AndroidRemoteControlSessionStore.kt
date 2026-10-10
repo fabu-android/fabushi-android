@@ -397,6 +397,29 @@ internal object RemoteControlSessionStatePolicy {
         )
     }
 
+    fun markReconnectRequired(
+        value: RemoteControlSessionCredential,
+        processGeneration: Long,
+        expectedViewportRevision: Long,
+    ): RemoteControlSessionCredential {
+        require(processGeneration == value.processGeneration) {
+            "Remote control reconnect crossed process generation"
+        }
+        require(expectedViewportRevision == value.viewportRevision) {
+            "Remote control reconnect used a stale viewport revision"
+        }
+        require(value.lifecycle !in setOf(
+            RemoteControlSessionLifecycle.CLOSING,
+            RemoteControlSessionLifecycle.OUTCOME_UNKNOWN,
+        )) { "Remote control session cannot reconnect while closing" }
+        return value.copy(
+            lifecycle = RemoteControlSessionLifecycle.RECONNECTING,
+            reconnectCount = value.reconnectCount + 1,
+            reconcileRequired = true,
+            humanTakeover = false,
+        )
+    }
+
     fun beginClosing(value: RemoteControlSessionCredential): RemoteControlSessionCredential =
         value.copy(
             viewportRevision = value.viewportRevision + 1,
@@ -545,6 +568,26 @@ internal class AndroidRemoteControlSessionStore(context: Context) {
             ?: error("Remote control session is unavailable")
         require(current.sessionId == sessionId) { "Remote control session identity changed" }
         val updated = RemoteControlSessionStatePolicy.advanceViewport(current, expectedViewportRevision)
+        write(updated)
+        return updated
+    }
+
+    @Synchronized
+    fun markReconnectRequired(
+        currentAccountFence: String,
+        currentAccountEpoch: Long,
+        sessionId: String,
+        processGeneration: Long,
+        expectedViewportRevision: Long,
+    ): RemoteControlSessionCredential {
+        val current = readForAccountFence(currentAccountFence, currentAccountEpoch)
+            ?: error("Remote control session is unavailable")
+        require(current.sessionId == sessionId) { "Remote control session identity changed" }
+        val updated = RemoteControlSessionStatePolicy.markReconnectRequired(
+            current,
+            processGeneration,
+            expectedViewportRevision,
+        )
         write(updated)
         return updated
     }
