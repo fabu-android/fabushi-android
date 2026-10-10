@@ -5405,6 +5405,7 @@ fn encode_api_path_segment(value: &str) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::runner::SubagentLineage;
 
     #[test]
     fn sidebar_sections_dispatch_is_account_fenced_durable_and_idempotent() {
