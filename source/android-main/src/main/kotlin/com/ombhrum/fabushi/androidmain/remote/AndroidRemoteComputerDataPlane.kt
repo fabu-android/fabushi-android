@@ -122,6 +122,7 @@ internal class AndroidRemoteComputerDataPlane(
     @Volatile private var peerConnection: PeerConnection? = null
     @Volatile private var controlChannel: DataChannel? = null
     @Volatile private var renderer: SurfaceViewRenderer? = null
+    @Volatile private var remoteVideoTrack: VideoTrack? = null
     @Volatile private var drainTask: ScheduledFuture<*>? = null
     @Volatile private var closed = false
 
@@ -152,6 +153,7 @@ internal class AndroidRemoteComputerDataPlane(
             view.isFocusableInTouchMode = true
             view.setOnTouchListener { _, event -> sendPointer(event) }
             view.setOnKeyListener { _, _, event -> sendKey(event) }
+            remoteVideoTrack?.addSink(view)
             renderer = view
         }
     }
@@ -202,12 +204,25 @@ internal class AndroidRemoteComputerDataPlane(
             override fun onAddTrack(receiver: RtpReceiver, mediaStreams: Array<out MediaStream>) {
                 if (!isCurrent(generation)) return
                 (receiver.track() as? VideoTrack)?.let { track ->
+                    remoteVideoTrack?.let { previous ->
+                        renderer?.let(previous::removeSink)
+                    }
+                    remoteVideoTrack = track
                     renderer?.let(track::addSink)
                 }
             }
 
             override fun onConnectionChange(newState: PeerConnection.PeerConnectionState) {
                 if (!isCurrent(generation)) return
+                if (newState == PeerConnection.PeerConnectionState.CONNECTED) {
+                    val current = activeFence ?: return
+                    sendSignal(
+                        "ready",
+                        JSONObject()
+                            .put("processGeneration", current.processGeneration)
+                            .put("viewportRevision", current.viewportRevision),
+                    )
+                }
                 if (newState == PeerConnection.PeerConnectionState.FAILED ||
                     newState == PeerConnection.PeerConnectionState.CLOSED
                 ) {
@@ -387,6 +402,8 @@ internal class AndroidRemoteComputerDataPlane(
         controlChannel?.close()
         controlChannel?.dispose()
         controlChannel = null
+        remoteVideoTrack?.let { track -> renderer?.let(track::removeSink) }
+        remoteVideoTrack = null
         peerConnection?.close()
         peerConnection?.dispose()
         peerConnection = null
