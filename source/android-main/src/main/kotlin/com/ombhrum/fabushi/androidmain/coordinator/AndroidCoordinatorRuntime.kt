@@ -190,6 +190,19 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
             failures += "privacy:" + (error.message ?: error::class.java.simpleName)
             "unknown"
         }
+        var teamPolicyState = AccountTruthState.UNKNOWN
+        runCatching { host.request("feature.account.teamRules") }.onSuccess { response ->
+            if (response.opt("rules") is JSONArray) {
+                // Team rules are an enforced policy input, not an authorization decision.
+                // A successful canonical fetch means policy ownership is settled for this refresh.
+                teamPolicyState = AccountTruthState.GRANTED
+            } else {
+                failures += "team-policy:invalid-payload"
+            }
+        }.onFailure { error ->
+            failures += "team-policy:" + (error.message ?: error::class.java.simpleName)
+        }
+
         val remote = runCatching { host.request("feature.remote.binding.status") }.getOrElse { error ->
             failures += "remote:" + (error.message ?: error::class.java.simpleName)
             null
@@ -264,14 +277,14 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
                 // product account adapter; the Host exposes that canonical policy over JNI.
                 sandAccessState = sandAccessState,
                 blockReason = sandAccessBlockReason,
-                // Descriptor-account authorization and managed-team policy remain separate
-                // owners and stay unknown until their exact shipping contracts are wired.
+                // Descriptor-account authorization remains a separate owner and stays unknown
+                // until its exact shipping contract is wired.
                 authorizationState = AccountTruthState.UNKNOWN,
                 paymentState = paymentState,
                 entitlementState = entitlementState,
                 entitlementReason = entitlementReason,
                 privacyMode = privacyMode,
-                teamPolicyState = AccountTruthState.UNKNOWN,
+                teamPolicyState = teamPolicyState,
                 remoteReady = remoteReady,
                 remoteHasDesktop = remoteHasDesktop,
                 sessionSettled = true,
