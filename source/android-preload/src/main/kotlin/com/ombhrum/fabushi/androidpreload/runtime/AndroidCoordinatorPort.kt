@@ -109,6 +109,8 @@ interface AndroidCoordinatorPort {
         error("remote_computer_pairing_status_not_implemented")
     fun remoteComputerSessionCreate(deviceId: String): JSONObject =
         error("remote_computer_session_create_not_implemented")
+    fun remoteComputerSessionReconcile(): JSONObject =
+        error("remote_computer_session_reconcile_not_implemented")
     fun remoteComputerSessionStatus(): JSONObject =
         error("remote_computer_session_status_not_implemented")
     fun remoteComputerSessionTransport(
