@@ -5203,6 +5203,90 @@ mod tests {
     use super::*;
 
     #[test]
+    fn sidebar_sections_dispatch_is_account_fenced_durable_and_idempotent() {
+        let root = tempfile::tempdir().unwrap();
+        let mut first = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+        let first_agent = first
+            .dispatch("createAgent", &json!({"name":"One","description":""}))
+            .unwrap();
+        let second_agent = first
+            .dispatch("createAgent", &json!({"name":"Two","description":""}))
+            .unwrap();
+        let first_id = first_agent["id"].as_str().unwrap().to_string();
+        let second_id = second_agent["id"].as_str().unwrap().to_string();
+
+        let payload = json!({
+            "operationId":"sidebar-op-1",
+            "accountFence":"session:test:android",
+            "mutation":{
+                "kind":"sidebar-sections",
+                "sections":[{
+                    "id":"section-a",
+                    "name":"Team",
+                    "agentIds":[first_id],
+                    "isCollapsed":false
+                }]
+            }
+        });
+        let committed = first
+            .dispatch("feature.agent.rosterMutation", &payload)
+            .unwrap();
+        assert_eq!(committed["status"], "completed");
+        let projected = first
+            .dispatch("feature.agent.sidebarSections", &json!({}))
+            .unwrap();
+        assert_eq!(projected["sections"][0]["id"], "section-a");
+        assert_eq!(projected["sections"][1]["id"], "__agents__");
+        assert_eq!(projected["sections"][1]["agentIds"][0], second_id);
+
+        let replayed = first
+            .dispatch("feature.agent.rosterMutation", &payload)
+            .unwrap();
+        assert_eq!(replayed, committed);
+
+        let mismatch = first.dispatch(
+            "feature.agent.rosterMutation",
+            &json!({
+                "operationId":"sidebar-op-1",
+                "accountFence":"session:test:android",
+                "mutation":{
+                    "kind":"sidebar-sections",
+                    "sections":[{
+                        "id":"section-a",
+                        "name":"Changed",
+                        "agentIds":[],
+                        "isCollapsed":false
+                    }]
+                }
+            }),
+        );
+        assert!(mismatch.is_err());
+
+        let stale = first.dispatch(
+            "feature.agent.rosterMutation",
+            &json!({
+                "operationId":"sidebar-op-stale",
+                "accountFence":"session:stale",
+                "mutation":{"kind":"sidebar-sections","sections":[]}
+            }),
+        );
+        assert!(stale.is_err());
+
+        drop(first);
+        let mut reopened = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+        let restored = reopened
+            .dispatch("feature.agent.sidebarSections", &json!({}))
+            .unwrap();
+        assert_eq!(restored, projected);
+        assert_eq!(
+            reopened
+                .dispatch("feature.agent.rosterMutation", &payload)
+                .unwrap(),
+            committed,
+        );
+    }
+
+    #[test]
     fn fabushi_shipping_sand_access_is_owned_by_authenticated_product_policy() {
         assert_eq!(
             project_fabushi_sand_access(true),
