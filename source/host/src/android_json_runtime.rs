@@ -594,10 +594,7 @@ impl AndroidJsonHost {
             "feature.automation.cancel" => self.automation_cancel(params),
             "feature.automation.settle" => self.automation_settle(params),
             "feature.automation.snapshot" => self.automation_snapshot(params),
-            "listAgents" => {
-                let agents = self.agents.lock().map_err(|_| "canonical Android Agent roster lock poisoned".to_string())?;
-                Ok(Value::Array(agents.list().into_iter().map(|agent| agent.as_json()).collect()))
-            }
+            "listAgents" => Ok(Value::Array(self.project_agent_roster()?))
             "countAgents" => {
                 let agents = self.agents.lock().map_err(|_| "canonical Android Agent roster lock poisoned".to_string())?;
                 Ok(json!(agents.count()))
@@ -749,6 +746,80 @@ impl AndroidJsonHost {
         }
     }
 
+
+    fn project_agent_roster(&self) -> Result<Vec<Value>, String> {
+        let agents = self
+            .agents
+            .lock()
+            .map_err(|_| "canonical Android Agent roster lock poisoned".to_string())?
+            .list();
+        let transcript = self
+            .transcript
+            .lock()
+            .map_err(|_| "transcript lock poisoned".to_string())?
+            .get_transcript();
+
+        let mut latest_message: BTreeMap<String, (u64, String)> = BTreeMap::new();
+        let mut running_agents = BTreeSet::new();
+        for entry in transcript {
+            if entry.get("kind").and_then(Value::as_str) != Some("message") {
+                continue;
+            }
+            let Some(agent_id) = entry
+                .get("agentId")
+                .and_then(Value::as_str)
+                .filter(|value| !value.trim().is_empty())
+            else {
+                continue;
+            };
+            let timestamp = entry
+                .get("timestampMs")
+                .and_then(Value::as_u64)
+                .unwrap_or(0);
+            if let Some(content) = entry.get("content").and_then(Value::as_str) {
+                let replace = latest_message
+                    .get(agent_id)
+                    .is_none_or(|(observed_at, _)| timestamp >= *observed_at);
+                if replace {
+                    latest_message.insert(agent_id.to_string(), (timestamp, content.to_string()));
+                }
+            }
+            if entry
+                .get("operationId")
+                .and_then(Value::as_str)
+                .is_some_and(|operation_id| self.active_operations.contains(operation_id))
+            {
+                running_agents.insert(agent_id.to_string());
+            }
+        }
+
+        Ok(agents
+            .into_iter()
+            .map(|agent| {
+                let mut value = agent.as_json();
+                if let Some(object) = value.as_object_mut() {
+                    if let Some((timestamp, message)) = latest_message.get(&agent.id) {
+                        object.insert("lastMessage".into(), Value::String(message.clone()));
+                        object.insert(
+                            "updatedAt".into(),
+                            Value::from(agent.updated_at.max(*timestamp)),
+                        );
+                    } else {
+                        object.insert("lastMessage".into(), Value::String(String::new()));
+                    }
+                    object.insert(
+                        "isRunning".into(),
+                        Value::Bool(running_agents.contains(&agent.id)),
+                    );
+                    // No second owner: these remain conservative until Host has explicit
+                    // agent-to-agent and awaiting-user canonical events.
+                    object.insert("conversationPartnerIds".into(), Value::Array(Vec::new()));
+                    object.insert("awaitingUserResponse".into(), Value::Bool(false));
+                }
+                value
+            })
+            .collect())
+    }
 
     fn assistant_projection(&self) -> Result<Value, String> {
         let transcript = self
@@ -2361,13 +2432,7 @@ impl AndroidJsonHost {
 
         match kind {
             "bot.list" => {
-                let bots = self.agents
-                    .lock()
-                    .map_err(|_| "canonical Android Agent roster lock poisoned".to_string())?
-                    .list()
-                    .into_iter()
-                    .map(|agent| agent.as_json())
-                    .collect::<Vec<_>>();
+                let bots = self.project_agent_roster()?;
                 self.events.push_back(json!({
                     "type":"bot.listed",
                     "operationId":operation_id,
