@@ -312,6 +312,7 @@ pub struct AndroidJsonHost {
     turn_upgrade_quiescing: Arc<AtomicBool>,
     live_account_fence: Arc<Mutex<Option<String>>>,
     agent_turn_interruptions: Arc<AgentTurnInterruptionRegistry>,
+    agent_wake_operations: BTreeMap<String, String>,
     multitask_todos: Arc<Mutex<DurableMultitaskTodoStore>>,
     subagent_owner: Arc<Mutex<DurableSubagentOwner>>,
     subagent_tools: SubagentToolBridge,
@@ -458,6 +459,7 @@ impl AndroidJsonHost {
             turn_upgrade_quiescing: Arc::new(AtomicBool::new(false)),
             live_account_fence: Arc::new(Mutex::new(None)),
             agent_turn_interruptions: Arc::new(AgentTurnInterruptionRegistry::default()),
+            agent_wake_operations: BTreeMap::new(),
             multitask_todos,
             subagent_owner,
             subagent_tools,
@@ -910,6 +912,17 @@ impl AndroidJsonHost {
         if let Some(cancelled) = self.turn_cancellations.remove(operation_id) {
             cancelled.store(true, Ordering::Release);
         }
+        self.agent_turn_interruptions.unregister_operation(operation_id);
+        if let Some(wake_id) = self.agent_wake_operations.remove(operation_id) {
+            self.messaging
+                .lock()
+                .map_err(|_| "canonical Android messaging owner lock poisoned".to_string())?
+                .defer_agent_wake(
+                    &wake_id,
+                    i64::try_from(now_ms()).unwrap_or(i64::MAX),
+                    reason.unwrap_or("cancelled"),
+                )?;
+        }
         self.active_operations.remove(operation_id);
         self.turn_journal
             .lock()
@@ -1130,6 +1143,18 @@ impl AndroidJsonHost {
         for record in fenced {
             if let Some(cancelled) = self.turn_cancellations.remove(&record.operation_id) {
                 cancelled.store(true, Ordering::Release);
+            }
+            self.agent_turn_interruptions.unregister_operation(&record.operation_id);
+            if let Some(wake_id) = self.agent_wake_operations.remove(&record.operation_id) {
+                let _ = self
+                    .messaging
+                    .lock()
+                    .map_err(|_| "canonical Android messaging owner lock poisoned".to_string())?
+                    .defer_agent_wake(
+                        &wake_id,
+                        i64::try_from(now).unwrap_or(i64::MAX),
+                        "account-switch",
+                    );
             }
             self.active_operations.remove(&record.operation_id);
             push_turn_event(
@@ -3226,8 +3251,161 @@ impl AndroidJsonHost {
         Ok(())
     }
 
+    fn drain_agent_wake_once(&mut self) -> Result<(), String> {
+        let account_fence = match self.current_turn_account_fence() {
+            Ok(value) => value,
+            Err(_) => return Ok(()),
+        };
+        let wake = {
+            let messaging = self
+                .messaging
+                .lock()
+                .map_err(|_| "canonical Android messaging owner lock poisoned".to_string())?;
+            messaging
+                .pending_agent_wakes(
+                    &account_fence,
+                    i64::try_from(now_ms()).unwrap_or(i64::MAX),
+                )
+                .into_iter()
+                .next()
+        };
+        let Some(wake) = wake else { return Ok(()); };
+        let wake_id = required_string(&wake, "wakeId")?.to_string();
+        let target_agent_id = required_string(&wake, "targetAgentId")?.to_string();
+        let source_agent_id = required_string(&wake, "sourceAgentId")?.to_string();
+        if self
+            .agent_turn_interruptions
+            .has_active_turn(&target_agent_id, &account_fence)
+        {
+            return Ok(());
+        }
+        let target_exists = self
+            .agents
+            .lock()
+            .map_err(|_| "canonical Android Agent roster lock poisoned".to_string())?
+            .get(&target_agent_id)
+            .is_some();
+        if !target_exists {
+            self.messaging
+                .lock()
+                .map_err(|_| "canonical Android messaging owner lock poisoned".to_string())?
+                .defer_agent_wake(
+                    &wake_id,
+                    i64::try_from(now_ms()).unwrap_or(i64::MAX),
+                    "target-agent-missing",
+                )?;
+            return Ok(());
+        }
+        let source_name = self
+            .agents
+            .lock()
+            .map_err(|_| "canonical Android Agent roster lock poisoned".to_string())?
+            .get(&source_agent_id)
+            .map(|agent| agent.name)
+            .unwrap_or_else(|| source_agent_id.clone());
+        let message = required_string(&wake, "message")?;
+        let priority = wake.get("priority").and_then(Value::as_bool).unwrap_or(false);
+        let images = wake
+            .get("images")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        let mut prompt = vec![
+            format!(
+                "[agent] A message just arrived from another of your user's agents: {} (id: {}).",
+                source_name, source_agent_id
+            ),
+            if priority {
+                "This is a PRIORITY instruction from another assistant — not the user typing here. It interrupted your previous non-user work. Drop conflicting in-flight work and follow it now. Your user can already see it in this chat.".to_string()
+            } else {
+                "This is another assistant reaching out — not the user typing here. It arrived asynchronously, and your user can already see it in this chat.".to_string()
+            },
+            String::new(),
+            format!("{}: {}", source_name, message),
+        ];
+        if !images.is_empty() {
+            prompt.push(String::new());
+            prompt.push(format!(
+                "{} attached {} image(s) to this message:",
+                source_name,
+                images.len()
+            ));
+            for image in images {
+                let url = image.get("url").and_then(Value::as_str).unwrap_or_default();
+                let alt = image
+                    .get("alt")
+                    .and_then(Value::as_str)
+                    .filter(|value| !value.trim().is_empty())
+                    .map(|value| format!(" — {value}"))
+                    .unwrap_or_default();
+                prompt.push(format!("- {url}{alt}"));
+            }
+        }
+        prompt.push(String::new());
+        prompt.push(format!(
+            "If it needs a reply or an action, handle it and reply to {} with SendToAgent using id {}. Do not wait or poll for a reply; it arrives later on a fresh turn.",
+            source_name, source_agent_id
+        ));
+        let request_id = wake_id.clone();
+        let operation_id = self.next_operation_id(&request_id);
+        if self.active_operations.contains(&operation_id)
+            || self.agent_wake_operations.values().any(|value| value == &wake_id)
+        {
+            return Ok(());
+        }
+        let (bearer_token, _session_mutation) = match self.bearer_token_for_turn() {
+            Ok(value) => value,
+            Err(error) => {
+                self.messaging
+                    .lock()
+                    .map_err(|_| "canonical Android messaging owner lock poisoned".to_string())?
+                    .defer_agent_wake(
+                        &wake_id,
+                        i64::try_from(now_ms()).unwrap_or(i64::MAX),
+                        &error,
+                    )?;
+                return Ok(());
+            }
+        };
+        self.active_operations.insert(operation_id.clone());
+        let command = json!({
+            "type":"chat.send",
+            "requestId":request_id,
+            "agentId":target_agent_id,
+            "model":"default",
+            "text":prompt.join("\n"),
+            "hidden":true,
+            "requestSource":"agent-message",
+            "skipAckObligation":true
+        });
+        match self.queue_chat_turn(
+            &operation_id,
+            command.get("requestId").and_then(Value::as_str).unwrap_or_default(),
+            &command,
+            bearer_token,
+        ) {
+            Ok(()) => {
+                self.agent_wake_operations.insert(operation_id, wake_id);
+            }
+            Err(error) => {
+                self.active_operations.remove(&operation_id);
+                self.agent_turn_interruptions.unregister_operation(&operation_id);
+                self.messaging
+                    .lock()
+                    .map_err(|_| "canonical Android messaging owner lock poisoned".to_string())?
+                    .defer_agent_wake(
+                        &wake_id,
+                        i64::try_from(now_ms()).unwrap_or(i64::MAX),
+                        &error,
+                    )?;
+            }
+        }
+        Ok(())
+    }
+
     fn feature_receive(&mut self) -> Result<Value, String> {
         self.drain_mcp_auth_owner_events()?;
+        self.drain_agent_wake_once()?;
         if let Some(event) = self.events.pop_front() {
             return Ok(event);
         }
@@ -3259,6 +3437,22 @@ impl AndroidJsonHost {
                         self.active_operations.remove(operation_id);
                         self.turn_cancellations.remove(operation_id);
                         self.agent_turn_interruptions.unregister_operation(operation_id);
+                        if let Some(wake_id) = self.agent_wake_operations.remove(operation_id) {
+                            let terminal = event.get("type").and_then(Value::as_str).unwrap_or_default();
+                            let mut messaging = self
+                                .messaging
+                                .lock()
+                                .map_err(|_| "canonical Android messaging owner lock poisoned".to_string())?;
+                            if terminal == "operation.completed" {
+                                messaging.complete_agent_wake(&wake_id)?;
+                            } else {
+                                messaging.defer_agent_wake(
+                                    &wake_id,
+                                    i64::try_from(now_ms()).unwrap_or(i64::MAX),
+                                    terminal,
+                                )?;
+                            }
+                        }
                     }
                 }
                 return Ok(event);
