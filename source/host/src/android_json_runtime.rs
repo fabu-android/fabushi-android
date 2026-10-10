@@ -526,53 +526,85 @@ impl AndroidJsonHost {
             "feature.automation.cancel" => self.automation_cancel(params),
             "feature.automation.settle" => self.automation_settle(params),
             "feature.automation.snapshot" => self.automation_snapshot(params),
-            "listAgents" => Ok(Value::Array(
-                self.agents.list().into_iter().map(|agent| agent.as_json()).collect()
-            )),
-            "countAgents" => Ok(json!(self.agents.count())),
+            "listAgents" => {
+                let agents = self.agents.lock().map_err(|_| "canonical Android Agent roster lock poisoned".to_string())?;
+                Ok(Value::Array(agents.list().into_iter().map(|agent| agent.as_json()).collect()))
+            }
+            "countAgents" => {
+                let agents = self.agents.lock().map_err(|_| "canonical Android Agent roster lock poisoned".to_string())?;
+                Ok(json!(agents.count()))
+            }
             "createAgent" => {
                 let name = required_string(params, "name")?;
                 let description = params.get("description").and_then(Value::as_str).unwrap_or("");
-                let agent = self.agents.create(name, description).map_err(|error| error.to_string())?;
+                let agent = self.agents
+                    .lock()
+                    .map_err(|_| "canonical Android Agent roster lock poisoned".to_string())?
+                    .create(name, description)
+                    .map_err(|error| error.to_string())?;
                 Ok(json!({"agent": agent.as_json()}))
             }
             "updateAgent" => {
                 let id = required_string(params, "id")?;
-                let current = self.agents.get(id).ok_or_else(|| "agent not found".to_string())?;
+                let mut agents = self.agents.lock().map_err(|_| "canonical Android Agent roster lock poisoned".to_string())?;
+                let current = agents.get(id).ok_or_else(|| "agent not found".to_string())?;
                 let profile = params.get("profile").and_then(Value::as_object).ok_or("profile is required")?;
-                let name = profile.get("name").and_then(Value::as_str).unwrap_or(&current.name);
-                let description = profile.get("description").and_then(Value::as_str).unwrap_or(&current.description);
-                let agent = self.agents.update_profile(id, name, description).map_err(|error| error.to_string())?;
+                let name = profile.get("name").and_then(Value::as_str).unwrap_or(&current.name).to_string();
+                let description = profile.get("description").and_then(Value::as_str).unwrap_or(&current.description).to_string();
+                let agent = agents.update_profile(id, &name, &description).map_err(|error| error.to_string())?;
                 Ok(agent.as_json())
             }
             "setAgentHiddenFromSidebar" => {
                 let id = required_string(params, "id")?;
                 let is_hidden = params.get("isHidden").and_then(Value::as_bool).ok_or("isHidden is required")?;
-                let agent = self.agents.set_hidden(id, is_hidden).map_err(|error| error.to_string())?;
+                let agent = self.agents
+                    .lock()
+                    .map_err(|_| "canonical Android Agent roster lock poisoned".to_string())?
+                    .set_hidden(id, is_hidden)
+                    .map_err(|error| error.to_string())?;
                 Ok(agent.as_json())
             }
             "setAgentUnread" => {
                 let id = required_string(params, "id")?;
                 let is_unread = params.get("isUnread").and_then(Value::as_bool).ok_or("isUnread is required")?;
-                let agent = self.agents.set_unread(id, is_unread).map_err(|error| error.to_string())?;
+                let agent = self.agents
+                    .lock()
+                    .map_err(|_| "canonical Android Agent roster lock poisoned".to_string())?
+                    .set_unread(id, is_unread)
+                    .map_err(|error| error.to_string())?;
                 Ok(agent.as_json())
             }
             "duplicateAgent" => {
                 let id = required_string(params, "id")?;
-                let agent = self.agents.duplicate(id).map_err(|error| error.to_string())?;
+                let agent = self.agents
+                    .lock()
+                    .map_err(|_| "canonical Android Agent roster lock poisoned".to_string())?
+                    .duplicate(id)
+                    .map_err(|error| error.to_string())?;
                 Ok(json!({"agent": agent.as_json()}))
             }
             "deleteAgents" => {
                 let ids = params.get("ids").and_then(Value::as_array).ok_or("ids array is required")?
                     .iter().filter_map(Value::as_str).map(str::to_string).collect::<Vec<_>>();
-                let deleted = self.agents.delete(&ids).map_err(|error| error.to_string())?;
+                let deleted = self.agents
+                    .lock()
+                    .map_err(|_| "canonical Android Agent roster lock poisoned".to_string())?
+                    .delete(&ids)
+                    .map_err(|error| error.to_string())?;
                 Ok(json!({"deletedIds": deleted}))
             }
-            "getPinnedAgents" => Ok(json!(self.agents.pinned_agent_ids())),
+            "getPinnedAgents" => {
+                let agents = self.agents.lock().map_err(|_| "canonical Android Agent roster lock poisoned".to_string())?;
+                Ok(json!(agents.pinned_agent_ids()))
+            }
             "setPinnedAgents" => {
                 let ids = params.get("ids").and_then(Value::as_array).ok_or("ids array is required")?
                     .iter().filter_map(Value::as_str).map(str::to_string).collect::<Vec<_>>();
-                let ids = self.agents.set_pinned_agents(&ids).map_err(|error| error.to_string())?;
+                let ids = self.agents
+                    .lock()
+                    .map_err(|_| "canonical Android Agent roster lock poisoned".to_string())?
+                    .set_pinned_agents(&ids)
+                    .map_err(|error| error.to_string())?;
                 Ok(json!(ids))
             }
             "feature.execute" => self.feature_execute(params),
