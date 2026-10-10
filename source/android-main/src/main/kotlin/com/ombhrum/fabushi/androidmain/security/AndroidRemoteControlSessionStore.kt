@@ -345,6 +345,31 @@ internal object RemoteControlSessionStatePolicy {
         return value.copy(viewportRevision = value.viewportRevision + 1)
     }
 
+    fun reconcileAfterDrain(
+        value: RemoteControlSessionCredential,
+        sawReady: Boolean,
+        sawClose: Boolean,
+    ): RemoteControlSessionCredential {
+        if (sawClose) {
+            return value.copy(
+                viewportRevision = value.viewportRevision + 1,
+                humanTakeover = false,
+                lifecycle = RemoteControlSessionLifecycle.OUTCOME_UNKNOWN,
+                reconcileRequired = true,
+            )
+        }
+        val reconciledLifecycle = when {
+            value.humanTakeover -> RemoteControlSessionLifecycle.HUMAN_TAKEOVER
+            sawReady && value.selectedRoute != null -> RemoteControlSessionLifecycle.READY
+            value.selectedRoute != null -> RemoteControlSessionLifecycle.NEGOTIATING
+            else -> RemoteControlSessionLifecycle.PENDING
+        }
+        return value.copy(
+            lifecycle = reconciledLifecycle,
+            reconcileRequired = false,
+        )
+    }
+
     fun beginClosing(value: RemoteControlSessionCredential): RemoteControlSessionCredential =
         value.copy(
             viewportRevision = value.viewportRevision + 1,
@@ -541,6 +566,22 @@ internal class AndroidRemoteControlSessionStore(context: Context) {
             afterSignalId,
             lastSignalId,
         )
+        write(updated)
+        return updated
+    }
+
+    @Synchronized
+    fun reconcileAfterSignalDrain(
+        currentAccountFence: String,
+        currentAccountEpoch: Long,
+        sessionId: String,
+        sawReady: Boolean,
+        sawClose: Boolean,
+    ): RemoteControlSessionCredential {
+        val current = readForAccountFence(currentAccountFence, currentAccountEpoch)
+            ?: error("Remote control session is unavailable")
+        require(current.sessionId == sessionId) { "Remote control session identity changed" }
+        val updated = RemoteControlSessionStatePolicy.reconcileAfterDrain(current, sawReady, sawClose)
         write(updated)
         return updated
     }
