@@ -115,6 +115,9 @@ internal object RemoteControlSignalCursorPolicy {
             "Remote signal drain must start at the durable acknowledged cursor"
         }
         require(lastSignalId >= afterSignalId) { "Remote signal drain cursor regressed" }
+        require(lastSignalId >= value.highestDrainedSignalId) {
+            "Remote unacknowledged signals were not redelivered; reconnect is required"
+        }
         return value.copy(
             highestDrainedSignalId = maxOf(value.highestDrainedSignalId, lastSignalId),
         )

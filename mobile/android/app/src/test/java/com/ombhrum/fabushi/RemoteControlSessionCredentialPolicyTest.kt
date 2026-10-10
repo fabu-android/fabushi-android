@@ -95,6 +95,14 @@ class RemoteControlSessionCredentialPolicyTest {
         assertThrows(IllegalArgumentException::class.java) {
             RemoteControlSignalCursorPolicy.acknowledge(drained, "remote-session-1", 8)
         }
+        assertThrows(IllegalArgumentException::class.java) {
+            RemoteControlSignalCursorPolicy.recordDrain(
+                drained,
+                "remote-session-1",
+                0,
+                0,
+            )
+        }
         val acknowledged = RemoteControlSignalCursorPolicy.acknowledge(
             drained,
             "remote-session-1",
