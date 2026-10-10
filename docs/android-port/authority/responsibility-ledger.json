@@ -5,7 +5,7 @@
     "desktop_commit": "3bc92400826cc4ca7ac665b467708e22261edc61",
     "android_repository": "fabu-android/fabushi-android",
     "android_pr": 3,
-    "android_head_at_update": "c48e00ddf18db345cafb33e4e962affd5591edd3",
+    "android_head_at_update": "4cdb10a80c73c4ecb988d494210746fd101c18b1",
     "status": "incomplete",
     "note": "Persistent human-reviewed responsibility ledger for Desktop main. Rows are responsibility-level source facts; mapped/implemented never imply verified. Verification requires same-exact-HEAD source implementation, production wiring, CI/package and device evidence."
   },
@@ -3419,6 +3419,66 @@
       "artifact": null,
       "verification_status": "not-verified",
       "notes": "Mapped from the earliest unreviewed packaged E2E after reading Desktop Vault and secure-store responsibilities. Android secure primitive exists, but product/runtime parity remains missing."
+    },
+    {
+      "responsibility_id": "UI-AVATAR-MOTION-ANDROID-001",
+      "domain": "ui",
+      "desktop_sources": [
+        {
+          "path": "desktop/e2e/grok-motion-parity.spec.ts",
+          "blob_sha": "b2913b3a8bcc190bb945b9d5fa49817bb8ce1556",
+          "symbols": [
+            "desktop avatar cutover stays low-power and contains no legacy motion runtime",
+            "data-fab-avatar",
+            "data-state"
+          ]
+        }
+      ],
+      "source_commit": "3bc92400826cc4ca7ac665b467708e22261edc61",
+      "responsibility": "Keep Fabushi avatar feedback native and low-power: idle presentation must not run a perpetual motion loop, active work may use bounded animation, and legacy web motion runtimes/styles must not remain in production.",
+      "source_owner": "Desktop renderer avatar component and packaged motion-parity acceptance",
+      "direct_callers": [
+        "Desktop shell avatar presentation",
+        "Agent activity/status presentation"
+      ],
+      "downstream_dependencies": [
+        "renderer frame budget",
+        "battery/power use",
+        "visual state feedback"
+      ],
+      "state_owner": "Desktop avatar activity projection; Android native Compose avatar active flag",
+      "persistent_state": [],
+      "protocol_wire_contract": [
+        "avatar active/idle presentation state"
+      ],
+      "visible_effect": "Idle avatars remain visually present without continuous motion; active Agent work can animate to communicate activity.",
+      "failure_behavior": [
+        "idle state must fail toward static rendering rather than perpetual animation",
+        "legacy web motion runtime is not loaded on Android"
+      ],
+      "cancellation_behavior": "Leaving active state removes the animation clock on recomposition.",
+      "retry_semantics": "not applicable; rendering derives from current activity projection",
+      "idempotency_semantics": "same active flag yields the same animation policy",
+      "process_death_recovery": "Compose reconstructs current static/active avatar from UI projection; no animation state is persisted or replayed.",
+      "account_fencing": "not account scoped; avatar identity/color derives from current bot identity while activity state comes from current UI projection.",
+      "security_boundary": "Android uses native Compose Canvas only; no JavaScript/CSS/SVG legacy runtime or arbitrary WebView bridge is introduced.",
+      "android_disposition": "not-applicable-with-replacement",
+      "android_target": [
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/features/avatar/ClothGhostAvatarAndroid.kt",
+        "mobile/android/app/src/test/java/com/ombhrum/fabushi/AvatarMotionParityTest.kt"
+      ],
+      "android_owner": "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/features/avatar/ClothGhostAvatarAndroid.kt",
+      "platform_delta": "Desktop acceptance inspects DOM data attributes, stylesheets and removed legacy SVG/runtime nodes. Android has no DOM/CSS renderer; it preserves the product effect with a native Compose Canvas avatar. Idle resolves to a static phase and only active state allocates an infinite transition.",
+      "implementation_status": "implemented",
+      "production_wiring": "ClothGhostAvatarAndroid is the native production avatar. avatarAnimationDurationMillis(false) returns null so the idle branch never constructs rememberInfiniteTransition; active=true retains a 1200 ms native Compose loop.",
+      "unit_test": "AvatarMotionParityTest proves idle returns no animation duration and active retains the bounded 1200 ms policy.",
+      "contract_test": "Desktop grok-motion-parity source contract read at Desktop 3bc9240; same-exact-HEAD Android build/architecture execution remains pending.",
+      "integration_test": "pending same-exact-HEAD Android CI and packaged rendering acceptance",
+      "packaged_test": "required on final minified APK/AAB",
+      "device_test": "required on supported device/emulator to confirm idle power/rendering behavior and active visual feedback",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "The source responsibility is implemented with an Android-native replacement, but exact-head build/package/device evidence is not yet complete."
     }
   ],
   "traceability": {
