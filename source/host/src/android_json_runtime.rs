@@ -27,7 +27,8 @@ use crate::runner::{
     SubagentRunOutcome, SubagentSteerReview, SubagentTaskReviewCallback,
     SubagentSteerReviewCallback, SubagentToolBridge, SubagentToolContext,
     build_parent_subagent_routed_tools, spawn_generated_subagent,
-    with_agent_management_tools, with_multitask_todo_tools, DurableMultitaskTodoStore,
+    with_agent_management_tools, with_multitask_todo_tools, AgentTurnInterruptionRegistry,
+    DurableMultitaskTodoStore,
 };
 use fabushi_constants::composer::text_size_allowed;
 use fabushi_android_shared::node::mcp::mcp_auth_watch_lifecycle::{
@@ -310,6 +311,7 @@ pub struct AndroidJsonHost {
     turn_lifecycle: Arc<Mutex<ProductionTurnLifecycleStore>>,
     turn_upgrade_quiescing: Arc<AtomicBool>,
     live_account_fence: Arc<Mutex<Option<String>>>,
+    agent_turn_interruptions: Arc<AgentTurnInterruptionRegistry>,
     multitask_todos: Arc<Mutex<DurableMultitaskTodoStore>>,
     subagent_owner: Arc<Mutex<DurableSubagentOwner>>,
     subagent_tools: SubagentToolBridge,
@@ -455,6 +457,7 @@ impl AndroidJsonHost {
             )),
             turn_upgrade_quiescing: Arc::new(AtomicBool::new(false)),
             live_account_fence: Arc::new(Mutex::new(None)),
+            agent_turn_interruptions: Arc::new(AgentTurnInterruptionRegistry::default()),
             multitask_todos,
             subagent_owner,
             subagent_tools,
@@ -2454,6 +2457,12 @@ impl AndroidJsonHost {
         let cancelled = Arc::new(AtomicBool::new(false));
         self.turn_cancellations
             .insert(operation_id.to_string(), cancelled.clone());
+        self.agent_turn_interruptions.register(
+            &agent_id,
+            operation_id,
+            &account_fence,
+            Arc::clone(&cancelled),
+        )?;
 
         let mode = self.mode;
         let turn_events = self.turn_events.clone();
@@ -2476,6 +2485,7 @@ impl AndroidJsonHost {
         let agent_roster = Arc::clone(&self.agents);
         let agent_messaging = Arc::clone(&self.messaging);
         let live_account_fence = Arc::clone(&self.live_account_fence);
+        let agent_turn_interruptions = Arc::clone(&self.agent_turn_interruptions);
         let frozen_privacy = match self.mode {
             AndroidHostMode::Test => ProductionTurnPrivacyMode::NoStorage,
             AndroidHostMode::Production => self
@@ -2616,6 +2626,7 @@ impl AndroidJsonHost {
                     &account_fence_owned,
                     &conversation_id_owned,
                     Arc::clone(&cancelled),
+                    Arc::clone(&agent_turn_interruptions),
                 );
                 // Desktop exposes TodoWrite only on a root non-subagent turn when
                 // multitask is enabled. Keep it outside GeneratedChildToolRegistry
@@ -3246,6 +3257,7 @@ impl AndroidJsonHost {
                     {
                         self.active_operations.remove(operation_id);
                         self.turn_cancellations.remove(operation_id);
+                        self.agent_turn_interruptions.unregister_operation(operation_id);
                     }
                 }
                 return Ok(event);
