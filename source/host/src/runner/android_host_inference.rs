@@ -21,6 +21,12 @@ pub enum AndroidInferenceMode {
     Test,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum AndroidSubagentReviewDecision {
+    Allow,
+    Deny(String),
+}
+
 pub trait AndroidRoutedToolBridge: Send + Sync {
     fn list_tools(&self) -> Result<Vec<Value>, String>;
     fn call_tool(&self, name: &str, args: Value, tool_call_id: &str) -> Result<Value, String>;
@@ -122,6 +128,73 @@ impl AndroidHostInferenceProvider {
         Ok(output)
     }
 
+    pub fn run_subagent_review(
+        mode: AndroidInferenceMode,
+        bearer_token: Option<String>,
+        cancelled: Arc<AtomicBool>,
+        action: &str,
+        prompt: &str,
+        subagent_id: Option<&str>,
+        subagent_type: Option<&str>,
+    ) -> Result<AndroidSubagentReviewDecision, ProviderFailure> {
+        let action = action.trim();
+        let prompt = prompt.trim();
+        if action.is_empty() || prompt.is_empty() {
+            return Err(ProviderFailure::new("subagent auto-review target is invalid"));
+        }
+        if cancelled.load(Ordering::Acquire) {
+            return Err(ProviderFailure::new("cancelled"));
+        }
+        if mode == AndroidInferenceMode::Test {
+            if prompt.contains("[[review:error]]") {
+                return Err(ProviderFailure::new("test subagent auto-review failure"));
+            }
+            if prompt.contains("[[review:deny]]") {
+                return Ok(AndroidSubagentReviewDecision::Deny(
+                    "Blocked by generated-subagent auto-review.".into(),
+                ));
+            }
+            return Ok(AndroidSubagentReviewDecision::Allow);
+        }
+
+        let mut provider = Self::production(
+            bearer_token.ok_or_else(|| ProviderFailure::new("provider_credentials_unavailable"))?,
+            Arc::clone(&cancelled),
+        )?;
+        let target = json!({
+            "action":"sand_subagent",
+            "arguments":{
+                "action":action,
+                "prompt":prompt,
+                "subagent_id":subagent_id,
+                "subagent_type":subagent_type,
+            }
+        });
+        let review_prompt = format!(
+            "Classify this generated-subagent action for safety and authorization. \
+Return exactly one JSON object and no markdown: \
+{{\"decision\":\"allow\"}} or \
+{{\"decision\":\"deny\",\"reason\":\"concise reason\"}}. \
+Fail closed when uncertain. Target: {target}"
+        );
+        let input = StreamAttemptInput {
+            operation_id: "subagent-auto-review".into(),
+            agent_id: "mahayana-subagent-review".into(),
+            model: provider.default_model.clone(),
+            prompt: review_prompt,
+            resume_checkpoint_available: false,
+        };
+        let mut output = String::new();
+        provider.run_stream(&input, &mut |chunk| {
+            if cancelled.load(Ordering::Acquire) {
+                return Err("cancelled".into());
+            }
+            output.push_str(chunk);
+            Ok(())
+        })?;
+        parse_subagent_review_decision(&output)
+    }
+
     #[cfg(test)]
     fn with_endpoint(
         bearer_token: String,
@@ -151,8 +224,6 @@ impl AndroidHostInferenceProvider {
         if input.prompt.trim().is_empty() {
             return Err(ProviderFailure::new("prompt is required"));
         }
-        self.cancelled.store(false, Ordering::Release);
-
         if self.mode == AndroidInferenceMode::Test {
             if let Some(bridge) = self.routed_tools.as_ref() {
                 if let Some(script) = input.prompt.strip_prefix("[[tool:") {
@@ -419,6 +490,35 @@ impl TurnStreamProvider for AndroidHostInferenceProvider {
     }
 }
 
+fn parse_subagent_review_decision(
+    raw: &str,
+) -> Result<AndroidSubagentReviewDecision, ProviderFailure> {
+    let value: Value = serde_json::from_str(raw.trim())
+        .map_err(|_| ProviderFailure::new("subagent auto-review returned invalid JSON"))?;
+    let decision = value
+        .get("decision")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .unwrap_or_default();
+    match decision {
+        "allow" => Ok(AndroidSubagentReviewDecision::Allow),
+        "deny" => {
+            let reason = value
+                .get("reason")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .ok_or_else(|| {
+                    ProviderFailure::new("subagent auto-review deny decision omitted reason")
+                })?;
+            Ok(AndroidSubagentReviewDecision::Deny(reason.to_string()))
+        }
+        _ => Err(ProviderFailure::new(
+            "subagent auto-review returned invalid decision",
+        )),
+    }
+}
+
 fn valid_bearer_token(token: &str) -> bool {
     (24..=16 * 1024).contains(&token.len())
         && !token.chars().any(char::is_whitespace)
@@ -557,6 +657,48 @@ mod tests {
         .unwrap_err()
         .message
         .contains("cancelled"));
+    }
+
+    #[test]
+    fn test_subagent_auto_review_is_fail_closed_and_deterministic() {
+        let allow = AndroidHostInferenceProvider::run_subagent_review(
+            AndroidInferenceMode::Test,
+            None,
+            Arc::new(AtomicBool::new(false)),
+            "launch",
+            "safe child task",
+            None,
+            Some("executor"),
+        )
+        .unwrap();
+        assert_eq!(allow, AndroidSubagentReviewDecision::Allow);
+
+        let deny = AndroidHostInferenceProvider::run_subagent_review(
+            AndroidInferenceMode::Test,
+            None,
+            Arc::new(AtomicBool::new(false)),
+            "steer",
+            "[[review:deny]] unsafe steer",
+            Some("generated:child"),
+            None,
+        )
+        .unwrap();
+        assert!(matches!(deny, AndroidSubagentReviewDecision::Deny(_)));
+
+        let error = AndroidHostInferenceProvider::run_subagent_review(
+            AndroidInferenceMode::Test,
+            None,
+            Arc::new(AtomicBool::new(false)),
+            "launch",
+            "[[review:error]] classifier unavailable",
+            None,
+            Some("executor"),
+        )
+        .unwrap_err();
+        assert!(error.message.contains("auto-review failure"));
+
+        assert!(parse_subagent_review_decision(r#"{"decision":"deny"}"#).is_err());
+        assert!(parse_subagent_review_decision("not-json").is_err());
     }
 
     struct EchoTools;
