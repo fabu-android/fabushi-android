@@ -18,7 +18,7 @@ internal data class AgentNetworkNode(
     val isGroup: Boolean,
     val memberIds: List<String>,
     val conversationPartnerIds: List<String>,
-    val awaitingUserResponse: Boolean,
+    val awaitingUserResponse: Boolean?,
     val isRunning: Boolean,
     val lastMessage: String,
     val updatedAt: Long,
@@ -74,12 +74,15 @@ internal fun buildAgentNetworkEdges(nodes: List<AgentNetworkNode>): List<AgentNe
 internal fun agentNetworkEdgeActivity(edge: AgentNetworkEdge, nodesById: Map<String, AgentNetworkNode>, now: Long): AgentNetworkEdgeActivity {
     val source = nodesById[edge.sourceId] ?: return AgentNetworkEdgeActivity.IDLE
     val target = nodesById[edge.targetId] ?: return AgentNetworkEdgeActivity.IDLE
-    if (source.isRunning && !source.awaitingUserResponse && target.isRunning && !target.awaitingUserResponse) return AgentNetworkEdgeActivity.TALKING
+    if (
+        source.isRunning && source.awaitingUserResponse == null &&
+        target.isRunning && target.awaitingUserResponse == null
+    ) return AgentNetworkEdgeActivity.TALKING
     return if (now - minOf(source.updatedAt, target.updatedAt) <= 120_000L) AgentNetworkEdgeActivity.RECENT else AgentNetworkEdgeActivity.IDLE
 }
 
 internal fun agentNetworkActivity(node: AgentNetworkNode): AgentNetworkActivity = when {
-    node.awaitingUserResponse -> AgentNetworkActivity.WAITING
+    node.awaitingUserResponse != null -> AgentNetworkActivity.WAITING
     node.isRunning -> AgentNetworkActivity.WORKING
     else -> AgentNetworkActivity.IDLE
 }
