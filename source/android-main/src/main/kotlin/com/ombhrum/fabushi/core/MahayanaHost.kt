@@ -3,6 +3,7 @@ package com.ombhrum.fabushi.core
 import android.content.Context
 import com.ombhrum.fabushi.androidmain.security.AndroidAccountSessionStore
 import com.ombhrum.fabushi.androidmain.security.AndroidPluginVariableSecretStore
+import com.ombhrum.fabushi.androidmain.security.AndroidRemoteBindingStore
 import org.json.JSONObject
 import java.io.Closeable
 import java.util.ArrayDeque
@@ -25,6 +26,7 @@ class MahayanaHost(
     private val appDataDir = context.filesDir.absolutePath
     private val accountSessionStore = AndroidAccountSessionStore(context)
     private val pluginSecretStore = AndroidPluginVariableSecretStore(context)
+    private val remoteBindingStore = AndroidRemoteBindingStore(context)
     private val consumerId = UUID.randomUUID().toString()
     private val ownedListenerIds = mutableSetOf<String>()
     private val shared: SharedHost?
@@ -62,6 +64,26 @@ class MahayanaHost(
                         sharedHosts[appDataDir] = created
                     }
                 }
+            }
+        }
+        if (!featureHostTest) {
+            val state = checkNotNull(shared)
+            synchronized(state.lock) {
+                val protectedBinding = remoteBindingStore.readBindingJson().orEmpty()
+                check(nativeSetRemoteBinding(state.handle, protectedBinding)) {
+                    "Protected Remote binding was rejected by native Host"
+                }
+            }
+        }
+    }
+
+    internal fun refreshProtectedRemoteBinding() {
+        check(!featureHostTest && !closed) { "Protected Remote binding refresh requires production Host" }
+        val state = checkNotNull(shared)
+        synchronized(state.lock) {
+            check(state.handle != 0L) { "Mahayana host is closed" }
+            check(nativeSetRemoteBinding(state.handle, remoteBindingStore.readBindingJson().orEmpty())) {
+                "Protected Remote binding was rejected by native Host"
             }
         }
     }
@@ -270,7 +292,15 @@ class MahayanaHost(
         val mutation = result.optJSONObject("_accountSessionMutation") ?: return
         when (mutation.optString("action")) {
             "save" -> accountSessionStore.writeSessionJson(mutation.getString("sessionJson"))
-            "clear" -> accountSessionStore.clear()
+            "clear" -> {
+                accountSessionStore.clear()
+                remoteBindingStore.clear()
+                shared?.let { state ->
+                    synchronized(state.lock) {
+                        if (state.handle != 0L) nativeSetRemoteBinding(state.handle, "")
+                    }
+                }
+            }
             else -> error("Unknown private account-session mutation")
         }
         result.remove("_accountSessionMutation")
@@ -366,6 +396,7 @@ class MahayanaHost(
     ): Long
     private external fun nativeCreateTest(appDataDir: String): Long
     private external fun nativeDispatch(handle: Long, requestJson: String): String
+    private external fun nativeSetRemoteBinding(handle: Long, bindingJson: String): Boolean
     private external fun nativeSignalRuntimeCancel(handle: Long, requestId: String): Boolean
     private external fun nativeSignalRuntimePluginCancel(handle: Long, pluginId: String): Int
     private external fun nativeSignalRuntimePermissionCancel(

@@ -98,6 +98,10 @@ impl AndroidNativeRuntime {
         }
     }
 
+    pub fn set_remote_binding_json(&mut self, raw: Option<&str>) -> Result<(), String> {
+        self.coordinator.host_mut().runtime.set_remote_binding_json(raw)
+    }
+
     pub fn runtime_call_control(&self) -> Arc<RuntimeCallCancellationRegistry> {
         Arc::clone(&self.runtime_call_control)
     }
@@ -643,6 +647,24 @@ mod android_jni {
         app_data_dir: JString,
     ) -> jlong {
         create(env, app_data_dir, AndroidHostMode::Test, 1)
+    }
+
+    #[no_mangle]
+    pub extern "system" fn Java_com_ombhrum_fabushi_core_MahayanaHost_nativeSetRemoteBinding(
+        mut env: JNIEnv,
+        _object: JObject,
+        handle: jlong,
+        binding_json: JString,
+    ) -> jboolean {
+        if handle == 0 { return 0; }
+        let raw = match env.get_string(&binding_json) {
+            Ok(value) => value.to_string_lossy().into_owned(),
+            Err(_) => return 0,
+        };
+        let runtime = unsafe { &mut *(handle as *mut AndroidNativeRuntime) };
+        runtime
+            .set_remote_binding_json((!raw.trim().is_empty()).then_some(raw.as_str()))
+            .is_ok() as jboolean
     }
 
     #[no_mangle]

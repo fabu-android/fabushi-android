@@ -501,6 +501,8 @@ impl<H: HostPort> MahayanaCoordinator<H> {
         self.pending.get(request_id).map(|request| (request.session_id.as_str(), request.method.as_str()))
     }
 
+    pub fn host_mut(&mut self) -> &mut H { &mut self.host }
+
     pub fn into_host(self) -> H { self.host }
 }
 

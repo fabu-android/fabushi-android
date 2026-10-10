@@ -3,6 +3,7 @@ use crate::capability_broker::{CapabilityDecision, PendingCapabilityCall, Shared
 use crate::automation_runtime::{run_json as automation_run_json, AutomationRuntime, AutomationSpec};
 use crate::android_agent_roster::AndroidAgentRoster;
 use crate::host_secret_store::get_or_create_host_machine_id;
+use crate::host_runner_composition::AuthenticatedRemoteHostRunner;
 use crate::messaging_service::AndroidMessagingService;
 use crate::plugin_variable_store::{variable_fields_json, PluginVariableStore, PreparedPluginVariableWrite};
 use crate::mcp_auth::{
@@ -40,9 +41,11 @@ use fabushi_android_shared::webauthn_gateway::{
     WebAuthnStageOutcome,
 };
 use mahayana_js_runtime::{DeepSeekJsHost, HostEvent};
+use fabushi_android_box_exec_daemon::{AuthenticatedRemoteHttpTransport, RemoteBearerCredential, RemoteTransportPolicy};
 use mahayana_plugin_runtime::{
     ExternalReleaseManifest, PermissionManager, PluginInstaller,
 };
+use serde::Deserialize;
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::path::PathBuf;
@@ -282,6 +285,39 @@ impl RuntimeCallCancellationRegistry {
     }
 }
 
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct RemoteOutboundBinding {
+    endpoint: String,
+    bearer_credential: String,
+    device_id: String,
+    account_fence: String,
+    account_epoch: u64,
+    #[serde(default)]
+    has_desktop: bool,
+}
+
+impl RemoteOutboundBinding {
+    fn validate(&self) -> Result<(), String> {
+        if self.account_epoch == 0 {
+            return Err("remote binding account epoch must be positive".into());
+        }
+        for (label, value) in [
+            ("remote device", self.device_id.as_str()),
+            ("remote account fence", self.account_fence.as_str()),
+        ] {
+            if value.trim().is_empty() || value.len() > 512 || value.chars().any(char::is_control) {
+                return Err(format!("{label} identity is invalid"));
+            }
+        }
+        RemoteBearerCredential::new(self.bearer_credential.clone())
+            .map_err(|error| format!("remote credential rejected: {error:?}"))?;
+        AuthenticatedRemoteHttpTransport::new(&self.endpoint, RemoteTransportPolicy::default())
+            .map_err(|error| format!("remote endpoint rejected: {error:?}"))?;
+        Ok(())
+    }
+}
+
 pub struct AndroidJsonHost {
     mode: AndroidHostMode,
     account: AndroidAccountService,
@@ -325,6 +361,9 @@ pub struct AndroidJsonHost {
     runtime_generations: BTreeMap<String, u64>,
     runtime_call_cancellations: Arc<RuntimeCallCancellationRegistry>,
     capability_broker: SharedCapabilityBroker,
+    remote_binding: Arc<Mutex<Option<RemoteOutboundBinding>>>,
+    remote_runner: Arc<Mutex<Option<AuthenticatedRemoteHostRunner<AuthenticatedRemoteHttpTransport>>>>,
+    remote_journal_path: PathBuf,
     automation_runtime: AutomationRuntime,
     webauthn: WebAuthnProxyExtension,
     webauthn_provider_queues: BTreeMap<String, VecDeque<WebAuthnRequestFrame>>,
@@ -473,10 +512,62 @@ impl AndroidJsonHost {
             runtime_call_cancellations: Arc::new(RuntimeCallCancellationRegistry::default()),
             capability_broker: SharedCapabilityBroker::open(app_data_dir.join("capability-broker.json"), now_ms())
                 .unwrap_or_else(|error| panic!("failed to open durable Android Capability Broker: {error}")),
+            remote_binding: Arc::new(Mutex::new(None)),
+            remote_runner: Arc::new(Mutex::new(None)),
+            remote_journal_path: app_data_dir.join("remote-execution-journal.json"),
             automation_runtime: AutomationRuntime::open(app_data_dir.join("automation-runtime.json"), now_ms())
                 .unwrap_or_else(|error| panic!("failed to open durable Android automation runtime: {error}")),
             webauthn: WebAuthnProxyExtension::new(WebAuthnProxyExtensionConfig::default()),
             webauthn_provider_queues: BTreeMap::new(),
+        }
+    }
+
+    pub fn set_remote_binding_json(&mut self, raw: Option<&str>) -> Result<(), String> {
+        let raw = raw.map(str::trim).filter(|value| !value.is_empty());
+        if raw.is_none() {
+            *self.remote_binding.lock().map_err(|_| "remote binding lock poisoned".to_string())? = None;
+            *self.remote_runner.lock().map_err(|_| "remote runner lock poisoned".to_string())? = None;
+            return Ok(());
+        }
+        let binding: RemoteOutboundBinding = serde_json::from_str(raw.unwrap())
+            .map_err(|error| format!("invalid protected remote binding: {error}"))?;
+        binding.validate()?;
+        let current_fence = self.current_turn_account_fence()?;
+        if current_fence != binding.account_fence {
+            return Err("protected remote binding is fenced to a different account session".into());
+        }
+        let runner = AuthenticatedRemoteHostRunner::production(
+            &binding.endpoint,
+            &self.remote_journal_path,
+            RemoteTransportPolicy::default(),
+            now_ms(),
+        )
+        .map_err(|error| format!("failed to initialize authenticated Remote Runner: {error:?}"))?;
+        *self.remote_binding.lock().map_err(|_| "remote binding lock poisoned".to_string())? = Some(binding);
+        *self.remote_runner.lock().map_err(|_| "remote runner lock poisoned".to_string())? = Some(runner);
+        Ok(())
+    }
+
+    fn remote_binding_status(&self) -> Value {
+        let current_fence = self.current_turn_account_fence().ok();
+        let binding = self.remote_binding.lock().ok().and_then(|binding| binding.clone());
+        let runner_ready = self.remote_runner.lock().map(|runner| runner.is_some()).unwrap_or(false);
+        let ready = binding.as_ref().is_some_and(|binding| {
+            runner_ready && current_fence.as_deref() == Some(binding.account_fence.as_str())
+        });
+        match binding {
+            Some(binding) if ready => json!({
+                "ready": true,
+                "hasDesktop": binding.has_desktop,
+                "deviceId": binding.device_id,
+                "accountEpoch": binding.account_epoch,
+            }),
+            _ => json!({
+                "ready": false,
+                "hasDesktop": false,
+                "deviceId": Value::Null,
+                "accountEpoch": Value::Null,
+            }),
         }
     }
 
@@ -496,6 +587,7 @@ impl AndroidJsonHost {
                 }
             })),
             "feature.auth.status" => self.account_status(),
+            "feature.remote.binding.status" => Ok(self.remote_binding_status()),
             "feature.auth.deviceAgentSession" => Ok(self.device_agent_session()),
             "feature.auth.providers" => Ok(json!([
                 {"id":"google","displayName":"Google"},

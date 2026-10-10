@@ -138,8 +138,24 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
     override fun automationSettle(params: JSONObject) = host.request("feature.automation.settle", params)
     override fun automationSnapshot(params: JSONObject) = host.request("feature.automation.snapshot", params)
 
+    private fun remoteBoxCapabilities(): RemoteBoxCapabilitySnapshot {
+        val status = runCatching { host.request("feature.remote.binding.status") }.getOrNull()
+            ?: return RemoteBoxCapabilitySnapshot.Unavailable
+        val available = status.optBoolean("ready", false)
+        return RemoteBoxCapabilitySnapshot(
+            available = available,
+            hasDesktop = available && status.optBoolean("hasDesktop", false),
+        )
+    }
+
     override fun featureExecute(params: JSONObject) =
-        host.request("feature.execute", AgentTurnCapabilityProjection.forFeatureExecute(params))
+        host.request(
+            "feature.execute",
+            AgentTurnCapabilityProjection.forFeatureExecute(
+                params,
+                remoteBox = remoteBoxCapabilities(),
+            ),
+        )
     override fun featureInterrupt(params: JSONObject) = host.request("feature.interrupt", params)
     override fun transcriptSnapshot(): JSONArray =
         host.requestValue("feature.transcript.snapshot") as? JSONArray ?: JSONArray()
@@ -153,7 +169,10 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
     override fun agentSubagentTool(params: JSONObject): JSONObject =
         host.request(
             "feature.agent.subagent.tool",
-            AgentTurnCapabilityProjection.forSubagentTool(params),
+            AgentTurnCapabilityProjection.forSubagentTool(
+                params,
+                remoteBox = remoteBoxCapabilities(),
+            ),
         )
 
     override fun agentSubagentReconcile(params: JSONObject): JSONObject =
