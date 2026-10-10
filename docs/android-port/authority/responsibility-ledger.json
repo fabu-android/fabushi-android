@@ -4041,6 +4041,93 @@
       "artifact": null,
       "verification_status": "not-verified",
       "notes": "Implemented from Desktop exact blobs without marking verified. This responsibility is independent of the still-blocked outbound Remote Runner transport and release/protected-account secrets."
+    },
+    {
+      "responsibility_id": "AGENT-MANAGEMENT-001",
+      "domain": "agent",
+      "desktop_sources": [
+        {
+          "path": "source/host/src/runner/tools/sand_agent_management_tools.rs",
+          "blob_sha": "17e728d052b7c9c9d0eab05c54037fadaf59cb83",
+          "symbols": [
+            "AgentManagementSink",
+            "AgentManagementToolBridge",
+            "SendToAgent",
+            "CreateAgent",
+            "UpdateAgent"
+          ]
+        },
+        {
+          "path": "source/host/src/runner/tools/turn_toolset.rs",
+          "blob_sha": "018cd2b6906c6b9b18b7912602139dbba46bdec4",
+          "symbols": [
+            "TurnToolsetDependencies.agent_management_sink",
+            "build_turn_toolset"
+          ]
+        }
+      ],
+      "source_commit": "3bc92400826cc4ca7ac665b467708e22261edc61",
+      "responsibility": "Expose root-only Agent management tools through the shipping provider tool graph, preserve the canonical durable Agent roster for create/update, and deliver SendToAgent asynchronously through the canonical messaging owner with image validation, priority semantics, stable tool-call idempotency, process-reopen recovery, account fencing and cancellation/outcome-unknown behavior.",
+      "source_owner": "Desktop Rust Runner AgentManagementToolBridge over the canonical Agent/messaging owners",
+      "direct_callers": [
+        "root TurnAgentComposition",
+        "build_turn_toolset",
+        "provider routed-tool loop"
+      ],
+      "downstream_dependencies": [
+        "canonical Agent roster",
+        "canonical messaging repository",
+        "provider tool projection",
+        "turn cancellation/account epoch fencing"
+      ],
+      "state_owner": "AndroidAgentRoster owns Agent identity/profile state; AndroidMessagingService owns Agent-to-Agent/group delivery; the root routed-tool wrapper owns no canonical duplicate state.",
+      "persistent_state": [
+        "Agent roster/profile",
+        "stable CreateAgent/UpdateAgent tool-call identity and results",
+        "Agent delivery/message",
+        "stable SendToAgent tool-call arguments and result"
+      ],
+      "protocol_wire_contract": [
+        "SendToAgent(target_id,message,images?,priority?)",
+        "CreateAgent(name,description?)",
+        "UpdateAgent(agent_id,name?,description?)",
+        "file:// or https:// image sources only",
+        "priority applies only to relevant 1:1 delivery and is ignored for groups"
+      ],
+      "visible_effect": "A root Agent can create and rename teammate Agents and send real asynchronous messages to another Agent/group; replies are not synchronously awaited and arrive on a later fresh turn.",
+      "failure_behavior": [
+        "self-send is rejected without side effect",
+        "missing target or invalid arguments/image schemes fail closed",
+        "stable tool_call_id reused with different arguments fails closed",
+        "persistence settlement failure is surfaced as outcome-unknown rather than assumed not executed"
+      ],
+      "cancellation_behavior": "Cancellation is checked before side effects; cancellation racing a committed mutation returns outcome-unknown and requires stable-id reconciliation instead of blind retry.",
+      "retry_semantics": "Exact duplicate stable tool-call identity with identical arguments replays the durable result after Host reopen; mismatched duplicate is rejected.",
+      "idempotency_semantics": "Create/Update replay records live inside the canonical roster document; Send replay records live inside the canonical messaging repository and deterministic message identity prevents duplicate delivery.",
+      "process_death_recovery": "agents.json and messaging-repository.json reopen the committed Agent management call/result and delivery state; the same stable tool_call_id replays instead of recreating or redelivering.",
+      "account_fencing": "Root composition binds the current Host account fence and compares it with a shared live account epoch before and after side effects; stale-account callbacks fail closed/outcome-unknown.",
+      "security_boundary": "Only the root provider routed-tool composition receives Agent management. GeneratedChildToolRegistry is unchanged so generated children do not inherit CreateAgent/UpdateAgent/SendToAgent authority.",
+      "android_disposition": "direct-port",
+      "android_target": [
+        "source/host/src/runner/agent_management.rs",
+        "source/host/src/android_agent_roster.rs",
+        "source/host/src/messaging_service.rs",
+        "source/host/src/android_json_runtime.rs",
+        "source/host/src/runner/android_host_inference.rs",
+        "source/host/src/runner/mod.rs"
+      ],
+      "android_owner": "Rust Host canonical Agent roster + messaging owners with root-only AgentManagementRoutedTools",
+      "platform_delta": "Desktop sink/TurnToolset composition is retained in Rust but adapted to Android Host durable JSON owners and Android process/account lifecycle fencing; no UI or generated-child owner is introduced.",
+      "implementation_status": "implemented",
+      "production_wiring": "AndroidJsonHost shares one Arc<Mutex<AndroidAgentRoster>> and one Arc<Mutex<AndroidMessagingService>> between the Host façade and async provider thread, wraps the shipping root routed-tool bridge with AgentManagementRoutedTools, and leaves generated-child tool composition unchanged.",
+      "unit_test": "Focused Rust tests cover tool exposure, successful durable delivery, invalid/missing/self target, image schemes, Create/Update duplicate and mismatched duplicate, account fencing, process reopen; exact-head GitHub Actions pending.",
+      "contract_test": "Desktop tool schemas/return semantics are mirrored and the Host shipping-provider integration drives [[tool:SendToAgent]] through feature.execute then reopens Host and verifies the stable tool-call does not duplicate the canonical message; exact-head GitHub Actions pending.",
+      "integration_test": "feature.execute -> queue_chat_turn -> root routed-tool composition -> AndroidHostInferenceProvider -> AgentManagementRoutedTools -> canonical roster/messaging owner is implemented; exact-head CI pending.",
+      "packaged_test": "required on final exact-head signed APK/AAB",
+      "device_test": "required after protected-account and release signing prerequisites are available",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Implemented source slice only. Group delivery requires a pre-existing canonical group conversation/membership; Remote/Computer remains independently not-verified. Do not mark verified until same-head CI/package/device evidence succeeds."
     }
   ],
   "traceability": {
