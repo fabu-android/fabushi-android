@@ -28,6 +28,7 @@ internal fun AgentRowActions(
     hasUnread: Boolean = false,
     isHidden: Boolean = false,
     onEditName: ((String) -> Unit)? = null,
+    onEditProfile: ((String) -> Unit)? = null,
     onShowFullConversation: ((String) -> Unit)? = null,
     onShowAsyncTasks: ((String) -> Unit)? = null,
     onHideFromSidebar: (String) -> Unit,
@@ -52,7 +53,7 @@ internal fun AgentRowActions(
 
     if (
         isHidden ||
-        (actions.isEmpty() && onEditName == null && onShowFullConversation == null && onShowAsyncTasks == null)
+        (actions.isEmpty() && onEditName == null && onEditProfile == null && onShowFullConversation == null && onShowAsyncTasks == null)
     ) return
 
     Box(modifier) {
@@ -72,6 +73,15 @@ internal fun AgentRowActions(
                     onClick = {
                         expanded = false
                         onEditName(agentId)
+                    },
+                )
+            }
+            if (onEditProfile != null) {
+                DropdownMenuItem(
+                    text = { Text("Profile") },
+                    onClick = {
+                        expanded = false
+                        onEditProfile(agentId)
                     },
                 )
             }
