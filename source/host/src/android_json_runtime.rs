@@ -209,7 +209,7 @@ fn clear_turn_awaiting_user(
     turn_generation: u64,
     process_epoch: u64,
 ) -> Result<(), String> {
-    let durable = lifecycle
+    lifecycle
         .lock()
         .map_err(|_| "turn lifecycle lock poisoned".to_string())?
         .clear_awaiting_user(
@@ -219,11 +219,13 @@ fn clear_turn_awaiting_user(
             operation_id,
             turn_generation,
             process_epoch,
-        );
-    if let Ok(mut shell) = shell.lock() {
-        let _ = shell.resume_awaiting_user(operation_id);
-    }
-    durable.map(|_| ())
+        )?;
+    shell
+        .lock()
+        .map_err(|_| "turn run shell lock poisoned".to_string())?
+        .resume_awaiting_user(operation_id)
+        .map_err(|error| format!("turn waiting-user resume rejected: {error:?}"))?;
+    Ok(())
 }
 
 fn wait_for_subagent_review_approval(

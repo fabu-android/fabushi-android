@@ -738,6 +738,74 @@ mod tests {
     }
 
     #[test]
+    fn awaiting_user_duplicate_and_account_switch_fail_closed() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("turn-lifecycle.json");
+        let mut store = ProductionTurnLifecycleStore::open(&path, 1).unwrap();
+        let epoch = store.process_epoch();
+        store
+            .mark_awaiting_user(
+                "session:a",
+                "agent-a",
+                "request-a",
+                "operation-a",
+                3,
+                epoch,
+                "Approval required",
+                2,
+            )
+            .unwrap();
+
+        store
+            .mark_awaiting_user(
+                "session:a",
+                "agent-a",
+                "request-a",
+                "operation-a",
+                3,
+                epoch,
+                "Approval required",
+                3,
+            )
+            .unwrap();
+        assert!(store
+            .mark_awaiting_user(
+                "session:a",
+                "agent-a",
+                "request-b",
+                "operation-b",
+                4,
+                epoch,
+                "Second wait",
+                4,
+            )
+            .unwrap_err()
+            .contains("unresolved"));
+
+        store
+            .fence_account_outcome_unknown("session:a", 5)
+            .unwrap();
+        let fenced = store
+            .awaiting_user_projection("session:a", "agent-a")
+            .unwrap();
+        assert!(fenced.recovery_required);
+        assert!(store
+            .clear_awaiting_user(
+                "session:a",
+                "agent-a",
+                "request-a",
+                "operation-a",
+                3,
+                epoch,
+            )
+            .unwrap_err()
+            .contains("stale awaiting-user callback"));
+        assert!(store
+            .reconcile_awaiting_user("session:a", "operation-a", 3)
+            .unwrap());
+    }
+
+    #[test]
     fn platform_pressure_thresholds_and_hysteresis_match_desktop_contract() {
         assert_eq!(
             classify_production_disk_pressure(
