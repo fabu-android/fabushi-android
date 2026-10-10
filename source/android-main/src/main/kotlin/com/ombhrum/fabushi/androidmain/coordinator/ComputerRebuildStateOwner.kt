@@ -45,9 +45,9 @@ internal class SharedPreferencesComputerRebuildStateStore(context: Context) : Co
             val value = JSONObject(raw)
             ComputerRebuildSnapshot(
                 accountEpoch = value.getLong("accountEpoch"),
-                kind = value.optString("kind").takeIf(String::isNotBlank)?.let(ComputerRebuildKind::valueOf),
+                kind = value.optString("kind").takeIf(String::isNotBlank)?.let { ComputerRebuildKind.valueOf(it) },
                 operationId = value.optString("operationId").takeIf(String::isNotBlank),
-                source = value.optString("source").takeIf(String::isNotBlank)?.let(ComputerRebuildSource::valueOf),
+                source = value.optString("source").takeIf(String::isNotBlank)?.let { ComputerRebuildSource.valueOf(it) },
                 lockBoxId = value.optString("lockBoxId").takeIf(String::isNotBlank),
                 pending = value.optBoolean("pending", false),
                 acknowledged = value.optBoolean("acknowledged", false),
@@ -57,7 +57,7 @@ internal class SharedPreferencesComputerRebuildStateStore(context: Context) : Co
                 leftHealthy = value.optBoolean("leftHealthy", false),
                 teardown = value.optString("teardown")
                     .takeIf(String::isNotBlank)
-                    ?.let(ComputerRebuildTeardown::valueOf)
+                    ?.let { ComputerRebuildTeardown.valueOf(it) }
                     ?: ComputerRebuildTeardown.NONE,
                 reconnectedSinceLeft = value.optBoolean("reconnectedSinceLeft", false),
                 connected = value.optBoolean("connected", true),
@@ -65,7 +65,7 @@ internal class SharedPreferencesComputerRebuildStateStore(context: Context) : Co
                 outcomeUnknown = value.optBoolean("outcomeUnknown", false),
                 lastResolution = value.optString("lastResolution")
                     .takeIf(String::isNotBlank)
-                    ?.let(ComputerRebuildResolution::valueOf),
+                    ?.let { ComputerRebuildResolution.valueOf(it) },
             )
         }.getOrNull()
     }
