@@ -77,6 +77,34 @@ class AgentProfileEditorTest {
     }
 
     @Test
+    fun titleIsTrimmedBoundedAndPartOfCanonicalProfileMutation() {
+        val projected = committedAgentProfile(
+            initialName = "Agent",
+            initialTitle = "Old title",
+            initialDescription = "description",
+            draftName = "Agent",
+            draftTitle = "  " + "T".repeat(140) + "  ",
+            draftDescription = "description",
+        )
+        requireNotNull(projected)
+        assertEquals(120, projected.title?.length)
+    }
+
+    @Test
+    fun blankTitleClearsOptionalCanonicalTitle() {
+        val projected = committedAgentProfile(
+            initialName = "Agent",
+            initialTitle = "Existing",
+            initialDescription = "description",
+            draftName = "Agent",
+            draftTitle = "   ",
+            draftDescription = "description",
+        )
+        requireNotNull(projected)
+        assertNull(projected.title)
+    }
+
+    @Test
     fun descriptionOnlyChangeCreatesCanonicalMutation() {
         val projected = committedAgentProfile(
             initialName = "Agent",
