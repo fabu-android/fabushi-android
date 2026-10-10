@@ -5999,6 +5999,103 @@
       "artifact": "architecture evidence 11681070363; signing blocker evidence 11680662837",
       "verification_status": "not-verified",
       "notes": "Implemented but intentionally not verified. Exact-head 512eb71af4e47e9fa35c705843153c2a347341fd architecture run 38081842127 succeeded; Full CI 38081842136 built the exact-head native Host then stopped at the mandatory signing gate. Packaging/device settlement and strict full-source closure remain open. Source audit c36d3d48ec44bacaea14b024b2a73f043ac1977b: linked current Desktop access/account UI contract anchors; mapped/implemented source rows retain their own exact status and do not upgrade this responsibility verification."
+    },
+    {
+      "responsibility_id": "AGENT-ASYNC-TASKS-ANDROID-001",
+      "domain": "agent-management",
+      "desktop_sources": [
+        {
+          "path": "frontend/src/recovered/features/agent-info/async-tasks/clock.ts",
+          "blob_sha": "3ed6cb3e84695c017c63ab81322d68625912024d",
+          "symbols": [
+            "ASYNC_TASKS_CLOCK_INTERVAL_MS",
+            "createStableAsyncTasksClock",
+            "DEFAULT_ASYNC_TASKS_CLOCK"
+          ]
+        },
+        {
+          "path": "frontend/src/recovered/features/agent-info/async-tasks/provider.ts",
+          "blob_sha": "ec3ade25819916697a0a30b4aedf806a6d93cd70",
+          "symbols": [
+            "AsyncTask",
+            "AsyncTasksSnapshot",
+            "createAsyncTasksProvider",
+            "formatAsyncTaskTime",
+            "ingestAsyncTasksEvent"
+          ]
+        },
+        {
+          "path": "frontend/src/recovered/features/agent-info/async-tasks/view.tsx",
+          "blob_sha": "f6403a06f44725bf320a01166a2b8e5253f7dab5",
+          "symbols": [
+            "AsyncTasksPanel",
+            "AsyncTaskRow",
+            "taskMeta",
+            "useClockNow"
+          ]
+        }
+      ],
+      "source_commit": "92fcc2b0f64b6b8f8f8829305b30874b558d6b35",
+      "responsibility": "Project running subagent, shell and cloud-agent background work for an Agent with strict decoding, stable loading/empty/failed/previous/unavailable semantics, stale-result fencing, reconnect/reset/dispose lifecycle, push-event refresh, 30-second relative-time refresh and one native user-visible async-task surface.",
+      "source_owner": "Desktop recovered async-tasks provider/clock/view over Coordinator getAsyncTasks",
+      "direct_callers": [
+        "Agent information async-tasks entrypoint",
+        "AsyncTasksPanel useSyncExternalStore snapshot subscriber"
+      ],
+      "downstream_dependencies": [
+        "Coordinator getAsyncTasks projection",
+        "running subagent/shell/cloud-agent owners",
+        "Agent information surface",
+        "relative-time clock"
+      ],
+      "state_owner": "Coordinator/Host owns canonical running-task truth; presentation provider owns only ephemeral subscribed snapshot and generation fences.",
+      "persistent_state": [
+        "No presentation-persistent canonical task truth; task identity/status originate from lower runtime owners."
+      ],
+      "protocol_wire_contract": [
+        "task kinds: subagent|shell|cloud-agent",
+        "status must be running",
+        "id/label non-empty",
+        "startedAtMs finite",
+        "optional detail/subagentType",
+        "async task event parentAgentId + tasks"
+      ],
+      "visible_effect": "Opening an Agent async-tasks surface shows current running work, preserves prior rows across refresh failures, updates relative time, and never lets stale account/reconnect completions overwrite the current Agent.",
+      "failure_behavior": [
+        "malformed task reply fails projection",
+        "capability unavailable is distinct from generic failure",
+        "refresh failure may retain previous valid rows",
+        "stale generation completion is ignored"
+      ],
+      "cancellation_behavior": "unsubscribe/dispose/reset invalidate generation and stop source/timer ownership; Android must cancel in-flight ViewModel work on close/account reset.",
+      "retry_semantics": "Subscribed reads refresh after reconnect and may queue one refresh while a fetch is in flight; retries must not create task side effects.",
+      "idempotency_semantics": "Task reads/events are projection-only; stable kind+id identity prevents duplicate row ownership.",
+      "process_death_recovery": "Presentation snapshot is reconstructible from Host/Coordinator running-task truth after process recreation; no UI-owned replay is permitted.",
+      "account_fencing": "Running-task projection must be scoped to the current account/Agent generation and reject stale callbacks after account reset.",
+      "security_boundary": "Compose/ViewModel may read typed projection only; it cannot mutate canonical task owner or infer extra tool capability.",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "source/host/src/android_json_runtime.rs",
+        "source/android-preload/src/main/kotlin/com/ombhrum/fabushi/androidpreload/runtime/AndroidCoordinatorPort.kt",
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/coordinator/AndroidCoordinatorRuntime.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/presentation/MobileBotViewModel.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/production/AgentAsyncTasksPanel_view.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/production/ProductionRenderer_view.kt",
+        "mobile/android/app/src/test/java/com/ombhrum/fabushi/AgentAsyncTasksParityTest.kt",
+        "tests/test_agent_async_tasks_wiring.py"
+      ],
+      "android_owner": "Rust Host running-task projection + typed Coordinator transport; MobileBotViewModel/Compose own transient snapshot and display only.",
+      "platform_delta": "Desktop useSyncExternalStore provider and browser interval become Kotlin StateFlow/coroutine/Compose lifecycle. Android must preserve provider semantics rather than the DOM implementation mechanism.",
+      "implementation_status": "mapped",
+      "production_wiring": "Partial production wiring exists: AndroidJsonHost exposes feature.agent.asyncTasks, typed AndroidCoordinatorPort/Runtime carries it, MobileBotViewModel applies generation fencing, and native AgentAsyncTasksPanel is shipping. Current Host projection only proves subagent records; no audited shell/cloud-agent source closure is present, and the ViewModel does not yet consume an async-task push event/reconnect provider lifecycle equivalent.",
+      "unit_test": "AgentAsyncTasksParityTest covers task kinds, malformed/settled rejection, Desktop relative-time thresholds and labels; exact-head CI is required after this mapping commit.",
+      "contract_test": "tests/test_agent_async_tasks_wiring.py checks account-fenced Host projection, typed Coordinator path, shipping native panel and stale-result fencing/30s interval. Missing push/reconnect and shell/cloud-agent source contracts remain open.",
+      "integration_test": "Typed Host -> Coordinator -> ViewModel -> Compose path exists, but full Desktop provider lifecycle semantics are not yet integration-complete.",
+      "packaged_test": "required after semantic gaps close on final exact-head APK/AAB",
+      "device_test": "required for live running subagent/shell/cloud-agent updates, reconnect/account switch and process recreation",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Fresh Desktop 92fcc2b0 semantic audit on 2026-10-11. Deliberately mapped, not implemented/verified. Do not promote until push-event/reconnect lifecycle and all three task-kind source owners are proven in production plus same-exact-HEAD unit/contract/integration/package/device evidence."
     }
   ],
   "traceability": {
