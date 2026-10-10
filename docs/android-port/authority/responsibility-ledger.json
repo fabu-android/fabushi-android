@@ -281,6 +281,23 @@
             "FBCP-QA-02..18",
             "FBCP AC-01..50"
           ]
+        },
+        {
+          "path": "frontend/src/production/model.ts",
+          "blob_sha": "a8607a383ec32f6fba7142bd7ce8ae93f6af7dc5",
+          "symbols": [
+            "projectHumanConversationTranscript",
+            "projectTranscriptEntry",
+            "projectTranscriptFeedEntries"
+          ]
+        },
+        {
+          "path": "frontend/src/production/reaction-root.ts",
+          "blob_sha": "b3b72b1d0abc570833ac5d6fa2f1197073a0e38a",
+          "symbols": [
+            "applyOptimisticReactionUpdate",
+            "createProductionReactionRootScope"
+          ]
         }
       ],
       "source_commit": "3bc92400826cc4ca7ac665b467708e22261edc61",
@@ -1333,6 +1350,13 @@
             "FBCP sections 4/6/7",
             "FBCP-QA-02..18",
             "FBCP AC-01..50"
+          ]
+        },
+        {
+          "path": "frontend/src/production/settings-notice-controller.ts",
+          "blob_sha": "06b5960030a886714aa7ae57284728dcbaf4b9c8",
+          "symbols": [
+            "createSettingsNoticeController"
           ]
         }
       ],
@@ -3826,6 +3850,14 @@
         },
         {
           "path": "frontend/src/recovered/features/org-chart/workspace/view.tsx"
+        },
+        {
+          "path": "frontend/src/production/model.ts",
+          "blob_sha": "a8607a383ec32f6fba7142bd7ce8ae93f6af7dc5",
+          "symbols": [
+            "RendererAgent",
+            "projectRendererAgent"
+          ]
         }
       ],
       "source_commit": "3bc92400826cc4ca7ac665b467708e22261edc61",
@@ -4038,6 +4070,14 @@
           "symbols": [
             "Account sidebar CAS preserves concurrent cross-device edits",
             "Agent sidebar supports modifier selection and account-scoped sections"
+          ]
+        },
+        {
+          "path": "frontend/src/production/sidebar-model.ts",
+          "blob_sha": "d925c699091706a0e65624f67c1cc5db6211292e",
+          "symbols": [
+            "partitionSidebarAgents",
+            "movePinnedAgent"
           ]
         }
       ],
@@ -5318,6 +5358,34 @@
             "shipping root composition",
             "Coordinator client wiring",
             "conversation/Agent/settings/plugins/computer overlays"
+          ]
+        },
+        {
+          "path": "frontend/src/production/model.ts",
+          "blob_sha": "a8607a383ec32f6fba7142bd7ce8ae93f6af7dc5",
+          "symbols": [
+            "projectRendererAgent",
+            "projectTranscriptEntry",
+            "projectComputerStatus"
+          ]
+        },
+        {
+          "path": "frontend/src/production/production.css",
+          "blob_sha": "6a3738d98a07a7b2a81194c6666a2fe868ace80a",
+          "symbols": []
+        },
+        {
+          "path": "frontend/src/production/runtime-assets.ts",
+          "blob_sha": "470eb11f3d7f22b959008755e639a96a7f71aba0",
+          "symbols": [
+            "rendererRuntimeAssetUrl"
+          ]
+        },
+        {
+          "path": "frontend/src/production/strict-mode-disposal.ts",
+          "blob_sha": "2390a247c3df88473d758e8fbbdad697e034e526",
+          "symbols": [
+            "createStrictModeDisposalGuard"
           ]
         }
       ],
