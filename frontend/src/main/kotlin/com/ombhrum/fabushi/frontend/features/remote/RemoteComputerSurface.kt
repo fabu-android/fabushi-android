@@ -61,10 +61,18 @@ fun RemoteComputerSurface(onClose: () -> Unit) {
     var pairingLabel by remember { mutableStateOf("Fabushi Android") }
 
     suspend fun loadNativeState(): RemoteComputerNativeState = withContext(Dispatchers.IO) {
+        val initialSession = coordinator.remoteComputerSessionStatus()
+        val settledSession = if (initialSession.optBoolean("createOutcomeUnknown", false)) {
+            // A create response may have been lost after the server committed the session.
+            // Reconcile the stable request identity; never resend create or replay user input.
+            coordinator.remoteComputerSessionReconcile()
+        } else {
+            initialSession
+        }
         RemoteComputerPresentationPolicy.parse(
             coordinator.remoteComputerList(),
             coordinator.remoteComputerPairingStatus(),
-            coordinator.remoteComputerSessionStatus(),
+            settledSession,
         )
     }
 
