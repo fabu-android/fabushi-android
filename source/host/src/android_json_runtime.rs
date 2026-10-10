@@ -1069,9 +1069,9 @@ impl AndroidJsonHost {
                         .map(Value::String)
                         .collect();
                     object.insert("conversationPartnerIds".into(), Value::Array(partners));
-                    // No second owner: awaiting-user remains conservative until Host has an
-                    // explicit durable waiting-user event/state owner.
-                    object.insert("awaitingUserResponse".into(), Value::Bool(false));
+                    // No second owner: preserve Desktop's nullable waiting-state contract until
+                    // Host has an explicit durable waiting-user event/state owner.
+                    object.insert("awaitingUserResponse".into(), Value::Null);
                 }
                 value
             })
