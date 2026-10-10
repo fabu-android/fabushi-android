@@ -34,6 +34,38 @@ data class MobileBotSummaryAndroid(
     val updatedAt: Long = 0L,
 )
 
+data class PendingAgentApproval(
+    val approvalId: String,
+    val operationId: String,
+    val capability: String,
+    val reason: String,
+    val expiresAtMs: Long?,
+    val resolving: Boolean = false,
+)
+
+internal fun projectPendingAgentApproval(
+    event: JSONObject,
+    currentOperationId: String,
+): PendingAgentApproval? {
+    if (event.optString("type") != "approval.requested") return null
+    val operationId = event.optString("operationId")
+    if (operationId.isBlank() || operationId != currentOperationId) return null
+    val approvalId = event.optString("approvalId")
+    if (approvalId.isBlank()) return null
+    val expiresAtMs = if (!event.has("expiresAtMs") || event.isNull("expiresAtMs")) {
+        null
+    } else {
+        event.optLong("expiresAtMs").takeIf { it > 0L }
+    }
+    return PendingAgentApproval(
+        approvalId = approvalId,
+        operationId = operationId,
+        capability = event.optString("capability").ifBlank { "agent.subagent.review" },
+        reason = event.optString("reason").ifBlank { "This Agent action requires approval." },
+        expiresAtMs = expiresAtMs,
+    )
+}
+
 data class MobileBotUiState(
     val bots: List<MobileBotSummaryAndroid> = emptyList(),
     val activeBot: MobileBotSummaryAndroid? = null,
@@ -41,6 +73,7 @@ data class MobileBotUiState(
     val messages: List<MobileChatMessage> = emptyList(),
     val busy: Boolean = false,
     val operationId: String? = null,
+    val pendingApproval: PendingAgentApproval? = null,
     val messageTargetId: String? = null,
     val paletteMessageSearch: CommandPaletteMessageSnapshot = CommandPaletteMessageSnapshot(
         status = CommandPaletteMessageStatus.IDLE,
@@ -304,6 +337,7 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
                     activeBot = null,
                     busy = false,
                     operationId = null,
+                    pendingApproval = null,
                 ),
             )
         }
@@ -354,6 +388,7 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
                 activeBot = bot,
                 draft = draftsByBot[bot.id].orEmpty(),
                 messages = cachedMessages,
+                pendingApproval = null,
                 messageTargetId = targetEntryId,
                 error = null,
             ),
@@ -405,6 +440,7 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
                 activeBot = null,
                 draft = "",
                 messages = emptyList(),
+                pendingApproval = null,
                 messageTargetId = null,
                 error = null,
             ),
@@ -540,6 +576,7 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
             busy = true,
             error = null,
             operationId = requestId,
+            pendingApproval = null,
             messageTargetId = null,
             messages = snapshot.messages + MobileChatMessage(requestId, MobileChatRole.USER, text),
         ))
@@ -671,6 +708,37 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
+    fun resolveApproval(approved: Boolean) {
+        val pending = mutableState.value.pendingApproval ?: return
+        if (pending.resolving) return
+        commitState(mutableState.value.copy(pendingApproval = pending.copy(resolving = true), error = null))
+        viewModelScope.launch {
+            runCatching {
+                withContext(Dispatchers.IO) {
+                    coordinator.featureApprovalResolve(
+                        JSONObject()
+                            .put("approvalId", pending.approvalId)
+                            .put("approved", approved),
+                    )
+                }
+            }.onSuccess {
+                if (mutableState.value.pendingApproval?.approvalId == pending.approvalId) {
+                    commitState(mutableState.value.copy(pendingApproval = null))
+                }
+            }.onFailure { error ->
+                val current = mutableState.value.pendingApproval
+                if (current?.approvalId == pending.approvalId) {
+                    commitState(
+                        mutableState.value.copy(
+                            pendingApproval = current.copy(resolving = false),
+                            error = error.message ?: "Approval resolution failed",
+                        ),
+                    )
+                }
+            }
+        }
+    }
+
     fun stop() {
         val operationId = mutableState.value.operationId ?: return
         if (mutableState.value.activeBot?.miniAppId != null) return
@@ -684,7 +752,7 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
         if (!mutableState.value.busy) return
         val type = event.optString("type")
         val eventOperationId = event.optString("operationId").ifBlank { operationId }
-        if (type in setOf("chat.message", "chat.delta", "agent.step", "operation.started", "operation.completed", "operation.interrupted", "operation.failed", "model.routed") && eventOperationId != operationId) {
+        if (type in setOf("chat.message", "chat.delta", "agent.step", "operation.started", "operation.completed", "operation.interrupted", "operation.failed", "model.routed", "approval.requested", "approval.resolved") && eventOperationId != operationId) {
             return
         }
         when (type) {
@@ -715,15 +783,26 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
                 val detail = listOf(event.optString("provider"), event.optString("model")).filter { it.isNotBlank() }.joinToString(" · ")
                 upsert(MobileChatMessage("action:" + operationId + ":model", MobileChatRole.ASSISTANT, "", MobileChatEntryKind.ACTION, operationId, "Model", detail, "completed"))
             }
+            "approval.requested" -> {
+                projectPendingAgentApproval(event, operationId)?.let { pending ->
+                    commitState(mutableState.value.copy(pendingApproval = pending))
+                }
+            }
+            "approval.resolved" -> {
+                val approvalId = event.optString("approvalId")
+                if (approvalId.isNotBlank() && mutableState.value.pendingApproval?.approvalId == approvalId) {
+                    commitState(mutableState.value.copy(pendingApproval = null))
+                }
+            }
             "operation.completed", "operation.interrupted" -> {
                 removeThinking(operationId)
                 finishAssistant(operationId)
-                commitState(mutableState.value.copy(busy = false, operationId = null))
+                commitState(mutableState.value.copy(busy = false, operationId = null, pendingApproval = null))
             }
             "operation.failed" -> {
                 removeThinking(operationId)
                 finishAssistant(operationId)
-                commitState(mutableState.value.copy(busy = false, operationId = null, error = event.optString("message").ifBlank { "Bot run failed" }))
+                commitState(mutableState.value.copy(busy = false, operationId = null, pendingApproval = null, error = event.optString("message").ifBlank { "Bot run failed" }))
             }
         }
     }

@@ -126,6 +126,7 @@ internal fun GrokBotChatAndroid(
     onDraftChange: (String) -> Unit,
     onSend: () -> Unit,
     onStop: () -> Unit,
+    onResolveApproval: (Boolean) -> Unit,
     onMessageTargetConsumed: (String) -> Unit,
 ) {
     val messageListState = rememberLazyListState()
@@ -136,7 +137,7 @@ internal fun GrokBotChatAndroid(
         messageListState.animateScrollToItem(targetIndex)
         onMessageTargetConsumed(targetId)
     }
-    LaunchedEffect(bot.id, state.draft, state.busy, state.error, state.messages, appAgentSurface) {
+    LaunchedEffect(bot.id, state.draft, state.busy, state.error, state.messages, state.pendingApproval, appAgentSurface) {
         val elements = mutableListOf(
             FabushiAppAgentSurface.Element("mobile-bot-chat", "application", "Bot ${bot.name}"),
             FabushiAppAgentSurface.Element("mobile-bot-close", "button", "关闭 Bot 对话"),
@@ -159,6 +160,15 @@ internal fun GrokBotChatAndroid(
             }
             elements += FabushiAppAgentSurface.Element(id, "log", roleName)
         }
+        state.pendingApproval?.let { approval ->
+            elements += FabushiAppAgentSurface.Element(
+                "mobile-bot-approval",
+                "alert",
+                "Agent 动作需要批准：${approval.capability}",
+            )
+            elements += FabushiAppAgentSurface.Element("mobile-bot-approval-approve", "button", "批准 Agent 动作", enabled = !approval.resolving)
+            elements += FabushiAppAgentSurface.Element("mobile-bot-approval-deny", "button", "拒绝 Agent 动作", enabled = !approval.resolving)
+        }
         if (state.error?.isNotBlank() == true) {
             elements += FabushiAppAgentSurface.Element("mobile-bot-error", "status", "Bot 对话失败")
         }
@@ -167,6 +177,10 @@ internal fun GrokBotChatAndroid(
             "mobile-bot-draft" to FabushiAppAgentSurface.Action(setOf("setValue")) { onDraftChange(it.orEmpty()) },
             sendId to FabushiAppAgentSurface.Action(setOf("invoke")) { if (state.busy) onStop() else onSend() },
         )
+        state.pendingApproval?.takeIf { !it.resolving }?.let {
+            actions["mobile-bot-approval-approve"] = FabushiAppAgentSurface.Action(setOf("invoke")) { onResolveApproval(true) }
+            actions["mobile-bot-approval-deny"] = FabushiAppAgentSurface.Action(setOf("invoke")) { onResolveApproval(false) }
+        }
         appAgentSurface.publish(screen = "bot-chat", elements = elements, actions = actions)
     }
     DisposableEffect(appAgentSurface) {
@@ -224,6 +238,26 @@ internal fun GrokBotChatAndroid(
                         Row(verticalAlignment = Alignment.Bottom) {
                             ClothGhostAvatarAndroid(bot.id, 20.dp)
                             Text(entry.text + if (entry.streaming) "▌" else "", color = GrokMobileInk, fontSize = 16.sp, modifier = Modifier.padding(start = 7.dp).background(Color.Black.copy(alpha = 0.055f), RoundedCornerShape(18.dp)).padding(horizontal = 15.dp, vertical = 10.dp))
+                        }
+                    }
+                }
+            }
+            state.pendingApproval?.let { approval ->
+                item(key = "approval:${approval.approvalId}") {
+                    Column(
+                        Modifier
+                            .fillMaxWidth()
+                            .background(Color(0xFFFFF3E8), RoundedCornerShape(14.dp))
+                            .padding(12.dp)
+                            .testTag("mobile-bot-approval"),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Text("Agent action requires approval", color = GrokMobileInk, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                        Text(approval.reason, color = GrokMobileMuted, fontSize = 12.sp)
+                        Text(approval.capability, color = GrokMobileMuted, fontSize = 11.sp)
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Button(onClick = { onResolveApproval(false) }, enabled = !approval.resolving, modifier = Modifier.testTag("mobile-bot-approval-deny")) { Text("Deny") }
+                            Button(onClick = { onResolveApproval(true) }, enabled = !approval.resolving, modifier = Modifier.testTag("mobile-bot-approval-approve")) { Text(if (approval.resolving) "Resolving…" else "Approve") }
                         }
                     }
                 }

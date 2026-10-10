@@ -53,6 +53,7 @@ interface AndroidCoordinatorPort {
 
     fun featureExecute(params: JSONObject): JSONObject
     fun featureInterrupt(params: JSONObject): JSONObject
+    fun featureApprovalResolve(params: JSONObject): JSONObject
     fun transcriptSnapshot(): JSONArray
     fun assistantProjection(): JSONObject = JSONObject().put("hasUnread", false)
     fun assistantMarkRead(): JSONObject = assistantProjection()

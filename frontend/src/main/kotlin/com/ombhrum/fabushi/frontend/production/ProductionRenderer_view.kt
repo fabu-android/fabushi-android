@@ -317,6 +317,7 @@ internal fun ProductionRenderer(
                             onDraftChange = botModel::setDraft,
                             onSend = botModel::send,
                             onStop = botModel::stop,
+                            onResolveApproval = botModel::resolveApproval,
                             onMessageTargetConsumed = botModel::consumeMessageTarget,
                         )
                         if (miniAppBot != null) {

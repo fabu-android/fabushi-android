@@ -86,6 +86,7 @@ fun GrokHomeSurface(
     onDraftChange: (String) -> Unit,
     onSend: () -> Unit,
     onStop: () -> Unit,
+    onResolveApproval: (Boolean) -> Unit,
     onMessageTargetConsumed: (String) -> Unit,
 ) {
     LaunchedEffect(Unit) { onRefreshBots() }
@@ -100,6 +101,7 @@ fun GrokHomeSurface(
             onDraftChange,
             onSend,
             onStop,
+            onResolveApproval,
             onMessageTargetConsumed,
         )
         return

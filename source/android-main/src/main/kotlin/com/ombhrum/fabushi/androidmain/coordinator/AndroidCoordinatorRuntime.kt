@@ -346,6 +346,7 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
             ),
         )
     override fun featureInterrupt(params: JSONObject) = host.request("feature.interrupt", params)
+    override fun featureApprovalResolve(params: JSONObject) = host.request("feature.approval.resolve", params)
     override fun transcriptSnapshot(): JSONArray =
         host.requestValue("feature.transcript.snapshot") as? JSONArray ?: JSONArray()
 
