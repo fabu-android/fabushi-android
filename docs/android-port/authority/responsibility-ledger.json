@@ -2103,7 +2103,9 @@
         "stepMutationId",
         "approvalId",
         "run state",
-        "last/next run metadata"
+        "last/next run metadata",
+        "agentId",
+        "triggerDescription"
       ],
       "protocol_wire_contract": [
         "feature.automation.upsert/list/start/advanceStep/awaitApproval/resolveApproval/cancel/settle/snapshot"
@@ -2131,15 +2133,15 @@
       "android_owner": "Rust AutomationRuntime under Android Host",
       "platform_delta": "Android trigger execution will use OS/background adapters, while platform-independent run/idempotency/approval state remains Rust-owned.",
       "implementation_status": "implemented",
-      "production_wiring": "AndroidJsonHost opens automation-runtime.json and exposes typed Coordinator operations for durable lifecycle; no UI-side canonical state.",
-      "unit_test": "Rust tests cover duplicate convergence, restart outcome-unknown, account/generation/approval fencing and deterministic step mutation identities; exact-head Actions required.",
-      "contract_test": "Typed AndroidCoordinatorPort only exposes fixed automation methods; same exact-head Android compile required.",
+      "production_wiring": "AndroidJsonHost opens automation-runtime.json and exposes typed Coordinator operations for durable lifecycle. AutomationSpec now durably binds each new definition to an explicit canonical agentId plus triggerDescription; Host validates custom Agent existence while the fixed Mahayana system Agent is allowed. Legacy ownerless persisted rows remain readable for upgrade but cannot be rewritten as valid owner-bound specs. No UI-side canonical workflow state.",
+      "unit_test": "Rust tests cover duplicate convergence, restart outcome-unknown, account/generation/approval fencing, deterministic step mutation identities, Agent owner persistence across reopen, and legacy ownerless-spec fail-closed rewrite; 9f57f160a93e74b6a816ca2cd044bb06cdc0eb2b rust-runtime-foundation job 114208803548 succeeded.",
+      "contract_test": "Typed AndroidCoordinatorPort exposes fixed automation methods; 9f57f160a93e74b6a816ca2cd044bb06cdc0eb2b existing-android-regression job 114208803450 succeeded. Full workflow/trigger parity remains outside this durable slice.",
       "integration_test": "Still required for actual Agent/tool step execution through Capability Broker and trigger adapter retry/reconnect.",
       "packaged_test": "Required for background/package restart workflow journey.",
       "device_test": "Required for WorkManager/OS kill/background restrictions once scheduling adapter is wired.",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Durable run state machine only; full AUTOMATION-WORKFLOW-001 remains open."
+      "notes": "Durable run state machine + durable Agent ownership only; full AUTOMATION-WORKFLOW-001 remains open (event/cron execution adapters, full schedule-description semantics, step executor, packaged background/device evidence)."
     },
     {
       "responsibility_id": "TOOLS-CLIENT-SIDE-TOOL-V2-RELAY-001",
@@ -5447,20 +5449,22 @@
         "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/presentation/MobileBotViewModel.kt",
         "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/features/bots/GrokBotComponents.kt",
         "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/production/ProductionRenderer_view.kt",
-        "mobile/android/app/src/test/java/com/ombhrum/fabushi/FrontendProductionModelParityTest.kt"
+        "mobile/android/app/src/test/java/com/ombhrum/fabushi/FrontendProductionModelParityTest.kt",
+        "source/host/src/automation_runtime.rs",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/production/command-palette-routine-provider.kt"
       ],
       "android_owner": "Native Compose command palette over typed domain projections",
       "platform_delta": "Desktop DOM focus/virtual-scroll shortcuts become Android Compose focus/keyboard/semantics. Search/provider lifecycle contracts and unique domain ownership remain required.",
       "implementation_status": "mapped",
-      "production_wiring": "Android native palette core/root/update wiring exists. The message provider is now production-wired over the Host-owned canonical transcript: durable agentId identity, 150ms debounced reads, generation fencing against stale completions, fail-closed owner parsing, per-Agent transcript restore, stable entryId activation and target-row scrolling are implemented. Media/file searchMedia, link metadata, routine/automation ownership projection, and the remaining provider/tab breadth are still incomplete.",
-      "unit_test": "FrontendProductionModelParityTest covers canonical identity replacement plus canonical Agent transcript partitioning/fail-closed legacy rows, late-snapshot/live-event merge, message search stable identity/activation, and stale request fencing.",
-      "contract_test": "577f6cabb54ad89365d1fbe4c15995fc2af95042 Grok Android Architecture run 38050231130 existing-android-regression job 114207710274 success covers the current native provider implementation; files/links/routines and packaged/device breadth remain required.",
-      "integration_test": "Message search is wired through ProductionRenderer -> MobileBotViewModel -> typed AndroidCoordinatorPort transcriptSnapshot -> Host canonical transcript; remaining providers require equivalent owner-safe integration.",
+      "production_wiring": "Android native palette core/root/update wiring exists. Message search is production-wired over the Host canonical transcript with durable agentId, 150ms debounce, generation fencing, fail-closed parsing, per-Agent restore and exact entryId navigation. Routine/automation projection is now production-wired over account-scoped AutomationRuntime specs with durable agent ownership, fail-closed owner validation, refresh generation fencing, stable routine identity and owner activation. Media/file searchMedia, link metadata and remaining provider/tab breadth are still incomplete.",
+      "unit_test": "FrontendProductionModelParityTest covers canonical Agent transcript partitioning/fail-closed legacy rows, late-snapshot/live-event merge, message stable identity/activation and stale request fencing; routine tests cover ownerless-row rejection, stable routine identity/activation and stale refresh fencing. Rust AutomationRuntime tests cover durable Agent owner persistence/reopen and legacy ownerless upgrade fail-closed behavior.",
+      "contract_test": "Message slice: 577f6cabb54ad89365d1fbe4c15995fc2af95042 Architecture run 38050231130 existing-android-regression success. Routine owner/provider slice: 9f57f160a93e74b6a816ca2cd044bb06cdc0eb2b Architecture run 38050611013 rust-runtime-foundation 114208803548, existing-android-regression 114208803450 and parity-ledger 114208803521 all success. Files/links and packaged/device breadth remain required.",
+      "integration_test": "Message search is ProductionRenderer -> MobileBotViewModel -> typed transcriptSnapshot -> Host transcript. Routine search is ProductionRenderer -> MobileBotViewModel -> typed automationList -> Host AutomationRuntime; both reject unknown owners rather than fabricating domain objects. Files/links remain open.",
       "packaged_test": "required for final release command palette breadth and unavailable/failure states",
       "device_test": "required for native keyboard/focus/accessibility and large-result behavior",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Responsibility intentionally remains mapped/not-verified because provider breadth is materially incomplete. Message-provider subresponsibility has same-SHA compile/unit evidence at 577f6cabb54ad89365d1fbe4c15995fc2af95042; no aggregate verification upgrade is claimed."
+      "notes": "Responsibility intentionally remains mapped/not-verified. Message and routine provider subresponsibilities have same-SHA compile/unit evidence; files/media and links are materially incomplete, so no aggregate verification upgrade is claimed."
     }
   ],
   "traceability": {
