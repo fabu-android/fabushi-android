@@ -23,6 +23,12 @@ data class MobileBotSummaryAndroid(
     val hasUnread: Boolean = false,
     val isHidden: Boolean = false,
     val isGroup: Boolean = false,
+    val memberIds: List<String> = emptyList(),
+    val conversationPartnerIds: List<String> = emptyList(),
+    val awaitingUserResponse: Boolean = false,
+    val isRunning: Boolean = false,
+    val lastMessage: String = "",
+    val updatedAt: Long = 0L,
 )
 
 data class MobileBotUiState(
@@ -114,6 +120,26 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
                         hasUnread = row.optBoolean("hasUnread"),
                         isHidden = row.optBoolean("isHiddenFromSidebar") || row.optBoolean("hiddenFromSidebar"),
                         isGroup = row.optBoolean("isGroup"),
+                        memberIds = row.optJSONArray("memberIds")?.let { values ->
+                            buildList {
+                                for (itemIndex in 0 until values.length()) {
+                                    values.optString(itemIndex).takeIf(String::isNotBlank)?.let(::add)
+                                }
+                            }
+                        }.orEmpty(),
+                        conversationPartnerIds = row.optJSONArray("conversationPartnerIds")?.let { values ->
+                            buildList {
+                                for (itemIndex in 0 until values.length()) {
+                                    values.optString(itemIndex).takeIf(String::isNotBlank)?.let(::add)
+                                }
+                            }
+                        }.orEmpty(),
+                        awaitingUserResponse = row.opt("awaitingUserResponse") != null &&
+                            row.opt("awaitingUserResponse") != JSONObject.NULL &&
+                            row.optBoolean("awaitingUserResponse", true),
+                        isRunning = row.optBoolean("isRunning"),
+                        lastMessage = row.optString("lastMessage"),
+                        updatedAt = row.optLong("updatedAt"),
                     ),
                 )
             }
