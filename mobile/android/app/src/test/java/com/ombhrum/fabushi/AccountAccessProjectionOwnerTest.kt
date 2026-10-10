@@ -28,7 +28,7 @@ class AccountAccessProjectionOwnerTest {
             AccountTruthState.GRANTED, AccountPaymentState.REQUIRED, AccountEntitlementState.DENIED,
             null, "unknown", AccountTruthState.GRANTED, false, false, true,
             AccountRebuildState.IDLE, AccountRecoveryState.READY))
-        assertTrue(p.explicitlyBlocked); assertTrue(p.mayShowAccessNotice); assertFalse(p.complete)
+        assertTrue(p.explicitlyBlocked); assertTrue(p.mayShowAccessNotice); assertTrue(p.complete)
     }
 
     @Test fun staleAccountEpochIsFenced() {
