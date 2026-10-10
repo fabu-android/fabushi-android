@@ -2668,6 +2668,68 @@
       "artifact": null,
       "verification_status": "not-verified",
       "notes": "Replacement is implemented but deliberately not verified while full source closure remains nonzero. Do not mark this responsibility or its source row verified until the same final HEAD has zero strict debt and final package/device gates."
+    },
+    {
+      "responsibility_id": "SEARCH-CANONICAL-IDENTITY-001",
+      "domain": "navigation",
+      "desktop_sources": [
+        {
+          "path": ".github/workflows/tdrp-search-responsibility.yml",
+          "blob_sha": "9b82dab2f13f7982257a7a47869297b83ae99594",
+          "symbols": [
+            "canonical-search",
+            "independent-review"
+          ]
+        }
+      ],
+      "source_commit": "3bc92400826cc4ca7ac665b467708e22261edc61",
+      "responsibility": "Keep command-palette participant identity canonical when roster/search rows are replaced: stable identities appear once, the newest replacement controls projection, and exact-head CI independently verifies the source/contract.",
+      "source_owner": "Desktop command-palette model plus canonical Search GitHub Actions contract",
+      "direct_callers": [
+        "Command Palette search/filter projection",
+        "tdrp canonical Search workflow"
+      ],
+      "downstream_dependencies": [
+        "canonical participant roster",
+        "command-palette filtering/scoring",
+        "exact-head CI evidence"
+      ],
+      "state_owner": "Canonical roster identity remains outside the palette; the palette owns only a deduplicated immutable projection.",
+      "persistent_state": [],
+      "protocol_wire_contract": [
+        "stable entry identity",
+        "latest replacement wins while original result slot is preserved"
+      ],
+      "visible_effect": "Search never shows stale and current copies of the same participant at the same time.",
+      "failure_behavior": [
+        "duplicate stable IDs collapse to one latest projection",
+        "CI fails when the canonical replacement contract regresses"
+      ],
+      "cancellation_behavior": "Search projection is pure; cancellation creates no side effect.",
+      "retry_semantics": "Projection recomputation is idempotent for the same ordered input.",
+      "idempotency_semantics": "Repeated rows with the same stable identity replace the existing slot rather than append.",
+      "process_death_recovery": "Projection is rebuilt from the canonical roster after process recreation; it owns no durable duplicate state.",
+      "account_fencing": "Inputs come from the account-scoped canonical roster; the palette does not merge identities across accounts.",
+      "security_boundary": "Pure presentation projection; no Host capability or credential access.",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/production/command-palette-model.kt",
+        "mobile/android/app/src/test/java/com/ombhrum/fabushi/FrontendProductionModelParityTest.kt",
+        ".github/workflows/grok-android-architecture.yml",
+        ".github/workflows/android-parity-full-ci.yml"
+      ],
+      "android_owner": "Native Kotlin command-palette model",
+      "platform_delta": "Desktop TypeScript canonical agent-row replacement is implemented as Kotlin deduplication over Android's flattened CommandPaletteEntry projection. No second roster owner is introduced.",
+      "implementation_status": "implemented",
+      "production_wiring": "commandPaletteEntries canonicalizes stable entry IDs before tab filtering and fuzzy scoring, preserving the first slot and replacing it with the newest row.",
+      "unit_test": "FrontendProductionModelParityTest.commandPaletteCanonicalIdentityReplacesStaleRowsWithoutDuplicates",
+      "contract_test": "Exact Android unit regression exercises latest-row replacement and one-result search projection.",
+      "integration_test": "Grok Android Architecture existing-android-regression and Android Parity Full CI Gradle test path; same-head result pending.",
+      "packaged_test": "Not yet independently exercised in final packaged acceptance.",
+      "device_test": "Not yet independently exercised in final protected-device acceptance.",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Implemented but intentionally not verified until same final exact HEAD CI/package/device gates succeed."
     }
   ],
   "traceability": {
