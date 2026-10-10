@@ -58,12 +58,33 @@ internal fun fuzzyPaletteScore(query: String, candidate: String): Int? {
     return score
 }
 
+internal fun dedupeCommandPaletteEntries(
+    entries: List<CommandPaletteEntry>,
+): List<CommandPaletteEntry> {
+    val deduped = mutableListOf<CommandPaletteEntry>()
+    val indexById = mutableMapOf<String, Int>()
+    for (entry in entries) {
+        val existing = indexById[entry.id]
+        if (existing == null) {
+            indexById[entry.id] = deduped.size
+            deduped += entry
+        } else {
+            // Preserve the canonical participant/command slot while projecting
+            // the newest row. A replaced roster/search object must not create
+            // a parallel result root with the same stable identity.
+            deduped[existing] = entry
+        }
+    }
+    return deduped
+}
+
 internal fun commandPaletteEntries(
     entries: List<CommandPaletteEntry>,
     tab: CommandPaletteTab,
     query: String,
 ): List<CommandPaletteEntry> {
-    val filteredByTab = entries.filter { entry ->
+    val canonicalEntries = dedupeCommandPaletteEntries(entries)
+    val filteredByTab = canonicalEntries.filter { entry ->
         when (tab) {
             CommandPaletteTab.ALL -> true
             CommandPaletteTab.MESSAGES -> entry.kind == CommandPaletteEntryKind.MESSAGE
