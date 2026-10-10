@@ -198,7 +198,7 @@ fun FabushiMessagingSurface(
     onDeleteMessage: (String, String) -> Unit = { _, _ -> },
     onSetMessagePinned: (String, String, Boolean) -> Unit = { _, _, _ -> },
     onSetReaction: (String, String, String, Boolean) -> Unit = { _, _, _, _ -> },
-    onForwardMessage: (String, String, String) -> Unit = { _, _, _ -> },
+    onForwardMessage: (String, String, List<String>) -> Unit = { _, _, _ -> },
     onStartTyping: (String) -> Unit = {},
     onStopTyping: (String) -> Unit = {},
     onSetPinned: (ConversationSummary, Boolean) -> Unit = { _, _ -> },

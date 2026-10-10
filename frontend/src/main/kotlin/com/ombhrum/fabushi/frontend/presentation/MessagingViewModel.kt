@@ -15,6 +15,17 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.util.UUID
 
+internal fun normalizeForwardDestinations(destinationConversationIds: List<String>): List<String> =
+    destinationConversationIds.map(String::trim).filter(String::isNotEmpty).distinct()
+
+internal fun forwardClientMessageId(batchId: String, destinationConversationId: String): String {
+    val batch = batchId.trim()
+    val destination = destinationConversationId.trim()
+    require(batch.isNotEmpty()) { "forward batch id must not be empty" }
+    require(destination.isNotEmpty()) { "forward destination must not be empty" }
+    return "android:forward:$batch:$destination"
+}
+
 enum class ConversationKind(val wire: String, val label: String) {
     DIRECT("direct", "私聊"), GROUP("group", "群组"), CHANNEL("channel", "频道"),
     SAVED_MESSAGES("savedMessages", "收藏"), SECRET("secret", "加密聊天"),
@@ -299,8 +310,21 @@ internal class MessagingViewModel(application: Application) : AndroidViewModel(a
     fun setReaction(conversationId: String, messageId: String, reaction: String, enabled: Boolean) =
         executeAsync(JSONObject().put("type", "setReaction").put("conversationId", conversationId).put("messageId", messageId)
             .put("reaction", JSONObject().put("reaction", reaction).put("count", if (enabled) 1 else 0).put("chosenByMe", enabled).put("recentActorIds", if (enabled) JSONArray().put(actorId) else JSONArray())))
-    fun forwardMessage(sourceConversationId: String, messageId: String, destinationConversationId: String) =
-        executeAsync(JSONObject().put("type", "forwardMessage").put("sourceConversationId", sourceConversationId).put("messageId", messageId).put("destinationConversationId", destinationConversationId).put("clientMessageId", "android:${UUID.randomUUID()}"))
+    fun forwardMessage(sourceConversationId: String, messageId: String, destinationConversationIds: List<String>) {
+        val destinations = normalizeForwardDestinations(destinationConversationIds)
+        if (destinations.isEmpty()) return
+        val batchId = UUID.randomUUID().toString()
+        destinations.forEach { destinationConversationId ->
+            executeAsync(
+                JSONObject()
+                    .put("type", "forwardMessage")
+                    .put("sourceConversationId", sourceConversationId)
+                    .put("messageId", messageId)
+                    .put("destinationConversationId", destinationConversationId)
+                    .put("clientMessageId", forwardClientMessageId(batchId, destinationConversationId)),
+            )
+        }
+    }
     fun startTyping(conversationId: String) = executeAsync(JSONObject().put("type", "startTyping").put("conversationId", conversationId).put("action", "typing"))
     fun stopTyping(conversationId: String) = executeAsync(JSONObject().put("type", "stopTyping").put("conversationId", conversationId))
 

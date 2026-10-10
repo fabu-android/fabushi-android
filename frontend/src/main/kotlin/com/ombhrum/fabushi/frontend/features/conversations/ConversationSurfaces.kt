@@ -110,7 +110,7 @@ internal fun ConversationHome(
     onDeleteMessage: (String, String) -> Unit,
     onSetMessagePinned: (String, String, Boolean) -> Unit,
     onSetReaction: (String, String, String, Boolean) -> Unit,
-    onForwardMessage: (String, String, String) -> Unit,
+    onForwardMessage: (String, String, List<String>) -> Unit,
     onStartTyping: (String) -> Unit,
     onStopTyping: (String) -> Unit,
     onSetPinned: (ConversationSummary, Boolean) -> Unit,
@@ -203,7 +203,7 @@ internal fun ConversationHome(
             onDelete = { messageId -> onDeleteMessage(conversation.id, messageId) },
             onSetMessagePinned = { messageId, pinned -> onSetMessagePinned(conversation.id, messageId, pinned) },
             onReact = { messageId, reaction -> onSetReaction(conversation.id, messageId, reaction, true) },
-            onForward = { messageId, destinationId -> onForwardMessage(conversation.id, messageId, destinationId) },
+            onForward = { messageId, destinationIds -> onForwardMessage(conversation.id, messageId, destinationIds) },
             forwardDestinations = conversations.filter { it.id != conversation.id && !it.isArchived },
             typingActorName = messagingState.typingActorByConversation[conversation.id],
             onTypingChanged = { typing -> if (typing) onStartTyping(conversation.id) else onStopTyping(conversation.id) },
@@ -398,7 +398,7 @@ internal fun ConversationDetail(
     onDelete: (String) -> Unit,
     onSetMessagePinned: (String, Boolean) -> Unit,
     onReact: (String, String) -> Unit,
-    onForward: (String, String) -> Unit,
+    onForward: (String, List<String>) -> Unit,
     forwardDestinations: List<ConversationSummary>,
     typingActorName: String?,
     onTypingChanged: (Boolean) -> Unit,
@@ -422,6 +422,8 @@ internal fun ConversationDetail(
     }
     var editingMessage by remember { mutableStateOf<ChatMessage?>(null) }
     var forwardingMessage by remember { mutableStateOf<ChatMessage?>(null) }
+    var forwardQuery by remember { mutableStateOf("") }
+    var forwardSelection by remember { mutableStateOf(setOf<String>()) }
     var mediaViewerMessage by remember { mutableStateOf<ChatMessage?>(null) }
     var showConversationInfo by remember { mutableStateOf(false) }
     var showChatSearch by remember { mutableStateOf(false) }
@@ -589,7 +591,12 @@ internal fun ConversationDetail(
             text = {
                 Column {
                     TextButton(onClick = { replyTarget = message; editingMessage = null; selectedMessage = null }) { Text("回复") }
-                    TextButton(onClick = { forwardingMessage = message; selectedMessage = null }) { Text("转发") }
+                    TextButton(onClick = {
+                        forwardQuery = ""
+                        forwardSelection = emptySet()
+                        forwardingMessage = message
+                        selectedMessage = null
+                    }) { Text("转发") }
                     TextButton(onClick = { onReact(message.id, "👍"); selectedMessage = null }) { Text("👍 赞") }
                     if (message.outgoing) TextButton(onClick = { editingMessage = message; replyTarget = null; draft = message.text; selectedMessage = null }) { Text("编辑") }
                     TextButton(onClick = { onSetMessagePinned(message.id, !message.pinned); selectedMessage = null }) { Text(if (message.pinned) "取消置顶消息" else "置顶消息") }
@@ -601,18 +608,76 @@ internal fun ConversationDetail(
     }
 
     forwardingMessage?.let { message ->
+        val normalizedQuery = forwardQuery.trim()
+        val filteredDestinations = remember(forwardDestinations, normalizedQuery) {
+            if (normalizedQuery.isEmpty()) forwardDestinations
+            else forwardDestinations.filter { destination ->
+                destination.title.contains(normalizedQuery, ignoreCase = true) ||
+                    destination.preview.contains(normalizedQuery, ignoreCase = true)
+            }
+        }
         AlertDialog(
-            onDismissRequest = { forwardingMessage = null },
+            onDismissRequest = {
+                forwardingMessage = null
+                forwardQuery = ""
+                forwardSelection = emptySet()
+            },
             title = { Text("转发到") },
             text = {
                 Column {
-                    if (forwardDestinations.isEmpty()) Text("暂无其他会话", color = homeSecondaryText)
-                    forwardDestinations.take(20).forEach { destination ->
-                        TextButton(onClick = { onForward(message.id, destination.id); forwardingMessage = null }) { Text(destination.title) }
+                    OutlinedTextField(
+                        value = forwardQuery,
+                        onValueChange = { forwardQuery = it },
+                        modifier = Modifier.fillMaxWidth().testTag("forward-recipient-search"),
+                        singleLine = true,
+                        label = { Text("搜索会话") },
+                    )
+                    if (filteredDestinations.isEmpty()) {
+                        Text(
+                            if (forwardDestinations.isEmpty()) "暂无其他会话" else "没有匹配的会话",
+                            color = homeSecondaryText,
+                            modifier = Modifier.padding(top = 8.dp),
+                        )
+                    }
+                    filteredDestinations.take(50).forEach { destination ->
+                        val selected = destination.id in forwardSelection
+                        TextButton(
+                            onClick = {
+                                forwardSelection = if (selected) {
+                                    forwardSelection - destination.id
+                                } else {
+                                    forwardSelection + destination.id
+                                }
+                            },
+                            modifier = Modifier.fillMaxWidth().testTag("forward-recipient-${destination.id}"),
+                        ) {
+                            Text(if (selected) "✓ ${destination.title}" else destination.title)
+                        }
                     }
                 }
             },
-            confirmButton = { OutlinedButton(onClick = { forwardingMessage = null }) { Text("取消") } },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        val destinations = forwardDestinations
+                            .map { it.id }
+                            .filter { it in forwardSelection }
+                        if (destinations.isNotEmpty()) onForward(message.id, destinations)
+                        forwardingMessage = null
+                        forwardQuery = ""
+                        forwardSelection = emptySet()
+                    },
+                    enabled = forwardSelection.isNotEmpty(),
+                    modifier = Modifier.testTag("forward-submit"),
+                ) { Text("转发") }
+            },
+            dismissButton = {
+                OutlinedButton(onClick = {
+                    forwardingMessage = null
+                    forwardQuery = ""
+                    forwardSelection = emptySet()
+                }) { Text("取消") }
+            },
         )
     }
 
