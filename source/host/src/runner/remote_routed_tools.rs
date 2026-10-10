@@ -200,6 +200,7 @@ impl AndroidRoutedToolBridge for RemoteRoutedTools {
             !matches!(
                 tool.get("name").and_then(Value::as_str),
                 Some("Shell") | Some("Read") | Some("Computer") | Some("Screenshot")
+                    | Some("ExternalShell") | Some("ExternalRead")
             )
         });
         tools.push(json!({
@@ -269,12 +270,45 @@ impl AndroidRoutedToolBridge for RemoteRoutedTools {
                     "properties":{}
                 }
             }));
+            tools.push(json!({
+                "type":"function",
+                "name":"ExternalShell",
+                "description":"Run a shell command on the user's paired trusted Remote computer. Requires one-time user approval before dispatch.",
+                "parameters":{
+                    "type":"object",
+                    "additionalProperties":false,
+                    "required":["command"],
+                    "properties":{
+                        "command":{"type":"string","minLength":1},
+                        "workingDirectory":{"type":"string"}
+                    }
+                }
+            }));
+            tools.push(json!({
+                "type":"function",
+                "name":"ExternalRead",
+                "description":"Read a file from the user's paired trusted Remote computer. Requires one-time user approval before dispatch.",
+                "parameters":{
+                    "type":"object",
+                    "additionalProperties":false,
+                    "required":["path"],
+                    "properties":{
+                        "path":{"type":"string","minLength":1},
+                        "offset":{"type":"integer"},
+                        "limit":{"type":"integer","minimum":0},
+                        "encodingHint":{"type":"string"}
+                    }
+                }
+            }));
         }
         Ok(tools)
     }
 
     fn call_tool(&self, name: &str, args: Value, tool_call_id: &str) -> Result<Value, String> {
-        if !matches!(name, "Shell" | "Read" | "Computer" | "Screenshot") {
+        if !matches!(
+            name,
+            "Shell" | "Read" | "Computer" | "Screenshot" | "ExternalShell" | "ExternalRead"
+        ) {
             return self.delegate.call_tool(name, args, tool_call_id);
         }
         if self.cancelled.load(Ordering::Acquire) {
@@ -296,13 +330,15 @@ impl AndroidRoutedToolBridge for RemoteRoutedTools {
         let request_id = format!("remote-request-{request_hash}");
         let approval_id = format!("remote-approval-{identity_hash}");
         let capability = match name {
-            "Shell" => "remote.shell",
-            "Read" => "remote.read",
+            "Shell" | "ExternalShell" => "remote.shell",
+            "Read" | "ExternalRead" => "remote.read",
             "Computer" | "Screenshot" => "computer.use",
             _ => unreachable!("unsupported Remote routed tool was delegated"),
         };
         let binding = self.current_binding()?;
-        if matches!(name, "Computer" | "Screenshot") && !binding.has_desktop {
+        if matches!(name, "Computer" | "Screenshot" | "ExternalShell" | "ExternalRead")
+            && !binding.has_desktop
+        {
             return Err("trusted Remote binding does not own a desktop".into());
         }
         let context = binding.context(&operation_id, &request_id, &approval_id)?;
@@ -589,6 +625,66 @@ fn validate_remote_tool_input(name: &str, args: &Value) -> Result<u64, String> {
             }
             Ok(30_000)
         }
+        "ExternalShell" => {
+            const KEYS: &[&str] = &["command", "workingDirectory"];
+            if let Some(key) = object.keys().find(|key| !KEYS.contains(&key.as_str())) {
+                return Err(format!("Remote ExternalShell argument is unsupported: {key}"));
+            }
+            let command = object
+                .get("command")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .ok_or("Remote ExternalShell command is required")?;
+            if command.len() > MAX_SHELL_COMMAND || command.chars().any(|c| c == '\0') {
+                return Err("Remote ExternalShell command is invalid or too large".into());
+            }
+            if object
+                .get("workingDirectory")
+                .is_some_and(|value| !value.is_string())
+            {
+                return Err("Remote ExternalShell workingDirectory must be a string".into());
+            }
+            Ok(30_000)
+        }
+        "ExternalRead" => {
+            const KEYS: &[&str] = &["path", "offset", "limit", "encodingHint"];
+            if let Some(key) = object.keys().find(|key| !KEYS.contains(&key.as_str())) {
+                return Err(format!("Remote ExternalRead argument is unsupported: {key}"));
+            }
+            let path = object
+                .get("path")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .ok_or("Remote ExternalRead path is required")?;
+            if path.len() > MAX_READ_PATH || path.chars().any(|c| c == '\0') {
+                return Err("Remote ExternalRead path is invalid or too large".into());
+            }
+            if let Some(offset) = object.get("offset") {
+                let offset = offset
+                    .as_i64()
+                    .ok_or("Remote ExternalRead offset must be an integer")?;
+                if i32::try_from(offset).is_err() {
+                    return Err("Remote ExternalRead offset is outside signed int32 range".into());
+                }
+            }
+            if let Some(limit) = object.get("limit") {
+                let limit = limit
+                    .as_u64()
+                    .ok_or("Remote ExternalRead limit must be a non-negative integer")?;
+                if u32::try_from(limit).is_err() {
+                    return Err("Remote ExternalRead limit is outside unsigned int32 range".into());
+                }
+            }
+            if object
+                .get("encodingHint")
+                .is_some_and(|value| !value.is_string())
+            {
+                return Err("Remote ExternalRead encodingHint must be a string".into());
+            }
+            Ok(30_000)
+        }
         _ => Err("unsupported Remote routed tool".into()),
     }
 }
@@ -784,6 +880,42 @@ mod tests {
             .is_err());
     }
 
+
+    #[test]
+    fn external_machine_validation_matches_desktop_contract() {
+        assert_eq!(
+            validate_remote_tool_input(
+                "ExternalShell",
+                &json!({"command":"pwd","workingDirectory":"/tmp"}),
+            )
+            .unwrap(),
+            30_000,
+        );
+        assert!(validate_remote_tool_input(
+            "ExternalShell",
+            &json!({"command":"pwd","timeoutMs":1000}),
+        )
+        .is_err());
+
+        assert_eq!(
+            validate_remote_tool_input(
+                "ExternalRead",
+                &json!({"path":"notes.txt","offset":-1,"limit":0,"encodingHint":"utf-8"}),
+            )
+            .unwrap(),
+            30_000,
+        );
+        assert!(validate_remote_tool_input(
+            "ExternalRead",
+            &json!({"path":"notes.txt","limit":-1}),
+        )
+        .is_err());
+        assert!(validate_remote_tool_input(
+            "ExternalRead",
+            &json!({"path":"notes.txt","extra":true}),
+        )
+        .is_err());
+    }
 
     #[test]
     fn remote_screenshot_rejects_nonempty_arguments() {
