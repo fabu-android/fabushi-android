@@ -335,15 +335,15 @@
       "android_owner": "source/host/src/messaging_service.rs",
       "platform_delta": "Android uses native Compose/platform adapters + typed JNI while preserving canonical Rust owners where platform-independent.",
       "implementation_status": "implemented",
-      "production_wiring": "implemented in cited Android targets; package/device proof still pending",
-      "unit_test": "same-head Rust contract/unit gate succeeded on predecessor code HEAD; current ledger HEAD must rerun before verification",
+      "production_wiring": "implemented in canonical Rust messaging Host and native typed Android presentation. AndroidMessagingService owns per-message reaction actor sets and emits authoritative count/chosenByMe in messageChanged/sync. Native UI derives add/remove from the current chosenByMe projection, applies presentation-only optimistic reaction state only for settled messages, and refreshes canonical state after dispatch failure; Compose/ViewModel never becomes the durable reaction owner. Other canonical messaging commands remain wired through the same Coordinator/Host route; package/device proof is still pending.",
+      "unit_test": "Rust messaging tests cover authenticated actor-scoped reaction projection and canonical repository behavior. mobile/android/app FrontendProductionModelParityTest now covers reaction add/remove toggle, aggregate-count projection, and no optimistic mutation for pending/unsettled messages. Exact-head GitHub Actions are required before verification.",
       "contract_test": "required on same exact HEAD",
       "integration_test": "required on same exact HEAD",
       "packaged_test": "required on final minified release artifact",
       "device_test": "required on emulator/physical device as applicable",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Rust implementation now exists with durable blob owner/range read, membership/admin checks, stable request replay and process reopen tests. Remains not-verified until this ledger-updated HEAD gets package/device evidence. FBCP Revision 7 is a cross-cutting source authority for this responsibility; this mapping does not upgrade implementation_status or verification_status."
+      "notes": "Canonical messaging remains implemented/not-verified. The Desktop reaction-root source responsibility is now implemented as an Android adaptation: one canonical Rust reaction owner plus ephemeral native optimistic projection and authoritative reconciliation. This does not claim the entire broad messaging responsibility is verified; final exact-head contract/integration/package/device evidence remains required. FBCP Revision 7 remains cross-cutting authority."
     },
     {
       "responsibility_id": "AGENT-RUN-LIFECYCLE-001",
