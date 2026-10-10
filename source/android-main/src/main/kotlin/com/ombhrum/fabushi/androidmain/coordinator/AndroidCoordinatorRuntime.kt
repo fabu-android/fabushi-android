@@ -138,13 +138,17 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
     override fun automationSettle(params: JSONObject) = host.request("feature.automation.settle", params)
     override fun automationSnapshot(params: JSONObject) = host.request("feature.automation.snapshot", params)
 
-    override fun featureExecute(params: JSONObject) = host.request("feature.execute", params)
+    override fun featureExecute(params: JSONObject) =
+        host.request("feature.execute", AgentTurnCapabilityProjection.forFeatureExecute(params))
     override fun featureInterrupt(params: JSONObject) = host.request("feature.interrupt", params)
     override fun transcriptSnapshot(): JSONArray =
         host.requestValue("feature.transcript.snapshot") as? JSONArray ?: JSONArray()
 
     override fun agentSubagentTool(params: JSONObject): JSONObject =
-        host.request("feature.agent.subagent.tool", params)
+        host.request(
+            "feature.agent.subagent.tool",
+            AgentTurnCapabilityProjection.forSubagentTool(params),
+        )
 
     override fun agentSubagentReconcile(params: JSONObject): JSONObject =
         host.request("feature.agent.subagent.reconcile", params)
