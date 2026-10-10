@@ -41,6 +41,34 @@ class AgentRosterMutationOwnerTest {
     }
 
     @Test
+    fun corruptPendingJournalFailsClosedInsteadOfForgettingOutcomeUnknown() {
+        val owner = AgentRosterMutationOwner(MemoryStore("{not-json"))
+        val failure = runCatching { owner.pendingFor("session:account-a") }.exceptionOrNull()
+        assertTrue(failure is IllegalStateException)
+        assertTrue(failure?.message.orEmpty().contains("corrupt"))
+    }
+
+    @Test
+    fun fullPendingJournalRejectsNewSideEffectInsteadOfDroppingOldestIdentity() {
+        val store = MemoryStore()
+        val owner = AgentRosterMutationOwner(store)
+        repeat(64) { index ->
+            owner.begin(
+                "session:account-a",
+                JSONObject().put("kind", "delete").put("id", "agent-$index"),
+            )
+        }
+        val failure = runCatching {
+            owner.begin(
+                "session:account-a",
+                JSONObject().put("kind", "duplicate").put("id", "agent-overflow"),
+            )
+        }.exceptionOrNull()
+        assertTrue(failure is IllegalStateException)
+        assertEquals(64, owner.pendingFor("session:account-a").size)
+    }
+
+    @Test
     fun eachUserIntentGetsAStableDistinctOperationIdentity() {
         val store = MemoryStore()
         val owner = AgentRosterMutationOwner(store)
