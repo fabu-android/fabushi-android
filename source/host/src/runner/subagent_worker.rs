@@ -1,7 +1,7 @@
 use super::{
     DurableSubagentOwner, ProductionTurnAgentBuildBindings, ProductionTurnAgentOwner,
     ProductionTurnAgentStaticConfig, ProductionTurnEvent, ProductionTurnInput,
-    ProductionTurnPrivacyMode, ProviderFailure, SubagentLaunch, SubagentRunOutcome,
+    ProductionTurnPrivacyMode, SubagentLaunch, SubagentRunOutcome,
     SubagentSessionSnapshot, SAND_AGENT_TOKEN_LIMIT,
 };
 use crate::android_json_runtime::{AndroidHostMode, now_ms};
@@ -25,7 +25,16 @@ pub fn spawn_generated_subagent(
     let subagent_id = record.subagent_id.clone();
     let request_id = record.subagent_request_id.clone();
     let account_fence = record.account_fence.clone();
-    let model = "default".to_string();
+    let Some(frozen_turn) = record.frozen_turn.clone() else {
+        return Err("generated subagent launch is missing frozen turn configuration".into());
+    };
+    if frozen_turn.provider_id != "android-host-inference"
+        || frozen_turn.model_id.trim().is_empty()
+        || frozen_turn.summarization_binding_id != "android-host-inference:same-provider"
+    {
+        return Err("generated subagent frozen provider configuration is unsupported".into());
+    }
+    let model = frozen_turn.model_id.clone();
 
     thread::Builder::new()
         .name(format!(
@@ -80,13 +89,38 @@ pub fn spawn_generated_subagent(
                     }
                 };
 
+                let summarization_token = bearer_token.clone();
+                let summarization_cancelled = Arc::clone(&cancelled);
+                let summarization_mode = match mode {
+                    AndroidHostMode::Test => AndroidInferenceMode::Test,
+                    AndroidHostMode::Production => AndroidInferenceMode::Production,
+                };
                 let summarization: super::ProductionTurnSummarizationPrompt = Arc::new(
-                    |_system, _user, _cancel| {
-                        Err(ProviderFailure::new(
-                            "generated subagent summarization is not available on this provider path",
-                        ))
+                    move |system, user, should_cancel| {
+                        AndroidHostInferenceProvider::run_summarization_prompt(
+                            summarization_mode,
+                            summarization_token.clone(),
+                            Arc::clone(&summarization_cancelled),
+                            system,
+                            user,
+                            should_cancel,
+                        )
                     },
                 );
+                let frozen_privacy = frozen_turn.privacy_mode.clone();
+                let privacy = Arc::new(move || {
+                    Some(match frozen_privacy.as_str() {
+                        "no-storage" => ProductionTurnPrivacyMode::NoStorage,
+                        "no-training" => ProductionTurnPrivacyMode::NoTraining,
+                        "usage-data-training-allowed" => {
+                            ProductionTurnPrivacyMode::UsageDataTrainingAllowed
+                        }
+                        "usage-codebase-training-allowed" => {
+                            ProductionTurnPrivacyMode::UsageCodebaseTrainingAllowed
+                        }
+                        _ => ProductionTurnPrivacyMode::Unspecified,
+                    })
+                });
                 let build = ProductionTurnAgentBuildBindings::new(
                     ProductionTurnAgentStaticConfig {
                         model_id: model.clone(),
@@ -98,7 +132,7 @@ pub fn spawn_generated_subagent(
                         sand_send_message_delivery_owed: false,
                         transcripts_folder_available: false,
                     },
-                    Arc::new(|| Some(ProductionTurnPrivacyMode::NoStorage)),
+                    privacy,
                     summarization,
                 );
 
