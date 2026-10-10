@@ -5,7 +5,7 @@
     "desktop_commit": "3bc92400826cc4ca7ac665b467708e22261edc61",
     "android_repository": "fabu-android/fabushi-android",
     "android_pr": 3,
-    "android_head_at_update": "0e46404f9ac2726f7415b9dc6e7bf425c356a4b1",
+    "android_head_at_update": "cbadacbde6c4bfcc16c66a04c78323f83be7c227",
     "status": "incomplete",
     "note": "Persistent human-reviewed responsibility ledger for Desktop main. Rows are responsibility-level source facts; mapped/implemented never imply verified. Verification requires same-exact-HEAD source implementation, production wiring, CI/package and device evidence."
   },
@@ -5198,6 +5198,141 @@
       "artifact": null,
       "verification_status": "not-verified",
       "notes": "Mapped conservatively from exact Desktop source. Existing Host/ViewModel mutation methods do not by themselves prove full user-visible Agent row/editor/delete UI parity."
+    },
+    {
+      "responsibility_id": "MSG-FORWARD-PRESENTATION-ANDROID-001",
+      "domain": "messaging",
+      "desktop_sources": [
+        {
+          "path": "frontend/src/production/ForwardMessageDialog.tsx",
+          "blob_sha": "45b4031d4e9a9081ec3e3987d77b7128add050c5",
+          "symbols": [
+            "ForwardMessageDialog",
+            "searchRecipients",
+            "forwardMessage",
+            "ForwardSettlement",
+            "createForwardRequestId"
+          ]
+        }
+      ],
+      "source_commit": "3bc92400826cc4ca7ac665b467708e22261edc61",
+      "responsibility": "Present forward-message recipient search/selection and settlement while delegating the canonical forward side effect to the messaging owner with stable mutation identity and without duplicating message truth in UI.",
+      "source_owner": "Desktop ForwardMessageDialog over production messaging forward/search APIs",
+      "direct_callers": [
+        "ProductionRenderer transcript message actions"
+      ],
+      "downstream_dependencies": [
+        "conversation recipient search",
+        "canonical forwardMessage command",
+        "message projection/settlement"
+      ],
+      "state_owner": "Presentation owns query/selection/dialog progress only; messaging repository owns the forwarded message and delivery result.",
+      "persistent_state": [
+        "forwarded destination message is canonical messaging state; dialog selection/query is ephemeral"
+      ],
+      "protocol_wire_contract": [
+        "sourceConversationId",
+        "source messageId/entryId",
+        "destinationConversationId(s)",
+        "stable client mutation id",
+        "forward settlement"
+      ],
+      "visible_effect": "User can choose valid destination conversations, forward a message, see partial/failed settlement, and avoid duplicate forwards from UI retries.",
+      "failure_behavior": [
+        "protected content and inaccessible destinations fail closed in Host",
+        "failed destinations remain visibly failed",
+        "UI must not infer success from timeout"
+      ],
+      "cancellation_behavior": "closing/cancelling before dispatch produces no forward side effect; after dispatch, uncertain outcome must be reconciled by canonical messaging state rather than replayed.",
+      "retry_semantics": "recipient search may retry observation; forwarding must use stable identity/reconciliation and no blind mutation retry.",
+      "idempotency_semantics": "stable client message/mutation identity prevents duplicate destination messages.",
+      "process_death_recovery": "dialog may close; canonical destination message state reloads from messaging persistence without reissuing forward.",
+      "account_fencing": "source/destination access and actor identity are validated by current messaging owner.",
+      "security_boundary": "Presentation cannot bypass access/protected-content checks or write destination messages directly.",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "source/host/src/messaging_service.rs",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/presentation/MessagingViewModel.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/production/ProductionRenderer_view.kt"
+      ],
+      "android_owner": "Rust AndroidMessagingService canonical command owner + native MessagingViewModel/Compose interaction",
+      "platform_delta": "Desktop modal/multi-select keyboard interaction becomes native Compose selection/search. Host access, protected-content, stable mutation and durable forward semantics remain mandatory.",
+      "implementation_status": "mapped",
+      "production_wiring": "Host forwardMessage is durable and validates source/destination access, protected content and bounded clientMessageId; MessagingViewModel exposes a production forward command. Native UI currently forwards to one destination at a time and does not yet prove Desktop-equivalent multi-recipient search, drop-captions/drop-sender options, stable cross-destination request identity or per-destination settlement.",
+      "unit_test": "Rust messaging tests cover forward persistence/reopen; focused native recipient/selection/settlement tests remain required.",
+      "contract_test": "required for duplicate/stable client identity, protected content, destination access and partial multi-destination settlement",
+      "integration_test": "required through native conversation message action -> recipient UI -> Host forward -> canonical projection",
+      "packaged_test": "required on final release for multi-recipient forward success/failure and restart",
+      "device_test": "required for keyboard/back/accessibility and process recreation where applicable",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Mapped only. Existing single-destination Android command is not sufficient to claim Desktop ForwardMessageDialog parity."
+    },
+    {
+      "responsibility_id": "UI-PRODUCTION-COMPOSITION-ANDROID-001",
+      "domain": "ui-runtime-composition",
+      "desktop_sources": [
+        {
+          "path": "frontend/src/production/ProductionRenderer.tsx",
+          "blob_sha": "af8a83a8dd7cf1444474889ce3e64fe796a7d458",
+          "symbols": [
+            "ProductionRenderer",
+            "shipping root composition",
+            "Coordinator client wiring",
+            "conversation/Agent/settings/plugins/computer overlays"
+          ]
+        }
+      ],
+      "source_commit": "3bc92400826cc4ca7ac665b467708e22261edc61",
+      "responsibility": "Compose the shipping product surface from canonical account, messaging, Agent, MCP/Mini App, settings, notification, automation and Remote owners without creating renderer-owned duplicate canonical state or a legacy web production path.",
+      "source_owner": "Desktop ProductionRenderer root composition",
+      "direct_callers": [
+        "Desktop renderer bootstrap"
+      ],
+      "downstream_dependencies": [
+        "Coordinator/Host typed client",
+        "all shipping domain projections",
+        "navigation/overlays",
+        "conversation/Agent surfaces"
+      ],
+      "state_owner": "Root renderer owns only route/dialog/focus/transient presentation state; each domain canonical state remains with its service/Host owner.",
+      "persistent_state": [
+        "none owned by root composition; domain stores persist canonical state"
+      ],
+      "protocol_wire_contract": [
+        "typed domain commands/events only; no direct storage mutation"
+      ],
+      "visible_effect": "Shipping app exposes the full product as one coherent native surface with account-safe navigation and domain projections.",
+      "failure_behavior": [
+        "missing production runtime/domain owner is surfaced rather than silently falling back to fixture/legacy web state",
+        "domain errors remain attributable to their owner"
+      ],
+      "cancellation_behavior": "presentation teardown unsubscribes observers; durable runs/tools remain governed by Coordinator/Host cancellation contracts.",
+      "retry_semantics": "root UI may refresh/reconnect projections but cannot blind-retry domain side effects.",
+      "idempotency_semantics": "root composition does not own mutation identities; domain stable IDs/reconciliation remain authoritative.",
+      "process_death_recovery": "Android recreates Activity/Compose presentation and reconnects to durable Coordinator/Host/domain state.",
+      "account_fencing": "all projected account-scoped state is rebound through current Coordinator/Host account identity; stale callbacks are rejected downstream.",
+      "security_boundary": "Compose accesses Host only through typed AndroidCoordinatorPort/JNI; WebView remains isolated to Mini App surfaces.",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "mobile/android/app/src/main/java/com/ombhrum/fabushi/MainActivity.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/production/ProductionRenderer_view.kt",
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/coordinator/AndroidCoordinatorRuntime.kt",
+        "source/android-preload/src/main/kotlin/com/ombhrum/fabushi/androidpreload/runtime/AndroidCoordinatorPort.kt",
+        "source/android-host-jni/src/lib.rs"
+      ],
+      "android_owner": "Native Activity/Compose production renderer + process-scoped Coordinator runtime",
+      "platform_delta": "Electron/React renderer composition becomes native Activity/Compose/navigation with typed Kotlin/JNI; DOM/Electron overlays and browser mechanics are replaced by Android-native equivalents.",
+      "implementation_status": "mapped",
+      "production_wiring": "Native production composition and typed Coordinator/JNI path exist and multiple domains are wired, but the Desktop ProductionRenderer aggregates a much broader shipping closure than current proof. Full settings/plugins/computer/forward/search/sidebar/group/channel/automation and all overlay semantics still require per-responsibility closure plus packaged/device acceptance.",
+      "unit_test": "existing native model/surface tests are partial",
+      "contract_test": "architecture gate checks typed bridge/no bypass; full root composition responsibility remains open",
+      "integration_test": "required across all final native production routes with canonical domain owners",
+      "packaged_test": "required final signed APK/AAB end-to-end shipping surface",
+      "device_test": "required install/launch/login/navigation/process-death/restart/upgrade and all applicable domain journeys",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Aggregate source row remains mapped by design; its child responsibilities must close independently before this can be considered complete."
     }
   ],
   "traceability": {
