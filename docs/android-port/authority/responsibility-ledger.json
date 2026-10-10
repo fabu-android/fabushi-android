@@ -3066,6 +3066,90 @@
       "artifact": null,
       "verification_status": "not-verified",
       "notes": "Historical Desktop restoration paths are not current source facts. Replacement is implemented but remains not-verified until final exact-head source closure/package/device gates."
+    },
+    {
+      "responsibility_id": "APP-AGENT-SURFACE-ANDROID-001",
+      "domain": "remote",
+      "desktop_sources": [
+        {
+          "path": "chatgpt-vps-control/lib/app-agent-surface-client.d.ts",
+          "blob_sha": "bd318104e09985c448ac867c3a8fda33545ae318",
+          "symbols": [
+            "AppAgentSurfaceClient",
+            "AppAgentSurfaceUnavailableError",
+            "createAppAgentSurfaceClient"
+          ]
+        },
+        {
+          "path": "chatgpt-vps-control/lib/app-agent-surface-client.js",
+          "blob_sha": "587aff30570ecfc59a989e41108a6f4d1c4e7505",
+          "symbols": [
+            "createAppAgentSurfaceClient",
+            "discovery",
+            "call",
+            "status"
+          ]
+        }
+      ],
+      "source_commit": "3bc92400826cc4ca7ac665b467708e22261edc61",
+      "responsibility": "Expose the running Fabushi application's bounded semantic App Agent Surface with status/snapshot/find/action/wait/assert operations, stale-generation fencing, sensitive-value redaction, bounded requests/results, authenticated access and deterministic unavailable/error behavior.",
+      "source_owner": "Desktop chatgpt-vps-control App Agent Surface client + Desktop private loopback bridge",
+      "direct_callers": [
+        "Desktop packaged App Agent Surface E2E",
+        "external Fabushi App MCP/device automation clients"
+      ],
+      "downstream_dependencies": [
+        "semantic UI projection",
+        "private/authenticated transport",
+        "generation/ref identity",
+        "remote command lifecycle"
+      ],
+      "state_owner": "Desktop private App Agent Surface publication; Android native FabushiAppAgentSurface plus account-scoped FabushiRemoteDeviceGateway",
+      "persistent_state": [
+        "Android remote command request identity and terminal/outcome-unknown journal; semantic generation is current-process UI state"
+      ],
+      "protocol_wire_contract": [
+        "fabushi.app.status",
+        "fabushi.app.snapshot",
+        "fabushi.app.find",
+        "fabushi.app.action",
+        "fabushi.app.wait",
+        "fabushi.app.assert"
+      ],
+      "visible_effect": "Authorized automation can inspect and operate the current Fabushi UI by stable semantic identifiers without screenshots, arbitrary reflection, JavaScript injection or shell execution.",
+      "failure_behavior": [
+        "unknown tools fail closed",
+        "stale generation/ref rejected",
+        "sensitive direct value writes rejected",
+        "invalid/expired device session rejected",
+        "duplicate in-flight or mismatched request identity rejected"
+      ],
+      "cancellation_behavior": "Gateway disconnect cancels active jobs; pending side-effect commands become outcome-unknown instead of being blindly replayed.",
+      "retry_semantics": "Terminal requests replay the recorded result; uncertain pending side effects require reconciliation.",
+      "idempotency_semantics": "Remote requestId is fenced by device/session/tool identity; exact terminal duplicates replay and mismatches fail closed.",
+      "process_death_recovery": "RemoteCommandJournal reopens pending commands as outcome-unknown; semantic UI is republished by the current native screen rather than replaying old UI actions.",
+      "account_fencing": "FabushiRemoteDeviceGateway obtains the account-scoped device Agent session through the typed Coordinator port and reconnects/fences on session changes.",
+      "security_boundary": "Desktop's private loopback discovery file is not copied to Android. Android publishes only the six typed fabushi.app.* semantic tools through an authenticated account/device WebSocket; the native surface exposes allowlisted actions and never arbitrary Kotlin/Java reflection, shell or WebView bridge authority.",
+      "android_disposition": "not-applicable-with-replacement",
+      "android_target": [
+        "source/android-preload/src/main/kotlin/com/ombhrum/fabushi/androidpreload/semantic/FabushiAppAgentSurface.kt",
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/remote/FabushiRemoteDeviceGateway.kt",
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/remote/RemoteCommandJournal.kt",
+        "mobile/android/app/src/test/java/com/ombhrum/fabushi/FabushiAppAgentSurfaceTest.kt",
+        "mobile/android/app/src/test/java/com/ombhrum/fabushi/RemoteCommandJournalTest.kt"
+      ],
+      "android_owner": "source/android-preload/src/main/kotlin/com/ombhrum/fabushi/androidpreload/semantic/FabushiAppAgentSurface.kt",
+      "platform_delta": "Desktop uses a private local loopback HTTP discovery file/token for an external Node client. Android has no reason to publish a private filesystem discovery endpoint; it replaces that mechanism with a native semantic surface exposed through the existing authenticated account-scoped device gateway. The user capability and six semantic operations are preserved, while transport/discovery are Android-adapted.",
+      "implementation_status": "implemented",
+      "production_wiring": "FabushiRemoteDeviceGateway registers exactly FabushiAppAgentSurface.ToolNames after obtaining the typed account-scoped device Agent session. Calls are admitted through RemoteCommandJournal, dispatched on the Android main thread to the native semantic surface, and terminal results are journaled before wire reply. Surface action requires exact generation, stable agentId/ref and an allowlisted action; semantic elements do not carry sensitive values.",
+      "unit_test": "FabushiAppAgentSurfaceTest covers tool names, stale generation, sensitive write rejection, find/assert/wait; RemoteCommandJournalTest covers terminal duplicate replay, session mismatch, process-restart outcome-unknown and disconnect settlement.",
+      "contract_test": "Desktop app-agent-surface client + packaged E2E contract was read at Desktop 3bc9240; Android exact-head Gradle/Rust architecture gates pending.",
+      "integration_test": "Android gateway invokes the native surface and publishes the six exact fabushi.app.* names; protected end-to-end device gateway acceptance remains pending.",
+      "packaged_test": "required on final exact-head minified APK/AAB",
+      "device_test": "required with protected account/device gateway",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Implementation is present and the Desktop-only loopback discovery mechanism is intentionally replaced, not copied. Current exact-head CI/package/protected-device evidence is still pending, so this responsibility is not verified."
     }
   ],
   "traceability": {
