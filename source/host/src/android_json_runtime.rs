@@ -7029,11 +7029,11 @@ export function apply(ctx) {
 
     #[test]
     fn root_agent_management_routes_through_feature_execute_provider_and_replays_after_reopen() {
-        let root = std::env::temp_dir().join(format!(
-            "fabushi-agent-management-provider-{}-{}",
-            std::process::id(),
-            now_ms()
-        ));
+        // This test intentionally reopens the same durable Host state. Own a pre-created,
+        // unique directory for the whole test instead of relying on one of the stores to
+        // create a process/time-derived parent as an incidental side effect.
+        let root_owner = tempfile::tempdir().unwrap();
+        let root = root_owner.path();
         let run_send = |host: &mut AndroidJsonHost, request_id: &str| {
             let accepted = host
                 .dispatch(
