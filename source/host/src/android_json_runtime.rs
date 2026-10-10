@@ -795,6 +795,7 @@ impl AndroidJsonHost {
             "feature.account.fence" => Ok(json!({"accountFence":self.current_turn_account_fence()?})),
             "feature.account.sandAccess" => self.account_sand_access(),
             "feature.account.privacyMode" => Ok(self.account_privacy_mode()),
+            "feature.account.teamRules" => self.account_team_rules(),
             "feature.remote.binding.status" => Ok(self.remote_binding_status()),
             "feature.auth.deviceAgentSession" => Ok(self.device_agent_session()),
             "feature.auth.providers" => Ok(json!([
@@ -1420,6 +1421,18 @@ impl AndroidJsonHost {
                 .unwrap_or("unknown"),
         };
         json!({"mode":mode})
+    }
+
+    fn account_team_rules(&self) -> Result<Value, String> {
+        let rules = match self.mode {
+            AndroidHostMode::Test => Vec::new(),
+            AndroidHostMode::Production => self
+                .mcp_dashboard_backend
+                .as_ref()
+                .ok_or("managed team rules backend is unavailable")?
+                .resolve_sand_team_rules()?,
+        };
+        Ok(json!({"rules": rules}))
     }
 
     fn automation_upsert(&mut self, params: &Value) -> Result<Value, String> {
