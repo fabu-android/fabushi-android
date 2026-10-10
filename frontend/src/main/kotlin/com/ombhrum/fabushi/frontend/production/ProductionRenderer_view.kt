@@ -317,6 +317,7 @@ internal fun ProductionRenderer(
                         onChatDraftChange = model::setChatDraft,
                         onSendChat = model::sendChat,
                         onStopChat = model::stopChat,
+                        onMarkAssistantRead = model::markAssistantRead,
                     )
                 }
             }
