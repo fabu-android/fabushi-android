@@ -21,7 +21,6 @@ struct ActiveAgentTurn {
     operation_id: String,
     account_fence: String,
     cancelled: Arc<AtomicBool>,
-    turn_interruptions: Arc<AgentTurnInterruptionRegistry>,
 }
 
 #[derive(Default)]
