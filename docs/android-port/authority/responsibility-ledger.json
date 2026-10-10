@@ -5,7 +5,7 @@
     "desktop_commit": "3bc92400826cc4ca7ac665b467708e22261edc61",
     "android_repository": "fabu-android/fabushi-android",
     "android_pr": 3,
-    "android_head_at_update": "9ad06a14fd096cd1cba64b812a4b0e8d644e8fb8",
+    "android_head_at_update": "1517895838e311a76c8855abebcd4c61973d9220",
     "status": "incomplete",
     "note": "Persistent human-reviewed responsibility ledger for Desktop main. Rows are responsibility-level source facts; mapped/implemented never imply verified. Verification requires same-exact-HEAD source implementation, production wiring, CI/package and device evidence."
   },
@@ -923,6 +923,14 @@
           "symbols": [
             "commerce quote/purchase/entitlement worker APIs"
           ]
+        },
+        {
+          "path": "docs/adr/FBCP-ADR-002-payment-settlement.md",
+          "blob_sha": "349f42dbfbba7629f3491e13524dd5fd22b14380",
+          "symbols": [
+            "PaymentSettlement owner decision",
+            "settlement lifecycle/reconciliation/security requirements"
+          ]
         }
       ],
       "source_commit": "3bc92400826cc4ca7ac665b467708e22261edc61",
@@ -969,7 +977,7 @@
       "device_test": "required on emulator/physical device as applicable",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "COMMERCE-IDEMPOTENCY-JOURNAL-001 closes crash-safe stable purchase identity for the shipping Global Dharma server path. Full Play Billing purchase token reconciliation, refund/revoke handling and packaged account-switch evidence remain open."
+      "notes": "COMMERCE-IDEMPOTENCY-JOURNAL-001 closes crash-safe stable purchase identity for the shipping Global Dharma server path. Full Play Billing purchase token reconciliation, refund/revoke handling and packaged account-switch evidence remain open. Desktop FBCP-ADR-002 is explicitly proposed/no production implementation, so this row remains mapped rather than verified. Android must preserve a canonical settlement owner distinct from UI/transcript, durable terminal settlement, account fencing, provider reconciliation, cancellation/refund/reversal semantics, and fail-closed production rails."
     },
     {
       "responsibility_id": "NAVIGATION-NATIVE-001",
@@ -1738,6 +1746,14 @@
           "symbols": [
             "commerce quote/purchase/entitlement worker APIs"
           ]
+        },
+        {
+          "path": "docs/adr/FBCP-ADR-002-payment-settlement.md",
+          "blob_sha": "349f42dbfbba7629f3491e13524dd5fd22b14380",
+          "symbols": [
+            "PaymentSettlement owner decision",
+            "settlement lifecycle/reconciliation/security requirements"
+          ]
         }
       ],
       "source_commit": "3bc92400826cc4ca7ac665b467708e22261edc61",
@@ -1790,7 +1806,7 @@
       "device_test": "Play Billing physical-device/license-tester evidence still required.",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Implemented for shipping Global Dharma canonical-server path; does not by itself close Play Billing token/restore/refund/revoke lifecycle."
+      "notes": "Implemented for shipping Global Dharma canonical-server path; does not by itself close Play Billing token/restore/refund/revoke lifecycle. FBCP-ADR-002 strengthens the idempotency/recovery requirement: provider-accepted-but-locally-unsettled operations must reconcile after crash and must never be blindly resubmitted. Current CommerceOperationJournal covers stable scoped idempotency and confirmation only; broader settlement/reversal/reconciliation remains open."
     },
     {
       "responsibility_id": "AUTOMATION-DURABLE-RUN-001",
