@@ -3,6 +3,7 @@
 pub mod cli;
 #[allow(special_module_name)]
 pub mod main;
+pub mod deployment_contract;
 pub mod server;
 pub mod transport;
 
