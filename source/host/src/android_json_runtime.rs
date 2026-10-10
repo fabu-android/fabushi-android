@@ -793,6 +793,12 @@ impl AndroidJsonHost {
             }
         }
 
+        let account_fence = self.current_turn_account_fence().ok();
+        let messaging = self
+            .messaging
+            .lock()
+            .map_err(|_| "canonical Android messaging owner lock poisoned".to_string())?;
+
         Ok(agents
             .into_iter()
             .map(|agent| {
@@ -811,9 +817,16 @@ impl AndroidJsonHost {
                         "isRunning".into(),
                         Value::Bool(running_agents.contains(&agent.id)),
                     );
-                    // No second owner: these remain conservative until Host has explicit
-                    // agent-to-agent and awaiting-user canonical events.
-                    object.insert("conversationPartnerIds".into(), Value::Array(Vec::new()));
+                    let partners = account_fence
+                        .as_deref()
+                        .map(|fence| messaging.agent_conversation_partner_ids(fence, &agent.id))
+                        .unwrap_or_default()
+                        .into_iter()
+                        .map(Value::String)
+                        .collect();
+                    object.insert("conversationPartnerIds".into(), Value::Array(partners));
+                    // No second owner: awaiting-user remains conservative until Host has an
+                    // explicit durable waiting-user event/state owner.
                     object.insert("awaitingUserResponse".into(), Value::Bool(false));
                 }
                 value
