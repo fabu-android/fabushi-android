@@ -15,6 +15,104 @@ use std::sync::{
 };
 use std::thread;
 
+struct ParentSubagentRoutedTools {
+    mode: AndroidHostMode,
+    bearer_token: Option<String>,
+    owner: Arc<Mutex<DurableSubagentOwner>>,
+    bridge: SubagentToolBridge,
+    context: SubagentToolContext,
+    events: Arc<Mutex<VecDeque<Value>>>,
+    allowed_names: BTreeSet<String>,
+}
+
+impl AndroidRoutedToolBridge for ParentSubagentRoutedTools {
+    fn list_tools(&self) -> Result<Vec<Value>, String> {
+        Ok(self
+            .bridge
+            .tool_definitions(&self.context)
+            .into_iter()
+            .filter(|definition| {
+                definition
+                    .get("name")
+                    .and_then(Value::as_str)
+                    .is_some_and(|name| self.allowed_names.contains(name))
+            })
+            .map(|definition| {
+                json!({
+                    "type":"function",
+                    "name":definition.get("name").cloned().unwrap_or(Value::Null),
+                    "description":definition.get("description").cloned().unwrap_or_else(|| Value::String(String::new())),
+                    "parameters":definition.get("inputSchema").cloned().unwrap_or_else(|| json!({"type":"object"})),
+                })
+            })
+            .collect())
+    }
+
+    fn call_tool(&self, name: &str, args: Value, tool_call_id: &str) -> Result<Value, String> {
+        if !self.allowed_names.contains(name) {
+            return Err(format!("parent subagent routed tool is unavailable for this turn: {name}"));
+        }
+        let result = self
+            .bridge
+            .call(name, &args, tool_call_id, &self.context, now_ms())?;
+        let Some(launch) = result.launch else {
+            return Ok(result.value);
+        };
+        if let Err(error) = spawn_generated_subagent(
+            self.mode,
+            self.bearer_token.clone(),
+            Arc::clone(&self.owner),
+            self.bridge.clone(),
+            Arc::clone(&self.events),
+            launch.clone(),
+        ) {
+            let epoch = self
+                .owner
+                .lock()
+                .map_err(|_| "subagent owner lock poisoned".to_string())?
+                .process_epoch();
+            let _ = self
+                .owner
+                .lock()
+                .map_err(|_| "subagent owner lock poisoned".to_string())?
+                .settle(
+                    &launch.record.subagent_id,
+                    &self.context.account_fence,
+                    epoch,
+                    SubagentRunOutcome::Failed(error.clone()),
+                    now_ms(),
+                );
+            return Err(error);
+        }
+        Ok(result.value)
+    }
+}
+
+pub fn build_parent_subagent_routed_tools(
+    mode: AndroidHostMode,
+    bearer_token: Option<String>,
+    owner: Arc<Mutex<DurableSubagentOwner>>,
+    bridge: SubagentToolBridge,
+    events: Arc<Mutex<VecDeque<Value>>>,
+    context: SubagentToolContext,
+) -> Arc<dyn AndroidRoutedToolBridge> {
+    let allowed_names = context
+        .frozen_turn
+        .tool_names
+        .iter()
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    Arc::new(ParentSubagentRoutedTools {
+        mode,
+        bearer_token,
+        owner,
+        bridge,
+        context,
+        events,
+        allowed_names,
+    })
+}
+
 struct GeneratedSubagentRoutedTools {
     bridge: SubagentToolBridge,
     context: SubagentToolContext,
