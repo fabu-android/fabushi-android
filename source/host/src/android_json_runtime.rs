@@ -6310,7 +6310,7 @@ export function apply(ctx) {
         assert_eq!(row["lastMessage"], "canonical latest message");
         assert_eq!(row["isRunning"], true);
         assert_eq!(row["conversationPartnerIds"], json!([partner.id.clone()]));
-        assert_eq!(row["awaitingUserResponse"], false);
+        assert_eq!(row["awaitingUserResponse"], Value::Null);
         assert!(row["updatedAt"].as_u64().unwrap() >= 200);
 
         host.active_operations.remove("projection-op");
