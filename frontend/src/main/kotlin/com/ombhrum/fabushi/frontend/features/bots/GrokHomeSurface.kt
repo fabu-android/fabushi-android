@@ -51,6 +51,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.ombhrum.fabushi.androidpreload.runtime.AccountAccessBlockReason
+import com.ombhrum.fabushi.androidpreload.runtime.AccountAccessProjection
 import kotlin.math.absoluteValue
 import kotlin.math.sin
 
@@ -61,10 +63,12 @@ internal val GrokMobileMuted = Color(0xFF8B8B8B)
 @Composable
 fun GrokHomeSurface(
     accountName: String,
+    accessProjection: AccountAccessProjection,
     messagingState: MessagingUiState,
     botState: MobileBotUiState,
     appAgentSurface: FabushiAppAgentSurface,
     onOpenMessaging: () -> Unit,
+    onRefreshAccess: () -> Unit,
     onOpenAgentNetwork: () -> Unit,
     onOpenCommandPalette: () -> Unit,
     onRefreshBots: () -> Unit,
@@ -455,6 +459,25 @@ fun GrokHomeSurface(
                     }
                 }
             }
+            if (accessProjection.mayShowAccessNotice) {
+                item {
+                    Column(
+                        Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 18.dp, vertical = 8.dp)
+                            .background(Color(0xFFFFF1E8), RoundedCornerShape(18.dp))
+                            .padding(16.dp)
+                            .testTag("account-access-notice"),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Text("账号访问暂不可用", color = GrokMobileInk, fontWeight = FontWeight.Bold)
+                        Text(accountAccessReasonCopy(accessProjection.blockReason), color = GrokMobileMuted, fontSize = 12.sp)
+                        Button(onClick = onRefreshAccess, modifier = Modifier.testTag("account-access-retry")) {
+                            Text("重新检查")
+                        }
+                    }
+                }
+            }
             item {
                 Column(
                     Modifier.fillMaxWidth().padding(top = 30.dp, bottom = 34.dp),
@@ -623,3 +646,17 @@ fun GrokHomeSurface(
     }
 }
 
+
+
+private fun accountAccessReasonCopy(reason: AccountAccessBlockReason): String = when (reason) {
+    AccountAccessBlockReason.TEAM_PRIVACY_MODE -> "当前团队隐私策略不允许使用此能力。"
+    AccountAccessBlockReason.TEAM_SETUP_REQUIRED -> "团队需要先完成设置。"
+    AccountAccessBlockReason.TEAM_ACCESS_REQUIRED -> "当前账号还没有团队访问权限。"
+    AccountAccessBlockReason.NOT_OFFERED -> "当前账号暂未提供此能力。"
+    AccountAccessBlockReason.FREE_TRIAL_AVAILABLE -> "当前账号可先完成试用或权益开通。"
+    AccountAccessBlockReason.PAYWALL_INDIVIDUAL,
+    AccountAccessBlockReason.PAYWALL_TEAM_MEMBER,
+    AccountAccessBlockReason.PAYWALL_TEAM_ADMIN -> "当前账号需要完成对应权益开通。"
+    AccountAccessBlockReason.NONE,
+    AccountAccessBlockReason.UNSPECIFIED -> "当前访问决定需要由账号服务重新确认。"
+}

@@ -2,6 +2,14 @@ package com.ombhrum.fabushi.androidmain.coordinator
 
 import android.app.Application
 import android.os.StatFs
+import com.ombhrum.fabushi.androidpreload.runtime.AccountAccessBlockReason
+import com.ombhrum.fabushi.androidpreload.runtime.AccountAccessProjection
+import com.ombhrum.fabushi.androidpreload.runtime.AccountAccessState
+import com.ombhrum.fabushi.androidpreload.runtime.AccountEntitlementState
+import com.ombhrum.fabushi.androidpreload.runtime.AccountPaymentState
+import com.ombhrum.fabushi.androidpreload.runtime.AccountRebuildState
+import com.ombhrum.fabushi.androidpreload.runtime.AccountRecoveryState
+import com.ombhrum.fabushi.androidpreload.runtime.AccountTruthState
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidCoordinatorPort
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidMcpOAuthCompletion
 import com.ombhrum.fabushi.core.MahayanaHost
@@ -29,6 +37,9 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
     private val processRuntime = CoordinatorProcessRuntime(epochStore)
     val processGeneration: Long = processRuntime.start()
     private val host = MahayanaHost(application, processGeneration = processGeneration)
+    private val accountAccessOwner = AccountAccessProjectionOwner(
+        SharedPreferencesAccountAccessEpochStore(application),
+    )
     private val featureEventListeners = CopyOnWriteArrayList<(JSONObject) -> Unit>()
     private val eventPumpRunning = AtomicBoolean(false)
     private val lastEventSequence = AtomicLong(0L)
@@ -121,13 +132,129 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
         )
     }
 
-    override fun authStatus() = host.request("feature.auth.status")
+    override fun authStatus(): JSONObject =
+        host.request("feature.auth.status").also(::observeAccountAccessAuth)
+
+    override fun accountAccessProjection(): AccountAccessProjection {
+        val auth = authStatus()
+        val token = accountAccessOwner.beginRefresh()
+        if (!auth.optBoolean("loggedIn", false)) {
+            return accountAccessOwner.settle(
+                token,
+                AccountAccessFacts(
+                    loggedIn = false,
+                    sessionSettled = true,
+                    recoveryState = AccountRecoveryState.READY,
+                ),
+            )
+        }
+
+        val failures = mutableListOf<String>()
+        val privacyMode = runCatching {
+            host.request("feature.account.privacyMode").optString("mode", "unknown")
+        }.getOrElse { error ->
+            failures += "privacy:" + (error.message ?: error::class.java.simpleName)
+            "unknown"
+        }
+        val remote = runCatching { host.request("feature.remote.binding.status") }.getOrElse { error ->
+            failures += "remote:" + (error.message ?: error::class.java.simpleName)
+            null
+        }
+        val remoteReady = remote?.optBoolean("ready", false) == true
+        val remoteHasDesktop = remoteReady && remote?.optBoolean("hasDesktop", false) == true
+
+        var entitlementState = AccountEntitlementState.UNKNOWN
+        var entitlementReason: String? = null
+        var paymentState = AccountPaymentState.UNKNOWN
+        runCatching {
+            host.request(
+                "platform.request",
+                JSONObject()
+                    .put("method", "GET")
+                    .put("path", "/v1/plugins/global-dharma/entitlements/local.prayer-wheel.start")
+                    .put("authenticated", true),
+            )
+        }.onSuccess { response ->
+            val access = response.optJSONObject("data")?.optJSONObject("access")
+            if (access == null) {
+                failures += "entitlement:missing-access-decision"
+            } else {
+                entitlementReason = access.optString("reason").trim().takeIf(String::isNotEmpty)
+                val allowed = access.optBoolean("allowed", false)
+                entitlementState = when {
+                    allowed -> AccountEntitlementState.GRANTED
+                    entitlementReason?.lowercase()?.let { "revok" in it || "refund" in it } == true ->
+                        AccountEntitlementState.REVOKED
+                    else -> AccountEntitlementState.DENIED
+                }
+                paymentState = when {
+                    allowed -> AccountPaymentState.SETTLED
+                    entitlementReason?.lowercase()?.contains("pending") == true -> AccountPaymentState.PENDING
+                    entitlementState == AccountEntitlementState.DENIED -> AccountPaymentState.REQUIRED
+                    else -> AccountPaymentState.UNKNOWN
+                }
+            }
+        }.onFailure { error ->
+            failures += "entitlement:" + (error.message ?: error::class.java.simpleName)
+            paymentState = AccountPaymentState.OUTCOME_UNKNOWN
+        }
+
+        return accountAccessOwner.settle(
+            token,
+            AccountAccessFacts(
+                loggedIn = true,
+                // Desktop GetSandAccessStatus and full team-policy projection are not yet wired.
+                // Unknown stays fail-closed rather than being inferred from login/payment.
+                sandAccessState = AccountAccessState.UNKNOWN,
+                blockReason = AccountAccessBlockReason.UNSPECIFIED,
+                authorizationState = AccountTruthState.UNKNOWN,
+                paymentState = paymentState,
+                entitlementState = entitlementState,
+                entitlementReason = entitlementReason,
+                privacyMode = privacyMode,
+                teamPolicyState = AccountTruthState.UNKNOWN,
+                remoteReady = remoteReady,
+                remoteHasDesktop = remoteHasDesktop,
+                sessionSettled = true,
+                rebuildState = when {
+                    remote == null -> AccountRebuildState.OUTCOME_UNKNOWN
+                    remoteReady -> AccountRebuildState.IDLE
+                    else -> AccountRebuildState.UNKNOWN
+                },
+                recoveryState = when {
+                    failures.isNotEmpty() -> AccountRecoveryState.OUTCOME_UNKNOWN
+                    remoteReady -> AccountRecoveryState.READY
+                    else -> AccountRecoveryState.UNKNOWN
+                },
+                detail = failures.takeIf { it.isNotEmpty() }?.joinToString("; ")?.take(240),
+            ),
+        )
+    }
+
     override fun authDeviceAgentSession() = host.request("feature.auth.deviceAgentSession")
     override fun authBrowserStart() = host.request("feature.auth.browserStart")
     override fun authBrowserReopen(params: JSONObject) = host.request("feature.auth.browserReopen", params)
     override fun authBrowserCancel(params: JSONObject) = host.request("feature.auth.browserCancel", params)
-    override fun authBrowserPoll(params: JSONObject) = host.request("feature.auth.browserPoll", params)
-    override fun authLogout() = host.request("feature.auth.logout")
+    override fun authBrowserPoll(params: JSONObject): JSONObject =
+        host.request("feature.auth.browserPoll", params).also { result ->
+            if (result.optString("status") == "completed") {
+                result.optJSONObject("auth")?.let(::observeAccountAccessAuth)
+            }
+        }
+    override fun authLogout(): JSONObject =
+        host.request("feature.auth.logout").also(::observeAccountAccessAuth)
+
+    private fun observeAccountAccessAuth(auth: JSONObject) {
+        val user = auth.optJSONObject("user")
+        val identity = auth.optString("authId").trim()
+            .ifBlank { user?.optString("id").orEmpty().trim() }
+            .ifBlank { user?.optString("email").orEmpty().trim() }
+            .takeIf(String::isNotEmpty)
+        accountAccessOwner.observeAuth(
+            loggedIn = auth.optBoolean("loggedIn", false),
+            identity = identity,
+        )
+    }
     override fun automationUpsert(params: JSONObject) = host.request("feature.automation.upsert", params)
     override fun automationList(): JSONArray = host.requestValue("feature.automation.list") as? JSONArray ?: JSONArray()
     override fun automationStart(params: JSONObject) = host.request("feature.automation.start", params)

@@ -289,10 +289,12 @@ internal fun ProductionRenderer(
                     Box {
                         GrokHomeSurface(
                             accountName = state.accountName,
+                            accessProjection = state.accountAccessProjection,
                             messagingState = messagingState,
                             botState = botState,
                             appAgentSurface = appAgentSurface,
                             onOpenMessaging = { rendererRoute = RendererRoute.MESSAGING },
+                            onRefreshAccess = model::refreshAccountAccess,
                             onOpenAgentNetwork = { rendererRoute = RendererRoute.AGENT_NETWORK },
                             onOpenCommandPalette = {
                                 botModel.resetPaletteMessageSearch()

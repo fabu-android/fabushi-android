@@ -6,6 +6,7 @@ import androidx.lifecycle.viewModelScope
 import com.ombhrum.fabushi.androidpreload.deeplink.AndroidDeepLink
 import com.ombhrum.fabushi.androidpreload.deeplink.AndroidPresentationDeepLink
 import com.ombhrum.fabushi.androidpreload.deeplink.AuthCompletionStatus
+import com.ombhrum.fabushi.androidpreload.runtime.AccountAccessProjection
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidCoordinatorPort
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -96,6 +97,7 @@ data class MarketplaceUiState(
     val chatBusy: Boolean = false,
     val activeOperationId: String? = null,
     val assistantHasUnread: Boolean = false,
+    val accountAccessProjection: AccountAccessProjection = AccountAccessProjection.initial(),
 )
 
 class MarketplaceViewModel(application: Application) : AndroidViewModel(application) {
@@ -127,6 +129,7 @@ class MarketplaceViewModel(application: Application) : AndroidViewModel(applicat
                     accountName = user?.optString("nickname").orEmpty().ifBlank { user?.optString("username").orEmpty().ifBlank { user?.optString("email").orEmpty().ifBlank { "Fabushi" } } },
                     accountEmail = user?.optString("email").orEmpty(),
                 )
+                refreshAccountAccess()
                 if (mutableState.value.loggedIn) {
                     restoreChatTranscript()
                     refresh()
@@ -262,6 +265,7 @@ class MarketplaceViewModel(application: Application) : AndroidViewModel(applicat
                             loginError = null,
                             message = "登录成功，账号状态已同步",
                         )
+                        refreshAccountAccess()
                         restoreChatTranscript()
                         refresh()
                     }
@@ -296,6 +300,7 @@ class MarketplaceViewModel(application: Application) : AndroidViewModel(applicat
                         chatBusy = false,
                         message = "已退出登录",
                     )
+                    refreshAccountAccess()
                 }
                 .onFailure { error -> mutableState.value = mutableState.value.copy(message = "退出登录失败：${error.message ?: error::class.java.simpleName}") }
         }
@@ -451,6 +456,20 @@ class MarketplaceViewModel(application: Application) : AndroidViewModel(applicat
             current.toMutableList().also { list -> list[index] = list[index].copy(text = if (append) list[index].text + text else text) }
         } else current + MobileChatMessage("assistant:$operationId", MobileChatRole.ASSISTANT, text, operationId = operationId)
         mutableState.value = mutableState.value.copy(chatMessages = next)
+    }
+
+    fun refreshAccountAccess() {
+        viewModelScope.launch {
+            runCatching {
+                withContext(Dispatchers.IO) { coordinator.accountAccessProjection() }
+            }.onSuccess { projection ->
+                mutableState.value = mutableState.value.copy(accountAccessProjection = projection)
+            }.onFailure { error ->
+                mutableState.value = mutableState.value.copy(
+                    message = "账号访问状态刷新失败：" + (error.message ?: error::class.java.simpleName),
+                )
+            }
+        }
     }
 
     fun refresh() {

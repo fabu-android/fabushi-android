@@ -557,6 +557,7 @@ impl AndroidJsonHost {
                 }
             })),
             "feature.auth.status" => self.account_status(),
+            "feature.account.privacyMode" => Ok(self.account_privacy_mode()),
             "feature.remote.binding.status" => Ok(self.remote_binding_status()),
             "feature.auth.deviceAgentSession" => Ok(self.device_agent_session()),
             "feature.auth.providers" => Ok(json!([
@@ -1066,6 +1067,25 @@ impl AndroidJsonHost {
         }
         let (status, mutation) = self.account.public_status()?;
         Ok(with_account_session_mutation(status, mutation))
+    }
+
+    fn account_privacy_mode(&self) -> Value {
+        let mode = match self.mode {
+            AndroidHostMode::Test => "no-storage",
+            AndroidHostMode::Production => self
+                .mcp_dashboard_backend
+                .as_ref()
+                .and_then(|backend| backend.resolve_sand_privacy_mode())
+                .map(|mode| match mode {
+                    BackendSandPrivacyMode::Unspecified => "unspecified",
+                    BackendSandPrivacyMode::NoStorage => "no-storage",
+                    BackendSandPrivacyMode::NoTraining => "no-training",
+                    BackendSandPrivacyMode::UsageDataTrainingAllowed => "usage-data-training-allowed",
+                    BackendSandPrivacyMode::UsageCodebaseTrainingAllowed => "usage-codebase-training-allowed",
+                })
+                .unwrap_or("unknown"),
+        };
+        json!({"mode":mode})
     }
 
     fn automation_upsert(&mut self, params: &Value) -> Result<Value, String> {

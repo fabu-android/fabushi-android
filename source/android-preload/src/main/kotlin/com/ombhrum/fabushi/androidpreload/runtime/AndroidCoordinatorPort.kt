@@ -34,6 +34,7 @@ interface AndroidCoordinatorPort {
     ): AndroidMcpOAuthCompletion
 
     fun authStatus(): JSONObject
+    fun accountAccessProjection(): AccountAccessProjection
     fun authDeviceAgentSession(): JSONObject
     fun authBrowserStart(): JSONObject
     fun authBrowserReopen(params: JSONObject): JSONObject

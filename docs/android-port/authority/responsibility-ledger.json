@@ -244,13 +244,16 @@
         "source/host/src/android_json_runtime.rs",
         "source/android-host-jni/src/lib.rs",
         "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/security/AndroidAccountSessionStore.kt",
-        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/core/MahayanaHost.kt"
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/core/MahayanaHost.kt",
+        "source/android-preload/src/main/kotlin/com/ombhrum/fabushi/androidpreload/runtime/AccountAccessProjection.kt",
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/coordinator/AccountAccessProjectionOwner.kt",
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/coordinator/AndroidCoordinatorRuntime.kt"
       ],
       "android_owner": "Rust AndroidAccountService behind Coordinator/Host; Keystore adapter owns encryption/storage mechanics only",
       "platform_delta": "Desktop secret-store + host credential file becomes AndroidKeyStore AES-GCM + no-backup ciphertext, with initial session injected through the typed native boundary and private persistence mutations consumed before UI.",
       "implementation_status": "implemented",
-      "production_wiring": "implemented: real Fabushi browser/OAuth start/poll/cancel share AndroidAccountService; OAuth attempt is durably persisted under Host app data and reloaded on cold start; Custom Tabs accepts only the canonical api.ombhrum.com HTTPS origin; exact-head CI/package/device evidence pending",
-      "unit_test": "Rust session normalization/base URL/login-origin/provider allowlist/persistent-attempt cold-start tests plus Kotlin same-origin Custom Tabs validation; exact-head GitHub Actions pending",
+      "production_wiring": "Implemented account/access projection slice: Rust Host remains canonical account/session owner; Coordinator owns monotonic account epoch + async refresh fencing and composes Host privacy/Remote plus canonical server entitlement facts into one immutable projection. Desktop Sand GetSandAccessStatus, full authorization/team policy, durable first-Box and rebuild replacement remain explicit unknown/incomplete, so verified status is unchanged.",
+      "unit_test": "AccountAccessProjectionOwnerTest covers success, denial, stale account epoch, process death, reconnect, outcome-unknown and entitlement revoke. Exact-head GitHub Actions evidence pending.",
       "contract_test": "Rust workspace/architecture Actions pending for exact current HEAD",
       "integration_test": "required: real protected account browser journey + refresh + process death on emulator/device",
       "packaged_test": "required: public githubRelease excludes CI import and normal login works from packaged artifact",
@@ -1080,7 +1083,8 @@
       "android_target": [
         "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/features/remote/RemoteComputerSurface.kt",
         "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/remote/FabushiRemoteDeviceGateway.kt",
-        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/remote/RemoteCommandJournal.kt"
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/remote/RemoteCommandJournal.kt",
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/coordinator/AccountAccessProjectionOwner.kt"
       ],
       "android_owner": "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/remote/FabushiRemoteDeviceGateway.kt",
       "platform_delta": "Android uses native Compose/platform adapters + typed JNI while preserving canonical Rust owners where platform-independent.",
@@ -1093,7 +1097,7 @@
       "device_test": "required on emulator/physical device as applicable",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "2026-10-10 current-main review located concrete Desktop Host executor interfaces and worker pairing/session/signaling endpoints but not the production client wire for side-effectful outbound commands. No transport is invented. REMOTE-COMPUTER-001 remains not-verified until exact endpoint/frame/auth/ack/reconcile semantics are proven, wired through Capability Broker + account/process epoch, and verified on the same exact HEAD with packaged/device evidence. FBCP Revision 7 is a cross-cutting source authority for this responsibility; this mapping does not upgrade implementation_status or verification_status."
+      "notes": "2026-10-10 current-main review located concrete Desktop Host executor interfaces and worker pairing/session/signaling endpoints but not the production client wire for side-effectful outbound commands. No transport is invented. REMOTE-COMPUTER-001 remains not-verified until exact endpoint/frame/auth/ack/reconcile semantics are proven, wired through Capability Broker + account/process epoch, and verified on the same exact HEAD with packaged/device evidence. FBCP Revision 7 is a cross-cutting source authority for this responsibility; this mapping does not upgrade implementation_status or verification_status. Access projection now consumes the canonical Host remote binding and distinguishes rebuild/recovery unknown/outcome-unknown from ready; durable Desktop-equivalent first-Box/rebuild settlement remains open."
     },
     {
       "responsibility_id": "COMMERCE-LIFECYCLE-001",
@@ -1157,13 +1161,15 @@
         "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/presentation/GlobalDharmaCommercePanel.kt",
         "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/payments/CommerceOperationJournal.kt",
         "source/android-preload/src/main/kotlin/com/ombhrum/fabushi/androidpreload/miniapp/MiniAppPlatformBridge.kt",
-        "source/host/src/android_json_runtime.rs"
+        "source/host/src/android_json_runtime.rs",
+        "source/android-preload/src/main/kotlin/com/ombhrum/fabushi/androidpreload/runtime/AccountAccessProjection.kt",
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/coordinator/AccountAccessProjectionOwner.kt"
       ],
       "android_owner": "Android CommerceOperationJournal + canonical server commerce/entitlement APIs; Presentation only initiates and renders state",
       "platform_delta": "Android uses native Compose/platform adapters + typed JNI while preserving canonical Rust owners where platform-independent.",
       "implementation_status": "mapped",
-      "production_wiring": "Partial: Global Dharma purchase/restore uses authenticated canonical server APIs. Stable purchase idempotency identity is now account/plugin/sku scoped and durable outside ViewModel memory; canonical entitlement confirmation settles that journal. FabushiPayBilling still has no production caller, and Play Billing pending/restore/refund/revoke lifecycle remains open.",
-      "unit_test": "required",
+      "production_wiring": "Partial: canonical server entitlement is now consumed by the Coordinator-owned immutable access projection; payment callbacks are not treated as entitlement truth. Play Billing production caller, pending token reconciliation, refund/revoke settlement and packaged evidence remain open.",
+      "unit_test": "AccountAccessProjectionOwnerTest covers entitlement grant/denial/revoke and outcome-unknown projection semantics; full Play Billing lifecycle tests remain required.",
       "contract_test": "required on same exact HEAD",
       "integration_test": "required on same exact HEAD",
       "packaged_test": "required on final minified release artifact",
