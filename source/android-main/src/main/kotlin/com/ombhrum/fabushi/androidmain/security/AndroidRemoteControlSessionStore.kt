@@ -14,6 +14,16 @@ import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
 
+internal enum class RemoteControlSessionLifecycle {
+    PENDING,
+    NEGOTIATING,
+    READY,
+    HUMAN_TAKEOVER,
+    RECONNECTING,
+    CLOSING,
+    OUTCOME_UNKNOWN,
+}
+
 internal data class RemoteControlSessionCredential(
     val deviceId: String,
     val clientId: String,
@@ -29,6 +39,12 @@ internal data class RemoteControlSessionCredential(
     val selectedRoute: String? = null,
     val relayRegion: String? = null,
     val transportUpdatedAt: Long = 0L,
+    val processGeneration: Long = 0L,
+    val viewportRevision: Long = 0L,
+    val humanTakeover: Boolean = false,
+    val lifecycle: RemoteControlSessionLifecycle = RemoteControlSessionLifecycle.PENDING,
+    val reconnectCount: Int = 0,
+    val reconcileRequired: Boolean = false,
 ) {
     fun toSecretJson(): String = JSONObject()
         .put("deviceId", deviceId)
@@ -45,6 +61,12 @@ internal data class RemoteControlSessionCredential(
         .put("selectedRoute", selectedRoute ?: JSONObject.NULL)
         .put("relayRegion", relayRegion ?: JSONObject.NULL)
         .put("transportUpdatedAt", transportUpdatedAt)
+        .put("processGeneration", processGeneration)
+        .put("viewportRevision", viewportRevision)
+        .put("humanTakeover", humanTakeover)
+        .put("lifecycle", lifecycle.name)
+        .put("reconnectCount", reconnectCount)
+        .put("reconcileRequired", reconcileRequired)
         .toString()
 
     fun publicProjection(): JSONObject = JSONObject()
@@ -60,6 +82,12 @@ internal data class RemoteControlSessionCredential(
         .put("selectedRoute", selectedRoute ?: JSONObject.NULL)
         .put("relayRegion", relayRegion ?: JSONObject.NULL)
         .put("transportUpdatedAt", transportUpdatedAt)
+        .put("processGeneration", processGeneration)
+        .put("viewportRevision", viewportRevision)
+        .put("humanTakeover", humanTakeover)
+        .put("lifecycle", lifecycle.name.lowercase())
+        .put("reconnectCount", reconnectCount)
+        .put("reconcileRequired", reconcileRequired)
 
     companion object {
         fun parse(value: String): RemoteControlSessionCredential {
@@ -84,11 +112,20 @@ internal data class RemoteControlSessionCredential(
                 "relayRegion",
                 "transportUpdatedAt",
             )
+            val lifecycleKeys = currentKeys + setOf(
+                "processGeneration",
+                "viewportRevision",
+                "humanTakeover",
+                "lifecycle",
+                "reconnectCount",
+                "reconcileRequired",
+            )
             val observedKeys = json.keys().asSequence().toSet()
             require(
                 observedKeys == legacyKeys ||
                     observedKeys == cursorKeys ||
-                    observedKeys == currentKeys
+                    observedKeys == currentKeys ||
+                    observedKeys == lifecycleKeys
             ) {
                 "Remote control session credential contains unsupported fields"
             }
@@ -140,6 +177,17 @@ internal data class RemoteControlSessionCredential(
             require(selectedRoute == null || transportUpdatedAt > 0L) {
                 "Remote control selected route requires a transport timestamp"
             }
+            val processGeneration = json.optLong("processGeneration", 0L)
+            require(processGeneration >= 0L) { "Remote control process generation is invalid" }
+            val viewportRevision = json.optLong("viewportRevision", 0L)
+            require(viewportRevision >= 0L) { "Remote control viewport revision is invalid" }
+            val lifecycle = json.optString("lifecycle")
+                .takeIf(String::isNotBlank)
+                ?.let { RemoteControlSessionLifecycle.valueOf(it) }
+                ?: RemoteControlSessionLifecycle.PENDING
+            val reconnectCount = json.optInt("reconnectCount", 0)
+            require(reconnectCount >= 0) { "Remote control reconnect count is invalid" }
+            val reconcileRequired = json.optBoolean("reconcileRequired", false)
             return RemoteControlSessionCredential(
                 deviceId = identity("deviceId", 160),
                 clientId = identity("clientId", 160),
@@ -155,6 +203,12 @@ internal data class RemoteControlSessionCredential(
                 selectedRoute = selectedRoute,
                 relayRegion = relayRegion,
                 transportUpdatedAt = transportUpdatedAt,
+                processGeneration = processGeneration,
+                viewportRevision = viewportRevision,
+                humanTakeover = json.optBoolean("humanTakeover", false),
+                lifecycle = lifecycle,
+                reconnectCount = reconnectCount,
+                reconcileRequired = reconcileRequired,
             )
         }
     }
@@ -211,6 +265,100 @@ internal object RemoteControlTransportPolicy {
             transportUpdatedAt = transportUpdatedAt,
         )
     }
+}
+
+internal object RemoteControlSessionStatePolicy {
+    fun bindProcess(
+        value: RemoteControlSessionCredential,
+        processGeneration: Long,
+    ): RemoteControlSessionCredential {
+        require(processGeneration > 0L) { "Remote control process generation must be positive" }
+        if (value.processGeneration == processGeneration) return value
+        val recoveredLifecycle = when (value.lifecycle) {
+            RemoteControlSessionLifecycle.CLOSING,
+            RemoteControlSessionLifecycle.OUTCOME_UNKNOWN -> RemoteControlSessionLifecycle.OUTCOME_UNKNOWN
+            else -> RemoteControlSessionLifecycle.RECONNECTING
+        }
+        return value.copy(
+            processGeneration = processGeneration,
+            viewportRevision = value.viewportRevision + 1,
+            humanTakeover = false,
+            lifecycle = recoveredLifecycle,
+            reconnectCount = value.reconnectCount + 1,
+            reconcileRequired = true,
+        )
+    }
+
+    fun transportReady(
+        value: RemoteControlSessionCredential,
+        processGeneration: Long,
+    ): RemoteControlSessionCredential {
+        require(value.lifecycle !in setOf(
+            RemoteControlSessionLifecycle.CLOSING,
+            RemoteControlSessionLifecycle.OUTCOME_UNKNOWN,
+        )) { "Remote control session cannot negotiate after local close" }
+        require(processGeneration > 0L) { "Remote control process generation must be positive" }
+        return value.copy(
+            processGeneration = processGeneration,
+            lifecycle = RemoteControlSessionLifecycle.NEGOTIATING,
+            reconcileRequired = false,
+        )
+    }
+
+    fun setHumanTakeover(
+        value: RemoteControlSessionCredential,
+        expectedViewportRevision: Long,
+        active: Boolean,
+    ): RemoteControlSessionCredential {
+        require(expectedViewportRevision == value.viewportRevision) {
+            "Remote control human takeover used a stale viewport revision"
+        }
+        require(value.lifecycle !in setOf(
+            RemoteControlSessionLifecycle.CLOSING,
+            RemoteControlSessionLifecycle.OUTCOME_UNKNOWN,
+        )) { "Remote control session is closing or outcome-unknown" }
+        val nextLifecycle = if (active) {
+            RemoteControlSessionLifecycle.HUMAN_TAKEOVER
+        } else if (value.selectedRoute == null) {
+            RemoteControlSessionLifecycle.PENDING
+        } else {
+            RemoteControlSessionLifecycle.NEGOTIATING
+        }
+        return value.copy(
+            viewportRevision = value.viewportRevision + 1,
+            humanTakeover = active,
+            lifecycle = nextLifecycle,
+        )
+    }
+
+    fun advanceViewport(
+        value: RemoteControlSessionCredential,
+        expectedViewportRevision: Long,
+    ): RemoteControlSessionCredential {
+        require(expectedViewportRevision == value.viewportRevision) {
+            "Remote control viewport revision is stale"
+        }
+        require(value.lifecycle !in setOf(
+            RemoteControlSessionLifecycle.CLOSING,
+            RemoteControlSessionLifecycle.OUTCOME_UNKNOWN,
+        )) { "Remote control session cannot advance a closed viewport" }
+        return value.copy(viewportRevision = value.viewportRevision + 1)
+    }
+
+    fun beginClosing(value: RemoteControlSessionCredential): RemoteControlSessionCredential =
+        value.copy(
+            viewportRevision = value.viewportRevision + 1,
+            humanTakeover = false,
+            lifecycle = RemoteControlSessionLifecycle.CLOSING,
+            reconcileRequired = true,
+        )
+
+    fun markCloseOutcomeUnknown(value: RemoteControlSessionCredential): RemoteControlSessionCredential =
+        value.copy(
+            humanTakeover = false,
+            lifecycle = RemoteControlSessionLifecycle.OUTCOME_UNKNOWN,
+            reconcileRequired = true,
+        )
 }
 
 internal object RemoteControlSignalCursorPolicy {
@@ -282,18 +430,97 @@ internal class AndroidRemoteControlSessionStore(context: Context) {
         selectedRoute: String,
         relayRegion: String?,
         transportUpdatedAt: Long,
+        processGeneration: Long,
     ): RemoteControlSessionCredential {
         val current = readForAccountFence(currentAccountFence, currentAccountEpoch)
             ?: error("Remote control session is unavailable")
-        val updated = RemoteControlTransportPolicy.record(
-            current,
-            sessionId,
-            provider,
-            routePolicy,
-            selectedRoute,
-            relayRegion,
-            transportUpdatedAt,
+        val updated = RemoteControlSessionStatePolicy.transportReady(
+            RemoteControlTransportPolicy.record(
+                current,
+                sessionId,
+                provider,
+                routePolicy,
+                selectedRoute,
+                relayRegion,
+                transportUpdatedAt,
+            ),
+            processGeneration,
         )
+        write(updated)
+        return updated
+    }
+
+    @Synchronized
+    fun bindProcess(
+        currentAccountFence: String,
+        currentAccountEpoch: Long,
+        processGeneration: Long,
+    ): RemoteControlSessionCredential? {
+        val current = readForAccountFence(currentAccountFence, currentAccountEpoch) ?: return null
+        val updated = RemoteControlSessionStatePolicy.bindProcess(current, processGeneration)
+        if (updated != current) write(updated)
+        return updated
+    }
+
+    @Synchronized
+    fun setHumanTakeover(
+        currentAccountFence: String,
+        currentAccountEpoch: Long,
+        sessionId: String,
+        expectedViewportRevision: Long,
+        active: Boolean,
+    ): RemoteControlSessionCredential {
+        val current = readForAccountFence(currentAccountFence, currentAccountEpoch)
+            ?: error("Remote control session is unavailable")
+        require(current.sessionId == sessionId) { "Remote control session identity changed" }
+        val updated = RemoteControlSessionStatePolicy.setHumanTakeover(
+            current,
+            expectedViewportRevision,
+            active,
+        )
+        write(updated)
+        return updated
+    }
+
+    @Synchronized
+    fun advanceViewport(
+        currentAccountFence: String,
+        currentAccountEpoch: Long,
+        sessionId: String,
+        expectedViewportRevision: Long,
+    ): RemoteControlSessionCredential {
+        val current = readForAccountFence(currentAccountFence, currentAccountEpoch)
+            ?: error("Remote control session is unavailable")
+        require(current.sessionId == sessionId) { "Remote control session identity changed" }
+        val updated = RemoteControlSessionStatePolicy.advanceViewport(current, expectedViewportRevision)
+        write(updated)
+        return updated
+    }
+
+    @Synchronized
+    fun beginClosing(
+        currentAccountFence: String,
+        currentAccountEpoch: Long,
+        sessionId: String,
+    ): RemoteControlSessionCredential {
+        val current = readForAccountFence(currentAccountFence, currentAccountEpoch)
+            ?: error("Remote control session is unavailable")
+        require(current.sessionId == sessionId) { "Remote control session identity changed" }
+        val updated = RemoteControlSessionStatePolicy.beginClosing(current)
+        write(updated)
+        return updated
+    }
+
+    @Synchronized
+    fun markCloseOutcomeUnknown(
+        currentAccountFence: String,
+        currentAccountEpoch: Long,
+        sessionId: String,
+    ): RemoteControlSessionCredential {
+        val current = readForAccountFence(currentAccountFence, currentAccountEpoch)
+            ?: error("Remote control session is unavailable")
+        require(current.sessionId == sessionId) { "Remote control session identity changed" }
+        val updated = RemoteControlSessionStatePolicy.markCloseOutcomeUnknown(current)
         write(updated)
         return updated
     }
