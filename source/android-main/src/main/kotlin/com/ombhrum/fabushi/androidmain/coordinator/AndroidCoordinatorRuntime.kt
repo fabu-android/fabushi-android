@@ -1451,6 +1451,10 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
             )
             dispatchFeatureEvent(projected)
         }
+        // Host-owned async task truth is reconstructed by a typed read rather than replaying
+        // UI state. A feature-stream reconnect/resync therefore invalidates any subscribed
+        // panel so it performs the Desktop-equivalent noteReconnect refresh.
+        dispatchFeatureEvent(JSONObject().put("type", "agent.async-tasks.refresh"))
     }
 
     private fun acceptCoordinatorEvent(event: JSONObject): Boolean {
