@@ -224,11 +224,15 @@ impl AuthenticatedRemoteHttpTransport {
             Ok(response) => decode_response(response, self.policy.max_response_bytes)
                 .map_err(HttpFailure::Protocol),
             Err(ureq::Error::Status(status, response)) => {
-                let ack_id = response
+                let header_ack_id = response
                     .header("X-Fabushi-Ack-Id")
                     .map(str::to_string);
-                let detail = decode_response(response, self.policy.max_response_bytes)
-                    .ok()
+                let decoded = decode_response(response, self.policy.max_response_bytes).ok();
+                let ack_id = decoded
+                    .as_ref()
+                    .and_then(|wire| wire.ack_id.clone())
+                    .or(header_ack_id);
+                let detail = decoded
                     .and_then(|wire| wire.error.or(wire.output_json))
                     .map(sanitize_reason)
                     .unwrap_or_else(|| format!("remote runner returned HTTP {status}"));
