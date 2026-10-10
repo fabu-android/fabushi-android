@@ -80,6 +80,78 @@ class RemoteComputerPresentationPolicyTest {
     }
 
     @Test
+    fun parsesPublicControlSessionAndFencesItToCurrentPairing() {
+        val state = RemoteComputerPresentationPolicy.parse(
+            JSONObject().put("computers", JSONArray()),
+            JSONObject()
+                .put("paired", true)
+                .put("deviceId", "computer-1")
+                .put("clientId", "android-client-1")
+                .put("accountEpoch", 7),
+            JSONObject()
+                .put("stored", true)
+                .put("deviceId", "computer-1")
+                .put("clientId", "android-client-1")
+                .put("sessionId", "remote-session-1")
+                .put("accountEpoch", 7)
+                .put("expiresAt", 2_000_000_000)
+                .put("lastAcknowledgedSignalId", 4)
+                .put("highestDrainedSignalId", 4)
+                .put("selectedRoute", "relay")
+                .put("viewportRevision", 9)
+                .put("humanTakeover", true)
+                .put("lifecycle", "human_takeover")
+                .put("reconnectCount", 2)
+                .put("reconcileRequired", false),
+        )
+
+        assertTrue(state.session.stored)
+        assertEquals("remote-session-1", state.session.sessionId)
+        assertEquals(9L, state.session.viewportRevision)
+        assertTrue(state.session.humanTakeover)
+        assertEquals("human_takeover", state.session.lifecycle)
+    }
+
+    @Test
+    fun rejectsNestedCredentialsAndStaleSessionIdentity() {
+        val paired = JSONObject()
+            .put("paired", true)
+            .put("deviceId", "computer-1")
+            .put("clientId", "android-client-1")
+            .put("accountEpoch", 7)
+
+        assertThrows(IllegalArgumentException::class.java) {
+            RemoteComputerPresentationPolicy.parse(
+                JSONObject()
+                    .put(
+                        "computers",
+                        JSONArray().put(
+                            JSONObject()
+                                .put("deviceId", "computer-1")
+                                .put("credentialEnvelope", JSONObject().put("credential", "secret")),
+                        ),
+                    ),
+                paired,
+            )
+        }
+
+        assertThrows(IllegalArgumentException::class.java) {
+            RemoteComputerPresentationPolicy.parse(
+                JSONObject().put("computers", JSONArray()),
+                paired,
+                JSONObject()
+                    .put("stored", true)
+                    .put("deviceId", "computer-other")
+                    .put("clientId", "android-client-1")
+                    .put("sessionId", "remote-session-1")
+                    .put("accountEpoch", 7)
+                    .put("expiresAt", 2_000_000_000)
+                    .put("lifecycle", "pending"),
+            )
+        }
+    }
+
+    @Test
     fun pairingCodeAndLabelMatchCoordinatorContract() {
         assertEquals(
             "A1B2C3D4E5F6",
