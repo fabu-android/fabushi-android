@@ -78,6 +78,7 @@ fun GrokHomeSurface(
     onSetGroupMembers: (String, List<String>) -> Unit,
     onOpenBot: (MobileBotSummaryAndroid) -> Unit,
     onRenameBot: (String, String) -> Unit,
+    onUpdateBotProfile: (String, String, String) -> Unit,
     onHideBot: (String) -> Unit,
     onSetBotUnread: (String, Boolean) -> Unit,
     onDuplicateBot: (String) -> Unit,
@@ -120,6 +121,7 @@ fun GrokHomeSurface(
     var botName by remember { mutableStateOf("") }
     var botDescription by remember { mutableStateOf("") }
     var editingBotId by remember { mutableStateOf<String?>(null) }
+    var profileTarget by remember { mutableStateOf<MobileBotSummaryAndroid?>(null) }
     var deleteTarget by remember { mutableStateOf<AgentDeleteTarget?>(null) }
     var showHiddenBots by remember { mutableStateOf(false) }
 
@@ -596,6 +598,7 @@ fun GrokHomeSurface(
                                 hasUnread = bot.hasUnread,
                                 isHidden = bot.isHidden,
                                 onEditName = { editingBotId = it },
+                                onEditProfile = { profileTarget = bot },
                                 onShowFullConversation = { onOpenBot(bot) },
                                 onShowAsyncTasks = { onShowBotAsyncTasks(bot) },
                                 onHideFromSidebar = onHideBot,
@@ -642,6 +645,15 @@ fun GrokHomeSurface(
             }
             item { Spacer(Modifier.height(44.dp)) }
         }
+
+        AgentProfileEditor(
+            agent = profileTarget,
+            onClose = { profileTarget = null },
+            onConfirm = { id, name, description ->
+                onUpdateBotProfile(id, name, description)
+                profileTarget = null
+            },
+        )
 
         AgentDeleteConfirmation(
             agent = deleteTarget,
