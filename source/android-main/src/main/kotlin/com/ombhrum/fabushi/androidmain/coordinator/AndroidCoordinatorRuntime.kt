@@ -14,7 +14,9 @@ import com.ombhrum.fabushi.androidpreload.runtime.AccountTruthState
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidCoordinatorPort
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidMcpOAuthCompletion
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidSidebarSection
+import com.ombhrum.fabushi.androidmain.security.AndroidRemoteControlSessionStore
 import com.ombhrum.fabushi.androidmain.security.AndroidRemotePairingStore
+import com.ombhrum.fabushi.androidmain.security.RemoteControlSessionCredential
 import com.ombhrum.fabushi.androidmain.security.RemotePairingCredential
 import com.ombhrum.fabushi.core.MahayanaHost
 import org.json.JSONArray
@@ -42,6 +44,7 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
     val processGeneration: Long = processRuntime.start()
     private val host = MahayanaHost(application, processGeneration = processGeneration)
     private val remotePairingStore = AndroidRemotePairingStore(application)
+    private val remoteControlSessionStore = AndroidRemoteControlSessionStore(application)
     // Independent shared-Host consumer for process-owned rebuild/transport state. MahayanaHost
     // fans each native event into every registered consumer queue, so this owner may drain
     // continuously without stealing approvals/chat/tool events from Presentation.
@@ -355,6 +358,7 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
         )
         val currentEpoch = accountAccessOwner.currentProjection().accountEpoch
         if (!loggedIn || currentEpoch != previousEpoch) {
+            remoteControlSessionStore.clear()
             remotePairingStore.clear()
             runCatching { host.clearProtectedRemoteBinding() }
         }
@@ -650,6 +654,9 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
             accountFence = currentFence,
             accountEpoch = currentEpoch,
         )
+        // A newly paired client supersedes any short-lived control session owned by this
+        // Android process. The long-lived clientToken remains confined to pairing storage.
+        remoteControlSessionStore.clear()
         remotePairingStore.write(RemotePairingCredential.parse(credential.toSecretJson()))
         return JSONObject()
             .put("deviceId", credential.deviceId)
@@ -666,16 +673,202 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
         val currentFence = host.request("feature.account.fence").getString("accountFence")
         val currentEpoch = accountAccessOwner.currentProjection().accountEpoch
         val stored = remotePairingStore.readForAccountFence(currentFence, currentEpoch)
+        val activeSession = remoteControlSessionStore.readForAccountFence(currentFence, currentEpoch)
+        if (activeSession != null &&
+            activeSession.deviceId == safeDeviceId &&
+            activeSession.clientId == safeClientId
+        ) {
+            remoteControlSessionStore.clear()
+        }
         if (stored != null && stored.deviceId == safeDeviceId && stored.clientId == safeClientId) {
             remotePairingStore.clear()
         }
-        // Local execution authority is revoked before the remote mutation. A network failure cannot
-        // leave this Android process authorized to dispatch against a possibly revoked client.
+        // Revoke every local execution credential before the remote mutation. A network failure
+        // must leave this Android process fail-closed even when the server revoke is still pending.
         host.clearProtectedRemoteBinding()
         return authenticatedRemotePlatformRequest(
             "POST",
             "/v1/computers/$safeDeviceId/clients/$safeClientId/revoke",
         )
+    }
+
+    override fun remoteComputerPairingStatus(): JSONObject {
+        val (currentFence, currentEpoch) = currentRemoteAccountFence()
+        val pairing = remotePairingStore.readForAccountFence(currentFence, currentEpoch)
+            ?: return JSONObject().put("paired", false)
+        return pairing.publicProjection().put("paired", true)
+    }
+
+    override fun remoteComputerSessionCreate(deviceId: String): JSONObject {
+        val safeDeviceId = boundedRemoteIdentifier(deviceId, "deviceId")
+        val (currentFence, currentEpoch) = currentRemoteAccountFence()
+        val pairing = remotePairingStore.readForAccountFence(currentFence, currentEpoch)
+            ?: error("Remote Computer is not paired for the current account")
+        require(pairing.deviceId == safeDeviceId) { "Remote Computer pairing does not match device" }
+        val data = authenticatedRemotePlatformRequest(
+            "POST",
+            "/v1/computers/" + safeDeviceId + "/sessions",
+            JSONObject()
+                .put("clientId", pairing.clientId)
+                .put("clientToken", pairing.clientToken),
+        )
+        require(boundedRemoteIdentifier(data.getString("deviceId"), "deviceId") == pairing.deviceId) {
+            "Remote control session device identity mismatch"
+        }
+        require(boundedRemoteIdentifier(data.getString("clientId"), "clientId") == pairing.clientId) {
+            "Remote control session client identity mismatch"
+        }
+        val credential = RemoteControlSessionCredential(
+            deviceId = pairing.deviceId,
+            clientId = pairing.clientId,
+            sessionId = boundedRemoteIdentifier(data.getString("sessionId"), "sessionId"),
+            mobileToken = data.getString("mobileToken"),
+            accountFence = currentFence,
+            accountEpoch = currentEpoch,
+            expiresAt = data.getLong("expiresAt"),
+        )
+        remoteControlSessionStore.write(RemoteControlSessionCredential.parse(credential.toSecretJson()))
+        return credential.publicProjection()
+            .put("stored", true)
+            .put("state", data.optString("state"))
+            .put("createdAt", data.optLong("createdAt"))
+            .put("permissions", data.optJSONObject("permissions") ?: JSONObject())
+            .put("iceServers", data.optJSONArray("iceServers") ?: JSONArray())
+    }
+
+    override fun remoteComputerSessionStatus(): JSONObject {
+        val (currentFence, currentEpoch) = currentRemoteAccountFence()
+        val session = remoteControlSessionStore.readForAccountFence(currentFence, currentEpoch)
+            ?: return JSONObject().put("stored", false)
+        if (session.expiresAt <= System.currentTimeMillis() / 1_000L) {
+            remoteControlSessionStore.clear()
+            return JSONObject().put("stored", false).put("reason", "expired")
+        }
+        return session.publicProjection().put("stored", true)
+    }
+
+    override fun remoteComputerSessionTransport(
+        deviceId: String,
+        sessionId: String,
+        directAvailable: Boolean,
+        relayRegion: String?,
+    ): JSONObject {
+        val session = requireRemoteControlSession(deviceId, sessionId)
+        val region = relayRegion?.trim()?.takeIf(String::isNotEmpty)
+        if (region != null) {
+            require(region.length <= 32 && region.all { it.isLetterOrDigit() || it == '-' || it == '_' }) {
+                "Remote relay region is invalid"
+            }
+        }
+        val body = JSONObject()
+            .put("role", "mobile")
+            .put("clientId", session.clientId)
+            .put("mobileToken", session.mobileToken)
+            .put("directAvailable", directAvailable)
+        region?.let { body.put("relayRegion", it) }
+        return authenticatedRemotePlatformRequest(
+            "POST",
+            "/v1/computers/" + session.deviceId + "/sessions/" + session.sessionId + "/transport",
+            body,
+        )
+    }
+
+    override fun remoteComputerSignal(
+        deviceId: String,
+        sessionId: String,
+        kind: String,
+        payload: JSONObject,
+    ): JSONObject {
+        val session = requireRemoteControlSession(deviceId, sessionId)
+        val normalizedKind = kind.trim()
+        require(normalizedKind in setOf("offer", "ice", "ready", "close")) {
+            "Remote mobile signal kind is invalid"
+        }
+        val payloadCopy = JSONObject(payload.toString())
+        require(payloadCopy.toString().toByteArray(Charsets.UTF_8).size <= 256 * 1024) {
+            "Remote signal payload exceeds 256 KiB"
+        }
+        return authenticatedRemotePlatformRequest(
+            "POST",
+            "/v1/computers/" + session.deviceId + "/signals",
+            JSONObject()
+                .put("sessionId", session.sessionId)
+                .put("senderRole", "mobile")
+                .put("clientId", session.clientId)
+                .put("mobileToken", session.mobileToken)
+                .put("kind", normalizedKind)
+                .put("payload", payloadCopy),
+        )
+    }
+
+    override fun remoteComputerSignalDrain(
+        deviceId: String,
+        sessionId: String,
+        afterSignalId: Long,
+    ): JSONObject {
+        require(afterSignalId >= 0L) { "Remote signal cursor is invalid" }
+        val session = requireRemoteControlSession(deviceId, sessionId)
+        return authenticatedRemotePlatformRequest(
+            "POST",
+            "/v1/computers/" + session.deviceId + "/signals/drain",
+            JSONObject()
+                .put("sessionId", session.sessionId)
+                .put("receiverRole", "mobile")
+                .put("clientId", session.clientId)
+                .put("mobileToken", session.mobileToken)
+                .put("afterSignalId", afterSignalId),
+        )
+    }
+
+    override fun remoteComputerSessionClose(deviceId: String, sessionId: String): JSONObject {
+        val session = requireRemoteControlSession(deviceId, sessionId)
+        // Closing locally is the security boundary. The captured credential is used only for this
+        // one server mutation; subsequent callers cannot resurrect the session if the network fails.
+        remoteControlSessionStore.clear()
+        return authenticatedRemotePlatformRequest(
+            "POST",
+            "/v1/computers/" + session.deviceId + "/sessions/" + session.sessionId + "/close",
+            JSONObject()
+                .put("role", "mobile")
+                .put("clientId", session.clientId)
+                .put("mobileToken", session.mobileToken),
+        )
+    }
+
+    private fun requireRemoteControlSession(
+        deviceId: String,
+        sessionId: String,
+    ): RemoteControlSessionCredential {
+        val safeDeviceId = boundedRemoteIdentifier(deviceId, "deviceId")
+        val safeSessionId = boundedRemoteIdentifier(sessionId, "sessionId")
+        val (currentFence, currentEpoch) = currentRemoteAccountFence()
+        val session = remoteControlSessionStore.readForAccountFence(currentFence, currentEpoch)
+            ?: error("Remote control session is unavailable")
+        if (session.expiresAt <= System.currentTimeMillis() / 1_000L) {
+            remoteControlSessionStore.clear()
+            error("Remote control session expired")
+        }
+        require(session.deviceId == safeDeviceId && session.sessionId == safeSessionId) {
+            "Remote control session identity mismatch"
+        }
+        val pairing = remotePairingStore.readForAccountFence(currentFence, currentEpoch)
+            ?: run {
+                remoteControlSessionStore.clear()
+                error("Remote Computer pairing is unavailable")
+            }
+        require(pairing.deviceId == session.deviceId && pairing.clientId == session.clientId) {
+            remoteControlSessionStore.clear()
+            error("Remote control session no longer matches paired client")
+        }
+        return session
+    }
+
+    private fun currentRemoteAccountFence(): Pair<String, Long> {
+        val currentFence = host.request("feature.account.fence").getString("accountFence")
+        require(currentFence.isNotBlank()) { "Remote Computer requires an account fence" }
+        val currentEpoch = accountAccessOwner.currentProjection().accountEpoch
+        require(currentEpoch > 0L) { "Remote Computer requires a settled account epoch" }
+        return currentFence to currentEpoch
     }
 
     private fun authenticatedRemotePlatformRequest(

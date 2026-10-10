@@ -102,6 +102,31 @@ interface AndroidCoordinatorPort {
         error("remote_computer_pair_not_implemented")
     fun remoteComputerRevoke(deviceId: String, clientId: String): JSONObject =
         error("remote_computer_revoke_not_implemented")
+    fun remoteComputerPairingStatus(): JSONObject =
+        error("remote_computer_pairing_status_not_implemented")
+    fun remoteComputerSessionCreate(deviceId: String): JSONObject =
+        error("remote_computer_session_create_not_implemented")
+    fun remoteComputerSessionStatus(): JSONObject =
+        error("remote_computer_session_status_not_implemented")
+    fun remoteComputerSessionTransport(
+        deviceId: String,
+        sessionId: String,
+        directAvailable: Boolean,
+        relayRegion: String? = null,
+    ): JSONObject = error("remote_computer_session_transport_not_implemented")
+    fun remoteComputerSignal(
+        deviceId: String,
+        sessionId: String,
+        kind: String,
+        payload: JSONObject,
+    ): JSONObject = error("remote_computer_signal_not_implemented")
+    fun remoteComputerSignalDrain(
+        deviceId: String,
+        sessionId: String,
+        afterSignalId: Long = 0L,
+    ): JSONObject = error("remote_computer_signal_drain_not_implemented")
+    fun remoteComputerSessionClose(deviceId: String, sessionId: String): JSONObject =
+        error("remote_computer_session_close_not_implemented")
     fun webAuthnRegisterProvider(): JSONObject
     fun webAuthnUnregisterProvider(params: JSONObject): JSONObject
     fun webAuthnPollRequest(params: JSONObject): JSONObject
