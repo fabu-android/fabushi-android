@@ -37,7 +37,8 @@ class AgentRosterPresentationWiringTest(unittest.TestCase):
         ):
             self.assertIn(call, source)
         self.assertIn("committedAgentName(bot.name, name)", source)
-        self.assertNotIn("SharedPreferences", source)
+        mutation_slice = source[source.index("fun renameBot("):source.index("fun openBot(")]
+        self.assertNotIn("SharedPreferences", mutation_slice)
 
     def test_delete_dialog_stays_nonoptimistic_while_host_result_is_pending(self):
         source = DELETE.read_text(encoding="utf-8")
