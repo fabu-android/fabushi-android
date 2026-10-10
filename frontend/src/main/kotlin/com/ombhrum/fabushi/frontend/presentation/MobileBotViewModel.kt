@@ -4,6 +4,7 @@ import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidCoordinatorPort
+import com.ombhrum.fabushi.androidpreload.runtime.AndroidSidebarSection
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -68,6 +69,7 @@ internal fun projectPendingAgentApproval(
 
 data class MobileBotUiState(
     val bots: List<MobileBotSummaryAndroid> = emptyList(),
+    val sidebarSections: List<AndroidSidebarSection> = emptyList(),
     val activeBot: MobileBotSummaryAndroid? = null,
     val draft: String = "",
     val messages: List<MobileChatMessage> = emptyList(),
@@ -117,6 +119,7 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
             val previous = mutableState.value.bots
             val installedResult = withContext(Dispatchers.IO) { runCatching { loadInstalledMiniAppBots() } }
             val surfaceResult = withContext(Dispatchers.IO) { runCatching { loadSurfaceBots() } }
+            val sectionsResult = withContext(Dispatchers.IO) { runCatching { coordinator.agentSidebarSections() } }
             val cachedInstalledBots = if (installedResult.isFailure) {
                 withContext(Dispatchers.IO) {
                     runCatching {
@@ -141,9 +144,13 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
                 surfaceResult.exceptionOrNull()?.let { error ->
                     add("surface bot list: ${(error.message ?: error::class.java.simpleName).take(240)}")
                 }
+                sectionsResult.exceptionOrNull()?.let { error ->
+                    add("sidebar sections: ${(error.message ?: error::class.java.simpleName).take(240)}")
+                }
             }
             mutableState.value = mutableState.value.copy(
                 bots = bots,
+                sidebarSections = sectionsResult.getOrElse { mutableState.value.sidebarSections },
                 error = diagnostics.takeIf { it.isNotEmpty() }?.joinToString(" | "),
                 rosterLoading = false,
             )
@@ -384,6 +391,48 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
                 refreshBots()
             }.onFailure { error ->
                 mutableState.value = mutableState.value.copy(error = error.message ?: "Pin state update failed")
+            }
+        }
+    }
+
+    fun moveBotToSection(botId: String, sectionId: String) {
+        val bot = mutableState.value.bots.firstOrNull { it.id == botId } ?: return
+        if (bot.isPinned || bot.isHidden) return
+        val next = moveAgentToSidebarSection(
+            mutableState.value.sidebarSections,
+            botId,
+            sectionId,
+        ) ?: return
+        commitSidebarSections(next, "Move Agent to section failed")
+    }
+
+    fun moveBotToNewSection(botId: String) {
+        val bot = mutableState.value.bots.firstOrNull { it.id == botId } ?: return
+        if (bot.isPinned || bot.isHidden) return
+        val next = createSidebarSectionForAgent(
+            mutableState.value.sidebarSections,
+            botId,
+            "section-${UUID.randomUUID()}",
+        ) ?: return
+        commitSidebarSections(next, "Create Agent section failed")
+    }
+
+    private fun commitSidebarSections(
+        sections: List<AndroidSidebarSection>,
+        fallbackMessage: String,
+    ) {
+        viewModelScope.launch {
+            runCatching {
+                withContext(Dispatchers.IO) { coordinator.agentSetSidebarSections(sections) }
+            }.onSuccess { settled ->
+                mutableState.value = mutableState.value.copy(
+                    sidebarSections = settled,
+                    error = null,
+                )
+            }.onFailure { error ->
+                mutableState.value = mutableState.value.copy(
+                    error = error.message ?: fallbackMessage,
+                )
             }
         }
     }
