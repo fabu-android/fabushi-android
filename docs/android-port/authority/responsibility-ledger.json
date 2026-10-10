@@ -5,7 +5,7 @@
     "desktop_commit": "3bc92400826cc4ca7ac665b467708e22261edc61",
     "android_repository": "fabu-android/fabushi-android",
     "android_pr": 3,
-    "android_head_at_update": "cbadacbde6c4bfcc16c66a04c78323f83be7c227",
+    "android_head_at_update": "11fc53b6f037b96d45cd265b2abb896d1df7a101",
     "status": "incomplete",
     "note": "Persistent human-reviewed responsibility ledger for Desktop main. Rows are responsibility-level source facts; mapped/implemented never imply verified. Verification requires same-exact-HEAD source implementation, production wiring, CI/package and device evidence."
   },
@@ -5333,6 +5333,126 @@
       "artifact": null,
       "verification_status": "not-verified",
       "notes": "Aggregate source row remains mapped by design; its child responsibilities must close independently before this can be considered complete."
+    },
+    {
+      "responsibility_id": "SEARCH-COMMAND-PALETTE-PROVIDERS-ANDROID-001",
+      "domain": "search-navigation",
+      "desktop_sources": [
+        {
+          "path": "frontend/src/production/command-palette-link-provider.ts",
+          "blob_sha": "94a341a4dfd6fc999850d551430dff3083317eba",
+          "symbols": [
+            "createCommandPaletteLinkMetadataProvider",
+            "commandPaletteLinksFromConversation"
+          ]
+        },
+        {
+          "path": "frontend/src/production/command-palette-message-provider.ts",
+          "blob_sha": "888e5d683d941018856291197662033c44edc506",
+          "symbols": [
+            "createCommandPaletteMessageProvider",
+            "debounced/cancellable message search"
+          ]
+        },
+        {
+          "path": "frontend/src/production/command-palette-model.ts",
+          "blob_sha": "8f3ac50a132c2b2e050a51ccc911b81dca897b21",
+          "symbols": [
+            "commandPaletteEntries",
+            "fuzzyPaletteScore",
+            "virtualization/tab/nested-command helpers"
+          ]
+        },
+        {
+          "path": "frontend/src/production/command-palette-provider.ts",
+          "blob_sha": "e96c3b5cec57fc141ec30fc46b0c475ea16aaf21",
+          "symbols": [
+            "createCommandPaletteRoutineProvider",
+            "commandPaletteRoutinesFromCoordinator"
+          ]
+        },
+        {
+          "path": "frontend/src/production/command-palette-root-commands.ts",
+          "blob_sha": "48c7c7878843756a800414aa6f9db68b723aed47",
+          "symbols": [
+            "commandPaletteRootCommands",
+            "info/computer-update actions"
+          ]
+        },
+        {
+          "path": "frontend/src/production/command-palette-search-provider.ts",
+          "blob_sha": "9c1d24f19e5dfcb13462ab5feec1152505d2feff",
+          "symbols": [
+            "createCommandPaletteFileProvider",
+            "searchMedia",
+            "bounded result projection"
+          ]
+        },
+        {
+          "path": "frontend/src/production/command-palette-update-command.ts",
+          "blob_sha": "264116e83248f48d35a7482bdaaf665e4ffa7512",
+          "symbols": [
+            "commandPaletteUpdateCommand",
+            "update status/action projection"
+          ]
+        }
+      ],
+      "source_commit": "3bc92400826cc4ca7ac665b467708e22261edc61",
+      "responsibility": "Provide one native command/search palette that merges canonical Agent/group identity, messages, files/media, links, routines/automations and root/update actions; preserve provider loading/empty/failed/cancelled states, stable result identity, debounced/cancellable observation and safe activation without making the palette a second domain owner.",
+      "source_owner": "Desktop production command-palette model and provider adapters",
+      "direct_callers": [
+        "CommandPalette",
+        "ProductionRenderer global search/command entrypoint"
+      ],
+      "downstream_dependencies": [
+        "Coordinator message/Agent search",
+        "media search",
+        "automation list",
+        "link metadata",
+        "update owner",
+        "root navigation commands"
+      ],
+      "state_owner": "Palette owns query/tab/highlight/provider snapshot only; domain results remain canonical in their Agent/messaging/media/automation/update owners.",
+      "persistent_state": [
+        "none required in palette; domain owners persist messages/media/routines/update state"
+      ],
+      "protocol_wire_contract": [
+        "stable agent/message/file/link/routine ids",
+        "provider loading/ready/empty/failed/unavailable/cancelled states",
+        "bounded/cancellable search",
+        "typed activation actions"
+      ],
+      "visible_effect": "Users can search and activate Agents, groups, messages, files, links, routines and actions from one native command surface with accurate pending/unavailable states.",
+      "failure_behavior": [
+        "provider failure preserves prior safe projection where defined and reports unavailable/failed",
+        "malformed search rows are rejected",
+        "activation cannot fabricate missing domain objects"
+      ],
+      "cancellation_behavior": "new/disposed queries abort prior message/file/link/provider work; cancellation does not mutate canonical domain state.",
+      "retry_semantics": "read/search providers may retry/cancel observations; update/install or other side-effect commands delegate to their canonical owner.",
+      "idempotency_semantics": "stable result identity deduplicates projections; palette activation delegates side-effect identity to the owning domain.",
+      "process_death_recovery": "palette transient state may reset; canonical search sources and update/automation/domain state recover independently.",
+      "account_fencing": "account-scoped results must come only from current Coordinator/domain projection; stale provider completions must not overwrite current-account results.",
+      "security_boundary": "link opening follows Android URL policy; update/computer actions cannot bypass their protected owners; palette itself has no privileged bridge.",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/production/command-palette-model.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/production/command-palette-root-commands.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/production/command-palette-update-command.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/production/ProductionRenderer_view.kt"
+      ],
+      "android_owner": "Native Compose command palette over typed domain projections",
+      "platform_delta": "Desktop DOM focus/virtual-scroll shortcuts become Android Compose focus/keyboard/semantics. Search/provider lifecycle contracts and unique domain ownership remain required.",
+      "implementation_status": "mapped",
+      "production_wiring": "Android has native palette fuzzy/canonical identity logic, root/update commands and shipping renderer entrypoint. It does not yet prove Desktop-equivalent message search provider, media/file search provider, link metadata provider, routine provider, full tabs/nested-command lifecycle or cancellation/stale-result fencing.",
+      "unit_test": "existing FrontendProductionModelParityTest covers part of native model/root/update behavior; provider-state/cancellation breadth remains required",
+      "contract_test": "required for current-account search identity, malformed row rejection, cancellation/stale callback fencing and domain-safe activation",
+      "integration_test": "required through production renderer against messaging/media/automation/update owners",
+      "packaged_test": "required for final release command palette breadth and unavailable/failure states",
+      "device_test": "required for native keyboard/focus/accessibility and large-result behavior",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Mapped rather than implemented because provider breadth is materially incomplete even though native core model/root/update slices exist."
     }
   ],
   "traceability": {
