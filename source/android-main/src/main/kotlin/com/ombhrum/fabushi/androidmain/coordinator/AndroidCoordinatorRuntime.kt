@@ -377,11 +377,7 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
     private fun remoteBoxCapabilities(): RemoteBoxCapabilitySnapshot {
         val status = runCatching { host.request("feature.remote.binding.status") }.getOrNull()
             ?: return RemoteBoxCapabilitySnapshot.Unavailable
-        val available = status.optBoolean("ready", false)
-        return RemoteBoxCapabilitySnapshot(
-            available = available,
-            hasDesktop = available && status.optBoolean("hasDesktop", false),
-        )
+        return RemoteBoxCapabilitySnapshot.fromBindingStatus(status)
     }
 
     override fun featureExecute(params: JSONObject) =

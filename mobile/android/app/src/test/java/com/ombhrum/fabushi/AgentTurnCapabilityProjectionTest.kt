@@ -1,6 +1,8 @@
 package com.ombhrum.fabushi
 
 import com.ombhrum.fabushi.androidmain.coordinator.AgentTurnCapabilityProjection
+import com.ombhrum.fabushi.androidmain.coordinator.RemoteBoxCapabilitySnapshot
+import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -54,4 +56,51 @@ class AgentTurnCapabilityProjectionTest {
         assertFalse(capabilities.getBoolean("remoteBoxHasDesktop"))
         assertFalse(capabilities.getBoolean("browserUseEnabled"))
     }
+    @Test
+    fun remoteComputerSubagentRequiresConcreteComputerExecutor() {
+        val externalOnly = RemoteBoxCapabilitySnapshot.fromBindingStatus(
+            JSONObject()
+                .put("ready", true)
+                // This coarse flag is intentionally ignored for capability grant.
+                .put("hasDesktop", true)
+                .put("executors", JSONArray().put("external-shell").put("external-read")),
+        )
+        assertTrue(externalOnly.available)
+        assertFalse(externalOnly.hasDesktop)
+
+        val screenshotOnly = RemoteBoxCapabilitySnapshot.fromBindingStatus(
+            JSONObject()
+                .put("ready", true)
+                .put("hasDesktop", true)
+                .put("executors", JSONArray().put("screenshot")),
+        )
+        assertTrue(screenshotOnly.available)
+        assertFalse(screenshotOnly.hasDesktop)
+
+        val computer = RemoteBoxCapabilitySnapshot.fromBindingStatus(
+            JSONObject()
+                .put("ready", true)
+                .put("hasDesktop", true)
+                .put("executors", JSONArray().put("computer").put("screenshot")),
+        )
+        assertTrue(computer.available)
+        assertTrue(computer.hasDesktop)
+
+        val notReady = RemoteBoxCapabilitySnapshot.fromBindingStatus(
+            JSONObject()
+                .put("ready", false)
+                .put("executors", JSONArray().put("computer")),
+        )
+        assertFalse(notReady.available)
+        assertFalse(notReady.hasDesktop)
+
+        val malformed = RemoteBoxCapabilitySnapshot.fromBindingStatus(
+            JSONObject()
+                .put("ready", true)
+                .put("executors", JSONArray().put(JSONObject().put("executor", "computer"))),
+        )
+        assertFalse(malformed.available)
+        assertFalse(malformed.hasDesktop)
+    }
+
 }

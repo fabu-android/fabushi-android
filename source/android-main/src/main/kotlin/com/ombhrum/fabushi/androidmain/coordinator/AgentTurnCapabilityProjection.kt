@@ -8,6 +8,32 @@ internal data class RemoteBoxCapabilitySnapshot(
 ) {
     companion object {
         val Unavailable = RemoteBoxCapabilitySnapshot(false, false)
+
+        /**
+         * Project only capabilities backed by the exact protected Remote executor set.
+         *
+         * Desktop exposes Computer only when a concrete ComputerToolExecutor is present.
+         * The coarse Host hasDesktop bit also covers screenshot/external-machine surfaces,
+         * so it must never grant the computeruse subagent type by itself.
+         */
+        fun fromBindingStatus(status: JSONObject): RemoteBoxCapabilitySnapshot {
+            if (!status.optBoolean("ready", false)) return Unavailable
+            val rawExecutors = status.optJSONArray("executors") ?: return Unavailable
+            if (rawExecutors.length() == 0) return Unavailable
+
+            val executors = buildSet {
+                for (index in 0 until rawExecutors.length()) {
+                    val value = rawExecutors.opt(index)
+                    if (value !is String || value.isBlank()) return Unavailable
+                    add(value)
+                }
+            }
+            return RemoteBoxCapabilitySnapshot(
+                available = true,
+                // screenshot/external-shell/external-read are not a Computer executor.
+                hasDesktop = "computer" in executors,
+            )
+        }
     }
 }
 
