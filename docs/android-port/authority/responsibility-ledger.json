@@ -608,6 +608,14 @@
             "R6 computer control lease",
             "AC-4"
           ]
+        },
+        {
+          "path": "frontend/src/production/local-tool-permission-scope.ts",
+          "blob_sha": "4bfbc19e23c8b4b4eacd049d38ab47e021d732cf",
+          "symbols": [
+            "createLocalToolPermissionScopeGate",
+            "LocalToolPermissionScopeGate"
+          ]
         }
       ],
       "source_commit": "3bc92400826cc4ca7ac665b467708e22261edc61",
@@ -4115,6 +4123,15 @@
           "symbols": [
             "reviewed Desktop platform/build/verification contract"
           ]
+        },
+        {
+          "path": "frontend/src/production/evidence.ts",
+          "blob_sha": "2f97fde079e0ca0180d0ae709fa4c291fd9c7a99",
+          "symbols": [
+            "PRODUCTION_UI_EVIDENCE",
+            "PRODUCTION_RENDERER_GAPS",
+            "UI_TEXT"
+          ]
         }
       ],
       "source_commit": "3bc92400826cc4ca7ac665b467708e22261edc61",
@@ -4199,6 +4216,15 @@
             "FBCP sections 4/6/7",
             "FBCP-QA-02..18",
             "FBCP AC-01..50"
+          ]
+        },
+        {
+          "path": "frontend/src/production/human-call-media.tsx",
+          "blob_sha": "8e5c4cbe5b3c9fb7f0d51d43300ccdeb2d2ac99e",
+          "symbols": [
+            "HumanCallControls",
+            "selectActiveHumanCall",
+            "requireLocalCallLease"
           ]
         }
       ],
@@ -5215,6 +5241,16 @@
             "ForwardSettlement",
             "createForwardRequestId"
           ]
+        },
+        {
+          "path": "frontend/src/production/forward-recipient-navigation.ts",
+          "blob_sha": "aba269a9dd687747e4d53fd1d971f74451a8542c",
+          "symbols": [
+            "nextForwardRecipientIndex",
+            "isForwardRecipientNavigationKey",
+            "isForwardSubmitShortcut",
+            "isForwardToggleShortcut"
+          ]
         }
       ],
       "source_commit": "3bc92400826cc4ca7ac665b467708e22261edc61",
@@ -5560,6 +5596,96 @@
       "artifact": null,
       "verification_status": "not-verified",
       "notes": "Source responsibility is implemented, not verified. The predecessor HEAD a82bba3cab2d234391f4f1f6ed5ec707a0402cb3 had focused Rust tests green, but exact-head policy requires rerunning the descendant commit created by this ledger update before any verified claim."
+    },
+    {
+      "responsibility_id": "AGENT-GROUP-MEMBERSHIP-ANDROID-001",
+      "domain": "agent",
+      "desktop_sources": [
+        {
+          "path": "frontend/src/production/group-members-root.ts",
+          "blob_sha": "02910ea0377b4782620e0154bb45405df479e3ba",
+          "symbols": [
+            "createGroupMembersRootScope",
+            "SynchronizedRendererRosterOwner"
+          ]
+        },
+        {
+          "path": "frontend/src/recovered/features/agent-info/group-members/bridge.ts",
+          "blob_sha": "b100644c8a181222bddd83369bf755cc5139880e",
+          "symbols": [
+            "typedCoordinatorSetGroupMembers",
+            "createGenerationFencedGroupRosterSource"
+          ]
+        },
+        {
+          "path": "frontend/src/recovered/features/agent-info/group-members/model.ts",
+          "blob_sha": "5f72bbc2c3ac035b9a6e28091ce8e8bd34a63c55",
+          "symbols": [
+            "GROUP_MAX_MEMBERS",
+            "createGroupMembersProvider",
+            "projectGroupMemberAgent"
+          ]
+        }
+      ],
+      "source_commit": "3bc92400826cc4ca7ac665b467708e22261edc61",
+      "responsibility": "Own Agent-group identity and durable 1-6 member relationships in the canonical Agent roster, expose typed create/update membership commands, fence invalid/group/self/stale member identities, and let native presentation keep only transient selection/pending UI state.",
+      "source_owner": "Desktop group-members root/provider over Coordinator setGroupMembers and synchronized account-generation roster",
+      "direct_callers": [
+        "Agent/group information surface",
+        "Agent network membership projection"
+      ],
+      "downstream_dependencies": [
+        "canonical Agent roster",
+        "typed Coordinator bridge",
+        "Agent Network membership edges",
+        "native Home group creation/member editor"
+      ],
+      "state_owner": "Rust AndroidAgentRoster owns durable group/member truth; AndroidCoordinatorRuntime is transport only; MobileBotViewModel/Compose own no durable membership truth.",
+      "persistent_state": [
+        "source/host agents.json contains isGroup and memberIds",
+        "member IDs are normalized against existing non-group Agent identities"
+      ],
+      "protocol_wire_contract": [
+        "createGroup(name,description,memberAgentIds)",
+        "setGroupMembers(id,memberAgentIds)",
+        "listAgents returns isGroup/memberIds",
+        "member count 1-6"
+      ],
+      "visible_effect": "User can create a native Agent group from existing Agents, inspect it in the canonical roster/Agent Network, and edit its membership without a renderer-owned roster.",
+      "failure_behavior": [
+        "unknown member is rejected",
+        "group/self member is rejected",
+        "empty or more than six members is rejected",
+        "deleting an Agent removes it from surviving group membership",
+        "corrupt roster follows existing quarantine policy"
+      ],
+      "cancellation_behavior": "selection before dispatch is presentation-only; once dispatched, canonical Host mutation settles atomically before refreshed projection.",
+      "retry_semantics": "UI refresh may retry reads; membership mutation is not replayed by Compose after timeout. Canonical roster remains the source of reconciliation.",
+      "idempotency_semantics": "member IDs are de-duplicated in canonical order; normalization on reopen prevents duplicate/invalid membership rows.",
+      "process_death_recovery": "memberIds persist with the canonical roster and are reloaded after process death; no UI mutation replay is required.",
+      "account_fencing": "group roster is reached only through the process/account-scoped typed Coordinator runtime; presentation cannot inject a second account roster.",
+      "security_boundary": "Compose -> MobileBotViewModel -> AndroidCoordinatorPort -> AndroidCoordinatorRuntime -> JNI/Rust Host; membership validation is repeated in Rust canonical owner.",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "source/host/src/android_agent_roster.rs",
+        "source/host/src/android_json_runtime.rs",
+        "source/android-preload/src/main/kotlin/com/ombhrum/fabushi/androidpreload/runtime/AndroidCoordinatorPort.kt",
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/coordinator/AndroidCoordinatorRuntime.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/presentation/MobileBotViewModel.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/features/bots/GrokHomeSurface.kt"
+      ],
+      "android_owner": "Rust AndroidAgentRoster canonical membership owner + typed Coordinator transport + native ephemeral selection UI",
+      "platform_delta": "Desktop React provider/account-generation wrapper becomes native Compose/ViewModel selection over a process-scoped typed Coordinator. Durable membership and validation stay below UI in Rust.",
+      "implementation_status": "implemented",
+      "production_wiring": "createGroup/setGroupMembers dispatch into AndroidJsonRuntime and AndroidAgentRoster; MobileBotViewModel invokes only typed agentCreateGroup/agentSetGroupMembers; GrokHomeSurface exposes create/edit members and refreshes canonical roster.",
+      "unit_test": "Rust AndroidAgentRoster tests cover durable member persistence, duplicate normalization, self/group/unknown fencing via validation path, and delete cleanup; descendant exact-head Android UI regression must rerun after this ledger commit.",
+      "contract_test": "Desktop max-six/setGroupMembers contract is represented; typed Android Coordinator contains no arbitrary Host method string at presentation call sites.",
+      "integration_test": "Predecessor 3c0d9edad4246879463ba118234cf7a692d6c2dd Rust foundation passed including group membership tests; descendant exact-head integration still required.",
+      "packaged_test": "required in final packaged Agent group/Agent Network journey",
+      "device_test": "required for create/edit/restart/accessibility on supported Android devices",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Implemented but intentionally not verified. Same-exact-HEAD Android regression/packaged/device evidence is required; Agent Network relationship/activity parity also has separate open fields beyond memberIds."
     }
   ],
   "traceability": {
