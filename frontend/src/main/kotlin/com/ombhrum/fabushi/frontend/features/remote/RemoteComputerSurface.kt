@@ -83,6 +83,7 @@ fun RemoteComputerSurface(onClose: () -> Unit) {
         RemoteComputerPresentationPolicy.parse(
             coordinator.remoteComputerList(),
             coordinator.remoteComputerPairingStatus(),
+            coordinator.remoteComputerSessionStatus(),
         )
     }
 
@@ -255,6 +256,7 @@ fun RemoteComputerSurface(onClose: () -> Unit) {
                             RemoteComputerPresentationPolicy.parse(
                                 coordinator.remoteComputerList(),
                                 coordinator.remoteComputerPairingStatus(),
+                                coordinator.remoteComputerSessionStatus(),
                             )
                         }
                     }.onSuccess {
@@ -303,6 +305,7 @@ fun RemoteComputerSurface(onClose: () -> Unit) {
                             RemoteComputerPresentationPolicy.parse(
                                 coordinator.remoteComputerList(),
                                 coordinator.remoteComputerPairingStatus(),
+                                coordinator.remoteComputerSessionStatus(),
                             )
                         }
                     }.onSuccess {
@@ -312,6 +315,133 @@ fun RemoteComputerSurface(onClose: () -> Unit) {
                         // Revoke is locally fail-closed before the remote mutation. Keep the UI
                         // conservative and reload native truth rather than assuming server success.
                         nativeError = "本机授权已关闭；服务器撤销状态将在下次刷新时重新核对。"
+                        runCatching { loadNativeState() }.onSuccess { nativeState = it }
+                    }
+                    nativeBusy = false
+                }
+            },
+            onSessionStart = sessionStart@{ pairing ->
+                if (nativeBusy) return@sessionStart
+                scope.launch {
+                    nativeBusy = true
+                    runCatching {
+                        withContext(Dispatchers.IO) {
+                            coordinator.remoteComputerSessionCreate(pairing.deviceId)
+                            loadNativeState()
+                        }
+                    }.onSuccess {
+                        nativeState = it
+                        nativeError = null
+                    }.onFailure {
+                        nativeError = "无法建立控制会话；不会自动重发可能已创建的请求，请刷新核对。"
+                        runCatching { loadNativeState() }.onSuccess { nativeState = it }
+                    }
+                    nativeBusy = false
+                }
+            },
+            onSessionConnect = sessionConnect@{ session ->
+                if (nativeBusy) return@sessionConnect
+                scope.launch {
+                    nativeBusy = true
+                    runCatching {
+                        withContext(Dispatchers.IO) {
+                            // Android currently has no independent direct WebRTC data-plane owner.
+                            // Report directAvailable=false so the server must choose an authenticated
+                            // relay or fail closed; never claim a direct path that does not exist.
+                            coordinator.remoteComputerSessionTransport(
+                                session.deviceId,
+                                session.sessionId,
+                                directAvailable = false,
+                            )
+                            coordinator.remoteComputerSignal(
+                                session.deviceId,
+                                session.sessionId,
+                                "ready",
+                                org.json.JSONObject()
+                                    .put("viewportRevision", session.viewportRevision)
+                                    .put("humanTakeover", session.humanTakeover),
+                            )
+                            loadNativeState()
+                        }
+                    }.onSuccess {
+                        nativeState = it
+                        nativeError = null
+                    }.onFailure {
+                        nativeError = "目标电脑尚未激活会话，或没有可用的认证中继；保持 fail-closed。"
+                        runCatching { loadNativeState() }.onSuccess { nativeState = it }
+                    }
+                    nativeBusy = false
+                }
+            },
+            onSessionReconcile = sessionReconcile@{ session ->
+                if (nativeBusy) return@sessionReconcile
+                scope.launch {
+                    nativeBusy = true
+                    runCatching {
+                        withContext(Dispatchers.IO) {
+                            val drained = coordinator.remoteComputerSignalDrain(
+                                session.deviceId,
+                                session.sessionId,
+                                session.lastAcknowledgedSignalId,
+                            )
+                            val lastSignalId = drained.getLong("lastSignalId")
+                            if (lastSignalId > session.lastAcknowledgedSignalId) {
+                                coordinator.remoteComputerSignalAcknowledge(
+                                    session.deviceId,
+                                    session.sessionId,
+                                    lastSignalId,
+                                )
+                            }
+                            loadNativeState()
+                        }
+                    }.onSuccess {
+                        nativeState = it
+                        nativeError = null
+                    }.onFailure {
+                        nativeError = "会话核对失败；不会重放输入或远端副作用。"
+                        runCatching { loadNativeState() }.onSuccess { nativeState = it }
+                    }
+                    nativeBusy = false
+                }
+            },
+            onHumanTakeover = takeover@{ session, active ->
+                if (nativeBusy) return@takeover
+                scope.launch {
+                    nativeBusy = true
+                    runCatching {
+                        withContext(Dispatchers.IO) {
+                            coordinator.remoteComputerHumanTakeover(
+                                session.deviceId,
+                                session.sessionId,
+                                session.viewportRevision,
+                                active,
+                            )
+                            loadNativeState()
+                        }
+                    }.onSuccess {
+                        nativeState = it
+                        nativeError = null
+                    }.onFailure {
+                        nativeError = "控制租约已变化，请刷新后再切换人工接管。"
+                        runCatching { loadNativeState() }.onSuccess { nativeState = it }
+                    }
+                    nativeBusy = false
+                }
+            },
+            onSessionClose = sessionClose@{ session ->
+                if (nativeBusy) return@sessionClose
+                scope.launch {
+                    nativeBusy = true
+                    runCatching {
+                        withContext(Dispatchers.IO) {
+                            coordinator.remoteComputerSessionClose(session.deviceId, session.sessionId)
+                            loadNativeState()
+                        }
+                    }.onSuccess {
+                        nativeState = it
+                        nativeError = null
+                    }.onFailure {
+                        nativeError = "结束会话的服务端结果未知；本机会保持 outcome-unknown 并要求核对，不会自动重复关闭。"
                         runCatching { loadNativeState() }.onSuccess { nativeState = it }
                     }
                     nativeBusy = false
@@ -381,6 +511,11 @@ private fun RemoteComputerNativePanel(
     onPair: () -> Unit,
     onRebuild: (force: Boolean) -> Unit,
     onRevoke: (RemoteComputerPairing) -> Unit,
+    onSessionStart: (RemoteComputerPairing) -> Unit,
+    onSessionConnect: (RemoteComputerSessionProjection) -> Unit,
+    onSessionReconcile: (RemoteComputerSessionProjection) -> Unit,
+    onHumanTakeover: (RemoteComputerSessionProjection, Boolean) -> Unit,
+    onSessionClose: (RemoteComputerSessionProjection) -> Unit,
 ) {
     Card(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
@@ -474,6 +609,66 @@ private fun RemoteComputerNativePanel(
                 )
                 OutlinedButton(onClick = { onRevoke(pairing) }, enabled = !busy) {
                     Text("撤销本机授权")
+                }
+
+                val session = state.session
+                if (!session.stored) {
+                    Button(onClick = { onSessionStart(pairing) }, enabled = !busy) {
+                        Text("建立控制会话")
+                    }
+                } else {
+                    Card(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(10.dp)) {
+                        Column(
+                            modifier = Modifier.fillMaxWidth().padding(12.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            Text("原生控制会话", style = MaterialTheme.typography.labelMedium)
+                            Text(
+                                "状态 " + session.lifecycle +
+                                    " · viewport r" + session.viewportRevision +
+                                    (if (session.selectedRoute.isBlank()) "" else " · " + session.selectedRoute),
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                            Text(
+                                "信令游标 " + session.lastAcknowledgedSignalId +
+                                    "/" + session.highestDrainedSignalId +
+                                    (if (session.reconcileRequired) " · 需要核对" else ""),
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                OutlinedButton(
+                                    onClick = { onSessionConnect(session) },
+                                    enabled = !busy && session.lifecycle !in setOf("closing", "outcome_unknown"),
+                                ) {
+                                    Text("连接控制会话")
+                                }
+                                OutlinedButton(
+                                    onClick = { onSessionReconcile(session) },
+                                    enabled = !busy,
+                                ) {
+                                    Text("核对信令")
+                                }
+                            }
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                OutlinedButton(
+                                    onClick = { onHumanTakeover(session, !session.humanTakeover) },
+                                    enabled = !busy && session.lifecycle !in setOf("closing", "outcome_unknown"),
+                                ) {
+                                    Text(if (session.humanTakeover) "结束人工接管" else "人工接管")
+                                }
+                                OutlinedButton(
+                                    onClick = { onSessionClose(session) },
+                                    enabled = !busy && session.lifecycle != "closing",
+                                ) {
+                                    Text("结束会话")
+                                }
+                            }
+                            Text(
+                                "控制凭据只保存在 Android Coordinator/Keystore；网页视图没有 native credential 或高权限 JS bridge。",
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                        }
+                    }
                 }
             }
 
