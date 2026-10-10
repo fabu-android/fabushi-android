@@ -48,6 +48,8 @@ struct MessagingRepositoryState {
     agent_delivery_calls: BTreeMap<String, Value>,
     #[serde(default)]
     agent_delivery_call_order: Vec<String>,
+    #[serde(default)]
+    agent_wakes: BTreeMap<String, Value>,
 }
 
 impl Default for MessagingRepositoryState {
@@ -67,6 +69,7 @@ impl Default for MessagingRepositoryState {
             request_order: Vec::new(),
             agent_delivery_calls: BTreeMap::new(),
             agent_delivery_call_order: Vec::new(),
+            agent_wakes: BTreeMap::new(),
         }
     }
 }
@@ -178,18 +181,7 @@ impl AndroidMessagingService {
             }
         };
 
-        self.state.agent_delivery_calls.insert(
-            replay_key.clone(),
-            json!({"args":replay_args,"result":result.clone()}),
-        );
-        self.state.agent_delivery_call_order.retain(|key| key != &replay_key);
-        self.state.agent_delivery_call_order.push(replay_key.clone());
-        while self.state.agent_delivery_call_order.len() > MAX_REPLAY_RESULTS {
-            if let Some(expired) = self.state.agent_delivery_call_order.first().cloned() {
-                self.state.agent_delivery_call_order.remove(0);
-                self.state.agent_delivery_calls.remove(&expired);
-            }
-        }
+        self.remember_result(replay_key, result.clone());
         if let Err(error) = self.persist() {
             self.state = previous;
             return Err(format!("failed to persist canonical Android messaging repository: {error}"));
@@ -743,6 +735,48 @@ impl AndroidMessagingService {
                 }
             }
             self.bump_cursor();
+
+            let recipients = if target_is_group {
+                conversation
+                    .get("participants")
+                    .and_then(Value::as_array)
+                    .map(|participants| {
+                        participants
+                            .iter()
+                            .filter_map(|participant| participant.get("actorId").and_then(Value::as_str))
+                            .filter(|actor_id| *actor_id != sender_id)
+                            .map(str::to_string)
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default()
+            } else {
+                vec![target_id.to_string()]
+            };
+            for recipient_id in recipients {
+                let wake_id = format!(
+                    "agent-wake:{}",
+                    &crate::sha256::sha256_hex(
+                        format!("{account_fence}\n{message_id}\n{recipient_id}").as_bytes()
+                    )[..32]
+                );
+                self.state.agent_wakes.entry(wake_id.clone()).or_insert_with(|| {
+                    json!({
+                        "wakeId":wake_id,
+                        "accountFence":account_fence,
+                        "targetAgentId":recipient_id,
+                        "sourceAgentId":sender_id,
+                        "conversationId":conversation_id,
+                        "messageId":message_id,
+                        "message":message,
+                        "images":images,
+                        "priority": if target_is_group { false } else { priority },
+                        "createdAtMs":now_ms,
+                        "attempts":0,
+                        "nextAttemptAtMs":now_ms,
+                        "lastError":Value::Null
+                    })
+                });
+            }
         }
 
         let result = json!({
@@ -753,12 +787,82 @@ impl AndroidMessagingService {
             "priorityApplied":!target_is_group && priority,
             "deliveryMode":"async-new-turn"
         });
-        self.remember_result(replay_key, result.clone());
+        self.state.agent_delivery_calls.insert(
+            replay_key.clone(),
+            json!({"args":replay_args,"result":result.clone()}),
+        );
+        self.state.agent_delivery_call_order.retain(|key| key != &replay_key);
+        self.state.agent_delivery_call_order.push(replay_key.clone());
+        while self.state.agent_delivery_call_order.len() > MAX_REPLAY_RESULTS {
+            if let Some(expired) = self.state.agent_delivery_call_order.first().cloned() {
+                self.state.agent_delivery_call_order.remove(0);
+                self.state.agent_delivery_calls.remove(&expired);
+            }
+        }
         if let Err(error) = self.persist() {
             self.state = previous;
             return Err(format!("failed to persist Agent delivery: {error}"));
         }
         Ok(result)
+    }
+
+    pub fn pending_agent_wakes(
+        &self,
+        account_fence: &str,
+        now_ms: i64,
+    ) -> Vec<Value> {
+        let mut wakes = self
+            .state
+            .agent_wakes
+            .values()
+            .filter(|wake| wake.get("accountFence").and_then(Value::as_str) == Some(account_fence))
+            .filter(|wake| wake.get("nextAttemptAtMs").and_then(Value::as_i64).unwrap_or(0) <= now_ms)
+            .cloned()
+            .collect::<Vec<_>>();
+        wakes.sort_by_key(|wake| wake.get("createdAtMs").and_then(Value::as_i64).unwrap_or(0));
+        wakes
+    }
+
+    pub fn complete_agent_wake(&mut self, wake_id: &str) -> Result<(), String> {
+        let previous = self.state.clone();
+        if self.state.agent_wakes.remove(wake_id).is_none() {
+            return Ok(());
+        }
+        if let Err(error) = self.persist() {
+            self.state = previous;
+            return Err(format!("failed to persist completed Agent wake: {error}"));
+        }
+        Ok(())
+    }
+
+    pub fn defer_agent_wake(
+        &mut self,
+        wake_id: &str,
+        now_ms: i64,
+        reason: &str,
+    ) -> Result<(), String> {
+        let previous = self.state.clone();
+        let wake = self
+            .state
+            .agent_wakes
+            .get_mut(wake_id)
+            .ok_or_else(|| "Agent wake is missing".to_string())?;
+        let attempts = wake.get("attempts").and_then(Value::as_u64).unwrap_or(0).saturating_add(1);
+        let delay_ms = (5_000_u64.saturating_mul(1_u64 << attempts.min(5))).min(120_000);
+        let object = wake
+            .as_object_mut()
+            .ok_or_else(|| "Agent wake record is invalid".to_string())?;
+        object.insert("attempts".into(), json!(attempts));
+        object.insert(
+            "nextAttemptAtMs".into(),
+            json!(now_ms.saturating_add(i64::try_from(delay_ms).unwrap_or(i64::MAX))),
+        );
+        object.insert("lastError".into(), Value::String(reason.to_string()));
+        if let Err(error) = self.persist() {
+            self.state = previous;
+            return Err(format!("failed to persist deferred Agent wake: {error}"));
+        }
+        Ok(())
     }
 
     pub fn read_blob_range(
