@@ -30,12 +30,13 @@ internal fun CommandPalette(
     entries: List<CommandPaletteEntry>,
     messageSearchStatus: CommandPaletteMessageStatus = CommandPaletteMessageStatus.IDLE,
     routineStatus: CommandPaletteRoutineStatus = CommandPaletteRoutineStatus.IDLE,
+    initialTab: CommandPaletteTab = CommandPaletteTab.ALL,
     onQueryChange: (String) -> Unit = {},
     onDismiss: () -> Unit,
 ) {
     if (!open) return
     var query by remember(open) { mutableStateOf("") }
-    var tab by remember(open) { mutableStateOf(CommandPaletteTab.ALL) }
+    var tab by remember(open, initialTab) { mutableStateOf(initialTab) }
     val visible = remember(entries, query, tab) {
         commandPaletteEntries(entries, tab, query)
     }
