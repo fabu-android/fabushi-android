@@ -557,6 +557,7 @@ impl AndroidJsonHost {
                 }
             })),
             "feature.auth.status" => self.account_status(),
+            "feature.account.fence" => Ok(json!({"accountFence":self.current_turn_account_fence()?})),
             "feature.account.privacyMode" => Ok(self.account_privacy_mode()),
             "feature.remote.binding.status" => Ok(self.remote_binding_status()),
             "feature.auth.deviceAgentSession" => Ok(self.device_agent_session()),
@@ -584,6 +585,7 @@ impl AndroidJsonHost {
             "feature.agent.turn.reconcile" => self.agent_turn_reconcile(params),
             "feature.agent.subagent.tool" => self.agent_subagent_tool(params),
             "feature.agent.subagent.reconcile" => self.agent_subagent_reconcile(params),
+            "feature.agent.rosterMutation" => self.agent_roster_mutation(params),
             "feature.agent.upgradeQuiesce" => self.agent_upgrade_quiesce(params),
             "feature.automation.upsert" => self.automation_upsert(params),
             "feature.automation.list" => self.automation_list(),
@@ -1392,6 +1394,27 @@ impl AndroidJsonHost {
             );
         }
         Ok(())
+    }
+
+    fn agent_roster_mutation(&mut self, params: &Value) -> Result<Value, String> {
+        let operation_id = required_string(params, "operationId")?;
+        let expected_account_fence = required_string(params, "accountFence")?;
+        let current_account_fence = self.current_turn_account_fence()?;
+        if current_account_fence != expected_account_fence {
+            return Err("presentation roster mutation is fenced to a stale account".into());
+        }
+        let mutation = params
+            .get("mutation")
+            .filter(|value| value.is_object())
+            .ok_or("presentation roster mutation payload is required")?;
+        self.agents
+            .lock()
+            .map_err(|_| "canonical Android Agent roster lock poisoned".to_string())?
+            .apply_presentation_operation(
+                &current_account_fence,
+                operation_id,
+                mutation,
+            )
     }
 
     fn agent_disk_pressure_observe(&mut self, params: &Value) -> Result<Value, String> {
