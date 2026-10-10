@@ -9,6 +9,56 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 class FrontendProductionModelParityTest {
+
+    @Test
+    fun messageReactionToggleUsesChosenByMeAndOptimisticProjection() {
+        val base = ChatMessage(
+            id = "m1",
+            conversationId = "c1",
+            text = "hello",
+            outgoing = false,
+            time = "now",
+            reactions = listOf(ChatReaction("👍", count = 2, chosenByMe = true)),
+        )
+        assertFalse(desiredReactionEnabled(base, "👍"))
+        val removed = optimisticReactionMessage(base, "👍", enabled = false)
+        assertEquals(1, removed.reactions.single().count)
+        assertFalse(removed.reactions.single().chosenByMe)
+
+        assertTrue(desiredReactionEnabled(removed, "👍"))
+        val restored = optimisticReactionMessage(removed, "👍", enabled = true)
+        assertEquals(2, restored.reactions.single().count)
+        assertTrue(restored.reactions.single().chosenByMe)
+
+        val added = optimisticReactionMessage(base.copy(reactions = emptyList()), "❤️", enabled = true)
+        assertEquals(ChatReaction("❤️", count = 1, chosenByMe = true), added.reactions.single())
+    }
+
+    @Test
+    fun messageReactionProjectionDoesNotMutateUnsettledMessages() {
+        val unsettled = ChatMessage(
+            id = "m1",
+            conversationId = "c1",
+            text = "hello",
+            outgoing = true,
+            time = "now",
+            deliveryState = "pending",
+        )
+        assertEquals(
+            unsettled,
+            optimisticReactionMessage(unsettled, "👍", enabled = true),
+        )
+        val other = unsettled.copy(id = "m2", deliveryState = "sent")
+        val projected = optimisticReactionMessages(
+            messages = listOf(unsettled, other),
+            messageId = "m2",
+            reaction = "👍",
+            enabled = true,
+        )
+        assertTrue(projected.first().reactions.isEmpty())
+        assertEquals("👍", projected.last().reactions.single().reaction)
+    }
+
     @Test
     fun miniAppAndUnknownConversationKindsAreNotProjectedAsChats() {
         assertEquals(ConversationKind.DIRECT, conversationKindFromWire("direct"))
