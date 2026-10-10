@@ -21,6 +21,7 @@ const APPROVAL_WAIT_TIMEOUT: Duration = Duration::from_secs(120);
 const APPROVAL_POLL: Duration = Duration::from_millis(250);
 const MAX_SHELL_COMMAND: usize = 32 * 1024;
 const MAX_READ_PATH: usize = 4096;
+const REMOTE_BROWSER_EXECUTION_TIMEOUT_MS: u64 = 90_000;
 
 const REMOTE_BROWSER_TOOL_NAMES: &[&str] = &[
     "browser_navigate",
@@ -504,7 +505,7 @@ impl AndroidRoutedToolBridge for RemoteRoutedTools {
                     RemoteExecutionState::Rejected => return Err("remote_execution_rejected".into()),
                     RemoteExecutionState::Cancelled => return Err("remote_execution_cancelled".into()),
                 };
-                return Ok(parse_remote_output(&result.output_json));
+                return parse_remote_tool_output(name, &result.output_json);
             }
         }
 
@@ -670,7 +671,7 @@ impl AndroidRoutedToolBridge for RemoteRoutedTools {
             .map_err(|_| "remote runner lock poisoned".to_string())?;
         let runner = guard.as_mut().ok_or("trusted Remote runner is unavailable")?;
         match runner.dispatch_prepared_authorized(&context, &request, now_ms()) {
-            Ok(result) => Ok(parse_remote_output(&result.output_json)),
+            Ok(result) => parse_remote_tool_output(name, &result.output_json),
             Err(ExecutionError::Transport(message))
                 if message.contains("remote_outcome_unknown") =>
             {
@@ -858,6 +859,105 @@ fn validate_remote_tool_input(name: &str, args: &Value) -> Result<u64, String> {
     }
 }
 
+fn validate_browser_required_string(
+    object: &serde_json::Map<String, Value>,
+    tool: &str,
+    key: &str,
+) -> Result<(), String> {
+    match object.get(key).and_then(Value::as_str) {
+        Some(value) if !value.is_empty() => Ok(()),
+        _ => Err(format!("Remote Browser {tool} requires string {key}")),
+    }
+}
+
+fn validate_browser_optional_string(
+    object: &serde_json::Map<String, Value>,
+    key: &str,
+) -> Result<(), String> {
+    if object.get(key).is_some_and(|value| !value.is_string()) {
+        return Err(format!("Remote Browser {key} must be a string"));
+    }
+    Ok(())
+}
+
+fn validate_browser_optional_bool(
+    object: &serde_json::Map<String, Value>,
+    key: &str,
+) -> Result<(), String> {
+    if object.get(key).is_some_and(|value| !value.is_boolean()) {
+        return Err(format!("Remote Browser {key} must be a boolean"));
+    }
+    Ok(())
+}
+
+fn validate_browser_optional_number(
+    object: &serde_json::Map<String, Value>,
+    key: &str,
+) -> Result<(), String> {
+    if object.get(key).is_some_and(|value| value.as_f64().is_none()) {
+        return Err(format!("Remote Browser {key} must be a number"));
+    }
+    Ok(())
+}
+
+fn validate_browser_string_array(
+    object: &serde_json::Map<String, Value>,
+    key: &str,
+    required: bool,
+) -> Result<(), String> {
+    let Some(value) = object.get(key) else {
+        return if required {
+            Err(format!("Remote Browser requires {key}"))
+        } else {
+            Ok(())
+        };
+    };
+    let values = value
+        .as_array()
+        .ok_or_else(|| format!("Remote Browser {key} must be an array"))?;
+    if values.iter().any(|value| !value.is_string()) {
+        return Err(format!("Remote Browser {key} must contain only strings"));
+    }
+    Ok(())
+}
+
+fn validate_browser_button(object: &serde_json::Map<String, Value>) -> Result<(), String> {
+    if let Some(button) = object.get("button") {
+        if !matches!(button.as_str(), Some("left" | "right" | "middle")) {
+            return Err("Remote Browser button is unsupported".into());
+        }
+    }
+    Ok(())
+}
+
+fn validate_browser_cdp_method(method: &str) -> Result<(), String> {
+    const DENIED_PREFIXES: &[&str] = &[
+        "Browser.",
+        "Target.",
+        "Storage.",
+        "SystemInfo.",
+        "Security.",
+        "Input.",
+        "Tethering.",
+        "Cast.",
+    ];
+    const DENIED_METHODS: &[&str] = &[
+        "Network.setCookie",
+        "Network.setCookies",
+        "Network.getCookies",
+        "Network.getAllCookies",
+        "Network.deleteCookies",
+        "Network.clearBrowserCookies",
+        "Network.clearBrowserCache",
+    ];
+    if DENIED_PREFIXES.iter().any(|prefix| method.starts_with(prefix))
+        || DENIED_METHODS.contains(&method)
+    {
+        return Err(format!("Remote Browser CDP method is denied: {method}"));
+    }
+    Ok(())
+}
+
 fn validate_remote_browser_tool_input(name: &str, args: &Value) -> Result<u64, String> {
     let object = args
         .as_object()
@@ -874,23 +974,127 @@ fn validate_remote_browser_tool_input(name: &str, args: &Value) -> Result<u64, S
             return Err(format!("Remote Browser {name} requires {key}"));
         }
     }
-    if let Some(view_id) = object.get("viewId") {
-        if !view_id.is_string() {
-            return Err("Remote Browser viewId must be a string".into());
-        }
-    }
-    if name == "browser_tabs" {
-        let action = object
-            .get("action")
-            .and_then(Value::as_str)
-            .ok_or("Remote Browser tabs action is required")?;
-        if !matches!(action, "list" | "new" | "close" | "select") {
-            return Err("Remote Browser tabs action is unsupported".into());
-        }
-    }
-    Ok(30_000)
-}
 
+    validate_browser_optional_string(object, "viewId")?;
+    validate_browser_optional_string(object, "element")?;
+
+    match name {
+        "browser_navigate" => {
+            validate_browser_required_string(object, name, "url")?;
+            validate_browser_optional_bool(object, "newTab")?;
+        }
+        "browser_snapshot" => {
+            validate_browser_optional_bool(object, "interactive")?;
+            validate_browser_optional_number(object, "maxDepth")?;
+            validate_browser_optional_string(object, "selector")?;
+        }
+        "browser_click" => {
+            validate_browser_required_string(object, name, "ref")?;
+            validate_browser_optional_number(object, "offsetX")?;
+            validate_browser_optional_number(object, "offsetY")?;
+            validate_browser_optional_number(object, "holdDurationMs")?;
+            validate_browser_optional_bool(object, "doubleClick")?;
+            validate_browser_button(object)?;
+            validate_browser_string_array(object, "modifiers", false)?;
+        }
+        "browser_mouse_click_xy" => {
+            for key in ["x", "y"] {
+                if object.get(key).and_then(Value::as_f64).is_none() {
+                    return Err(format!("Remote Browser {name} requires numeric {key}"));
+                }
+            }
+            validate_browser_button(object)?;
+        }
+        "browser_type" => {
+            validate_browser_required_string(object, name, "ref")?;
+            validate_browser_required_string(object, name, "text")?;
+            for key in ["clear", "slowly", "submit"] {
+                validate_browser_optional_bool(object, key)?;
+            }
+        }
+        "browser_fill" => {
+            validate_browser_required_string(object, name, "ref")?;
+            validate_browser_required_string(object, name, "value")?;
+        }
+        "browser_select_option" => {
+            validate_browser_required_string(object, name, "ref")?;
+            validate_browser_string_array(object, "values", true)?;
+        }
+        "browser_press_key" => {
+            validate_browser_required_string(object, name, "key")?;
+        }
+        "browser_scroll" => {
+            validate_browser_optional_string(object, "ref")?;
+            for key in ["amount", "deltaX", "deltaY"] {
+                validate_browser_optional_number(object, key)?;
+            }
+            if let Some(direction) = object.get("direction") {
+                if !matches!(direction.as_str(), Some("up" | "down" | "left" | "right")) {
+                    return Err("Remote Browser scroll direction is unsupported".into());
+                }
+            }
+        }
+        "browser_drag" => {
+            validate_browser_required_string(object, name, "sourceRef")?;
+            validate_browser_optional_string(object, "targetRef")?;
+            validate_browser_optional_number(object, "targetX")?;
+            validate_browser_optional_number(object, "targetY")?;
+            let has_target_ref = object
+                .get("targetRef")
+                .and_then(Value::as_str)
+                .is_some_and(|value| !value.is_empty());
+            let has_target_xy = object.get("targetX").and_then(Value::as_f64).is_some()
+                && object.get("targetY").and_then(Value::as_f64).is_some();
+            if !has_target_ref && !has_target_xy {
+                return Err("Remote Browser drag requires targetRef or targetX/targetY".into());
+            }
+        }
+        "browser_get_bounding_box" => {
+            validate_browser_required_string(object, name, "ref")?;
+        }
+        "browser_highlight" => {
+            validate_browser_required_string(object, name, "ref")?;
+            validate_browser_optional_number(object, "durationMs")?;
+        }
+        "browser_cdp" => {
+            validate_browser_required_string(object, name, "method")?;
+            let method = object
+                .get("method")
+                .and_then(Value::as_str)
+                .ok_or("Remote Browser CDP method is required")?;
+            validate_browser_cdp_method(method)?;
+            if object.get("params").is_some_and(|value| !value.is_object()) {
+                return Err("Remote Browser CDP params must be an object".into());
+            }
+        }
+        "browser_tabs" => {
+            let action = object
+                .get("action")
+                .and_then(Value::as_str)
+                .ok_or("Remote Browser tabs action is required")?;
+            if !matches!(action, "list" | "new" | "close" | "select") {
+                return Err("Remote Browser tabs action is unsupported".into());
+            }
+            if let Some(index) = object.get("index") {
+                if index.as_u64().is_none() {
+                    return Err("Remote Browser tabs index must be a non-negative integer".into());
+                }
+            }
+            if action == "select" && object.get("index").and_then(Value::as_u64).is_none() {
+                return Err("Remote Browser tabs select requires index".into());
+            }
+        }
+        "browser_take_screenshot" => {
+            validate_browser_optional_bool(object, "fullPage")?;
+        }
+        _ => return Err("unsupported Remote Browser tool".into()),
+    }
+
+    // Desktop's frozen browser driver owns a 90s watchdog. Preserve that execution
+    // budget in the authorized Remote Runner request. Transport uncertainty remains
+    // outcome-unknown and is reconciled by stable operation/request identity.
+    Ok(REMOTE_BROWSER_EXECUTION_TIMEOUT_MS)
+}
 
 fn validate_remote_computer_action(args: &Value, allow_followups: bool) -> Result<(), String> {
     const ACTIONS: &[&str] = &["screenshot", "click", "move", "drag", "type", "key", "scroll", "wait"];
@@ -985,6 +1189,28 @@ fn validate_remote_computer_action(args: &Value, allow_followups: bool) -> Resul
 
 fn parse_remote_output(output: &str) -> Value {
     serde_json::from_str(output).unwrap_or_else(|_| Value::String(output.to_string()))
+}
+
+fn parse_remote_tool_output(name: &str, output: &str) -> Result<Value, String> {
+    let parsed = parse_remote_output(output);
+    if !is_remote_browser_tool(name) {
+        return Ok(parsed);
+    }
+    let object = parsed
+        .as_object()
+        .ok_or("Remote Browser result must use the Desktop BrowserToolExecutor object contract")?;
+    if object.get("text").and_then(Value::as_str).is_none() {
+        return Err("Remote Browser result omitted string text".into());
+    }
+    if object.get("isError").and_then(Value::as_bool).is_none() {
+        return Err("Remote Browser result omitted boolean isError".into());
+    }
+    match object.get("imageB64") {
+        Some(Value::Null) | Some(Value::String(_)) => {}
+        Some(_) => return Err("Remote Browser imageB64 must be a string or null".into()),
+        None => return Err("Remote Browser result omitted imageB64".into()),
+    }
+    Ok(parsed)
 }
 
 fn remote_execution_error(error: ExecutionError) -> String {
@@ -1207,22 +1433,105 @@ mod tests {
                 &json!({"url":"https://example.com","newTab":true}),
             )
             .unwrap(),
-            30_000,
+            REMOTE_BROWSER_EXECUTION_TIMEOUT_MS,
         );
         assert!(validate_remote_tool_input("browser_navigate", &json!({})).is_err());
+        assert!(validate_remote_tool_input("browser_navigate", &json!({"url":42})).is_err());
+
+        assert!(validate_remote_tool_input(
+            "browser_mouse_click_xy",
+            &json!({"x":"12","y":34}),
+        )
+        .is_err());
+        assert!(validate_remote_tool_input(
+            "browser_select_option",
+            &json!({"ref":"ref-1","values":["one",2]}),
+        )
+        .is_err());
+        assert!(validate_remote_tool_input(
+            "browser_drag",
+            &json!({"sourceRef":"ref-1"}),
+        )
+        .is_err());
+        assert_eq!(
+            validate_remote_tool_input(
+                "browser_drag",
+                &json!({"sourceRef":"ref-1","targetX":12.5,"targetY":9}),
+            )
+            .unwrap(),
+            REMOTE_BROWSER_EXECUTION_TIMEOUT_MS,
+        );
+
+        assert!(validate_remote_tool_input(
+            "browser_cdp",
+            &json!({"method":"Storage.clearDataForOrigin","params":{}}),
+        )
+        .is_err());
+        assert!(validate_remote_tool_input(
+            "browser_cdp",
+            &json!({"method":"Network.setCookie","params":{}}),
+        )
+        .is_err());
+        assert_eq!(
+            validate_remote_tool_input(
+                "browser_cdp",
+                &json!({"method":"Runtime.evaluate","params":{"expression":"location.href"}}),
+            )
+            .unwrap(),
+            REMOTE_BROWSER_EXECUTION_TIMEOUT_MS,
+        );
+        assert!(validate_remote_tool_input(
+            "browser_cdp",
+            &json!({"method":"Runtime.evaluate","params":"not-an-object"}),
+        )
+        .is_err());
+
         assert_eq!(
             validate_remote_tool_input("browser_tabs", &json!({"action":"list"})).unwrap(),
-            30_000,
+            REMOTE_BROWSER_EXECUTION_TIMEOUT_MS,
         );
-        assert!(
-            validate_remote_tool_input("browser_tabs", &json!({"action":"destroy"})).is_err()
-        );
-        assert!(
-            validate_remote_tool_input(
-                "browser_click",
-                &json!({"ref":"ref-1","viewId":42}),
-            )
-            .is_err()
+        assert!(validate_remote_tool_input("browser_tabs", &json!({"action":"destroy"})).is_err());
+        assert!(validate_remote_tool_input("browser_tabs", &json!({"action":"select"})).is_err());
+        assert!(validate_remote_tool_input(
+            "browser_click",
+            &json!({"ref":"ref-1","viewId":42}),
+        )
+        .is_err());
+        assert!(validate_remote_tool_input(
+            "browser_take_screenshot",
+            &json!({"fullPage":"yes"}),
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn browser_remote_result_must_match_desktop_bridge_shape() {
+        let valid = parse_remote_tool_output(
+            "browser_snapshot",
+            r#"{"text":"snapshot","imageB64":null,"isError":false}"#,
+        )
+        .expect("desktop browser output");
+        assert_eq!(valid["text"], "snapshot");
+        assert_eq!(valid["isError"], false);
+
+        assert!(parse_remote_tool_output(
+            "browser_snapshot",
+            r#"{"text":"snapshot","isError":false}"#,
+        )
+        .is_err());
+        assert!(parse_remote_tool_output(
+            "browser_snapshot",
+            r#"{"text":"snapshot","imageB64":12,"isError":false}"#,
+        )
+        .is_err());
+        assert!(parse_remote_tool_output(
+            "browser_snapshot",
+            r#"{"text":"snapshot","imageB64":null,"isError":"false"}"#,
+        )
+        .is_err());
+        assert_eq!(
+            parse_remote_tool_output("Shell", "plain-text").unwrap(),
+            Value::String("plain-text".into()),
         );
     }
 
