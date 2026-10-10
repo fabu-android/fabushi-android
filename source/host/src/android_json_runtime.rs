@@ -5298,7 +5298,12 @@ mod tests {
             })
             .expect("subagent auto-review approval requested");
         let approval_id = approval["approvalId"].as_str().unwrap().to_string();
-        assert_eq!(approval["operationId"], operation_id);
+        let approval_operation_id = approval["operationId"].as_str().unwrap().to_string();
+        assert_ne!(approval_operation_id, operation_id);
+        assert!(
+            approval_operation_id.starts_with("subagent-review-operation-"),
+            "review approval must retain its own stable side-effect operation identity"
+        );
         assert!(approval["expiresAtMs"].is_null(), "root turn approvals must be parked");
 
         let mut reopened = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
