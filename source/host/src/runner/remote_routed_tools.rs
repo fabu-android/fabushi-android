@@ -162,9 +162,10 @@ impl RemoteApprovalRegistry {
             .waits
             .lock()
             .map_err(|_| "remote approval registry lock poisoned".to_string())?;
-        if waits.insert(approval_id.to_string(), wait).is_some() {
+        if waits.contains_key(approval_id) {
             return Err("remote approval waiter identity collision".into());
         }
+        waits.insert(approval_id.to_string(), wait);
         Ok(())
     }
 
@@ -279,10 +280,12 @@ impl AndroidRoutedToolBridge for RemoteRoutedTools {
                         .map_err(remote_execution_error)?,
                     RemoteExecutionState::OutcomeUnknown
                     | RemoteExecutionState::Sent
-                    | RemoteExecutionState::Acked
-                    | RemoteExecutionState::Pending => runner
+                    | RemoteExecutionState::Acked => runner
                         .reconcile_authorized(&context, now_ms())
                         .map_err(remote_execution_error)?,
+                    RemoteExecutionState::Pending => {
+                        return Err("remote_pending_dispatch_requires_original_owner".into())
+                    }
                     RemoteExecutionState::Rejected => return Err("remote_execution_rejected".into()),
                     RemoteExecutionState::Cancelled => return Err("remote_execution_cancelled".into()),
                 };

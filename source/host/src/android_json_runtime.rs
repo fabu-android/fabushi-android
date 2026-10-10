@@ -525,7 +525,10 @@ impl AndroidJsonHost {
         match binding {
             Some(binding) if ready => json!({
                 "ready": true,
-                "hasDesktop": binding.has_desktop,
+                // Outbound Shell/Read are now shipping, but no authenticated Computer adapter
+                // is installed yet. Do not advertise desktop-control capability from pairing
+                // metadata alone.
+                "hasDesktop": false,
                 "deviceId": binding.device_id,
                 "accountEpoch": binding.account_epoch,
             }),
