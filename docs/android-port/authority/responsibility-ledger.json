@@ -2492,6 +2492,27 @@
           "symbols": [
             "MAS app sandbox/network/files/microphone/camera entitlements"
           ]
+        },
+        {
+          "path": "desktop/scripts/build-electron-runtime.mjs",
+          "blob_sha": "38c04317bd10c30fef2d6be517dd9b41dbfb8925",
+          "symbols": [
+            "platform/architecture contract reviewed for Android replacement"
+          ]
+        },
+        {
+          "path": "desktop/scripts/check-desktop-bundle.mjs",
+          "blob_sha": "c69612c23c01ba222b52cd7fbc9685df38eb078c",
+          "symbols": [
+            "platform/architecture contract reviewed for Android replacement"
+          ]
+        },
+        {
+          "path": "desktop/scripts/check-electron-runtime-bundle.mjs",
+          "blob_sha": "2aa0ce0f9ea0220c5cc6f63cc84a400bb65b8731",
+          "symbols": [
+            "platform/architecture contract reviewed for Android replacement"
+          ]
         }
       ],
       "source_commit": "3bc92400826cc4ca7ac665b467708e22261edc61",
@@ -3112,6 +3133,13 @@
           "symbols": [
             "Rust desktop runtime restoration"
           ]
+        },
+        {
+          "path": "desktop/scripts/check-agent-workspace-boundary.mjs",
+          "blob_sha": "a2ddb992fa459fd2328c924f9e39840a70f2f3d5",
+          "symbols": [
+            "platform/architecture contract reviewed for Android replacement"
+          ]
         }
       ],
       "source_commit": "3bc92400826cc4ca7ac665b467708e22261edc61",
@@ -3211,6 +3239,13 @@
             "FCM-010.13.11 authoritative conversation projection refresh",
             "conversation-list-after-open",
             "conversation-list-assistant-message"
+          ]
+        },
+        {
+          "path": "desktop/scripts/check-app-agent-stable-rebase-contract.mjs",
+          "blob_sha": "5821564394663e7511ac5d745eaca906ad7bdfc5",
+          "symbols": [
+            "platform/architecture contract reviewed for Android replacement"
           ]
         }
       ],
@@ -4174,6 +4209,13 @@
           "blob_sha": "af7aa06ade37e180d12e3ce1054893949fb8be41",
           "symbols": [
             "desktop Messenger navigation/search/settings/messaging/channel/group/Mini App/logout/startup acceptance"
+          ]
+        },
+        {
+          "path": "desktop/scripts/assert-openbot-parity.mjs",
+          "blob_sha": "5bdac676f2ad1abfd66822918eafe14d70158e99",
+          "symbols": [
+            "platform/architecture contract reviewed for Android replacement"
           ]
         }
       ],
