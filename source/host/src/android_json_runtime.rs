@@ -4044,7 +4044,14 @@ impl AndroidJsonHost {
                 &account_fence,
                 now_ms(),
             )?;
-            self.subagent_review_approvals.resolve(&approval_id, approved)?;
+            if let Err(error) = self.subagent_review_approvals.resolve(&approval_id, approved) {
+                let _ = self.capability_broker.cancel_approval_operation(
+                    &resolved.operation_id,
+                    "auto-review waiter disappeared before resolution delivery",
+                    now_ms(),
+                );
+                return Err(error);
+            }
             self.events.push_back(json!({
                 "type":"approval.resolved",
                 "approvalId":approval_id,
