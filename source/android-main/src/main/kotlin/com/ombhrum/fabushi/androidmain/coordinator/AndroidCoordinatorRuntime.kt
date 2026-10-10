@@ -41,7 +41,9 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
     private val accountAccessOwner = AccountAccessProjectionOwner(
         SharedPreferencesAccountAccessEpochStore(application),
     )
-    private val agentRosterMutationOwner = AgentRosterMutationOwner(application)
+    private val agentRosterMutationOwner = AgentRosterMutationOwner(
+        SharedPreferencesAgentRosterMutationStore(application),
+    )
     private val featureEventListeners = CopyOnWriteArrayList<(JSONObject) -> Unit>()
     private val eventPumpRunning = AtomicBoolean(false)
     private val lastEventSequence = AtomicLong(0L)
