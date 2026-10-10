@@ -772,7 +772,7 @@ mod tests {
     #[test]
     fn subagent_auto_review_uses_desktop_timeout_and_fails_closed() {
         let mut provider = AndroidHostInferenceProvider::production(
-            "token-for-review".into(),
+            "a".repeat(32),
             Arc::new(AtomicBool::new(false)),
         )
         .unwrap();
