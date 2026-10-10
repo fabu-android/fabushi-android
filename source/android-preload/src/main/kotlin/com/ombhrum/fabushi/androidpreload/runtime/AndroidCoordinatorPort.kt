@@ -125,6 +125,11 @@ interface AndroidCoordinatorPort {
         sessionId: String,
         afterSignalId: Long = 0L,
     ): JSONObject = error("remote_computer_signal_drain_not_implemented")
+    fun remoteComputerSignalAcknowledge(
+        deviceId: String,
+        sessionId: String,
+        lastSignalId: Long,
+    ): JSONObject = error("remote_computer_signal_acknowledge_not_implemented")
     fun remoteComputerSessionClose(deviceId: String, sessionId: String): JSONObject =
         error("remote_computer_session_close_not_implemented")
     fun webAuthnRegisterProvider(): JSONObject

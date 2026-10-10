@@ -22,6 +22,8 @@ internal data class RemoteControlSessionCredential(
     val accountFence: String,
     val accountEpoch: Long,
     val expiresAt: Long,
+    val lastAcknowledgedSignalId: Long = 0L,
+    val highestDrainedSignalId: Long = 0L,
 ) {
     fun toSecretJson(): String = JSONObject()
         .put("deviceId", deviceId)
@@ -31,6 +33,8 @@ internal data class RemoteControlSessionCredential(
         .put("accountFence", accountFence)
         .put("accountEpoch", accountEpoch)
         .put("expiresAt", expiresAt)
+        .put("lastAcknowledgedSignalId", lastAcknowledgedSignalId)
+        .put("highestDrainedSignalId", highestDrainedSignalId)
         .toString()
 
     fun publicProjection(): JSONObject = JSONObject()
@@ -39,22 +43,29 @@ internal data class RemoteControlSessionCredential(
         .put("sessionId", sessionId)
         .put("accountEpoch", accountEpoch)
         .put("expiresAt", expiresAt)
+        .put("lastAcknowledgedSignalId", lastAcknowledgedSignalId)
+        .put("highestDrainedSignalId", highestDrainedSignalId)
 
     companion object {
         fun parse(value: String): RemoteControlSessionCredential {
             val json = JSONObject(value)
-            require(
-                json.keys().asSequence().toSet() ==
-                    setOf(
-                        "deviceId",
-                        "clientId",
-                        "sessionId",
-                        "mobileToken",
-                        "accountFence",
-                        "accountEpoch",
-                        "expiresAt",
-                    ),
-            ) { "Remote control session credential contains unsupported fields" }
+            val legacyKeys = setOf(
+                "deviceId",
+                "clientId",
+                "sessionId",
+                "mobileToken",
+                "accountFence",
+                "accountEpoch",
+                "expiresAt",
+            )
+            val currentKeys = legacyKeys + setOf(
+                "lastAcknowledgedSignalId",
+                "highestDrainedSignalId",
+            )
+            val observedKeys = json.keys().asSequence().toSet()
+            require(observedKeys == legacyKeys || observedKeys == currentKeys) {
+                "Remote control session credential contains unsupported fields"
+            }
             fun identity(key: String, max: Int): String =
                 json.getString(key).trim().also {
                     require(it.isNotEmpty() && it.length <= max && it.none(Char::isISOControl)) {
@@ -69,6 +80,14 @@ internal data class RemoteControlSessionCredential(
             require(epoch > 0L) { "Remote control session account epoch must be positive" }
             val expiresAt = json.getLong("expiresAt")
             require(expiresAt > 0L) { "Remote control session expiry must be positive" }
+            val lastAcknowledgedSignalId = json.optLong("lastAcknowledgedSignalId", 0L)
+            val highestDrainedSignalId = json.optLong("highestDrainedSignalId", 0L)
+            require(lastAcknowledgedSignalId >= 0L) {
+                "Remote control acknowledged signal cursor must not be negative"
+            }
+            require(highestDrainedSignalId >= lastAcknowledgedSignalId) {
+                "Remote control drained signal cursor must not precede acknowledged cursor"
+            }
             return RemoteControlSessionCredential(
                 deviceId = identity("deviceId", 160),
                 clientId = identity("clientId", 160),
@@ -77,8 +96,43 @@ internal data class RemoteControlSessionCredential(
                 accountFence = identity("accountFence", 512),
                 accountEpoch = epoch,
                 expiresAt = expiresAt,
+                lastAcknowledgedSignalId = lastAcknowledgedSignalId,
+                highestDrainedSignalId = highestDrainedSignalId,
             )
         }
+    }
+}
+
+internal object RemoteControlSignalCursorPolicy {
+    fun recordDrain(
+        value: RemoteControlSessionCredential,
+        sessionId: String,
+        afterSignalId: Long,
+        lastSignalId: Long,
+    ): RemoteControlSessionCredential {
+        require(value.sessionId == sessionId) { "Remote control signal session changed during drain" }
+        require(afterSignalId == value.lastAcknowledgedSignalId) {
+            "Remote signal drain must start at the durable acknowledged cursor"
+        }
+        require(lastSignalId >= afterSignalId) { "Remote signal drain cursor regressed" }
+        return value.copy(
+            highestDrainedSignalId = maxOf(value.highestDrainedSignalId, lastSignalId),
+        )
+    }
+
+    fun acknowledge(
+        value: RemoteControlSessionCredential,
+        sessionId: String,
+        lastSignalId: Long,
+    ): RemoteControlSessionCredential {
+        require(value.sessionId == sessionId) { "Remote control signal session changed before acknowledgement" }
+        require(lastSignalId >= value.lastAcknowledgedSignalId) {
+            "Remote signal acknowledgement regressed"
+        }
+        require(lastSignalId == value.highestDrainedSignalId) {
+            "Remote signal acknowledgement must match the most recent fully drained batch"
+        }
+        return value.copy(lastAcknowledgedSignalId = lastSignalId)
     }
 }
 
@@ -92,6 +146,7 @@ internal data class RemoteControlSessionCredential(
 internal class AndroidRemoteControlSessionStore(context: Context) {
     private val credentialFile = File(context.applicationContext.noBackupFilesDir, FILE_NAME)
 
+    @Synchronized
     fun readForAccountFence(
         currentAccountFence: String,
         currentAccountEpoch: Long,
@@ -104,6 +159,41 @@ internal class AndroidRemoteControlSessionStore(context: Context) {
         return value
     }
 
+    @Synchronized
+    fun recordSignalDrain(
+        currentAccountFence: String,
+        currentAccountEpoch: Long,
+        sessionId: String,
+        afterSignalId: Long,
+        lastSignalId: Long,
+    ): RemoteControlSessionCredential {
+        val current = readForAccountFence(currentAccountFence, currentAccountEpoch)
+            ?: error("Remote control session is unavailable")
+        val updated = RemoteControlSignalCursorPolicy.recordDrain(
+            current,
+            sessionId,
+            afterSignalId,
+            lastSignalId,
+        )
+        write(updated)
+        return updated
+    }
+
+    @Synchronized
+    fun acknowledgeSignals(
+        currentAccountFence: String,
+        currentAccountEpoch: Long,
+        sessionId: String,
+        lastSignalId: Long,
+    ): RemoteControlSessionCredential {
+        val current = readForAccountFence(currentAccountFence, currentAccountEpoch)
+            ?: error("Remote control session is unavailable")
+        val updated = RemoteControlSignalCursorPolicy.acknowledge(current, sessionId, lastSignalId)
+        write(updated)
+        return updated
+    }
+
+    @Synchronized
     fun write(value: RemoteControlSessionCredential) {
         RemoteControlSessionCredential.parse(value.toSecretJson())
         val plaintext = value.toSecretJson().toByteArray(StandardCharsets.UTF_8)
@@ -134,6 +224,7 @@ internal class AndroidRemoteControlSessionStore(context: Context) {
         }
     }
 
+    @Synchronized
     fun clear() {
         runCatching { credentialFile.delete() }
     }

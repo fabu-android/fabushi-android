@@ -804,7 +804,10 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
     ): JSONObject {
         require(afterSignalId >= 0L) { "Remote signal cursor is invalid" }
         val session = requireRemoteControlSession(deviceId, sessionId)
-        return authenticatedRemotePlatformRequest(
+        require(afterSignalId == session.lastAcknowledgedSignalId) {
+            "Remote signal cursor must match the durable acknowledged cursor"
+        }
+        val response = authenticatedRemotePlatformRequest(
             "POST",
             "/v1/computers/" + session.deviceId + "/signals/drain",
             JSONObject()
@@ -814,6 +817,58 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
                 .put("mobileToken", session.mobileToken)
                 .put("afterSignalId", afterSignalId),
         )
+        require(
+            boundedRemoteIdentifier(response.getString("sessionId"), "sessionId") == session.sessionId,
+        ) {
+            "Remote signal drain session identity mismatch"
+        }
+        val signals = response.optJSONArray("signals") ?: JSONArray()
+        require(signals.length() <= 128) { "Remote signal drain exceeds server batch contract" }
+        var previousSignalId = afterSignalId
+        repeat(signals.length()) { index ->
+            val signal = signals.getJSONObject(index)
+            val signalId = signal.getLong("signalId")
+            require(signalId > previousSignalId) { "Remote signal ids must be strictly increasing" }
+            require(signal.optString("senderRole") == "desktop") {
+                "Remote mobile drain accepted a non-desktop signal"
+            }
+            require(signal.optString("kind") in setOf("answer", "ice", "ready", "close")) {
+                "Remote desktop signal kind is invalid"
+            }
+            previousSignalId = signalId
+        }
+        val lastSignalId = response.getLong("lastSignalId")
+        require(lastSignalId == previousSignalId) {
+            "Remote signal drain lastSignalId does not match the delivered batch"
+        }
+        val (currentFence, currentEpoch) = currentRemoteAccountFence()
+        val updated = remoteControlSessionStore.recordSignalDrain(
+            currentFence,
+            currentEpoch,
+            session.sessionId,
+            afterSignalId,
+            lastSignalId,
+        )
+        return JSONObject(response.toString())
+            .put("lastAcknowledgedSignalId", updated.lastAcknowledgedSignalId)
+            .put("highestDrainedSignalId", updated.highestDrainedSignalId)
+    }
+
+    override fun remoteComputerSignalAcknowledge(
+        deviceId: String,
+        sessionId: String,
+        lastSignalId: Long,
+    ): JSONObject {
+        require(lastSignalId >= 0L) { "Remote signal acknowledgement cursor is invalid" }
+        val session = requireRemoteControlSession(deviceId, sessionId)
+        val (currentFence, currentEpoch) = currentRemoteAccountFence()
+        val updated = remoteControlSessionStore.acknowledgeSignals(
+            currentFence,
+            currentEpoch,
+            session.sessionId,
+            lastSignalId,
+        )
+        return updated.publicProjection().put("acknowledged", true)
     }
 
     override fun remoteComputerSessionClose(deviceId: String, sessionId: String): JSONObject {
