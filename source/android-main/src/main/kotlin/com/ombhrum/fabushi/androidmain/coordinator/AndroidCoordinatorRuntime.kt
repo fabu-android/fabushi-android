@@ -461,6 +461,10 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
     override fun agentSubagentReconcile(params: JSONObject): JSONObject =
         host.request("feature.agent.subagent.reconcile", params)
 
+    override fun agentAsyncTasks(id: String): JSONArray =
+        host.requestValue("feature.agent.asyncTasks", JSONObject().put("id", id)) as? JSONArray
+            ?: JSONArray()
+
     override fun agentList(): JSONArray {
         runCatching { reconcileAgentRosterMutations() }
         return host.requestValue("listAgents") as? JSONArray ?: JSONArray()
