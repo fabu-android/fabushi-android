@@ -11,6 +11,9 @@ class RemoteBindingFencePolicyTest {
         """
         {
           "credentialPlane":"authorized-remote-runner-v1",
+          "credentialId":"runner-credential-1",
+          "issuedAtMs":1,
+          "expiresAtMs":4102444800000,
           "endpoint":"https://remote.example.test",
           "bearerCredential":"remote-secret-token-1234",
           "deviceId":"desktop-1",
@@ -59,6 +62,47 @@ class RemoteBindingFencePolicyTest {
             .apply { remove("credentialPlane") }
             .toString()
         assertFalse(runCatching { RemoteBindingCredentialContract.validate(missingPlane) }.isSuccess)
+    }
+
+    @Test
+    fun credentialLifecycleAndRotationFailClosed() {
+        val current = binding("session:stable")
+        assertTrue(RemoteBindingLifecyclePolicy.isActive(current, 1L))
+        assertTrue(RemoteBindingLifecyclePolicy.isActive(current, 4102444799999L))
+        assertFalse(RemoteBindingLifecyclePolicy.isActive(current, 4102444800000L))
+
+        val future = JSONObject(current)
+            .put("credentialId", "runner-credential-future")
+            .put("issuedAtMs", 200L)
+            .put("expiresAtMs", 500L)
+            .toString()
+        assertFalse(RemoteBindingLifecyclePolicy.isActive(future, 199L))
+        assertTrue(RemoteBindingLifecyclePolicy.isActive(future, 200L))
+
+        assertTrue(RemoteBindingRotationPolicy.canReplace(current, current))
+        val changedMaterialSameId = JSONObject(current)
+            .put("bearerCredential", "different-remote-secret-token-1234")
+            .toString()
+        assertFalse(RemoteBindingRotationPolicy.canReplace(current, changedMaterialSameId))
+
+        val rollback = JSONObject(current)
+            .put("credentialId", "runner-credential-old")
+            .put("issuedAtMs", 1L)
+            .put("expiresAtMs", 4102444801000L)
+            .toString()
+        assertFalse(RemoteBindingRotationPolicy.canReplace(current, rollback))
+
+        val newer = JSONObject(current)
+            .put("credentialId", "runner-credential-2")
+            .put("issuedAtMs", 2L)
+            .put("expiresAtMs", 4102444801000L)
+            .toString()
+        assertTrue(RemoteBindingRotationPolicy.canReplace(current, newer))
+
+        val switchedAccount = JSONObject(newer)
+            .put("accountFence", "session:other")
+            .toString()
+        assertFalse(RemoteBindingRotationPolicy.canReplace(current, switchedAccount))
     }
 
     @Test
