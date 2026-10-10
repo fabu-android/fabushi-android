@@ -539,6 +539,8 @@ fun FabushiMessagingSurface(
             onUpsertFolder = onUpsertFolder,
             onDeleteFolder = onDeleteFolder,
             onOpenAgentChat = { showAgentChat = true },
+            logoutBusy = state.logoutBusy,
+            logoutError = state.logoutError,
             onLogout = onLogout,
             onSemanticContextChanged = { section, conversationOpen ->
                 semanticSection = section

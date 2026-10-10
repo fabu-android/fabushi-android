@@ -92,6 +92,8 @@ data class MarketplaceUiState(
     val browserLaunchNonce: Long = 0,
     val loginBusy: Boolean = false,
     val loginError: String? = null,
+    val logoutBusy: Boolean = false,
+    val logoutError: String? = null,
     val chatDraft: String = "",
     val chatMessages: List<MobileChatMessage> = emptyList(),
     val chatBusy: Boolean = false,
@@ -282,7 +284,10 @@ class MarketplaceViewModel(application: Application) : AndroidViewModel(applicat
     }
 
     fun logout() {
-        val operationId = mutableState.value.activeOperationId
+        val current = mutableState.value
+        if (current.logoutBusy) return
+        val operationId = current.activeOperationId
+        mutableState.value = current.copy(logoutBusy = true, logoutError = null)
         viewModelScope.launch {
             if (!operationId.isNullOrBlank()) {
                 runCatching { withContext(Dispatchers.IO) { coordinator.featureInterrupt( JSONObject().put("operationId", operationId)) } }
@@ -298,11 +303,20 @@ class MarketplaceViewModel(application: Application) : AndroidViewModel(applicat
                         chatMessages = emptyList(),
                         activeOperationId = null,
                         chatBusy = false,
+                        logoutBusy = false,
+                        logoutError = null,
                         message = "已退出登录",
                     )
                     refreshAccountAccess()
                 }
-                .onFailure { error -> mutableState.value = mutableState.value.copy(message = "退出登录失败：${error.message ?: error::class.java.simpleName}") }
+                .onFailure { error ->
+                    val detail = error.message ?: error::class.java.simpleName
+                    mutableState.value = mutableState.value.copy(
+                        logoutBusy = false,
+                        logoutError = detail,
+                        message = "退出登录失败：$detail",
+                    )
+                }
         }
     }
 

@@ -78,6 +78,19 @@ import androidx.core.content.ContextCompat
 import kotlinx.coroutines.delay
 
 
+internal data class LogoutConfirmationPolicy(
+    val dismissAllowed: Boolean,
+    val confirmEnabled: Boolean,
+    val error: String?,
+)
+
+internal fun logoutConfirmationPolicy(busy: Boolean, error: String?): LogoutConfirmationPolicy =
+    LogoutConfirmationPolicy(
+        dismissAllowed = !busy,
+        confirmEnabled = !busy,
+        error = error?.trim()?.takeIf(String::isNotEmpty),
+    )
+
 @Composable
 internal fun ConversationHome(
     updateState: AndroidUpdateUiState,
@@ -125,6 +138,8 @@ internal fun ConversationHome(
     onUpsertFolder: (MessagingFolder) -> Unit,
     onDeleteFolder: (String) -> Unit,
     onOpenAgentChat: () -> Unit,
+    logoutBusy: Boolean,
+    logoutError: String?,
     onLogout: () -> Unit,
     onSemanticContextChanged: (AndroidMobileSection?, Boolean) -> Unit = { _, _ -> },
 ) {
@@ -136,6 +151,7 @@ internal fun ConversationHome(
     var selectedConversation by remember { mutableStateOf<ConversationSummary?>(null) }
     var contextConversation by remember { mutableStateOf<ConversationSummary?>(null) }
     var activeSection by remember { mutableStateOf<AndroidMobileSection?>(null) }
+    var showLogoutConfirmation by remember { mutableStateOf(false) }
 
     LaunchedEffect(activeSection, selectedConversation) {
         onSemanticContextChanged(activeSection, selectedConversation != null)
@@ -160,6 +176,38 @@ internal fun ConversationHome(
                 }
             },
             confirmButton = { OutlinedButton(onClick = { contextConversation = null }) { Text("取消") } },
+        )
+    }
+
+    if (showLogoutConfirmation) {
+        val policy = logoutConfirmationPolicy(logoutBusy, logoutError)
+        AlertDialog(
+            onDismissRequest = {
+                if (policy.dismissAllowed) showLogoutConfirmation = false
+            },
+            title = { Text("退出登录？") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("退出后需要重新登录才能继续使用此账号。")
+                    policy.error?.let { Text("退出登录失败：$it", color = Color(0xFFFF6B6B)) }
+                }
+            },
+            confirmButton = {
+                Button(
+                    enabled = policy.confirmEnabled,
+                    onClick = onLogout,
+                    modifier = Modifier.testTag("mobile-logout-confirm"),
+                ) {
+                    Text(if (logoutBusy) "正在退出…" else "退出登录")
+                }
+            },
+            dismissButton = {
+                OutlinedButton(
+                    enabled = policy.dismissAllowed,
+                    onClick = { showLogoutConfirmation = false },
+                    modifier = Modifier.testTag("mobile-logout-cancel"),
+                ) { Text("取消") }
+            },
         )
     }
 
@@ -325,7 +373,7 @@ internal fun ConversationHome(
                             DropdownMenuItem(text = { Text("设置", color = homePrimaryText) }, onClick = { onShowAddMenuChange(false); activeSection = AndroidMobileSection.SETTINGS })
                             DropdownMenuItem(modifier = Modifier.testTag(TestTags.MarketplaceEntry), text = { Text("Mini Apps / 插件市场", color = homePrimaryText) }, onClick = { onShowAddMenuChange(false); onOpenMarketplace() })
                             DropdownMenuItem(modifier = Modifier.testTag(TestTags.RemoteComputerEntry), text = { Text("我的电脑", color = homePrimaryText) }, onClick = { onShowAddMenuChange(false); onOpenRemoteComputer() })
-                            DropdownMenuItem(modifier = Modifier.testTag(TestTags.MobileLogout), text = { Text("退出登录", color = Color(0xFFFF6B6B)) }, onClick = { onShowAddMenuChange(false); onLogout() })
+                            DropdownMenuItem(modifier = Modifier.testTag(TestTags.MobileLogout), text = { Text("退出登录", color = Color(0xFFFF6B6B)) }, onClick = { onShowAddMenuChange(false); showLogoutConfirmation = true })
                             if (updateState.phase != AndroidUpdatePhase.DISABLED) DropdownMenuItem(text = { Text("检查更新", color = homePrimaryText) }, onClick = { onShowAddMenuChange(false); onCheckUpdate() })
                         }
                     }

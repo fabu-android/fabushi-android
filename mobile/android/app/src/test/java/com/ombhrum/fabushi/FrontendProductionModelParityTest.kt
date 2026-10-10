@@ -511,6 +511,24 @@ class FrontendProductionModelParityTest {
         assertEquals(1, secondDisposed)
     }
     @Test
+    fun logoutConfirmationBlocksDismissWhileBusyAndKeepsFailureVisible() {
+        val idle = logoutConfirmationPolicy(busy = false, error = null)
+        assertTrue(idle.dismissAllowed)
+        assertTrue(idle.confirmEnabled)
+        assertNull(idle.error)
+
+        val busy = logoutConfirmationPolicy(busy = true, error = "late failure")
+        assertFalse(busy.dismissAllowed)
+        assertFalse(busy.confirmEnabled)
+        assertEquals("late failure", busy.error)
+
+        val failed = logoutConfirmationPolicy(busy = false, error = "  network down  ")
+        assertTrue(failed.dismissAllowed)
+        assertTrue(failed.confirmEnabled)
+        assertEquals("network down", failed.error)
+    }
+
+    @Test
     fun deepLinkInfoModelUsesFabushiRouteAndSourceLabel() {
         val info = DeepLinkInfo(source = DeepLinkSource.PROTOCOL)
         assertEquals("fabushi://app/v1/info?topic=deep-links", deepLinkRoute(info))
