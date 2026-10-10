@@ -763,6 +763,7 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
             currentEpoch = currentEpoch,
             requestId = requestId,
             data = data,
+            reconciledCreateOutcome = false,
         )
     }
 
@@ -790,6 +791,7 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
             currentEpoch = currentEpoch,
             requestId = requestId,
             data = data,
+            reconciledCreateOutcome = true,
         )
     }
 
@@ -1166,6 +1168,7 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
         currentEpoch: Long,
         requestId: String,
         data: JSONObject,
+        reconciledCreateOutcome: Boolean,
     ): JSONObject {
         require(boundedRemoteIdentifier(data.getString("deviceId"), "deviceId") == pairing.deviceId) {
             "Remote control session device identity mismatch"
@@ -1199,7 +1202,7 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
             .put("stored", true)
             .put("state", serverState)
             .put("createdAt", data.optLong("createdAt"))
-            .put("reconciledCreateOutcome", true)
+            .put("reconciledCreateOutcome", reconciledCreateOutcome)
     }
 
     private fun reserveRemoteControlCreateRequest(
