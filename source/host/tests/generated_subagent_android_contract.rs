@@ -270,10 +270,11 @@ fn generated_child_projection_rejects_control_injection_duplicate_and_revoked_ad
     assert_eq!(frozen, vec!["BoxRead".to_string()]);
 
     let revoked = SubagentToolBridge::new(Arc::clone(&owner));
-    assert!(revoked
+    let revoked_error = revoked
         .generated_child_routed_tools(&frozen)
-        .unwrap_err()
-        .contains("adapter is unavailable"));
+        .err()
+        .expect("revoked adapter must fail closed");
+    assert!(revoked_error.contains("adapter is unavailable"));
 
     let unavailable_remote = TurnSubagentCapabilityProjection::default();
     assert!(authorized
