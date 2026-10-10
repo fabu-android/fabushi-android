@@ -52,6 +52,10 @@ struct AndroidAgentRosterFile {
     pinned_agent_ids: Vec<String>,
     #[serde(default)]
     agents: Vec<AndroidAgentRecord>,
+    #[serde(default)]
+    management_calls: std::collections::BTreeMap<String, Value>,
+    #[serde(default)]
+    management_call_order: Vec<String>,
 }
 
 impl Default for AndroidAgentRosterFile {
@@ -61,6 +65,8 @@ impl Default for AndroidAgentRosterFile {
             next_id: 0,
             pinned_agent_ids: Vec::new(),
             agents: Vec::new(),
+            management_calls: std::collections::BTreeMap::new(),
+            management_call_order: Vec::new(),
         }
     }
 }
@@ -133,6 +139,84 @@ impl AndroidAgentRoster {
         next.agents.push(record.clone());
         self.commit(next)?;
         Ok(record)
+    }
+
+    pub fn create_for_tool_call(
+        &mut self,
+        account_fence: &str,
+        sender_agent_id: &str,
+        tool_call_id: &str,
+        name: &str,
+        description: &str,
+    ) -> Result<AndroidAgentRecord, String> {
+        let key = management_call_key(account_fence, sender_agent_id, tool_call_id)?;
+        let args = json!({"tool":"CreateAgent","name":name.trim(),"description":description.trim()});
+        if let Some(call) = self.state.management_calls.get(&key) {
+            if call.get("args") != Some(&args) {
+                return Err("CreateAgent tool_call_id was reused with mismatched arguments".into());
+            }
+            return call
+                .get("result")
+                .cloned()
+                .ok_or_else(|| "CreateAgent durable replay result is missing".to_string())
+                .and_then(|value| serde_json::from_value(value)
+                    .map_err(|error| format!("CreateAgent durable replay result is invalid: {error}")));
+        }
+
+        let created = self.create(name, description).map_err(|error| error.to_string())?;
+        self.remember_management_call(
+            key,
+            json!({"args":args,"result":created.as_json()}),
+        )
+        .map_err(|error| error.to_string())?;
+        Ok(created)
+    }
+
+    pub fn update_for_tool_call(
+        &mut self,
+        account_fence: &str,
+        sender_agent_id: &str,
+        tool_call_id: &str,
+        id: &str,
+        name: Option<&str>,
+        description: Option<&str>,
+    ) -> Result<Option<AndroidAgentRecord>, String> {
+        let key = management_call_key(account_fence, sender_agent_id, tool_call_id)?;
+        let args = json!({
+            "tool":"UpdateAgent",
+            "agentId":id.trim(),
+            "name":name.map(str::trim),
+            "description":description.map(str::trim)
+        });
+        if let Some(call) = self.state.management_calls.get(&key) {
+            if call.get("args") != Some(&args) {
+                return Err("UpdateAgent tool_call_id was reused with mismatched arguments".into());
+            }
+            return match call.get("result") {
+                Some(Value::Null) => Ok(None),
+                Some(value) => serde_json::from_value(value.clone())
+                    .map(Some)
+                    .map_err(|error| format!("UpdateAgent durable replay result is invalid: {error}")),
+                None => Err("UpdateAgent durable replay result is missing".into()),
+            };
+        }
+
+        let Some(current) = self.get(id) else {
+            self.remember_management_call(key, json!({"args":args,"result":Value::Null}))
+                .map_err(|error| error.to_string())?;
+            return Ok(None);
+        };
+        let next_name = name.unwrap_or(&current.name);
+        let next_description = description.unwrap_or(&current.description);
+        let updated = self
+            .update_profile(id, next_name, next_description)
+            .map_err(|error| error.to_string())?;
+        self.remember_management_call(
+            key,
+            json!({"args":args,"result":updated.as_json()}),
+        )
+        .map_err(|error| error.to_string())?;
+        Ok(Some(updated))
     }
 
     pub fn update_profile(
@@ -234,6 +318,18 @@ impl AndroidAgentRoster {
         self.state.pinned_agent_ids.clone()
     }
 
+    fn remember_management_call(&mut self, key: String, call: Value) -> io::Result<()> {
+        let mut next = self.state.clone();
+        next.management_calls.insert(key.clone(), call);
+        next.management_call_order.retain(|value| value != &key);
+        next.management_call_order.push(key.clone());
+        while next.management_call_order.len() > 512 {
+            let expired = next.management_call_order.remove(0);
+            next.management_calls.remove(&expired);
+        }
+        self.commit(next)
+    }
+
     fn mutate_agent(
         &mut self,
         id: &str,
@@ -258,6 +354,25 @@ impl AndroidAgentRoster {
         self.state = next;
         Ok(())
     }
+}
+
+fn management_call_key(
+    account_fence: &str,
+    sender_agent_id: &str,
+    tool_call_id: &str,
+) -> Result<String, String> {
+    let account_fence = account_fence.trim();
+    let sender_agent_id = sender_agent_id.trim();
+    let tool_call_id = tool_call_id.trim();
+    if account_fence.is_empty() || sender_agent_id.is_empty() || tool_call_id.is_empty() {
+        return Err("Agent management account, sender and tool-call identity are required".into());
+    }
+    Ok(format!(
+        "agent-management:{}",
+        crate::sha256::sha256_hex(
+            format!("{account_fence}\n{sender_agent_id}\n{tool_call_id}").as_bytes()
+        )
+    ))
 }
 
 fn persist(path: &Path, state: &AndroidAgentRosterFile) -> io::Result<()> {
