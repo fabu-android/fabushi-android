@@ -16,7 +16,8 @@ use crate::extensions::webauthn_proxy::{
     WebAuthnBridgeError, WebAuthnProxyExtension, WebAuthnProxyExtensionConfig,
 };
 use crate::runner::{
-    AndroidHostInferenceProvider, AndroidInferenceMode, DurableTurnJournal, DurableTurnState,
+    AndroidHostInferenceProvider, AndroidInferenceMode, AndroidSubagentReviewDecision,
+    DurableTurnJournal, DurableTurnState,
     ProductionTurnAgentBuildBindings, ProductionTurnAgentLifecycleBindings,
     ProductionTurnAgentOwner, ProductionTurnAgentStaticConfig, ProductionTurnEvent,
     ProductionDiskPressureLevel, ProductionTurnInput, ProductionTurnLifecycleStore,
@@ -24,7 +25,7 @@ use crate::runner::{
     build_turn_subagent_types, DurableSubagentOwner, SubagentFrozenTurnConfig,
     SubagentRunOutcome, SubagentSteerReview, SubagentTaskReviewCallback,
     SubagentSteerReviewCallback, SubagentToolBridge, SubagentToolContext,
-    spawn_generated_subagent,
+    build_parent_subagent_routed_tools, spawn_generated_subagent,
 };
 use fabushi_constants::composer::text_size_allowed;
 use fabushi_android_shared::node::mcp::mcp_auth_watch_lifecycle::{
@@ -398,34 +399,7 @@ impl AndroidJsonHost {
             DurableSubagentOwner::open(app_data_dir.join("generated-subagents.json"), now_ms())
                 .unwrap_or_else(|error| panic!("failed to open durable generated-subagent owner: {error}")),
         ));
-        let task_review: SubagentTaskReviewCallback = Arc::new(
-            |prompt, subagent_type, tool_call_id| {
-                if prompt.trim().is_empty()
-                    || subagent_type.trim().is_empty()
-                    || tool_call_id.trim().is_empty()
-                {
-                    return Err("generated subagent Task review input is invalid".into());
-                }
-                Ok(None)
-            },
-        );
-        let steer_review: SubagentSteerReviewCallback = Arc::new(
-            |subagent_id, message, tool_call_id| {
-                if subagent_id.trim().is_empty()
-                    || message.trim().is_empty()
-                    || tool_call_id.trim().is_empty()
-                {
-                    return Err("generated subagent steer review input is invalid".into());
-                }
-                Ok(SubagentSteerReview {
-                    allowed: true,
-                    reason: String::new(),
-                })
-            },
-        );
-        let subagent_tools = SubagentToolBridge::new(Arc::clone(&subagent_owner))
-            .with_task_review(task_review)
-            .with_steer_review(steer_review);
+        let subagent_tools = SubagentToolBridge::new(Arc::clone(&subagent_owner));
         let subagent_events = Arc::new(Mutex::new(VecDeque::new()));
         Self {
             mode,
@@ -2253,12 +2227,13 @@ impl AndroidJsonHost {
             .filter(|value| !value.trim().is_empty())
             .unwrap_or("mahayana-assistant")
             .to_string();
-        let model = command
-            .get("model")
-            .and_then(Value::as_str)
-            .filter(|value| !value.trim().is_empty())
-            .unwrap_or("default")
-            .to_string();
+        let model = AndroidHostInferenceProvider::resolve_model_id(
+            command
+                .get("model")
+                .and_then(Value::as_str)
+                .filter(|value| !value.trim().is_empty())
+                .unwrap_or("default"),
+        );
 
         if self.turn_upgrade_quiescing.load(Ordering::Acquire) {
             return Err("Agent turns are quiescing for upgrade; new dispatch is fenced.".into());
@@ -2315,13 +2290,147 @@ impl AndroidJsonHost {
         let model_owned = model.clone();
         let summarization_token = bearer_token.clone();
         let profile_revision_owned = profile_revision.clone();
+        let subagent_owner = Arc::clone(&self.subagent_owner);
+        let subagent_events = Arc::clone(&self.subagent_events);
+        let subagent_tools = self.subagent_tools.clone();
+        let frozen_privacy = match self.mode {
+            AndroidHostMode::Test => ProductionTurnPrivacyMode::NoStorage,
+            AndroidHostMode::Production => self
+                .mcp_dashboard_backend
+                .as_ref()
+                .and_then(|backend| backend.resolve_sand_privacy_mode())
+                .map(|privacy| match privacy {
+                    BackendSandPrivacyMode::Unspecified => ProductionTurnPrivacyMode::Unspecified,
+                    BackendSandPrivacyMode::NoStorage => ProductionTurnPrivacyMode::NoStorage,
+                    BackendSandPrivacyMode::NoTraining => ProductionTurnPrivacyMode::NoTraining,
+                    BackendSandPrivacyMode::UsageDataTrainingAllowed => {
+                        ProductionTurnPrivacyMode::UsageDataTrainingAllowed
+                    }
+                    BackendSandPrivacyMode::UsageCodebaseTrainingAllowed => {
+                        ProductionTurnPrivacyMode::UsageCodebaseTrainingAllowed
+                    }
+                })
+                .unwrap_or(ProductionTurnPrivacyMode::Unspecified),
+        };
+        let frozen_privacy_label = match frozen_privacy {
+            ProductionTurnPrivacyMode::Unspecified => "unspecified",
+            ProductionTurnPrivacyMode::NoStorage => "no-storage",
+            ProductionTurnPrivacyMode::NoTraining => "no-training",
+            ProductionTurnPrivacyMode::UsageDataTrainingAllowed => "usage-data-training-allowed",
+            ProductionTurnPrivacyMode::UsageCodebaseTrainingAllowed => "usage-codebase-training-allowed",
+        }
+        .to_string();
+        let allowed_subagent_types = build_turn_subagent_types(
+            false,
+            false,
+            false,
+            false,
+            false,
+        )
+        .unwrap_or_default();
+        let frozen_subagent_turn = SubagentFrozenTurnConfig {
+            provider_id: "android-host-inference".into(),
+            model_id: model.clone(),
+            tool_names: vec![
+                crate::runner::TASK_TOOL_NAME.into(),
+                crate::runner::CHECK_SUBAGENT_TOOL_NAME.into(),
+                crate::runner::MESSAGE_SUBAGENT_TOOL_NAME.into(),
+                crate::runner::STOP_SUBAGENT_TOOL_NAME.into(),
+            ],
+            allowed_subagent_types,
+            privacy_mode: frozen_privacy_label,
+            summarization_binding_id: "android-host-inference:same-provider".into(),
+        };
+        let request_source = command
+            .get("requestSource")
+            .and_then(Value::as_str)
+            .filter(|value| !value.trim().is_empty())
+            .map(str::to_string);
 
         let spawn = thread::Builder::new()
             .name(format!("fabushi-turn-{}", operation_id.chars().take(32).collect::<String>()))
             .spawn(move || {
+                let review_mode = match mode {
+                    AndroidHostMode::Test => AndroidInferenceMode::Test,
+                    AndroidHostMode::Production => AndroidInferenceMode::Production,
+                };
+                let task_review_token = bearer_token.clone();
+                let task_review_cancelled = Arc::clone(&cancelled);
+                let task_review: SubagentTaskReviewCallback = Arc::new(
+                    move |prompt, subagent_type, tool_call_id| {
+                        if tool_call_id.trim().is_empty() {
+                            return Err("generated subagent Task review input is invalid".into());
+                        }
+                        match AndroidHostInferenceProvider::run_subagent_review(
+                            review_mode,
+                            task_review_token.clone(),
+                            Arc::clone(&task_review_cancelled),
+                            "launch",
+                            prompt,
+                            None,
+                            Some(subagent_type),
+                        )
+                        .map_err(|error| error.message)?
+                        {
+                            AndroidSubagentReviewDecision::Allow => Ok(None),
+                            AndroidSubagentReviewDecision::Deny(reason) => Ok(Some(reason)),
+                        }
+                    },
+                );
+                let steer_review_token = bearer_token.clone();
+                let steer_review_cancelled = Arc::clone(&cancelled);
+                let steer_review: SubagentSteerReviewCallback = Arc::new(
+                    move |subagent_id, message, tool_call_id| {
+                        if tool_call_id.trim().is_empty() {
+                            return Err("generated subagent steer review input is invalid".into());
+                        }
+                        match AndroidHostInferenceProvider::run_subagent_review(
+                            review_mode,
+                            steer_review_token.clone(),
+                            Arc::clone(&steer_review_cancelled),
+                            "steer",
+                            message,
+                            Some(subagent_id),
+                            None,
+                        )
+                        .map_err(|error| error.message)?
+                        {
+                            AndroidSubagentReviewDecision::Allow => Ok(SubagentSteerReview {
+                                allowed: true,
+                                reason: String::new(),
+                            }),
+                            AndroidSubagentReviewDecision::Deny(reason) => Ok(SubagentSteerReview {
+                                allowed: false,
+                                reason,
+                            }),
+                        }
+                    },
+                );
+                let reviewed_subagent_tools = subagent_tools
+                    .clone()
+                    .with_task_review(task_review)
+                    .with_steer_review(steer_review);
+                let routed_subagent_tools = build_parent_subagent_routed_tools(
+                    mode,
+                    bearer_token.clone(),
+                    Arc::clone(&subagent_owner),
+                    reviewed_subagent_tools,
+                    Arc::clone(&subagent_events),
+                    SubagentToolContext {
+                        parent_agent_id: conversation_id_owned.clone(),
+                        parent_request_id: request_id_owned.clone(),
+                        root_parent_request_id: Some(request_id_owned.clone()),
+                        account_fence: account_fence_owned.clone(),
+                        box_id: String::new(),
+                        quiet_origin: request_source.clone(),
+                        frozen_turn: frozen_subagent_turn.clone(),
+                    },
+                );
+
                 let provider = match mode {
                     AndroidHostMode::Test => {
                         AndroidHostInferenceProvider::new(AndroidInferenceMode::Test)
+                            .with_routed_tools(Arc::clone(&routed_subagent_tools))
                     }
                     AndroidHostMode::Production => {
                         let Some(token) = bearer_token else {
@@ -2352,7 +2461,7 @@ impl AndroidJsonHost {
                             return;
                         };
                         match AndroidHostInferenceProvider::production(token, cancelled.clone()) {
-                            Ok(provider) => provider,
+                            Ok(provider) => provider.with_routed_tools(Arc::clone(&routed_subagent_tools)),
                             Err(error) => {
                                 let message = error.message;
                                 let settled = turn_journal
@@ -2385,43 +2494,20 @@ impl AndroidJsonHost {
                     }
                 };
 
-                let privacy_mode_resolver = Arc::new(move || match mode {
-                    AndroidHostMode::Test => Some(ProductionTurnPrivacyMode::NoStorage),
-                    AndroidHostMode::Production => {
-                        let privacy_mode = mcp_dashboard_backend
-                            .as_ref()
-                            .and_then(|backend| backend.resolve_sand_privacy_mode())?;
-                        Some(match privacy_mode {
-                            BackendSandPrivacyMode::Unspecified => {
-                                ProductionTurnPrivacyMode::Unspecified
-                            }
-                            BackendSandPrivacyMode::NoStorage => {
-                                ProductionTurnPrivacyMode::NoStorage
-                            }
-                            BackendSandPrivacyMode::NoTraining => {
-                                ProductionTurnPrivacyMode::NoTraining
-                            }
-                            BackendSandPrivacyMode::UsageDataTrainingAllowed => {
-                                ProductionTurnPrivacyMode::UsageDataTrainingAllowed
-                            }
-                            BackendSandPrivacyMode::UsageCodebaseTrainingAllowed => {
-                                ProductionTurnPrivacyMode::UsageCodebaseTrainingAllowed
-                            }
-                        })
-                    }
-                });
+                let privacy_mode_resolver = Arc::new(move || Some(frozen_privacy));
                 let summarization_cancelled = Arc::clone(&cancelled);
                 let summarization_prompt = Arc::new(
                     move |system_prompt: &str,
                           user_prompt: &str,
                           should_cancel: &dyn Fn() -> bool| {
-                        AndroidHostInferenceProvider::run_summarization_prompt(
+                        AndroidHostInferenceProvider::run_summarization_prompt_with_model(
                             match mode {
                                 AndroidHostMode::Test => AndroidInferenceMode::Test,
                                 AndroidHostMode::Production => AndroidInferenceMode::Production,
                             },
                             summarization_token.clone(),
                             Arc::clone(&summarization_cancelled),
+                            &model_owned,
                             system_prompt,
                             user_prompt,
                             should_cancel,
