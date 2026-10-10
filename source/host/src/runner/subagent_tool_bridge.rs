@@ -1,8 +1,10 @@
+use super::android_host_inference::AndroidRoutedToolBridge;
 use super::subagent_runtime::{
     status_label, DurableSubagentOwner, DurableSubagentRecord, SubagentFrozenTurnConfig,
     SubagentLaunch, SubagentLineage,
 };
 use serde_json::{json, Value};
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex};
 
 pub type SubagentTaskReviewCallback = Arc<
@@ -102,6 +104,220 @@ pub fn build_turn_subagent_types(
     Some(types)
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GeneratedChildToolClass {
+    Box,
+    Web,
+    Browser,
+    Computer,
+    File,
+    Await,
+}
+
+#[derive(Clone)]
+struct GeneratedChildToolBinding {
+    class: GeneratedChildToolClass,
+    bridge: Arc<dyn AndroidRoutedToolBridge>,
+}
+
+#[derive(Clone, Default)]
+pub struct GeneratedChildToolRegistry {
+    bindings: Vec<GeneratedChildToolBinding>,
+}
+
+impl GeneratedChildToolRegistry {
+    pub fn with_adapter(
+        mut self,
+        class: GeneratedChildToolClass,
+        bridge: Arc<dyn AndroidRoutedToolBridge>,
+    ) -> Self {
+        self.bindings.push(GeneratedChildToolBinding { class, bridge });
+        self
+    }
+
+    pub fn project_names(
+        &self,
+        subagent_type: &str,
+        capabilities: &TurnSubagentCapabilityProjection,
+    ) -> Result<Vec<String>, String> {
+        let role = GeneratedChildToolsetRole::for_subagent_type(subagent_type, capabilities)?;
+        let mut names = BTreeSet::new();
+        for binding in &self.bindings {
+            if !role.allows(binding.class) {
+                continue;
+            }
+            for definition in binding.bridge.list_tools()? {
+                let name = definition
+                    .get("name")
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .ok_or_else(|| "generated child adapter exposed a tool without a valid name".to_string())?;
+                reject_parent_control_name(name)?;
+                if !names.insert(name.to_string()) {
+                    return Err(format!("duplicate generated child tool identity: {name}"));
+                }
+            }
+        }
+        Ok(names.into_iter().collect())
+    }
+
+    fn frozen_bridge(
+        &self,
+        frozen_names: &[String],
+    ) -> Result<Arc<dyn AndroidRoutedToolBridge>, String> {
+        let requested = frozen_names.iter().cloned().collect::<BTreeSet<_>>();
+        if requested.len() != frozen_names.len() {
+            return Err("generated child frozen tool projection contains duplicate names".into());
+        }
+        for name in &requested {
+            reject_parent_control_name(name)?;
+        }
+
+        let mut definitions = BTreeMap::new();
+        let mut routes = BTreeMap::new();
+        for binding in &self.bindings {
+            for definition in binding.bridge.list_tools()? {
+                let Some(name) = definition
+                    .get("name")
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                else {
+                    continue;
+                };
+                if !requested.contains(name) {
+                    continue;
+                }
+                reject_parent_control_name(name)?;
+                if definitions.insert(name.to_string(), definition.clone()).is_some() {
+                    return Err(format!("duplicate generated child tool identity: {name}"));
+                }
+                routes.insert(name.to_string(), Arc::clone(&binding.bridge));
+            }
+        }
+        if let Some(missing) = requested.iter().find(|name| !definitions.contains_key(*name)) {
+            return Err(format!(
+                "generated child tool adapter is unavailable for frozen capability: {missing}"
+            ));
+        }
+        Ok(Arc::new(ProjectedGeneratedChildTools { definitions, routes }))
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct GeneratedChildToolsetRole {
+    is_box_scoped_subagent: bool,
+    is_computer_use_subagent: bool,
+    is_browser_use_subagent: bool,
+    remote_box_available: bool,
+    remote_box_has_desktop: bool,
+    browser_use_enabled: bool,
+}
+
+impl GeneratedChildToolsetRole {
+    fn for_subagent_type(
+        subagent_type: &str,
+        capabilities: &TurnSubagentCapabilityProjection,
+    ) -> Result<Self, String> {
+        let normalized = subagent_type
+            .chars()
+            .filter(|ch| !matches!(ch, '-' | '_' | ' '))
+            .collect::<String>()
+            .to_ascii_lowercase();
+        let (is_computer_use_subagent, is_browser_use_subagent) = match normalized.as_str() {
+            "generalpurpose" | "executor" => (false, false),
+            "computeruse" => (true, false),
+            "browseruse" => (false, true),
+            _ => return Err(format!("unsupported generated subagent type: {subagent_type}")),
+        };
+        if is_computer_use_subagent
+            && (!capabilities.remote_box_available || !capabilities.remote_box_has_desktop)
+        {
+            return Err("computer-use child requires a trusted remote box with desktop capability".into());
+        }
+        if is_browser_use_subagent
+            && (!capabilities.remote_box_available
+                || !capabilities.remote_box_has_desktop
+                || !capabilities.browser_use_enabled)
+        {
+            return Err("browser-use child requires a trusted browser-enabled remote desktop".into());
+        }
+        Ok(Self {
+            // Android currently runs every generated child through the box-scoped
+            // Runner profile. This mirrors the Desktop role fence and deliberately
+            // excludes web/external/file/await surfaces until a non-box-scoped
+            // child profile and real authorized adapters exist.
+            is_box_scoped_subagent: true,
+            is_computer_use_subagent,
+            is_browser_use_subagent,
+            remote_box_available: capabilities.remote_box_available,
+            remote_box_has_desktop: capabilities.remote_box_has_desktop,
+            browser_use_enabled: capabilities.browser_use_enabled,
+        })
+    }
+
+    fn allows(&self, class: GeneratedChildToolClass) -> bool {
+        match class {
+            GeneratedChildToolClass::Box => self.remote_box_available,
+            GeneratedChildToolClass::Browser => {
+                self.is_browser_use_subagent
+                    && self.remote_box_available
+                    && self.remote_box_has_desktop
+                    && self.browser_use_enabled
+            }
+            GeneratedChildToolClass::Computer => {
+                (self.is_computer_use_subagent || self.is_browser_use_subagent)
+                    && self.remote_box_available
+                    && self.remote_box_has_desktop
+            }
+            GeneratedChildToolClass::Web => !self.is_box_scoped_subagent,
+            GeneratedChildToolClass::File => {
+                !self.is_box_scoped_subagent && self.remote_box_available
+            }
+            GeneratedChildToolClass::Await => {
+                !self.is_box_scoped_subagent && self.remote_box_available
+            }
+        }
+    }
+}
+
+fn reject_parent_control_name(name: &str) -> Result<(), String> {
+    if [
+        TASK_TOOL_NAME,
+        CHECK_SUBAGENT_TOOL_NAME,
+        MESSAGE_SUBAGENT_TOOL_NAME,
+        STOP_SUBAGENT_TOOL_NAME,
+    ]
+    .iter()
+    .any(|control| name.eq_ignore_ascii_case(control))
+    {
+        return Err(format!(
+            "generated child adapter attempted to expose parent-only control tool: {name}"
+        ));
+    }
+    Ok(())
+}
+
+struct ProjectedGeneratedChildTools {
+    definitions: BTreeMap<String, Value>,
+    routes: BTreeMap<String, Arc<dyn AndroidRoutedToolBridge>>,
+}
+
+impl AndroidRoutedToolBridge for ProjectedGeneratedChildTools {
+    fn list_tools(&self) -> Result<Vec<Value>, String> {
+        Ok(self.definitions.values().cloned().collect())
+    }
+
+    fn call_tool(&self, name: &str, args: Value, tool_call_id: &str) -> Result<Value, String> {
+        let bridge = self
+            .routes
+            .get(name)
+            .ok_or_else(|| format!("generated child tool is outside the frozen projection: {name}"))?;
+        bridge.call_tool(name, args, tool_call_id)
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SubagentToolContext {
     pub parent_agent_id: String,
@@ -111,6 +327,7 @@ pub struct SubagentToolContext {
     pub box_id: String,
     pub quiet_origin: Option<String>,
     pub frozen_turn: SubagentFrozenTurnConfig,
+    pub child_capabilities: TurnSubagentCapabilityProjection,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -124,6 +341,7 @@ pub struct SubagentToolBridge {
     owner: Arc<Mutex<DurableSubagentOwner>>,
     review_task: Option<SubagentTaskReviewCallback>,
     review_steer: Option<SubagentSteerReviewCallback>,
+    generated_child_tools: GeneratedChildToolRegistry,
 }
 
 impl SubagentToolBridge {
@@ -132,6 +350,7 @@ impl SubagentToolBridge {
             owner,
             review_task: None,
             review_steer: None,
+            generated_child_tools: GeneratedChildToolRegistry::default(),
         }
     }
 
@@ -143,6 +362,26 @@ impl SubagentToolBridge {
     pub fn with_steer_review(mut self, review: SubagentSteerReviewCallback) -> Self {
         self.review_steer = Some(review);
         self
+    }
+
+    pub fn with_generated_child_tools(mut self, tools: GeneratedChildToolRegistry) -> Self {
+        self.generated_child_tools = tools;
+        self
+    }
+
+    pub fn project_generated_child_tool_names(
+        &self,
+        subagent_type: &str,
+        capabilities: &TurnSubagentCapabilityProjection,
+    ) -> Result<Vec<String>, String> {
+        self.generated_child_tools.project_names(subagent_type, capabilities)
+    }
+
+    pub fn generated_child_routed_tools(
+        &self,
+        frozen_names: &[String],
+    ) -> Result<Arc<dyn AndroidRoutedToolBridge>, String> {
+        self.generated_child_tools.frozen_bridge(frozen_names)
     }
 
     pub fn tool_definitions(&self, context: &SubagentToolContext) -> Vec<Value> {
@@ -246,6 +485,11 @@ impl SubagentToolBridge {
                 .or_else(|| Some(context.parent_request_id.clone())),
             parent_agent_tool_call_id: Some(tool_call_id.to_string()),
         };
+        let mut frozen_turn = context.frozen_turn.clone();
+        frozen_turn.tool_names = self.project_generated_child_tool_names(
+            subagent_type,
+            &context.child_capabilities,
+        )?;
         let launch = self
             .owner
             .lock()
@@ -259,7 +503,7 @@ impl SubagentToolBridge {
                 prompt,
                 &context.account_fence,
                 context.quiet_origin.as_deref(),
-                context.frozen_turn.clone(),
+                frozen_turn,
                 now_ms,
             )?;
         let value = json!({
@@ -436,6 +680,7 @@ mod tests {
                 privacy_mode: "no-storage".into(),
                 summarization_binding_id: "android-host-inference:same-provider".into(),
             },
+            child_capabilities: TurnSubagentCapabilityProjection::default(),
         }
     }
 
