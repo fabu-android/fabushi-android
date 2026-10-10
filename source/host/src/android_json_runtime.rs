@@ -5318,10 +5318,20 @@ mod tests {
         );
         assert!(stale.is_err(), "pre-restart approval must never be reusable");
 
-        let children = reopened.subagent_owner.lock().unwrap().list_for_parent(
-            "mahayana-assistant",
-            "restart-pending-review",
-        );
+        let children = reopened
+            .subagent_owner
+            .lock()
+            .unwrap()
+            .all_records()
+            .into_iter()
+            .filter(|record| {
+                record.parent_agent_id == "mahayana-assistant"
+                    && (record.lineage.parent_request_id.as_deref()
+                        == Some("restart-pending-review")
+                        || record.lineage.root_parent_request_id.as_deref()
+                            == Some("restart-pending-review"))
+            })
+            .collect::<Vec<_>>();
         assert!(
             children.is_empty(),
             "blocked Task must not launch before a fresh reconciled approval"
