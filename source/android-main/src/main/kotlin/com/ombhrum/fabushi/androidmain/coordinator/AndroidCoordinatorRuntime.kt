@@ -890,16 +890,33 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
             "Remote signal drain lastSignalId does not match the delivered batch"
         }
         val (currentFence, currentEpoch) = currentRemoteAccountFence()
-        val updated = remoteControlSessionStore.recordSignalDrain(
+        remoteControlSessionStore.recordSignalDrain(
             currentFence,
             currentEpoch,
             session.sessionId,
             afterSignalId,
             lastSignalId,
         )
+        var sawReady = false
+        var sawClose = false
+        repeat(signals.length()) { index ->
+            when (signals.getJSONObject(index).optString("kind")) {
+                "ready" -> sawReady = true
+                "close" -> sawClose = true
+            }
+        }
+        val updated = remoteControlSessionStore.reconcileAfterSignalDrain(
+            currentFence,
+            currentEpoch,
+            session.sessionId,
+            sawReady,
+            sawClose,
+        )
         return JSONObject(response.toString())
             .put("lastAcknowledgedSignalId", updated.lastAcknowledgedSignalId)
             .put("highestDrainedSignalId", updated.highestDrainedSignalId)
+            .put("lifecycle", updated.lifecycle.name.lowercase())
+            .put("reconcileRequired", updated.reconcileRequired)
     }
 
     override fun remoteComputerSignalAcknowledge(
