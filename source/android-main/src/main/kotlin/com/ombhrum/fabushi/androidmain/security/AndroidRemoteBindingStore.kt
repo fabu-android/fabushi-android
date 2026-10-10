@@ -45,6 +45,22 @@ internal class AndroidRemoteBindingStore(context: Context) {
         }
     }
 
+    /**
+     * Return the protected binding only when it is still fenced to the canonical
+     * account session currently owned by the Rust Host. A stale account/session
+     * binding is destroyed before it can be reinstalled after login, token
+     * refresh, account switch, or process restart.
+     */
+    fun readBindingJsonForAccountFence(currentAccountFence: String): String? {
+        require(currentAccountFence.isNotBlank()) { "current account fence must not be blank" }
+        val value = readBindingJson() ?: return null
+        if (!RemoteBindingFencePolicy.matches(value, currentAccountFence)) {
+            clear()
+            return null
+        }
+        return value
+    }
+
     /** Protected pairing boundary only; no presentation-facing owner calls this. */
     fun writeBindingJson(value: String) {
         validateBindingJson(value)
@@ -127,5 +143,20 @@ internal class AndroidRemoteBindingStore(context: Context) {
         const val FILE_NAME = "fabushi-remote-outbound-binding.v1"
         const val GCM_TAG_BITS = 128
         const val MAX_BINDING_BYTES = 32 * 1024
+    }
+}
+
+/**
+ * Pure fence comparison used by the protected binding owner and JVM tests.
+ * It intentionally returns only a boolean and never exposes the bearer credential.
+ */
+internal object RemoteBindingFencePolicy {
+    fun matches(bindingJson: String, currentAccountFence: String): Boolean {
+        if (currentAccountFence.isBlank() || currentAccountFence.length > 512) return false
+        if (currentAccountFence.any(Char::isISOControl)) return false
+        return runCatching {
+            val binding = JSONObject(bindingJson)
+            binding.getString("accountFence") == currentAccountFence
+        }.getOrDefault(false)
     }
 }

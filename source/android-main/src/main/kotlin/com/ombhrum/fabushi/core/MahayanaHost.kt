@@ -69,10 +69,7 @@ class MahayanaHost(
         if (!featureHostTest) {
             val state = checkNotNull(shared)
             synchronized(state.lock) {
-                val protectedBinding = remoteBindingStore.readBindingJson().orEmpty()
-                check(nativeSetRemoteBinding(state.handle, protectedBinding)) {
-                    "Protected Remote binding was rejected by native Host"
-                }
+                installProtectedRemoteBindingForCurrentAccountLocked(state)
             }
         }
     }
@@ -81,10 +78,38 @@ class MahayanaHost(
         check(!featureHostTest && !closed) { "Protected Remote binding refresh requires production Host" }
         val state = checkNotNull(shared)
         synchronized(state.lock) {
-            check(state.handle != 0L) { "Mahayana host is closed" }
-            check(nativeSetRemoteBinding(state.handle, remoteBindingStore.readBindingJson().orEmpty())) {
-                "Protected Remote binding was rejected by native Host"
-            }
+            installProtectedRemoteBindingForCurrentAccountLocked(state)
+        }
+    }
+
+    /**
+     * The native Host is the canonical account-fence owner. Protected Remote
+     * credentials may only be reinstalled after that fence is read from the live
+     * Host and matched by the platform secret store. This keeps Presentation out
+     * of the credential lifecycle and makes stale bindings fail closed.
+     */
+    private fun installProtectedRemoteBindingForCurrentAccountLocked(state: SharedHost) {
+        check(state.handle != 0L) { "Mahayana host is closed" }
+        val fenceRequest = JSONObject()
+            .put("method", "feature.account.fence")
+            .put("params", JSONObject())
+        val fenceResponse = JSONObject(nativeDispatch(state.handle, fenceRequest.toString()))
+        val currentFence = if (fenceResponse.optBoolean("ok", false)) {
+            fenceResponse.optJSONObject("result")
+                ?.optString("accountFence")
+                ?.trim()
+                ?.takeIf(String::isNotEmpty)
+        } else {
+            null
+        }
+        val protectedBinding = if (currentFence == null) {
+            remoteBindingStore.clear()
+            ""
+        } else {
+            remoteBindingStore.readBindingJsonForAccountFence(currentFence).orEmpty()
+        }
+        check(nativeSetRemoteBinding(state.handle, protectedBinding)) {
+            "Protected Remote binding was rejected by native Host"
         }
     }
 
@@ -291,7 +316,14 @@ class MahayanaHost(
         val result = response.optJSONObject("result") ?: return
         val mutation = result.optJSONObject("_accountSessionMutation") ?: return
         when (mutation.optString("action")) {
-            "save" -> accountSessionStore.writeSessionJson(mutation.getString("sessionJson"))
+            "save" -> {
+                accountSessionStore.writeSessionJson(mutation.getString("sessionJson"))
+                shared?.let { state ->
+                    synchronized(state.lock) {
+                        installProtectedRemoteBindingForCurrentAccountLocked(state)
+                    }
+                }
+            }
             "clear" -> {
                 accountSessionStore.clear()
                 remoteBindingStore.clear()
