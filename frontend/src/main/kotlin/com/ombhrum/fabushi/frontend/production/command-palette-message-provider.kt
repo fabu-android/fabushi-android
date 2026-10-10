@@ -4,7 +4,7 @@ import org.json.JSONArray
 
 internal const val COMMAND_PALETTE_MESSAGE_DEBOUNCE_MS = 150L
 
-internal enum class CommandPaletteMessageStatus {
+enum class CommandPaletteMessageStatus {
     UNAVAILABLE,
     IDLE,
     LOADING,
@@ -14,7 +14,7 @@ internal enum class CommandPaletteMessageStatus {
     CANCELLED,
 }
 
-internal data class CommandPaletteMessage(
+data class CommandPaletteMessage(
     val agentId: String,
     val entryId: String,
     val role: MobileChatRole,
@@ -22,7 +22,7 @@ internal data class CommandPaletteMessage(
     val snippet: String,
 )
 
-internal data class CommandPaletteMessageSnapshot(
+data class CommandPaletteMessageSnapshot(
     val status: CommandPaletteMessageStatus = CommandPaletteMessageStatus.UNAVAILABLE,
     val value: List<CommandPaletteMessage> = emptyList(),
 )
