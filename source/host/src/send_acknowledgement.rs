@@ -1,3 +1,4 @@
+use crate::agent_attachment::AgentAttachment;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::{
@@ -72,6 +73,8 @@ pub struct SendAcknowledgementRecord {
     pub prior_nonces: Vec<String>,
     pub entries: Vec<SendAcknowledgementEntry>,
     pub message_text: String,
+    #[serde(default)]
+    pub attachments: Vec<AgentAttachment>,
     pub phase: SendAcknowledgementPhase,
     pub generation: u64,
     pub failed_at_ms: Option<u64>,
@@ -131,15 +134,39 @@ impl DurableSendAcknowledgementOwner {
         message_text: &str,
         entries: Vec<SendAcknowledgementEntry>,
     ) -> Result<SendAcknowledgementRecord, String> {
+        self.begin_with_attachments(
+            account_slot,
+            account_fence,
+            agent_id,
+            nonce,
+            message_text,
+            Vec::new(),
+            entries,
+        )
+    }
+
+    pub fn begin_with_attachments(
+        &mut self,
+        account_slot: Option<&str>,
+        account_fence: &str,
+        agent_id: &str,
+        nonce: &str,
+        message_text: &str,
+        attachments: Vec<AgentAttachment>,
+        entries: Vec<SendAcknowledgementEntry>,
+    ) -> Result<SendAcknowledgementRecord, String> {
         validate_identity(account_fence, "account fence")?;
         validate_optional_identity(account_slot, "account slot")?;
         validate_identity(agent_id, "agent id")?;
         validate_identity(nonce, "send nonce")?;
-        if message_text.trim().is_empty() {
-            return Err("send acknowledgement message text is required".into());
+        if message_text.trim().is_empty() && attachments.is_empty() {
+            return Err("send acknowledgement requires message text or an attachment".into());
         }
         if message_text.len() > 2 * 1024 * 1024 {
             return Err("send acknowledgement message text is too large".into());
+        }
+        for attachment in &attachments {
+            attachment.validate_public()?;
         }
         validate_entries(nonce, &entries)?;
 
@@ -147,6 +174,7 @@ impl DurableSendAcknowledgementOwner {
             let existing = self.state.records.get(&key).expect("located record");
             if existing.nonce == nonce
                 && existing.message_text == message_text
+                && existing.attachments == attachments
                 && existing.entries == entries
             {
                 return Ok(existing.clone());
@@ -162,6 +190,7 @@ impl DurableSendAcknowledgementOwner {
             prior_nonces: Vec::new(),
             entries,
             message_text: message_text.to_string(),
+            attachments,
             phase: SendAcknowledgementPhase::Pending,
             generation: self.state.owner_generation,
             failed_at_ms: None,
@@ -329,6 +358,7 @@ impl DurableSendAcknowledgementOwner {
             prior_nonces,
             entries,
             message_text: old.message_text,
+            attachments: old.attachments,
             phase: SendAcknowledgementPhase::Pending,
             generation: self.state.owner_generation,
             failed_at_ms: None,
@@ -416,6 +446,12 @@ impl DurableSendAcknowledgementOwner {
             }
             let kind = match entry.get("kind").and_then(Value::as_str) {
                 Some("message") if entry.get("role").and_then(Value::as_str) == Some("user") => {
+                    if let Some(key) = self.find_key(account_slot, account_fence, agent_id, client_nonce) {
+                        let record = self.state.records.get(&key).expect("located record");
+                        if !message_echo_matches_attachments(entry, &record.attachments) {
+                            continue;
+                        }
+                    }
                     SendAcknowledgementEntryKind::Message
                 }
                 Some("user-attachment") => SendAcknowledgementEntryKind::UserAttachment,
@@ -554,6 +590,22 @@ impl DurableSendAcknowledgementOwner {
     pub fn path(&self) -> &Path {
         &self.path
     }
+}
+
+fn message_echo_matches_attachments(entry: &Value, expected: &[AgentAttachment]) -> bool {
+    if expected.is_empty() {
+        return true;
+    }
+    let Some(rows) = entry.get("attachments").and_then(Value::as_array) else {
+        return false;
+    };
+    expected.iter().all(|attachment| {
+        rows.iter().any(|row| {
+            row.get("id").and_then(Value::as_str) == Some(attachment.id.as_str())
+                && row.get("name").and_then(Value::as_str) == Some(attachment.name.as_str())
+                && row.get("size").and_then(Value::as_u64) == Some(attachment.size_bytes)
+        })
+    })
 }
 
 fn required_string<'a>(value: &'a Value, key: &str) -> Result<&'a str, String> {

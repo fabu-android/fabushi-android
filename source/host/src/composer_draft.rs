@@ -1,3 +1,4 @@
+use crate::agent_attachment::{AgentAttachment, COMPOSER_ATTACHMENT_LIMIT};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeMap,
@@ -16,6 +17,8 @@ pub struct ComposerDraftRecord {
     pub agent_id: String,
     pub draft_id: String,
     pub prompt: String,
+    #[serde(default)]
+    pub attachments: Vec<AgentAttachment>,
     pub updated_at_ms: u64,
 }
 
@@ -87,6 +90,12 @@ impl DurableComposerDraftOwner {
             return Err("composer draft prompt is too large".into());
         }
         let key = scope_key(account_slot, account_fence, agent_id)?;
+        let existing_attachments = self
+            .state
+            .records
+            .get(&key)
+            .map(|record| record.attachments.clone())
+            .unwrap_or_default();
         if let Some(existing) = self.state.records.get(&key) {
             if existing.prompt == prompt {
                 return Ok(existing.clone());
@@ -99,11 +108,91 @@ impl DurableComposerDraftOwner {
             agent_id: agent_id.to_string(),
             draft_id: format!("android-composer-draft-{}", self.state.next_id),
             prompt: prompt.to_string(),
+            attachments: existing_attachments,
             updated_at_ms: now_ms,
         };
         self.state.records.insert(key, record.clone());
         self.persist()?;
         Ok(record)
+    }
+
+
+    pub fn add_attachment(
+        &mut self,
+        account_slot: Option<&str>,
+        account_fence: &str,
+        agent_id: &str,
+        attachment: AgentAttachment,
+        now_ms: u64,
+    ) -> Result<ComposerDraftRecord, String> {
+        validate_scope(account_slot, account_fence, agent_id)?;
+        attachment.validate_public()?;
+        let key = scope_key(account_slot, account_fence, agent_id)?;
+        let current = self.state.records.get(&key).cloned();
+        let mut attachments = current.as_ref().map(|record| record.attachments.clone()).unwrap_or_default();
+        if let Some(existing) = attachments.iter().find(|row| row.id == attachment.id) {
+            if existing == &attachment {
+                return current.ok_or("composer attachment state is inconsistent".into());
+            }
+            return Err("composer attachment id was reused with different metadata".into());
+        }
+        if attachments.len() >= COMPOSER_ATTACHMENT_LIMIT {
+            return Err("composer attachment limit reached".into());
+        }
+        attachments.push(attachment);
+        self.state.next_id = self.state.next_id.saturating_add(1).max(1);
+        let record = ComposerDraftRecord {
+            account_slot: account_slot.map(str::to_string),
+            account_fence: account_fence.to_string(),
+            agent_id: agent_id.to_string(),
+            draft_id: format!("android-composer-draft-{}", self.state.next_id),
+            prompt: current.as_ref().map(|record| record.prompt.clone()).unwrap_or_default(),
+            attachments,
+            updated_at_ms: now_ms,
+        };
+        self.state.records.insert(key, record.clone());
+        self.persist()?;
+        Ok(record)
+    }
+
+    pub fn remove_attachment(
+        &mut self,
+        account_slot: Option<&str>,
+        account_fence: &str,
+        agent_id: &str,
+        attachment_id: &str,
+        now_ms: u64,
+    ) -> Result<Option<ComposerDraftRecord>, String> {
+        validate_scope(account_slot, account_fence, agent_id)?;
+        validate_identity(attachment_id, "attachment id")?;
+        let key = scope_key(account_slot, account_fence, agent_id)?;
+        let Some(current) = self.state.records.get(&key).cloned() else {
+            return Ok(None);
+        };
+        let mut attachments = current.attachments.clone();
+        let before = attachments.len();
+        attachments.retain(|row| row.id != attachment_id);
+        if attachments.len() == before {
+            return Ok(Some(current));
+        }
+        if current.prompt.trim().is_empty() && attachments.is_empty() {
+            self.state.records.remove(&key);
+            self.persist()?;
+            return Ok(None);
+        }
+        self.state.next_id = self.state.next_id.saturating_add(1).max(1);
+        let record = ComposerDraftRecord {
+            account_slot: current.account_slot,
+            account_fence: current.account_fence,
+            agent_id: current.agent_id,
+            draft_id: format!("android-composer-draft-{}", self.state.next_id),
+            prompt: current.prompt,
+            attachments,
+            updated_at_ms: now_ms,
+        };
+        self.state.records.insert(key, record.clone());
+        self.persist()?;
+        Ok(Some(record))
     }
 
     pub fn clear_if_current(
