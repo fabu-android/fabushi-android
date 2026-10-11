@@ -7,7 +7,7 @@
     "android_pr": 3,
     "android_head_at_update": "e6fc1e328f7d2f6960d5e1c8f3182ca115e6c513",
     "status": "incomplete",
-    "note": "Incrementally rebased to Desktop main 371b72f1cd20de03dc4dff9a15ed761054968093, root tree 3116c54a1e36da95189c740bdc789ad543ce2d20. Compare from 62d0c99f changes only Marketplace owner inventory; shipping source blobs and 8177-row set are unchanged. Skills Host owner audit was re-read and mapped without inherited verification. Deterministic transcript audit advanced through registry/resolver/root, secret-request, send-message:text, thread affordance/loader/summary, transcript feed fanout and URL-card; confirmed Android secret/thread/link-metadata gaps remain mapped."
+    "note": "Incrementally rebased to Desktop main 371b72f1cd20de03dc4dff9a15ed761054968093, root tree 3116c54a1e36da95189c740bdc789ad543ce2d20. Compare from 62d0c99f changes only Marketplace owner inventory; shipping source blobs and 8177-row set are unchanged. Skills Host owner audit was re-read and mapped without inherited verification. Deterministic transcript audit advanced through registry/resolver/root, secret-request, send-message:text, thread affordance/loader/summary, transcript feed fanout and URL-card; confirmed Android secret/thread/link-metadata gaps remain mapped. Deterministic audit advanced through transcript card leaf CSS/barrel/shared plus attachment/approval/cloud-agent/connector/draft/link/listener/local-tool/secret/text views; draft leaves preserve source no-op send/discard semantics rather than inventing execution."
   },
   "responsibilities": [
     {
@@ -8271,6 +8271,72 @@
       "artifact": null,
       "verification_status": "not-verified",
       "notes": "Only exact Desktop bare-link classification is in scope; do not turn arbitrary mixed text into a preview."
+    },
+    {
+      "responsibility_id": "TRANSCRIPT-DRAFT-CARDS-ANDROID-001",
+      "domain": "conversation-transcript-drafts",
+      "desktop_sources": [
+        {
+          "path": "frontend/src/recovered/features/conversation/cards/transcript-card/views/email-draft.tsx",
+          "blob_sha": "f7fdd8ab665a86bdad08162ad07a3463d7e15816",
+          "symbols": [
+            "EmailDraftTranscriptCard"
+          ]
+        },
+        {
+          "path": "frontend/src/recovered/features/conversation/cards/transcript-card/views/slack-draft.tsx",
+          "blob_sha": "76ab5821bc8b1169dfa6b47616d0fecce398297d",
+          "symbols": [
+            "SlackDraftTranscriptCard"
+          ]
+        }
+      ],
+      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "responsibility": "Render Agent transcript email/Slack draft cards with strict entry decoding, editable/sending/sent projection, input validation, long-body collapse/expand and disabled-state semantics while preserving the shipped fact that recovered Send/Discard callbacks are presentation-only no-ops until a canonical action owner exists.",
+      "source_owner": "Canonical Agent transcript owns draft payload/draftSendState; leaf owns transient form edits/expanded state only.",
+      "direct_callers": [
+        "Transcript card registry send-message:email-draft and send-message:slack-draft leaves"
+      ],
+      "downstream_dependencies": [
+        "canonical transcript draft payload/state"
+      ],
+      "state_owner": "Host transcript owns durable draft/send state; presentation owns only unsaved local editing buffer.",
+      "persistent_state": [
+        "No additional durable UI draft owner; process reopen returns to canonical payload/state."
+      ],
+      "protocol_wire_contract": [
+        "email draft {to,from?,subject,body}+draftSendState",
+        "slack draft {target,workspace?,thread?,body}+draftSendState"
+      ],
+      "visible_effect": "Agent transcript can show editable/sending/sent email and Slack draft cards with valid recipient/body/status presentation.",
+      "failure_behavior": [
+        "Malformed entry renders nothing",
+        "invalid/empty recipient/body disables send",
+        "non-editable state disables editing"
+      ],
+      "cancellation_behavior": "No shipped side-effect callback to cancel in recovered leaf; local edits disappear with surface lifecycle.",
+      "retry_semantics": "No hidden retry; recovered Send/Discard callbacks intentionally do not execute delivery.",
+      "idempotency_semantics": "Pure projection over canonical draft state.",
+      "process_death_recovery": "Reproject canonical draft payload/state; do not invent sent state from local input.",
+      "account_fencing": "Card follows canonical Agent/account transcript scope.",
+      "security_boundary": "Draft presentation must not acquire direct mail/Slack execution authority; future delivery must route through the canonical tool/connector owner and approval boundary.",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/production/canonical-agent-transcript.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/features/chat/AgentChatSurfaces.kt"
+      ],
+      "android_owner": "Native Agent transcript presentation.",
+      "platform_delta": "React form becomes Compose; no new delivery side effect is invented.",
+      "implementation_status": "mapped",
+      "production_wiring": "Current Android canonical Agent transcript projects only plain message fields and does not expose typed email/slack draft leaves.",
+      "unit_test": "missing focused draft projection/validation/status tests",
+      "contract_test": "missing typed draft union contract",
+      "integration_test": "missing exact-head transcript reload/state journey",
+      "packaged_test": "required final package",
+      "device_test": "required device Agent transcript acceptance",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Source explicitly documents empty Send/Discard callbacks; parity requires presenting source facts, not inventing a new outbound-mail/Slack side effect."
     }
   ],
   "traceability": {
