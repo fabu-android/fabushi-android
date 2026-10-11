@@ -58,7 +58,7 @@ internal fun ProductionRenderer(
                 var rendererRoute by remember { mutableStateOf(RendererRoute.GROK_HOME) }
                 var commandPaletteOpen by remember { mutableStateOf(false) }
                 var commandPaletteAgentFilter by remember { mutableStateOf<String?>(null) }
-                var showAbout by remember { mutableStateOf(false) }
+                var showAbout by remember { mutableStateOf(false) }\n                var showSettings by remember { mutableStateOf(false) }
                 var computerUpdateConfirmAction by remember {
                     mutableStateOf<CommandPaletteComputerUpdateAction?>(null)
                 }
@@ -85,6 +85,14 @@ internal fun ProductionRenderer(
                     AndroidAboutDialog(
                         updateState = updateState,
                         onClose = { showAbout = false },
+                    )
+                }
+                if (showSettings) {
+                    FabushiSettingsSurface(
+                        updateState = updateState,
+                        onCheckUpdate = { updateModel.checkForUpdates(force = true) },
+                        onInstallUpdate = updateModel::downloadAndInstall,
+                        onClose = { showSettings = false },
                     )
                 }
                 computerUpdateConfirmAction?.let { action ->
@@ -368,6 +376,19 @@ internal fun ProductionRenderer(
                                 detail = "Open conversations",
                                 searchText = "Messages conversations chats channels",
                                 activate = { rendererRoute = RendererRoute.MESSAGING },
+                            ),
+                        )
+                        add(
+                            CommandPaletteEntry(
+                                id = "android:settings",
+                                kind = CommandPaletteEntryKind.COMMAND,
+                                label = "Settings",
+                                detail = "Appearance and app updates",
+                                searchText = "Settings preferences appearance theme updates",
+                                activate = {
+                                    commandPaletteOpen = false
+                                    showSettings = true
+                                },
                             ),
                         )
                         add(

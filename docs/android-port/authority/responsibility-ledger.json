@@ -1560,6 +1560,76 @@
             "Bzn",
             "createRuntimeThemeInstaller"
           ]
+        },
+        {
+          "path": "frontend/src/recovered/features/settings/overlay/desktop-preview.tsx",
+          "blob_sha": "5f7f33e68a9a5f0b0f1c88eadb246d4345531dd6",
+          "symbols": [
+            "SettingsDesktopPreview"
+          ]
+        },
+        {
+          "path": "frontend/src/recovered/features/settings/overlay/desktop-surface.tsx",
+          "blob_sha": "2ccb6c4f94c094495c24907be32cee6447796d6d",
+          "symbols": [
+            "SettingsDesktopSurface"
+          ]
+        },
+        {
+          "path": "frontend/src/recovered/features/settings/overlay/desktop.ts",
+          "blob_sha": "ff8e61b13ea9475c502da6ed58a0906fd44538d6",
+          "symbols": [
+            "SettingsDesktopSnapshot",
+            "loadSettingsDesktopSnapshot",
+            "subscribeToSettingsDesktop"
+          ]
+        },
+        {
+          "path": "frontend/src/recovered/features/settings/overlay/entrypoint.ts",
+          "blob_sha": "82781fad9840196983c362bf0a7c7d3f99ff39c6",
+          "symbols": [
+            "SettingsOverlayParams",
+            "defineEntrypoint"
+          ]
+        },
+        {
+          "path": "frontend/src/recovered/features/settings/overlay/localization.ts",
+          "blob_sha": "9d42e30c34998db6e0f12b1dfc4f5e9176bceb89",
+          "symbols": [
+            "settingsCopy",
+            "SettingsCopy"
+          ]
+        },
+        {
+          "path": "frontend/src/recovered/features/settings/overlay/notice.tsx",
+          "blob_sha": "c6a0c0f94010c819177d8c463ca96490b51dc3bd",
+          "symbols": [
+            "SettingsNoticeView",
+            "createSettingsNoticeExpiry"
+          ]
+        },
+        {
+          "path": "frontend/src/recovered/features/settings/overlay/panels.tsx",
+          "blob_sha": "994d0e009430e6dfb0b1edb39f717b673be40a8f",
+          "symbols": [
+            "GeneralSettingsPanel",
+            "ThemePreferencePicker"
+          ]
+        },
+        {
+          "path": "frontend/src/recovered/features/settings/overlay/view.css",
+          "blob_sha": "07d07d81d43acd09597e51d7a077d187d334efc8",
+          "symbols": [
+            "settings overlay presentation"
+          ]
+        },
+        {
+          "path": "frontend/src/recovered/features/settings/overlay/view.tsx",
+          "blob_sha": "c79bf6787f5d423e7c958bc85bf068e65f45b0d3",
+          "symbols": [
+            "SettingsModalShell",
+            "SETTINGS_SECTIONS"
+          ]
         }
       ],
       "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
@@ -1593,20 +1663,21 @@
         "source/shared/src/host_settings.rs",
         "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/production/FabushiNativeTheme.kt",
         "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/production/ProductionRenderer_view.kt",
-        "mobile/android/app/src/test/java/com/ombhrum/fabushi/FabushiNativeThemeTest.kt"
+        "mobile/android/app/src/test/java/com/ombhrum/fabushi/FabushiNativeThemeTest.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/production/FabushiSettingsSurface.kt"
       ],
       "android_owner": "source/shared/src/host_settings.rs",
       "platform_delta": "Android uses native Compose/platform adapters + typed JNI while preserving canonical Rust owners where platform-independent.",
       "implementation_status": "mapped",
-      "production_wiring": "Mapped with a concrete native appearance slice: ProductionRenderer now enters FabushiNativeTheme, which replaces Desktop DOM/CSS theme installation with immutable Compose light/dark tokens derived from the Desktop base/text/accent palette and Android system dark mode. No WebView/CSS runtime or second product-state owner is introduced. Durable account/device appearance preference, settings migration/DataStore owner, export semantics and package/device theme acceptance remain open.",
-      "unit_test": "FabushiNativeThemeTest covers Desktop-equivalent light/dark base, foreground and accent token projection. Existing host_settings.rs notification defaults remain separate. Exact-head GitHub Actions plus persistent settings coverage are still required.",
+      "production_wiring": "Native Settings is now a single Compose surface opened from the existing command palette. Device-scoped appearance uses a versioned SharedPreferences owner with the Desktop system/light/dark contract; FabushiNativeTheme observes that owner and projects immutable Material3 colors without owning account/runtime truth. Existing Android app-update state is surfaced in the same native Settings dialog. Router/Usage, durable UI locale/direction/text-scale/high-contrast/reduced-motion, Auto Review persistence, media/device preferences, local-tool policy, timezone, security-key and full migration/export semantics remain open.",
+      "unit_test": "FabushiNativeThemeTest covers preference parsing/resolution and Desktop-equivalent light/dark base/text/accent tokens. Existing update/version tests cover release selection grammar. Exact-head GitHub Actions plus focused Settings surface/device persistence tests remain required.",
       "contract_test": "required on same exact HEAD",
       "integration_test": "required on same exact HEAD",
       "packaged_test": "required on final minified release artifact",
       "device_test": "required on emulator/physical device as applicable",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Keep mapped/not-verified. The DOM style-element lifecycle is not-applicable as a mechanism, but its user-visible light/dark appearance responsibility is replaced natively rather than deleted."
+      "notes": "Keep mapped/not-verified. This closes a real native Settings entry plus durable theme preference slice only; it does not claim the still-open Settings domains or packaged/device accessibility."
     },
     {
       "responsibility_id": "NOTIFICATION-OS-001",
@@ -11833,6 +11904,21 @@
             "addRule",
             "saveEdit"
           ]
+        },
+        {
+          "path": "frontend/src/recovered/features/settings/overlay/desktop-surface.tsx",
+          "blob_sha": "2ccb6c4f94c094495c24907be32cee6447796d6d",
+          "symbols": [
+            "SettingsDesktopSurface"
+          ]
+        },
+        {
+          "path": "frontend/src/recovered/features/settings/overlay/panels.tsx",
+          "blob_sha": "994d0e009430e6dfb0b1edb39f717b673be40a8f",
+          "symbols": [
+            "GeneralSettingsPanel",
+            "ThemePreferencePicker"
+          ]
         }
       ],
       "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
@@ -12370,6 +12456,74 @@
       "verification_status": "not-verified",
       "notes": "Underlying Desktop source row will receive the reverse link when deterministic cursor reaches it; this responsibility currently cites the contract authority only to avoid false source closure.",
       "android_head_at_update": "2e6f7598ab3a73fcec2ab5be857e55ae52bad2ac"
+    },
+    {
+      "responsibility_id": "SETTINGS-APP-UPDATE-ANDROID-001",
+      "domain": "settings-release",
+      "desktop_sources": [
+        {
+          "path": "frontend/src/recovered/features/settings/overlay/updates-controller.ts",
+          "blob_sha": "54b703f3d692c72a449759d5437678a96a5a3575",
+          "symbols": [
+            "createSettingsUpdateController",
+            "SettingsUpdateSnapshot"
+          ]
+        },
+        {
+          "path": "frontend/src/recovered/features/settings/overlay/updates.ts",
+          "blob_sha": "2da4ba45f821bec3242ff88ae2b82f1246219182",
+          "symbols": [
+            "UpdateStatus",
+            "UPDATE_TRACK_LABELS",
+            "updateStatusMessage"
+          ]
+        },
+        {
+          "path": "frontend/src/recovered/features/settings/overlay/desktop-surface.tsx",
+          "blob_sha": "2ccb6c4f94c094495c24907be32cee6447796d6d",
+          "symbols": [
+            "UpdatesSettingsPanel wiring"
+          ]
+        },
+        {
+          "path": "frontend/src/recovered/features/settings/overlay/desktop.ts",
+          "blob_sha": "ff8e61b13ea9475c502da6ed58a0906fd44538d6",
+          "symbols": [
+            "SettingsDesktopSnapshot.update"
+          ]
+        },
+        {
+          "path": "frontend/src/recovered/features/settings/overlay/panels.tsx",
+          "blob_sha": "994d0e009430e6dfb0b1edb39f717b673be40a8f",
+          "symbols": [
+            "UpdatesSettingsPanel"
+          ]
+        }
+      ],
+      "responsibility": "Project and control the shipped app-update lifecycle from a single native owner: current status, explicit check, available/download/install/error states, verified package handoff, release-channel policy and auto-update preference without conflating app updates with shared Computer image updates.",
+      "source_owner": "Desktop settings update controller / update bridge",
+      "visible_effect": "Users can inspect Fabushi app update status from native Settings, explicitly check for releases, and continue a verified Android package update through the platform installer.",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/update/AndroidUpdateViewModel.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/production/FabushiSettingsSurface.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/features/update/UpdateBanner.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/production/command-palette-update-command.kt",
+        "source/shared/src/update.rs",
+        "mobile/android/app/src/test/java/com/ombhrum/fabushi/AndroidVersionTest.kt"
+      ],
+      "android_owner": "AndroidUpdateViewModel for update lifecycle; Settings surface is immutable presentation only",
+      "platform_delta": "Android downloads a bounded GitHub Release APK, verifies SHA-256/size/package/signing identity, then delegates install to the system package installer. Desktop quit-and-install and Electron updater mechanics do not exist. Public Android currently follows the stable signed release channel only; nightly/dogfood selection and auto-update-when-idle are not yet implemented.",
+      "implementation_status": "mapped",
+      "production_wiring": "AndroidUpdateViewModel already owns startup/foreground check, bounded release metadata, semantic version selection, download progress, SHA-256/declared-size verification, package/version/signing-identity verification, unknown-app-source permission and system installer handoff. UpdateBanner and command-palette actions are shipping projections. Native Settings now exposes this same owner with Check/Download/Continue controls. Desktop setTrack(stable/nightly/dogfood), autoUpdateWhenIdleOptIn and equivalent generation/dispose controller semantics remain open.",
+      "unit_test": "AndroidVersionTest covers strict Desktop version grammar/prerelease ordering. Exact-head Kotlin compile/unit/lint must cover the Settings projection; focused updater state/reconnect/permission/package tests and final signed package/device upgrade remain required.",
+      "contract_test": "required",
+      "integration_test": "required",
+      "packaged_test": "required",
+      "device_test": "required",
+      "artifact": "pending exact-head signed Android package evidence",
+      "verification_status": "not-verified",
+      "notes": "Mapped, not verified. Do not use Computer image-update evidence for this app-updater responsibility and do not treat stable-only GitHub Release handling as Desktop release-track parity."
     }
   ],
   "traceability": {
