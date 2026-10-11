@@ -1,5 +1,10 @@
 package com.ombhrum.fabushi
 
+import com.ombhrum.fabushi.androidpreload.runtime.AccountAccessProjection
+import com.ombhrum.fabushi.androidpreload.runtime.AccountRosterLoadState
+import com.ombhrum.fabushi.androidpreload.runtime.RootConnectionResilienceProjection
+import com.ombhrum.fabushi.androidpreload.runtime.RootConnectionTransportState
+
 internal enum class RosterTransportState { BROWSER, CONNECTING, CONNECTED, DOWN }
 internal enum class RosterLoadState { LOADING, READY, ERROR }
 
@@ -71,3 +76,43 @@ internal fun selectRosterAccessReadiness(
         isPrivacyBlocked = input.isPrivacyBlocked,
     )
 }
+
+/**
+ * Production adapter from canonical Coordinator-owned projections into the recovered pure selector.
+ * This creates no second account/transport/roster owner; the derived accountKey is epoch-scoped and
+ * never persisted or used for authorization.
+ */
+internal fun selectRosterAccessReadiness(
+    access: AccountAccessProjection,
+    connection: RootConnectionResilienceProjection,
+    agentIds: List<String>,
+    selectedAgentId: String?,
+): RosterAccessReadiness =
+    selectRosterAccessReadiness(
+        RosterAccessReadinessInput(
+            accountKey = access.accountEpoch
+                .takeIf { access.loggedIn && it > 0L }
+                ?.let { "epoch:$it" },
+            transport = when (connection.transport) {
+                RootConnectionTransportState.CONNECTING -> RosterTransportState.CONNECTING
+                RootConnectionTransportState.CONNECTED -> RosterTransportState.CONNECTED
+                RootConnectionTransportState.DOWN -> RosterTransportState.DOWN
+            },
+            loadState = when (access.rosterLoadState) {
+                AccountRosterLoadState.READY -> RosterLoadState.READY
+                AccountRosterLoadState.ERROR -> RosterLoadState.ERROR
+                AccountRosterLoadState.LOADING,
+                AccountRosterLoadState.UNKNOWN -> RosterLoadState.LOADING
+            },
+            hasLoadedAgents = access.hasReachedBox,
+            agentIds = agentIds,
+            selectedAgentId = selectedAgentId,
+            failure = projectRosterFailure(
+                access.rosterFailureCode,
+                access.rosterFailureTransportKind,
+            ),
+            isShowingRestoredRoster = access.isShowingRestoredRoster,
+            isPrivacyBlocked = connection.isPrivacyBlocked,
+        ),
+    )
+
