@@ -267,7 +267,8 @@ internal fun ProductionRenderer(
                     }
                     val computerUpdateAction = commandPaletteComputerUpdateAction(
                         activeAgentIsGroup = botState.activeBot?.isGroup,
-                        workingAgentCount = botState.bots.count { it.isRunning },
+                        workingAgentCount = botState.bots.count { it.isRunning } +
+                            if (botState.busy) 1 else 0,
                         snapshot = botState.computerRebuild.takeUnless { it.loading }?.let {
                             CommandPaletteComputerUpdateSnapshot(
                                 imageUpdateAvailable = it.imageUpdateAvailable,

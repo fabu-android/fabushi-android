@@ -123,7 +123,9 @@ internal fun projectMobileComputerRebuildStatus(value: JSONObject): MobileComput
         imageUpdateAvailable = value.opt("imageUpdateAvailable").let { if (it is Boolean) it else null },
         pending = value.optBoolean("pending", false),
         outcomeUnknown = value.optBoolean("outcomeUnknown", false),
-        kind = value.optString("kind").trim().takeIf(String::isNotEmpty),
+        kind = value.opt("kind").let { raw ->
+            if (raw is String) raw.trim().takeIf(String::isNotEmpty) else null
+        },
     )
 
 data class MobileBotUiState(
@@ -231,7 +233,7 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
         val snapshot = current.computerRebuild
         val action = commandPaletteComputerUpdateAction(
             activeAgentIsGroup = active.isGroup,
-            workingAgentCount = current.bots.count { it.isRunning },
+            workingAgentCount = current.bots.count { it.isRunning } + if (current.busy) 1 else 0,
             snapshot = CommandPaletteComputerUpdateSnapshot(
                 imageUpdateAvailable = snapshot.imageUpdateAvailable,
                 pending = snapshot.pending,
@@ -273,7 +275,8 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
             }
             val latestAction = commandPaletteComputerUpdateAction(
                 activeAgentIsGroup = mutableState.value.activeBot?.isGroup,
-                workingAgentCount = mutableState.value.bots.count { it.isRunning },
+                workingAgentCount = mutableState.value.bots.count { it.isRunning } +
+                    if (mutableState.value.busy) 1 else 0,
                 snapshot = CommandPaletteComputerUpdateSnapshot(
                     imageUpdateAvailable = latest.imageUpdateAvailable,
                     pending = latest.pending,
