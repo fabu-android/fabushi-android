@@ -2,6 +2,7 @@ package com.ombhrum.fabushi.androidmain.coordinator
 
 import android.content.Context
 import com.ombhrum.fabushi.androidpreload.runtime.AccountRebuildState
+import org.json.JSONArray
 import org.json.JSONObject
 
 internal enum class ComputerRebuildKind { UPDATE, RESET, RECOVER, RECONNECTING }
@@ -25,6 +26,8 @@ internal data class ComputerRebuildSnapshot(
     val acknowledged: Boolean = false,
     val observedBoxId: String? = null,
     val boxPhase: String? = null,
+    val pullPercent: Double? = null,
+    val migrationPhases: List<ComputerRebuildMigrationPhase> = emptyList(),
     val lastHealthyBoxId: String? = null,
     val leftHealthy: Boolean = false,
     val teardown: ComputerRebuildTeardown = ComputerRebuildTeardown.NONE,
@@ -60,6 +63,12 @@ internal class SharedPreferencesComputerRebuildStateStore(context: Context) : Co
                 acknowledged = value.optBoolean("acknowledged", false),
                 observedBoxId = value.optString("observedBoxId").takeIf(String::isNotBlank),
                 boxPhase = value.optString("boxPhase").takeIf(String::isNotBlank),
+                pullPercent = value.optDouble("pullPercent", Double.NaN).takeIf { it.isFinite() && it in 0.0..100.0 },
+                migrationPhases = value.optJSONArray("migrationPhases")?.let { phases ->
+                    (0 until phases.length()).mapNotNull { index ->
+                        runCatching { ComputerRebuildMigrationPhase.valueOf(phases.getString(index)) }.getOrNull()
+                    }.takeLast(16)
+                } ?: emptyList(),
                 lastHealthyBoxId = value.optString("lastHealthyBoxId").takeIf(String::isNotBlank),
                 leftHealthy = value.optBoolean("leftHealthy", false),
                 teardown = value.optString("teardown")
@@ -95,6 +104,8 @@ internal class SharedPreferencesComputerRebuildStateStore(context: Context) : Co
             .put("acknowledged", snapshot.acknowledged)
             .put("observedBoxId", snapshot.observedBoxId ?: "")
             .put("boxPhase", snapshot.boxPhase ?: "")
+            .put("pullPercent", snapshot.pullPercent ?: JSONObject.NULL)
+            .put("migrationPhases", JSONArray(snapshot.migrationPhases.map { it.name }))
             .put("lastHealthyBoxId", snapshot.lastHealthyBoxId ?: "")
             .put("leftHealthy", snapshot.leftHealthy)
             .put("teardown", snapshot.teardown.name)
@@ -256,6 +267,8 @@ internal class ComputerRebuildStateOwner(
                 source = if (kind == ComputerRebuildKind.UPDATE) source else null,
                 lockBoxId = current.observedBoxId,
                 acknowledged = false,
+                pullPercent = null,
+                migrationPhases = emptyList(),
                 leftHealthy = kind == ComputerRebuildKind.RESET ||
                     kind == ComputerRebuildKind.RECOVER ||
                     kind == ComputerRebuildKind.RECONNECTING,
@@ -336,14 +349,19 @@ internal class ComputerRebuildStateOwner(
         accountEpoch: Long,
         boxId: String?,
         phase: String?,
+        pullPercent: Double? = null,
     ): ComputerRebuildSnapshot {
         requireCurrentAccount(accountEpoch)
         val current = requireSnapshot(accountEpoch)
         val normalizedBox = boxId?.trim()?.takeIf(String::isNotEmpty)
+        require(pullPercent == null || pullPercent.isFinite() && pullPercent in 0.0..100.0) {
+            "computer rebuild pull percent is invalid"
+        }
         val healthy = phase == "running" || phase == "local"
         var next = current.copy(
             observedBoxId = normalizedBox,
             boxPhase = phase,
+            pullPercent = if (phase == "pulling") pullPercent else null,
             lastHealthyBoxId = if (healthy) normalizedBox else current.lastHealthyBoxId,
         )
         if (
@@ -384,10 +402,19 @@ internal class ComputerRebuildStateOwner(
         if (current.outcomeUnknown && normalized != null) {
             current = persist(current.copy(outcomeUnknown = false))
         }
+        fun appendPhase(snapshot: ComputerRebuildSnapshot): ComputerRebuildSnapshot {
+            val history = if (snapshot.migrationPhases.lastOrNull() == phase) {
+                snapshot.migrationPhases
+            } else {
+                (snapshot.migrationPhases + phase).takeLast(16)
+            }
+            return persist(snapshot.copy(migrationPhases = history))
+        }
         if (phase == ComputerRebuildMigrationPhase.FAILED) {
             if (current.kind == null) return current
             if (current.operationId != null && current.operationId != normalized) return current
-            return clear(current, ComputerRebuildResolution.FAILED)
+            appendPhase(current)
+            return clear(requireSnapshot(accountEpoch), ComputerRebuildResolution.FAILED)
         }
         if (phase == ComputerRebuildMigrationPhase.DONE) {
             val eligible =
@@ -402,12 +429,13 @@ internal class ComputerRebuildStateOwner(
                     )
             if (!eligible || current.terminalMigration) return current
             if (current.operationId != null && current.operationId != normalized) return current
-            return persist(current.copy(terminalMigration = true, leftHealthy = true, outcomeUnknown = false))
+            val withPhase = appendPhase(current)
+            return persist(withPhase.copy(terminalMigration = true, leftHealthy = true, outcomeUnknown = false))
         }
         if (phase == ComputerRebuildMigrationPhase.WIPING) {
-            return begin(accountEpoch, ComputerRebuildKind.RESET, normalized, null)
+            return appendPhase(begin(accountEpoch, ComputerRebuildKind.RESET, normalized, null))
         }
-        return begin(accountEpoch, ComputerRebuildKind.UPDATE, normalized, ComputerRebuildSource.MIGRATION)
+        return appendPhase(begin(accountEpoch, ComputerRebuildKind.UPDATE, normalized, ComputerRebuildSource.MIGRATION))
     }
 
     @Synchronized
@@ -462,6 +490,8 @@ internal class ComputerRebuildStateOwner(
             lockBoxId = null,
             pending = false,
             acknowledged = false,
+            pullPercent = null,
+            migrationPhases = emptyList(),
             leftHealthy = false,
             teardown = ComputerRebuildTeardown.NONE,
             reconnectedSinceLeft = false,
@@ -497,18 +527,26 @@ internal class ComputerRebuildStateOwner(
  * Desktop Forever Box -> Android rebuild adapter. Invalid or unrelated payloads are ignored rather
  * than manufacturing a rebuild transition. A pull takes precedence over the coarse box state.
  */
-internal fun projectForeverBoxRebuildEvent(value: JSONObject): Pair<String, String>? {
+internal data class ComputerRebuildBoxIngress(
+    val boxId: String,
+    val phase: String,
+    val pullPercent: Double?,
+)
+
+internal fun projectForeverBoxRebuildEvent(value: JSONObject): ComputerRebuildBoxIngress? {
     val payload = value.optJSONObject("payload") ?: value
     val boxId = payload.optString("agentId").trim().takeIf(String::isNotEmpty) ?: return null
     val state = payload.optString("state").trim().takeIf(String::isNotEmpty) ?: return null
+    val pull = payload.optJSONObject("pull")
+    val pullPercent = pull?.optDouble("percent", Double.NaN)?.takeIf { it.isFinite() && it in 0.0..100.0 }
     val phase = when {
-        payload.has("pull") && !payload.isNull("pull") -> "pulling"
+        pull != null -> "pulling"
         state == "running" && payload.optString("vncUrl").isNotBlank() -> "running"
         state == "running" -> "local"
         state == "hibernated" -> "sleeping"
         else -> "off"
     }
-    return boxId to phase
+    return ComputerRebuildBoxIngress(boxId = boxId, phase = phase, pullPercent = pullPercent)
 }
 
 
