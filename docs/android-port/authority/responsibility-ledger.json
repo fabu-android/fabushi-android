@@ -10884,6 +10884,165 @@
       "artifact": null,
       "verification_status": "not-verified",
       "notes": "Fresh deterministic source audit. This row records a confirmed Android gap/partial foundation and intentionally does not promote implementation or verification."
+    },
+    {
+      "responsibility_id": "HIDDEN-CHATS-OVERLAY-ANDROID-001",
+      "domain": "agent",
+      "desktop_sources": [
+        {
+          "path": "frontend/src/recovered/features/hidden-chats/overlay/entrypoint.ts",
+          "blob_sha": "5ef5eda637d893caf47fd315d8947eee0c1b7540",
+          "symbols": [
+            "HiddenChatsOverlayParams",
+            "defineEntrypoint"
+          ]
+        },
+        {
+          "path": "frontend/src/recovered/features/hidden-chats/overlay/model.ts",
+          "blob_sha": "42389f23b8a43eb01907245f3f4f374ce937c6a0",
+          "symbols": [
+            "HiddenChatsOverlayModel",
+            "hiddenChatNameId",
+            "hiddenChatsEmptyLabel",
+            "openHiddenChat"
+          ]
+        },
+        {
+          "path": "frontend/src/recovered/features/hidden-chats/overlay/view.css",
+          "blob_sha": "6b3cf7d512470f187f43a76e85b2a3ac0c35e3b5",
+          "symbols": [
+            "shipping Hidden Bots chooser layout and interaction styling"
+          ]
+        },
+        {
+          "path": "frontend/src/recovered/features/hidden-chats/overlay/view.tsx",
+          "blob_sha": "d043587a0eb8dfe4f04c4ab3e48c1e8f36f6409b",
+          "symbols": [
+            "HiddenChatsDialog",
+            "createHiddenChatsOverlayView"
+          ]
+        }
+      ],
+      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "responsibility": "Expose an always-available Hidden Bots chooser that projects only hidden Agents, preserves their active/history semantics, supports open-after-dismiss and explicit Unhide, and provides native modal/accessibility behavior without owning canonical hidden state.",
+      "source_owner": "Desktop hidden-chats overlay entry/model/view over canonical Agent roster",
+      "direct_callers": [
+        "shipping sidebar/roster hidden-bot affordance"
+      ],
+      "downstream_dependencies": [
+        "canonical Agent roster isHidden state",
+        "Agent open navigation",
+        "typed hidden mutation"
+      ],
+      "state_owner": "Rust AndroidAgentRoster remains canonical hidden-state owner; Compose owns only chooser visibility.",
+      "persistent_state": [
+        "isHiddenFromSidebar persists in the Rust Agent roster; dialog visibility is transient"
+      ],
+      "protocol_wire_contract": [
+        "agentSetHidden(id,false) through typed Android Coordinator",
+        "Agent list projection carries isHiddenFromSidebar"
+      ],
+      "visible_effect": "Hidden Bots remain absent from the normal sidebar, but users can open a dedicated chooser, inspect hidden Bots, open one, or unhide it without losing history.",
+      "failure_behavior": [
+        "empty chooser shows an explicit empty state",
+        "failed Unhide surfaces existing mutation error and canonical roster remains authoritative"
+      ],
+      "cancellation_behavior": "Closing/dismissing chooser has no canonical side effect; open closes chooser before navigation.",
+      "retry_semantics": "Chooser reads can refresh; Unhide is never presentation-blind-retried.",
+      "idempotency_semantics": "Roster projection is identity-deduplicated; repeated rendering is side-effect free.",
+      "process_death_recovery": "Hidden truth reloads from Rust roster after restart; chooser visibility is reconstructed only by user intent.",
+      "account_fencing": "Roster account selection and durable mutation owner fence canonical state; chooser consumes only current MobileBotUiState.",
+      "security_boundary": "Native Compose -> MobileBotViewModel -> typed AndroidCoordinatorPort -> durable AgentRosterMutationOwner -> Rust Host.",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/recovered/features/hidden-chats/overlay/HiddenBotsDialog.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/features/bots/GrokHomeSurface.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/presentation/MobileBotViewModel.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/production/ProductionRenderer_view.kt",
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/coordinator/AndroidCoordinatorRuntime.kt",
+        "source/host/src/android_agent_roster.rs",
+        "mobile/android/app/src/test/java/com/ombhrum/fabushi/HiddenBotsProjectionTest.kt"
+      ],
+      "android_owner": "Rust AndroidAgentRoster canonical hidden state + native transient HiddenBotsDialog",
+      "platform_delta": "Desktop renderer entrypoint/focus trap/CSS becomes a native Material AlertDialog reached from the Android home surface. Android system modal semantics replace DOM Tab trapping/hover/window geometry; canonical hidden state remains below presentation.",
+      "implementation_status": "implemented",
+      "production_wiring": "93c357e187edd66312c0b25b3b172ebd2e9c93e9 wires a dedicated native chooser into GrokHomeSurface; normal sidebar always excludes hidden Bots; chooser Open dismisses before navigation; Unhide routes through MobileBotViewModel to the existing process-death-safe durable Agent roster mutation path. be90e4ecec8a913895662e8849aaa723cb5a4232 fixes the required Compose weight import.",
+      "unit_test": "HiddenBotsProjectionTest covers hidden-only projection, identity dedupe and empty labeling. Exact-head Android regression is pending; device focus/back/accessibility acceptance remains required.",
+      "contract_test": "Existing typed agentSetHidden route and durable roster mutation contract back Unhide; same-head contract evidence required.",
+      "integration_test": "Required: hide -> chooser -> open/unhide -> authoritative roster refresh, account switch and process reopen.",
+      "packaged_test": "Required on final minified package.",
+      "device_test": "Required for modal back/dismiss, accessibility focus/labels, hidden history/open behavior and Unhide on supported form factors.",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Implemented source/UI slice, intentionally not verified until same-exact-head Actions/package/device gates. Desktop DOM-specific focus trap is replaced by native dialog semantics, but dedicated device accessibility proof is still open."
+    },
+    {
+      "responsibility_id": "HIDDEN-CHATS-MUTATION-LIFECYCLE-ANDROID-001",
+      "domain": "agent",
+      "desktop_sources": [
+        {
+          "path": "frontend/src/recovered/features/hidden-chats/overlay/mutation-controller.ts",
+          "blob_sha": "d2ccdd9071c10013e5de739f5e089ba67a2f7d19",
+          "symbols": [
+            "createHiddenChatsMutationController",
+            "setScope",
+            "ingestAgents",
+            "setAgentHiddenFromSidebar",
+            "noteReconnect",
+            "reset",
+            "dispose"
+          ]
+        }
+      ],
+      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "responsibility": "Preserve hidden-state mutation lifecycle semantics: scope/account fencing, optimistic projection, deterministic rollback, transport-unknown hold/reconciliation, duplicate suppression, reconnect retry and generation/dispose fencing.",
+      "source_owner": "Desktop hidden-chats mutation controller",
+      "direct_callers": [
+        "sidebar hide/unhide presentation"
+      ],
+      "downstream_dependencies": [
+        "canonical Agent roster",
+        "transport reconnect signal",
+        "typed Agent hidden mutation"
+      ],
+      "state_owner": "On Android durable mutation identity/outcome truth belongs to AgentRosterMutationOwner + Rust roster; any future presentation controller may only own transient optimistic/pending state.",
+      "persistent_state": [
+        "AgentRosterMutationOwner journal persists unknown mutation operations before Host dispatch"
+      ],
+      "protocol_wire_contract": [
+        "feature.agent.rosterMutation kind=hidden with stable operationId/accountFence",
+        "agentList reconciliation of pending operations"
+      ],
+      "visible_effect": "Hide/Unhide remains responsive but cannot silently duplicate or revert incorrectly across transport failure, reconnect, account switch or process death.",
+      "failure_behavior": [
+        "deterministic rejection should rollback optimistic state",
+        "ambiguous transport must not be treated as rejection/success without canonical reconciliation"
+      ],
+      "cancellation_behavior": "scope/reset/dispose invalidate transient callbacks only; durable unknown operation remains owned below presentation until reconciled.",
+      "retry_semantics": "Unknown durable operation may be replayed only by stable operation identity; Compose/ViewModel must not issue a fresh side effect blindly.",
+      "idempotency_semantics": "Host roster journal returns stable settlement for replayed durable operation IDs.",
+      "process_death_recovery": "AgentRosterMutationOwner persists pending mutation identity and agentList reconciles it after process reopen.",
+      "account_fencing": "Durable owner binds accountFence; presentation still needs focused optimistic generation/scope fencing equivalent to Desktop.",
+      "security_boundary": "No direct Compose Host calls; mutation remains through typed Coordinator and durable mutation owner.",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/coordinator/AgentRosterMutationOwner.kt",
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/coordinator/AndroidCoordinatorRuntime.kt",
+        "source/host/src/android_agent_roster.rs",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/presentation/MobileBotViewModel.kt"
+      ],
+      "android_owner": "AgentRosterMutationOwner + Rust AndroidAgentRoster; transient presentation fence remains incomplete",
+      "platform_delta": "Android already replaces renderer transport-held retry with a process-death-safe durable mutation journal and Host replay/reconciliation. However MobileBotViewModel currently lacks Desktop-equivalent optimistic value/rollback/pending UI and explicit reconnect-generation controller semantics.",
+      "implementation_status": "mapped",
+      "production_wiring": "Durable hidden mutation is production-wired and stronger across process death: Coordinator persists operation ID/accountFence before Host dispatch, Host journals settlement, and agentList reconciles pending operations. Presentation hide/unhide currently dispatches then refreshes and surfaces errors; it does not yet expose Desktop-equivalent optimistic/held/pending projection or deterministic-reject rollback fencing.",
+      "unit_test": "Existing AgentRosterMutationOwner/Rust roster tests cover durable replay/persistence; dedicated hidden optimistic/reject/transport-held/reconnect/account-switch/dispose presentation tests are still missing.",
+      "contract_test": "Partial durable contract exists; typed outcome classification for presentation rollback-vs-hold remains required.",
+      "integration_test": "Required: transport failure then reconnect reconciliation, deterministic rejection rollback, duplicate suppression, account switch and late callback.",
+      "packaged_test": "required",
+      "device_test": "required",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Keep mapped. Do not claim Desktop mutation-controller parity merely because durable Host mutation exists; the user-visible optimistic/held lifecycle still needs an Android transient controller and same-head evidence."
     }
   ],
   "traceability": {
