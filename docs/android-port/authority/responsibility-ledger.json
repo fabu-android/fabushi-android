@@ -5,7 +5,7 @@
     "desktop_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
     "android_repository": "fabu-android/fabushi-android",
     "android_pr": 3,
-    "android_head_at_update": "c3523f6ddf474c507e1d724592f400bf6437ea0f",
+    "android_head_at_update": "86ca96cfdce363b777e3bcf1f84e49e5f493b8bc",
     "status": "incomplete",
     "note": "Incrementally rebased to Desktop main 371b72f1cd20de03dc4dff9a15ed761054968093. Durable send acknowledgement, transcript widget actions and client-side tool-result projection remain Host/Coordinator-owned. At Android code head 8927278b8ec61145700abb906f226f97f6497195, Agent avatar presentation has Desktop-order photo/shared-room/group/persona dispatch and activity-state mapping; Agent composer prompt drafts are durably Host-owned with account/Agent fencing, process-reopen restore, corrupt-store quarantine and clear-if-current; conversation outline is a retained read-only projection over canonical transcript with Agent/subagent tabs and running-subagent polling; Agent find-in-chat searches canonical transcript semantic payloads and has native Enter/Shift+Enter/Escape focus navigation. Rows stay mapped/not-verified where upstream roster fields, full ComposerDraft attachments/recovery, exact occurrence-span highlighting, composed header controls or same-head packaged/device evidence are still missing. Full source closure remains incomplete. Spreadsheet preview audit now records CSV/TSV and bounded OOXML multi-sheet production wiring at 1e66eb907c46043bcb429c15abeae253b44ef443; Desktop legacy BIFF .xls remains mapped/not-verified."
   },
@@ -11631,6 +11631,159 @@
       "verification_status": "not-verified",
       "notes": "Separate from normal MCP OAuth. This responsibility repairs Git repository fetch credentials for installed private plugin/skill content.",
       "android_head_at_update": "c3523f6ddf474c507e1d724592f400bf6437ea0f"
+    },
+    {
+      "responsibility_id": "SETTINGS-AUTO-REVIEW-INSTRUCTIONS-ANDROID-001",
+      "domain": "settings",
+      "desktop_sources": [
+        {
+          "path": "frontend/src/recovered/features/settings/overlay/model.ts",
+          "blob_sha": "154e97f3075f1e6b5f8c728f431326e5357fcc45",
+          "symbols": [
+            "parseCursorAuthId",
+            "instructionRows",
+            "removeInstruction",
+            "reconcileInstructionRow",
+            "saveInstruction",
+            "MAX_INSTRUCTIONS_PER_BEHAVIOR"
+          ]
+        },
+        {
+          "path": "frontend/src/recovered/features/recovered-configuration-models.contract.test.ts",
+          "blob_sha": "31884d984fdf1c59ece67d5453480d207d24e721",
+          "symbols": [
+            "settings instruction model contract"
+          ]
+        }
+      ],
+      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "responsibility": "Preserve Desktop Auto Review instruction editing semantics: stable allow/ask list identity, Cursor auth subject parsing, duplicate rejection, in-list edits, cross-list moves, stale-row reconciliation and 20-rule per-behavior cap.",
+      "source_owner": "Desktop settings overlay instruction model",
+      "direct_callers": [
+        "Settings Auto Review/instructions editor"
+      ],
+      "downstream_dependencies": [
+        "durable account/team settings owner",
+        "Cursor auth/account projection"
+      ],
+      "state_owner": "Durable settings owner is canonical; Kotlin model owns only draft/edit projections.",
+      "persistent_state": [
+        "allowInstructions",
+        "blockInstructions under account/team settings"
+      ],
+      "protocol_wire_contract": [
+        "allow behavior maps to allowInstructions; ask maps to blockInstructions",
+        "duplicate text in target list is rejected except the row being edited",
+        "cross-list edit removes the previous exact row then appends to target",
+        "each behavior list is capped at 20",
+        "reconcile follows text identity if list index changed",
+        "Cursor auth id parses only values with non-empty prefix and subject separated by |"
+      ],
+      "visible_effect": "Android settings can edit Auto Review allow/ask rules without duplicating or silently losing list identity.",
+      "failure_behavior": [
+        "invalid/duplicate/full-list saves fail closed and do not mutate canonical settings"
+      ],
+      "cancellation_behavior": "abandoning editor draft has no canonical side effect.",
+      "retry_semantics": "settings write retries must use the current canonical version rather than replay stale row indices.",
+      "idempotency_semantics": "same canonical list plus same edit intent yields one deterministic list result.",
+      "process_death_recovery": "reload canonical lists; ephemeral edit row is not authoritative.",
+      "account_fencing": "settings persistence must bind to active account/team scope.",
+      "security_boundary": "instruction UI cannot bypass the canonical Auto Review policy owner.",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/recovered/features/settings/SettingsConfigurationModels.kt",
+        "mobile/android/app/src/test/java/com/ombhrum/fabushi/SettingsConfigurationModelsTest.kt"
+      ],
+      "android_owner": "Android settings presentation over canonical durable settings owner",
+      "platform_delta": "Pure TypeScript model becomes pure Kotlin. Durable settings transport remains to be wired; no second local settings database is introduced.",
+      "implementation_status": "mapped",
+      "production_wiring": "86ca96cf ports model semantics only. No dedicated production Auto Review instruction editor/persistence path is yet proven on Android.",
+      "unit_test": "SettingsConfigurationModelsTest covers parsing, row projection, duplicate rejection, same/cross-list edit, reconciliation and cap. Same-head CI pending.",
+      "contract_test": "Recovered configuration-model contract source audited.",
+      "integration_test": "missing durable save/reload/account-switch flow",
+      "packaged_test": "required",
+      "device_test": "required",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Keep mapped until durable settings owner and UI are wired.",
+      "android_head_at_update": "86ca96cfdce363b777e3bcf1f84e49e5f493b8bc"
+    },
+    {
+      "responsibility_id": "SETTINGS-ROUTER-PROVIDER-ANDROID-001",
+      "domain": "settings",
+      "desktop_sources": [
+        {
+          "path": "frontend/src/recovered/features/settings/overlay/router.ts",
+          "blob_sha": "5c92152fa4301e00cf2b62640993c67f2f955375",
+          "symbols": [
+            "ROUTER_PROVIDERS",
+            "parseRouterProviderPreference",
+            "loadRouterProvider",
+            "saveRouterProvider"
+          ]
+        },
+        {
+          "path": "frontend/src/recovered/features/recovered-configuration-models.contract.test.ts",
+          "blob_sha": "31884d984fdf1c59ece67d5453480d207d24e721",
+          "symbols": [
+            "router provider preference contract"
+          ]
+        }
+      ],
+      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "responsibility": "Expose and durably persist the Desktop router-provider preference catalog (Cursor, Claude Code, Codex, OpenRouter) with schemaVersion=1 parsing, fail-closed default to Cursor, and route actual Agent inference through the selected canonical provider without UI-owned routing truth.",
+      "source_owner": "Desktop settings router model + inference router",
+      "direct_callers": [
+        "Settings provider selector",
+        "Agent inference router"
+      ],
+      "downstream_dependencies": [
+        "durable settings persistence",
+        "canonical inference router/provider credentials"
+      ],
+      "state_owner": "Coordinator/Host inference router owns effective provider; settings UI only edits a preference through the durable settings owner.",
+      "persistent_state": [
+        "settings.router-provider.v1 JSON {schemaVersion:1,provider}"
+      ],
+      "protocol_wire_contract": [
+        "provider ids cursor|claude-code|codex|openrouter",
+        "default cursor",
+        "unknown/corrupt/non-v1 persistence fails closed to cursor",
+        "save emits schemaVersion=1 and a supported provider id",
+        "provider catalog includes Desktop labels/descriptions/usage source"
+      ],
+      "visible_effect": "Users can choose the same routing provider as Desktop and the choice survives restart/account scope.",
+      "failure_behavior": [
+        "invalid persisted provider never selects an unknown backend",
+        "unavailable selected provider must surface a real error/fallback policy, not silently impersonate Cursor"
+      ],
+      "cancellation_behavior": "provider-selection draft cancellation leaves effective Host routing unchanged.",
+      "retry_semantics": "persistence can retry; inference side effects follow canonical run identity and must not be duplicated by provider changes.",
+      "idempotency_semantics": "writing the same provider/version is idempotent.",
+      "process_death_recovery": "reload versioned preference and reconcile with Host effective provider.",
+      "account_fencing": "preference/effective route must bind to current account/team policy where applicable.",
+      "security_boundary": "provider credentials remain in their canonical protected auth owners; Compose never stores provider tokens.",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/recovered/features/settings/SettingsConfigurationModels.kt",
+        "mobile/android/app/src/test/java/com/ombhrum/fabushi/SettingsConfigurationModelsTest.kt",
+        "source/mahayana-agent-coordinator/src/inference_router.rs",
+        "source/host/src/production_binding_providers.rs",
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/coordinator/ProductionProvider.kt"
+      ],
+      "android_owner": "Mahayana inference router + Android settings projection",
+      "platform_delta": "Pure preference parsing is Kotlin; actual provider execution remains Rust/Host. Android must not substitute a display-only selector.",
+      "implementation_status": "mapped",
+      "production_wiring": "86ca96cf ports exact provider catalog and versioned parse/encode semantics only. Selection is not yet wired to durable settings plus production inference routing, so it remains mapped.",
+      "unit_test": "SettingsConfigurationModelsTest covers catalog ids, corrupt/version/unknown fail-closed parsing and v1 round-trip. Same-head CI pending.",
+      "contract_test": "Recovered configuration-model contract source audited.",
+      "integration_test": "missing selected-provider -> canonical inference route test for all supported providers",
+      "packaged_test": "required",
+      "device_test": "required with available provider credentials",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Do not claim provider parity from preference model existence alone.",
+      "android_head_at_update": "86ca96cfdce363b777e3bcf1f84e49e5f493b8bc"
     }
   ],
   "traceability": {
@@ -11665,7 +11818,7 @@
   },
   "metadata": {
     "android_head_at_update": "1e66eb907c46043bcb429c15abeae253b44ef443",
-    "note": " Deterministic editor cursor now records the shipped suggestion boundary: Android has production-wired Agent/scheduled-automation projection with stale fencing, while Desktop PR/MCP providers are explicitly dormant in the current production adapter. Agent find-in-chat is now production-wired for message/widget semantic search and wrap navigation, while occurrence-span highlighting and richer searchable payloads remain mapped gaps. Native media viewer gallery is production-wired for Human conversations with navigation/zoom/stale-load fencing; in-app PDF rendering is now implemented at 499519f… and pending exact-head CI/device evidence, while Agent attachment/audio/focus semantics remain mapped. Spreadsheet preview responsibility is explicit; legacy .xls remains a deterministic gap. Signed-in onboarding rows are now explicitly mapped to native route/persona/create presentation and a separate unresolved computer-readiness/kickstart responsibility; neither is verified. Desktop permissions/local-tool renderer/store rows are now mapped to a dedicated unresolved Host-owned always/ask/never + team ceiling policy responsibility. Desktop plugins/overlay rows are now split across native overlay presentation, server-tool lifecycle, Git private-source auth recovery, and existing Skills/MCP owners; all remain mapped until production wiring/evidence closes.",
-    "last_updated_android_head": "c3523f6ddf474c507e1d724592f400bf6437ea0f"
+    "note": " Deterministic editor cursor now records the shipped suggestion boundary: Android has production-wired Agent/scheduled-automation projection with stale fencing, while Desktop PR/MCP providers are explicitly dormant in the current production adapter. Agent find-in-chat is now production-wired for message/widget semantic search and wrap navigation, while occurrence-span highlighting and richer searchable payloads remain mapped gaps. Native media viewer gallery is production-wired for Human conversations with navigation/zoom/stale-load fencing; in-app PDF rendering is now implemented at 499519f… and pending exact-head CI/device evidence, while Agent attachment/audio/focus semantics remain mapped. Spreadsheet preview responsibility is explicit; legacy .xls remains a deterministic gap. Signed-in onboarding rows are now explicitly mapped to native route/persona/create presentation and a separate unresolved computer-readiness/kickstart responsibility; neither is verified. Desktop permissions/local-tool renderer/store rows are now mapped to a dedicated unresolved Host-owned always/ask/never + team ceiling policy responsibility. Desktop plugins/overlay rows are now split across native overlay presentation, server-tool lifecycle, Git private-source auth recovery, and existing Skills/MCP owners; all remain mapped until production wiring/evidence closes. Settings instruction/router source and recovered cross-owner contract tests are now mapped to concrete responsibilities; provider/instruction production wiring remains explicitly open.",
+    "last_updated_android_head": "86ca96cfdce363b777e3bcf1f84e49e5f493b8bc"
   }
 }
