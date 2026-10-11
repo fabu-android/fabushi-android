@@ -107,7 +107,7 @@ private fun MobileTranscriptRichBlock(block: TranscriptRichBlock) {
             }
         }
         is TranscriptRichBlock.Math -> Text(
-            "$$\n${block.expression}\n$$",
+            "\$\$\n${block.expression}\n\$\$",
             color = GrokMobileInk,
             fontFamily = FontFamily.Monospace,
             fontSize = 14.sp,
