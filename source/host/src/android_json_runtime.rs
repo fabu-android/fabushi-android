@@ -597,6 +597,39 @@ impl RuntimeCallCancellationRegistry {
     }
 }
 
+#[derive(Clone, Debug)]
+struct AndroidMessagingAccessGrant {
+    account_fence: String,
+    actor_id: String,
+    device_id: String,
+    session_id: String,
+    scopes: BTreeSet<String>,
+}
+
+impl AndroidMessagingAccessGrant {
+    fn authorize(
+        &self,
+        account_fence: &str,
+        actor_id: &str,
+        device_id: Option<&str>,
+        session_id: Option<&str>,
+        scope: &str,
+    ) -> Result<(), String> {
+        if self.account_fence != account_fence || self.actor_id != actor_id {
+            return Err("messaging access grant is stale for the current account session".into());
+        }
+        if device_id.is_some_and(|value| value != self.device_id)
+            || session_id.is_some_and(|value| value != self.session_id)
+        {
+            return Err("messaging access grant does not match request device/session context".into());
+        }
+        if !self.scopes.contains(scope) {
+            return Err(format!("messaging access grant is missing required scope {scope}"));
+        }
+        Ok(())
+    }
+}
+
 pub struct AndroidJsonHost {
     mode: AndroidHostMode,
     account: AndroidAccountService,
@@ -607,6 +640,7 @@ pub struct AndroidJsonHost {
     composer_drafts: Arc<Mutex<DurableComposerDraftOwner>>,
     agent_attachments: Arc<Mutex<DurableAgentAttachmentOwner>>,
     messaging: Arc<Mutex<AndroidMessagingService>>,
+    messaging_access: Option<AndroidMessagingAccessGrant>,
     mcp_auth_watches: Arc<Mutex<AndroidMcpAuthWatchManager>>,
     mcp_auth_owner: Option<AndroidMcpAuthWatchOwner>,
     mcp_dashboard_backend: Option<Arc<CursorDashboardMcpAuthBackend>>,
@@ -787,6 +821,7 @@ impl AndroidJsonHost {
             composer_drafts,
             agent_attachments,
             messaging,
+            messaging_access: None,
             mcp_auth_watches,
             mcp_auth_owner,
             mcp_dashboard_backend,
@@ -1402,20 +1437,47 @@ impl AndroidJsonHost {
     fn messaging_access_issue(&mut self, params: &Value) -> Result<Value, String> {
         let requested_session = required_string(params, "sessionId")?.to_string();
         let requested_device = required_string(params, "deviceId")?.to_string();
-        let scopes = params
+        let raw_scopes = params
             .get("scopes")
             .and_then(Value::as_array)
             .ok_or("messaging scopes array is required")?;
-        if !scopes.iter().any(|scope| scope.as_str() == Some("messaging")) {
+        let supported_scopes = BTreeSet::from([
+            "messaging",
+            "calls",
+            "blobsRead",
+            "blobsWrite",
+            "payments",
+            "miniApps",
+        ]);
+        let scopes = raw_scopes
+            .iter()
+            .map(|scope| {
+                scope
+                    .as_str()
+                    .filter(|scope| supported_scopes.contains(scope))
+                    .map(str::to_string)
+                    .ok_or_else(|| "messaging access request contains an unsupported scope".to_string())
+            })
+            .collect::<Result<BTreeSet<_>, _>>()?;
+        if !scopes.contains("messaging") {
             return Err("messaging scope is required".into());
         }
         let (actor_id, mutation) = self.current_messaging_identity()?;
+        let account_fence = self.current_turn_account_fence()?;
+        self.messaging_access = Some(AndroidMessagingAccessGrant {
+            account_fence,
+            actor_id: actor_id.clone(),
+            device_id: requested_device.clone(),
+            session_id: requested_session.clone(),
+            scopes: scopes.clone(),
+        });
         Ok(with_account_session_mutation(
             json!({
                 "status":"available",
                 "actorId":actor_id,
                 "sessionId":requested_session,
                 "deviceId":requested_device,
+                "scopes":scopes.into_iter().collect::<Vec<_>>(),
                 "protocolVersion":2
             }),
             mutation,
@@ -1424,6 +1486,41 @@ impl AndroidJsonHost {
 
     fn messaging_execute(&mut self, params: &Value) -> Result<Value, String> {
         let (actor_id, mutation) = self.current_messaging_identity()?;
+        let account_fence = self.current_turn_account_fence()?;
+        let envelope = params
+            .get("envelope")
+            .and_then(Value::as_object)
+            .ok_or("messaging envelope object is required")?;
+        let context = envelope
+            .get("context")
+            .and_then(Value::as_object)
+            .ok_or("messaging envelope context object is required")?;
+        let context_actor = context
+            .get("actorId")
+            .and_then(Value::as_str)
+            .ok_or("messaging actorId is required")?;
+        let context_device = context
+            .get("deviceId")
+            .and_then(Value::as_str)
+            .ok_or("messaging deviceId is required")?;
+        let context_session = context
+            .get("sessionId")
+            .and_then(Value::as_str)
+            .ok_or("messaging sessionId is required")?;
+        if context_actor != actor_id {
+            return Err("messaging actor does not match the authenticated account".into());
+        }
+        let required_scope = required_android_messaging_scope(envelope.get("command"));
+        self.messaging_access
+            .as_ref()
+            .ok_or("messaging access grant has not been issued")?
+            .authorize(
+                &account_fence,
+                &actor_id,
+                Some(context_device),
+                Some(context_session),
+                required_scope,
+            )?;
         let result = self
             .messaging
             .lock()
@@ -1434,6 +1531,11 @@ impl AndroidJsonHost {
 
     fn messaging_blob_read(&mut self, params: &Value) -> Result<Value, String> {
         let (actor_id, mutation) = self.current_messaging_identity()?;
+        let account_fence = self.current_turn_account_fence()?;
+        self.messaging_access
+            .as_ref()
+            .ok_or("messaging access grant has not been issued")?
+            .authorize(&account_fence, &actor_id, None, None, "blobsRead")?;
         let result = self
             .messaging
             .lock()
@@ -6357,6 +6459,20 @@ fn assistant_projection_from_entries(entries: &[Value]) -> Value {
     })
 }
 
+fn required_android_messaging_scope(command: Option<&Value>) -> &'static str {
+    match command
+        .and_then(|command| command.get("type"))
+        .and_then(Value::as_str)
+    {
+        Some("beginBlobUpload" | "appendBlobChunk" | "finishBlobUpload" | "deleteBlob") => {
+            "blobsWrite"
+        }
+        Some("createInvoice" | "checkoutInvoice" | "refundOrder" | "walletStatus") => "payments",
+        Some("installMiniApp" | "grantMiniApp" | "openMiniApp" | "miniAppCall") => "miniApps",
+        _ => "messaging",
+    }
+}
+
 fn required_string<'a>(value: &'a Value, key: &str) -> Result<&'a str, String> {
     value
         .get(key)
@@ -6401,6 +6517,81 @@ mod tests {
     use super::*;
     use crate::runner::SubagentLineage;
 
+
+    #[test]
+    fn in_process_messaging_grant_binds_account_context_and_scopes() {
+        let root = tempfile::tempdir().unwrap();
+        let mut host = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+        host.logged_in = true;
+
+        let access = host
+            .dispatch(
+                "feature.messaging.access.issue",
+                &json!({
+                    "deviceId":"android:test-device",
+                    "sessionId":"android:test-session",
+                    "scopes":["messaging"]
+                }),
+            )
+            .unwrap();
+        assert_eq!(access["actorId"], "human:android-test");
+        assert_eq!(access["deviceId"], "android:test-device");
+        assert_eq!(access["sessionId"], "android:test-session");
+
+        let valid = json!({
+            "requestId":"messaging-grant-valid",
+            "envelope":{
+                "protocolVersion":2,
+                "context":{
+                    "requestId":"messaging-grant-valid",
+                    "deviceId":"android:test-device",
+                    "actorId":"human:android-test",
+                    "sessionId":"android:test-session",
+                    "sentAtMs":1
+                },
+                "command":{
+                    "type":"upsertProfile",
+                    "actor":{
+                        "id":"human:android-test",
+                        "kind":"human",
+                        "displayName":"Android Test"
+                    }
+                }
+            }
+        });
+        assert!(host.dispatch("feature.messaging.execute", &valid).is_ok());
+
+        let mut forged = valid.clone();
+        forged["requestId"] = json!("messaging-grant-forged");
+        forged["envelope"]["context"]["requestId"] = json!("messaging-grant-forged");
+        forged["envelope"]["context"]["deviceId"] = json!("android:other-device");
+        let forged_error = host
+            .dispatch("feature.messaging.execute", &forged)
+            .unwrap_err();
+        assert!(forged_error.contains("device/session context"));
+
+        let blob_write = json!({
+            "requestId":"messaging-grant-blob-write",
+            "envelope":{
+                "protocolVersion":2,
+                "context":{
+                    "requestId":"messaging-grant-blob-write",
+                    "deviceId":"android:test-device",
+                    "actorId":"human:android-test",
+                    "sessionId":"android:test-session",
+                    "sentAtMs":2
+                },
+                "command":{"type":"beginBlobUpload"}
+            }
+        });
+        let scope_error = host
+            .dispatch("feature.messaging.execute", &blob_write)
+            .unwrap_err();
+        assert!(scope_error.contains("required scope blobsWrite"));
+
+        host.logged_in = false;
+        assert!(host.dispatch("feature.messaging.execute", &valid).is_err());
+    }
 
     #[test]
     fn teach_recording_status_is_durable_and_never_promotes_generic_remote_shell() {
