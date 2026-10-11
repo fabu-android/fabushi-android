@@ -242,9 +242,13 @@ internal fun MobileTranscriptUrlCard(
                 }
             }
         }
-        if (callback != null) runCatching { connectivity.registerDefaultNetworkCallback(callback) }
+        if (connectivity != null && callback != null) {
+            runCatching { connectivity.registerDefaultNetworkCallback(callback) }
+        }
         onDispose {
-            if (callback != null) runCatching { connectivity?.unregisterNetworkCallback(callback) }
+            if (connectivity != null && callback != null) {
+                runCatching { connectivity.unregisterNetworkCallback(callback) }
+            }
         }
     }
 
