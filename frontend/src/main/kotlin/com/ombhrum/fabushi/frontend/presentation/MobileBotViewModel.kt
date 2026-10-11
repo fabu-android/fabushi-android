@@ -1548,40 +1548,68 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
 
-    fun addDraftAttachment(contentUri: String) {
+    fun addDraftAttachments(contentUris: List<String>) {
         val snapshot = mutableState.value
         val bot = snapshot.activeBot ?: return
-        if (snapshot.busy || snapshot.attachmentBusy || bot.miniAppId != null || contentUri.isBlank()) return
+        if (snapshot.busy || snapshot.attachmentBusy || bot.miniAppId != null) return
+        val uris = contentUris
+            .map(String::trim)
+            .filter { it.startsWith("content://") }
+            .distinct()
+            .take(6 - snapshot.draftAttachments.size)
+        if (uris.isEmpty()) return
         val accountSlot = rosterSelectionAccountSlot
         val scope = draftScopeGeneration
         commitState(snapshot.copy(attachmentBusy = true, error = null))
         viewModelScope.launch {
-            val result = withContext(Dispatchers.IO) {
-                runCatching { coordinator.composerDraftStageAttachment(accountSlot, bot.id, contentUri) }
-            }
-            if (
-                scope != draftScopeGeneration ||
-                mutableState.value.activeBot?.id != bot.id ||
-                accountSlot != rosterSelectionAccountSlot
-            ) {
+            for (contentUri in uris) {
+                val result = withContext(Dispatchers.IO) {
+                    runCatching { coordinator.composerDraftStageAttachment(accountSlot, bot.id, contentUri) }
+                }
+                if (
+                    scope != draftScopeGeneration ||
+                    mutableState.value.activeBot?.id != bot.id ||
+                    accountSlot != rosterSelectionAccountSlot
+                ) {
+                    return@launch
+                }
+                val draft = result.getOrNull()
+                if (draft != null) {
+                    activeDraftId = draft.draftId
+                    commitState(
+                        mutableState.value.copy(
+                            draftAttachments = draft.attachments,
+                            error = null,
+                        ),
+                    )
+                    continue
+                }
+                val recovered = withContext(Dispatchers.IO) {
+                    runCatching { coordinator.composerDraftRead(accountSlot, bot.id) }.getOrNull()
+                }
+                if (
+                    scope != draftScopeGeneration ||
+                    mutableState.value.activeBot?.id != bot.id ||
+                    accountSlot != rosterSelectionAccountSlot
+                ) {
+                    return@launch
+                }
+                activeDraftId = recovered?.draftId
+                commitState(
+                    mutableState.value.copy(
+                        draftAttachments = recovered?.attachments.orEmpty(),
+                        attachmentBusy = false,
+                        error = result.exceptionOrNull()?.message ?: "Attachment could not be staged",
+                    ),
+                )
                 return@launch
             }
-            result.onSuccess { draft ->
-                activeDraftId = draft.draftId
-                commitState(
-                    mutableState.value.copy(
-                        draftAttachments = draft.attachments,
-                        attachmentBusy = false,
-                        error = null,
-                    ),
-                )
-            }.onFailure { error ->
-                commitState(
-                    mutableState.value.copy(
-                        attachmentBusy = false,
-                        error = error.message ?: "Attachment could not be staged",
-                    ),
-                )
+            if (
+                scope == draftScopeGeneration &&
+                mutableState.value.activeBot?.id == bot.id &&
+                accountSlot == rosterSelectionAccountSlot
+            ) {
+                commitState(mutableState.value.copy(attachmentBusy = false))
             }
         }
     }

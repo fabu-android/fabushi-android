@@ -422,6 +422,8 @@ internal fun ProductionRenderer(
                             onMoveBotToNewSection = botModel::moveBotToNewSection,
                             onCloseBot = botModel::closeBot,
                             onDraftChange = botModel::setDraft,
+                            onAddDraftAttachments = botModel::addDraftAttachments,
+                            onRemoveDraftAttachment = botModel::removeDraftAttachment,
                             onSend = botModel::send,
                             onRetrySend = botModel::retrySend,
                             onLoadOlderMessages = botModel::loadOlderMessages,

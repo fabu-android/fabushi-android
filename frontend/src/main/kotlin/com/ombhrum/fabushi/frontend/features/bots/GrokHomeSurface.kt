@@ -97,6 +97,8 @@ fun GrokHomeSurface(
     onMoveBotToNewSection: (String) -> Unit,
     onCloseBot: () -> Unit,
     onDraftChange: (String) -> Unit,
+    onAddDraftAttachments: (List<String>) -> Unit,
+    onRemoveDraftAttachment: (String) -> Unit,
     onSend: () -> Unit,
     onRetrySend: (String) -> Unit,
     onLoadOlderMessages: () -> Unit,
@@ -137,6 +139,8 @@ fun GrokHomeSurface(
                 profileTarget = active
             },
             onDraftChange = onDraftChange,
+            onAddDraftAttachments = onAddDraftAttachments,
+            onRemoveDraftAttachment = onRemoveDraftAttachment,
             onSend = onSend,
             onRetrySend = onRetrySend,
             onLoadOlderMessages = onLoadOlderMessages,

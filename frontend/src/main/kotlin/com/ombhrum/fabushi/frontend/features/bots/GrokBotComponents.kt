@@ -1,5 +1,7 @@
 package com.ombhrum.fabushi
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
@@ -319,6 +321,8 @@ internal fun GrokBotChatAndroid(
     onOpenSettings: () -> Unit,
     onOpenConversationOutline: () -> Unit,
     onDraftChange: (String) -> Unit,
+    onAddDraftAttachments: (List<String>) -> Unit,
+    onRemoveDraftAttachment: (String) -> Unit,
     onSend: () -> Unit,
     onRetrySend: (String) -> Unit,
     onLoadOlderMessages: () -> Unit,
@@ -333,6 +337,11 @@ internal fun GrokBotChatAndroid(
     var findQuery by remember(bot.id) { mutableStateOf("") }
     var findIndex by remember(bot.id) { mutableStateOf(-1) }
     var historyAnchor by remember(bot.id) { mutableStateOf<Pair<String, Int>?>(null) }
+    val attachmentPicker = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenMultipleDocuments(),
+    ) { uris ->
+        if (uris.isNotEmpty()) onAddDraftAttachments(uris.map { it.toString() })
+    }
     val findMatches = remember(state.findEntries, findQuery) {
         findInCanonicalAgentChatMatches(state.findEntries, findQuery)
     }
@@ -676,6 +685,63 @@ internal fun GrokBotChatAndroid(
                     modifier = Modifier.fillMaxWidth().testTag("mobile-bot-draft"),
                     shape = RoundedCornerShape(19.dp),
                 )
+                if (bot.miniAppId == null) {
+                    if (state.draftAttachments.isNotEmpty()) {
+                        Column(
+                            Modifier
+                                .fillMaxWidth()
+                                .padding(top = 6.dp),
+                            verticalArrangement = Arrangement.spacedBy(4.dp),
+                        ) {
+                            state.draftAttachments.forEach { attachment ->
+                                Row(
+                                    Modifier
+                                        .fillMaxWidth()
+                                        .background(Color.Black.copy(alpha = 0.045f), RoundedCornerShape(10.dp))
+                                        .padding(horizontal = 10.dp, vertical = 6.dp)
+                                        .testTag("mobile-bot-draft-attachment-" + attachment.id),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                ) {
+                                    Column(Modifier.weight(1f)) {
+                                        Text(
+                                            attachment.name,
+                                            color = GrokMobileInk,
+                                            fontSize = 12.sp,
+                                            fontWeight = FontWeight.SemiBold,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                        )
+                                        Text(
+                                            listOfNotNull(
+                                                attachment.mimeType,
+                                                formatTranscriptAttachmentBytes(attachment.sizeBytes),
+                                            ).joinToString(" · "),
+                                            color = GrokMobileMuted,
+                                            fontSize = 10.sp,
+                                        )
+                                    }
+                                    TextButton(
+                                        onClick = { onRemoveDraftAttachment(attachment.id) },
+                                        enabled = !state.busy && !state.attachmentBusy,
+                                        modifier = Modifier.testTag("mobile-bot-draft-attachment-remove-" + attachment.id),
+                                    ) { Text("Remove") }
+                                }
+                            }
+                        }
+                    }
+                    TextButton(
+                        onClick = { attachmentPicker.launch(arrayOf("*/*")) },
+                        enabled = !state.busy && !state.attachmentBusy && state.draftAttachments.size < 6,
+                        modifier = Modifier.testTag("mobile-bot-attach"),
+                    ) {
+                        if (state.attachmentBusy) {
+                            CircularProgressIndicator(Modifier.size(12.dp), strokeWidth = 1.5.dp)
+                            Spacer(Modifier.size(6.dp))
+                        }
+                        Text(if (state.attachmentBusy) "Attaching…" else "Attach")
+                    }
+                }
                 val editorSuggestions = state.editorSuggestions
                 if (editorSuggestions.rows.isNotEmpty() && editorSuggestions.status in setOf(MobileEditorSuggestionStatus.LOADING, MobileEditorSuggestionStatus.READY, MobileEditorSuggestionStatus.FAILED)) {
                     Column(
@@ -735,7 +801,10 @@ internal fun GrokBotChatAndroid(
             }
             Button(
                 onClick = if (state.busy) onStop else onSend,
-                enabled = state.busy || state.draft.trim().isNotEmpty(),
+                enabled = state.busy || (
+                    !state.attachmentBusy &&
+                        (state.draft.trim().isNotEmpty() || state.draftAttachments.isNotEmpty())
+                    ),
                 modifier = Modifier.size(48.dp).testTag(if (state.busy) "mobile-bot-stop" else "mobile-bot-send"),
                 colors = ButtonDefaults.buttonColors(containerColor = if (state.busy) Color(0xFFE34B5F) else Color.Black, contentColor = Color.White),
                 contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp),
