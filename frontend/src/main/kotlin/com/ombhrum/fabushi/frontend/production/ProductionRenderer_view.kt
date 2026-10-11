@@ -213,6 +213,16 @@ internal fun ProductionRenderer(
                     }
                 }
 
+                val canonicalSelectedAgentId = botState.activeBot?.id?.takeIf { selectedId ->
+                    botState.bots.any { it.id == selectedId }
+                }
+                val rosterAccessReadiness = selectRosterAccessReadiness(
+                    access = state.accountAccessProjection,
+                    connection = state.rootConnectionProjection,
+                    agentIds = botState.bots.map { it.id },
+                    selectedAgentId = canonicalSelectedAgentId,
+                )
+
                 val active = openedMiniApp
                 if (active != null) {
                     val coordinator = remember { CoordinatorClient.presentation() }
@@ -491,6 +501,7 @@ internal fun ProductionRenderer(
                         GrokHomeSurface(
                             accountName = state.accountName,
                             accessProjection = state.accountAccessProjection,
+                            rosterAccessReadiness = rosterAccessReadiness,
                             messagingState = messagingState,
                             botState = botState,
                             appAgentSurface = appAgentSurface,
