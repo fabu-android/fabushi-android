@@ -265,6 +265,7 @@ internal fun GrokBotChatAndroid(
     appAgentSurface: FabushiAppAgentSurface,
     onClose: () -> Unit,
     onOpenCommandPalette: () -> Unit,
+    onOpenSettings: () -> Unit,
     onDraftChange: (String) -> Unit,
     onSend: () -> Unit,
     onRetrySend: (String) -> Unit,
@@ -286,6 +287,7 @@ internal fun GrokBotChatAndroid(
         val elements = mutableListOf(
             FabushiAppAgentSurface.Element("mobile-bot-chat", "application", "Bot ${bot.name}"),
             FabushiAppAgentSurface.Element("mobile-bot-close", "button", "关闭 Bot 对话"),
+            FabushiAppAgentSurface.Element("mobile-bot-settings", "button", "查看 ${bot.name} 设置"),
             FabushiAppAgentSurface.Element("mobile-bot-draft", "textbox", "Bot 消息"),
         )
         val sendId = if (state.busy) "mobile-bot-stop" else "mobile-bot-send"
@@ -319,6 +321,7 @@ internal fun GrokBotChatAndroid(
         }
         val actions = linkedMapOf(
             "mobile-bot-close" to FabushiAppAgentSurface.Action(setOf("invoke")) { onClose() },
+            "mobile-bot-settings" to FabushiAppAgentSurface.Action(setOf("invoke")) { onOpenSettings() },
             "mobile-bot-draft" to FabushiAppAgentSurface.Action(setOf("setValue")) { onDraftChange(it.orEmpty()) },
             sendId to FabushiAppAgentSurface.Action(setOf("invoke")) { if (state.busy) onStop() else onSend() },
         )
@@ -336,9 +339,21 @@ internal fun GrokBotChatAndroid(
         Row(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
             Text("‹", color = GrokMobileInk, fontSize = 34.sp, modifier = Modifier.clickable(onClick = onClose).padding(horizontal = 8.dp))
             Spacer(Modifier.weight(1f))
-            Row(Modifier.background(Color.White, RoundedCornerShape(28.dp)).padding(horizontal = 13.dp, vertical = 7.dp), verticalAlignment = Alignment.CenterVertically) {
+            Row(
+                Modifier
+                    .background(Color.White, RoundedCornerShape(28.dp))
+                    .clickable(onClick = onOpenSettings)
+                    .padding(horizontal = 13.dp, vertical = 7.dp)
+                    .testTag("mobile-bot-settings"),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
                 AgentAvatarAndroid(bot, 28.dp, activeOverride = state.busy)
-                Text(bot.name, color = GrokMobileInk, fontSize = 17.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(start = 8.dp))
+                Column(Modifier.padding(start = 8.dp)) {
+                    Text(bot.name, color = GrokMobileInk, fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
+                    if (bot.isRunning && bot.awaitingUserResponse == null) {
+                        Text("Working", color = GrokMobileMuted, fontSize = 10.sp)
+                    }
+                }
             }
             Spacer(Modifier.weight(1f))
             Text(

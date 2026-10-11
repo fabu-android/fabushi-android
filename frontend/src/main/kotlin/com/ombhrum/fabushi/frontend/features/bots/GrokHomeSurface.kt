@@ -102,14 +102,34 @@ fun GrokHomeSurface(
     onMessageTargetConsumed: (String) -> Unit,
 ) {
     LaunchedEffect(Unit) { onRefreshBots() }
+    var profileTarget by remember { mutableStateOf<MobileBotSummaryAndroid?>(null) }
     val active = botState.activeBot
     if (active != null) {
+        val profileTargetId = profileTarget?.id
+        DisposableEffect(profileTargetId) {
+            onDispose {
+                profileTargetId?.let(onEndAgentSettings)
+            }
+        }
+        LaunchedEffect(profileTargetId, botState.bots) {
+            val currentId = profileTargetId ?: return@LaunchedEffect
+            val authoritative = botState.bots.firstOrNull { it.id == currentId }
+            if (authoritative == null) {
+                profileTarget = null
+            } else if (authoritative != profileTarget) {
+                profileTarget = authoritative
+            }
+        }
         GrokBotChatAndroid(
             active,
             botState,
             appAgentSurface,
             onCloseBot,
             onOpenCommandPalette,
+            onOpenSettings = {
+                onBeginAgentSettings(active.id)
+                profileTarget = active
+            },
             onDraftChange,
             onSend,
             onRetrySend,
@@ -118,6 +138,15 @@ fun GrokHomeSurface(
             onStop,
             onResolveApproval,
             onMessageTargetConsumed,
+        )
+        AgentProfileEditor(
+            agent = profileTarget,
+            onClose = { profileTarget = null },
+            onConfirm = { id, name, title, description, avatarShape, avatarColor ->
+                onUpdateBotProfile(id, name, title, description, avatarShape, avatarColor)
+                profileTarget = null
+            },
+            onSetNotifications = onSetBotNotifyOnUpdates,
         )
         return
     }
@@ -134,7 +163,6 @@ fun GrokHomeSurface(
     var botName by remember { mutableStateOf("") }
     var botDescription by remember { mutableStateOf("") }
     var editingBotId by remember { mutableStateOf<String?>(null) }
-    var profileTarget by remember { mutableStateOf<MobileBotSummaryAndroid?>(null) }
     var deleteTarget by remember { mutableStateOf<AgentDeleteTarget?>(null) }
     var showHiddenBots by remember { mutableStateOf(false) }
 
