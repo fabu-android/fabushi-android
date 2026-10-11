@@ -6798,6 +6798,129 @@
       "artifact": null,
       "verification_status": "not-verified",
       "notes": "Do not inherit COMPUTER-REBUILD-ANDROID-001 backend implementation status for this presentation responsibility. Backend parity does not prove the Desktop progress banner user effect."
+    },
+    {
+      "responsibility_id": "REMOTE-COMPUTER-SHELL-ANDROID-001",
+      "domain": "remote-computer",
+      "desktop_sources": [
+        {
+          "path": "frontend/src/recovered/features/computer/shell/controller.ts",
+          "blob_sha": "52887c16f3ca4b01871bf991b460be7873f25e36",
+          "symbols": [
+            "useComputerExperience",
+            "ComputerExperience"
+          ]
+        },
+        {
+          "path": "frontend/src/recovered/features/computer/shell/model.ts",
+          "blob_sha": "b99b77f2299d83cd49e66875e7b78081ed6fec8c",
+          "symbols": [
+            "projectComputerStatus",
+            "projectComputerMonitors",
+            "projectComputerCursor",
+            "computerCursorPresentation"
+          ]
+        },
+        {
+          "path": "frontend/src/recovered/features/computer/shell/status-store.ts",
+          "blob_sha": "e57c92249587250d310ab0c26ba187d77f47d41b",
+          "symbols": [
+            "createComputerStatusStore",
+            "ComputerStatusStore"
+          ]
+        },
+        {
+          "path": "frontend/src/recovered/features/computer/shell/view.tsx",
+          "blob_sha": "3289962193d6bca326229a0abf63d99e84a65af4",
+          "symbols": [
+            "ComputerFullscreen",
+            "ComputerPreview",
+            "ComputerInfoPane",
+            "ComputerHandoffCard"
+          ]
+        },
+        {
+          "path": "frontend/src/recovered/features/computer/shell/vnc-webview.tsx",
+          "blob_sha": "bdb077ea73e051afc67b80b18edbe6f86d70a885",
+          "symbols": [
+            "VncWebview",
+            "bindVncWebviewLifecycle"
+          ]
+        },
+        {
+          "path": "frontend/src/recovered/features/computer/shell/view.css",
+          "blob_sha": "f2e712895fd5901d1d22c38d96754f7ea640de8",
+          "symbols": [
+            "Desktop Computer shell presentation styles"
+          ]
+        },
+        {
+          "path": "frontend/src/recovered/features/computer/shell/cursor-icons-16-f_W_ogc-.woff2",
+          "blob_sha": "c0c9d539050bfadded4d58e78eb771cdbab621a4",
+          "symbols": [
+            "Desktop cursor icon font asset"
+          ]
+        }
+      ],
+      "source_commit": "92fcc2b0f64b6b8f8f8829305b30874b558d6b35",
+      "responsibility": "Provide the complete Computer shell around the canonical remote session: status projection/cache, reconnect refresh, multi-monitor preview/fullscreen selection, handoff state, cursor projection, display/input lifecycle and stale/dispose fencing.",
+      "source_owner": "Desktop Computer shell controller/status store and presentation; canonical box/session truth remains below renderer.",
+      "direct_callers": [
+        "conversation workspace Computer surface",
+        "Computer info pane/header/handoff entrypoints"
+      ],
+      "downstream_dependencies": [
+        "Forever Box status",
+        "subagent/async-task streams",
+        "computer-action stream",
+        "VNC/WebRTC display transport",
+        "human takeover"
+      ],
+      "state_owner": "Android canonical control/session truth is Coordinator/Keystore; Presentation may own only transient selected monitor/focus/display state.",
+      "persistent_state": [
+        "Android control-session credential/cursors/process generation in protected session store"
+      ],
+      "protocol_wire_contract": [
+        "display stream",
+        "ordered input",
+        "viewport revision",
+        "human takeover",
+        "reconnect",
+        "status and action projections"
+      ],
+      "visible_effect": "User can inspect/open a Computer, see status/preview, take over safely, switch relevant monitors, observe handoff/cursor state and recover transport without replaying input.",
+      "failure_behavior": [
+        "stale process/viewport input is rejected",
+        "transport loss enters reconnect",
+        "status read failures do not fabricate healthy state",
+        "display crash/liveness failures surface without creating another input owner"
+      ],
+      "cancellation_behavior": "closing/dispose invalidates display callbacks and input leases",
+      "retry_semantics": "status/display reconnect may retry reads/negotiation; unknown side-effect input is never replayed",
+      "idempotency_semantics": "session/signal cursors and viewport revisions fence duplicate/stale work",
+      "process_death_recovery": "protected session is rebound to a new process generation and requires reconcile before input",
+      "account_fencing": "pairing/session account epoch and process generation fence all control state",
+      "security_boundary": "Compose -> typed Coordinator -> native WebRTC/session owner; credentials never enter Presentation or hosted viewport.",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/features/remote/RemoteComputerSurface.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/features/remote/RemoteComputerPresentationPolicy.kt",
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/remote/AndroidRemoteComputerDataPlane.kt",
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/security/AndroidRemoteControlSessionStore.kt",
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/coordinator/AndroidCoordinatorRuntime.kt"
+      ],
+      "android_owner": "AndroidRemoteControlSessionStore + AndroidRemoteComputerDataPlane + RemoteComputerSurface",
+      "platform_delta": "Electron <webview>/VNC partition and CSS/font mechanics are replaced by native WebRTC video/input and Compose. Product shell semantics still need full native equivalents.",
+      "implementation_status": "mapped",
+      "production_wiring": "Partial: pairing/session create/reconcile/revoke, protected credential storage, native WebRTC video/input, signal cursors, process/viewport/human-takeover fences and basic RemoteComputerSurface are wired. Missing/partial: Desktop-equivalent per-box status cache/deadline, multi-monitor strip/selection, handoff card/banner, cursor overlay/action projection, warm previews, crash/liveness presentation/telemetry and teach-recording shell injection.",
+      "unit_test": "Existing RemoteComputerPresentationPolicyTest, RemoteComputerDataPlanePolicyTest and RemoteControlSessionCredentialPolicyTest cover the implemented native security/session slice; focused missing-shell tests remain required.",
+      "contract_test": "Typed Coordinator remote-computer contracts exist for the implemented slice; complete shell/status projection contract remains open.",
+      "integration_test": "real multi-monitor/handoff/cursor/reconnect shell integration remains open",
+      "packaged_test": "real peer packaged acceptance remains open",
+      "device_test": "real Remote Computer peer/device and process-death shell acceptance remains open",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Do not inherit REMOTE-COMPUTER-001 implementation status wholesale. This row isolates Desktop shell product effects still missing above the already-implemented native transport/session foundation. CSS/font rows are platform-mechanism replacements only and do not close this responsibility."
     }
   ],
   "traceability": {
