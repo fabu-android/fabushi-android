@@ -9285,6 +9285,45 @@
       "artifact": null,
       "verification_status": "not-verified",
       "notes": "Keep mapped until author/time preview, normalized semantic quote labels, cross-scope behavior and same-exact-head CI/device evidence are complete."
+    },
+    {
+      "responsibility_id": "CONVERSATION-RICH-TEXT-EDITOR-ANDROID-001",
+      "domain": "conversation-workspace",
+      "desktop_sources": [
+        {
+          "path": "frontend/src/recovered/features/conversation/workspace/rich-text-editor.tsx",
+          "blob_sha": "988a89ff68792b3764d8982df08e98c2a8fce49b",
+          "symbols": [
+            "PromptRichTextEditor",
+            "promptEditorContent",
+            "promptEditorText",
+            "findSpaceSuggestionMatch",
+            "findEmojiSuggestionMatch",
+            "createSuggestionRenderer"
+          ]
+        }
+      ],
+      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "responsibility": "Own ephemeral prompt-editor composition and selection while preserving canonical draft ownership; restore persisted rich-text content with plain-text fallback; serialize semantic links/references; project mention/workflow/emoji/PR suggestions; fence queued pre-clear and old-scope edits; avoid submitting during IME composition; support Enter-submit versus Shift+Enter newline, Escape, file paste, and explicit focus/clear/restore controls.",
+      "source_owner": "Editor owns only ephemeral document/selection/composition state. Canonical prompt/draft and Agent/account scope remain presentation/runtime-owned and external updates must be fenced against stale editor transactions.",
+      "visible_effect": "Prompt entry preserves rich references and links, autocomplete is keyboard accessible, IME input does not accidentally submit, stale edits cannot resurrect a cleared or previous-scope draft, and pasted files stage as attachments.",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/recovered/features/conversation/workspace/composer_view.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/presentation/EditorSuggestionProjection.kt"
+      ],
+      "android_owner": "Compose composer owns ephemeral text-field presentation; canonical Human draft remains MessagingDraft-owned. MobileEditorSuggestionProjection owns only immutable suggestion query/projection plus account/Agent generation fencing.",
+      "platform_delta": "Android currently uses a String OutlinedTextField. EditorSuggestionProjection implements bounded @ and / plain-text suggestion query/projection and request fencing for assistants/automations/workflows, and explicitly does not pretend to implement typed rich-text nodes. Missing production parity includes persisted richText JSON/node serialization, inline mention/workflow/PR/emoji references in the Human composer, IME composition-aware submit fencing, clear/scope stale-edit fencing, paste-file routing from the editor, hardware Enter/Shift+Enter/Escape semantics, explicit editor controls and accessibility/listbox interaction.",
+      "implementation_status": "mapped",
+      "production_wiring": "Existing Human ConversationComposer is the shipping native text entry path and MessagingDraft remains canonical. EditorSuggestionProjection is an implemented projection primitive but the current Human composer does not expose the Desktop rich-text document/suggestion-node lifecycle.",
+      "unit_test": "mobile/android/app/src/test/java/com/ombhrum/fabushi/EditorSuggestionProjectionTest.kt covers the existing suggestion projection/fence subset; full rich-text/IME/scope-clear tests remain required.",
+      "contract_test": "Required: external draft updates must not be overwritten by queued old-scope editor changes, accepted send clear must not resurrect prior content, and suggestion insertion must not create a second canonical draft owner.",
+      "integration_test": "Required: Human and Agent composer IME, paste, suggestion insertion, scope switching, process recreation and send-clear lifecycle.",
+      "packaged_test": "required final minified githubRelease package",
+      "device_test": "required hardware/software keyboard, CJK IME, accessibility and clipboard attachment acceptance",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Do not mark implemented or verified from the plain-text OutlinedTextField or suggestion projection alone. Typed rich-text and composition fencing remain production gaps."
     }
   ],
   "traceability": {
