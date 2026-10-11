@@ -116,8 +116,9 @@ internal fun OfflineAsrDraftControl(
                         listening = false
                         processing = true
                     }
-                } else if (!processing && (
-                    ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
+                } else if (
+                    !processing &&
+                        ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
                 ) {
                     startOfflineTranscription()
                 } else {

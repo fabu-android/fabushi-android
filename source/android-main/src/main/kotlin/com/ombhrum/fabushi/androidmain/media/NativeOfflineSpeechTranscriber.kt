@@ -126,6 +126,7 @@ internal class NativeOfflineSpeechTranscriber(private val context: Context) {
         activeCeiling.set(ceiling)
         recognizer.startListening(intent)
         mainHandler.postDelayed(ceiling, ANDROID_VOICE_MAX_RECORDING_MS)
+        Unit
     }.onFailure {
         activeCeiling.getAndSet(null)?.let(mainHandler::removeCallbacks)
         activeStartedAtMs.set(0L)
