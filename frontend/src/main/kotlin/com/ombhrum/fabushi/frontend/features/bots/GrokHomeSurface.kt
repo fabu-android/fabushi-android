@@ -89,6 +89,7 @@ fun GrokHomeSurface(
     onUpdateBotProfile: (String, String, String?, String, String?, String?) -> Unit,
     onSetBotNotifyOnUpdates: (String, Boolean) -> Unit,
     onHideBot: (String) -> Unit,
+    onUnhideBot: (String) -> Unit,
     onSetBotUnread: (String, Boolean) -> Unit,
     onDuplicateBot: (String) -> Unit,
     onDeleteBot: suspend (String) -> Unit,
@@ -189,6 +190,17 @@ fun GrokHomeSurface(
     var editingBotId by remember { mutableStateOf<String?>(null) }
     var deleteTarget by remember { mutableStateOf<AgentDeleteTarget?>(null) }
     var showHiddenBots by remember { mutableStateOf(false) }
+
+    HiddenBotsDialog(
+        open = showHiddenBots,
+        hiddenBots = botState.bots.filter { it.isHidden },
+        onClose = { showHiddenBots = false },
+        onOpenBot = { bot ->
+            showHiddenBots = false
+            onOpenBot(bot)
+        },
+        onUnhide = onUnhideBot,
+    )
 
     LaunchedEffect(
         query,
@@ -593,12 +605,27 @@ fun GrokHomeSurface(
                     onClick = onOpenBot,
                 )
             }
+            if (botState.bots.any { it.isHidden }) {
+                item {
+                    TextButton(
+                        onClick = { showHiddenBots = true },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("hidden-bots-open"),
+                    ) {
+                        Text(
+                            "Hidden Bots",
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    }
+                }
+            }
             val matchingBots = botState.bots.filter {
                 query.isBlank() ||
                     it.name.contains(query.trim(), true) ||
                     it.description.contains(query.trim(), true)
             }
-            val visibleBots = matchingBots.filter { showHiddenBots || !it.isHidden }
+            val visibleBots = matchingBots.filter { !it.isHidden }
             val allMatchingBotsHidden =
                 matchingBots.isNotEmpty() &&
                     visibleBots.isEmpty() &&

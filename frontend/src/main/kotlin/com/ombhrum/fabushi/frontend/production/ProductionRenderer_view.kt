@@ -414,6 +414,7 @@ internal fun ProductionRenderer(
                             onUpdateBotProfile = botModel::updateBotProfile,
                             onSetBotNotifyOnUpdates = botModel::setBotNotifyOnUpdates,
                             onHideBot = botModel::hideBot,
+                            onUnhideBot = botModel::unhideBot,
                             onSetBotUnread = botModel::setBotUnread,
                             onDuplicateBot = botModel::duplicateBot,
                             onDeleteBot = botModel::deleteBotAndAwait,

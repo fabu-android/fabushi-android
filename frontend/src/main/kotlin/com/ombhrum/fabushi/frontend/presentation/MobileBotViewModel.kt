@@ -813,6 +813,10 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
         mutateAgent(botId, "Hide agent failed") { coordinator.agentSetHidden(botId, true) }
     }
 
+    fun unhideBot(botId: String) {
+        mutateAgent(botId, "Unhide agent failed") { coordinator.agentSetHidden(botId, false) }
+    }
+
     fun setBotUnread(botId: String, isUnread: Boolean) {
         mutateAgent(botId, "Unread state update failed") { coordinator.agentSetUnread(botId, isUnread) }
     }
