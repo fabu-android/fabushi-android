@@ -2,6 +2,7 @@ package com.ombhrum.fabushi
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.focusable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.text.ClickableText
 import androidx.compose.foundation.layout.Arrangement
@@ -10,6 +11,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -20,6 +22,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
@@ -237,12 +241,8 @@ private fun MobileTranscriptRichBlock(block: TranscriptRichBlock) {
                 }
             }
         }
-        is TranscriptRichBlock.Math -> Text(
-            "\$\$\n${block.expression}\n\$\$",
-            color = GrokMobileInk,
-            fontFamily = FontFamily.Monospace,
-            fontSize = 14.sp,
-        )
+        is TranscriptRichBlock.Math -> MobileTranscriptMath(block)
+        is TranscriptRichBlock.Mermaid -> MobileTranscriptMermaid(block)
         is TranscriptRichBlock.Code -> MobileTranscriptCodeBlock(block)
         TranscriptRichBlock.HorizontalRule -> Box(
             Modifier
@@ -281,6 +281,15 @@ private fun MobileTranscriptParagraph(text: String) {
     }
     ClickableText(
         text = annotated,
+        modifier = Modifier
+            .focusable()
+            .semantics {
+                val links = inline.mapNotNull { it.url }.distinct()
+                if (links.isNotEmpty()) {
+                    contentDescription = "Message text with ${links.size} link" +
+                        if (links.size == 1) "" else "s"
+                }
+            },
         style = androidx.compose.ui.text.TextStyle(
             color = GrokMobileInk,
             fontSize = 16.sp,
@@ -293,6 +302,109 @@ private fun MobileTranscriptParagraph(text: String) {
                 ?.let { url -> runCatching { uriHandler.openUri(url) } }
         },
     )
+}
+
+@Composable
+private fun MobileTranscriptMath(block: TranscriptRichBlock.Math) {
+    val presentation = block.presentation
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .background(Color.Black.copy(alpha = 0.035f), RoundedCornerShape(7.dp))
+            .semantics {
+                contentDescription = if (presentation.supported) {
+                    "Math expression"
+                } else {
+                    "Unsupported math expression shown as text"
+                }
+            }
+            .padding(horizontal = 10.dp, vertical = 8.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        Text(
+            if (presentation.supported) "Math" else "Math · source",
+            color = GrokMobileMuted,
+            fontSize = 11.sp,
+            fontWeight = FontWeight.SemiBold,
+        )
+        Text(
+            presentation.displayText.ifBlank { block.expression },
+            color = GrokMobileInk,
+            fontFamily = FontFamily.Monospace,
+            fontSize = 14.sp,
+        )
+    }
+}
+
+@Composable
+private fun MobileTranscriptMermaid(block: TranscriptRichBlock.Mermaid) {
+    val diagram = block.diagram
+    if (diagram == null) {
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .semantics {
+                    contentDescription = "Mermaid diagram could not be safely rendered"
+                },
+            verticalArrangement = Arrangement.spacedBy(5.dp),
+        ) {
+            Text(
+                "Couldn’t render this diagram.",
+                color = GrokMobileMuted,
+                fontSize = 12.sp,
+            )
+            MobileTranscriptCodeBlock(TranscriptRichBlock.Code("mermaid", block.code))
+        }
+        return
+    }
+
+    val nodeLabels = diagram.nodes.associate { it.id to it.label }
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .background(Color.Black.copy(alpha = 0.035f), RoundedCornerShape(8.dp))
+            .semantics {
+                contentDescription =
+                    "Mermaid diagram, ${diagram.nodes.size} nodes, ${diagram.edges.size} connections"
+            }
+            .padding(10.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        Text(
+            "Diagram · ${diagram.direction}",
+            color = GrokMobileMuted,
+            fontSize = 11.sp,
+            fontWeight = FontWeight.SemiBold,
+        )
+        if (diagram.edges.isEmpty()) {
+            diagram.nodes.forEach { node ->
+                Text(
+                    node.label,
+                    color = GrokMobileInk,
+                    fontSize = 14.sp,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(Color.Black.copy(alpha = 0.045f), RoundedCornerShape(6.dp))
+                        .padding(horizontal = 8.dp, vertical = 6.dp),
+                )
+            }
+        } else {
+            diagram.edges.forEach { edge ->
+                val from = nodeLabels[edge.from] ?: edge.from
+                val to = nodeLabels[edge.to] ?: edge.to
+                val label = edge.label?.let { " · $it" }.orEmpty()
+                Text(
+                    "$from → $to$label",
+                    color = GrokMobileInk,
+                    fontSize = 14.sp,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(Color.Black.copy(alpha = 0.045f), RoundedCornerShape(6.dp))
+                        .padding(horizontal = 8.dp, vertical = 6.dp),
+                )
+            }
+        }
+    }
 }
 
 @Composable
@@ -313,6 +425,10 @@ private fun MobileTranscriptCodeBlock(block: TranscriptRichBlock.Code) {
             )
             TextButton(
                 onClick = { clipboard.setText(AnnotatedString(block.code)) },
+                modifier = Modifier
+                    .heightIn(min = 48.dp)
+                    .focusable()
+                    .semantics { contentDescription = "Copy code" },
             ) {
                 Text("Copy", fontSize = 11.sp)
             }

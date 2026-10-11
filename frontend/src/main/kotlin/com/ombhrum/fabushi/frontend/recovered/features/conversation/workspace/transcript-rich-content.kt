@@ -20,7 +20,14 @@ internal sealed interface TranscriptRichBlock {
         val items: List<TranscriptRichListItem>,
     ) : TranscriptRichBlock
     data class Table(val headers: List<String>, val rows: List<List<String>>) : TranscriptRichBlock
-    data class Math(val expression: String) : TranscriptRichBlock
+    data class Math(
+        val expression: String,
+        val presentation: TranscriptSafeMathPresentation = projectTranscriptSafeMath(expression),
+    ) : TranscriptRichBlock
+    data class Mermaid(
+        val code: String,
+        val diagram: TranscriptMermaidDiagram?,
+    ) : TranscriptRichBlock
     data class Code(val language: String, val code: String) : TranscriptRichBlock
     data object HorizontalRule : TranscriptRichBlock
 }
@@ -60,10 +67,18 @@ internal fun projectTranscriptRichContent(text: String): List<TranscriptRichBloc
             output += projectTranscriptRichText(text.substring(cursor, match.range.first))
         }
         val rawLanguage = match.groupValues[1].trim()
-        output += TranscriptRichBlock.Code(
-            language = rawLanguage.takeIf(languageToken::matches).orEmpty(),
-            code = match.groupValues[2],
-        )
+        val code = match.groupValues[2]
+        output += if (rawLanguage.equals("mermaid", ignoreCase = true)) {
+            TranscriptRichBlock.Mermaid(
+                code = code,
+                diagram = projectTranscriptMermaid(code),
+            )
+        } else {
+            TranscriptRichBlock.Code(
+                language = rawLanguage.takeIf(languageToken::matches).orEmpty(),
+                code = code,
+            )
+        }
         cursor = match.range.last + 1
     }
     if (cursor < text.length || output.isEmpty()) {

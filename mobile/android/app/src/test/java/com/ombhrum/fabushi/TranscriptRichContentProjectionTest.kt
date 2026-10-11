@@ -1,6 +1,7 @@
 package com.ombhrum.fabushi
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -60,6 +61,40 @@ class TranscriptRichContentProjectionTest {
             "```bad language!\nbody\n```",
         )
         assertEquals(TranscriptRichBlock.Code("", "body"), blocks.single())
+    }
+
+    @Test
+    fun mermaidFenceUsesBoundedNativeProjectionAndKeepsLabelsInert() {
+        val block = projectTranscriptRichContent(
+            "```mermaid\nflowchart LR\nA[Start] -->|next| B[Finish]\n```",
+        ).single() as TranscriptRichBlock.Mermaid
+
+        val diagram = block.diagram!!
+        assertEquals("LR", diagram.direction)
+        assertEquals(listOf("Start", "Finish"), diagram.nodes.map { it.label })
+        assertEquals(TranscriptMermaidEdge("A", "B", "next"), diagram.edges.single())
+    }
+
+    @Test
+    fun mermaidRejectsExecutableOrUnsupportedDirectivesAndFallsBackSafely() {
+        val unsafe = projectTranscriptRichContent(
+            "```mermaid\nflowchart TD\nA --> B\nclick A javascript:alert(1)\n```",
+        ).single() as TranscriptRichBlock.Mermaid
+        assertNull(unsafe.diagram)
+
+        assertNull(projectTranscriptMermaid("flowchart TD\nsubgraph hidden\nA-->B\nend"))
+        assertNull(projectTranscriptMermaid("flowchart TD\nA[<script>] --> B"))
+    }
+
+    @Test
+    fun mathProjectionAllowsBoundedInertSubsetAndRejectsActiveExtensions() {
+        val safe = projectTranscriptSafeMath("""\alpha + x \leq \infty""")
+        assertTrue(safe.supported)
+        assertEquals("α + x ≤ ∞", safe.displayText)
+
+        val unsafe = projectTranscriptSafeMath("""\href{https://example.test}{click}""")
+        assertFalse(unsafe.supported)
+        assertTrue(unsafe.displayText.contains("href"))
     }
 
     @Test
