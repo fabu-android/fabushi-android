@@ -500,7 +500,7 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
                     )
                 }
             }.onSuccess {
-                if (agentSettingsFence.isCurrent(token) && accountSlot == rosterSelectionAccountSlot) {
+                if (accountSlot == rosterSelectionAccountSlot) {
                     refreshBots()
                 }
             }.onFailure { error ->
@@ -508,6 +508,7 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
                     mutableState.value = mutableState.value.copy(error = error.message ?: "Agent profile update failed")
                 }
             }
+            agentSettingsFence.finish(token)
         }
     }
 
@@ -522,7 +523,7 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
                     coordinator.agentSetNotifyOnUpdates(botId, isEnabled)
                 }
             }.onSuccess {
-                if (agentSettingsFence.isCurrent(token) && accountSlot == rosterSelectionAccountSlot) {
+                if (accountSlot == rosterSelectionAccountSlot) {
                     refreshBots()
                 }
             }.onFailure { error ->
@@ -530,6 +531,7 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
                     mutableState.value = mutableState.value.copy(error = error.message ?: "Agent notification update failed")
                 }
             }
+            agentSettingsFence.finish(token)
         }
     }
 
