@@ -1,8 +1,101 @@
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::fs;
 use std::path::{Path, PathBuf};
 
 pub const SAND_TEACH_MAX_DURATION_MS: u64 = 10 * 60_000;
+
+
+pub fn teach_queue_scope(agent_id: &str) -> Result<String, String> {
+    validate_identity("agent", agent_id)?;
+    Ok(hex_lower(&Sha256::digest(agent_id.as_bytes())))
+}
+
+pub fn teach_queue_signature(key: &[u8], agent_id: &str, queue_file: &str) -> Result<String, String> {
+    if key.is_empty() {
+        return Err("teach recording queue signing key must not be empty".into());
+    }
+    validate_identity("agent", agent_id)?;
+    validate_queue_file(queue_file)?;
+    let payload = format!("{agent_id}\n{queue_file}");
+    Ok(hex_lower(&hmac_sha256(key, payload.as_bytes())))
+}
+
+pub fn verify_teach_queue_signature(
+    key: &[u8],
+    agent_id: &str,
+    queue_file: &str,
+    signature: &str,
+) -> Result<bool, String> {
+    let expected = teach_queue_signature(key, agent_id, queue_file)?;
+    if signature.len() != expected.len() || !signature.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Ok(false);
+    }
+    // Compare all bytes so a remote forged queue entry cannot learn a matching-prefix length.
+    let mut difference = 0_u8;
+    for (left, right) in expected.bytes().zip(signature.bytes()) {
+        difference |= left ^ right.to_ascii_lowercase();
+    }
+    Ok(difference == 0)
+}
+
+pub fn teach_learning_client_nonce(agent_id: &str, queue_file: &str) -> Result<String, String> {
+    Ok(format!(
+        "teach-recording:{}:{}",
+        teach_queue_scope(agent_id)?,
+        validate_queue_file(queue_file)?,
+    ))
+}
+
+fn validate_queue_file(value: &str) -> Result<&str, String> {
+    if value.is_empty()
+        || value.len() > 192
+        || value == "."
+        || value == ".."
+        || value.contains('/')
+        || value.contains('\\')
+        || value.chars().any(char::is_control)
+        || !value.ends_with(".json")
+    {
+        return Err("teach recording queue file is invalid".into());
+    }
+    Ok(value)
+}
+
+fn hmac_sha256(key: &[u8], payload: &[u8]) -> [u8; 32] {
+    const BLOCK: usize = 64;
+    let mut key_block = [0_u8; BLOCK];
+    if key.len() > BLOCK {
+        let digest = Sha256::digest(key);
+        key_block[..32].copy_from_slice(&digest);
+    } else {
+        key_block[..key.len()].copy_from_slice(key);
+    }
+    let mut inner_pad = [0x36_u8; BLOCK];
+    let mut outer_pad = [0x5c_u8; BLOCK];
+    for index in 0..BLOCK {
+        inner_pad[index] ^= key_block[index];
+        outer_pad[index] ^= key_block[index];
+    }
+    let mut inner = Sha256::new();
+    inner.update(inner_pad);
+    inner.update(payload);
+    let inner_digest = inner.finalize();
+
+    let mut outer = Sha256::new();
+    outer.update(outer_pad);
+    outer.update(inner_digest);
+    outer.finalize().into()
+}
+
+fn hex_lower(bytes: &[u8]) -> String {
+    let mut output = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        use std::fmt::Write as _;
+        let _ = write!(&mut output, "{byte:02x}");
+    }
+    output
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -307,6 +400,37 @@ fn atomic_write_json(path: &Path, snapshot: &TeachRecordingSnapshot) -> Result<(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+
+    #[test]
+    fn queue_scope_signature_and_client_nonce_match_desktop_contract() {
+        let key = b"android-teach-recording-test-key";
+        let agent = "agent-a";
+        let queue_file = "session-0001.json";
+        let scope = teach_queue_scope(agent).unwrap();
+        assert_eq!(scope.len(), 64);
+        assert!(scope.bytes().all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase()));
+
+        let signature = teach_queue_signature(key, agent, queue_file).unwrap();
+        assert_eq!(signature.len(), 64);
+        assert!(verify_teach_queue_signature(key, agent, queue_file, &signature).unwrap());
+        assert!(!verify_teach_queue_signature(key, agent, queue_file, &format!("0{}", &signature[1..])).unwrap());
+
+        assert_eq!(
+            teach_learning_client_nonce(agent, queue_file).unwrap(),
+            format!("teach-recording:{scope}:{queue_file}")
+        );
+    }
+
+    #[test]
+    fn queue_contract_rejects_path_traversal_and_malformed_signatures() {
+        let key = b"k";
+        for invalid in ["", ".", "..", "../session.json", "nested/session.json", "session.txt"] {
+            assert!(teach_queue_signature(key, "agent-a", invalid).is_err(), "{invalid}");
+        }
+        assert!(!verify_teach_queue_signature(key, "agent-a", "session.json", "xyz").unwrap());
+        assert!(teach_queue_signature(&[], "agent-a", "session.json").is_err());
+    }
 
     #[test]
     fn start_stop_and_save_intent_are_durable_and_identity_fenced() {
