@@ -23,6 +23,19 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
+import java.util.concurrent.atomic.AtomicLong
+
+internal class OfflineAsrGenerationFence {
+    private val generation = AtomicLong(0L)
+
+    fun begin(): Long = generation.incrementAndGet()
+
+    fun accepts(token: Long): Boolean = token == generation.get()
+
+    fun invalidate() {
+        generation.incrementAndGet()
+    }
+}
 
 @Composable
 internal fun OfflineAsrDraftControl(
@@ -34,6 +47,7 @@ internal fun OfflineAsrDraftControl(
 ) {
     val context = LocalContext.current
     val transcriber = remember(sessionKey) { NativeOfflineSpeechTranscriber(context.applicationContext) }
+    val generationFence = remember(sessionKey) { OfflineAsrGenerationFence() }
     val available = remember { transcriber.isAvailable() }
     var listening by remember { mutableStateOf(false) }
     var error by remember(available) { mutableStateOf(if (available) null else "设备离线语音识别不可用") }
@@ -43,7 +57,9 @@ internal fun OfflineAsrDraftControl(
             error = "设备离线语音识别不可用"
             return
         }
+        val generation = generationFence.begin()
         transcriber.start { result ->
+            if (!generationFence.accepts(generation)) return@start
             listening = false
             result.onSuccess { text ->
                 val clean = text.trim()
@@ -59,6 +75,7 @@ internal fun OfflineAsrDraftControl(
             listening = true
             error = null
         }.onFailure { failure ->
+            if (!generationFence.accepts(generation)) return@onFailure
             listening = false
             error = failure.message ?: "离线语音识别无法启动"
         }
@@ -71,13 +88,26 @@ internal fun OfflineAsrDraftControl(
     }
 
     DisposableEffect(transcriber) {
-        onDispose { transcriber.cancel() }
+        onDispose {
+            generationFence.invalidate()
+            transcriber.cancel()
+        }
+    }
+
+    DisposableEffect(enabled, transcriber) {
+        if (!enabled) {
+            generationFence.invalidate()
+            transcriber.cancel()
+            listening = false
+        }
+        onDispose { }
     }
 
     Column {
         Button(
             onClick = {
                 if (listening) {
+                    generationFence.invalidate()
                     transcriber.cancel()
                     listening = false
                 } else if (
