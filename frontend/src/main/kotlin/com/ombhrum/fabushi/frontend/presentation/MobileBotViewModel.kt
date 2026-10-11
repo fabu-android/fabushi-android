@@ -866,6 +866,15 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
+    fun toggleSidebarSection(sectionId: String) {
+        val current = mutableState.value.sidebarSections
+        val section = current.firstOrNull { it.id == sectionId } ?: return
+        val next = current.map { row ->
+            if (row.id == sectionId) row.copy(isCollapsed = !section.isCollapsed) else row
+        }
+        commitSidebarSections(next, "Toggle Agent section failed")
+    }
+
     fun moveBotToSection(botId: String, sectionId: String) {
         val bot = mutableState.value.bots.firstOrNull { it.id == botId } ?: return
         if (bot.isPinned || bot.isHidden) return

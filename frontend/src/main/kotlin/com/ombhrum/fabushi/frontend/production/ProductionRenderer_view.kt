@@ -418,6 +418,7 @@ internal fun ProductionRenderer(
                             onDuplicateBot = botModel::duplicateBot,
                             onDeleteBot = botModel::deleteBotAndAwait,
                             onSetBotPinned = botModel::setBotPinned,
+                            onToggleSidebarSection = botModel::toggleSidebarSection,
                             onMoveBotToSection = botModel::moveBotToSection,
                             onMoveBotToNewSection = botModel::moveBotToNewSection,
                             onCloseBot = botModel::closeBot,

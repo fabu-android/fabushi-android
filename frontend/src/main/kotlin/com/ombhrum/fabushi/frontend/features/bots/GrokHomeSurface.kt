@@ -93,6 +93,7 @@ fun GrokHomeSurface(
     onDuplicateBot: (String) -> Unit,
     onDeleteBot: suspend (String) -> Unit,
     onSetBotPinned: (String, Boolean) -> Unit,
+    onToggleSidebarSection: (String) -> Unit,
     onMoveBotToSection: (String, String) -> Unit,
     onMoveBotToNewSection: (String) -> Unit,
     onCloseBot: () -> Unit,
@@ -641,20 +642,40 @@ fun GrokHomeSurface(
             if (visibleBots.isNotEmpty()) {
                 val visibleById = visibleBots.associateBy { it.id }
                 val renderedSections = if (botState.sidebarSections.isEmpty()) {
-                    listOf("Bots" to visibleBots)
+                    listOf(null to visibleBots)
                 } else {
                     botState.sidebarSections.map { section ->
-                        section.name.ifBlank {
-                            if (section.id == AGENT_UNASSIGNED_SECTION_ID) "Unassigned" else "Section"
-                        } to section.agentIds.mapNotNull(visibleById::get)
+                        section to section.agentIds.mapNotNull(visibleById::get)
                     }
                 }
                 renderedSections
                     .filter { (_, bots) -> bots.isNotEmpty() || query.isBlank() }
-                    .forEach { (sectionName, sectionBots) ->
+                    .forEach { (section, sectionBots) ->
+                        val sectionName = section?.name?.ifBlank {
+                            if (section.id == AGENT_UNASSIGNED_SECTION_ID) "Unassigned" else "Section"
+                        } ?: "Bots"
+                        val isCollapsed = section?.isCollapsed == true
                         item {
-                            SectionLabelAndroid("$sectionName  ${sectionBots.size}")
+                            if (section == null) {
+                                SectionLabelAndroid(sectionName + "  " + sectionBots.size)
+                            } else {
+                                TextButton(
+                                    onClick = { onToggleSidebarSection(section.id) },
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .testTag("agent-section-header-" + section.id),
+                                ) {
+                                    Text(
+                                        text = (if (isCollapsed) "▸ " else "▾ ") + sectionName + "  " + sectionBots.size,
+                                        color = GrokMobileMuted,
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        modifier = Modifier.fillMaxWidth(),
+                                    )
+                                }
+                            }
                         }
+                        if (!isCollapsed) {
                         items(sectionBots, key = { it.id }) { bot ->
                             GrokBotRowAndroid(
                                 bot = bot,
@@ -709,6 +730,7 @@ fun GrokHomeSurface(
                                     }
                                 },
                             )
+                        }
                         }
                     }
             }

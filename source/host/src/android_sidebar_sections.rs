@@ -169,7 +169,6 @@ fn normalize_loaded_state(state: &mut AndroidSidebarSectionsFile) {
             {
                 return false;
             }
-            section.is_collapsed = false;
             section.agent_ids.retain(|agent_id| {
                 !agent_id.is_empty() && seen_agents.insert(agent_id.clone())
             });
@@ -219,7 +218,7 @@ fn normalize_input_sections(
             id: id.to_string(),
             name: section.name.clone(),
             agent_ids,
-            is_collapsed: false,
+            is_collapsed: section.is_collapsed,
         });
     }
     Ok(normalized)
@@ -298,10 +297,37 @@ mod tests {
                 &known(&["agent-1", "agent-2"]),
             )
             .unwrap();
-        assert_eq!(result["result"]["sections"][0]["isCollapsed"], false);
+        assert_eq!(result["result"]["sections"][0]["isCollapsed"], true);
         assert_eq!(result["result"]["sections"][1]["id"], SIDEBAR_SYNTHETIC_SECTION_ID);
         assert_eq!(result["result"]["sections"][1]["agentIds"][0], "agent-2");
         assert!(store.get("acct-2", &known(&["agent-1"])).is_empty());
+    }
+
+    #[test]
+    fn collapsed_state_survives_process_reopen_without_persisting_synthetic_section() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("sidebar-sections.json");
+        {
+            let mut store = AndroidSidebarSections::open(&path).unwrap();
+            store
+                .set(
+                    "acct-1",
+                    "op-collapse",
+                    &[AndroidSidebarSection {
+                        id: "section-a".into(),
+                        name: "Team".into(),
+                        agent_ids: vec!["agent-1".into()],
+                        is_collapsed: true,
+                    }],
+                    &known(&["agent-1", "agent-2"]),
+                )
+                .unwrap();
+        }
+        let reopened = AndroidSidebarSections::open(&path).unwrap();
+        let projected = reopened.get("acct-1", &known(&["agent-1", "agent-2"]));
+        assert!(projected[0].is_collapsed);
+        assert_eq!(projected[1].id, SIDEBAR_SYNTHETIC_SECTION_ID);
+        assert!(!projected[1].is_collapsed);
     }
 
     #[test]

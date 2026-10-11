@@ -80,6 +80,17 @@ class AgentSidebarSectionsModelTest {
     }
 
     @Test
+    fun collapsedFlagIsPreservedAcrossSectionMutations() {
+        val collapsed = sections.map { section ->
+            if (section.id == "section-a") section.copy(isCollapsed = true) else section
+        }
+        val moved = requireNotNull(moveAgentToSidebarSection(collapsed, "agent-2", "section-a"))
+        assertEquals(true, moved.first { it.id == "section-a" }.isCollapsed)
+        val renamed = requireNotNull(renameAgentSidebarSection(collapsed, "section-a", "Renamed"))
+        assertEquals(true, renamed.first { it.id == "section-a" }.isCollapsed)
+    }
+
+    @Test
     fun sectionActionsRejectBlankNoopAndUnknownTargets() {
         assertNull(renameAgentSidebarSection(sections, "section-a", "   "))
         assertNull(renameAgentSidebarSection(sections, "missing", "Name"))
