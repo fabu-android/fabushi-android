@@ -1,6 +1,8 @@
 package com.ombhrum.fabushi
 
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -30,6 +32,7 @@ internal fun CommandPalette(
     entries: List<CommandPaletteEntry>,
     messageSearchStatus: CommandPaletteMessageStatus = CommandPaletteMessageStatus.IDLE,
     fileSearchStatus: CommandPaletteFileStatus = CommandPaletteFileStatus.IDLE,
+    linkSearchStatus: CommandPaletteLinkStatus = CommandPaletteLinkStatus.IDLE,
     routineStatus: CommandPaletteRoutineStatus = CommandPaletteRoutineStatus.IDLE,
     initialTab: CommandPaletteTab = CommandPaletteTab.ALL,
     onQueryChange: (String) -> Unit = {},
@@ -64,7 +67,9 @@ internal fun CommandPalette(
                 )
                 Row(
                     horizontalArrangement = Arrangement.spacedBy(4.dp),
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
                 ) {
                     listOf(
                         CommandPaletteTab.ALL to "All",
@@ -72,6 +77,7 @@ internal fun CommandPalette(
                         CommandPaletteTab.AGENTS to "Agents",
                         CommandPaletteTab.GROUPS to "Groups",
                         CommandPaletteTab.FILES to "Files",
+                        CommandPaletteTab.LINKS to "Links",
                         CommandPaletteTab.ROUTINES to "Routines",
                         CommandPaletteTab.ACTIONS to "Actions",
                     ).forEach { (candidate, label) ->
@@ -92,6 +98,12 @@ internal fun CommandPalette(
                             fileSearchStatus == CommandPaletteFileStatus.FAILED -> "File search unavailable"
                         tab == CommandPaletteTab.FILES &&
                             fileSearchStatus == CommandPaletteFileStatus.EMPTY -> "No files"
+                        tab == CommandPaletteTab.LINKS &&
+                            linkSearchStatus == CommandPaletteLinkStatus.LOADING -> "Loading link details…"
+                        tab == CommandPaletteTab.LINKS &&
+                            linkSearchStatus == CommandPaletteLinkStatus.FAILED -> "Link details unavailable"
+                        tab == CommandPaletteTab.LINKS &&
+                            linkSearchStatus == CommandPaletteLinkStatus.EMPTY -> "No links in this chat"
                         tab == CommandPaletteTab.ROUTINES &&
                             routineStatus == CommandPaletteRoutineStatus.LOADING -> "Loading routines…"
                         tab == CommandPaletteTab.ROUTINES &&

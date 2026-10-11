@@ -345,6 +345,12 @@ internal fun ProductionRenderer(
                             botModel.openBot(targetBot, targetEntryId = file.entryId)
                         }
                     }
+                    val paletteLinkEntries = commandPaletteLinkEntries(
+                        links = botState.paletteLinks.value,
+                        metadata = botState.paletteLinks.metadata,
+                    ) { link ->
+                        runtimePort.launchExternalUrl(link.url)
+                    }
                     val paletteRoutineEntries = commandPaletteRoutineEntries(
                         routines = botState.paletteRoutines.value.filter { routine ->
                             commandPaletteAgentFilter == null || routine.agentId == commandPaletteAgentFilter
@@ -382,6 +388,7 @@ internal fun ProductionRenderer(
                     val paletteEntries = buildList {
                         addAll(paletteMessageEntries)
                         addAll(paletteFileEntries)
+                        addAll(paletteLinkEntries)
                         addAll(paletteRoutineEntries)
                         botState.bots.forEach { bot ->
                             add(
@@ -487,6 +494,8 @@ internal fun ProductionRenderer(
                                 botModel.resetPaletteMessageSearch()
                                 botModel.resetPaletteFileSearch()
                                 botModel.setPaletteFileQuery("")
+                                botModel.resetPaletteLinks()
+                                botModel.refreshPaletteLinks()
                                 botModel.resetPaletteRoutines()
                                 botModel.refreshPaletteRoutines()
                                 botModel.refreshComputerRebuildStatus()
@@ -544,6 +553,7 @@ internal fun ProductionRenderer(
                             entries = paletteEntries,
                             messageSearchStatus = botState.paletteMessageSearch.status,
                             fileSearchStatus = botState.paletteFileSearch.status,
+                            linkSearchStatus = botState.paletteLinks.status,
                             routineStatus = botState.paletteRoutines.status,
                             initialTab = if (commandPaletteAgentFilter == null) {
                                 CommandPaletteTab.ALL
@@ -557,6 +567,7 @@ internal fun ProductionRenderer(
                             onDismiss = {
                                 botModel.resetPaletteMessageSearch()
                                 botModel.resetPaletteFileSearch()
+                                botModel.resetPaletteLinks()
                                 botModel.resetPaletteRoutines()
                                 commandPaletteAgentFilter = null
                                 commandPaletteOpen = false

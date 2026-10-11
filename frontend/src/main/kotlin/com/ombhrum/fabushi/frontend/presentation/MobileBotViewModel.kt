@@ -216,6 +216,9 @@ data class MobileBotUiState(
     val paletteFileSearch: CommandPaletteFileSnapshot = CommandPaletteFileSnapshot(
         status = CommandPaletteFileStatus.IDLE,
     ),
+    val paletteLinks: CommandPaletteLinkSnapshot = CommandPaletteLinkSnapshot(
+        status = CommandPaletteLinkStatus.IDLE,
+    ),
     val paletteRoutines: CommandPaletteRoutineSnapshot = CommandPaletteRoutineSnapshot(
         status = CommandPaletteRoutineStatus.IDLE,
     ),
@@ -284,6 +287,9 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
     private var paletteMessageSearchJob: Job? = null
     private val paletteFileFence = CommandPaletteFileRequestFence()
     private var paletteFileSearchJob: Job? = null
+    private val paletteLinkFence = CommandPaletteLinkRequestFence()
+    private val paletteLinkMetadataProvider = TranscriptUrlCardMetadataProvider()
+    private var paletteLinkJob: Job? = null
     private val paletteRoutineFence = CommandPaletteRoutineRequestFence()
     private var paletteRoutineJob: Job? = null
     private var openBotGeneration = 0L
@@ -1146,6 +1152,9 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
 
     fun closeBot() {
         if (mutableState.value.busy) return
+        resetPaletteMessageSearch()
+        resetPaletteFileSearch()
+        resetPaletteLinks()
         hiddenChatsMutationController.setScope(rosterSelectionAccountSlot, null)
         closeConversationOutline()
         rosterSelection.select(null)
@@ -1183,6 +1192,10 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     fun resetAccountScope() {
+        resetPaletteMessageSearch()
+        resetPaletteFileSearch()
+        resetPaletteLinks()
+        resetPaletteRoutines()
         hiddenChatsMutationController.reset()
         closeConversationOutline()
         rosterSelection.reset()
@@ -1581,6 +1594,84 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
                         paletteRoutines = CommandPaletteRoutineSnapshot(
                             status = CommandPaletteRoutineStatus.FAILED,
                             value = previous,
+                        ),
+                    )
+                }
+            }
+        }
+    }
+
+    fun resetPaletteLinks() {
+        paletteLinkJob?.cancel()
+        paletteLinkJob = null
+        paletteLinkFence.cancel()
+        paletteLinkMetadataProvider.reset()
+        mutableState.value = mutableState.value.copy(
+            paletteLinks = CommandPaletteLinkSnapshot(
+                status = CommandPaletteLinkStatus.IDLE,
+            ),
+        )
+    }
+
+    fun refreshPaletteLinks() {
+        paletteLinkJob?.cancel()
+        paletteLinkJob = null
+        paletteLinkFence.cancel()
+        paletteLinkMetadataProvider.reset()
+        val links = commandPaletteLinksFromConversation(
+            mutableState.value.messages.map(MobileChatMessage::text),
+        )
+        if (links.isEmpty()) {
+            mutableState.value = mutableState.value.copy(
+                paletteLinks = CommandPaletteLinkSnapshot(
+                    status = CommandPaletteLinkStatus.EMPTY,
+                ),
+            )
+            return
+        }
+        val token = paletteLinkFence.begin()
+        mutableState.value = mutableState.value.copy(
+            paletteLinks = CommandPaletteLinkSnapshot(
+                status = CommandPaletteLinkStatus.LOADING,
+                value = links,
+            ),
+        )
+        paletteLinkJob = viewModelScope.launch {
+            try {
+                val metadata = linkedMapOf<String, TranscriptLinkCardMetadata>()
+                for (link in links) {
+                    val snapshot = withContext(Dispatchers.IO) {
+                        paletteLinkMetadataProvider.load(link.url)
+                    }
+                    if (!paletteLinkFence.accepts(token)) return@launch
+                    if (snapshot.status == TranscriptLinkCardStatus.READY && snapshot.metadata != null) {
+                        metadata[link.url] = snapshot.metadata
+                        mutableState.value = mutableState.value.copy(
+                            paletteLinks = CommandPaletteLinkSnapshot(
+                                status = CommandPaletteLinkStatus.LOADING,
+                                value = links,
+                                metadata = metadata.toMap(),
+                            ),
+                        )
+                    }
+                }
+                if (!paletteLinkFence.accepts(token)) return@launch
+                mutableState.value = mutableState.value.copy(
+                    paletteLinks = CommandPaletteLinkSnapshot(
+                        status = CommandPaletteLinkStatus.READY,
+                        value = links,
+                        metadata = metadata.toMap(),
+                    ),
+                )
+            } catch (error: CancellationException) {
+                throw error
+            } catch (_: Throwable) {
+                if (paletteLinkFence.accepts(token)) {
+                    mutableState.value = mutableState.value.copy(
+                        paletteLinks = CommandPaletteLinkSnapshot(
+                            status = CommandPaletteLinkStatus.FAILED,
+                            value = links,
+                            metadata = mutableState.value.paletteLinks.metadata,
                         ),
                     )
                 }
@@ -2813,6 +2904,13 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
         paletteMessageSearchJob?.cancel()
         paletteMessageSearchJob = null
         paletteMessageFence.cancel()
+        paletteFileSearchJob?.cancel()
+        paletteFileSearchJob = null
+        paletteFileFence.cancel()
+        paletteLinkJob?.cancel()
+        paletteLinkJob = null
+        paletteLinkFence.cancel()
+        paletteLinkMetadataProvider.dispose()
         paletteRoutineJob?.cancel()
         paletteRoutineJob = null
         paletteRoutineFence.cancel()
