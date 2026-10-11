@@ -69,6 +69,11 @@ internal fun SectionLabelAndroid(text: String) {
 
 @Composable
 private fun MobileToolResultTranscriptCard(card: MobileToolResultCard) {
+    val terminal = projectTerminalOutputCardAndroid(card)
+    if (terminal != null) {
+        TerminalOutputView(terminal)
+        return
+    }
     val title = when (card.kind) {
         "file-edit" -> "Edited file"
         "file-write" -> "Wrote file"

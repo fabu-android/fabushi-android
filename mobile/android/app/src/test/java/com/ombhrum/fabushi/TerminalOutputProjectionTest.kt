@@ -7,6 +7,51 @@ import org.junit.Test
 
 class TerminalOutputProjectionTest {
     @Test
+    fun hostOwnedShellCardProjectsIntoReadOnlyTerminalSnapshot() {
+        assertEquals(
+            TerminalOutputSnapshot(
+                sessionId = "tool-7",
+                command = "cargo test",
+                cwd = "/repo",
+                output = "ok\n",
+                status = TerminalOutputStatus.RUNNING,
+                exitCode = null,
+            ),
+            projectTerminalOutputCardAndroid(
+                MobileToolResultCard(
+                    kind = "shell",
+                    toolCallId = "tool-7",
+                    status = "running",
+                    command = "cargo test",
+                    workingDirectory = "/repo",
+                    output = "ok\r\n",
+                    isStreaming = true,
+                ),
+            ),
+        )
+        assertNull(
+            projectTerminalOutputCardAndroid(
+                MobileToolResultCard(
+                    kind = "file-write",
+                    toolCallId = "tool-8",
+                    status = "success",
+                    command = "ignored",
+                ),
+            ),
+        )
+        assertNull(
+            projectTerminalOutputCardAndroid(
+                MobileToolResultCard(
+                    kind = "shell",
+                    toolCallId = "tool-9",
+                    status = "success",
+                    command = null,
+                ),
+            ),
+        )
+    }
+
+    @Test
     fun normalizesLegacyFieldVariantsAndStatusPriority() {
         assertEquals("a\nb\nc", normalizeTerminalOutputAndroid("a\r\nb\rc"))
         assertNull(projectTerminalOutputAndroid(null))

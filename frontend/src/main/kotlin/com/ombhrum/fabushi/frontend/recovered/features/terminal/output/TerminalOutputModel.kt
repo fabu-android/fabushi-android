@@ -105,3 +105,21 @@ internal fun projectTerminalOutputAndroid(value: Any?): TerminalOutputSnapshot? 
         exitCode = exitCode,
     )
 }
+
+internal fun projectTerminalOutputCardAndroid(card: MobileToolResultCard): TerminalOutputSnapshot? {
+    if (card.kind != "shell" || card.toolCallId.isBlank() || card.command.isNullOrBlank()) return null
+    val running =
+        card.isStreaming ||
+            card.status.equals("running", ignoreCase = true) ||
+            card.status.equals("background", ignoreCase = true)
+    return projectTerminalOutputAndroid(
+        mapOf(
+            "sessionId" to card.toolCallId,
+            "command" to card.command,
+            "cwd" to card.workingDirectory,
+            "output" to card.output.ifBlank { card.summary },
+            "status" to card.status.lowercase(),
+            "isRunning" to running,
+        ),
+    )
+}

@@ -12346,6 +12346,13 @@
             "normalizeTerminalOutput",
             "projectTerminalOutput"
           ]
+        },
+        {
+          "path": "frontend/src/recovered/features/terminal/output/view.tsx",
+          "blob_sha": "532d386bd5efbcb7162788e45df3dd6f227d7d8e",
+          "symbols": [
+            "TerminalOutputView"
+          ]
         }
       ],
       "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
@@ -12382,20 +12389,23 @@
       "android_disposition": "direct-port",
       "android_target": [
         "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/recovered/features/terminal/output/TerminalOutputModel.kt",
-        "mobile/android/app/src/test/java/com/ombhrum/fabushi/TerminalOutputProjectionTest.kt"
+        "mobile/android/app/src/test/java/com/ombhrum/fabushi/TerminalOutputProjectionTest.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/recovered/features/terminal/output/TerminalOutputView.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/features/bots/GrokBotComponents.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/production/canonical-agent-transcript.kt"
       ],
       "android_owner": "Pure Kotlin terminal output projector",
       "platform_delta": "none",
-      "implementation_status": "mapped",
-      "production_wiring": "2e6f7598 adds model/tests only; terminal output view production consumption is not yet wired.",
-      "unit_test": "TerminalOutputProjectionTest",
+      "implementation_status": "implemented",
+      "production_wiring": "Host/relay remains the only canonical tool-result owner. canonical-agent-transcript joins a shell result to the matching toolCallId, MobileToolResultCard is adapted into the already-ported TerminalOutputSnapshot, and MobileToolResultTranscriptCard now renders a native read-only TerminalOutputView with command/cwd/status, selectable monospaced output and polite live-region semantics while running. Compose exposes no shell execution, mutation, retry or completion ownership; malformed/non-shell cards fail closed to the existing generic tool-result presentation.",
+      "unit_test": "TerminalOutputProjectionTest covers legacy/current field normalization, running/error precedence, CRLF normalization, Host-owned MobileToolResultCard shell projection, canonical toolCallId session identity, and fail-closed non-shell/missing-command cards. Exact-head GitHub Actions are required before verification.",
       "contract_test": "recovered-runtime-models contract",
       "integration_test": "missing",
       "packaged_test": "required",
       "device_test": "required",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Keep mapped until native terminal view consumes this projector.",
+      "notes": "Implemented, not verified. Production consumption now exists; final exact-head Kotlin/Compose/lint plus packaged/device selectable-text/live-region evidence remain open.",
       "android_head_at_update": "2e6f7598ab3a73fcec2ab5be857e55ae52bad2ac"
     },
     {
