@@ -107,6 +107,30 @@ internal data class TranscriptMermaidDiagram(
     val edges: List<TranscriptMermaidEdge>,
 )
 
+internal data class TranscriptMermaidViewport(
+    val scale: Float = 1f,
+    val panX: Float = 0f,
+    val panY: Float = 0f,
+)
+
+internal fun fitTranscriptMermaidViewport(): TranscriptMermaidViewport = TranscriptMermaidViewport()
+
+internal fun applyTranscriptMermaidViewportTransform(
+    current: TranscriptMermaidViewport,
+    zoomChange: Float,
+    panXChange: Float,
+    panYChange: Float,
+): TranscriptMermaidViewport {
+    val safeZoom = zoomChange.takeIf { it.isFinite() && it > 0f } ?: 1f
+    val safePanX = panXChange.takeIf(Float::isFinite) ?: 0f
+    val safePanY = panYChange.takeIf(Float::isFinite) ?: 0f
+    return TranscriptMermaidViewport(
+        scale = (current.scale * safeZoom).coerceIn(0.75f, 3f),
+        panX = (current.panX + safePanX).coerceIn(-4096f, 4096f),
+        panY = (current.panY + safePanY).coerceIn(-4096f, 4096f),
+    )
+}
+
 private val transcriptMermaidHeader = Regex("""(?i)^(?:graph|flowchart)\s+(TD|TB|BT|LR|RL)\s*$""")
 private val transcriptMermaidNode = Regex(
     """^([A-Za-z_][A-Za-z0-9_-]*)(?:\[(.{1,120})]|\((.{1,120})\)|\{(.{1,120})})?$""",

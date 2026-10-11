@@ -87,6 +87,30 @@ class TranscriptRichContentProjectionTest {
     }
 
     @Test
+    fun mermaidViewportBoundsZoomPanAndFitState() {
+        val zoomed = applyTranscriptMermaidViewportTransform(
+            current = TranscriptMermaidViewport(),
+            zoomChange = 2f,
+            panXChange = 24f,
+            panYChange = -12f,
+        )
+        assertEquals(2f, zoomed.scale, 0.001f)
+        assertEquals(24f, zoomed.panX, 0.001f)
+        assertEquals(-12f, zoomed.panY, 0.001f)
+
+        val bounded = applyTranscriptMermaidViewportTransform(
+            current = zoomed,
+            zoomChange = 99f,
+            panXChange = Float.POSITIVE_INFINITY,
+            panYChange = 9_999f,
+        )
+        assertEquals(3f, bounded.scale, 0.001f)
+        assertEquals(24f, bounded.panX, 0.001f)
+        assertEquals(4_096f, bounded.panY, 0.001f)
+        assertEquals(TranscriptMermaidViewport(), fitTranscriptMermaidViewport())
+    }
+
+    @Test
     fun mathProjectionAllowsBoundedInertSubsetAndRejectsActiveExtensions() {
         val safe = projectTranscriptSafeMath("""\alpha + x \leq \infty""")
         assertTrue(safe.supported)

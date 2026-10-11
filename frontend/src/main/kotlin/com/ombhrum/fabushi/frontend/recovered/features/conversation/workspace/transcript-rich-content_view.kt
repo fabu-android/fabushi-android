@@ -3,6 +3,8 @@ package com.ombhrum.fabushi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
+import androidx.compose.foundation.gestures.rememberTransformableState
+import androidx.compose.foundation.gestures.transformable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.text.ClickableText
 import androidx.compose.foundation.layout.Arrangement
@@ -10,6 +12,8 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.weight
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
@@ -23,6 +27,8 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalClipboardManager
@@ -38,6 +44,8 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 
 /**
  * Native Compose consumer for the presentation-only rich transcript projection.
@@ -369,7 +377,7 @@ private fun MobileTranscriptMermaid(block: TranscriptRichBlock.Mermaid) {
         return
     }
 
-    val nodeLabels = diagram.nodes.associate { it.id to it.label }
+    var showViewer by remember(block.code) { mutableStateOf(false) }
     Column(
         Modifier
             .fillMaxWidth()
@@ -381,12 +389,39 @@ private fun MobileTranscriptMermaid(block: TranscriptRichBlock.Mermaid) {
             .padding(10.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        Text(
-            "Diagram · ${diagram.direction}",
-            color = GrokMobileMuted,
-            fontSize = 11.sp,
-            fontWeight = FontWeight.SemiBold,
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            Text(
+                "Diagram · ${diagram.direction}",
+                color = GrokMobileMuted,
+                fontSize = 11.sp,
+                fontWeight = FontWeight.SemiBold,
+            )
+            TextButton(
+                onClick = { showViewer = true },
+                modifier = Modifier.semantics { contentDescription = "Open diagram preview" },
+            ) { Text("Open", fontSize = 11.sp) }
+        }
+        MobileTranscriptMermaidDiagramBody(diagram)
+    }
+
+    if (showViewer) {
+        MobileTranscriptMermaidViewer(
+            diagram = diagram,
+            onDismiss = { showViewer = false },
         )
+    }
+}
+
+@Composable
+private fun MobileTranscriptMermaidDiagramBody(
+    diagram: TranscriptMermaidDiagram,
+    modifier: Modifier = Modifier,
+) {
+    val nodeLabels = diagram.nodes.associate { it.id to it.label }
+    Column(
+        modifier,
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
         if (diagram.edges.isEmpty()) {
             diagram.nodes.forEach { node ->
                 Text(
@@ -412,6 +447,88 @@ private fun MobileTranscriptMermaid(block: TranscriptRichBlock.Mermaid) {
                         .fillMaxWidth()
                         .background(Color.Black.copy(alpha = 0.045f), RoundedCornerShape(6.dp))
                         .padding(horizontal = 8.dp, vertical = 6.dp),
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun MobileTranscriptMermaidViewer(
+    diagram: TranscriptMermaidDiagram,
+    onDismiss: () -> Unit,
+) {
+    var viewport by remember(diagram) { mutableStateOf(fitTranscriptMermaidViewport()) }
+    val transformState = rememberTransformableState { zoomChange, panChange, _ ->
+        viewport = applyTranscriptMermaidViewportTransform(
+            current = viewport,
+            zoomChange = zoomChange,
+            panXChange = panChange.x,
+            panYChange = panChange.y,
+        )
+    }
+
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false),
+    ) {
+        Column(
+            Modifier
+                .fillMaxSize()
+                .background(Color(0xFFF7F7F7))
+                .padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Text("Diagram preview", color = GrokMobileInk, fontWeight = FontWeight.SemiBold)
+                TextButton(onClick = onDismiss) { Text("Close") }
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                TextButton(
+                    onClick = {
+                        viewport = applyTranscriptMermaidViewportTransform(
+                            viewport,
+                            zoomChange = 0.8f,
+                            panXChange = 0f,
+                            panYChange = 0f,
+                        )
+                    },
+                ) { Text("−") }
+                TextButton(onClick = { viewport = fitTranscriptMermaidViewport() }) { Text("Fit") }
+                TextButton(
+                    onClick = {
+                        viewport = applyTranscriptMermaidViewportTransform(
+                            viewport,
+                            zoomChange = 1.25f,
+                            panXChange = 0f,
+                            panYChange = 0f,
+                        )
+                    },
+                ) { Text("+") }
+            }
+            Box(
+                Modifier
+                    .fillMaxWidth()
+                    .weight(1f)
+                    .clipToBounds()
+                    .background(Color.White, RoundedCornerShape(10.dp))
+                    .transformable(transformState)
+                    .semantics {
+                        contentDescription =
+                            "Interactive Mermaid preview. Pinch to zoom and drag to pan."
+                    }
+                    .padding(14.dp),
+            ) {
+                MobileTranscriptMermaidDiagramBody(
+                    diagram = diagram,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .graphicsLayer {
+                            scaleX = viewport.scale
+                            scaleY = viewport.scale
+                            translationX = viewport.panX
+                            translationY = viewport.panY
+                        },
                 )
             }
         }
