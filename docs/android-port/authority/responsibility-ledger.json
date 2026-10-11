@@ -5,9 +5,9 @@
     "desktop_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
     "android_repository": "fabu-android/fabushi-android",
     "android_pr": 3,
-    "android_head_at_update": "680be4eeeefc8870cd7885685588dd53b6d568df",
+    "android_head_at_update": "ddec852eb53476a6c498af5d311914d0659e91af",
     "status": "incomplete",
-    "note": "Incrementally rebased to Desktop main 371b72f1cd20de03dc4dff9a15ed761054968093. Durable Android Agent send acknowledgement is Host-owned and production-wired. Transcript widget respond/dismiss now uses typed Kotlin/Coordinator/Host routes with canonical respondedValue/widgetDismissed settlement, hidden continuation dispatch, rollback and presentation-generation fencing. ClientSideToolV2 relay is durable across process reopen and projects supported 7/15/38 file-edit/file-write/shell cards; Android joins typed results only onto matching canonical tool-call rows and keeps unmatched updates out of the transcript. Exact-head GitHub Actions/package/device verification remains pending and full source closure remains incomplete. Deterministic workspace cursor now has explicit Agent avatar, Agent header and composer responsibilities with current Android gaps recorded separately from unrelated human-conversation surfaces."
+    "note": "Incrementally rebased to Desktop main 371b72f1cd20de03dc4dff9a15ed761054968093. Durable Android Agent send acknowledgement is Host-owned and production-wired. Transcript widget respond/dismiss now uses typed Kotlin/Coordinator/Host routes with canonical respondedValue/widgetDismissed settlement, hidden continuation dispatch, rollback and presentation-generation fencing. ClientSideToolV2 relay is durable across process reopen and projects supported 7/15/38 file-edit/file-write/shell cards; Android joins typed results only onto matching canonical tool-call rows and keeps unmatched updates out of the transcript. Exact-head GitHub Actions/package/device verification remains pending and full source closure remains incomplete. Deterministic workspace cursor now has explicit Agent avatar, Agent header and composer responsibilities with current Android gaps recorded separately from unrelated human-conversation surfaces. Deterministic cursor now explicitly maps conversation outline provider/view as one read-only projection responsibility; production outline UI remains open."
   },
   "responsibilities": [
     {
@@ -8791,6 +8791,81 @@
       "artifact": null,
       "verification_status": "not-verified",
       "notes": "Desktop drag/drop/clipboard mechanics are adapted to Android system picker/share/paste APIs rather than mechanically copied; user capability must remain."
+    },
+    {
+      "responsibility_id": "CONVERSATION-OUTLINE-ANDROID-001",
+      "domain": "conversation-outline",
+      "desktop_sources": [
+        {
+          "path": "frontend/src/recovered/features/conversation/workspace/conversation-outline-provider.ts",
+          "blob_sha": "b9c7cb2cb34fb1850bfe42bf554e22e5b8091bec",
+          "symbols": [
+            "createConversationOutlineProvider",
+            "ConversationOutlineSnapshot"
+          ]
+        },
+        {
+          "path": "frontend/src/recovered/features/conversation/workspace/conversation-outline-view.tsx",
+          "blob_sha": "80c8eb96334ff0cb2c520f81e071f1f8a2859821",
+          "symbols": [
+            "ConversationOutlinePanel",
+            "OutlineTabs",
+            "OutlineItemRow"
+          ]
+        }
+      ],
+      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "responsibility": "Provide account+Agent scoped full-conversation outline snapshots with retain/refcount lifecycle, cancellable single-flight refresh, transport reconnect recovery, optional polling for running subagents, generation fencing, append/update reconciliation, and a native panel with subagent tabs, expandable typed rows and close/accessibility behavior.",
+      "source_owner": "Canonical transcript/runtime owns conversation items; outline provider owns only retained/read-only projection lifecycle and panel-local selection/expansion.",
+      "direct_callers": [
+        "conversation workspace full-conversation action"
+      ],
+      "downstream_dependencies": [
+        "canonical Agent transcript",
+        "Coordinator event transport",
+        "subagent lifecycle",
+        "native panel/navigation"
+      ],
+      "state_owner": "Coordinator/transcript remain canonical; outline projection owns ephemeral retain/request/panel state only.",
+      "persistent_state": [
+        "none; process reopen reloads canonical transcript/subagent state"
+      ],
+      "protocol_wire_contract": [
+        "getConversationOutline({id}) array reply",
+        "outline snapshot/appended/updated events",
+        "transport connected/down",
+        "accountKey+agentId generation fencing"
+      ],
+      "visible_effect": "User can open Full conversation, switch Agent/subagent tabs, see user/thinking/assistant/send-message/tool-call rows, expand details and observe running/error states.",
+      "failure_behavior": [
+        "malformed snapshot fails closed",
+        "transport down surfaces error",
+        "stale/aborted request cannot overwrite newer account/Agent scope"
+      ],
+      "cancellation_behavior": "release/Account switch/reset/dispose aborts in-flight request and polling; late results are fenced.",
+      "retry_semantics": "retained reconnect and optional running-subagent polling may refresh read-only projection; no side-effect retry.",
+      "idempotency_semantics": "items reconcile by canonical item id; appended duplicate becomes replacement instead of duplicate row.",
+      "process_death_recovery": "reload from canonical transcript/subagent owners; no panel-local state treated as canonical.",
+      "account_fencing": "scope key is account+Agent and generation increments on account/reset/dispose.",
+      "security_boundary": "outline is read-only and cannot grant execution capability.",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/production/canonical-agent-transcript.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/recovered/features/conversation/workspace/transcript_view.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/presentation/MobileBotViewModel.kt"
+      ],
+      "android_owner": "Planned native read-only outline projection over existing canonical transcript/Coordinator; no second transcript owner.",
+      "platform_delta": "Compose modal/panel and coroutine cancellation replace DOM movable panel/AbortController; lifecycle semantics remain.",
+      "implementation_status": "mapped",
+      "production_wiring": "Canonical transcript and Agent/subagent mechanisms exist, but no dedicated retained outline provider/panel, outline family subscription, subagent tabs or 2s running-subagent refresh is production-wired yet.",
+      "unit_test": "missing focused outline parsing/retain/generation/duplicate/update tests.",
+      "contract_test": "missing typed Kotlin Coordinator outline projection contract.",
+      "integration_test": "missing exact-head open/switch/reconnect/dispose journey.",
+      "packaged_test": "required final minified package",
+      "device_test": "required phone/tablet accessibility/back/navigation acceptance",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Do not treat the ordinary transcript list as outline parity; Desktop has a separate retained read-only projection lifecycle."
     }
   ],
   "traceability": {
