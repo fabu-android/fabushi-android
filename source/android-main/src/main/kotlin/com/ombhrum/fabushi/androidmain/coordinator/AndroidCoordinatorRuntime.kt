@@ -1120,9 +1120,15 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
             "completed" -> {
                 agentRosterMutationOwner.settle(operation.operationId)
                 val result = outcome.opt("result")
-                // The Host settlement is canonical. Projection publication is best-effort:
-                // a failed event transport must never replay an already committed side effect.
-                runCatching { publishAgentRosterMutationProjection(mutation, result) }
+                // The Host settlement is canonical. Projection publication is best-effort and
+                // must be fenced again after the synchronous Host call: account/session identity
+                // may have changed while the old operation was in flight. Settling the old
+                // journal row is correct, but publishing its roster payload into the new account
+                // would violate canonical account ownership.
+                val currentFence = runCatching { currentAgentRosterAccountFence() }.getOrNull()
+                if (agentRosterMutationProjectionMatchesCurrentFence(operation.accountFence, currentFence)) {
+                    runCatching { publishAgentRosterMutationProjection(mutation, result) }
+                }
                 result
             }
             "rejected" -> {

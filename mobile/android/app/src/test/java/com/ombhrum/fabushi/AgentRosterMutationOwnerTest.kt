@@ -2,6 +2,7 @@ package com.ombhrum.fabushi
 
 import com.ombhrum.fabushi.androidmain.coordinator.AgentRosterMutationOwner
 import com.ombhrum.fabushi.androidmain.coordinator.AgentRosterMutationStore
+import com.ombhrum.fabushi.androidmain.coordinator.agentRosterMutationProjectionMatchesCurrentFence
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -38,6 +39,34 @@ class AgentRosterMutationOwnerTest {
 
         reopened.settle(pending.operationId)
         assertTrue(AgentRosterMutationOwner(store).pendingFor("session:account-a").isEmpty())
+    }
+
+    @Test
+    fun lateSettlementProjectionIsFencedToTheOriginalAccountSession() {
+        assertTrue(
+            agentRosterMutationProjectionMatchesCurrentFence(
+                "session:account-a:epoch-7",
+                "session:account-a:epoch-7",
+            ),
+        )
+        assertTrue(
+            !agentRosterMutationProjectionMatchesCurrentFence(
+                "session:account-a:epoch-7",
+                "session:account-a:epoch-8",
+            ),
+        )
+        assertTrue(
+            !agentRosterMutationProjectionMatchesCurrentFence(
+                "session:account-a:epoch-7",
+                "session:account-b:epoch-1",
+            ),
+        )
+        assertTrue(
+            !agentRosterMutationProjectionMatchesCurrentFence(
+                "session:account-a:epoch-7",
+                null,
+            ),
+        )
     }
 
     @Test

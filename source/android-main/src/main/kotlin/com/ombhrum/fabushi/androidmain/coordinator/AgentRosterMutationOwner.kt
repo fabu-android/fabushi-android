@@ -127,3 +127,10 @@ internal class AgentRosterMutationOwner(
         const val MAX_PENDING_OPERATIONS = 64
     }
 }
+
+
+internal fun agentRosterMutationProjectionMatchesCurrentFence(
+    operationAccountFence: String,
+    currentAccountFence: String?,
+): Boolean =
+    currentAccountFence != null && operationAccountFence == currentAccountFence
