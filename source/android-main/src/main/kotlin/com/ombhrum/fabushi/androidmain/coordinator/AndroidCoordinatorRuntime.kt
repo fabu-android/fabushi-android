@@ -445,14 +445,12 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
                 AccountRosterLoadState.ERROR
             }
         }.onFailure { error ->
-            val message = error.message.orEmpty().lowercase()
             rosterLoadState = AccountRosterLoadState.ERROR
-            rosterFailureTransportKind = when {
-                "dns" in message -> "dns"
-                "network" in message || "connect" in message || "timeout" in message -> "network"
-                else -> null
-            }
-            rosterFailureCode = "roster-load-failed"
+            val classification = classifyRosterAccessFailure(
+                error.message ?: error::class.java.simpleName,
+            )
+            rosterFailureCode = classification.code
+            rosterFailureTransportKind = classification.transportKind
             failures += "roster:" + (error.message ?: error::class.java.simpleName)
         }
 

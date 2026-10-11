@@ -163,6 +163,54 @@ class AccountAccessProjectionOwnerTest {
         assertEquals(AccountPaymentState.OUTCOME_UNKNOWN, p.paymentState); assertFalse(p.complete)
     }
 
+    @Test fun rosterFailureClassificationPreservesDesktopPrivacyAndTransportSemantics() {
+        val privacyCode = classifyRosterAccessFailure(
+            "Host failed: CLOUD_AGENT_STORAGE_DISABLED",
+        )
+        assertEquals("CLOUD_AGENT_STORAGE_DISABLED", privacyCode.code)
+        assertNull(privacyCode.transportKind)
+
+        val noStorage = classifyRosterAccessFailure("transport kind=no_storage")
+        assertEquals("CLOUD_AGENT_STORAGE_DISABLED", noStorage.code)
+        assertEquals("no_storage", noStorage.transportKind)
+
+        val dns = classifyRosterAccessFailure("DNS resolution failed")
+        assertEquals("roster-load-failed", dns.code)
+        assertEquals("dns", dns.transportKind)
+
+        val timeout = classifyRosterAccessFailure("network timeout")
+        assertEquals("roster-load-failed", timeout.code)
+        assertEquals("network", timeout.transportKind)
+
+        val unknown = classifyRosterAccessFailure("host unavailable")
+        assertEquals("roster-load-failed", unknown.code)
+        assertNull(unknown.transportKind)
+    }
+
+    @Test fun privacyFailureSuppressesFalseFirstBoxWait() {
+        val owner = AccountAccessProjectionOwner(MemoryStore())
+        owner.observeAuth(true, "a")
+        val byCode = owner.settle(
+            owner.beginRefresh(),
+            AccountAccessFacts(
+                loggedIn = true,
+                rosterLoadState = AccountRosterLoadState.ERROR,
+                rosterFailureCode = "CLOUD_AGENT_STORAGE_DISABLED",
+            ),
+        )
+        assertFalse(byCode.isAwaitingFirstBox)
+
+        val byTransport = owner.settle(
+            owner.beginRefresh(),
+            AccountAccessFacts(
+                loggedIn = true,
+                rosterLoadState = AccountRosterLoadState.ERROR,
+                rosterFailureTransportKind = "no_storage",
+            ),
+        )
+        assertFalse(byTransport.isAwaitingFirstBox)
+    }
+
     @Test fun entitlementRevokeSupersedesGrant() {
         val owner = AccountAccessProjectionOwner(MemoryStore()); owner.observeAuth(true, "a")
         owner.settle(owner.beginRefresh(), AccountAccessFacts(true, entitlementState=AccountEntitlementState.GRANTED))

@@ -27,6 +27,37 @@ internal class SharedPreferencesAccountAccessEpochStore(context: Context) : Acco
 }
 
 internal data class AccountAccessRefreshToken(val generation: Long, val accountEpoch: Long)
+internal data class RosterAccessFailureClassification(
+    val code: String,
+    val transportKind: String?,
+)
+
+internal fun classifyRosterAccessFailure(message: String): RosterAccessFailureClassification {
+    val normalized = message.trim()
+    val lower = normalized.lowercase()
+    val privacyCode = "CLOUD_AGENT_STORAGE_DISABLED" in normalized.uppercase()
+    val noStorage = "no_storage" in lower || "no storage" in lower
+    return when {
+        privacyCode || noStorage -> RosterAccessFailureClassification(
+            code = "CLOUD_AGENT_STORAGE_DISABLED",
+            transportKind = if (noStorage) "no_storage" else null,
+        )
+        "dns" in lower -> RosterAccessFailureClassification(
+            code = "roster-load-failed",
+            transportKind = "dns",
+        )
+        "network" in lower || "connect" in lower || "timeout" in lower ->
+            RosterAccessFailureClassification(
+                code = "roster-load-failed",
+                transportKind = "network",
+            )
+        else -> RosterAccessFailureClassification(
+            code = "roster-load-failed",
+            transportKind = null,
+        )
+    }
+}
+
 internal data class AccountAccessFacts(
     val loggedIn: Boolean,
     val sandAccessState: AccountAccessState = AccountAccessState.UNKNOWN,
@@ -97,9 +128,13 @@ internal class AccountAccessProjectionOwner(private val epochStore: AccountAcces
 
         val connectivityFailure =
             facts.rosterFailureTransportKind == "network" || facts.rosterFailureTransportKind == "dns"
+        val privacyFailure =
+            facts.rosterFailureCode == "CLOUD_AGENT_STORAGE_DISABLED" ||
+                facts.rosterFailureTransportKind == "no_storage"
         val firstBoxSuppressed =
             facts.isShowingRestoredRoster ||
                 facts.rosterFailureCode == "sand-access-blocked" ||
+                privacyFailure ||
                 connectivityFailure
         val isLoading =
             facts.rosterLoadState == AccountRosterLoadState.LOADING || facts.isRosterFetching
