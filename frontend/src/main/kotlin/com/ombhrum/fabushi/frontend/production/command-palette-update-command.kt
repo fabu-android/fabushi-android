@@ -31,6 +31,13 @@ internal fun commandPaletteUpdateCommand(
             label = "Installing Update…"
             activate = openUpdates
         }
+        AndroidUpdatePhase.OUTCOME_UNKNOWN -> {
+            label = "Verify and Continue Update…"
+            // OUTCOME_UNKNOWN means the prior installer side effect cannot be proven.
+            // Only an explicit user activation may enter the updater's re-verification path;
+            // never convert this state into an automatic check/replay.
+            activate = install
+        }
         AndroidUpdatePhase.UP_TO_DATE,
         AndroidUpdatePhase.ERROR -> {
             label = "Check for Updates"
