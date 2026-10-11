@@ -570,7 +570,15 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
                 detail = failures.takeIf { it.isNotEmpty() }?.joinToString("; ")?.take(240),
             ),
         )
-        publishRootConnectionProjection(rootConnectionOwner.observeReadiness(settled))
+        rootConnectionOwner.observeReadiness(settled)
+        if (
+            settled.rosterFailureTransportKind == "network" ||
+            settled.rosterFailureTransportKind == "dns"
+        ) {
+            observeRootConnectionTransport(RootConnectionTransportState.DOWN)
+        } else {
+            publishRootConnectionProjection()
+        }
         return settled
     }
 
@@ -635,14 +643,21 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
             try {
                 val access = accountAccessProjection()
                 val code = access.rosterFailureCode
+                val replacementTransportDown =
+                    access.rosterFailureTransportKind == "network" ||
+                        access.rosterFailureTransportKind == "dns" ||
+                        rootConnectionOwner.currentProjection().transport !=
+                            RootConnectionTransportState.CONNECTED
                 if (code == null) {
                     rootConnectionOwner.completeRetrySuccess(token)
                 } else {
+                    if (replacementTransportDown) {
+                        observeRootConnectionTransport(RootConnectionTransportState.DOWN)
+                    }
                     rootConnectionOwner.completeRetryFailure(
                         token = token,
                         code = code,
-                        transportDown = rootConnectionOwner.currentProjection().transport !=
-                            RootConnectionTransportState.CONNECTED,
+                        transportDown = replacementTransportDown,
                     )
                 }
             } catch (error: Throwable) {
