@@ -435,4 +435,63 @@ class ComputerRebuildStateOwnerTest {
         assertEquals(16, owner.snapshot(130).migrationPhases.size)
     }
 
+
+    @Test
+    fun queuedUpdateSurvivesProcessDeathWithoutBecomingOutcomeUnknown() {
+        val store = MemoryStore()
+        val owner = ComputerRebuildStateOwner(store, processGeneration = 140)
+        owner.observeAccount(140)
+        owner.observeBox(
+            accountEpoch = 140,
+            boxId = "forever-box",
+            phase = "running",
+            imageUpdateAvailable = true,
+        )
+        val queued = owner.queueUpdateWhenIdle(140)
+        assertTrue(queued.queuedWhenIdle)
+        assertFalse(queued.pending)
+        assertFalse(queued.outcomeUnknown)
+
+        val reopened = ComputerRebuildStateOwner(store, processGeneration = 141)
+        val restored = reopened.snapshot(140)
+        assertTrue(restored.queuedWhenIdle)
+        assertFalse(restored.pending)
+        assertFalse(restored.outcomeUnknown)
+
+        val reserved = reopened.reserveQueuedRequest(140, "queued-request-140")
+        assertFalse(reserved.queuedWhenIdle)
+        assertTrue(reserved.pending)
+        assertEquals("queued-request-140", reserved.requestId)
+
+        val ambiguous = reopened.markRequestOutcomeUnknown(140, "queued-request-140")
+        assertTrue(ambiguous.outcomeUnknown)
+        assertThrows(IllegalArgumentException::class.java) {
+            reopened.reserveRequest(140, "must-not-replay")
+        }
+    }
+
+    @Test
+    fun queuedUpdateIsAccountFencedCancellableAndClearedWhenUpdateDisappears() {
+        val owner = ComputerRebuildStateOwner(MemoryStore())
+        owner.observeAccount(150)
+        owner.observeBox(150, "forever-box", "running", imageUpdateAvailable = true)
+        assertTrue(owner.queueUpdateWhenIdle(150).queuedWhenIdle)
+        assertFalse(owner.cancelQueuedUpdate(150).queuedWhenIdle)
+
+        owner.queueUpdateWhenIdle(150)
+        val unavailable = owner.observeBox(
+            accountEpoch = 150,
+            boxId = "forever-box",
+            phase = "running",
+            imageUpdateAvailable = false,
+        )
+        assertFalse(unavailable.queuedWhenIdle)
+
+        owner.observeAccount(151)
+        assertFalse(owner.snapshot(151).queuedWhenIdle)
+        assertThrows(IllegalArgumentException::class.java) {
+            owner.queueUpdateWhenIdle(150)
+        }
+    }
+
 }

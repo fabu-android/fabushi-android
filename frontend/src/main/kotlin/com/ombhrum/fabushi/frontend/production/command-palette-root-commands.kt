@@ -17,14 +17,13 @@ internal data class CommandPaletteComputerUpdateSnapshot(
     val pending: Boolean,
     val outcomeUnknown: Boolean,
     val rebuildKind: String?,
+    val queuedWhenIdle: Boolean = false,
 )
 
 /**
  * Android exposes the computer update action only when the durable Coordinator snapshot proves
- * that an image update exists and no rebuild episode is active. Desktop also offers a durable
- * "update when idle" path while agents are working. Android does not yet have that queue owner, so
- * the working-agent case deliberately fails closed instead of creating a process-local queue that
- * could be lost and replay a side effect after process death.
+ * that an image update exists and no rebuild episode or queued intent is active. Working Agents
+ * project the Desktop busy action; the actual wait-until-idle decision remains Coordinator-owned.
  */
 internal fun commandPaletteComputerUpdateAction(
     activeAgentIsGroup: Boolean?,
@@ -33,9 +32,17 @@ internal fun commandPaletteComputerUpdateAction(
 ): CommandPaletteComputerUpdateAction? {
     if (activeAgentIsGroup == null || activeAgentIsGroup) return null
     if (snapshot == null || snapshot.imageUpdateAvailable != true) return null
-    if (snapshot.pending || snapshot.outcomeUnknown || snapshot.rebuildKind != null) return null
-    if (workingAgentCount > 0) return null
-    return CommandPaletteComputerUpdateAction.READY
+    if (
+        snapshot.pending ||
+        snapshot.outcomeUnknown ||
+        snapshot.rebuildKind != null ||
+        snapshot.queuedWhenIdle
+    ) return null
+    return if (workingAgentCount > 0) {
+        CommandPaletteComputerUpdateAction.BUSY_OVERRIDE
+    } else {
+        CommandPaletteComputerUpdateAction.READY
+    }
 }
 
 internal fun commandPaletteRootCommands(

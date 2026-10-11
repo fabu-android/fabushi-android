@@ -114,6 +114,7 @@ data class MobileComputerRebuildUiState(
     val pending: Boolean = false,
     val outcomeUnknown: Boolean = false,
     val kind: String? = null,
+    val queuedWhenIdle: Boolean = false,
     val loading: Boolean = false,
     val error: String? = null,
 )
@@ -126,6 +127,7 @@ internal fun projectMobileComputerRebuildStatus(value: JSONObject): MobileComput
         kind = value.opt("kind").let { raw ->
             if (raw is String) raw.trim().takeIf(String::isNotEmpty) else null
         },
+        queuedWhenIdle = value.optBoolean("queuedWhenIdle", false),
     )
 
 data class MobileBotUiState(
@@ -224,14 +226,17 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     /**
-     * Dispatches only the fail-closed idle update path. The Coordinator owns durable request
-     * identity/outcome-unknown recovery and this ViewModel never retries a possibly-started update.
+     * Requests either an immediate idle update or a durable wait-until-idle intent. The
+     * Coordinator re-reads canonical Host roster truth and owns request identity/outcome-unknown
+     * recovery; this ViewModel never retries a possibly-started update.
      */
-    fun requestComputerUpdate() {
+    fun requestComputerUpdate(
+        action: CommandPaletteComputerUpdateAction = CommandPaletteComputerUpdateAction.READY,
+    ) {
         val current = mutableState.value
         val active = current.activeBot ?: return
         val snapshot = current.computerRebuild
-        val action = commandPaletteComputerUpdateAction(
+        val projectedAction = commandPaletteComputerUpdateAction(
             activeAgentIsGroup = active.isGroup,
             workingAgentCount = current.bots.count { it.isRunning } + if (current.busy) 1 else 0,
             snapshot = CommandPaletteComputerUpdateSnapshot(
@@ -239,9 +244,10 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
                 pending = snapshot.pending,
                 outcomeUnknown = snapshot.outcomeUnknown,
                 rebuildKind = snapshot.kind,
+                queuedWhenIdle = snapshot.queuedWhenIdle,
             ),
         )
-        if (action != CommandPaletteComputerUpdateAction.READY || snapshot.loading) return
+        if (projectedAction != action || snapshot.loading) return
 
         val token = ++computerRebuildGeneration
         val expectedAgentId = active.id
@@ -282,19 +288,31 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
                     pending = latest.pending,
                     outcomeUnknown = latest.outcomeUnknown,
                     rebuildKind = latest.kind,
+                    queuedWhenIdle = latest.queuedWhenIdle,
                 ),
             )
-            if (latestAction != CommandPaletteComputerUpdateAction.READY) {
+            val actionStillAllowed = when (action) {
+                CommandPaletteComputerUpdateAction.READY ->
+                    latestAction == CommandPaletteComputerUpdateAction.READY
+                CommandPaletteComputerUpdateAction.BUSY_OVERRIDE ->
+                    latestAction == CommandPaletteComputerUpdateAction.BUSY_OVERRIDE ||
+                        latestAction == CommandPaletteComputerUpdateAction.READY
+            }
+            if (!actionStillAllowed) {
                 commitState(mutableState.value.copy(computerRebuild = latest.copy(loading = false)))
                 return@launch
             }
 
             val request = withContext(Dispatchers.IO) {
                 runCatching {
-                    coordinator.computerRebuildRequest(
-                        preserveData = true,
-                        forceRecreate = false,
-                    )
+                    if (action == CommandPaletteComputerUpdateAction.BUSY_OVERRIDE) {
+                        coordinator.computerRebuildQueueWhenIdle()
+                    } else {
+                        coordinator.computerRebuildRequest(
+                            preserveData = true,
+                            forceRecreate = false,
+                        )
+                    }
                 }
             }
             if (token != computerRebuildGeneration) return@launch

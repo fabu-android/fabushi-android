@@ -170,6 +170,10 @@ interface AndroidCoordinatorPort {
         preserveData: Boolean = true,
         forceRecreate: Boolean = false,
     ): JSONObject = error("computer_rebuild_request_not_implemented")
+    fun computerRebuildQueueWhenIdle(): JSONObject =
+        error("computer_rebuild_queue_when_idle_not_implemented")
+    fun computerRebuildCancelQueuedUpdate(): JSONObject =
+        error("computer_rebuild_cancel_queued_update_not_implemented")
     fun computerRebuildStatus(): JSONObject =
         error("computer_rebuild_status_not_implemented")
     fun webAuthnRegisterProvider(): JSONObject

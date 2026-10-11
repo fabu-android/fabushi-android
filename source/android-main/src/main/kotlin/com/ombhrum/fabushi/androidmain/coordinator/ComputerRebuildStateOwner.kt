@@ -19,6 +19,7 @@ internal data class ComputerRebuildSnapshot(
     val kind: ComputerRebuildKind? = null,
     val operationId: String? = null,
     val requestId: String? = null,
+    val queuedWhenIdle: Boolean = false,
     val migrationOffsetKey: String = "",
     val source: ComputerRebuildSource? = null,
     val lockBoxId: String? = null,
@@ -57,6 +58,7 @@ internal class SharedPreferencesComputerRebuildStateStore(context: Context) : Co
                 kind = value.optString("kind").takeIf(String::isNotBlank)?.let { ComputerRebuildKind.valueOf(it) },
                 operationId = value.optString("operationId").takeIf(String::isNotBlank),
                 requestId = value.optString("requestId").takeIf(String::isNotBlank),
+                queuedWhenIdle = value.optBoolean("queuedWhenIdle", false),
                 migrationOffsetKey = value.optString("migrationOffsetKey"),
                 source = value.optString("source").takeIf(String::isNotBlank)?.let { ComputerRebuildSource.valueOf(it) },
                 lockBoxId = value.optString("lockBoxId").takeIf(String::isNotBlank),
@@ -99,6 +101,7 @@ internal class SharedPreferencesComputerRebuildStateStore(context: Context) : Co
             .put("kind", snapshot.kind?.name ?: "")
             .put("operationId", snapshot.operationId ?: "")
             .put("requestId", snapshot.requestId ?: "")
+            .put("queuedWhenIdle", snapshot.queuedWhenIdle)
             .put("migrationOffsetKey", snapshot.migrationOffsetKey)
             .put("source", snapshot.source?.name ?: "")
             .put("lockBoxId", snapshot.lockBoxId ?: "")
@@ -170,11 +173,62 @@ internal class ComputerRebuildStateOwner(
             require(current.requestId == normalized) { "computer rebuild request already active" }
             return current
         }
-        require(current.kind == null && !current.pending && !current.outcomeUnknown) {
+        require(current.kind == null && !current.pending && !current.outcomeUnknown && !current.queuedWhenIdle) {
             "computer rebuild episode is not settled"
         }
         return persist(
             current.copy(
+                requestId = normalized,
+                migrationOffsetKey = "",
+                pending = true,
+                acknowledged = false,
+                outcomeUnknown = false,
+                lastResolution = null,
+            ),
+        )
+    }
+
+    @Synchronized
+    fun queueUpdateWhenIdle(accountEpoch: Long): ComputerRebuildSnapshot {
+        requireCurrentAccount(accountEpoch)
+        val current = requireSnapshot(accountEpoch)
+        require(current.imageUpdateAvailable == true) { "computer update is not available" }
+        require(current.kind == null && !current.pending && !current.outcomeUnknown && current.requestId == null) {
+            "computer rebuild episode is not settled"
+        }
+        if (current.queuedWhenIdle) return current
+        return persist(
+            current.copy(
+                queuedWhenIdle = true,
+                lastResolution = null,
+            ),
+        )
+    }
+
+    @Synchronized
+    fun cancelQueuedUpdate(accountEpoch: Long): ComputerRebuildSnapshot {
+        requireCurrentAccount(accountEpoch)
+        val current = requireSnapshot(accountEpoch)
+        if (!current.queuedWhenIdle) return current
+        return persist(current.copy(queuedWhenIdle = false))
+    }
+
+    @Synchronized
+    fun reserveQueuedRequest(accountEpoch: Long, requestId: String): ComputerRebuildSnapshot {
+        requireCurrentAccount(accountEpoch)
+        val normalized = requestId.trim()
+        require(normalized.isNotEmpty() && normalized.length <= 240 && normalized.none(Char::isISOControl)) {
+            "computer rebuild request identity is invalid"
+        }
+        val current = requireSnapshot(accountEpoch)
+        require(current.queuedWhenIdle) { "computer update is not queued" }
+        require(current.imageUpdateAvailable == true) { "computer update is not available" }
+        require(current.kind == null && !current.pending && !current.outcomeUnknown && current.requestId == null) {
+            "computer rebuild episode is not settled"
+        }
+        return persist(
+            current.copy(
+                queuedWhenIdle = false,
                 requestId = normalized,
                 migrationOffsetKey = "",
                 pending = true,
@@ -369,6 +423,9 @@ internal class ComputerRebuildStateOwner(
             pullPercent = if (phase == "pulling") pullPercent else null,
             lastHealthyBoxId = if (healthy) normalizedBox else current.lastHealthyBoxId,
         )
+        if (next.queuedWhenIdle && next.imageUpdateAvailable == false) {
+            next = next.copy(queuedWhenIdle = false)
+        }
         if (
             next.kind == null &&
             !next.pending &&
@@ -490,6 +547,7 @@ internal class ComputerRebuildStateOwner(
             kind = null,
             operationId = null,
             requestId = null,
+            queuedWhenIdle = false,
             migrationOffsetKey = "",
             source = null,
             lockBoxId = null,

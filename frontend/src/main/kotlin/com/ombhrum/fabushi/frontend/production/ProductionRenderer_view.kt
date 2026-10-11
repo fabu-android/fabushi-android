@@ -57,7 +57,9 @@ internal fun ProductionRenderer(
                 var commandPaletteOpen by remember { mutableStateOf(false) }
                 var commandPaletteAgentFilter by remember { mutableStateOf<String?>(null) }
                 var showAbout by remember { mutableStateOf(false) }
-                var showComputerUpdateConfirm by remember { mutableStateOf(false) }
+                var computerUpdateConfirmAction by remember {
+                    mutableStateOf<CommandPaletteComputerUpdateAction?>(null)
+                }
                 var deepLinkInfo by remember { mutableStateOf<DeepLinkInfo?>(null) }
 
                 BackHandler(enabled = rendererRoute != RendererRoute.GROK_HOME && state.loggedIn) {
@@ -83,29 +85,37 @@ internal fun ProductionRenderer(
                         onClose = { showAbout = false },
                     )
                 }
-                if (showComputerUpdateConfirm) {
+                computerUpdateConfirmAction?.let { action ->
+                    val busy = action == CommandPaletteComputerUpdateAction.BUSY_OVERRIDE
                     AlertDialog(
-                        onDismissRequest = { showComputerUpdateConfirm = false },
-                        title = { Text("Update Fabushi's Computer?") },
+                        onDismissRequest = { computerUpdateConfirmAction = null },
+                        title = {
+                            Text(if (busy) "An agent is working" else "Update Fabushi's Computer?")
+                        },
                         text = {
                             Text(
-                                "This updates the shared computer your agents run on to the latest version. " +
-                                    "Files and logins are kept. Android will not retry an update whose outcome is unknown.",
+                                if (busy) {
+                                    "Waiting lets current Agent turns finish. Fabushi will update the shared computer " +
+                                        "when the canonical Agent roster is idle. Files and logins are kept."
+                                } else {
+                                    "This updates the shared computer your agents run on to the latest version. " +
+                                        "Files and logins are kept. Android will not retry an update whose outcome is unknown."
+                                },
                             )
                         },
                         confirmButton = {
                             TextButton(
                                 onClick = {
-                                    showComputerUpdateConfirm = false
-                                    botModel.requestComputerUpdate()
+                                    computerUpdateConfirmAction = null
+                                    botModel.requestComputerUpdate(action)
                                 },
                             ) {
-                                Text("Update Fabushi's Computer")
+                                Text(if (busy) "Update when done" else "Update Fabushi's Computer")
                             }
                         },
                         dismissButton = {
-                            TextButton(onClick = { showComputerUpdateConfirm = false }) {
-                                Text("Not now")
+                            TextButton(onClick = { computerUpdateConfirmAction = null }) {
+                                Text(if (busy) "Cancel" else "Not now")
                             }
                         },
                     )
@@ -275,6 +285,7 @@ internal fun ProductionRenderer(
                                 pending = it.pending,
                                 outcomeUnknown = it.outcomeUnknown,
                                 rebuildKind = it.kind,
+                                queuedWhenIdle = it.queuedWhenIdle,
                             )
                         },
                     )
@@ -343,10 +354,8 @@ internal fun ProductionRenderer(
                                 },
                                 computerUpdateAction = computerUpdateAction,
                                 openComputerUpdateConfirm = { action ->
-                                    if (action == CommandPaletteComputerUpdateAction.READY) {
-                                        commandPaletteOpen = false
-                                        showComputerUpdateConfirm = true
-                                    }
+                                    commandPaletteOpen = false
+                                    computerUpdateConfirmAction = action
                                 },
                             ),
                         )

@@ -113,10 +113,14 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
     private val computerRebuildMigrationExecutor = Executors.newSingleThreadExecutor { runnable ->
         Thread(runnable, "fabushi-computer-rebuild-migration").apply { isDaemon = true }
     }
+    private val computerRebuildQueueExecutor = Executors.newSingleThreadScheduledExecutor { runnable ->
+        Thread(runnable, "fabushi-computer-update-queue").apply { isDaemon = true }
+    }
     private val remoteComputerReconnectExecutor = Executors.newSingleThreadScheduledExecutor { runnable ->
         Thread(runnable, "fabushi-remote-computer-reconnect").apply { isDaemon = true }
     }
     private val computerRebuildMigrationRunning = AtomicBoolean(false)
+    private val computerRebuildQueueRunning = AtomicBoolean(false)
     private val storagePressureExecutor = Executors.newSingleThreadScheduledExecutor { runnable ->
         Thread(runnable, "fabushi-storage-pressure").apply { isDaemon = true }
     }
@@ -125,6 +129,7 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
         computerRebuildOwner.observeAccount(accountAccessOwner.currentProjection().accountEpoch)
         startComputerRebuildEventPump()
         resumeComputerRebuildMigrationIfNeeded()
+        resumeQueuedComputerUpdateIfNeeded()
         runCatching { reconcileAgentRosterMutations() }
         storagePressureExecutor.scheduleWithFixedDelay(
             {
@@ -413,6 +418,7 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
             runCatching { host.clearProtectedRemoteBinding() }
         }
         computerRebuildOwner.observeAccount(currentEpoch)
+        if (loggedIn) resumeQueuedComputerUpdateIfNeeded()
     }
     override fun automationUpsert(params: JSONObject) = host.request("feature.automation.upsert", params)
     override fun automationList(): JSONArray = host.requestValue("feature.automation.list") as? JSONArray ?: JSONArray()
@@ -1154,6 +1160,34 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
         require(accountEpoch > 0L) { "Computer rebuild requires a settled account epoch" }
         val requestId = "android-rebuild-$processGeneration-" + UUID.randomUUID().toString()
         computerRebuildOwner.reserveRequest(accountEpoch, requestId)
+        return dispatchComputerRebuildRequest(
+            accountEpoch = accountEpoch,
+            requestId = requestId,
+            preserveData = preserveData,
+            forceRecreate = forceRecreate,
+        )
+    }
+
+    override fun computerRebuildQueueWhenIdle(): JSONObject {
+        val accountEpoch = accountAccessOwner.currentProjection().accountEpoch
+        require(accountEpoch > 0L) { "Computer update queue requires a settled account epoch" }
+        computerRebuildOwner.queueUpdateWhenIdle(accountEpoch)
+        resumeQueuedComputerUpdateIfNeeded()
+        return computerRebuildStatus()
+    }
+
+    override fun computerRebuildCancelQueuedUpdate(): JSONObject {
+        val accountEpoch = accountAccessOwner.currentProjection().accountEpoch
+        computerRebuildOwner.cancelQueuedUpdate(accountEpoch)
+        return computerRebuildStatus()
+    }
+
+    private fun dispatchComputerRebuildRequest(
+        accountEpoch: Long,
+        requestId: String,
+        preserveData: Boolean,
+        forceRecreate: Boolean,
+    ): JSONObject {
         val reply = try {
             host.requestComputerRebuild(
                 requestId = requestId,
@@ -1198,6 +1232,7 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
             .put("accountEpoch", snapshot.accountEpoch)
             .put("processGeneration", snapshot.processGeneration)
             .put("requestId", snapshot.requestId ?: JSONObject.NULL)
+            .put("queuedWhenIdle", snapshot.queuedWhenIdle)
             .put("operationId", snapshot.operationId ?: JSONObject.NULL)
             .put("migrationOffsetKey", snapshot.migrationOffsetKey)
             .put("pending", snapshot.pending)
@@ -1600,6 +1635,73 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
                         accountEpoch = epoch,
                         operationId = migration.operationId,
                         phase = migration.phase,
+                    )
+                }
+            }
+        }
+    }
+
+    private fun resumeQueuedComputerUpdateIfNeeded() {
+        val accountEpoch = accountAccessOwner.currentProjection().accountEpoch
+        val snapshot = runCatching { computerRebuildOwner.snapshot(accountEpoch) }.getOrNull() ?: return
+        if (!snapshot.queuedWhenIdle || snapshot.kind != null || snapshot.pending || snapshot.outcomeUnknown) return
+        if (!computerRebuildQueueRunning.compareAndSet(false, true)) return
+        val expectedEpoch = accountEpoch
+        val expectedGeneration = processGeneration
+        computerRebuildQueueExecutor.execute {
+            try {
+                if (accountAccessOwner.currentProjection().accountEpoch != expectedEpoch) return@execute
+                val current = computerRebuildOwner.snapshot(expectedEpoch)
+                if (
+                    current.processGeneration != expectedGeneration ||
+                    !current.queuedWhenIdle ||
+                    current.kind != null ||
+                    current.pending ||
+                    current.outcomeUnknown
+                ) {
+                    return@execute
+                }
+                if (current.imageUpdateAvailable == false) {
+                    computerRebuildOwner.cancelQueuedUpdate(expectedEpoch)
+                    return@execute
+                }
+                if (current.imageUpdateAvailable != true) return@execute
+
+                val roster = host.requestValue("listAgents") as? JSONArray
+                    ?: error("Canonical Agent roster is unavailable")
+                var hasWorkingAgent = false
+                for (index in 0 until roster.length()) {
+                    val row = roster.optJSONObject(index) ?: continue
+                    if (row.optBoolean("isRunning", false)) {
+                        hasWorkingAgent = true
+                        break
+                    }
+                }
+                if (hasWorkingAgent) return@execute
+
+                val requestId = "android-rebuild-$processGeneration-" + UUID.randomUUID().toString()
+                computerRebuildOwner.reserveQueuedRequest(expectedEpoch, requestId)
+                dispatchComputerRebuildRequest(
+                    accountEpoch = expectedEpoch,
+                    requestId = requestId,
+                    preserveData = true,
+                    forceRecreate = false,
+                )
+            } catch (_: Throwable) {
+                // A queued intent is safe to retry only while no rebuild request has been reserved.
+                // Once request identity is reserved, dispatch marks ambiguous transport as
+                // outcome-unknown and this loop must not replay the side effect.
+            } finally {
+                computerRebuildQueueRunning.set(false)
+                val pending = runCatching {
+                    val epoch = accountAccessOwner.currentProjection().accountEpoch
+                    if (epoch != expectedEpoch) null else computerRebuildOwner.snapshot(epoch)
+                }.getOrNull()
+                if (pending?.queuedWhenIdle == true) {
+                    computerRebuildQueueExecutor.schedule(
+                        { resumeQueuedComputerUpdateIfNeeded() },
+                        COMPUTER_REBUILD_RECONNECT_MS,
+                        TimeUnit.MILLISECONDS,
                     )
                 }
             }

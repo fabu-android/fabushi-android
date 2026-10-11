@@ -55,7 +55,7 @@ class ComputerUpdateProjectionTest {
     }
 
     @Test
-    fun paletteComputerUpdateFailsClosedUnlessIdleSingleAgentAndAvailable() {
+    fun paletteComputerUpdateProjectsReadyBusyAndFailsClosedForActiveEpisode() {
         val ready = CommandPaletteComputerUpdateSnapshot(
             imageUpdateAvailable = true,
             pending = false,
@@ -68,7 +68,11 @@ class ComputerUpdateProjectionTest {
         )
         assertNull(commandPaletteComputerUpdateAction(null, 0, ready))
         assertNull(commandPaletteComputerUpdateAction(true, 0, ready))
-        assertNull(commandPaletteComputerUpdateAction(false, 1, ready))
+        assertEquals(
+            CommandPaletteComputerUpdateAction.BUSY_OVERRIDE,
+            commandPaletteComputerUpdateAction(false, 1, ready),
+        )
+        assertNull(commandPaletteComputerUpdateAction(false, 0, ready.copy(queuedWhenIdle = true)))
         assertNull(commandPaletteComputerUpdateAction(false, 0, ready.copy(imageUpdateAvailable = false)))
         assertNull(commandPaletteComputerUpdateAction(false, 0, ready.copy(imageUpdateAvailable = null)))
         assertNull(commandPaletteComputerUpdateAction(false, 0, ready.copy(pending = true)))
@@ -98,12 +102,12 @@ class ComputerUpdateProjectionTest {
 
         val ready = projectMobileComputerRebuildStatus(
             JSONObject(
-                """{"imageUpdateAvailable":true,"pending":false,"outcomeUnknown":false,"kind":null}""",
+                """{"imageUpdateAvailable":true,"pending":false,"outcomeUnknown":false,"kind":null,"queuedWhenIdle":true}""",
             ),
         )
         assertEquals(true, ready.imageUpdateAvailable)
-        assertEquals(
-            CommandPaletteComputerUpdateAction.READY,
+        assertTrue(ready.queuedWhenIdle)
+        assertNull(
             commandPaletteComputerUpdateAction(
                 activeAgentIsGroup = false,
                 workingAgentCount = 0,
@@ -112,6 +116,23 @@ class ComputerUpdateProjectionTest {
                     pending = ready.pending,
                     outcomeUnknown = ready.outcomeUnknown,
                     rebuildKind = ready.kind,
+                    queuedWhenIdle = ready.queuedWhenIdle,
+                ),
+            ),
+        )
+
+        val idle = ready.copy(queuedWhenIdle = false)
+        assertEquals(
+            CommandPaletteComputerUpdateAction.READY,
+            commandPaletteComputerUpdateAction(
+                activeAgentIsGroup = false,
+                workingAgentCount = 0,
+                snapshot = CommandPaletteComputerUpdateSnapshot(
+                    imageUpdateAvailable = idle.imageUpdateAvailable,
+                    pending = idle.pending,
+                    outcomeUnknown = idle.outcomeUnknown,
+                    rebuildKind = idle.kind,
+                    queuedWhenIdle = idle.queuedWhenIdle,
                 ),
             ),
         )
