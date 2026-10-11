@@ -11,6 +11,33 @@ internal enum class CommandPaletteComputerUpdateAction {
     BUSY_OVERRIDE,
 }
 
+
+internal data class CommandPaletteComputerUpdateSnapshot(
+    val imageUpdateAvailable: Boolean?,
+    val pending: Boolean,
+    val outcomeUnknown: Boolean,
+    val rebuildKind: String?,
+)
+
+/**
+ * Android exposes the computer update action only when the durable Coordinator snapshot proves
+ * that an image update exists and no rebuild episode is active. Desktop also offers a durable
+ * "update when idle" path while agents are working. Android does not yet have that queue owner, so
+ * the working-agent case deliberately fails closed instead of creating a process-local queue that
+ * could be lost and replay a side effect after process death.
+ */
+internal fun commandPaletteComputerUpdateAction(
+    activeAgentIsGroup: Boolean?,
+    workingAgentCount: Int,
+    snapshot: CommandPaletteComputerUpdateSnapshot?,
+): CommandPaletteComputerUpdateAction? {
+    if (activeAgentIsGroup == null || activeAgentIsGroup) return null
+    if (snapshot == null || snapshot.imageUpdateAvailable != true) return null
+    if (snapshot.pending || snapshot.outcomeUnknown || snapshot.rebuildKind != null) return null
+    if (workingAgentCount > 0) return null
+    return CommandPaletteComputerUpdateAction.READY
+}
+
 internal fun commandPaletteRootCommands(
     activeAgentIsGroup: Boolean?,
     activeAgentIsSharedRoom: Boolean,

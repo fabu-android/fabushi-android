@@ -26,6 +26,7 @@ internal data class ComputerRebuildSnapshot(
     val acknowledged: Boolean = false,
     val observedBoxId: String? = null,
     val boxPhase: String? = null,
+    val imageUpdateAvailable: Boolean? = null,
     val pullPercent: Double? = null,
     val migrationPhases: List<ComputerRebuildMigrationPhase> = emptyList(),
     val lastHealthyBoxId: String? = null,
@@ -63,6 +64,7 @@ internal class SharedPreferencesComputerRebuildStateStore(context: Context) : Co
                 acknowledged = value.optBoolean("acknowledged", false),
                 observedBoxId = value.optString("observedBoxId").takeIf(String::isNotBlank),
                 boxPhase = value.optString("boxPhase").takeIf(String::isNotBlank),
+                imageUpdateAvailable = value.opt("imageUpdateAvailable").let { if (it is Boolean) it else null },
                 pullPercent = value.optDouble("pullPercent", Double.NaN).takeIf { it.isFinite() && it in 0.0..100.0 },
                 migrationPhases = value.optJSONArray("migrationPhases")?.let { phases ->
                     (0 until phases.length()).mapNotNull { index ->
@@ -104,6 +106,7 @@ internal class SharedPreferencesComputerRebuildStateStore(context: Context) : Co
             .put("acknowledged", snapshot.acknowledged)
             .put("observedBoxId", snapshot.observedBoxId ?: "")
             .put("boxPhase", snapshot.boxPhase ?: "")
+            .put("imageUpdateAvailable", snapshot.imageUpdateAvailable ?: JSONObject.NULL)
             .put("pullPercent", snapshot.pullPercent ?: JSONObject.NULL)
             .put("migrationPhases", JSONArray(snapshot.migrationPhases.map { it.name }))
             .put("lastHealthyBoxId", snapshot.lastHealthyBoxId ?: "")
@@ -350,6 +353,7 @@ internal class ComputerRebuildStateOwner(
         boxId: String?,
         phase: String?,
         pullPercent: Double? = null,
+        imageUpdateAvailable: Boolean? = null,
     ): ComputerRebuildSnapshot {
         requireCurrentAccount(accountEpoch)
         val current = requireSnapshot(accountEpoch)
@@ -361,6 +365,7 @@ internal class ComputerRebuildStateOwner(
         var next = current.copy(
             observedBoxId = normalizedBox,
             boxPhase = phase,
+            imageUpdateAvailable = imageUpdateAvailable ?: current.imageUpdateAvailable,
             pullPercent = if (phase == "pulling") pullPercent else null,
             lastHealthyBoxId = if (healthy) normalizedBox else current.lastHealthyBoxId,
         )
@@ -531,6 +536,7 @@ internal data class ComputerRebuildBoxIngress(
     val boxId: String,
     val phase: String,
     val pullPercent: Double?,
+    val imageUpdateAvailable: Boolean? = null,
 )
 
 internal fun projectForeverBoxRebuildEvent(value: JSONObject): ComputerRebuildBoxIngress? {
@@ -539,6 +545,7 @@ internal fun projectForeverBoxRebuildEvent(value: JSONObject): ComputerRebuildBo
     val state = payload.optString("state").trim().takeIf(String::isNotEmpty) ?: return null
     val pull = payload.optJSONObject("pull")
     val pullPercent = pull?.optDouble("percent", Double.NaN)?.takeIf { it.isFinite() && it in 0.0..100.0 }
+    val imageUpdateAvailable = payload.opt("imageUpdateAvailable").let { if (it is Boolean) it else null }
     val phase = when {
         pull != null -> "pulling"
         state == "running" && payload.optString("vncUrl").isNotBlank() -> "running"
@@ -546,7 +553,12 @@ internal fun projectForeverBoxRebuildEvent(value: JSONObject): ComputerRebuildBo
         state == "hibernated" -> "sleeping"
         else -> "off"
     }
-    return ComputerRebuildBoxIngress(boxId = boxId, phase = phase, pullPercent = pullPercent)
+    return ComputerRebuildBoxIngress(
+        boxId = boxId,
+        phase = phase,
+        pullPercent = pullPercent,
+        imageUpdateAvailable = imageUpdateAvailable,
+    )
 }
 
 

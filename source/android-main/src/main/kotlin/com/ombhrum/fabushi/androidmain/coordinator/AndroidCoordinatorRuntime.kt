@@ -1206,6 +1206,7 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
             .put("kind", snapshot.kind?.name?.lowercase() ?: JSONObject.NULL)
             .put("source", snapshot.source?.name?.lowercase() ?: JSONObject.NULL)
             .put("boxPhase", snapshot.boxPhase ?: JSONObject.NULL)
+            .put("imageUpdateAvailable", snapshot.imageUpdateAvailable ?: JSONObject.NULL)
             .put("pullPercent", snapshot.pullPercent ?: JSONObject.NULL)
             .put("migrationPhases", JSONArray(snapshot.migrationPhases.map { phase ->
                 phase.name.lowercase().replace('_', '-')
@@ -1576,6 +1577,7 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
                         box.boxId,
                         box.phase,
                         box.pullPercent,
+                        box.imageUpdateAvailable,
                     )
                 }
             }
