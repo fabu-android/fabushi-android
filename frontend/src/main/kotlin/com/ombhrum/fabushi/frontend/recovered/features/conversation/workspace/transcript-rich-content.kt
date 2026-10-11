@@ -111,13 +111,14 @@ private fun projectTranscriptRichText(text: String): List<TranscriptRichBlock> {
             }
         }
 
-        quoteLine.matchEntire(line)?.let { match ->
+        val quote = quoteLine.matchEntire(line)
+        if (quote != null) {
             flushList()
             flushParagraph()
-            activeQuote += match.groupValues[1]
+            activeQuote += quote.groupValues[1]
             index += 1
-            return@let
-        }?.also { continue }
+            continue
+        }
         flushQuote()
 
         val headers = splitTranscriptTableRow(line)
@@ -150,16 +151,17 @@ private fun projectTranscriptRichText(text: String): List<TranscriptRichBlock> {
             continue
         }
 
-        headingLine.matchEntire(line)?.let { match ->
+        val heading = headingLine.matchEntire(line)
+        if (heading != null) {
             flushList()
             flushParagraph()
             blocks += TranscriptRichBlock.Heading(
-                level = match.groupValues[1].length,
-                text = match.groupValues[2].trim(),
+                level = heading.groupValues[1].length,
+                text = heading.groupValues[2].trim(),
             )
             index += 1
-            return@let
-        }?.also { continue }
+            continue
+        }
 
         val ordered = orderedLine.matchEntire(line)
         val unordered = unorderedLine.matchEntire(line)
@@ -210,5 +212,7 @@ internal fun normalizeTranscriptHttpUrl(value: String): String? {
     val trimmed = value.trim()
     val scheme = trimmed.substringBefore(':', missingDelimiterValue = "").lowercase()
     if (scheme !in setOf("http", "https")) return null
-    return trimmed.takeIf { it.length <= 8_192 && !it.any(Char::isISOControl) }
+    return trimmed.takeIf {
+        it.length <= 8_192 && it.none { char -> char.code in 0..31 || char.code == 127 }
+    }
 }
