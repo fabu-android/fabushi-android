@@ -131,9 +131,8 @@ class TranscriptAdjacencyProjectionTest {
         )
 
         assertTrue(projected[0].isRunStart)
-        // Desktop indicator seaming extends an assistant bubble into a following
-        // send-message card even though the card itself is not a bubble.
-        assertTrue(projected[0].isContinuedToNext)
+        // A send-message card retains assistant grouping identity but is never itself a bubble.
+        assertFalse(projected[0].isContinuedToNext)
         assertTrue(projected[1].isGroupStart)
         assertTrue(projected[1].isRunStart)
     }
@@ -271,7 +270,8 @@ class TranscriptAdjacencyProjectionTest {
             assistantAuthor = "Agent",
         )
 
-        assertFalse(projected[0].isContinuedToNext)
+        // The preceding assistant message still seams into the indicator/card surface.
+        assertTrue(projected[0].isContinuedToNext)
         assertTrue(projected[1].isGroupStart)
         assertFalse(projected[1].isContinuedFromPrev)
         assertFalse(projected[1].isContinuedToNext)
