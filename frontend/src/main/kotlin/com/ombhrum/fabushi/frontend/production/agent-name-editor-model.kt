@@ -69,12 +69,14 @@ internal class AgentSettingsMutationFence {
     private var selectedAgentId: String? = null
     private var selectedAccountSlot: String? = null
     private var generation: Long = 0L
+    private var pending: AgentSettingsMutationToken? = null
     private var disposed: Boolean = false
 
     fun select(agentId: String, accountSlot: String?) {
         if (disposed) return
         if (selectedAgentId == agentId && selectedAccountSlot == accountSlot) return
         generation += 1
+        pending = null
         selectedAgentId = agentId
         selectedAccountSlot = accountSlot
     }
@@ -84,12 +86,14 @@ internal class AgentSettingsMutationFence {
         if (agentId != null && selectedAgentId != agentId) return
         if (selectedAgentId == null) return
         generation += 1
+        pending = null
         selectedAgentId = null
     }
 
     fun accountChanged(accountSlot: String?) {
         if (disposed || selectedAccountSlot == accountSlot) return
         generation += 1
+        pending = null
         selectedAgentId = null
         selectedAccountSlot = accountSlot
     }
@@ -97,25 +101,32 @@ internal class AgentSettingsMutationFence {
     fun beginMutation(agentId: String, accountSlot: String?): AgentSettingsMutationToken? {
         if (
             disposed ||
+            pending != null ||
             selectedAgentId != agentId ||
             selectedAccountSlot != accountSlot
         ) {
             return null
         }
         generation += 1
-        return AgentSettingsMutationToken(agentId, accountSlot, generation)
+        return AgentSettingsMutationToken(agentId, accountSlot, generation).also { pending = it }
     }
 
     fun isCurrent(token: AgentSettingsMutationToken): Boolean =
         !disposed &&
+            pending == token &&
             token.agentId == selectedAgentId &&
             token.accountSlot == selectedAccountSlot &&
             token.generation == generation
+
+    fun finish(token: AgentSettingsMutationToken) {
+        if (pending == token) pending = null
+    }
 
     fun dispose() {
         if (disposed) return
         disposed = true
         generation += 1
+        pending = null
         selectedAgentId = null
     }
 }
