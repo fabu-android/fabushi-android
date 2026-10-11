@@ -144,6 +144,7 @@ class MahayanaHost(
         requestId: String,
         preserveData: Boolean,
         forceRecreate: Boolean,
+        forceUpdate: Boolean = false,
     ): JSONObject {
         check(!featureHostTest && !closed) { "Computer rebuild requires production Host" }
         // Resolve the canonical Host account fence before dispatching a side effect. The backend
@@ -155,7 +156,7 @@ class MahayanaHost(
             state.handle
         }
         val response = JSONObject(
-            nativeComputerRebuildRequest(active, requestId, preserveData, forceRecreate),
+            nativeComputerRebuildRequest(active, requestId, preserveData, forceRecreate, forceUpdate),
         )
         check(response.optBoolean("ok", false)) {
             response.optString("error", "Computer rebuild backend request failed")
@@ -492,6 +493,7 @@ class MahayanaHost(
         requestId: String,
         preserveData: Boolean,
         forceRecreate: Boolean,
+        forceUpdate: Boolean,
     ): String
     private external fun nativeComputerRebuildWatchOnce(
         handle: Long,

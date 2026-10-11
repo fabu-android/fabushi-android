@@ -232,7 +232,9 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
      */
     fun requestComputerUpdate(
         action: CommandPaletteComputerUpdateAction = CommandPaletteComputerUpdateAction.READY,
+        forceNow: Boolean = false,
     ) {
+        if (forceNow && action != CommandPaletteComputerUpdateAction.BUSY_OVERRIDE) return
         val current = mutableState.value
         val active = current.activeBot ?: return
         val snapshot = current.computerRebuild
@@ -305,13 +307,17 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
 
             val request = withContext(Dispatchers.IO) {
                 runCatching {
-                    if (action == CommandPaletteComputerUpdateAction.BUSY_OVERRIDE) {
-                        coordinator.computerRebuildQueueWhenIdle()
-                    } else {
-                        coordinator.computerRebuildRequest(
-                            preserveData = true,
-                            forceRecreate = false,
-                        )
+                    when {
+                        forceNow && latestAction == CommandPaletteComputerUpdateAction.BUSY_OVERRIDE ->
+                            coordinator.computerRebuildForceUpdate()
+                        action == CommandPaletteComputerUpdateAction.BUSY_OVERRIDE &&
+                            latestAction == CommandPaletteComputerUpdateAction.BUSY_OVERRIDE ->
+                            coordinator.computerRebuildQueueWhenIdle()
+                        else ->
+                            coordinator.computerRebuildRequest(
+                                preserveData = true,
+                                forceRecreate = false,
+                            )
                     }
                 }
             }

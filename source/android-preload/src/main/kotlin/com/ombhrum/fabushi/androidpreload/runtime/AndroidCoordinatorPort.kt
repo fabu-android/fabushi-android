@@ -172,6 +172,8 @@ interface AndroidCoordinatorPort {
     ): JSONObject = error("computer_rebuild_request_not_implemented")
     fun computerRebuildQueueWhenIdle(): JSONObject =
         error("computer_rebuild_queue_when_idle_not_implemented")
+    fun computerRebuildForceUpdate(): JSONObject =
+        error("computer_rebuild_force_update_not_implemented")
     fun computerRebuildCancelQueuedUpdate(): JSONObject =
         error("computer_rebuild_cancel_queued_update_not_implemented")
     fun computerRebuildStatus(): JSONObject =

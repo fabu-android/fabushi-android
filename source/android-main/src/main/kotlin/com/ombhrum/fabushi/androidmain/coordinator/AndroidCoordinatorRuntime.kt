@@ -1168,6 +1168,25 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
         )
     }
 
+    override fun computerRebuildForceUpdate(): JSONObject {
+        val accountEpoch = accountAccessOwner.currentProjection().accountEpoch
+        require(accountEpoch > 0L) { "Computer forced update requires a settled account epoch" }
+        val snapshot = computerRebuildOwner.snapshot(accountEpoch)
+        require(snapshot.imageUpdateAvailable == true) { "Computer update is not available" }
+        require(!snapshot.queuedWhenIdle && snapshot.kind == null && !snapshot.pending && !snapshot.outcomeUnknown) {
+            "Computer rebuild episode is not settled"
+        }
+        val requestId = "android-rebuild-$processGeneration-" + UUID.randomUUID().toString()
+        computerRebuildOwner.reserveRequest(accountEpoch, requestId)
+        return dispatchComputerRebuildRequest(
+            accountEpoch = accountEpoch,
+            requestId = requestId,
+            preserveData = true,
+            forceRecreate = false,
+            forceUpdate = true,
+        )
+    }
+
     override fun computerRebuildQueueWhenIdle(): JSONObject {
         val accountEpoch = accountAccessOwner.currentProjection().accountEpoch
         require(accountEpoch > 0L) { "Computer update queue requires a settled account epoch" }
@@ -1187,12 +1206,17 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
         requestId: String,
         preserveData: Boolean,
         forceRecreate: Boolean,
+        forceUpdate: Boolean = false,
     ): JSONObject {
+        require(!(forceRecreate && forceUpdate)) {
+            "Computer rebuild cannot force update and force recreate simultaneously"
+        }
         val reply = try {
             host.requestComputerRebuild(
                 requestId = requestId,
                 preserveData = preserveData,
                 forceRecreate = forceRecreate,
+                forceUpdate = forceUpdate,
             )
         } catch (error: Throwable) {
             runCatching { computerRebuildOwner.markRequestOutcomeUnknown(accountEpoch, requestId) }

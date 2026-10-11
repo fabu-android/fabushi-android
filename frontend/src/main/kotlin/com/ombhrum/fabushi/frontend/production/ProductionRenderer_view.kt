@@ -104,13 +104,28 @@ internal fun ProductionRenderer(
                             )
                         },
                         confirmButton = {
-                            TextButton(
-                                onClick = {
-                                    computerUpdateConfirmAction = null
-                                    botModel.requestComputerUpdate(action)
-                                },
-                            ) {
-                                Text(if (busy) "Update when done" else "Update Fabushi's Computer")
+                            Row {
+                                if (busy) {
+                                    TextButton(
+                                        onClick = {
+                                            computerUpdateConfirmAction = null
+                                            botModel.requestComputerUpdate(
+                                                action = action,
+                                                forceNow = true,
+                                            )
+                                        },
+                                    ) {
+                                        Text("Update anyway")
+                                    }
+                                }
+                                TextButton(
+                                    onClick = {
+                                        computerUpdateConfirmAction = null
+                                        botModel.requestComputerUpdate(action)
+                                    },
+                                ) {
+                                    Text(if (busy) "Update when done" else "Update Fabushi's Computer")
+                                }
                             }
                         },
                         dismissButton = {

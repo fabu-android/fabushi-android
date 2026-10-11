@@ -755,6 +755,7 @@ mod android_jni {
         request_id: JString,
         preserve_data: jboolean,
         force_recreate: jboolean,
+        force_update: jboolean,
     ) -> jstring {
         if handle == 0 {
             return rebuild_json_result(&mut env, Err("native runtime is not initialized".into()));
@@ -767,9 +768,15 @@ mod android_jni {
             return rebuild_json_result(&mut env, Err("computer rebuild backend is unavailable".into()));
         };
         let reply = if force_recreate != 0 {
+            if force_update != 0 {
+                return rebuild_json_result(
+                    &mut env,
+                    Err("computer rebuild cannot force update and force recreate simultaneously".into()),
+                );
+            }
             backend.force_recreate(&request_id)
         } else {
-            backend.recreate(&request_id, preserve_data != 0, false)
+            backend.recreate(&request_id, preserve_data != 0, force_update != 0)
         };
         rebuild_json_result(
             &mut env,
