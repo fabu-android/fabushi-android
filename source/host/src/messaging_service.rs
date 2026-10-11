@@ -2940,33 +2940,41 @@ mod tests {
     fn journal_pruning_drops_complete_cursor_groups() {
         let root = temp_root("journal-prune");
         let mut service = AndroidMessagingService::open(&root).unwrap();
-        service.state.cursor = (MESSAGING_EVENT_JOURNAL_LIMIT as u64) + 2;
-        service.state.event_journal = (1..=(MESSAGING_EVENT_JOURNAL_LIMIT as u64))
-            .map(|cursor| MessagingJournalEntry {
-                cursor,
-                audience: vec!["human:owner".into()],
-                envelope: json!({"cursor":cursor.to_string(),"event":{"type":"typingChanged"}}),
-            })
-            .collect();
+        service.state.cursor = MESSAGING_EVENT_JOURNAL_LIMIT as u64;
         service.state.event_journal.push(MessagingJournalEntry {
-            cursor: MESSAGING_EVENT_JOURNAL_LIMIT as u64,
-            audience: vec!["human:peer".into()],
-            envelope: json!({
-                "cursor":MESSAGING_EVENT_JOURNAL_LIMIT.to_string(),
-                "event":{"type":"typingChanged"}
-            }),
-        });
-        service.state.event_journal.push(MessagingJournalEntry {
-            cursor: (MESSAGING_EVENT_JOURNAL_LIMIT as u64) + 1,
+            cursor: 1,
             audience: vec!["human:owner".into()],
-            envelope: json!({
-                "cursor":((MESSAGING_EVENT_JOURNAL_LIMIT as u64) + 1).to_string(),
-                "event":{"type":"typingChanged"}
-            }),
+            envelope: json!({"cursor":"1","event":{"type":"typingChanged"}}),
         });
+        service.state.event_journal.push(MessagingJournalEntry {
+            cursor: 1,
+            audience: vec!["human:peer".into()],
+            envelope: json!({"cursor":"1","event":{"type":"typingChanged"}}),
+        });
+        service.state.event_journal.extend(
+            (2..=(MESSAGING_EVENT_JOURNAL_LIMIT as u64)).map(|cursor| {
+                MessagingJournalEntry {
+                    cursor,
+                    audience: vec!["human:owner".into()],
+                    envelope: json!({
+                        "cursor":cursor.to_string(),
+                        "event":{"type":"typingChanged"}
+                    }),
+                }
+            }),
+        );
+        assert_eq!(
+            service.state.event_journal.len(),
+            MESSAGING_EVENT_JOURNAL_LIMIT + 1,
+        );
 
         service.prune_event_journal();
 
+        assert_eq!(service.state.journal_floor_cursor, 1);
+        assert_eq!(
+            service.state.event_journal.len(),
+            MESSAGING_EVENT_JOURNAL_LIMIT - 1,
+        );
         assert!(service
             .state
             .event_journal
@@ -2976,7 +2984,7 @@ mod tests {
             .state
             .event_journal
             .iter()
-            .any(|entry| entry.cursor == MESSAGING_EVENT_JOURNAL_LIMIT as u64));
+            .any(|entry| entry.cursor == 1));
         let _ = fs::remove_dir_all(root);
     }
 
