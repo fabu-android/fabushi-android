@@ -503,6 +503,7 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
         agentId: String,
         nonce: String,
         text: String,
+        richText: JSONObject?,
         attachments: List<AndroidAgentAttachment>,
         entries: List<AndroidSendAcknowledgementEntry>,
     ): AndroidSendAcknowledgement =
@@ -514,6 +515,7 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
                     .put("agentId", agentId)
                     .put("nonce", nonce)
                     .put("text", text)
+                    .put("richText", richText ?: JSONObject.NULL)
                     .put("attachments", agentAttachmentsJson(attachments))
                     .put("entries", sendAcknowledgementEntriesJson(entries)),
             ),
@@ -980,6 +982,7 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
             priorNonces = prior,
             entries = entries,
             messageText = value.getString("messageText"),
+            messageRichText = value.optJSONObject("messageRichText"),
             attachments = parseAgentAttachments(value.optJSONArray("attachments") ?: JSONArray()),
             phase = AndroidSendAcknowledgementPhase.fromWire(value.getString("phase")),
             generation = value.getLong("generation"),
