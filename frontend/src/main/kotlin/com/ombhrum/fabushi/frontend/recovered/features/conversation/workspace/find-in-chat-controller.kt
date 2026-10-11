@@ -48,3 +48,48 @@ internal fun stepFindInChatIndex(current: Int, delta: Int, count: Int): Int {
     val base = current.takeIf { it in 0 until count } ?: 0
     return ((base + delta) % count + count) % count
 }
+
+
+/**
+ * Agent-workspace search projection.
+ *
+ * Desktop searches the semantic transcript payload, not arbitrary rendered chrome. The current
+ * Android Agent projection can faithfully expose message text and widget prompt. Action/tool rows
+ * stay excluded until their source entry kinds become searchable in Desktop as well.
+ */
+internal fun findInAgentChatSearchText(message: MobileChatMessage): String =
+    when (message.kind) {
+        MobileChatEntryKind.MESSAGE -> message.text
+        MobileChatEntryKind.WIDGET -> message.widget?.prompt ?: message.text
+        else -> ""
+    }
+
+internal fun findInAgentChatMatches(
+    messages: List<MobileChatMessage>,
+    query: String,
+): List<FindInChatMatch> {
+    if (query.trim().isEmpty()) return emptyList()
+    val needle = query.lowercase()
+    return buildList {
+        messages.forEach { message ->
+            val text = findInAgentChatSearchText(message).lowercase()
+            var at = text.indexOf(needle)
+            var occurrence = 0
+            while (at >= 0) {
+                add(FindInChatMatch(message.id, occurrence))
+                occurrence += 1
+                at = text.indexOf(needle, at + needle.length.coerceAtLeast(1))
+            }
+        }
+    }
+}
+
+/**
+ * Mirrors Desktop controller stepping from a null current selection: next enters the first match;
+ * previous uses the same wrap formula from the virtual last position.
+ */
+internal fun stepAgentFindInChatIndex(current: Int, delta: Int, count: Int): Int {
+    if (count <= 0) return -1
+    val base = current.takeIf { it in 0 until count } ?: (count - 1)
+    return ((base + delta) % count + count) % count
+}

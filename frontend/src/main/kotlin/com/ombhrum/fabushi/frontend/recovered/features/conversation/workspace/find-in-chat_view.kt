@@ -47,7 +47,9 @@ internal fun FindInChatBar(
         )
         if (query.isNotBlank()) {
             Text(
-                if (matchCount == 0 || currentIndex < 0) "0/0" else "${currentIndex + 1}/$matchCount",
+                if (matchCount == 0) "0/0"
+                else if (currentIndex < 0) "0/$matchCount"
+                else "${currentIndex + 1}/$matchCount",
                 color = homeSecondaryText,
                 modifier = Modifier.padding(horizontal = 6.dp),
             )

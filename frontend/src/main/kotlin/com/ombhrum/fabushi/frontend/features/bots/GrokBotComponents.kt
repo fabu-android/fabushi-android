@@ -276,6 +276,22 @@ internal fun GrokBotChatAndroid(
     onMessageTargetConsumed: (String) -> Unit,
 ) {
     val messageListState = rememberLazyListState()
+    var findOpen by remember(bot.id) { mutableStateOf(false) }
+    var findQuery by remember(bot.id) { mutableStateOf("") }
+    var findIndex by remember(bot.id) { mutableStateOf(-1) }
+    val findMatches = remember(state.messages, findQuery) {
+        findInAgentChatMatches(state.messages, findQuery)
+    }
+    val currentFindMessageId = findMatches.getOrNull(findIndex)?.messageId
+
+    LaunchedEffect(bot.id, findQuery, findMatches.size) {
+        if (findIndex !in findMatches.indices) findIndex = -1
+    }
+    LaunchedEffect(bot.id, currentFindMessageId, state.messages) {
+        val targetId = currentFindMessageId ?: return@LaunchedEffect
+        val targetIndex = state.messages.indexOfFirst { it.id == targetId }
+        if (targetIndex >= 0) messageListState.animateScrollToItem(targetIndex)
+    }
     LaunchedEffect(bot.id, state.messageTargetId, state.messages) {
         val targetId = state.messageTargetId ?: return@LaunchedEffect
         val targetIndex = state.messages.indexOfFirst { it.id == targetId }
@@ -357,6 +373,21 @@ internal fun GrokBotChatAndroid(
             }
             Spacer(Modifier.weight(1f))
             Text(
+                "⌕",
+                color = GrokMobileInk,
+                fontSize = 20.sp,
+                modifier = Modifier
+                    .padding(horizontal = 8.dp)
+                    .clickable {
+                        findOpen = !findOpen
+                        if (!findOpen) {
+                            findQuery = ""
+                            findIndex = -1
+                        }
+                    }
+                    .testTag("mobile-bot-find-open"),
+            )
+            Text(
                 "⌘",
                 color = GrokMobileInk,
                 fontSize = 20.sp,
@@ -364,6 +395,28 @@ internal fun GrokBotChatAndroid(
                     .padding(horizontal = 8.dp)
                     .clickable(onClick = onOpenCommandPalette)
                     .testTag("command-palette-open-chat"),
+            )
+        }
+        if (findOpen) {
+            FindInChatBar(
+                query = findQuery,
+                matchCount = findMatches.size,
+                currentIndex = findIndex,
+                onQueryChange = {
+                    findQuery = it
+                    findIndex = -1
+                },
+                onPrevious = {
+                    findIndex = stepAgentFindInChatIndex(findIndex, -1, findMatches.size)
+                },
+                onNext = {
+                    findIndex = stepAgentFindInChatIndex(findIndex, 1, findMatches.size)
+                },
+                onClose = {
+                    findOpen = false
+                    findQuery = ""
+                    findIndex = -1
+                },
             )
         }
         LazyColumn(
@@ -379,6 +432,20 @@ internal fun GrokBotChatAndroid(
                 }
             }
             items(state.messages, key = { it.id }) { entry ->
+                val findHighlight = currentFindMessageId == entry.id
+                Column(
+                    Modifier
+                        .fillMaxWidth()
+                        .then(
+                            if (findHighlight) {
+                                Modifier
+                                    .background(Color(0xFFFFF2A8), RoundedCornerShape(10.dp))
+                                    .testTag("mobile-bot-find-current")
+                            } else {
+                                Modifier
+                            },
+                        ),
+                ) {
                 when {
                     entry.kind == MobileChatEntryKind.THINKING -> Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(7.dp)) {
                         AgentAvatarAndroid(bot, 22.dp, activeOverride = true)
@@ -447,6 +514,7 @@ internal fun GrokBotChatAndroid(
                             Text(entry.text + if (entry.streaming) "▌" else "", color = GrokMobileInk, fontSize = 16.sp, modifier = Modifier.padding(start = 7.dp).background(Color.Black.copy(alpha = 0.055f), RoundedCornerShape(18.dp)).padding(horizontal = 15.dp, vertical = 10.dp))
                         }
                     }
+                }
                 }
             }
             state.pendingApproval?.let { approval ->
