@@ -138,6 +138,58 @@ class AndroidMandatoryUpdateOwnerTest {
     }
 
     @Test
+    fun idleGateSharesSequenceAndAccountFencingWithMandatoryUpdateFacts() {
+        val store = MemoryStore()
+        val owner = AndroidMandatoryUpdateOwner(store, processGeneration = 9)
+        val staleToken = owner.begin(accountEpoch = 4)
+        val currentToken = owner.begin(accountEpoch = 4)
+
+        val current = owner.settle(
+            token = currentToken,
+            facts = AndroidMandatoryUpdateFacts(
+                minimumVersionObserved = false,
+                minimumVersion = null,
+                backendSignal = AndroidBackendUpdateSignal.UNCHANGED,
+                autoUpdateWhenIdleGateObserved = true,
+                autoUpdateWhenIdleGateEnabled = false,
+            ),
+            currentAccountEpoch = 4,
+        )
+        assertTrue(current.autoUpdateWhenIdleGateObserved)
+        assertFalse(current.autoUpdateWhenIdleGateEnabled)
+
+        val stale = owner.settle(
+            token = staleToken,
+            facts = AndroidMandatoryUpdateFacts(
+                minimumVersionObserved = false,
+                minimumVersion = null,
+                backendSignal = AndroidBackendUpdateSignal.UNCHANGED,
+                autoUpdateWhenIdleGateObserved = true,
+                autoUpdateWhenIdleGateEnabled = true,
+            ),
+            currentAccountEpoch = 4,
+        )
+        assertTrue(stale.autoUpdateWhenIdleGateObserved)
+        assertFalse(stale.autoUpdateWhenIdleGateEnabled)
+
+        val switchToken = owner.begin(accountEpoch = 4)
+        owner.observeAccount(accountEpoch = 5)
+        val afterSwitch = owner.settle(
+            token = switchToken,
+            facts = AndroidMandatoryUpdateFacts(
+                minimumVersionObserved = false,
+                minimumVersion = null,
+                backendSignal = AndroidBackendUpdateSignal.UNCHANGED,
+                autoUpdateWhenIdleGateObserved = true,
+                autoUpdateWhenIdleGateEnabled = true,
+            ),
+            currentAccountEpoch = 5,
+        )
+        assertFalse(afterSwitch.autoUpdateWhenIdleGateObserved)
+        assertFalse(afterSwitch.autoUpdateWhenIdleGateEnabled)
+    }
+
+    @Test
     fun logoutClearsDurableMandatoryUpdateFacts() {
         val store = MemoryStore()
         val owner = AndroidMandatoryUpdateOwner(store, processGeneration = 2)

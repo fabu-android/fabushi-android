@@ -12,12 +12,16 @@ data class AndroidMandatoryUpdateProducerState(
     val accountEpoch: Long,
     val minimumVersion: String?,
     val backendRequiresUpdate: Boolean,
+    val autoUpdateWhenIdleGateObserved: Boolean = false,
+    val autoUpdateWhenIdleGateEnabled: Boolean = false,
 )
 
 data class AndroidMandatoryUpdateFacts(
     val minimumVersionObserved: Boolean,
     val minimumVersion: String?,
     val backendSignal: AndroidBackendUpdateSignal,
+    val autoUpdateWhenIdleGateObserved: Boolean = false,
+    val autoUpdateWhenIdleGateEnabled: Boolean = false,
 )
 
 interface AndroidMandatoryUpdateProducerStateStore {
@@ -35,6 +39,8 @@ class SharedPreferencesMandatoryUpdateStateStore(context: Context) : AndroidMand
             accountEpoch = preferences.getLong(KEY_ACCOUNT_EPOCH, 0L),
             minimumVersion = preferences.getString(KEY_MINIMUM_VERSION, null),
             backendRequiresUpdate = preferences.getBoolean(KEY_BACKEND_REQUIRED, false),
+            autoUpdateWhenIdleGateObserved = preferences.getBoolean(KEY_IDLE_GATE_OBSERVED, false),
+            autoUpdateWhenIdleGateEnabled = preferences.getBoolean(KEY_IDLE_GATE_ENABLED, false),
         )
     }
 
@@ -46,6 +52,8 @@ class SharedPreferencesMandatoryUpdateStateStore(context: Context) : AndroidMand
                 else putString(KEY_MINIMUM_VERSION, state.minimumVersion)
             }
             .putBoolean(KEY_BACKEND_REQUIRED, state.backendRequiresUpdate)
+            .putBoolean(KEY_IDLE_GATE_OBSERVED, state.autoUpdateWhenIdleGateObserved)
+            .putBoolean(KEY_IDLE_GATE_ENABLED, state.autoUpdateWhenIdleGateEnabled)
             .apply()
     }
 
@@ -53,6 +61,8 @@ class SharedPreferencesMandatoryUpdateStateStore(context: Context) : AndroidMand
         const val KEY_ACCOUNT_EPOCH = "accountEpoch"
         const val KEY_MINIMUM_VERSION = "minimumVersion"
         const val KEY_BACKEND_REQUIRED = "backendRequiresUpdate"
+        const val KEY_IDLE_GATE_OBSERVED = "autoUpdateWhenIdleGateObserved"
+        const val KEY_IDLE_GATE_ENABLED = "autoUpdateWhenIdleGateEnabled"
     }
 }
 
@@ -79,6 +89,8 @@ class AndroidMandatoryUpdateOwner(
         accountEpoch = 0L,
         minimumVersion = null,
         backendRequiresUpdate = false,
+        autoUpdateWhenIdleGateObserved = false,
+        autoUpdateWhenIdleGateEnabled = false,
     )
 
     init {
@@ -93,6 +105,8 @@ class AndroidMandatoryUpdateOwner(
                 accountEpoch = accountEpoch,
                 minimumVersion = null,
                 backendRequiresUpdate = false,
+                autoUpdateWhenIdleGateObserved = false,
+                autoUpdateWhenIdleGateEnabled = false,
             )
             store.write(state)
         }
@@ -135,6 +149,14 @@ class AndroidMandatoryUpdateOwner(
                 AndroidBackendUpdateSignal.CLEAR -> false
                 AndroidBackendUpdateSignal.UNCHANGED -> previous.backendRequiresUpdate
             },
+            autoUpdateWhenIdleGateObserved =
+                if (facts.autoUpdateWhenIdleGateObserved) true else previous.autoUpdateWhenIdleGateObserved,
+            autoUpdateWhenIdleGateEnabled =
+                if (facts.autoUpdateWhenIdleGateObserved) {
+                    facts.autoUpdateWhenIdleGateEnabled
+                } else {
+                    previous.autoUpdateWhenIdleGateEnabled
+                },
         )
         store.write(state)
         return state

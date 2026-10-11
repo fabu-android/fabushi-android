@@ -249,8 +249,8 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
                 processGeneration = processGeneration,
                 minimumVersion = cleared.minimumVersion,
                 backendRequiresUpdate = cleared.backendRequiresUpdate,
-                autoUpdateWhenIdleGateObserved = false,
-                autoUpdateWhenIdleGateEnabled = false,
+                autoUpdateWhenIdleGateObserved = cleared.autoUpdateWhenIdleGateObserved,
+                autoUpdateWhenIdleGateEnabled = cleared.autoUpdateWhenIdleGateEnabled,
             )
         }
 
@@ -265,8 +265,8 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
                 processGeneration = processGeneration,
                 minimumVersion = current.minimumVersion,
                 backendRequiresUpdate = current.backendRequiresUpdate,
-                autoUpdateWhenIdleGateObserved = false,
-                autoUpdateWhenIdleGateEnabled = false,
+                autoUpdateWhenIdleGateObserved = current.autoUpdateWhenIdleGateObserved,
+                autoUpdateWhenIdleGateEnabled = current.autoUpdateWhenIdleGateEnabled,
             )
         }
         val currentEpoch = accountAccessOwner.currentProjection().accountEpoch
@@ -284,6 +284,10 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
                 minimumVersionObserved = raw.optBoolean("minimumVersionObserved", false),
                 minimumVersion = minimumVersion,
                 backendSignal = backendSignal,
+                autoUpdateWhenIdleGateObserved =
+                    raw.optBoolean("autoUpdateWhenIdleGateObserved", false),
+                autoUpdateWhenIdleGateEnabled =
+                    raw.optBoolean("autoUpdateWhenIdleGateEnabled", false),
             ),
             currentAccountEpoch = currentEpoch,
         )
@@ -292,10 +296,9 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
             processGeneration = processGeneration,
             minimumVersion = settled.minimumVersion,
             backendRequiresUpdate = settled.backendRequiresUpdate,
-            autoUpdateWhenIdleGateObserved = raw.optBoolean("autoUpdateWhenIdleGateObserved", false),
+            autoUpdateWhenIdleGateObserved = settled.autoUpdateWhenIdleGateObserved,
             autoUpdateWhenIdleGateEnabled =
-                raw.optBoolean("autoUpdateWhenIdleGateObserved", false) &&
-                    raw.optBoolean("autoUpdateWhenIdleGateEnabled", false),
+                settled.autoUpdateWhenIdleGateObserved && settled.autoUpdateWhenIdleGateEnabled,
         )
     }
 
