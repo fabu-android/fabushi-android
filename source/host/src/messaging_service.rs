@@ -3372,7 +3372,13 @@ mod tests {
                 "participants":[
                     {"actorId":me,"role":"owner","joinedAtMs":3},
                     {"actorId":peer,"role":"member","joinedAtMs":3}
-                ]
+                ],
+                "permissions":{
+                    "canSendMessages":true,
+                    "canSendMedia":true,
+                    "canSendPolls":true,
+                    "canPinMessages":true
+                }
             }}),
         )
         .unwrap();
