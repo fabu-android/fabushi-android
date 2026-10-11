@@ -77,11 +77,13 @@ import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -665,12 +667,22 @@ internal fun ConversationDetail(
     }
 
     selectedMessage?.let { message ->
+        val messageActions = remember(message) { projectTranscriptMessageActions(message) }
+        val clipboard = LocalClipboardManager.current
         AlertDialog(
             onDismissRequest = { selectedMessage = null },
             title = { Text("消息操作") },
             text = {
                 Column {
                     TextButton(onClick = { replyTarget = message; editingMessage = null; selectedMessage = null }) { Text("回复") }
+                    messageActions.copyText?.let { copyText ->
+                        TextButton(
+                            onClick = {
+                                clipboard.setText(AnnotatedString(copyText))
+                                selectedMessage = null
+                            },
+                        ) { Text("复制") }
+                    }
                     TextButton(onClick = {
                         forwardQuery = ""
                         forwardSelection = emptyList()

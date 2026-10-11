@@ -7884,15 +7884,15 @@
       "android_owner": "Compose transcript gestures/action sheet + canonical messaging owner.",
       "platform_delta": "Desktop hover/context/focus lifecycle maps to Android long-press/action sheet/accessibility focus; touch has no hover but eligibility must remain equivalent.",
       "implementation_status": "mapped",
-      "production_wiring": "Android now has a pure Desktop-derived ordinary-message action eligibility projector wired into ConversationTranscript: failed/pending/queued and empty messages cannot trigger ordinary selection/reply gestures, while sent text/attachment/rich payloads remain eligible. Existing long-click selection, swipe reply and basic reactions still do not prove Desktop-equivalent thread/copy/forward/reaction action union, focus/a11y restoration or reply-target navigation.",
-      "unit_test": "TranscriptMessageActionProjectionTest covers sent content, failed/pending/queued gating, empty content, attachment/rich payloads and normalized delivery-state comparison. Focused copy/forward/thread/read-only/reaction/focus tests remain required.",
+      "production_wiring": "Android now has a pure Desktop-derived ordinary-message action projection wired into ConversationTranscript. Settled eligible messages expose a native always-touchable, keyboard-focusable action anchor instead of relying on Desktop hover-only visibility; the anchor reuses the existing selection/action dialog and carries an explicit accessibility label. Copy is fail-closed to settled text messages and writes only the immutable projected message text; reply/forward/reaction/edit/pin/delete continue through existing typed callbacks and canonical owners. Failed/pending/queued and empty messages remain non-actionable. Thread action union, full focus restoration after dialog dismissal, and packaged/device accessibility evidence remain open.",
+      "unit_test": "TranscriptMessageActionProjectionTest covers sent content, failed/pending/queued gating, empty content, attachment/rich payload eligibility, normalized delivery-state comparison, settled-text copy projection, non-text/unsettled copy fail-closed behavior, and stable action accessibility labels. Exact-head GitHub Actions are required before verification.",
       "contract_test": "missing action-to-canonical messaging/thread/reaction contract",
       "integration_test": "missing long-press/reply/thread/copy/reaction journey",
       "packaged_test": "required final packaged message-action acceptance",
       "device_test": "required touch/a11y/keyboard acceptance",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Mapped, not verified. 87dad6598cc3f04585e4b3bde9220286eaac7999 closes the ordinary delivery/content eligibility seam only; broader transcript action parity remains open and requires same-exact-head CI/package/device evidence."
+      "notes": "Mapped, not verified. Native Android now replaces Desktop hover-only action discovery with an always-touchable/focusable action anchor and adds bounded copy projection without moving transcript truth into Compose. Broader thread action parity, explicit post-dialog focus restoration, package/device accessibility and same-head acceptance remain open."
     },
     {
       "responsibility_id": "TRANSCRIPT-CARD-COMPOSITION-ANDROID-001",
@@ -10602,7 +10602,7 @@
       "android_owner": "Native Compose transcript presentation",
       "platform_delta": "Desktop first-party CSS utility classes, hover media queries and browser focus selectors cannot exist directly in native Android. Compose semantics, touch-visible actions, Material focus and system animation-scale/reduced-motion behavior are the replacement. Pixel values may differ to respect Android density/font scaling.",
       "implementation_status": "mapped",
-      "production_wiring": "Native Compose replacement now includes keyboard focus visibility for transcript link content, always-touchable/focusable code Copy with a 48dp minimum target, and platform animator-scale reduced-motion handling that switches find/reply/target navigation from animated to immediate scrolling. Core bubble/spacing/actions are already native. Remaining hover-only message-action replacement, complete keyboard traversal/focus restoration, link semantics across every transcript surface, font-scale/article accessibility and device proof are still open; status remains mapped.",
+      "production_wiring": "Native Compose replacement includes keyboard focus visibility for transcript link content, always-touchable/focusable code Copy with a 48dp minimum target, platform animator-scale reduced-motion handling for transcript navigation, and an always-touchable/focusable message action anchor that replaces Desktop hover-only discovery on touch devices. Core bubble/spacing/actions are native. Remaining complete keyboard traversal/focus restoration, link semantics across every transcript surface, font-scale/article accessibility and device proof are still open; status remains mapped.",
       "unit_test": "TranscriptMotionPreferenceTest covers zero/invalid versus positive animator scale; TranscriptRichContentProjectionTest covers link/code projection. UI/device focus, touch target and accessibility traversal remain required.",
       "contract_test": "Desktop CSS blob 81fcd7e2fad9d018c8dd56461c199721f2068b2d retained as visual/interaction source fact.",
       "integration_test": "required keyboard/touch/a11y traversal and reduced-motion behavior in production transcript",

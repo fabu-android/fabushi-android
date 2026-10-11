@@ -1,5 +1,6 @@
 package com.ombhrum.fabushi
 
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -28,6 +29,30 @@ class TranscriptMessageActionProjectionTest {
         assertTrue(projection.actionable)
         assertTrue(projection.canReply)
         assertTrue(projection.canSelect)
+    }
+
+    @Test
+    fun settledTextProjectsCopyAndStableAccessibleActionLabel() {
+        val outgoing = projectTranscriptMessageActions(message(text = " copy me "))
+        assertEquals(" copy me ", outgoing.copyText)
+        assertEquals("Message actions for your message (m1)", outgoing.actionLabel)
+
+        val incoming = projectTranscriptMessageActions(message(text = "hello").copy(outgoing = false))
+        assertEquals("Message actions for message (m1)", incoming.actionLabel)
+    }
+
+    @Test
+    fun nonTextAndUnsettledContentFailsClosedForCopy() {
+        assertEquals(
+            null,
+            projectTranscriptMessageActions(
+                message(text = "caption", contentType = "photo", mediaBlobId = "blob-1"),
+            ).copyText,
+        )
+        assertEquals(
+            null,
+            projectTranscriptMessageActions(message(text = "draft", deliveryState = "queued")).copyText,
+        )
     }
 
     @Test
