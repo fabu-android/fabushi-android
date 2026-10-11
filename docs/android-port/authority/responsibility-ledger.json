@@ -9007,6 +9007,96 @@
       "artifact": null,
       "verification_status": "not-verified",
       "notes": "Replacement preserves user capability; exact visual glyph set may differ by Android design system."
+    },
+    {
+      "responsibility_id": "COMPOSER-EDITOR-SUGGESTIONS-ANDROID-001",
+      "domain": "conversation-composer",
+      "desktop_sources": [
+        {
+          "path": "frontend/src/recovered/features/conversation/workspace/editor-suggestion-provider.ts",
+          "blob_sha": "a345bf733aee20929f7a4466debc170550dfee26",
+          "symbols": [
+            "createEditorSuggestionController",
+            "projectMentionMembers",
+            "projectWorkflowSuggestions",
+            "createEditorSuggestionSource"
+          ]
+        },
+        {
+          "path": "frontend/src/recovered/features/conversation/workspace/editor-suggestion-production-adapter.ts",
+          "blob_sha": "58bfb083d7eaacc93eee9cbc1d44197702662971",
+          "symbols": [
+            "createComposerEditorSuggestionAdapter",
+            "resolveEditorSkillIcon"
+          ]
+        }
+      ],
+      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "responsibility": "Produce account+Agent-scoped composer suggestions from canonical Agent/workflow sources; validate, deduplicate, filter and rank members/workflows, distinguish scheduled @ references from slash workflows, preserve loading/empty/failed/unavailable/cancelled lifecycle, reject stale account/Agent/generation completions, and dispose in-flight work. The released Desktop adapter mounts mention/workflow/emoji families and optional recents.",
+      "source_owner": "Suggestion controller owns ephemeral query/source projection only; Agent roster and workflow/automation truth remain canonical runtime owners, while the editor owns only presentation and selection.",
+      "visible_effect": "Typing @ or / in the Agent composer reveals scoped suggestions without stale results crossing account/Agent changes or late callbacks mutating the current composer.",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/presentation/EditorSuggestionProjection.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/presentation/MobileBotViewModel.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/features/bots/GrokBotComponents.kt",
+        "source/android-preload/src/main/kotlin/com/ombhrum/fabushi/androidpreload/runtime/AndroidCoordinatorPort.kt",
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/coordinator/AndroidCoordinatorRuntime.kt"
+      ],
+      "android_owner": "Typed Coordinator remains the canonical read source; MobileBotViewModel owns only immutable suggestion projection and request fencing, and Compose owns only rendering/selection.",
+      "platform_delta": "Compose plain-text editing currently replaces Tiptap suggestion UI. Agent roster plus account-scoped AutomationSpec are read through the existing typed Coordinator; native rich-text reference nodes, emoji catalog/recents and any future unscheduled workflow source remain separate follow-up responsibilities.",
+      "implementation_status": "mapped",
+      "production_wiring": "313a0d78cd876e9ba24a0a4bfd357ff4d2d3e9e8 wires @ Agent/group plus scheduled automation suggestions from coordinator.agentList()+automationList() into immutable MobileEditorSuggestionSnapshot, account/Agent/generation/dispose fencing, and native Compose selection. It deliberately does not claim typed rich-text reference-node parity, emoji recents/catalog parity, or a non-existent Android unscheduled-workflow source.",
+      "unit_test": "mobile/android/app/src/test/java/com/ombhrum/fabushi/EditorSuggestionProjectionTest.kt covers trigger matching, hidden/deduplicated Agent projection, synthetic everyone, Agent-owned scheduled automations, slash classification, account/Agent/generation/dispose fencing and token replacement; exact-head GitHub Actions pending.",
+      "contract_test": "Existing AndroidCoordinatorPort/Runtime agentList and automationList typed routes are the only production data sources; architecture/Rust contract jobs must succeed on the same exact HEAD.",
+      "integration_test": "Native Compose surface is production-wired; focused instrumentation for keyboard/listbox selection plus typed rich-reference submission remains required.",
+      "packaged_test": "required final minified package",
+      "device_test": "required composer IME/account-switch/process-recreation acceptance",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Do not upgrade to verified until rich editor semantics and remaining released emoji/recents behavior have exact-head evidence. PR/MCP providers are separately recorded because Desktop current production adapter explicitly does not mount them."
+    },
+    {
+      "responsibility_id": "EDITOR-REFERENCE-PROVIDERS-DORMANT-ANDROID-001",
+      "domain": "conversation-composer",
+      "desktop_sources": [
+        {
+          "path": "frontend/src/recovered/features/conversation/workspace/editor-mcp-reference-provider.ts",
+          "blob_sha": "2509d4d4d5721e7fded76dbb43418eb513183d69",
+          "symbols": [
+            "createEditorMcpReferenceProvider"
+          ]
+        },
+        {
+          "path": "frontend/src/recovered/features/conversation/workspace/editor-pr-reference-provider.ts",
+          "blob_sha": "5dfeae65b7dbce3b74c471295920d4cc7df05206",
+          "symbols": [
+            "createEditorPrReferenceProvider",
+            "projectPullRequestCandidates"
+          ]
+        }
+      ],
+      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "responsibility": "Retain the source-defined MCP-reference and pull-request candidate provider contracts without presenting them as a shipped composer capability when the current Desktop production adapter has no producer for either family.",
+      "source_owner": "These provider modules own dormant typed projection contracts only; current Desktop shipping composition intentionally leaves their PromptEditor provider slots unset.",
+      "visible_effect": "Current shipped composer has no PR or MCP suggestion producer even though dormant provider modules exist in source; Android must not invent an extra user-visible producer and call it parity.",
+      "android_disposition": "not-applicable-with-replacement",
+      "android_target": [
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/presentation/EditorSuggestionProjection.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/features/bots/GrokBotComponents.kt"
+      ],
+      "android_owner": "Native composer production composition intentionally exposes only currently mounted Desktop suggestion families; future Desktop activation requires a new authority rebaseline.",
+      "platform_delta": "The dormant React provider implementations are not copied into Android production because their Desktop production slots are intentionally absent. Replacement is preservation of the same no-producer user-visible behavior, with the source contract documented for future activation.",
+      "implementation_status": "implemented",
+      "production_wiring": "Desktop editor-suggestion-production-adapter.ts states PR, MCP and app actions have no current producer. Android exact head 313a0d78cd876e9ba24a0a4bfd357ff4d2d3e9e8 likewise exposes no PR/MCP suggestion category or production source.",
+      "unit_test": "EditorSuggestionProjectionTest exercises the released Android category boundary (Agent/automation/workflow only); static source audit establishes Desktop production non-wiring.",
+      "contract_test": "No shipping PR/MCP suggestion transport contract is invoked by the current Desktop adapter; future activation must not inherit this disposition automatically.",
+      "integration_test": "Current user-visible replacement is intentional absence; no synthetic PR/MCP listbox is rendered.",
+      "packaged_test": "required final package static/runtime review to ensure no unintended producer is enabled",
+      "device_test": "not separately applicable until Desktop shipping composition activates these providers",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Source code existence is not shipping composition. Re-review immediately if Desktop production adapter begins passing prReference or mention.getMcpReferences."
     }
   ],
   "traceability": {
@@ -9038,5 +9128,9 @@
       ],
       "status": "mapped-not-verified"
     }
+  },
+  "metadata": {
+    "android_head_at_update": "313a0d78cd876e9ba24a0a4bfd357ff4d2d3e9e8",
+    "note": " Deterministic editor cursor now records the shipped suggestion boundary: Android has production-wired Agent/scheduled-automation projection with stale fencing, while Desktop PR/MCP providers are explicitly dormant in the current production adapter."
   }
 }
