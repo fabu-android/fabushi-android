@@ -88,6 +88,22 @@ internal class AndroidSendSubmissionTransportQueue(
         return cancelled
     }
 
+    /**
+     * Drop only scheduler-local state when the authenticated account epoch changes.
+     *
+     * The Rust acknowledgement journal remains the durable owner. If the previous account becomes
+     * active again, its queued rows are rediscovered from that journal; they are never dispatched
+     * merely because they survived in this Coordinator instance.
+     */
+    fun fenceForAccountChange() {
+        synchronized(lock) {
+            if (disposed) return
+            lifecycleGeneration += 1L
+            queued.clear()
+            activeAgents.clear()
+        }
+    }
+
     fun dispose() {
         synchronized(lock) {
             lifecycleGeneration += 1L

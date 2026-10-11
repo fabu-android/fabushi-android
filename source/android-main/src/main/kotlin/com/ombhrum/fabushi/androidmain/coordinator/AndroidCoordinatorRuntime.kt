@@ -450,6 +450,7 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
         )
         val currentEpoch = accountAccessOwner.currentProjection().accountEpoch
         if (!loggedIn || currentEpoch != previousEpoch) {
+            sendSubmissionQueue.fenceForAccountChange()
             remoteControlSessionStore.clear()
             remotePairingStore.clear()
             runCatching { host.clearProtectedRemoteBinding() }
@@ -602,6 +603,7 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
         accountSlot: String?,
         agentId: String,
     ): List<AndroidSendAcknowledgement> {
+        val requestAccountEpoch = accountAccessOwner.currentProjection().accountEpoch
         val projection = host.request(
             "feature.sendAcknowledgement.snapshot",
             JSONObject()
@@ -614,8 +616,12 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
                 add(parseSendAcknowledgement(records.getJSONObject(index)))
             }
         }
-        sendSubmissionQueue.discover(parsed)
-        if (!isSendTransportDown()) scheduleSendSubmissionFlush()
+        // A snapshot begun under an older account epoch may still be returned to its caller, but
+        // it must never repopulate the live transport scheduler after an account switch.
+        if (accountAccessOwner.currentProjection().accountEpoch == requestAccountEpoch) {
+            sendSubmissionQueue.discover(parsed)
+            if (!isSendTransportDown()) scheduleSendSubmissionFlush()
+        }
         return parsed
     }
 
