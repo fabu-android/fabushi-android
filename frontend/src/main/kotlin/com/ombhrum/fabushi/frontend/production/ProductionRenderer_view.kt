@@ -58,7 +58,8 @@ internal fun ProductionRenderer(
                 var rendererRoute by remember { mutableStateOf(RendererRoute.GROK_HOME) }
                 var commandPaletteOpen by remember { mutableStateOf(false) }
                 var commandPaletteAgentFilter by remember { mutableStateOf<String?>(null) }
-                var showAbout by remember { mutableStateOf(false) }\n                var showSettings by remember { mutableStateOf(false) }
+                var showAbout by remember { mutableStateOf(false) }
+                var showSettings by remember { mutableStateOf(false) }
                 var computerUpdateConfirmAction by remember {
                     mutableStateOf<CommandPaletteComputerUpdateAction?>(null)
                 }
