@@ -7279,6 +7279,276 @@
       "artifact": null,
       "verification_status": "not-verified",
       "notes": "Mapped from real Desktop event registry/resolver/card behavior; no claim that generic Android message rendering is equivalent."
+    },
+    {
+      "responsibility_id": "TRANSCRIPT-ATTACHMENT-CARDS-ANDROID-001",
+      "domain": "conversation-transcript-media",
+      "desktop_sources": [
+        {
+          "path": "frontend/src/recovered/features/conversation/cards/transcript-card/attachment-data.ts",
+          "blob_sha": "52c8606066fe778b297759434c0f8a28d95fc696",
+          "symbols": [
+            "classifyAttachmentUrl",
+            "projectAttachmentCardEntry",
+            "projectUserAttachmentEvent",
+            "createAttachmentCardDataAdapter"
+          ]
+        }
+      ],
+      "source_commit": "d575b4f77b6895eea4ecaced96e5c512964bf3ed",
+      "responsibility": "Project attachment transcript entries into box, legacy-link, media or file cards; validate user-attachment metadata; preserve batch/reply/client identity; and resolve media only through the canonical attachment bridge.",
+      "source_owner": "Desktop transcript-card attachment data adapter over canonical transcript attachment entries.",
+      "direct_callers": [
+        "Transcript send-message attachment card",
+        "user-attachment transcript event/gallery projection"
+      ],
+      "downstream_dependencies": [
+        "AttachmentMedia bridge",
+        "box rebuild/computer card state",
+        "gallery/read/download bridge"
+      ],
+      "state_owner": "Canonical transcript and attachment/blob owners; card projection owns no bytes or transfer truth.",
+      "persistent_state": [
+        "attachment entry identity/path/url/batch/reply/client nonce remain canonical transcript metadata"
+      ],
+      "protocol_wire_contract": [
+        "send-message attachment url classification",
+        "user-attachment file_path/file_name/byteSize/width/height/timestamp/batchId/replyTo/clientNonce",
+        "HTTP normalization and media extension classification",
+        "invalid metadata fails closed"
+      ],
+      "visible_effect": "Users see attachment history as the appropriate media/file/link/Computer card with stable grouping and metadata.",
+      "failure_behavior": [
+        "Malformed metadata returns no projection",
+        "media resolution failure does not fabricate bytes or a successful download"
+      ],
+      "cancellation_behavior": "Projection is passive; media read/open cancellation stays with the attachment/media owner.",
+      "retry_semantics": "No side-effect retry in presentation.",
+      "idempotency_semantics": "Stable canonical attachment entry yields stable card classification and identity.",
+      "process_death_recovery": "Reload canonical transcript/attachment metadata; never duplicate upload/download or Computer side effects.",
+      "account_fencing": "Attachment access remains bound to canonical conversation/account and authorized blob/Computer owners.",
+      "security_boundary": "Paths/URLs are display/open inputs only; card projection cannot bypass scoped storage, blob authorization or Computer capability boundaries.",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/recovered/features/conversation/workspace/transcript_view.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/presentation/MessagingViewModel.kt",
+        "source/shared/src/media/attachments.rs"
+      ],
+      "android_owner": "Native transcript presentation plus canonical media/blob owner.",
+      "platform_delta": "Desktop URL/path card adapter maps to Android scoped media/blob projection; arbitrary filesystem paths cannot become direct Android file authority.",
+      "implementation_status": "mapped",
+      "production_wiring": "Android MessagingViewModel/ConversationTranscript already support canonical photo/video/document/voice/audio message attachments and blob reads, but no proven equivalent for Desktop send-message attachment box/legacy-link branches or user-attachment batch/reply/client metadata.",
+      "unit_test": "missing focused Desktop-equivalent attachment-card classifier/projection tests across box/http/media/file and malformed metadata",
+      "contract_test": "existing media/blob contracts do not yet prove the transcript-card union and grouping metadata",
+      "integration_test": "missing exact-head transcript attachment reload/open journey covering stale/account/process recovery",
+      "packaged_test": "required final packaged attachment-card acceptance",
+      "device_test": "required device scoped-storage/media/Computer-card acceptance",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Mapped separately from MEDIA-ATTACHMENT-ASR-001 because generic attachment transport does not prove transcript-card presentation semantics."
+    },
+    {
+      "responsibility_id": "TRANSCRIPT-AUTO-REVIEW-APPROVAL-ANDROID-001",
+      "domain": "conversation-transcript-approval",
+      "desktop_sources": [
+        {
+          "path": "frontend/src/recovered/features/conversation/cards/transcript-card/auto-review-actions.ts",
+          "blob_sha": "96a427f0f2536c9f25aaa4035faf61e3cec9e0dc",
+          "symbols": [
+            "createAutoReviewApprovalActions",
+            "appendAutoReviewAllowInstruction",
+            "ResolveAutoReviewApprovalInput"
+          ]
+        }
+      ],
+      "source_commit": "d575b4f77b6895eea4ecaced96e5c512964bf3ed",
+      "responsibility": "Resolve transcript auto-review approvals with explicit approve/deny/always state, bounded/redacted durable allow-rule persistence, stale request fencing, single in-flight action and dispose-generation fencing.",
+      "source_owner": "Desktop auto-review transcript-card action controller; capability execution remains below the card.",
+      "direct_callers": [
+        "Auto-review transcript approval card"
+      ],
+      "downstream_dependencies": [
+        "autoReviewInstructions resource",
+        "resolveAutoReviewApproval action facade",
+        "Agent/account scoped approval identity"
+      ],
+      "state_owner": "Approval runtime owns request settlement; settings/resource owner owns auto-review instructions; card owns transient submitting/failed presentation only.",
+      "persistent_state": [
+        "Always-allow may append one bounded redacted rule to canonical auto-review instructions before transport approval."
+      ],
+      "protocol_wire_contract": [
+        "resolution approved|denied; always persists rule then transports approved",
+        "entryId/requestId/agentId fence",
+        "resolver returns resolved|stale",
+        "max 20 instructions and 1000 chars each"
+      ],
+      "visible_effect": "User can approve once, always allow a sanitized matching rule, or deny; stale/completed approvals stop acting.",
+      "failure_behavior": [
+        "Missing agent/non-pending/disposed actions are inert",
+        "instruction persistence failure degrades Always to one-time approved rather than inventing durable rule",
+        "resolver failure surfaces failed state"
+      ],
+      "cancellation_behavior": "dispose increments generation and prevents late completion from mutating the active card.",
+      "retry_semantics": "No parallel duplicate resolution; failed state requires an explicit later user action.",
+      "idempotency_semantics": "One in-flight promise per card; request/entry identity and stale response guard prevent duplicate settlement.",
+      "process_death_recovery": "Canonical approval/request and auto-review instructions must be re-read; presentation must not replay an uncertain resolution.",
+      "account_fencing": "agentId/account scope and approval request identity fence all mutations.",
+      "security_boundary": "Always-allow rules are sanitized and bounded; presentation does not grant capability except through the canonical approval resolver.",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/features/chat/AgentChatSurfaces.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/presentation/MobileBotViewModel.kt",
+        "source/host/src/capability_broker.rs"
+      ],
+      "android_owner": "Native Agent approval presentation + canonical capability/approval owner.",
+      "platform_delta": "React card controller becomes native approval presentation but must retain rule sanitization, stale fencing and canonical approval resolution.",
+      "implementation_status": "mapped",
+      "production_wiring": "Android has live Agent approval projection/operation fencing, but no audited equivalent for Desktop Auto Review instructions persistence, Always-allow sanitization/bounds and this transcript-card controller.",
+      "unit_test": "AgentApprovalPresentationTest covers live approval projection only; focused auto-review Always/redaction/bounds/stale/dispose tests are missing",
+      "contract_test": "missing exact auto-review instruction persistence + capability resolver contract",
+      "integration_test": "missing process-reopen/outcome-unknown auto-review approval journey",
+      "packaged_test": "required final packaged approval-card acceptance",
+      "device_test": "required protected-account approval acceptance",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Do not inherit TOOLS-CAPABILITY-BROKER-001 verification: this source adds user-visible Auto Review policy mutation semantics."
+    },
+    {
+      "responsibility_id": "TRANSCRIPT-CLOUD-AGENT-CARD-ANDROID-001",
+      "domain": "conversation-transcript-agent",
+      "desktop_sources": [
+        {
+          "path": "frontend/src/recovered/features/conversation/cards/transcript-card/cloud-agent-provider.ts",
+          "blob_sha": "015ff9be8a04401a116574f4ddc1212a3377452e",
+          "symbols": [
+            "createCloudAgentInfoSource",
+            "createCloudAgentProvider",
+            "CloudAgentSnapshot"
+          ]
+        }
+      ],
+      "source_commit": "d575b4f77b6895eea4ecaced96e5c512964bf3ed",
+      "responsibility": "Project a transcript Cloud Agent card by exact bcId with bounded getCloudAgentInfo(includeFiles=false), live/recovery polling, previous-value continuity, watcher reference lifecycle, scope-generation fencing and explicit open action.",
+      "source_owner": "Desktop transcript-card Cloud Agent provider over account/Agent-scoped cloud-agent Coordinator state.",
+      "direct_callers": [
+        "Cloud Agent transcript card/name watchers"
+      ],
+      "downstream_dependencies": [
+        "getCloudAgentInfo Coordinator contract",
+        "openCloudAgent navigation/action",
+        "TranscriptCardScope accountSlot/agentId"
+      ],
+      "state_owner": "Cloud Agent backend/Coordinator owns job truth; card provider owns cache/poll lifecycle only.",
+      "persistent_state": [
+        "No card-owned persistence; canonical cloud-agent job/status remains backend/runtime owned."
+      ],
+      "protocol_wire_contract": [
+        "exact bcId match",
+        "includeFiles=false",
+        "creating|running|finished|error|expired|unknown status",
+        "5s live polling / 60s recovery defaults",
+        "terminal states stop live polling"
+      ],
+      "visible_effect": "Cloud Agent transcript cards update job name/status/change/PR metadata and can open the corresponding Cloud Agent.",
+      "failure_behavior": [
+        "Mismatched/malformed bcId produces empty projection",
+        "poll failures preserve previous value and recover on slower cadence"
+      ],
+      "cancellation_behavior": "watcher release, scope change and dispose cancel timers/invalidate request tokens and late results.",
+      "retry_semantics": "Polling retries read-only info on defined cadence; open is explicit user action and is not auto-retried.",
+      "idempotency_semantics": "Read projection keyed by bcId; generation/request token rejects stale duplicate results.",
+      "process_death_recovery": "Provider reconstructs from canonical Cloud Agent info after reopen; it does not recreate the job.",
+      "account_fencing": "accountSlot + agentId scope change invalidates all existing records/watchers.",
+      "security_boundary": "Provider fetches metadata only with includeFiles=false; open action uses canonical opener and does not expose credentials.",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/production/AgentAsyncTasksPanel_view.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/presentation/MobileBotViewModel.kt",
+        "source/host/src/runner/background_work.rs"
+      ],
+      "android_owner": "Native Agent async/background-work projection plus canonical Host/Cloud Agent owner.",
+      "platform_delta": "Native UI does not need Desktop provider hooks but must preserve bcId/scope/stale-result/poll semantics for transcript Cloud Agent cards.",
+      "implementation_status": "mapped",
+      "production_wiring": "Android has Agent async-task/background-work projection, but no audited transcript-card provider proving exact bcId metadata polling, previous-value continuity and Open Cloud Agent behavior.",
+      "unit_test": "existing AgentAsyncTasksParityTest is not evidence for the transcript Cloud Agent provider; focused bcId/scope/poll/open tests are missing",
+      "contract_test": "missing getCloudAgentInfo(includeFiles=false) transcript-card contract on Android",
+      "integration_test": "missing exact-head Cloud Agent transcript card recovery/open journey",
+      "packaged_test": "required final packaged Cloud Agent card acceptance",
+      "device_test": "required protected-account/device acceptance when Cloud Agent is available",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Related to AGENT-ASYNC-TASKS-ANDROID-001 but tracked separately because transcript-card provider behavior is a distinct user-visible source responsibility."
+    },
+    {
+      "responsibility_id": "TRANSCRIPT-CONNECTOR-CARD-ANDROID-001",
+      "domain": "conversation-transcript-mcp",
+      "desktop_sources": [
+        {
+          "path": "frontend/src/recovered/features/conversation/cards/transcript-card/connector-actions.ts",
+          "blob_sha": "f40a2eb5640eda7ad37aa612a7c9d5ab121a6d4d",
+          "symbols": [
+            "normalizeConnectorNames",
+            "findConnectorServer",
+            "findConnectorCatalogEntry",
+            "createConnectorProvider"
+          ]
+        }
+      ],
+      "source_commit": "d575b4f77b6895eea4ecaced96e5c512964bf3ed",
+      "responsibility": "Drive transcript Connector cards from canonical MCP catalog/server state with normalized identity matching, install/authenticate/reopen/retry lifecycle, account-key selection, team-policy fail-closed behavior and generation-fenced auth refresh.",
+      "source_owner": "Desktop transcript-card Connector provider over canonical MCP catalog/server/auth owners.",
+      "direct_callers": [
+        "send-message:connectors transcript card"
+      ],
+      "downstream_dependencies": [
+        "mcp.catalog",
+        "mcp.list",
+        "mcp.install",
+        "mcp.authenticate",
+        "mcp.onAuthCompleted",
+        "openExternal"
+      ],
+      "state_owner": "MCP runtime owns installed/server/auth truth; card provider owns transient loading/action/pending UI state.",
+      "persistent_state": [
+        "No connector secret or install truth is persisted in the card; MCP owner persists canonical state."
+      ],
+      "protocol_wire_contract": [
+        "connector identity normalized lower-case alphanumeric",
+        "first normalized duplicate preserved",
+        "default account preferred",
+        "team/policy-managed servers unavailable for local auth action",
+        "started auth yields authorizationUrl waiting/reopen state"
+      ],
+      "visible_effect": "User can see Connector availability in transcript and install/connect/authenticate/reopen it from the card with explicit state/error feedback.",
+      "failure_behavior": [
+        "Missing catalog/server or managed team server returns unavailable",
+        "load/action failures remain visible and do not synthesize installation/auth success"
+      ],
+      "cancellation_behavior": "close/dispose increments generation, removes auth listener, clears pending/retries/handoffs and ignores late requests.",
+      "retry_semantics": "Retry only re-invokes a stored explicit failed/user action; no silent side-effect retry.",
+      "idempotency_semantics": "pending connector/account key suppresses duplicate concurrent actions; canonical MCP install/auth remains authoritative.",
+      "process_death_recovery": "Card re-reads MCP catalog/list/auth state; it must not replay install/auth simply because UI reopened.",
+      "account_fencing": "server accountKey and current card/account scope determine action identity; stale auth completion only triggers current open provider reload.",
+      "security_boundary": "OAuth handoff goes through canonical MCP auth plus external browser; secrets/tokens never become renderer/card state.",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/presentation/MarketplaceViewModel.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/features/marketplace/MarketplaceContent.kt",
+        "source/host/src/android_json_runtime.rs",
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/coordinator/AndroidCoordinatorRuntime.kt"
+      ],
+      "android_owner": "Native Marketplace/MCP presentation plus canonical Host MCP owner.",
+      "platform_delta": "Desktop transcript connector card actions become native transcript/Marketplace handoff; Android OAuth uses its canonical browser/auth path rather than renderer bridge.",
+      "implementation_status": "mapped",
+      "production_wiring": "Android Marketplace/MCP install and auth paths exist, but no audited transcript Connector-card composition proves normalized identity matching, pending/retry/reopen lifecycle and team-policy unavailable semantics.",
+      "unit_test": "missing focused transcript Connector provider identity/pending/team-policy/auth-reopen tests",
+      "contract_test": "existing MCP/plugin runtime contracts do not yet prove this transcript-card action state machine",
+      "integration_test": "missing exact-head transcript Connector install/auth/reopen journey",
+      "packaged_test": "required final packaged Connector-card acceptance",
+      "device_test": "required protected-account OAuth/device acceptance",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Do not mark implemented from Marketplace existence alone; this is a distinct Desktop source responsibility and user journey."
     }
   ],
   "traceability": {
