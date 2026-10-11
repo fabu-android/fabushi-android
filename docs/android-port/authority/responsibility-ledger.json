@@ -9572,6 +9572,74 @@
       "artifact": null,
       "verification_status": "not-verified",
       "notes": "Source audited at Desktop main 371b72f1; mapped as a real production gap, not N/A."
+    },
+    {
+      "responsibility_id": "CONVERSATION-TRANSCRIPT-PAGINATION-ANDROID-001",
+      "domain": "conversation-workspace",
+      "desktop_sources": [
+        {
+          "path": "frontend/src/recovered/features/conversation/workspace/pagination.ts",
+          "blob_sha": "31b5d5e5078d31bb756bc44075c518876d40a54e",
+          "symbols": [
+            "TranscriptHistoryCursor",
+            "mergeOlderTranscriptEntries",
+            "createTranscriptPaginationController"
+          ]
+        }
+      ],
+      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "responsibility": "Provide bounded older-history pagination over the canonical Agent transcript using an exclusive older-page cursor, chronological page order, duplicate-safe merge semantics, single-flight loading, capability/failure state, account/Agent/generation stale fencing, prepend viewport anchor preservation, reset/dispose fencing, and process-reopen recovery without creating a presentation-owned transcript.",
+      "source_owner": "Desktop transcript pagination controller over Coordinator-owned transcript history.",
+      "direct_callers": [
+        "conversation workspace transcript root",
+        "transcript viewport"
+      ],
+      "downstream_dependencies": [
+        "canonical transcript history provider",
+        "conversation viewport commit lifecycle"
+      ],
+      "state_owner": "Host/Coordinator owns canonical history; presentation may own only cursor/loading/error/viewport projection for the currently fenced Agent scope.",
+      "persistent_state": [
+        "canonical transcript only; cursor/UI viewport are derived and may be reconstructed after reopen"
+      ],
+      "protocol_wire_contract": [
+        "page entries are chronological",
+        "nextBeforeSeq is an exclusive cursor for the next older page",
+        "default page limit is 200 and Android Host bounds requests to 1..500"
+      ],
+      "visible_effect": "Long Agent conversations can load older history incrementally without reordering rows, duplicating entries, leaking another Agent, or jumping the viewport after prepend.",
+      "failure_behavior": [
+        "invalid Agent/cursor/limit fails closed",
+        "presentation must expose retryable older-page failure separately from canonical transcript",
+        "capability-unavailable must stop further older loads without fabricating history"
+      ],
+      "cancellation_behavior": "scope change/reset/dispose must invalidate late page completions; no history request may mutate canonical transcript.",
+      "retry_semantics": "older-page fetch is read-only and may be explicitly retried; side-effecting transcript mutations are never retried by the pagination layer.",
+      "idempotency_semantics": "same Agent/cursor/page limit reads the same canonical slice unless older canonical history itself changes; merge must de-duplicate by canonical entry id.",
+      "process_death_recovery": "Host transcript store reopens durable canonical entries; presentation restarts from a fresh latest-page projection and never re-sends messages.",
+      "account_fencing": "Host is process/account scoped and the page protocol requires explicit Agent id; presentation accountSlot+Agent+generation fencing is still required when wiring loadOlder.",
+      "security_boundary": "Pagination is read-only canonical transcript access. UI cannot select an arbitrary Host method or mutate transcript rows.",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "source/host/src/extensions/transcript/transcript_store.rs",
+        "source/host/src/android_json_runtime.rs",
+        "source/android-preload/src/main/kotlin/com/ombhrum/fabushi/androidpreload/runtime/AndroidCoordinatorPort.kt",
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/coordinator/AndroidCoordinatorRuntime.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/presentation/MobileBotViewModel.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/features/bots/GrokBotComponents.kt"
+      ],
+      "android_owner": "Rust TranscriptStore/Host canonical history provider plus typed Coordinator bridge; Compose remains read-only.",
+      "platform_delta": "Android uses a native typed Host page boundary and later LazyList anchor preservation rather than DOM scrollTop/scrollHeight. The backend/typed bridge exists, but presentation loadOlder/single-flight/stale fencing/anchor preservation is not yet wired.",
+      "implementation_status": "mapped",
+      "production_wiring": "2279dec4c5a311a10e271746cbca7620bc6ff433 adds agent-scoped exclusive-cursor pages in durable TranscriptStore, feature.transcript.page in Host, and typed AndroidTranscriptHistoryPage/transcriptPage through AndroidCoordinatorPort/Runtime. Presentation still consumes full transcriptSnapshot and has no loadOlder path.",
+      "unit_test": "2279dec4c5a311a10e271746cbca7620bc6ff433 adds Rust TranscriptStore and Host contract tests for chronological latest/older pages, explicit Agent isolation, exclusive cursor stability across newer appends, invalid limits, exhaustion, and process reopen. GitHub Actions exact-head result pending.",
+      "contract_test": "typed Kotlin bridge rejects blank Agent id, negative cursor, and limits outside 1..500; exact-head CI pending.",
+      "integration_test": "missing ViewModel/Compose latest-page + loadOlder + stale completion + duplicate merge + viewport anchor integration tests",
+      "packaged_test": "required final minified githubRelease long-conversation pagination acceptance",
+      "device_test": "required scroll-to-top/load-older/process-reopen/account-switch viewport acceptance",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Desktop pagination.ts was fully source-audited. Do not mark verified until presentation uses the page API and same exact HEAD CI/device evidence passes."
     }
   ],
   "traceability": {
@@ -9605,7 +9673,7 @@
     }
   },
   "metadata": {
-    "android_head_at_update": "a3f8d9057768a2e4f7f216b2b1e0486b60b44bf1",
+    "android_head_at_update": "2279dec4c5a311a10e271746cbca7620bc6ff433",
     "note": " Deterministic editor cursor now records the shipped suggestion boundary: Android has production-wired Agent/scheduled-automation projection with stale fencing, while Desktop PR/MCP providers are explicitly dormant in the current production adapter. Agent find-in-chat is now production-wired for message/widget semantic search and wrap navigation, while occurrence-span highlighting and richer searchable payloads remain mapped gaps. Native media viewer gallery is production-wired for Human conversations with navigation/zoom/stale-load fencing; in-app PDF rendering is now implemented at 499519f… and pending exact-head CI/device evidence, while Agent attachment/audio/focus semantics remain mapped."
   }
 }
