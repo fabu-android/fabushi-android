@@ -90,6 +90,13 @@ data class MobileToolResultCard(
     val isBackground: Boolean = false,
 )
 
+data class MobileTranscriptAttachment(
+    val path: String,
+    val name: String,
+    val sizeBytes: Long? = null,
+    val mimeType: String? = null,
+)
+
 data class MobileChatMessage(
     val id: String,
     val role: MobileChatRole,
@@ -109,6 +116,7 @@ data class MobileChatMessage(
     val widget: MobileWidgetCard? = null,
     val toolResult: MobileToolResultCard? = null,
     val toolCallId: String? = null,
+    val attachments: List<MobileTranscriptAttachment> = emptyList(),
 )
 
 data class MarketplaceUiState(
