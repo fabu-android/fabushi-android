@@ -92,6 +92,17 @@ internal fun ProductionRenderer(
                     onCheckUpdate = { updateModel.checkForUpdates(force = true) },
                     onInstallUpdate = updateModel::downloadAndInstall,
                 )
+                if (isRosterPrivacyBlocked(state.accountAccessProjection)) {
+                    RosterPrivacyBlockedDialog(
+                        logoutBusy = state.logoutBusy,
+                        logoutError = state.logoutError,
+                        onSignOut = model::logout,
+                        onOpenSettings = {
+                            runtimePort.launchExternalUrl(ROSTER_PRIVACY_SETTINGS_URL)
+                            Unit
+                        },
+                    )
+                }
                 if (showAbout) {
                     AndroidAboutDialog(
                         updateState = updateState,

@@ -12339,21 +12339,23 @@
       "security_boundary": "does not weaken privacy mode or bypass storage policy.",
       "android_disposition": "android-adapted",
       "android_target": [
-        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/production/ProductionRenderer_view.kt"
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/production/ProductionRenderer_view.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/recovered/features/roster/privacy-blocked_view.kt",
+        "mobile/android/app/src/test/java/com/ombhrum/fabushi/RosterPrivacyBlockedTest.kt",
+        "tests/test_roster_privacy_block_wiring.py"
       ],
       "android_owner": "Android root/account presentation over canonical auth/roster failure",
       "platform_delta": "Desktop focus-trapped alertdialog becomes non-dismissible native Compose dialog and system browser intent.",
-      "implementation_status": "mapped",
-      "production_wiring": "No Android production handling of CLOUD_AGENT_STORAGE_DISABLED/no_storage privacy block was found in current branch.",
-      "unit_test": "missing",
-      "contract_test": "Desktop exact source audited.",
-      "integration_test": "missing privacy-block/sign-out/open-settings journey",
+      "implementation_status": "implemented",
+      "production_wiring": "Shipping ProductionRenderer derives the block only from Coordinator-owned AccountAccessProjection rosterFailureCode/rosterFailureTransportKind, mounts a native non-dismissible dialog, routes sign-out through MarketplaceViewModel -> Coordinator authLogout, and opens the exact Desktop privacy-settings URL through AndroidPresentationRuntimePort. Presentation owns no account truth; a logout failure remains visible and does not dismiss or bypass the block.",
+      "unit_test": "RosterPrivacyBlockedTest covers exact failure-code/no_storage matching, unrelated-failure rejection, logged-out fencing, logged-in projection and exact settings destination. tests/test_roster_privacy_block_wiring.py checks non-dismissible/busy/error behavior and shipping owner wiring. Exact-head Actions evidence pending.",
+      "contract_test": "Desktop privacy-blocked.tsx e566c979053099caabd6df1cd6cfbb241d210407 audited at Desktop 371b72f1cd20de03dc4dff9a15ed761054968093; Android same-head CI pending.",
+      "integration_test": "Protected-account privacy-block -> settings/sign-out device journey required; logout failure remains fail-closed in production UI.",
       "packaged_test": "required",
       "device_test": "required",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Explicit gap; generic error surface is not equivalent.",
-      "android_head_at_update": "2e6f7598ab3a73fcec2ab5be857e55ae52bad2ac"
+      "notes": "Production gap closed in source without upgrading verification. Keep not-verified until descendant exact-head Kotlin/Python/architecture checks pass; protected authenticated device evidence remains blocked by CI-AUTH-001."
     },
     {
       "responsibility_id": "TERMINAL-OUTPUT-PROJECTION-ANDROID-001",
