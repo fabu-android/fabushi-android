@@ -57,6 +57,12 @@ data class AndroidSendAcknowledgementDispatch(
     val operationId: String,
 )
 
+data class AndroidComposerDraft(
+    val draftId: String,
+    val prompt: String,
+    val updatedAtMs: Long,
+)
+
 
 data class AndroidApprovalCleanupResult(
     val generation: Long,
@@ -171,6 +177,12 @@ interface AndroidCoordinatorPort {
         accountSlot: String?,
         agentId: String,
     ): List<AndroidSendAcknowledgement>
+    fun composerDraftRead(accountSlot: String?, agentId: String): AndroidComposerDraft? =
+        error("Durable composer draft projection is unavailable on this Coordinator port")
+    fun composerDraftWrite(accountSlot: String?, agentId: String, prompt: String): AndroidComposerDraft =
+        error("Durable composer draft mutation is unavailable on this Coordinator port")
+    fun composerDraftClearIfCurrent(accountSlot: String?, agentId: String, draftId: String): Boolean =
+        error("Durable composer draft conditional clear is unavailable on this Coordinator port")
     fun acceptClientSideToolV2(event: JSONObject): AndroidClientSideToolV2Event =
         error("Client-side tool v2 ingress is unavailable on this Coordinator port")
     fun replayClientSideToolV2(): List<AndroidClientSideToolV2Event> = emptyList()

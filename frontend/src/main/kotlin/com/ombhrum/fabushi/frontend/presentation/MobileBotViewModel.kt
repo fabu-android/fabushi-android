@@ -13,6 +13,8 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
@@ -191,7 +193,11 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
     private val agentSettingsFence = AgentSettingsMutationFence()
     private val mutableState = MutableStateFlow(MobileBotUiState())
     private val messagesByBot = mutableMapOf<String, List<MobileChatMessage>>()
-    private val draftsByBot = mutableMapOf<String, String>()
+    private val draftWriteMutex = Mutex()
+    private var draftScopeGeneration = 0L
+    private var draftWriteGeneration = 0L
+    private var activeDraftId: String? = null
+    private var draftWriteJob: Job? = null
     private val paletteMessageFence = CommandPaletteMessageRequestFence()
     private var paletteMessageSearchJob: Job? = null
     private val paletteRoutineFence = CommandPaletteRoutineRequestFence()
@@ -212,7 +218,6 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
     private fun commitState(next: MobileBotUiState) {
         next.activeBot?.let { bot ->
             messagesByBot[bot.id] = next.messages
-            draftsByBot[bot.id] = next.draft
         }
         mutableState.value = next
     }
@@ -870,13 +875,20 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
         rosterSelection.select(bot.id)
         openBotGeneration += 1
         sendPresentationGeneration += 1
+        draftScopeGeneration += 1
+        draftWriteGeneration += 1
+        draftWriteJob?.cancel()
+        draftWriteJob = null
+        activeDraftId = null
         val generation = openBotGeneration
+        val draftScope = draftScopeGeneration
+        val draftEditAtOpen = draftWriteGeneration
         val cachedMessages = messagesByBot[bot.id].orEmpty()
         val baselineEntryIds = cachedMessages.mapTo(linkedSetOf(), MobileChatMessage::id)
         commitState(
             mutableState.value.copy(
                 activeBot = bot,
-                draft = draftsByBot[bot.id].orEmpty(),
+                draft = "",
                 messages = cachedMessages,
                 pendingApproval = null,
                 approvalCleanup = MobileApprovalCleanupState(),
@@ -886,6 +898,30 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
                 error = null,
             ),
         )
+        viewModelScope.launch {
+            val restored = withContext(Dispatchers.IO) {
+                runCatching { coordinator.composerDraftRead(rosterSelectionAccountSlot, bot.id) }
+            }
+            if (
+                draftScope != draftScopeGeneration ||
+                draftEditAtOpen != draftWriteGeneration ||
+                mutableState.value.activeBot?.id != bot.id
+            ) {
+                return@launch
+            }
+            restored.onSuccess { draft ->
+                activeDraftId = draft?.draftId
+                val prompt = draft?.prompt.orEmpty()
+                commitState(mutableState.value.copy(draft = prompt))
+                refreshEditorSuggestions(prompt)
+            }.onFailure { error ->
+                commitState(
+                    mutableState.value.copy(
+                        error = error.message ?: "Composer draft restore failed",
+                    ),
+                )
+            }
+        }
         refreshEditorSuggestions(mutableState.value.draft)
         if (bot.miniAppId != null) {
             rosterSelection.settle(bot.id)
@@ -937,6 +973,11 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
         rosterSelection.select(null)
         openBotGeneration += 1
         sendPresentationGeneration += 1
+        draftScopeGeneration += 1
+        draftWriteGeneration += 1
+        draftWriteJob?.cancel()
+        draftWriteJob = null
+        activeDraftId = null
         cancelEditorSuggestionRequest()
         commitState(
             mutableState.value.copy(
@@ -966,7 +1007,11 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
         computerRebuildGeneration += 1
         agentSettingsFence.clear()
         messagesByBot.clear()
-        draftsByBot.clear()
+        draftScopeGeneration += 1
+        draftWriteGeneration += 1
+        draftWriteJob?.cancel()
+        draftWriteJob = null
+        activeDraftId = null
         commitState(MobileBotUiState())
     }
 
@@ -1033,8 +1078,44 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     fun setDraft(value: String) {
+        val bot = mutableState.value.activeBot ?: return
+        val accountSlot = rosterSelectionAccountSlot
+        val scope = draftScopeGeneration
+        val writeGeneration = ++draftWriteGeneration
         commitState(mutableState.value.copy(draft = value))
         refreshEditorSuggestions(value)
+        draftWriteJob = viewModelScope.launch {
+            val result = runCatching {
+                draftWriteMutex.withLock {
+                    if (
+                        scope != draftScopeGeneration ||
+                        writeGeneration != draftWriteGeneration ||
+                        mutableState.value.activeBot?.id != bot.id
+                    ) {
+                        return@withLock null
+                    }
+                    withContext(Dispatchers.IO) {
+                        coordinator.composerDraftWrite(accountSlot, bot.id, value)
+                    }
+                }
+            }
+            if (
+                scope != draftScopeGeneration ||
+                writeGeneration != draftWriteGeneration ||
+                mutableState.value.activeBot?.id != bot.id
+            ) {
+                return@launch
+            }
+            result.onSuccess { draft ->
+                if (draft != null) activeDraftId = draft.draftId
+            }.onFailure { error ->
+                commitState(
+                    mutableState.value.copy(
+                        error = error.message ?: "Composer draft could not be persisted",
+                    ),
+                )
+            }
+        }
     }
 
     private fun cancelEditorSuggestionRequest() {
@@ -1250,9 +1331,11 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
         val miniAppId = bot.miniAppId
         if (!miniAppId.isNullOrBlank()) {
             val requestId = "android-mobile-bot-chat-${UUID.randomUUID()}"
+            val accountSlot = rosterSelectionAccountSlot
+            val scopeGeneration = sendPresentationGeneration
+            val draftRevisionAtSend = draftWriteGeneration
             commitState(
                 snapshot.copy(
-                    draft = "",
                     busy = true,
                     error = null,
                     operationId = requestId,
@@ -1265,12 +1348,47 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
                     ),
                 ),
             )
-            sendMiniApp(miniAppId, text, requestId)
+            viewModelScope.launch {
+                try {
+                    val sentDraft = draftWriteMutex.withLock {
+                        withContext(Dispatchers.IO) {
+                            coordinator.composerDraftWrite(accountSlot, bot.id, snapshot.draft)
+                        }
+                    }
+                    if (!isCurrentSendScope(bot.id, accountSlot, scopeGeneration)) return@launch
+                    val cleared = withContext(Dispatchers.IO) {
+                        coordinator.composerDraftClearIfCurrent(accountSlot, bot.id, sentDraft.draftId)
+                    }
+                    if (!isCurrentSendScope(bot.id, accountSlot, scopeGeneration)) return@launch
+                    if (cleared && draftWriteGeneration == draftRevisionAtSend) {
+                        activeDraftId = null
+                        draftWriteGeneration += 1
+                        draftWriteJob?.cancel()
+                        draftWriteJob = null
+                        commitState(mutableState.value.copy(draft = ""))
+                        refreshEditorSuggestions("")
+                    }
+                    sendMiniApp(miniAppId, text, requestId)
+                } catch (error: CancellationException) {
+                    throw error
+                } catch (error: Throwable) {
+                    if (isCurrentSendScope(bot.id, accountSlot, scopeGeneration)) {
+                        commitState(
+                            mutableState.value.copy(
+                                busy = false,
+                                operationId = null,
+                                error = error.message ?: "Mini App composer draft could not be journaled",
+                            ),
+                        )
+                    }
+                }
+            }
             return
         }
 
         val accountSlot = rosterSelectionAccountSlot
         val scopeGeneration = sendPresentationGeneration
+        val draftRevisionAtSend = draftWriteGeneration
         val approvalAtSend = snapshot.pendingApproval
         val nonce = "android-mobile-bot-chat-${UUID.randomUUID()}"
         commitState(
@@ -1283,6 +1401,12 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
         )
         viewModelScope.launch {
             try {
+                val sentDraft = draftWriteMutex.withLock {
+                    withContext(Dispatchers.IO) {
+                        coordinator.composerDraftWrite(accountSlot, bot.id, snapshot.draft)
+                    }
+                }
+                if (!isCurrentSendScope(bot.id, accountSlot, scopeGeneration)) return@launch
                 val acknowledgement = withContext(Dispatchers.IO) {
                     coordinator.sendAcknowledgementBegin(
                         accountSlot = accountSlot,
@@ -1293,7 +1417,22 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
                     )
                 }
                 if (!isCurrentSendScope(bot.id, accountSlot, scopeGeneration)) return@launch
-                commitState(mutableState.value.copy(draft = ""))
+                val clearedDraft = withContext(Dispatchers.IO) {
+                    coordinator.composerDraftClearIfCurrent(
+                        accountSlot = accountSlot,
+                        agentId = bot.id,
+                        draftId = sentDraft.draftId,
+                    )
+                }
+                if (!isCurrentSendScope(bot.id, accountSlot, scopeGeneration)) return@launch
+                if (clearedDraft && draftWriteGeneration == draftRevisionAtSend) {
+                    activeDraftId = null
+                    draftWriteGeneration += 1
+                    draftWriteJob?.cancel()
+                    draftWriteJob = null
+                    commitState(mutableState.value.copy(draft = ""))
+                    refreshEditorSuggestions("")
+                }
                 refreshDurableSendProjection(bot.id, accountSlot, scopeGeneration)
 
                 val dispatched = withContext(Dispatchers.IO) {
@@ -1925,6 +2064,11 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
         groupMembersGeneration += 1
         editorSuggestionJob?.cancel()
         editorSuggestionJob = null
+        draftScopeGeneration += 1
+        draftWriteGeneration += 1
+        draftWriteJob?.cancel()
+        draftWriteJob = null
+        activeDraftId = null
         editorSuggestionFence.dispose()
         agentSettingsFence.dispose()
         rosterSelection.dispose()

@@ -16,6 +16,7 @@ import com.ombhrum.fabushi.androidpreload.runtime.AccountTruthState
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidCoordinatorPort
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidApprovalCleanupResult
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidClientSideToolV2Event
+import com.ombhrum.fabushi.androidpreload.runtime.AndroidComposerDraft
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidMcpOAuthCompletion
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidToolResultCard
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidSendAcknowledgement
@@ -552,6 +553,51 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
             }
         }
     }
+
+    override fun composerDraftRead(accountSlot: String?, agentId: String): AndroidComposerDraft? =
+        host.request(
+            "feature.composerDraft.read",
+            JSONObject()
+                .putNullable("accountSlot", accountSlot)
+                .put("agentId", agentId),
+        ).optJSONObject("draft")?.let(::parseComposerDraft)
+
+    override fun composerDraftWrite(
+        accountSlot: String?,
+        agentId: String,
+        prompt: String,
+    ): AndroidComposerDraft =
+        parseComposerDraft(
+            host.request(
+                "feature.composerDraft.write",
+                JSONObject()
+                    .putNullable("accountSlot", accountSlot)
+                    .put("agentId", agentId)
+                    .put("prompt", prompt),
+            ),
+        )
+
+    override fun composerDraftClearIfCurrent(
+        accountSlot: String?,
+        agentId: String,
+        draftId: String,
+    ): Boolean =
+        host.request(
+            "feature.composerDraft.clearIfCurrent",
+            JSONObject()
+                .putNullable("accountSlot", accountSlot)
+                .put("agentId", agentId)
+                .put("draftId", draftId),
+        ).optBoolean("cleared", false)
+
+    private fun parseComposerDraft(value: JSONObject): AndroidComposerDraft =
+        AndroidComposerDraft(
+            draftId = value.getString("draftId"),
+            prompt = value.getString("prompt"),
+            updatedAtMs = value.getLong("updatedAtMs"),
+        ).also {
+            check(it.draftId.isNotBlank()) { "composer draft returned an empty identity" }
+        }
 
     override fun acceptClientSideToolV2(event: JSONObject): AndroidClientSideToolV2Event =
         parseClientSideToolV2Event(

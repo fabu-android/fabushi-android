@@ -9,6 +9,7 @@ pub mod android_json_runtime;
 pub mod automation_runtime;
 pub mod box_rebuild_backend;
 pub mod capability_broker;
+pub mod composer_draft;
 pub mod account_service;
 
 pub mod attachment_paths;

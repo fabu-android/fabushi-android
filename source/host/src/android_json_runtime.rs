@@ -6,6 +6,7 @@ use crate::android_sidebar_sections::{AndroidSidebarSection, AndroidSidebarSecti
 use crate::host_secret_store::get_or_create_host_machine_id;
 use crate::host_runner_composition::AuthenticatedRemoteHostRunner;
 use crate::messaging_service::AndroidMessagingService;
+use crate::composer_draft::DurableComposerDraftOwner;
 use crate::send_acknowledgement::{
     DurableSendAcknowledgementOwner, SendAcknowledgementEntry, SendAcknowledgementPhase,
 };
@@ -598,6 +599,7 @@ pub struct AndroidJsonHost {
     sidebar_sections: Arc<Mutex<AndroidSidebarSections>>,
     transcript: Arc<Mutex<TranscriptStore>>,
     send_acknowledgements: Arc<Mutex<DurableSendAcknowledgementOwner>>,
+    composer_drafts: Arc<Mutex<DurableComposerDraftOwner>>,
     messaging: Arc<Mutex<AndroidMessagingService>>,
     mcp_auth_watches: Arc<Mutex<AndroidMcpAuthWatchManager>>,
     mcp_auth_owner: Option<AndroidMcpAuthWatchOwner>,
@@ -697,6 +699,10 @@ impl AndroidJsonHost {
                 panic!("failed to open durable Android send acknowledgement owner: {error}")
             }),
         ));
+        let composer_drafts = Arc::new(Mutex::new(
+            DurableComposerDraftOwner::open(app_data_dir.join("composer-drafts.json"), now_ms())
+                .unwrap_or_else(|error| panic!("failed to open durable Android composer draft owner: {error}")),
+        ));
         let messaging = Arc::new(Mutex::new(
             AndroidMessagingService::open(&app_data_dir)
                 .unwrap_or_else(|error| panic!("failed to open canonical Android messaging repository: {error}")),
@@ -768,6 +774,7 @@ impl AndroidJsonHost {
             sidebar_sections,
             transcript,
             send_acknowledgements,
+            composer_drafts,
             messaging,
             mcp_auth_watches,
             mcp_auth_owner,
@@ -1109,6 +1116,9 @@ impl AndroidJsonHost {
             "feature.sendAcknowledgement.retry" => self.send_acknowledgement_retry(params),
             "feature.sendAcknowledgement.clearApprovals" => self.send_acknowledgement_clear_approvals(params),
             "feature.sendAcknowledgement.snapshot" => self.send_acknowledgement_snapshot(params),
+            "feature.composerDraft.read" => self.composer_draft_read(params),
+            "feature.composerDraft.write" => self.composer_draft_write(params),
+            "feature.composerDraft.clearIfCurrent" => self.composer_draft_clear_if_current(params),
             "feature.widget.respond" => self.widget_respond(params),
             "feature.widget.dismiss" => self.widget_dismiss(params),
             "feature.receive" => self.feature_receive(),
@@ -3042,6 +3052,42 @@ impl AndroidJsonHost {
         let account_fence = self.current_turn_account_fence()?;
         let agent_id = required_string(params, "agentId")?.to_string();
         Ok((account_slot, account_fence, agent_id))
+    }
+
+    fn composer_draft_read(&mut self, params: &Value) -> Result<Value, String> {
+        let (account_slot, account_fence, agent_id) = self.send_acknowledgement_scope(params)?;
+        let draft = self
+            .composer_drafts
+            .lock()
+            .map_err(|_| "composer draft owner lock poisoned".to_string())?
+            .read(account_slot.as_deref(), &account_fence, &agent_id)?;
+        Ok(json!({"draft": draft}))
+    }
+
+    fn composer_draft_write(&mut self, params: &Value) -> Result<Value, String> {
+        let (account_slot, account_fence, agent_id) = self.send_acknowledgement_scope(params)?;
+        let prompt = params
+            .get("prompt")
+            .and_then(Value::as_str)
+            .ok_or("composer draft prompt is required")?;
+        let draft = self
+            .composer_drafts
+            .lock()
+            .map_err(|_| "composer draft owner lock poisoned".to_string())?
+            .write(account_slot.as_deref(), &account_fence, &agent_id, prompt, now_ms())?;
+        serde_json::to_value(draft)
+            .map_err(|error| format!("failed to serialize composer draft: {error}"))
+    }
+
+    fn composer_draft_clear_if_current(&mut self, params: &Value) -> Result<Value, String> {
+        let (account_slot, account_fence, agent_id) = self.send_acknowledgement_scope(params)?;
+        let draft_id = required_string(params, "draftId")?;
+        let cleared = self
+            .composer_drafts
+            .lock()
+            .map_err(|_| "composer draft owner lock poisoned".to_string())?
+            .clear_if_current(account_slot.as_deref(), &account_fence, &agent_id, draft_id)?;
+        Ok(json!({"cleared": cleared}))
     }
 
     fn send_acknowledgement_begin(&mut self, params: &Value) -> Result<Value, String> {
