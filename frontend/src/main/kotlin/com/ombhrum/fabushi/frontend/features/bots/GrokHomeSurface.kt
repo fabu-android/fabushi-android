@@ -65,6 +65,7 @@ internal val GrokMobileMuted = Color(0xFF8B8B8B)
 fun GrokHomeSurface(
     accountName: String,
     accessProjection: AccountAccessProjection,
+    rosterAccessReadiness: RosterAccessReadiness,
     messagingState: MessagingUiState,
     botState: MobileBotUiState,
     appAgentSurface: FabushiAppAgentSurface,
@@ -131,9 +132,11 @@ fun GrokHomeSurface(
                 profileTarget = authoritative
             }
         }
+        val canonicalRosterAgent = botState.bots.any { it.id == active.id }
         GrokBotChatAndroid(
             bot = active,
             state = botState,
+            interactionReady = !canonicalRosterAgent || rosterAccessReadiness.isSelectionReady,
             appAgentSurface = appAgentSurface,
             onClose = onCloseBot,
             onOpenCommandPalette = onOpenCommandPalette,
@@ -294,9 +297,11 @@ fun GrokHomeSurface(
                     "grok-mobile-agent-network",
                     "button",
                     "Agent network",
-                    enabled = botState.bots.isNotEmpty(),
+                    enabled = botState.bots.isNotEmpty() && rosterAccessReadiness.isLoaded && rosterAccessReadiness.isConnected,
                     action = FabushiAppAgentSurface.Action(setOf("invoke")) {
-                        if (botState.bots.isNotEmpty()) onOpenAgentNetwork()
+                        if (botState.bots.isNotEmpty() && rosterAccessReadiness.isLoaded && rosterAccessReadiness.isConnected) {
+                            onOpenAgentNetwork()
+                        }
                     },
                 )
                 element(
@@ -368,7 +373,10 @@ fun GrokHomeSurface(
                             "grok-bot-${bot.id}",
                             "button",
                             "打开 ${bot.name}",
-                            action = FabushiAppAgentSurface.Action(setOf("invoke")) { onOpenBot(bot) },
+                            enabled = rosterAccessReadiness.isLoaded && rosterAccessReadiness.isConnected,
+                            action = FabushiAppAgentSurface.Action(setOf("invoke")) {
+                                if (rosterAccessReadiness.isLoaded && rosterAccessReadiness.isConnected) onOpenBot(bot)
+                            },
                         )
                     }
                 botState.error?.takeIf { it.isNotBlank() }?.let { diagnostic ->
@@ -517,10 +525,17 @@ fun GrokHomeSurface(
                     Text(
                         "◇",
                         fontSize = 22.sp,
-                        color = if (botState.bots.isNotEmpty()) GrokMobileInk else GrokMobileMuted.copy(alpha = 0.35f),
+                        color = if (botState.bots.isNotEmpty() && rosterAccessReadiness.isLoaded && rosterAccessReadiness.isConnected) {
+                            GrokMobileInk
+                        } else {
+                            GrokMobileMuted.copy(alpha = 0.35f)
+                        },
                         modifier = Modifier
                             .padding(horizontal = 8.dp)
-                            .clickable(enabled = botState.bots.isNotEmpty(), onClick = onOpenAgentNetwork)
+                            .clickable(
+                                enabled = botState.bots.isNotEmpty() && rosterAccessReadiness.isLoaded && rosterAccessReadiness.isConnected,
+                                onClick = onOpenAgentNetwork,
+                            )
                             .testTag("agent-network-open"),
                     )
                     Text("⌕", fontSize = 29.sp, color = GrokMobileInk, modifier = Modifier.padding(horizontal = 10.dp).clickable { query = if (query.isEmpty()) " " else "" })
