@@ -1,11 +1,15 @@
 package com.ombhrum.fabushi
 
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.util.Base64
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -39,12 +43,15 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -66,15 +73,70 @@ internal fun ghostColor(identity: String): Color {
 internal fun avatarAnimationDurationMillis(active: Boolean): Int? =
     if (active) 1200 else null
 
-internal enum class AgentAvatarVisualState { IDLE, WORKING }
+internal enum class AgentAvatarVisualState {
+    IDLE,
+    THINKING,
+    SEARCHING,
+    WORKING,
+    LOADING,
+    ORBIT,
+    SENDING,
+}
 
+internal enum class AgentAvatarPresentationKind { PHOTO, SHARED_ROOM, GROUP, PERSONA }
+
+/**
+ * Mirrors Desktop workspace/agent-avatar.tsx precedence without taking ownership of runtime state.
+ * All inputs are immutable projection fields supplied by the canonical Agent owner.
+ */
 internal fun agentAvatarVisualState(
     awaitingUserResponse: Boolean?,
+    currentActivityKind: String? = null,
+    currentActivityVerb: String? = null,
+    currentActivityTool: String? = null,
+    isComposingMessage: Boolean = false,
     isRunning: Boolean,
-): AgentAvatarVisualState =
-    if (awaitingUserResponse != null) AgentAvatarVisualState.IDLE
-    else if (isRunning) AgentAvatarVisualState.WORKING
-    else AgentAvatarVisualState.IDLE
+): AgentAvatarVisualState {
+    if (awaitingUserResponse != null) return AgentAvatarVisualState.IDLE
+    if (currentActivityKind == "thinking") return AgentAvatarVisualState.THINKING
+    if (currentActivityKind == "tool" && currentActivityTool == "SendToAgent") {
+        return AgentAvatarVisualState.SENDING
+    }
+    when (currentActivityVerb) {
+        "thinking" -> return AgentAvatarVisualState.THINKING
+        "searching", "browsing", "reading", "connecting" -> return AgentAvatarVisualState.SEARCHING
+        "writing", "coding", "running-commands", "on-its-computer", "on-your-computer", "working" ->
+            return AgentAvatarVisualState.WORKING
+        "generating" -> return AgentAvatarVisualState.LOADING
+        "messaging", "waiting" -> return AgentAvatarVisualState.ORBIT
+        "sending" -> return AgentAvatarVisualState.SENDING
+    }
+    when (currentActivityTool) {
+        "WebSearch", "WebFetch" -> return AgentAvatarVisualState.SEARCHING
+        "GenerateImage" -> return AgentAvatarVisualState.LOADING
+        "SendToAgent", "UpdateAgent" -> return AgentAvatarVisualState.SENDING
+        "Task", "Await", "CheckSubagent" -> return AgentAvatarVisualState.ORBIT
+        null, "" -> Unit
+        else -> if (currentActivityTool.startsWith("browser_")) {
+            return AgentAvatarVisualState.SEARCHING
+        } else {
+            return AgentAvatarVisualState.WORKING
+        }
+    }
+    if (isComposingMessage) return AgentAvatarVisualState.THINKING
+    return if (isRunning) AgentAvatarVisualState.WORKING else AgentAvatarVisualState.IDLE
+}
+
+internal fun agentAvatarPresentationKind(bot: MobileBotSummaryAndroid): AgentAvatarPresentationKind =
+    when {
+        !bot.avatarDataUrl.isNullOrBlank() -> AgentAvatarPresentationKind.PHOTO
+        bot.isSharedRoom -> AgentAvatarPresentationKind.SHARED_ROOM
+        bot.isGroup -> AgentAvatarPresentationKind.GROUP
+        else -> AgentAvatarPresentationKind.PERSONA
+    }
+
+internal fun avatarAnimationDurationMillis(state: AgentAvatarVisualState): Int? =
+    if (state == AgentAvatarVisualState.IDLE) null else 1200
 
 internal fun avatarPersonaColor(value: String?): Color? {
     val normalized = normalizeAgentAvatarColor(value) ?: return null
@@ -191,6 +253,104 @@ fun ClothGhostAvatarAndroid(
     }
 }
 
+private const val MAX_AVATAR_DATA_URL_CHARS = 5_600_000
+private const val MAX_AVATAR_IMAGE_BYTES = 4_000_000
+
+private fun decodeAvatarDataUrl(value: String): Bitmap? {
+    if (value.length > MAX_AVATAR_DATA_URL_CHARS) return null
+    val separator = value.indexOf(',')
+    if (separator <= 0 || separator == value.lastIndex) return null
+    val header = value.substring(0, separator).lowercase()
+    if (!header.startsWith("data:image/") || !header.endsWith(";base64")) return null
+    val bytes = runCatching { Base64.decode(value.substring(separator + 1), Base64.DEFAULT) }.getOrNull()
+        ?: return null
+    if (bytes.isEmpty() || bytes.size > MAX_AVATAR_IMAGE_BYTES) return null
+    return BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+}
+
+@Composable
+private fun AgentPhotoAvatarAndroid(
+    bot: MobileBotSummaryAndroid,
+    dataUrl: String,
+    size: Dp,
+    badge: Color?,
+    active: Boolean,
+    modifier: Modifier,
+) {
+    val bitmap = remember(dataUrl) { decodeAvatarDataUrl(dataUrl)?.asImageBitmap() }
+    if (bitmap == null) {
+        ClothGhostAvatarAndroid(
+            botId = bot.id,
+            size = size,
+            active = active,
+            badge = badge,
+            avatarShape = bot.avatarShape,
+            avatarColor = bot.avatarColor,
+            modifier = modifier.testTag("agent-photo-avatar-invalid"),
+        )
+        return
+    }
+    Box(
+        modifier = modifier.size(size).testTag("agent-photo-avatar"),
+        contentAlignment = Alignment.Center,
+    ) {
+        Image(
+            bitmap = bitmap,
+            contentDescription = null,
+            contentScale = ContentScale.Crop,
+            modifier = Modifier.fillMaxSize().clip(avatarPersonaShape(bot.avatarShape)),
+        )
+        if (badge != null) {
+            Box(
+                Modifier.align(Alignment.TopEnd).size(size * 0.23f)
+                    .background(Color.White, CircleShape).padding(2.dp).background(badge, CircleShape),
+            )
+        }
+    }
+}
+
+@Composable
+private fun SharedRoomAvatarAndroid(
+    bot: MobileBotSummaryAndroid,
+    size: Dp,
+    badge: Color?,
+    modifier: Modifier,
+) {
+    val base = avatarPersonaColor(bot.avatarColor) ?: ghostColor(bot.id)
+    Box(
+        modifier = modifier
+            .size(size)
+            .background(base.copy(alpha = 0.08f), CircleShape)
+            .testTag("agent-shared-room-avatar"),
+        contentAlignment = Alignment.Center,
+    ) {
+        Canvas(Modifier.fillMaxSize()) {
+            val stroke = (this.size.minDimension * 0.055f).coerceAtLeast(1f)
+            val radius = this.size.minDimension * 0.31f
+            val center = Offset(this.size.width / 2f, this.size.height / 2f)
+            drawCircle(color = base, radius = radius, center = center, style = Stroke(width = stroke))
+            drawLine(
+                color = base,
+                start = Offset(center.x - radius, center.y),
+                end = Offset(center.x + radius, center.y),
+                strokeWidth = stroke,
+            )
+            drawLine(
+                color = base,
+                start = Offset(center.x, center.y - radius),
+                end = Offset(center.x, center.y + radius),
+                strokeWidth = stroke,
+            )
+        }
+        if (badge != null) {
+            Box(
+                Modifier.align(Alignment.TopEnd).size(size * 0.23f)
+                    .background(Color.White, CircleShape).padding(2.dp).background(badge, CircleShape),
+            )
+        }
+    }
+}
+
 @Composable
 internal fun AgentAvatarAndroid(
     bot: MobileBotSummaryAndroid,
@@ -199,23 +359,46 @@ internal fun AgentAvatarAndroid(
     activeOverride: Boolean? = null,
     modifier: Modifier = Modifier,
 ) {
-    val active = activeOverride ?: (
-        agentAvatarVisualState(
-            awaitingUserResponse = bot.awaitingUserResponse,
-            isRunning = bot.isRunning,
-        ) == AgentAvatarVisualState.WORKING
+    val visualState = activeOverride?.let {
+        if (it) AgentAvatarVisualState.WORKING else AgentAvatarVisualState.IDLE
+    } ?: agentAvatarVisualState(
+        awaitingUserResponse = bot.awaitingUserResponse,
+        currentActivityKind = bot.currentActivityKind,
+        currentActivityVerb = bot.currentActivityVerb,
+        currentActivityTool = bot.currentActivityTool,
+        isComposingMessage = bot.isComposingMessage,
+        isRunning = bot.isRunning,
     )
-    if (!bot.isGroup) {
-        ClothGhostAvatarAndroid(
-            botId = bot.id,
-            size = size,
-            active = active,
-            badge = badge,
-            avatarShape = bot.avatarShape,
-            avatarColor = bot.avatarColor,
-            modifier = modifier,
-        )
-        return
+    val active = avatarAnimationDurationMillis(visualState) != null
+    when (agentAvatarPresentationKind(bot)) {
+        AgentAvatarPresentationKind.PHOTO -> {
+            AgentPhotoAvatarAndroid(
+                bot = bot,
+                dataUrl = requireNotNull(bot.avatarDataUrl),
+                size = size,
+                badge = badge,
+                active = active,
+                modifier = modifier,
+            )
+            return
+        }
+        AgentAvatarPresentationKind.SHARED_ROOM -> {
+            SharedRoomAvatarAndroid(bot = bot, size = size, badge = badge, modifier = modifier)
+            return
+        }
+        AgentAvatarPresentationKind.PERSONA -> {
+            ClothGhostAvatarAndroid(
+                botId = bot.id,
+                size = size,
+                active = active,
+                badge = badge,
+                avatarShape = bot.avatarShape,
+                avatarColor = bot.avatarColor,
+                modifier = modifier,
+            )
+            return
+        }
+        AgentAvatarPresentationKind.GROUP -> Unit
     }
 
     val participants = bot.memberIds.ifEmpty { listOf(bot.id) }

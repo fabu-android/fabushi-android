@@ -26,6 +26,12 @@ data class MobileBotSummaryAndroid(
     val notifyOnUpdatesEnabled: Boolean = false,
     val avatarShape: String? = null,
     val avatarColor: String? = null,
+    val avatarDataUrl: String? = null,
+    val isSharedRoom: Boolean = false,
+    val currentActivityKind: String? = null,
+    val currentActivityVerb: String? = null,
+    val currentActivityTool: String? = null,
+    val isComposingMessage: Boolean = false,
     val miniAppId: String? = null,
     val menuButtonText: String? = null,
     val isPinned: Boolean = false,
@@ -480,6 +486,15 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
                         notifyOnUpdatesEnabled = row.optBoolean("notifyOnUpdatesEnabled", false),
                         avatarShape = row.optString("avatarShape").takeIf(String::isNotBlank),
                         avatarColor = row.optString("avatarColor").takeIf(String::isNotBlank),
+                        avatarDataUrl = row.optString("avatarDataUrl").trim().takeIf(String::isNotEmpty),
+                        isSharedRoom = row.optBoolean("isSharedRoom", false),
+                        currentActivityKind = row.optJSONObject("currentActivity")
+                            ?.optString("kind")?.trim()?.takeIf(String::isNotEmpty),
+                        currentActivityVerb = row.optJSONObject("currentActivity")
+                            ?.optString("verb")?.trim()?.takeIf(String::isNotEmpty),
+                        currentActivityTool = row.optJSONObject("currentActivity")
+                            ?.optString("tool")?.trim()?.takeIf(String::isNotEmpty),
+                        isComposingMessage = row.optBoolean("isComposingMessage", false),
                         miniAppId = row.optString("miniAppId").takeIf(String::isNotBlank),
                         menuButtonText = row.optString("menuButtonText").takeIf(String::isNotBlank),
                         isPinned = row.optBoolean("isPinned"),

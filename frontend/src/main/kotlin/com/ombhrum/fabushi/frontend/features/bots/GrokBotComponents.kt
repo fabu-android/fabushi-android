@@ -363,7 +363,7 @@ internal fun GrokBotChatAndroid(
                     .testTag("mobile-bot-settings"),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                AgentAvatarAndroid(bot, 28.dp, activeOverride = state.busy)
+                AgentAvatarAndroid(bot, 28.dp, activeOverride = if (state.busy) true else null)
                 Column(Modifier.padding(start = 8.dp)) {
                     Text(bot.name, color = GrokMobileInk, fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
                     if (bot.isRunning && bot.awaitingUserResponse == null) {
