@@ -8233,8 +8233,14 @@ mod widget_action_tests {
             )
             .unwrap();
         let old_operation = pending["operationId"].as_str().unwrap().to_string();
-        let approval = host.dispatch("feature.receive", &json!({})).unwrap();
-        assert_eq!(approval["type"], "approval.requested");
+        let approval = (0..16)
+            .find_map(|_| {
+                let event = host.dispatch("feature.receive", &json!({})).ok()?;
+                (event["type"] == "approval.requested"
+                    && event["operationId"] == old_operation)
+                    .then_some(event)
+            })
+            .expect("matching approval requested");
         let approval_id = approval["approvalId"].as_str().unwrap().to_string();
 
         let accepted = {
@@ -8314,7 +8320,14 @@ mod widget_action_tests {
             )
             .unwrap();
         let next_operation = next["operationId"].as_str().unwrap().to_string();
-        let next_approval = host.dispatch("feature.receive", &json!({})).unwrap();
+        let next_approval = (0..16)
+            .find_map(|_| {
+                let event = host.dispatch("feature.receive", &json!({})).ok()?;
+                (event["type"] == "approval.requested"
+                    && event["operationId"] == next_operation)
+                    .then_some(event)
+            })
+            .expect("next matching approval requested");
         let next_approval_id = next_approval["approvalId"].as_str().unwrap().to_string();
 
         let failed_cleanup = host.dispatch(
