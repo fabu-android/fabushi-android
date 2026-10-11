@@ -711,19 +711,13 @@ internal fun GrokBotChatAndroid(
                                 verticalArrangement = Arrangement.spacedBy(5.dp),
                             ) {
                                 if (entry.text.isNotBlank() || entry.streaming) {
-                                    Text(
-                                        entry.text + if (entry.streaming) "▌" else "",
-                                        color = GrokMobileInk,
-                                        fontSize = 16.sp,
-                                        modifier = Modifier
-                                            .background(
-                                                Color.Black.copy(alpha = 0.055f),
-                                                mobileTranscriptBubbleShape(
-                                                    role = MobileChatRole.ASSISTANT,
-                                                    adjacency = adjacency,
-                                                ),
-                                            )
-                                            .padding(horizontal = 15.dp, vertical = 10.dp),
+                                    MobileAssistantRichTranscriptContent(
+                                        text = entry.text,
+                                        streaming = entry.streaming,
+                                        bubbleShape = mobileTranscriptBubbleShape(
+                                            role = MobileChatRole.ASSISTANT,
+                                            adjacency = adjacency,
+                                        ),
                                     )
                                 }
                                 MobileTranscriptAttachments(entry.attachments, alignEnd = false)
