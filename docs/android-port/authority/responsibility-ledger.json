@@ -6849,7 +6849,7 @@
         },
         {
           "path": "frontend/src/recovered/features/computer/shell/view.css",
-          "blob_sha": "f2e712895fd5901d1d22c38d96754f7ea640de8",
+          "blob_sha": "f2e712895fd5901d1d22c38d96754f7ea640de8c",
           "symbols": [
             "Desktop Computer shell presentation styles"
           ]
