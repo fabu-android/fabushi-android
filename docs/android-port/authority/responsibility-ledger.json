@@ -12531,14 +12531,14 @@
         },
         {
           "path": "source/electron-main/update/idle-relaunch-apply.ts",
-          "blob_sha": "b3f7101667968eb8c90f8b3e66544cb5c9793308",
+          "blob_sha": "8a323ec3cc915b1f62c471204eaf1f40000676ae",
           "symbols": [
             "tryApplyStagedWhenIdle"
           ]
         },
         {
           "path": "source/electron-main/update/safe-relaunch-gate.ts",
-          "blob_sha": "f31f358eb3630f0ebd6d74948e50fa5a3391cbca",
+          "blob_sha": "088f9bb188458c474a31b43ca59cadd9b1262ac5",
           "symbols": [
             "isSafeToRelaunchForUpdate",
             "DEFAULT_AUTO_UPDATE_IDLE_SECONDS"
@@ -12546,7 +12546,7 @@
         },
         {
           "path": "source/electron-main/update/update-telemetry.ts",
-          "blob_sha": "34a954be9b78d0df31dd72b8907480b9cfb96d1c",
+          "blob_sha": "3c2fed1856378609ba02c489e7d3679b1a9bb564",
           "symbols": [
             "reportSandUpdateCheck",
             "reportSandUpdateOutcome",
@@ -12588,7 +12588,7 @@
       "artifact": "pending exact-head signed Android package evidence",
       "verification_status": "not-verified",
       "notes": "Implemented, not verified. Auto-update-when-idle is an Android-adapted safe auto-stage: signed APK bytes may be downloaded and verified under Desktop-equivalent safety gates, but Android system installation still requires explicit foreground user continuation. Non-stable signed delivery, final release signing, packaged/device upgrade and protected-account acceptance remain open.",
-      "android_head_at_update": "1b8c053b7ae28be9b2594717a50952707f982d4f"
+      "android_head_at_update": "3001ee372f839912443e7bef686186d453f67787"
     },
     {
       "responsibility_id": "SETTINGS-MANDATORY-UPDATE-ANDROID-001",
@@ -12680,7 +12680,7 @@
       "artifact": null,
       "verification_status": "not-verified",
       "notes": "Implemented, not verified. This no longer relies on an invented release-manifest minimum: Desktop-equivalent sand_min_client_version and SAND_CLIENT_UPDATE_REQUIRED producers are real production code. Verification remains blocked on exact-head CI plus protected/signed package journeys.",
-      "android_head_at_update": "1b8c053b7ae28be9b2594717a50952707f982d4f"
+      "android_head_at_update": "3001ee372f839912443e7bef686186d453f67787"
     },
     {
       "responsibility_id": "SETTINGS-UPDATE-TRACK-ANDROID-001",
