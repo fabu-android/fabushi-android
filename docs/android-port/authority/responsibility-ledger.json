@@ -10290,21 +10290,25 @@
         "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/recovered/features/conversation/workspace/transcript-adjacency.kt",
         "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/recovered/features/conversation/workspace/transcript_view.kt",
         "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/presentation/MessagingViewModel.kt",
-        "mobile/android/app/src/test/java/com/ombhrum/fabushi/TranscriptAdjacencyProjectionTest.kt"
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/production/canonical-agent-transcript.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/presentation/MarketplaceViewModel.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/features/bots/GrokBotComponents.kt",
+        "mobile/android/app/src/test/java/com/ombhrum/fabushi/TranscriptAdjacencyProjectionTest.kt",
+        "mobile/android/app/src/test/java/com/ombhrum/fabushi/FrontendProductionModelParityTest.kt"
       ],
-      "android_owner": "Independent Kotlin immutable projector consumed by native transcript UI",
+      "android_owner": "Independent Kotlin immutable projector consumed by Human and Agent native transcript UI; Host remains the canonical transcript owner.",
       "platform_delta": "Desktop React row composition maps to a Kotlin pure projector and Compose shape/padding consumption. Canonical transcript ownership remains outside Compose.",
-      "implementation_status": "mapped",
-      "production_wiring": "Human transcript_view.kt consumes the projector and senderId is retained in immutable ChatMessage projection as of 0d596e4820242e259f7bc2d2d91f25fe0c6d5bfe; deterministic audit of Agent transcript.tsx composition is still open.",
-      "unit_test": "TranscriptAdjacencyProjectionTest covers role/author continuity, user-attachment, send-message fallback, emoji/image/url-card/attachment exclusions, reactions, thread-chip, group/run start/end.",
+      "implementation_status": "implemented",
+      "production_wiring": "Human transcript_view.kt consumes the immutable six-field projector with sender identity. Agent canonical JSON projection now carries only read-only author/source-kind/presentation/reaction/thread seam metadata when supplied by the canonical row, projectAgentTranscriptAdjacency maps message/widget/unsupported rows into the same projector, and GrokBotChatAndroid consumes the resulting run/group/continuation fields for author/avatar and bubble seams. Compose owns no transcript truth.",
+      "unit_test": "TranscriptAdjacencyProjectionTest covers Human and Agent role/author continuity, user-attachment forcing, send-message/widget fallback, emoji/image/url-card/attachment exclusions, reactions, thread-chip, unsupported-row boundaries, and group/run start/end. FrontendProductionModelParityTest covers canonical JSON preservation of optional read-only seam metadata.",
       "contract_test": "Focused JVM semantics mirror Desktop blob 6fa8e4ccbe3e0b16806d168861ce9046d0132693.",
-      "integration_test": "Human native transcript consumes adjacency; Agent transcript integration remains under deterministic source audit.",
+      "integration_test": "Human and Agent native transcript production surfaces both consume the same immutable projector. Same-exact-head GitHub Actions compile/unit/lint evidence is pending.",
       "packaged_test": "required on final packaged Human and Agent transcript surfaces",
       "device_test": "required for mixed-author/thread/reaction/emoji/url-card transcript continuity",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Kept mapped rather than implemented/verified until transcript.tsx follow-on audit confirms all production transcript entry kinds consume equivalent adjacency semantics.",
-      "android_head_at_update": "0d596e4820242e259f7bc2d2d91f25fe0c6d5bfe"
+      "notes": "Implementation closure for the six-field adjacency responsibility is complete without promoting the broader transcript.tsx source row: rich-content, actions, cards and other transcript responsibilities remain independently tracked. Keep not-verified until the same exact Android HEAD passes required Actions plus final packaged/device acceptance.",
+      "android_head_at_update": "6daf1066111f4c965e2a87747a387e5486f39699"
     },
     {
       "responsibility_id": "CONVERSATION-TRANSCRIPT-LOAD-ERROR-ANDROID-001",
