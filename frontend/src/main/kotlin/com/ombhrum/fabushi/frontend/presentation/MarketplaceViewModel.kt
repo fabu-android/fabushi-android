@@ -7,6 +7,7 @@ import com.ombhrum.fabushi.androidpreload.deeplink.AndroidDeepLink
 import com.ombhrum.fabushi.androidpreload.deeplink.AndroidPresentationDeepLink
 import com.ombhrum.fabushi.androidpreload.deeplink.AuthCompletionStatus
 import com.ombhrum.fabushi.androidpreload.runtime.AccountAccessProjection
+import com.ombhrum.fabushi.androidpreload.runtime.RootConnectionResilienceProjection
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidCoordinatorPort
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -158,6 +159,7 @@ data class MarketplaceUiState(
     val activeOperationId: String? = null,
     val assistantHasUnread: Boolean = false,
     val accountAccessProjection: AccountAccessProjection = AccountAccessProjection.initial(),
+    val rootConnectionProjection: RootConnectionResilienceProjection = RootConnectionResilienceProjection.initial(),
 )
 
 class MarketplaceViewModel(application: Application) : AndroidViewModel(application) {
@@ -166,10 +168,16 @@ class MarketplaceViewModel(application: Application) : AndroidViewModel(applicat
     private val mutableState = MutableStateFlow(MarketplaceUiState())
     val state: StateFlow<MarketplaceUiState> = mutableState.asStateFlow()
     private var featureEventSubscription: AutoCloseable? = null
+    private var rootConnectionSubscription: AutoCloseable? = null
 
     init {
         featureEventSubscription = coordinator.addFeatureEventListener { event ->
             viewModelScope.launch { handleChatEvent(event) }
+        }
+        rootConnectionSubscription = coordinator.addRootConnectionResilienceListener { projection ->
+            viewModelScope.launch {
+                mutableState.value = mutableState.value.copy(rootConnectionProjection = projection)
+            }
         }
         val onboardingComplete = application.getSharedPreferences("fabushi.mobile", 0).getBoolean("onboarding-complete", false)
         mutableState.value = mutableState.value.copy(onboardingStep = if (onboardingComplete) 3 else 0)
@@ -533,12 +541,32 @@ class MarketplaceViewModel(application: Application) : AndroidViewModel(applicat
     fun refreshAccountAccess() {
         viewModelScope.launch {
             runCatching {
-                withContext(Dispatchers.IO) { coordinator.accountAccessProjection() }
-            }.onSuccess { projection ->
-                mutableState.value = mutableState.value.copy(accountAccessProjection = projection)
+                withContext(Dispatchers.IO) {
+                    val access = coordinator.accountAccessProjection()
+                    access to coordinator.rootConnectionResilienceProjection()
+                }
+            }.onSuccess { (access, connection) ->
+                mutableState.value = mutableState.value.copy(
+                    accountAccessProjection = access,
+                    rootConnectionProjection = connection,
+                )
             }.onFailure { error ->
                 mutableState.value = mutableState.value.copy(
                     message = "账号访问状态刷新失败：" + (error.message ?: error::class.java.simpleName),
+                )
+            }
+        }
+    }
+
+    fun retryRootConnection() {
+        viewModelScope.launch {
+            runCatching {
+                withContext(Dispatchers.IO) { coordinator.rootConnectionRetry() }
+            }.onSuccess { projection ->
+                mutableState.value = mutableState.value.copy(rootConnectionProjection = projection)
+            }.onFailure { error ->
+                mutableState.value = mutableState.value.copy(
+                    message = "连接重试失败：" + (error.message ?: error::class.java.simpleName),
                 )
             }
         }
@@ -831,6 +859,8 @@ class MarketplaceViewModel(application: Application) : AndroidViewModel(applicat
     }
 
     override fun onCleared() {
+        rootConnectionSubscription?.close()
+        rootConnectionSubscription = null
         featureEventSubscription?.close()
         featureEventSubscription = null
         super.onCleared()
