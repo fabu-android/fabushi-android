@@ -144,7 +144,7 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
         ),
     )
     private var rosterSelectionAccountSlot: String? = null
-    private var agentSettingsGeneration: Long = 0L
+    private val agentSettingsFence = AgentSettingsMutationFence()
     private val mutableState = MutableStateFlow(MobileBotUiState())
     private val messagesByBot = mutableMapOf<String, List<MobileChatMessage>>()
     private val draftsByBot = mutableMapOf<String, String>()
@@ -182,6 +182,7 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
                 if (nextSlot != rosterSelectionAccountSlot) {
                     withContext(Dispatchers.IO) { rosterSelection.restore(nextSlot) }
                     rosterSelectionAccountSlot = nextSlot
+                    agentSettingsFence.accountChanged(nextSlot)
                 }
             }
             val restoredSelection = rosterSelection.get().currentAgentId
@@ -458,6 +459,15 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
+    fun beginAgentSettings(agentId: String) {
+        if (mutableState.value.bots.none { it.id == agentId }) return
+        agentSettingsFence.select(agentId, rosterSelectionAccountSlot)
+    }
+
+    fun endAgentSettings(agentId: String) {
+        agentSettingsFence.clear(agentId)
+    }
+
     fun updateBotProfile(
         botId: String,
         name: String,
@@ -479,9 +489,8 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
             draftAvatarShape = avatarShape,
             draftAvatarColor = avatarColor,
         ) ?: return
-        agentSettingsGeneration += 1
-        val generation = agentSettingsGeneration
         val accountSlot = rosterSelectionAccountSlot
+        val token = agentSettingsFence.beginMutation(botId, accountSlot) ?: return
         viewModelScope.launch {
             runCatching {
                 withContext(Dispatchers.IO) {
@@ -491,11 +500,11 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
                     )
                 }
             }.onSuccess {
-                if (generation == agentSettingsGeneration && accountSlot == rosterSelectionAccountSlot) {
+                if (agentSettingsFence.isCurrent(token) && accountSlot == rosterSelectionAccountSlot) {
                     refreshBots()
                 }
             }.onFailure { error ->
-                if (generation == agentSettingsGeneration && accountSlot == rosterSelectionAccountSlot) {
+                if (agentSettingsFence.isCurrent(token) && accountSlot == rosterSelectionAccountSlot) {
                     mutableState.value = mutableState.value.copy(error = error.message ?: "Agent profile update failed")
                 }
             }
@@ -505,20 +514,19 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
     fun setBotNotifyOnUpdates(botId: String, isEnabled: Boolean) {
         val bot = mutableState.value.bots.firstOrNull { it.id == botId && !it.isGroup } ?: return
         if (bot.notifyOnUpdatesEnabled == isEnabled) return
-        agentSettingsGeneration += 1
-        val generation = agentSettingsGeneration
         val accountSlot = rosterSelectionAccountSlot
+        val token = agentSettingsFence.beginMutation(botId, accountSlot) ?: return
         viewModelScope.launch {
             runCatching {
                 withContext(Dispatchers.IO) {
                     coordinator.agentSetNotifyOnUpdates(botId, isEnabled)
                 }
             }.onSuccess {
-                if (generation == agentSettingsGeneration && accountSlot == rosterSelectionAccountSlot) {
+                if (agentSettingsFence.isCurrent(token) && accountSlot == rosterSelectionAccountSlot) {
                     refreshBots()
                 }
             }.onFailure { error ->
-                if (generation == agentSettingsGeneration && accountSlot == rosterSelectionAccountSlot) {
+                if (agentSettingsFence.isCurrent(token) && accountSlot == rosterSelectionAccountSlot) {
                     mutableState.value = mutableState.value.copy(error = error.message ?: "Agent notification update failed")
                 }
             }
@@ -725,7 +733,7 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
         asyncTasksJob?.cancel()
         asyncTasksJob = null
         groupMembersGeneration += 1
-        agentSettingsGeneration += 1
+        agentSettingsFence.clear()
         messagesByBot.clear()
         draftsByBot.clear()
         commitState(MobileBotUiState())
@@ -1095,6 +1103,10 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
 
     private fun handleOperationEvent(event: JSONObject) {
         val type = event.optString("type")
+        if (type == "agents" || type == "agent-upserted" || type == "agent-deleted") {
+            refreshBots()
+            return
+        }
         if (type == "agent.async-tasks.changed") {
             val visibleAgentId = mutableState.value.asyncTasksAgent?.id ?: return
             if (event.optString("parentAgentId") == visibleAgentId) {
@@ -1214,6 +1226,7 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
         asyncTasksJob?.cancel()
         asyncTasksJob = null
         groupMembersGeneration += 1
+        agentSettingsFence.dispose()
         rosterSelection.dispose()
         featureEventSubscription?.close()
         featureEventSubscription = null
