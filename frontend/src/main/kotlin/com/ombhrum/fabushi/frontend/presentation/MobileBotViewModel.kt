@@ -109,6 +109,23 @@ internal fun projectMobileAsyncTasks(rows: org.json.JSONArray): List<MobileAsync
         }
     }
 
+data class MobileComputerRebuildUiState(
+    val imageUpdateAvailable: Boolean? = null,
+    val pending: Boolean = false,
+    val outcomeUnknown: Boolean = false,
+    val kind: String? = null,
+    val loading: Boolean = false,
+    val error: String? = null,
+)
+
+internal fun projectMobileComputerRebuildStatus(value: JSONObject): MobileComputerRebuildUiState =
+    MobileComputerRebuildUiState(
+        imageUpdateAvailable = value.opt("imageUpdateAvailable").let { if (it is Boolean) it else null },
+        pending = value.optBoolean("pending", false),
+        outcomeUnknown = value.optBoolean("outcomeUnknown", false),
+        kind = value.optString("kind").trim().takeIf(String::isNotEmpty),
+    )
+
 data class MobileBotUiState(
     val bots: List<MobileBotSummaryAndroid> = emptyList(),
     val sidebarSections: List<AndroidSidebarSection> = emptyList(),
@@ -133,6 +150,7 @@ data class MobileBotUiState(
     val asyncTasksLoading: Boolean = false,
     val asyncTasksError: String? = null,
     val groupMembersUpdatingId: String? = null,
+    val computerRebuild: MobileComputerRebuildUiState = MobileComputerRebuildUiState(),
 )
 
 class MobileBotViewModel(application: Application) : AndroidViewModel(application) {
@@ -156,6 +174,7 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
     private var asyncTasksGeneration = 0L
     private var asyncTasksJob: Job? = null
     private var groupMembersGeneration = 0L
+    private var computerRebuildGeneration = 0L
     val state: StateFlow<MobileBotUiState> = mutableState.asStateFlow()
     private var featureEventSubscription: AutoCloseable? = coordinator.addFeatureEventListener { event ->
         viewModelScope.launch { handleOperationEvent(event) }
@@ -167,6 +186,132 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
             draftsByBot[bot.id] = next.draft
         }
         mutableState.value = next
+    }
+
+
+    fun refreshComputerRebuildStatus() {
+        val token = ++computerRebuildGeneration
+        val previous = mutableState.value.computerRebuild
+        commitState(
+            mutableState.value.copy(
+                computerRebuild = previous.copy(loading = true, error = null),
+            ),
+        )
+        viewModelScope.launch {
+            val result = withContext(Dispatchers.IO) {
+                runCatching { projectMobileComputerRebuildStatus(coordinator.computerRebuildStatus()) }
+            }
+            if (token != computerRebuildGeneration) return@launch
+            result.onSuccess { projection ->
+                commitState(
+                    mutableState.value.copy(
+                        computerRebuild = projection.copy(loading = false),
+                    ),
+                )
+            }.onFailure { error ->
+                commitState(
+                    mutableState.value.copy(
+                        computerRebuild = previous.copy(
+                            loading = false,
+                            error = error.message ?: "Computer update status unavailable",
+                        ),
+                    ),
+                )
+            }
+        }
+    }
+
+    /**
+     * Dispatches only the fail-closed idle update path. The Coordinator owns durable request
+     * identity/outcome-unknown recovery and this ViewModel never retries a possibly-started update.
+     */
+    fun requestComputerUpdate() {
+        val current = mutableState.value
+        val active = current.activeBot ?: return
+        val snapshot = current.computerRebuild
+        val action = commandPaletteComputerUpdateAction(
+            activeAgentIsGroup = active.isGroup,
+            workingAgentCount = current.bots.count { it.isRunning },
+            snapshot = CommandPaletteComputerUpdateSnapshot(
+                imageUpdateAvailable = snapshot.imageUpdateAvailable,
+                pending = snapshot.pending,
+                outcomeUnknown = snapshot.outcomeUnknown,
+                rebuildKind = snapshot.kind,
+            ),
+        )
+        if (action != CommandPaletteComputerUpdateAction.READY || snapshot.loading) return
+
+        val token = ++computerRebuildGeneration
+        val expectedAgentId = active.id
+        commitState(
+            current.copy(
+                computerRebuild = snapshot.copy(loading = true, error = null),
+            ),
+        )
+        viewModelScope.launch {
+            // Re-read Coordinator truth immediately before the side effect. Returning to Main
+            // between the read and dispatch lets account/agent changes fence the request.
+            val latestResult = withContext(Dispatchers.IO) {
+                runCatching { projectMobileComputerRebuildStatus(coordinator.computerRebuildStatus()) }
+            }
+            if (
+                token != computerRebuildGeneration ||
+                mutableState.value.activeBot?.id != expectedAgentId
+            ) {
+                return@launch
+            }
+            val latest = latestResult.getOrElse { error ->
+                commitState(
+                    mutableState.value.copy(
+                        computerRebuild = snapshot.copy(
+                            loading = false,
+                            error = error.message ?: "Computer update status unavailable",
+                        ),
+                    ),
+                )
+                return@launch
+            }
+            val latestAction = commandPaletteComputerUpdateAction(
+                activeAgentIsGroup = mutableState.value.activeBot?.isGroup,
+                workingAgentCount = mutableState.value.bots.count { it.isRunning },
+                snapshot = CommandPaletteComputerUpdateSnapshot(
+                    imageUpdateAvailable = latest.imageUpdateAvailable,
+                    pending = latest.pending,
+                    outcomeUnknown = latest.outcomeUnknown,
+                    rebuildKind = latest.kind,
+                ),
+            )
+            if (latestAction != CommandPaletteComputerUpdateAction.READY) {
+                commitState(mutableState.value.copy(computerRebuild = latest.copy(loading = false)))
+                return@launch
+            }
+
+            val request = withContext(Dispatchers.IO) {
+                runCatching {
+                    coordinator.computerRebuildRequest(
+                        preserveData = true,
+                        forceRecreate = false,
+                    )
+                }
+            }
+            if (token != computerRebuildGeneration) return@launch
+            request.onSuccess {
+                // Never infer success from request return alone; refresh the durable owner.
+                refreshComputerRebuildStatus()
+            }.onFailure { error ->
+                // Coordinator marks request outcome-unknown on ambiguous transport failure.
+                // Surface the error and re-read durable truth; do not replay the side effect.
+                commitState(
+                    mutableState.value.copy(
+                        computerRebuild = latest.copy(
+                            loading = false,
+                            error = error.message ?: "Computer update request failed",
+                        ),
+                    ),
+                )
+                refreshComputerRebuildStatus()
+            }
+        }
     }
 
     fun refreshBots() {
@@ -735,6 +880,7 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
         asyncTasksJob?.cancel()
         asyncTasksJob = null
         groupMembersGeneration += 1
+        computerRebuildGeneration += 1
         agentSettingsFence.clear()
         messagesByBot.clear()
         draftsByBot.clear()

@@ -77,6 +77,47 @@ class ComputerUpdateProjectionTest {
     }
 
     @Test
+    fun typedMobileProjectionPreservesUnknownAndBlocksAmbiguousEpisodes() {
+        val unknown = projectMobileComputerRebuildStatus(
+            JSONObject("""{"pending":false,"outcomeUnknown":true,"kind":null}"""),
+        )
+        assertNull(unknown.imageUpdateAvailable)
+        assertTrue(unknown.outcomeUnknown)
+        assertNull(
+            commandPaletteComputerUpdateAction(
+                activeAgentIsGroup = false,
+                workingAgentCount = 0,
+                snapshot = CommandPaletteComputerUpdateSnapshot(
+                    imageUpdateAvailable = unknown.imageUpdateAvailable,
+                    pending = unknown.pending,
+                    outcomeUnknown = unknown.outcomeUnknown,
+                    rebuildKind = unknown.kind,
+                ),
+            ),
+        )
+
+        val ready = projectMobileComputerRebuildStatus(
+            JSONObject(
+                """{"imageUpdateAvailable":true,"pending":false,"outcomeUnknown":false,"kind":null}""",
+            ),
+        )
+        assertEquals(true, ready.imageUpdateAvailable)
+        assertEquals(
+            CommandPaletteComputerUpdateAction.READY,
+            commandPaletteComputerUpdateAction(
+                activeAgentIsGroup = false,
+                workingAgentCount = 0,
+                snapshot = CommandPaletteComputerUpdateSnapshot(
+                    imageUpdateAvailable = ready.imageUpdateAvailable,
+                    pending = ready.pending,
+                    outcomeUnknown = ready.outcomeUnknown,
+                    rebuildKind = ready.kind,
+                ),
+            ),
+        )
+    }
+
+    @Test
     fun malformedAvailabilityDoesNotManufactureAnUpdate() {
         val ingress = projectForeverBoxRebuildEvent(
             JSONObject(

@@ -4,9 +4,11 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -55,6 +57,7 @@ internal fun ProductionRenderer(
                 var commandPaletteOpen by remember { mutableStateOf(false) }
                 var commandPaletteAgentFilter by remember { mutableStateOf<String?>(null) }
                 var showAbout by remember { mutableStateOf(false) }
+                var showComputerUpdateConfirm by remember { mutableStateOf(false) }
                 var deepLinkInfo by remember { mutableStateOf<DeepLinkInfo?>(null) }
 
                 BackHandler(enabled = rendererRoute != RendererRoute.GROK_HOME && state.loggedIn) {
@@ -78,6 +81,33 @@ internal fun ProductionRenderer(
                     AndroidAboutDialog(
                         updateState = updateState,
                         onClose = { showAbout = false },
+                    )
+                }
+                if (showComputerUpdateConfirm) {
+                    AlertDialog(
+                        onDismissRequest = { showComputerUpdateConfirm = false },
+                        title = { Text("Update Fabushi's Computer?") },
+                        text = {
+                            Text(
+                                "This updates the shared computer your agents run on to the latest version. " +
+                                    "Files and logins are kept. Android will not retry an update whose outcome is unknown.",
+                            )
+                        },
+                        confirmButton = {
+                            TextButton(
+                                onClick = {
+                                    showComputerUpdateConfirm = false
+                                    botModel.requestComputerUpdate()
+                                },
+                            ) {
+                                Text("Update Fabushi's Computer")
+                            }
+                        },
+                        dismissButton = {
+                            TextButton(onClick = { showComputerUpdateConfirm = false }) {
+                                Text("Not now")
+                            }
+                        },
                     )
                 }
 
@@ -235,6 +265,18 @@ internal fun ProductionRenderer(
                             botModel.openBot(targetBot)
                         }
                     }
+                    val computerUpdateAction = commandPaletteComputerUpdateAction(
+                        activeAgentIsGroup = botState.activeBot?.isGroup,
+                        workingAgentCount = botState.bots.count { it.isRunning },
+                        snapshot = botState.computerRebuild.takeUnless { it.loading }?.let {
+                            CommandPaletteComputerUpdateSnapshot(
+                                imageUpdateAvailable = it.imageUpdateAvailable,
+                                pending = it.pending,
+                                outcomeUnknown = it.outcomeUnknown,
+                                rebuildKind = it.kind,
+                            )
+                        },
+                    )
                     val paletteEntries = buildList {
                         addAll(paletteMessageEntries)
                         addAll(paletteRoutineEntries)
@@ -298,6 +340,13 @@ internal fun ProductionRenderer(
                                 openInfoSection = {
                                     rendererRoute = RendererRoute.MESSAGING
                                 },
+                                computerUpdateAction = computerUpdateAction,
+                                openComputerUpdateConfirm = { action ->
+                                    if (action == CommandPaletteComputerUpdateAction.READY) {
+                                        commandPaletteOpen = false
+                                        showComputerUpdateConfirm = true
+                                    }
+                                },
                             ),
                         )
                     }
@@ -320,6 +369,7 @@ internal fun ProductionRenderer(
                                 botModel.resetPaletteMessageSearch()
                                 botModel.resetPaletteRoutines()
                                 botModel.refreshPaletteRoutines()
+                                botModel.refreshComputerRebuildStatus()
                                 commandPaletteOpen = true
                             },
                             onShowBotAsyncTasks = botModel::openAsyncTasks,
