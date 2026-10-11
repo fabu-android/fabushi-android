@@ -321,6 +321,7 @@ internal fun GrokBotChatAndroid(
     onDraftChange: (String) -> Unit,
     onSend: () -> Unit,
     onRetrySend: (String) -> Unit,
+    onLoadOlderMessages: () -> Unit,
     onRespondToWidget: (String, String) -> Unit,
     onDismissWidget: (String) -> Unit,
     onStop: () -> Unit,
@@ -331,6 +332,7 @@ internal fun GrokBotChatAndroid(
     var findOpen by remember(bot.id) { mutableStateOf(false) }
     var findQuery by remember(bot.id) { mutableStateOf("") }
     var findIndex by remember(bot.id) { mutableStateOf(-1) }
+    var historyAnchor by remember(bot.id) { mutableStateOf<Pair<String, Int>?>(null) }
     val findMatches = remember(state.findEntries, findQuery) {
         findInCanonicalAgentChatMatches(state.findEntries, findQuery)
     }
@@ -344,6 +346,15 @@ internal fun GrokBotChatAndroid(
         val targetIndex = state.messages.indexOfFirst { it.id == targetId }
         if (targetIndex >= 0) messageListState.animateScrollToItem(targetIndex)
     }
+    LaunchedEffect(bot.id, state.historyPrependRevision) {
+        val anchor = historyAnchor ?: return@LaunchedEffect
+        val index = state.messages.indexOfFirst { it.id == anchor.first }
+        if (index >= 0) {
+            messageListState.scrollToItem(index, anchor.second)
+        }
+        historyAnchor = null
+    }
+
     LaunchedEffect(bot.id, state.messageTargetId, state.messages) {
         val targetId = state.messageTargetId ?: return@LaunchedEffect
         val targetIndex = state.messages.indexOfFirst { it.id == targetId }
@@ -487,6 +498,40 @@ internal fun GrokBotChatAndroid(
             modifier = Modifier.weight(1f).fillMaxWidth().padding(horizontal = 16.dp),
             verticalArrangement = Arrangement.spacedBy(7.dp),
         ) {
+            if (state.historyHasMore || state.historyLoadingOlder || state.historyError != null) {
+                item(key = "history-loader") {
+                    Column(
+                        Modifier.fillMaxWidth().padding(vertical = 6.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(4.dp),
+                    ) {
+                        when {
+                            state.historyLoadingOlder -> Text("Loading earlier messages…", color = GrokMobileMuted, fontSize = 11.sp)
+                            state.historyHasMore -> Text(
+                                "Load earlier messages",
+                                color = Color(0xFF2A92FE),
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                modifier = Modifier
+                                    .clickable {
+                                        val firstVisible = messageListState.layoutInfo.visibleItemsInfo
+                                            .firstOrNull { item -> item.key is String && item.key != "history-loader" }
+                                        val key = firstVisible?.key as? String
+                                        if (key != null) {
+                                            historyAnchor = key to firstVisible.offset
+                                        }
+                                        onLoadOlderMessages()
+                                    }
+                                    .padding(horizontal = 12.dp, vertical = 6.dp)
+                                    .testTag("mobile-bot-load-older"),
+                            )
+                        }
+                        state.historyError?.let { error ->
+                            Text(error, color = Color(0xFFD14343), fontSize = 11.sp)
+                        }
+                    }
+                }
+            }
             if (state.messages.isEmpty()) item {
                 Column(Modifier.fillMaxWidth().padding(top = 96.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     AgentAvatarAndroid(bot, 82.dp)

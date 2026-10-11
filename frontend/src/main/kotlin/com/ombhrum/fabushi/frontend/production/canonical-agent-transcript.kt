@@ -180,6 +180,13 @@ internal fun mergeCanonicalMobileTranscript(
     return (canonical + arrivedDuringLoad).distinctBy(MobileChatMessage::id)
 }
 
+internal fun prependCanonicalMobileTranscriptPage(
+    older: List<MobileChatMessage>,
+    current: List<MobileChatMessage>,
+): List<MobileChatMessage> =
+    (older + current).distinctBy(MobileChatMessage::id)
+
+
 
 internal fun projectDurableSendAcknowledgements(
     canonical: List<MobileChatMessage>,

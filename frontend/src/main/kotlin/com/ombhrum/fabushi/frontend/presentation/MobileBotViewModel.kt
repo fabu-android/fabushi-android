@@ -193,6 +193,11 @@ data class MobileBotUiState(
     val draft: String = "",
     val messages: List<MobileChatMessage> = emptyList(),
     val findEntries: List<AndroidFindInChatEntry> = emptyList(),
+    val historyBeforeSeq: Long? = null,
+    val historyHasMore: Boolean = false,
+    val historyLoadingOlder: Boolean = false,
+    val historyError: String? = null,
+    val historyPrependRevision: Long = 0L,
     val busy: Boolean = false,
     val operationId: String? = null,
     val pendingApproval: PendingAgentApproval? = null,
@@ -241,6 +246,9 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
     private var paletteRoutineJob: Job? = null
     private var openBotGeneration = 0L
     private var sendPresentationGeneration = 0L
+    private var historyGeneration = 0L
+    private var historyLoadJob: Job? = null
+    private val historyOlderEntryIds = linkedSetOf<String>()
     private var asyncTasksGeneration = 0L
     private var asyncTasksJob: Job? = null
     private var outlineGeneration = 0L
@@ -917,6 +925,10 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
         rosterSelection.select(bot.id)
         openBotGeneration += 1
         sendPresentationGeneration += 1
+        historyGeneration += 1
+        historyLoadJob?.cancel()
+        historyLoadJob = null
+        historyOlderEntryIds.clear()
         draftScopeGeneration += 1
         draftWriteGeneration += 1
         draftWriteJob?.cancel()
@@ -932,6 +944,11 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
                 activeBot = bot,
                 draft = "",
                 messages = cachedMessages,
+                historyBeforeSeq = null,
+                historyHasMore = false,
+                historyLoadingOlder = false,
+                historyError = null,
+                historyPrependRevision = 0L,
                 pendingApproval = null,
                 approvalCleanup = MobileApprovalCleanupState(),
                 widgetPendingEntryIds = emptySet(),
@@ -987,6 +1004,10 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
                     mutableState.value.copy(
                         messages = merged.messages,
                         findEntries = merged.findEntries,
+                        historyBeforeSeq = merged.nextBeforeSeq,
+                        historyHasMore = merged.nextBeforeSeq != null,
+                        historyLoadingOlder = false,
+                        historyError = null,
                         messageTargetId = targetEntryId,
                         error = null,
                     ),
@@ -1019,6 +1040,10 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
         rosterSelection.select(null)
         openBotGeneration += 1
         sendPresentationGeneration += 1
+        historyGeneration += 1
+        historyLoadJob?.cancel()
+        historyLoadJob = null
+        historyOlderEntryIds.clear()
         draftScopeGeneration += 1
         draftWriteGeneration += 1
         draftWriteJob?.cancel()
@@ -1031,6 +1056,10 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
                 draft = "",
                 messages = emptyList(),
                 findEntries = emptyList(),
+                historyBeforeSeq = null,
+                historyHasMore = false,
+                historyLoadingOlder = false,
+                historyError = null,
                 pendingApproval = null,
                 approvalCleanup = MobileApprovalCleanupState(),
                 widgetPendingEntryIds = emptySet(),
@@ -1047,6 +1076,10 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
         rosterSelectionAccountSlot = null
         openBotGeneration += 1
         sendPresentationGeneration += 1
+        historyGeneration += 1
+        historyLoadJob?.cancel()
+        historyLoadJob = null
+        historyOlderEntryIds.clear()
         cancelEditorSuggestionRequest()
         asyncTasksGeneration += 1
         asyncTasksJob?.cancel()
@@ -1930,24 +1963,103 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
     private data class DurableAgentTranscriptProjection(
         val messages: List<MobileChatMessage>,
         val findEntries: List<AndroidFindInChatEntry>,
+        val nextBeforeSeq: Long?,
     )
+
+    private fun loadCanonicalAgentTranscriptPage(
+        agentId: String,
+        beforeSeq: Long?,
+    ): DurableAgentTranscriptProjection {
+        val page = coordinator.transcriptPage(
+            agentId = agentId,
+            beforeSeq = beforeSeq,
+            limit = 200,
+        )
+        val canonical = canonicalMobileTranscriptForAgent(page.entries, agentId)
+        return DurableAgentTranscriptProjection(
+            messages = joinClientSideToolResultCards(
+                canonical = canonical,
+                events = coordinator.replayClientSideToolV2(),
+                agentId = agentId,
+            ),
+            findEntries = parseAndroidFindInChatEntries(page.entries, agentId),
+            nextBeforeSeq = page.nextBeforeSeq,
+        )
+    }
 
     private fun loadDurableAgentTranscript(
         agentId: String,
         accountSlot: String?,
     ): DurableAgentTranscriptProjection {
-        val transcript = coordinator.transcriptSnapshot()
-        val canonical = canonicalMobileTranscriptForAgent(transcript, agentId)
+        val page = loadCanonicalAgentTranscriptPage(agentId, beforeSeq = null)
         val acknowledgements = coordinator.sendAcknowledgementSnapshot(accountSlot, agentId)
-        val durableMessages = projectDurableSendAcknowledgements(canonical, acknowledgements)
-        return DurableAgentTranscriptProjection(
-            messages = joinClientSideToolResultCards(
-                canonical = durableMessages,
-                events = coordinator.replayClientSideToolV2(),
-                agentId = agentId,
-            ),
-            findEntries = parseAndroidFindInChatEntries(transcript, agentId),
+        return page.copy(
+            messages = projectDurableSendAcknowledgements(page.messages, acknowledgements),
         )
+    }
+
+    fun loadOlderMessages() {
+        val snapshot = mutableState.value
+        val bot = snapshot.activeBot ?: return
+        val beforeSeq = snapshot.historyBeforeSeq ?: return
+        if (
+            bot.miniAppId != null ||
+            !snapshot.historyHasMore ||
+            snapshot.historyLoadingOlder ||
+            historyLoadJob?.isActive == true
+        ) {
+            return
+        }
+        val accountSlot = rosterSelectionAccountSlot
+        val generation = historyGeneration
+        val baselineIds = snapshot.messages.mapTo(linkedSetOf(), MobileChatMessage::id)
+        commitState(snapshot.copy(historyLoadingOlder = true, historyError = null))
+        historyLoadJob = viewModelScope.launch {
+            val result = withContext(Dispatchers.IO) {
+                runCatching { loadCanonicalAgentTranscriptPage(bot.id, beforeSeq) }
+            }
+            if (
+                generation != historyGeneration ||
+                accountSlot != rosterSelectionAccountSlot ||
+                mutableState.value.activeBot?.id != bot.id
+            ) {
+                return@launch
+            }
+            result.onSuccess { older ->
+                val current = mutableState.value
+                val currentIds = current.messages.mapTo(linkedSetOf(), MobileChatMessage::id)
+                val arrivedDuringLoad = current.messages.filter {
+                    it.id !in baselineIds && it.id !in older.messages.mapTo(linkedSetOf(), MobileChatMessage::id)
+                }
+                val baselineCurrent = current.messages.filter { it.id in baselineIds }
+                val merged = prependCanonicalMobileTranscriptPage(
+                    older = older.messages,
+                    current = baselineCurrent + arrivedDuringLoad,
+                )
+                historyOlderEntryIds.addAll(older.messages.map(MobileChatMessage::id))
+                val olderFindIds = older.findEntries.mapTo(linkedSetOf(), AndroidFindInChatEntry::entryId)
+                val mergedFind = (older.findEntries + current.findEntries.filter { it.entryId !in olderFindIds })
+                    .distinctBy(AndroidFindInChatEntry::entryId)
+                commitState(
+                    current.copy(
+                        messages = merged,
+                        findEntries = mergedFind,
+                        historyBeforeSeq = older.nextBeforeSeq,
+                        historyHasMore = older.nextBeforeSeq != null,
+                        historyLoadingOlder = false,
+                        historyError = null,
+                        historyPrependRevision = current.historyPrependRevision + 1L,
+                    ),
+                )
+            }.onFailure { error ->
+                commitState(
+                    mutableState.value.copy(
+                        historyLoadingOlder = false,
+                        historyError = error.message ?: "Older transcript page failed",
+                    ),
+                )
+            }
+        }
     }
 
     private suspend fun refreshDurableSendProjection(
@@ -1955,19 +2067,31 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
         accountSlot: String?,
         scopeGeneration: Long,
     ) {
+        val baselineIds = mutableState.value.messages.mapTo(linkedSetOf(), MobileChatMessage::id)
         val durable = withContext(Dispatchers.IO) {
             loadDurableAgentTranscript(agentId, accountSlot)
         }
         if (!isCurrentSendScope(agentId, accountSlot, scopeGeneration)) return
-        val merged = mergeCanonicalMobileTranscript(
-            baselineEntryIds = emptySet(),
-            current = mutableState.value.messages,
-            canonical = durable.messages,
-        )
+        val current = mutableState.value
+        val canonicalIds = durable.messages.mapTo(linkedSetOf(), MobileChatMessage::id)
+        val preservedOlder = current.messages.filter {
+            it.id in historyOlderEntryIds && it.id !in canonicalIds
+        }
+        val arrivedDuringLoad = current.messages.filter {
+            it.id !in baselineIds &&
+                it.id !in canonicalIds &&
+                it.id !in historyOlderEntryIds
+        }
+        val merged = (preservedOlder + durable.messages + arrivedDuringLoad)
+            .distinctBy(MobileChatMessage::id)
+        val preservedOlderFind = current.findEntries.filter { it.entryId in historyOlderEntryIds }
         commitState(
-            mutableState.value.copy(
+            current.copy(
                 messages = merged,
-                findEntries = durable.findEntries,
+                findEntries = (preservedOlderFind + durable.findEntries)
+                    .distinctBy(AndroidFindInChatEntry::entryId),
+                historyBeforeSeq = durable.nextBeforeSeq,
+                historyHasMore = durable.nextBeforeSeq != null || historyOlderEntryIds.isNotEmpty(),
             ),
         )
     }
