@@ -6,10 +6,10 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class AndroidMandatoryUpdateOwnerTest {
-    private class MemoryStore : AndroidMandatoryUpdateStateStore {
-        var value: AndroidMandatoryUpdateState? = null
-        override fun read(): AndroidMandatoryUpdateState? = value
-        override fun write(state: AndroidMandatoryUpdateState) {
+    private class MemoryStore : AndroidMandatoryUpdateProducerStateStore {
+        var value: AndroidMandatoryUpdateProducerState? = null
+        override fun read(): AndroidMandatoryUpdateProducerState? = value
+        override fun write(state: AndroidMandatoryUpdateProducerState) {
             value = state
         }
     }

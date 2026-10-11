@@ -8,7 +8,7 @@ enum class AndroidBackendUpdateSignal {
     UNCHANGED,
 }
 
-data class AndroidMandatoryUpdateState(
+data class AndroidMandatoryUpdateProducerState(
     val accountEpoch: Long,
     val minimumVersion: String?,
     val backendRequiresUpdate: Boolean,
@@ -20,25 +20,25 @@ data class AndroidMandatoryUpdateFacts(
     val backendSignal: AndroidBackendUpdateSignal,
 )
 
-interface AndroidMandatoryUpdateStateStore {
-    fun read(): AndroidMandatoryUpdateState?
-    fun write(state: AndroidMandatoryUpdateState)
+interface AndroidMandatoryUpdateProducerStateStore {
+    fun read(): AndroidMandatoryUpdateProducerState?
+    fun write(state: AndroidMandatoryUpdateProducerState)
 }
 
-class SharedPreferencesMandatoryUpdateStateStore(context: Context) : AndroidMandatoryUpdateStateStore {
+class SharedPreferencesMandatoryUpdateStateStore(context: Context) : AndroidMandatoryUpdateProducerStateStore {
     private val preferences =
         context.getSharedPreferences("fabushi-mandatory-update-producer-v1", Context.MODE_PRIVATE)
 
-    override fun read(): AndroidMandatoryUpdateState? {
+    override fun read(): AndroidMandatoryUpdateProducerState? {
         if (!preferences.contains(KEY_ACCOUNT_EPOCH)) return null
-        return AndroidMandatoryUpdateState(
+        return AndroidMandatoryUpdateProducerState(
             accountEpoch = preferences.getLong(KEY_ACCOUNT_EPOCH, 0L),
             minimumVersion = preferences.getString(KEY_MINIMUM_VERSION, null),
             backendRequiresUpdate = preferences.getBoolean(KEY_BACKEND_REQUIRED, false),
         )
     }
 
-    override fun write(state: AndroidMandatoryUpdateState) {
+    override fun write(state: AndroidMandatoryUpdateProducerState) {
         preferences.edit()
             .putLong(KEY_ACCOUNT_EPOCH, state.accountEpoch)
             .apply {
@@ -65,7 +65,7 @@ class SharedPreferencesMandatoryUpdateStateStore(context: Context) : AndroidMand
  * successful EnsureSandBox explicitly clears it.
  */
 class AndroidMandatoryUpdateOwner(
-    private val store: AndroidMandatoryUpdateStateStore,
+    private val store: AndroidMandatoryUpdateProducerStateStore,
     private val processGeneration: Long,
 ) {
     data class Token(
@@ -75,7 +75,7 @@ class AndroidMandatoryUpdateOwner(
     )
 
     private var sequence = 0L
-    private var state = store.read() ?: AndroidMandatoryUpdateState(
+    private var state = store.read() ?: AndroidMandatoryUpdateProducerState(
         accountEpoch = 0L,
         minimumVersion = null,
         backendRequiresUpdate = false,
@@ -86,10 +86,10 @@ class AndroidMandatoryUpdateOwner(
     }
 
     @Synchronized
-    fun observeAccount(accountEpoch: Long): AndroidMandatoryUpdateState {
+    fun observeAccount(accountEpoch: Long): AndroidMandatoryUpdateProducerState {
         require(accountEpoch >= 0L) { "account epoch must be non-negative" }
         if (state.accountEpoch != accountEpoch) {
-            state = AndroidMandatoryUpdateState(
+            state = AndroidMandatoryUpdateProducerState(
                 accountEpoch = accountEpoch,
                 minimumVersion = null,
                 backendRequiresUpdate = false,
@@ -115,7 +115,7 @@ class AndroidMandatoryUpdateOwner(
         token: Token,
         facts: AndroidMandatoryUpdateFacts,
         currentAccountEpoch: Long,
-    ): AndroidMandatoryUpdateState {
+    ): AndroidMandatoryUpdateProducerState {
         if (
             token.processGeneration != processGeneration ||
             token.sequence != sequence ||
@@ -141,9 +141,9 @@ class AndroidMandatoryUpdateOwner(
     }
 
     @Synchronized
-    fun clearForLoggedOutAccount(accountEpoch: Long): AndroidMandatoryUpdateState {
+    fun clearForLoggedOutAccount(accountEpoch: Long): AndroidMandatoryUpdateProducerState {
         sequence += 1
-        state = AndroidMandatoryUpdateState(
+        state = AndroidMandatoryUpdateProducerState(
             accountEpoch = accountEpoch,
             minimumVersion = null,
             backendRequiresUpdate = false,
@@ -153,5 +153,5 @@ class AndroidMandatoryUpdateOwner(
     }
 
     @Synchronized
-    fun snapshot(accountEpoch: Long): AndroidMandatoryUpdateState = observeAccount(accountEpoch)
+    fun snapshot(accountEpoch: Long): AndroidMandatoryUpdateProducerState = observeAccount(accountEpoch)
 }
