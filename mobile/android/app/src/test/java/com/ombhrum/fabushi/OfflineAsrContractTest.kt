@@ -21,4 +21,10 @@ class OfflineAsrContractTest {
         assertTrue(MicrophoneLease.acquire(second))
         MicrophoneLease.release(second)
     }
+
+    @Test
+    fun voiceInputTimingMatchesDesktopAuthority() {
+        assertEquals(300_000L, ANDROID_VOICE_MAX_RECORDING_MS)
+        assertEquals(500L, ANDROID_VOICE_MIN_RECORDING_MS)
+    }
 }

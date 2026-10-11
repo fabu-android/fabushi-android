@@ -50,6 +50,7 @@ internal fun OfflineAsrDraftControl(
     val generationFence = remember(sessionKey) { OfflineAsrGenerationFence() }
     val available = remember { transcriber.isAvailable() }
     var listening by remember { mutableStateOf(false) }
+    var processing by remember { mutableStateOf(false) }
     var error by remember(available) { mutableStateOf(if (available) null else "设备离线语音识别不可用") }
 
     fun startOfflineTranscription() {
@@ -61,6 +62,7 @@ internal fun OfflineAsrDraftControl(
         transcriber.start { result ->
             if (!generationFence.accepts(generation)) return@start
             listening = false
+            processing = false
             result.onSuccess { text ->
                 val clean = text.trim()
                 if (clean.isNotEmpty()) {
@@ -73,10 +75,12 @@ internal fun OfflineAsrDraftControl(
             }
         }.onSuccess {
             listening = true
+            processing = false
             error = null
         }.onFailure { failure ->
             if (!generationFence.accepts(generation)) return@onFailure
             listening = false
+            processing = false
             error = failure.message ?: "离线语音识别无法启动"
         }
     }
@@ -99,6 +103,7 @@ internal fun OfflineAsrDraftControl(
             generationFence.invalidate()
             transcriber.cancel()
             listening = false
+            processing = false
         }
         onDispose { }
     }
@@ -107,10 +112,11 @@ internal fun OfflineAsrDraftControl(
         Button(
             onClick = {
                 if (listening) {
-                    generationFence.invalidate()
-                    transcriber.cancel()
-                    listening = false
-                } else if (
+                    if (transcriber.stop()) {
+                        listening = false
+                        processing = true
+                    }
+                } else if (!processing && (
                     ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
                 ) {
                     startOfflineTranscription()
@@ -118,7 +124,7 @@ internal fun OfflineAsrDraftControl(
                     microphonePermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
                 }
             },
-            enabled = enabled && available,
+            enabled = enabled && available && !processing,
             modifier = Modifier.size(48.dp).testTag(testTag),
             colors = ButtonDefaults.buttonColors(
                 containerColor = if (listening) Color(0xFFE34B5F) else Color.Black,
@@ -126,7 +132,7 @@ internal fun OfflineAsrDraftControl(
             ),
             contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp),
         ) {
-            Text(if (listening) "■" else "🎙", fontSize = 17.sp)
+            Text(if (processing) "…" else if (listening) "■" else "🎙", fontSize = 17.sp)
         }
         error?.let {
             Text(it, color = Color(0xFFD14343), fontSize = 9.sp, modifier = Modifier.padding(top = 2.dp))

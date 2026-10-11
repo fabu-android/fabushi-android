@@ -4,6 +4,9 @@ import android.content.Context
 import android.content.Intent
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
+import android.os.SystemClock
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
@@ -16,10 +19,16 @@ import java.util.concurrent.atomic.AtomicReference
  * On-device-only speech transcription. It never constructs the ordinary SpeechRecognizer,
  * therefore there is no network/cloud fallback. Unsupported devices fail closed.
  */
+internal const val ANDROID_VOICE_MAX_RECORDING_MS = 300_000L
+internal const val ANDROID_VOICE_MIN_RECORDING_MS = 500L
+
 internal class NativeOfflineSpeechTranscriber(private val context: Context) {
     private val ownerId = "offline-asr:${UUID.randomUUID()}"
     private val generation = AtomicLong(0)
     private val activeRecognizer = AtomicReference<SpeechRecognizer?>(null)
+    private val mainHandler = Handler(Looper.getMainLooper())
+    private val activeCeiling = AtomicReference<Runnable?>(null)
+    private val activeStartedAtMs = AtomicLong(0L)
 
     fun isAvailable(): Boolean {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return false
@@ -48,11 +57,18 @@ internal class NativeOfflineSpeechTranscriber(private val context: Context) {
         }
         activeRecognizer.set(recognizer)
         val delivered = AtomicReference(false)
+        val startedAtMs = SystemClock.elapsedRealtime()
+        activeStartedAtMs.set(startedAtMs)
+
+        fun tooShort(): Boolean =
+            SystemClock.elapsedRealtime() - startedAtMs < ANDROID_VOICE_MIN_RECORDING_MS
 
         fun finish(result: Result<String>) {
             if (generation.get() != currentGeneration) return
             if (!delivered.compareAndSet(false, true)) return
             activeRecognizer.compareAndSet(recognizer, null)
+            activeCeiling.getAndSet(null)?.let(mainHandler::removeCallbacks)
+            activeStartedAtMs.compareAndSet(startedAtMs, 0L)
             runCatching { recognizer.destroy() }
             MicrophoneLease.release(ownerId)
             onResult(result)
@@ -68,10 +84,18 @@ internal class NativeOfflineSpeechTranscriber(private val context: Context) {
             override fun onEvent(eventType: Int, params: Bundle?) = Unit
 
             override fun onError(error: Int) {
-                finish(Result.failure(IllegalStateException(errorMessage(error))))
+                if (tooShort()) {
+                    finish(Result.success(""))
+                } else {
+                    finish(Result.failure(IllegalStateException(errorMessage(error))))
+                }
             }
 
             override fun onResults(results: Bundle?) {
+                if (tooShort()) {
+                    finish(Result.success(""))
+                    return
+                }
                 val text = results
                     ?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
                     ?.firstOrNull { it.isNotBlank() }
@@ -90,14 +114,37 @@ internal class NativeOfflineSpeechTranscriber(private val context: Context) {
             .putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, false)
             .putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
             .putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 3)
+        val ceiling = Runnable {
+            if (
+                generation.get() == currentGeneration &&
+                    activeRecognizer.get() === recognizer &&
+                    !delivered.get()
+            ) {
+                runCatching { recognizer.stopListening() }
+            }
+        }
+        activeCeiling.set(ceiling)
         recognizer.startListening(intent)
+        mainHandler.postDelayed(ceiling, ANDROID_VOICE_MAX_RECORDING_MS)
     }.onFailure {
+        activeCeiling.getAndSet(null)?.let(mainHandler::removeCallbacks)
+        activeStartedAtMs.set(0L)
         activeRecognizer.getAndSet(null)?.let { recognizer -> runCatching { recognizer.destroy() } }
         MicrophoneLease.release(ownerId)
     }
 
+    fun stop(): Boolean {
+        val recognizer = activeRecognizer.get() ?: return false
+        return runCatching {
+            recognizer.stopListening()
+            true
+        }.getOrDefault(false)
+    }
+
     fun cancel() {
         generation.incrementAndGet()
+        activeCeiling.getAndSet(null)?.let(mainHandler::removeCallbacks)
+        activeStartedAtMs.set(0L)
         activeRecognizer.getAndSet(null)?.let { recognizer ->
             runCatching { recognizer.cancel() }
             runCatching { recognizer.destroy() }
