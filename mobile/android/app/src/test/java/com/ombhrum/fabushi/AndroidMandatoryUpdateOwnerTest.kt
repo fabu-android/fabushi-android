@@ -73,6 +73,71 @@ class AndroidMandatoryUpdateOwnerTest {
     }
 
     @Test
+    fun idleGateSurvivesProcessDeathAndSupportsClearAndReassert() {
+        val store = MemoryStore()
+        val first = AndroidMandatoryUpdateOwner(store, processGeneration = 31)
+        val enabledToken = first.begin(accountEpoch = 12)
+        val enabled = first.settle(
+            token = enabledToken,
+            facts = AndroidMandatoryUpdateFacts(
+                minimumVersionObserved = false,
+                minimumVersion = null,
+                backendSignal = AndroidBackendUpdateSignal.UNCHANGED,
+                autoUpdateWhenIdleGateObserved = true,
+                autoUpdateWhenIdleGateEnabled = true,
+            ),
+            currentAccountEpoch = 12,
+        )
+        assertTrue(enabled.autoUpdateWhenIdleGateObserved)
+        assertTrue(enabled.autoUpdateWhenIdleGateEnabled)
+
+        val recreated = AndroidMandatoryUpdateOwner(store, processGeneration = 32)
+        val unavailableToken = recreated.begin(accountEpoch = 12)
+        val unavailable = recreated.settle(
+            token = unavailableToken,
+            facts = AndroidMandatoryUpdateFacts(
+                minimumVersionObserved = false,
+                minimumVersion = null,
+                backendSignal = AndroidBackendUpdateSignal.UNCHANGED,
+                autoUpdateWhenIdleGateObserved = false,
+                autoUpdateWhenIdleGateEnabled = false,
+            ),
+            currentAccountEpoch = 12,
+        )
+        assertTrue(unavailable.autoUpdateWhenIdleGateObserved)
+        assertTrue(unavailable.autoUpdateWhenIdleGateEnabled)
+
+        val clearToken = recreated.begin(accountEpoch = 12)
+        val cleared = recreated.settle(
+            token = clearToken,
+            facts = AndroidMandatoryUpdateFacts(
+                minimumVersionObserved = false,
+                minimumVersion = null,
+                backendSignal = AndroidBackendUpdateSignal.UNCHANGED,
+                autoUpdateWhenIdleGateObserved = true,
+                autoUpdateWhenIdleGateEnabled = false,
+            ),
+            currentAccountEpoch = 12,
+        )
+        assertTrue(cleared.autoUpdateWhenIdleGateObserved)
+        assertFalse(cleared.autoUpdateWhenIdleGateEnabled)
+
+        val reassertToken = recreated.begin(accountEpoch = 12)
+        val reasserted = recreated.settle(
+            token = reassertToken,
+            facts = AndroidMandatoryUpdateFacts(
+                minimumVersionObserved = false,
+                minimumVersion = null,
+                backendSignal = AndroidBackendUpdateSignal.UNCHANGED,
+                autoUpdateWhenIdleGateObserved = true,
+                autoUpdateWhenIdleGateEnabled = true,
+            ),
+            currentAccountEpoch = 12,
+        )
+        assertTrue(reasserted.autoUpdateWhenIdleGateEnabled)
+    }
+
+    @Test
     fun accountSwitchFencesLateCallbackAndClearsOldAccountRequirement() {
         val store = MemoryStore()
         val owner = AndroidMandatoryUpdateOwner(store, processGeneration = 4)
