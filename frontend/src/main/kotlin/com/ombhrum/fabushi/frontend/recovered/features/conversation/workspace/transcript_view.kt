@@ -107,6 +107,7 @@ internal fun ConversationTranscript(
         }
         itemsIndexed(visibleMessages, key = { _, message -> message.id }) { index, message ->
             val adjacency = transcriptAdjacency.getOrElse(index) { emptyTranscriptAdjacency() }
+            val messageActions = remember(message) { projectTranscriptMessageActions(message) }
             val bubbleShape = RoundedCornerShape(
                 topStart = if (adjacency.isContinuedFromPrev) 6.dp else 16.dp,
                 topEnd = if (adjacency.isContinuedFromPrev) 6.dp else 16.dp,
@@ -145,7 +146,7 @@ internal fun ConversationTranscript(
                                     change.consume()
                                 },
                                 onDragEnd = {
-                                    if (horizontalDrag > 58.dp.toPx()) {
+                                    if (messageActions.canReply && horizontalDrag > 58.dp.toPx()) {
                                         onReply(message)
                                         haptics.performHapticFeedback(HapticFeedbackType.LongPress)
                                     }
@@ -156,7 +157,9 @@ internal fun ConversationTranscript(
                         }
                         .combinedClickable(
                             onClick = {},
-                            onLongClick = { onSelectMessage(message) },
+                            onLongClick = {
+                                if (messageActions.canSelect) onSelectMessage(message)
+                            },
                         )
                         .padding(horizontal = 12.dp, vertical = 8.dp),
                 ) {
