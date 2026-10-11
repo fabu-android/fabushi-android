@@ -12638,6 +12638,77 @@
       "artifact": null,
       "verification_status": "not-verified",
       "notes": "Does not invent a release-manifest minimum. Desktop authority is backendRequiresUpdate OR currentVersion < sand_min_client_version.min_version."
+    },
+    {
+      "responsibility_id": "SETTINGS-UPDATE-TRACK-ANDROID-001",
+      "domain": "settings",
+      "desktop_sources": [
+        {
+          "path": "source/shared/update.ts",
+          "blob_sha": "838c56677eb813c5125362fb5650d9e1689074f2",
+          "symbols": [
+            "SAND_UPDATE_TRACKS",
+            "isSandUpdateTrack"
+          ]
+        },
+        {
+          "path": "source/shared/update-track.ts",
+          "blob_sha": "34733696bf85dcde26c8d2c2cfd1332b946d92fe",
+          "symbols": [
+            "selectableUpdateTracks",
+            "availableUpdateTracks",
+            "coerceToEnabledTrack",
+            "toManagedUpdateTrack",
+            "resolveReleaseTrackGate",
+            "resolveEffectiveTrack"
+          ]
+        }
+      ],
+      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "responsibility": "Own update-track validation and release-policy selection for stable/nightly/dogfood, including disabled nightly coercion, internal dogfood unlock, managed policy and effective-track precedence.",
+      "source_owner": "Desktop shared update/update-track policy",
+      "direct_callers": [
+        "update wiring and settings track selection"
+      ],
+      "downstream_dependencies": [
+        "release updater policy"
+      ],
+      "state_owner": "pure Rust policy; caller owns persisted preference/config",
+      "persistent_state": [
+        "none inside policy"
+      ],
+      "protocol_wire_contract": [
+        "stable",
+        "nightly",
+        "dogfood"
+      ],
+      "visible_effect": "Only supported/selectable update tracks can be chosen; disabled nightly is coerced to stable while a currently effective hidden track remains visible for reconciliation.",
+      "failure_behavior": [
+        "unknown managed track ignored",
+        "disabled nightly managed value ignored/coerced"
+      ],
+      "cancellation_behavior": "not applicable pure policy",
+      "retry_semantics": "not applicable pure policy",
+      "idempotency_semantics": "deterministic pure projection",
+      "process_death_recovery": "caller rehydrates persisted config then re-runs pure policy",
+      "account_fencing": "policy is account-neutral; managed configuration owner must fence its source",
+      "security_boundary": "managed track cannot unlock internal tracks; unlock is an explicit separate boolean input",
+      "android_disposition": "direct-port",
+      "android_target": [
+        "source/shared/src/update.rs"
+      ],
+      "android_owner": "source/shared Rust update policy",
+      "platform_delta": "none; platform-independent policy remains Rust-to-Rust",
+      "implementation_status": "implemented",
+      "production_wiring": "Shared Rust policy now matches Desktop track acceptance, nightly disablement, dogfood unlock, managed-track validation and effective precedence. Shipping settings/update adapters still need to consume this policy where track selection becomes user-visible.",
+      "unit_test": "Rust tests cover known tracks, selectable/available tracks, managed validation, internal unlock and effective precedence/coercion; exact-head Actions pending.",
+      "contract_test": "Shared Rust crate tests are part of architecture/rust-runtime Actions.",
+      "integration_test": "Pending shipping updater/settings track consumer journey.",
+      "packaged_test": "Pending final package if track selector is exposed.",
+      "device_test": "Pending only when track selector becomes user-visible on Android.",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Core policy is implemented; verification waits for exact-head CI and shipping consumer closure."
     }
   ],
   "traceability": {
