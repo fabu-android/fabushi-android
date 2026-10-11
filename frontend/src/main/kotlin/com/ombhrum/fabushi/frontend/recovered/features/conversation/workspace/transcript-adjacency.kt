@@ -203,6 +203,45 @@ internal fun projectTranscriptAdjacency(
 
 internal fun emptyTranscriptAdjacency(): TranscriptAdjacency = TranscriptAdjacency()
 
+/**
+ * Production adapter for Host-owned Agent transcript rows. Unsupported action/thinking/tool rows
+ * intentionally break adjacency. Widget rows are the Android projection of Desktop send-message
+ * cards and therefore retain the assistant fallback group while never becoming a message bubble.
+ *
+ * Thread ownership remains external: callers may provide ids from the canonical thread-summary
+ * owner, while a row-projected flag is consumed when that owner already attached it upstream.
+ */
+internal fun projectAgentTranscriptAdjacency(
+    messages: List<MobileChatMessage>,
+    assistantAuthor: String,
+    threadChipMessageIds: Set<String> = emptySet(),
+): List<TranscriptAdjacency> =
+    projectTranscriptAdjacency(
+        messages.map { message ->
+            val kind = when (message.kind) {
+                MobileChatEntryKind.MESSAGE -> TranscriptAdjacencyKind.MESSAGE
+                MobileChatEntryKind.WIDGET -> TranscriptAdjacencyKind.SEND_MESSAGE
+                else -> TranscriptAdjacencyKind.OTHER
+            }
+            val role = when (message.role) {
+                MobileChatRole.USER -> TranscriptAdjacencyRole.USER
+                MobileChatRole.ASSISTANT -> TranscriptAdjacencyRole.ASSISTANT
+            }
+            TranscriptAdjacencyInput(
+                kind = kind,
+                role = role,
+                author = message.transcriptAuthor?.trim()?.takeIf(String::isNotEmpty)
+                    ?: if (role == TranscriptAdjacencyRole.USER) "user" else assistantAuthor,
+                sourceKind = message.transcriptSourceKind,
+                text = message.text,
+                attachmentCount = message.attachments.size,
+                presentationKind = message.transcriptPresentationKind,
+                hasReaction = message.hasTranscriptReaction,
+                hasThreadChip = message.hasTranscriptThreadChip || message.id in threadChipMessageIds,
+            )
+        },
+    )
+
 private val attachmentContentTypes = setOf("photo", "video", "document", "voice", "audio")
 
 /**
