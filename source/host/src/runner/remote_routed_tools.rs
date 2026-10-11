@@ -282,6 +282,45 @@ impl RemoteApprovalRegistry {
         }))
     }
 
+
+    pub(crate) fn clear_from_ui(
+        &self,
+        approval_id: &str,
+        expected_operation_id: &str,
+        current_account_fence: &str,
+    ) -> Result<Option<RemoteApprovalResolution>, String> {
+        let wait = self
+            .waits
+            .lock()
+            .map_err(|_| "remote approval registry lock poisoned".to_string())?
+            .get(approval_id)
+            .cloned();
+        let Some(wait) = wait else {
+            return Ok(None);
+        };
+        if wait.account_fence != current_account_fence {
+            return Err("remote approval cleanup is fenced by account identity".into());
+        }
+        if wait.remote_operation_id != expected_operation_id {
+            return Err("remote approval cleanup operation identity disagrees with waiter".into());
+        }
+        let (state, condvar) = &*wait.signal;
+        let mut state = state
+            .lock()
+            .map_err(|_| "remote approval signal lock poisoned".to_string())?;
+        if state.is_some() {
+            return Err("remote approval cleanup raced a terminal resolution".into());
+        }
+        *state = Some(false);
+        condvar.notify_all();
+        Ok(Some(RemoteApprovalResolution {
+            parent_operation_id: wait.parent_operation_id,
+            remote_operation_id: wait.remote_operation_id,
+            capability: wait.capability,
+            approved: false,
+        }))
+    }
+
     fn register(&self, approval_id: &str, wait: RemoteApprovalWait) -> Result<(), String> {
         let mut waits = self
             .waits

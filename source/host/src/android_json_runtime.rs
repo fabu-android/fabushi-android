@@ -1107,6 +1107,7 @@ impl AndroidJsonHost {
             "feature.sendAcknowledgement.begin" => self.send_acknowledgement_begin(params),
             "feature.sendAcknowledgement.dispatch" => self.send_acknowledgement_dispatch(params),
             "feature.sendAcknowledgement.retry" => self.send_acknowledgement_retry(params),
+            "feature.sendAcknowledgement.clearApprovals" => self.send_acknowledgement_clear_approvals(params),
             "feature.sendAcknowledgement.snapshot" => self.send_acknowledgement_snapshot(params),
             "feature.widget.respond" => self.widget_respond(params),
             "feature.widget.dismiss" => self.widget_dismiss(params),
@@ -3184,6 +3185,111 @@ impl AndroidJsonHost {
             "agentId":agent_id,
             "nonce":retried.nonce,
             "generation":retried.generation,
+        }))
+    }
+
+
+    fn send_acknowledgement_clear_approvals(&mut self, params: &Value) -> Result<Value, String> {
+        let (account_slot, account_fence, agent_id) = self.send_acknowledgement_scope(params)?;
+        let nonce = required_string(params, "nonce")?;
+        let generation = params
+            .get("generation")
+            .and_then(Value::as_u64)
+            .filter(|value| *value > 0)
+            .ok_or("send acknowledgement generation is required")?;
+
+        let accepted = self
+            .send_acknowledgements
+            .lock()
+            .map_err(|_| "send acknowledgement owner lock poisoned".to_string())?
+            .record(account_slot.as_deref(), &account_fence, &agent_id, nonce)
+            .ok_or("post-journal approval cleanup requires a durable send acknowledgement")?;
+        if accepted.generation != generation {
+            return Err("post-journal approval cleanup was fenced by send generation".into());
+        }
+        if accepted.phase != SendAcknowledgementPhase::AcceptedAwaitingEcho {
+            return Err("post-journal approval cleanup requires an accepted send".into());
+        }
+
+        let approval_id = params
+            .get("approvalId")
+            .and_then(Value::as_str)
+            .filter(|value| !value.trim().is_empty());
+        let approval_operation_id = params
+            .get("approvalOperationId")
+            .and_then(Value::as_str)
+            .filter(|value| !value.trim().is_empty());
+        let (Some(approval_id), Some(approval_operation_id)) =
+            (approval_id, approval_operation_id)
+        else {
+            if approval_id.is_some() || approval_operation_id.is_some() {
+                return Err("approvalId and approvalOperationId must be provided together".into());
+            }
+            return Ok(json!({
+                "status":"idle",
+                "cleared":false,
+                "generation":generation,
+                "approvalId":Value::Null,
+            }));
+        };
+
+        let reason = "superseded by an accepted journaled user send";
+        let cancelled = self.capability_broker.cancel_approval(
+            approval_id,
+            approval_operation_id,
+            &account_fence,
+            reason,
+            now_ms(),
+        )?;
+        if !cancelled {
+            return Ok(json!({
+                "status":"settled",
+                "cleared":false,
+                "generation":generation,
+                "approvalId":approval_id,
+            }));
+        }
+
+        let registry = if self.subagent_review_approvals.contains(approval_id) {
+            self.subagent_review_approvals.resolve(approval_id, false)?;
+            "subagent-review"
+        } else if self
+            .remote_approvals
+            .clear_from_ui(approval_id, approval_operation_id, &account_fence)?
+            .is_some()
+        {
+            "remote"
+        } else if let Some(pending_operation) = self.pending_approvals.get(approval_id).cloned() {
+            if pending_operation != approval_operation_id {
+                return Err("feature approval cleanup operation identity disagrees with registry".into());
+            }
+            self.pending_approvals.remove(approval_id);
+            self.active_operations.remove(approval_operation_id);
+            self.events.push_back(json!({
+                "type":"operation.interrupted",
+                "operationId":approval_operation_id,
+                "reason":"superseded-by-journaled-send",
+            }));
+            "feature"
+        } else {
+            "broker"
+        };
+
+        self.events.push_back(json!({
+            "type":"approval.cleared",
+            "approvalId":approval_id,
+            "operationId":approval_operation_id,
+            "agentId":agent_id,
+            "accountSlot":account_slot,
+            "reason":"superseded-by-journaled-send",
+            "registry":registry,
+        }));
+        Ok(json!({
+            "status":"cleared",
+            "cleared":true,
+            "generation":generation,
+            "approvalId":approval_id,
+            "registry":registry,
         }))
     }
 
@@ -8110,4 +8216,168 @@ mod widget_action_tests {
         assert_eq!(answered["respondedValue"], "a");
         assert_eq!(dismissed["widgetDismissed"], true);
     }
+
+    #[test]
+    fn post_journal_approval_cleanup_is_canonical_and_failure_isolated() {
+        let root = tempfile::tempdir().unwrap();
+        let mut host = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+
+        let pending = host
+            .dispatch(
+                "feature.execute",
+                &json!({"command":{
+                    "type":"capability.request",
+                    "requestId":"approval-cleanup-old",
+                    "capability":"camera"
+                }}),
+            )
+            .unwrap();
+        let old_operation = pending["operationId"].as_str().unwrap().to_string();
+        let approval = host.dispatch("feature.receive", &json!({})).unwrap();
+        assert_eq!(approval["type"], "approval.requested");
+        let approval_id = approval["approvalId"].as_str().unwrap().to_string();
+
+        let accepted = {
+            let mut owner = host.send_acknowledgements.lock().unwrap();
+            let record = owner
+                .begin(
+                    None,
+                    "session:test:android",
+                    "mahayana-assistant",
+                    "cleanup-send-a",
+                    "hello",
+                    vec![SendAcknowledgementEntry {
+                        id: "cleanup-send-a".into(),
+                        kind: crate::send_acknowledgement::SendAcknowledgementEntryKind::Message,
+                        client_nonce: "cleanup-send-a".into(),
+                    }],
+                )
+                .unwrap();
+            owner
+                .mark_queued(
+                    None,
+                    "session:test:android",
+                    "mahayana-assistant",
+                    &record.nonce,
+                    record.generation,
+                )
+                .unwrap();
+            owner
+                .mark_dispatching(
+                    None,
+                    "session:test:android",
+                    "mahayana-assistant",
+                    &record.nonce,
+                    record.generation,
+                )
+                .unwrap();
+            owner
+                .mark_accepted(
+                    None,
+                    "session:test:android",
+                    "mahayana-assistant",
+                    &record.nonce,
+                    record.generation,
+                )
+                .unwrap()
+        };
+
+        let cleared = host
+            .dispatch(
+                "feature.sendAcknowledgement.clearApprovals",
+                &json!({
+                    "agentId":"mahayana-assistant",
+                    "nonce":accepted.nonce,
+                    "generation":accepted.generation,
+                    "approvalId":approval_id,
+                    "approvalOperationId":old_operation,
+                }),
+            )
+            .unwrap();
+        assert_eq!(cleared["status"], "cleared");
+        assert_eq!(cleared["cleared"], true);
+        assert!(host
+            .dispatch(
+                "feature.approval.resolve",
+                &json!({"approvalId":approval_id,"approved":true}),
+            )
+            .is_err());
+
+        let next = host
+            .dispatch(
+                "feature.execute",
+                &json!({"command":{
+                    "type":"capability.request",
+                    "requestId":"approval-cleanup-failure",
+                    "capability":"microphone"
+                }}),
+            )
+            .unwrap();
+        let next_operation = next["operationId"].as_str().unwrap().to_string();
+        let next_approval = host.dispatch("feature.receive", &json!({})).unwrap();
+        let next_approval_id = next_approval["approvalId"].as_str().unwrap().to_string();
+
+        let failed_cleanup = host.dispatch(
+            "feature.sendAcknowledgement.clearApprovals",
+            &json!({
+                "agentId":"mahayana-assistant",
+                "nonce":accepted.nonce,
+                "generation":accepted.generation,
+                "approvalId":next_approval_id,
+                "approvalOperationId":"wrong-operation",
+            }),
+        );
+        assert!(failed_cleanup.is_err());
+        assert_eq!(
+            host.send_acknowledgements
+                .lock()
+                .unwrap()
+                .record(
+                    None,
+                    "session:test:android",
+                    "mahayana-assistant",
+                    &accepted.nonce,
+                )
+                .unwrap()
+                .phase,
+            SendAcknowledgementPhase::AcceptedAwaitingEcho,
+        );
+        let denied = host
+            .dispatch(
+                "feature.approval.resolve",
+                &json!({"approvalId":next_approval_id,"approved":false}),
+            )
+            .unwrap();
+        assert_eq!(denied["operationId"], next_operation);
+        assert_eq!(denied["execution"], "denied");
+
+        let unaccepted = {
+            let mut owner = host.send_acknowledgements.lock().unwrap();
+            owner
+                .begin(
+                    None,
+                    "session:test:android",
+                    "mahayana-assistant",
+                    "cleanup-send-pending",
+                    "still pending",
+                    vec![SendAcknowledgementEntry {
+                        id: "cleanup-send-pending".into(),
+                        kind: crate::send_acknowledgement::SendAcknowledgementEntryKind::Message,
+                        client_nonce: "cleanup-send-pending".into(),
+                    }],
+                )
+                .unwrap()
+        };
+        assert!(host
+            .dispatch(
+                "feature.sendAcknowledgement.clearApprovals",
+                &json!({
+                    "agentId":"mahayana-assistant",
+                    "nonce":unaccepted.nonce,
+                    "generation":unaccepted.generation,
+                }),
+            )
+            .is_err());
+    }
+
 }

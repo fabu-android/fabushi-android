@@ -389,6 +389,56 @@ impl CapabilityBroker {
         )
     }
 
+
+    pub fn cancel_approval(
+        &mut self,
+        approval_id: &str,
+        expected_operation_id: &str,
+        current_account_fence: &str,
+        reason: &str,
+        now_ms: u64,
+    ) -> Result<bool, String> {
+        validate_identity("approval", approval_id)?;
+        validate_identity("operation", expected_operation_id)?;
+        validate_identity("account fence", current_account_fence)?;
+        let current = self
+            .state
+            .approvals
+            .get(approval_id)
+            .cloned()
+            .ok_or("approval is unknown, stale, cancelled, or already consumed")?;
+        if current.operation_id != expected_operation_id {
+            return Err("approval operation identity disagrees with cleanup request".into());
+        }
+        if current.account_fence != current_account_fence {
+            return Err("approval cleanup is fenced by account identity".into());
+        }
+        if !matches!(current.state.as_str(), "pending" | "allowed_once") {
+            return Ok(false);
+        }
+        let approval = self
+            .state
+            .approvals
+            .get_mut(approval_id)
+            .expect("validated approval remains present");
+        approval.state = "cancelled".into();
+        approval.resolved_at_ms = Some(now_ms);
+        self.state.audit.push(CapabilityAuditRecord {
+            request_id: current.request_id,
+            plugin_id: "feature".into(),
+            capability: current.capability,
+            tool: "capability.request".into(),
+            account_fence: current.account_fence,
+            runtime_generation: 0,
+            decision: CapabilityDecision::Deny,
+            outcome: "approval_cancelled".into(),
+            reason: Some(reason.into()),
+            at_ms: now_ms,
+        });
+        self.persist()?;
+        Ok(true)
+    }
+
     pub fn cancel_approval_operation(
         &mut self,
         operation_id: &str,
@@ -670,6 +720,24 @@ impl SharedCapabilityBroker {
             current_account_fence,
             account_epoch,
             device_id,
+            now_ms,
+        )
+    }
+
+
+    pub fn cancel_approval(
+        &self,
+        approval_id: &str,
+        expected_operation_id: &str,
+        current_account_fence: &str,
+        reason: &str,
+        now_ms: u64,
+    ) -> Result<bool, String> {
+        self.lock()?.cancel_approval(
+            approval_id,
+            expected_operation_id,
+            current_account_fence,
+            reason,
             now_ms,
         )
     }

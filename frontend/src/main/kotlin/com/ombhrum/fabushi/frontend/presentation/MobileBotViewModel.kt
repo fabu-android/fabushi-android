@@ -131,6 +131,18 @@ internal fun projectMobileComputerRebuildStatus(value: JSONObject): MobileComput
         queuedWhenIdle = value.optBoolean("queuedWhenIdle", false),
     )
 
+
+enum class MobileApprovalCleanupStatus {
+    IDLE,
+    CLEARING,
+    FAILED,
+}
+
+data class MobileApprovalCleanupState(
+    val status: MobileApprovalCleanupStatus = MobileApprovalCleanupStatus.IDLE,
+    val error: String? = null,
+)
+
 data class MobileBotUiState(
     val bots: List<MobileBotSummaryAndroid> = emptyList(),
     val sidebarSections: List<AndroidSidebarSection> = emptyList(),
@@ -140,6 +152,7 @@ data class MobileBotUiState(
     val busy: Boolean = false,
     val operationId: String? = null,
     val pendingApproval: PendingAgentApproval? = null,
+    val approvalCleanup: MobileApprovalCleanupState = MobileApprovalCleanupState(),
     val widgetPendingEntryIds: Set<String> = emptySet(),
     val editorSuggestions: MobileEditorSuggestionSnapshot = MobileEditorSuggestionSnapshot(),
     val messageTargetId: String? = null,
@@ -366,6 +379,7 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
                     commitState(
                         mutableState.value.copy(
                             widgetPendingEntryIds = emptySet(),
+                            approvalCleanup = MobileApprovalCleanupState(),
                             editorSuggestions = MobileEditorSuggestionSnapshot(),
                         ),
                     )
@@ -850,6 +864,7 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
                 draft = draftsByBot[bot.id].orEmpty(),
                 messages = cachedMessages,
                 pendingApproval = null,
+                approvalCleanup = MobileApprovalCleanupState(),
                 widgetPendingEntryIds = emptySet(),
                 editorSuggestions = MobileEditorSuggestionSnapshot(),
                 messageTargetId = targetEntryId,
@@ -914,6 +929,7 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
                 draft = "",
                 messages = emptyList(),
                 pendingApproval = null,
+                approvalCleanup = MobileApprovalCleanupState(),
                 widgetPendingEntryIds = emptySet(),
                 editorSuggestions = MobileEditorSuggestionSnapshot(),
                 messageTargetId = null,
@@ -1240,12 +1256,13 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
 
         val accountSlot = rosterSelectionAccountSlot
         val scopeGeneration = sendPresentationGeneration
+        val approvalAtSend = snapshot.pendingApproval
         val nonce = "android-mobile-bot-chat-${UUID.randomUUID()}"
         commitState(
             snapshot.copy(
                 busy = true,
                 error = null,
-                pendingApproval = null,
+                approvalCleanup = MobileApprovalCleanupState(),
                 messageTargetId = null,
             ),
         )
@@ -1272,6 +1289,15 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
                         generation = acknowledgement.generation,
                     )
                 }
+                if (!isCurrentSendScope(bot.id, accountSlot, scopeGeneration)) return@launch
+                clearApprovalsAfterJournal(
+                    agentId = bot.id,
+                    accountSlot = accountSlot,
+                    scopeGeneration = scopeGeneration,
+                    nonce = dispatched.acknowledgement.nonce,
+                    generation = dispatched.acknowledgement.generation,
+                    approval = approvalAtSend,
+                )
                 if (!isCurrentSendScope(bot.id, accountSlot, scopeGeneration)) return@launch
                 val operationId = dispatched.operationId
                 commitState(
@@ -1429,8 +1455,9 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
         val generation = failed.sendAcknowledgementGeneration ?: return
         val accountSlot = rosterSelectionAccountSlot
         val scopeGeneration = sendPresentationGeneration
+        val approvalAtRetry = snapshot.pendingApproval
         val freshNonce = "sand-resend-v1:${nonce.length}:$nonce:${UUID.randomUUID()}"
-        commitState(snapshot.copy(busy = true, error = null))
+        commitState(snapshot.copy(busy = true, error = null, approvalCleanup = MobileApprovalCleanupState()))
         viewModelScope.launch {
             try {
                 val dispatched = withContext(Dispatchers.IO) {
@@ -1443,6 +1470,15 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
                         entries = listOf(messageAcknowledgementEntry(freshNonce)),
                     )
                 }
+                if (!isCurrentSendScope(bot.id, accountSlot, scopeGeneration)) return@launch
+                clearApprovalsAfterJournal(
+                    agentId = bot.id,
+                    accountSlot = accountSlot,
+                    scopeGeneration = scopeGeneration,
+                    nonce = dispatched.acknowledgement.nonce,
+                    generation = dispatched.acknowledgement.generation,
+                    approval = approvalAtRetry,
+                )
                 if (!isCurrentSendScope(bot.id, accountSlot, scopeGeneration)) return@launch
                 val operationId = dispatched.operationId
                 refreshDurableSendProjection(bot.id, accountSlot, scopeGeneration)
@@ -1498,6 +1534,64 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
         scopeGeneration == sendPresentationGeneration &&
             mutableState.value.activeBot?.id == agentId &&
             rosterSelectionAccountSlot == accountSlot
+
+
+    private suspend fun clearApprovalsAfterJournal(
+        agentId: String,
+        accountSlot: String?,
+        scopeGeneration: Long,
+        nonce: String,
+        generation: Long,
+        approval: PendingAgentApproval?,
+    ) {
+        if (!isCurrentSendScope(agentId, accountSlot, scopeGeneration)) return
+        commitState(
+            mutableState.value.copy(
+                approvalCleanup = MobileApprovalCleanupState(
+                    status = MobileApprovalCleanupStatus.CLEARING,
+                ),
+            ),
+        )
+        val cleanup = withContext(Dispatchers.IO) {
+            runCatching {
+                coordinator.clearApprovalsAfterJournal(
+                    accountSlot = accountSlot,
+                    agentId = agentId,
+                    nonce = nonce,
+                    generation = generation,
+                    approvalId = approval?.approvalId,
+                    approvalOperationId = approval?.operationId,
+                )
+            }
+        }
+        if (!isCurrentSendScope(agentId, accountSlot, scopeGeneration)) return
+        cleanup.onSuccess { result ->
+            val current = mutableState.value
+            commitState(
+                current.copy(
+                    pendingApproval = if (
+                        result.cleared &&
+                        approval != null &&
+                        current.pendingApproval?.approvalId == approval.approvalId
+                    ) {
+                        null
+                    } else {
+                        current.pendingApproval
+                    },
+                    approvalCleanup = MobileApprovalCleanupState(),
+                ),
+            )
+        }.onFailure { error ->
+            commitState(
+                mutableState.value.copy(
+                    approvalCleanup = MobileApprovalCleanupState(
+                        status = MobileApprovalCleanupStatus.FAILED,
+                        error = error.message ?: "Approval cleanup failed after send was accepted",
+                    ),
+                ),
+            )
+        }
+    }
 
     private fun loadDurableAgentTranscript(
         agentId: String,
@@ -1747,7 +1841,7 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
                     commitState(mutableState.value.copy(pendingApproval = pending))
                 }
             }
-            "approval.resolved" -> {
+            "approval.resolved", "approval.cleared" -> {
                 val approvalId = event.optString("approvalId")
                 if (approvalId.isNotBlank() && mutableState.value.pendingApproval?.approvalId == approvalId) {
                     commitState(mutableState.value.copy(pendingApproval = null))

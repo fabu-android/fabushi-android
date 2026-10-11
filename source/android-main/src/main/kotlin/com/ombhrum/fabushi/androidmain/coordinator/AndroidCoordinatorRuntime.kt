@@ -508,6 +508,32 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
             ),
         )
 
+
+    override fun clearApprovalsAfterJournal(
+        accountSlot: String?,
+        agentId: String,
+        nonce: String,
+        generation: Long,
+        approvalId: String?,
+        approvalOperationId: String?,
+    ): AndroidApprovalCleanupResult {
+        val result = host.request(
+            "feature.sendAcknowledgement.clearApprovals",
+            JSONObject()
+                .putNullable("accountSlot", accountSlot)
+                .put("agentId", agentId)
+                .put("nonce", nonce)
+                .put("generation", generation)
+                .putNullable("approvalId", approvalId)
+                .putNullable("approvalOperationId", approvalOperationId),
+        )
+        return AndroidApprovalCleanupResult(
+            generation = result.getLong("generation"),
+            cleared = result.optBoolean("cleared", false),
+            approvalId = result.optString("approvalId").takeIf(String::isNotBlank),
+        )
+    }
+
     override fun sendAcknowledgementSnapshot(
         accountSlot: String?,
         agentId: String,

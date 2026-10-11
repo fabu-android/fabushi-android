@@ -57,6 +57,13 @@ data class AndroidSendAcknowledgementDispatch(
     val operationId: String,
 )
 
+
+data class AndroidApprovalCleanupResult(
+    val generation: Long,
+    val cleared: Boolean,
+    val approvalId: String?,
+)
+
 data class AndroidWidgetActionResult(
     val accepted: Boolean,
     val generation: Long,
@@ -150,6 +157,16 @@ interface AndroidCoordinatorPort {
         freshNonce: String,
         entries: List<AndroidSendAcknowledgementEntry>,
     ): AndroidSendAcknowledgementDispatch
+
+    fun clearApprovalsAfterJournal(
+        accountSlot: String?,
+        agentId: String,
+        nonce: String,
+        generation: Long,
+        approvalId: String? = null,
+        approvalOperationId: String? = null,
+    ): AndroidApprovalCleanupResult =
+        error("Post-journal approval cleanup is unavailable on this Coordinator port")
     fun sendAcknowledgementSnapshot(
         accountSlot: String?,
         agentId: String,
