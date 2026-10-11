@@ -31,7 +31,7 @@
   "symlinks": [],
   "truncation_fallback_used": false,
   "initial_status": "unreviewed",
-  "ledger_sha256": "b012fd80372e581689ea1330cbc6954635c7cb83c0af7313239bbc8b3d60eb58",
-  "closure_review": "incremental-rebaseline-to-d575-complete-new-specs-unreviewed-semantic-review-continuing",
+  "ledger_sha256": "e37ba3ed457a3d55118c729cf7f49b41682553a5ec4af1fb203ac494789603c5",
+  "closure_review": "incremental-rebaseline-to-d575-complete-new-specs-unreviewed-semantic-review-continuing-computer-update-confirmation-mapped",
   "product_acceptance": "not-claimed"
 }
