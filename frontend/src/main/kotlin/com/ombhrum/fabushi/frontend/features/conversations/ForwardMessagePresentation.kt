@@ -2,7 +2,7 @@ package com.ombhrum.fabushi
 
 import org.json.JSONObject
 
-internal data class ForwardMessageBatchRequest(
+data class ForwardMessageBatchRequest(
     val sourceConversationId: String,
     val messageId: String,
     val destinationConversationIds: List<String>,
@@ -11,9 +11,9 @@ internal data class ForwardMessageBatchRequest(
     val dropCaptions: Boolean = false,
 )
 
-internal enum class ForwardSettlementStatus { SENT, FAILED }
+enum class ForwardSettlementStatus { SENT, FAILED }
 
-internal data class ForwardSettlement(
+data class ForwardSettlement(
     val conversationId: String,
     val status: ForwardSettlementStatus,
     val error: String? = null,
