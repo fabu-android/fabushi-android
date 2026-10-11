@@ -5,9 +5,9 @@
     "desktop_commit": "d575b4f77b6895eea4ecaced96e5c512964bf3ed",
     "android_repository": "fabu-android/fabushi-android",
     "android_pr": 3,
-    "android_head_at_update": "22bcaa9e35fd958063b6df47753f39b6c242a1dc",
+    "android_head_at_update": "e6fc1e328f7d2f6960d5e1c8f3182ca115e6c513",
     "status": "incomplete",
-    "note": "Incrementally rebased to Desktop main d575b4f7. Relative to 92fcc2b0, Desktop changed only three tracked specification documents (two added, one modified); no shipping source blob changed. Existing responsibility mappings are retained only where source blobs are identical. The modified canonical runtime spec was human-reviewed for its OMA-001/FPM-001 additions; those two newly added extension specs remain unreviewed source rows pending dedicated responsibility mapping. No verification is inherited. COMPUTER-UPDATE-CONFIRMATION-ANDROID-001 added as implemented/not-verified at c727506a; busy when-idle queue and same-head packaged/device evidence remain open. TEACH-RECORDING-ANDROID-001 mapped at 4a7f591f with durable Rust owner only; production Remote Runner/API/UI remains open. Teach Recording advanced through 22bcaa9e with Host-owned status and Desktop-compatible queue authenticity/clientNonce protocol; start/stop Remote Runner and remote queue/UI remain open."
+    "note": "Incrementally rebased to Desktop main d575b4f7. Relative to 92fcc2b0, Desktop changed only three tracked specification documents (two added, one modified); no shipping source blob changed. Existing responsibility mappings are retained only where source blobs are identical. The modified canonical runtime spec was human-reviewed for its OMA-001/FPM-001 additions; those two newly added extension specs remain unreviewed source rows pending dedicated responsibility mapping. No verification is inherited. COMPUTER-UPDATE-CONFIRMATION-ANDROID-001 now includes durable when-idle queue plus forced-update wiring through Android e6fc1e32; same-head CI, packaged and device evidence remain open. TEACH-RECORDING-ANDROID-001 mapped at 4a7f591f with durable Rust owner only; production Remote Runner/API/UI remains open. Teach Recording advanced through 22bcaa9e with Host-owned status and Desktop-compatible queue authenticity/clientNonce protocol; start/stop Remote Runner and remote queue/UI remain open."
   },
   "responsibilities": [
     {
@@ -6960,7 +6960,7 @@
         }
       ],
       "source_commit": "d575b4f77b6895eea4ecaced96e5c512964bf3ed",
-      "responsibility": "Expose the shared-computer image update action only from canonical Forever Box/update truth, guard it against active rebuild or unknown outcomes, confirm before dispatch, preserve files/logins for the normal update path, and never replay an ambiguous side effect.",
+      "responsibility": "Expose shared-computer image update only from canonical Forever Box/update truth; when Agents are busy offer durable update-when-idle plus explicit forced update, preserve files/logins for update paths, fence account/process identity, and never replay an ambiguous side effect.",
       "source_owner": "Desktop ProductionRenderer computer update composition over Forever Box status, rebuild stores and confirmation controller",
       "direct_callers": [
         "ProductionRenderer command palette",
@@ -6974,28 +6974,30 @@
       ],
       "state_owner": "Coordinator/Forever Box rebuild owner owns canonical update availability and rebuild episode; presentation owns only transient dialog visibility.",
       "persistent_state": [
-        "Android ComputerRebuildStateOwner snapshot: account epoch, request/operation identity, imageUpdateAvailable, pending/outcomeUnknown and migration cursor"
+        "Android ComputerRebuildStateOwner snapshot: account epoch, request/operation identity, queuedWhenIdle intent, imageUpdateAvailable, pending/outcomeUnknown and migration cursor"
       ],
       "protocol_wire_contract": [
         "Forever Box imageUpdateAvailable boolean",
         "stable rebuild requestId and operationId",
-        "preserveData=true normal update",
-        "forceRecreate reserved for explicit destructive override",
+        "RecreateSandBox preserveData=true, force=false for normal/queued update",
+        "RecreateSandBox preserveData=true, force=true for Desktop busy 'Update anyway'",
+        "ForceRecreateSandBox remains reserved for destructive reset/recreate rather than busy update",
         "migration cursor/terminal reconciliation"
       ],
-      "visible_effect": "When a current single Agent is idle and the canonical shared computer reports a newer image, the Android command palette offers Update Fabushi's Computer and requires confirmation before dispatch.",
+      "visible_effect": "For a current single Agent with a newer canonical shared-computer image, Android offers Update Fabushi's Computer. Idle confirms immediate update; busy confirms 'Update when done' and also exposes 'Update anyway'.",
       "failure_behavior": [
         "missing/malformed update availability hides the action",
-        "pending, active rebuild or outcome-unknown hides the action",
-        "dispatch errors are surfaced and durable rebuild truth is re-read",
-        "busy-Agent path remains hidden until Android has a durable when-idle queue owner"
+        "pending, active rebuild, queued intent or outcome-unknown hides the action",
+        "queued update polls canonical Host Agent roster and dispatches only when no Agent reports isRunning",
+        "dispatch errors are surfaced/reconciled; an ambiguous reserved request becomes outcome-unknown and is never replayed",
+        "a queued intent clears if canonical imageUpdateAvailable becomes false"
       ],
-      "cancellation_behavior": "Dismissing the confirmation has no side effect. Once dispatch begins, presentation does not synthesize cancellation or retry; Coordinator reconciliation owns the episode.",
+      "cancellation_behavior": "Dismissing confirmation has no side effect. A durable queued intent has a typed Coordinator cancel operation. Once rebuild dispatch begins, presentation does not synthesize cancellation or retry; Coordinator reconciliation owns the episode.",
       "retry_semantics": "No presentation retry for computer rebuild. Ambiguous dispatch is marked outcome-unknown by Coordinator and reconciled from durable operation/migration identity.",
-      "idempotency_semantics": "Coordinator reserves a durable requestId before Host dispatch and refuses a second unsettled episode; presentation dispatches at most once per explicit confirmation.",
-      "process_death_recovery": "ComputerRebuildStateOwner persists update availability plus request/operation/migration state; unsettled episodes rebound outcome-unknown after process restart and are reconciled rather than replayed.",
+      "idempotency_semantics": "Coordinator persists queuedWhenIdle, atomically consumes it into a durable requestId before Host dispatch, refuses concurrent unsettled episodes, and marks ambiguous dispatch outcome-unknown; presentation never owns retry truth.",
+      "process_death_recovery": "A queuedWhenIdle intent survives process restart as an unconsumed intent and resumes canonical Host roster checks. A reserved/pending request instead rebounds outcome-unknown and is reconciled rather than replayed.",
       "account_fencing": "Coordinator status/request use the settled account epoch; presentation re-reads current status before dispatch and account reset invalidates its generation.",
-      "security_boundary": "Compose cannot call native Host directly; the action routes ViewModel -> AndroidCoordinatorPort -> AndroidCoordinatorRuntime -> MahayanaHost. Busy override remains fail-closed until a durable queue/approval equivalent exists.",
+      "security_boundary": "Compose routes only through typed AndroidCoordinatorPort. Coordinator owns queue/request state and reads canonical Host listAgents before queued dispatch. JNI distinguishes non-destructive forced update from destructive force-recreate; UI cannot call Rust/native Host directly.",
       "android_disposition": "android-adapted",
       "android_target": [
         "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/coordinator/ComputerRebuildStateOwner.kt",
@@ -7005,20 +7007,23 @@
         "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/presentation/MobileBotViewModel.kt",
         "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/production/ProductionRenderer_view.kt",
         "mobile/android/app/src/test/java/com/ombhrum/fabushi/ComputerUpdateProjectionTest.kt",
-        "mobile/android/app/src/test/java/com/ombhrum/fabushi/ComputerRebuildStateOwnerTest.kt"
+        "mobile/android/app/src/test/java/com/ombhrum/fabushi/ComputerRebuildStateOwnerTest.kt",
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/core/MahayanaHost.kt",
+        "source/android-host-jni/src/lib.rs",
+        "source/host/src/box_rebuild_backend.rs"
       ],
-      "android_owner": "Android Coordinator durable rebuild owner with typed ViewModel/Compose presentation",
-      "platform_delta": "Electron/Desktop bridge update confirmation becomes native Compose confirmation over AndroidCoordinatorPort. Android currently implements the idle safe path; Desktop busy 'update when agents are done' requires a durable Android queue owner and therefore remains fail-closed rather than process-local.",
+      "android_owner": "Android Coordinator durable rebuild/queue owner; Host/JNI/Rust rebuild transport; typed ViewModel/Compose presentation",
+      "platform_delta": "Desktop process-local React queue is strengthened on Android into a Coordinator-persisted when-idle intent so OS process death cannot lose or replay the side effect. Native Compose presents the Desktop ready/busy choices, and Rust RecreateSandBox force is carried through typed Kotlin/JNI separately from destructive ForceRecreateSandBox.",
       "implementation_status": "implemented",
-      "production_wiring": "Implemented at c727506ab253c3df246de322003bdc68067a19f7. Forever Box imageUpdateAvailable now enters and persists in ComputerRebuildStateOwner, is projected by computerRebuildStatus(), refreshed on command-palette open, gated with single-Agent/no-running-Agent/no-pending/no-outcome-unknown checks, confirmed in native Compose, and dispatched once through MobileBotViewModel -> AndroidCoordinatorPort -> AndroidCoordinatorRuntime -> MahayanaHost. Busy when-idle queue parity is not yet implemented.",
-      "unit_test": "ComputerUpdateProjectionTest covers canonical availability projection/persistence, malformed/unknown availability fail-closed behavior, pending/outcomeUnknown/active rebuild/group/busy fences and typed mobile projection. Existing ComputerRebuildStateOwnerTest covers request identity, process restart outcome-unknown, migration fencing and no side-effect replay.",
-      "contract_test": "Current exact-head GitHub Actions required; pending for c727506ab253c3df246de322003bdc68067a19f7 at ledger update time.",
-      "integration_test": "Production route is wired, but same-exact-head CI and device confirmation are still required. Busy when-idle queue remains an explicit implementation gap.",
+      "production_wiring": "Implemented through Android e6fc1e328f7d2f6960d5e1c8f3182ca115e6c513. Forever Box imageUpdateAvailable persists in ComputerRebuildStateOwner. Busy confirmation persists queuedWhenIdle; Coordinator rechecks canonical Host listAgents/isRunning on a process-owned scheduler, atomically reserves requestId when idle, and dispatches once. 'Update anyway' routes ViewModel -> AndroidCoordinatorPort -> AndroidCoordinatorRuntime -> MahayanaHost -> JNI -> Rust AndroidBoxRebuildBackend.recreate(preserveData=true, force=true), while destructive ForceRecreateSandBox remains separate.",
+      "unit_test": "ComputerUpdateProjectionTest covers ready/busy projection, queued suppression and malformed/unknown availability. ComputerRebuildStateOwnerTest covers queued process-death persistence, atomic queued request reservation, ambiguous outcome no-replay, account fencing, cancellation and disappearance of update availability, in addition to existing rebuild recovery tests. Exact-head Actions are still required.",
+      "contract_test": "Typed Coordinator queue/cancel/forced-update routes and distinct JNI force-update vs force-recreate semantics are production-wired. Same exact-head GitHub Actions are required before verification can advance.",
+      "integration_test": "Production queue, confirmation, Host roster gate and Rust rebuild backend are wired. Same exact-head CI is pending; packaged/device acceptance remain externally blocked by protected CI credentials.",
       "packaged_test": "required; blocked independently by release-signing prerequisite until protected signing secrets are provisioned",
       "device_test": "required; protected-account emulator/device acceptance remains blocked until CI test account secrets are provisioned",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Do not promote to verified until same exact HEAD tests pass and the Desktop busy when-idle semantic is implemented with a durable owner. This row intentionally records implemented production wiring without claiming full Desktop parity."
+      "notes": "Core Desktop busy update semantics are now implemented in production code, including durable when-idle and explicit forced update. Keep verification_status=not-verified until exact-head CI succeeds; packaged/device proof remains separately blocked by protected account/signing prerequisites."
     },
     {
       "responsibility_id": "TEACH-RECORDING-ANDROID-001",
