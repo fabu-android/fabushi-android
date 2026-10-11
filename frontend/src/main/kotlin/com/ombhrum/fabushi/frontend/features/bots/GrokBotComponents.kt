@@ -280,8 +280,8 @@ internal fun GrokBotChatAndroid(
     var findOpen by remember(bot.id) { mutableStateOf(false) }
     var findQuery by remember(bot.id) { mutableStateOf("") }
     var findIndex by remember(bot.id) { mutableStateOf(-1) }
-    val findMatches = remember(state.messages, findQuery) {
-        findInAgentChatMatches(state.messages, findQuery)
+    val findMatches = remember(state.findEntries, findQuery) {
+        findInCanonicalAgentChatMatches(state.findEntries, findQuery)
     }
     val currentFindMessageId = findMatches.getOrNull(findIndex)?.messageId
 

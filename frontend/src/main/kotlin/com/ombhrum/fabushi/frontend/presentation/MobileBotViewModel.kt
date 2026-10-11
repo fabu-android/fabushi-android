@@ -5,6 +5,8 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidCoordinatorPort
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidConversationOutlineItem
+import com.ombhrum.fabushi.androidpreload.runtime.AndroidFindInChatEntry
+import com.ombhrum.fabushi.androidpreload.runtime.parseAndroidFindInChatEntries
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidSendAcknowledgementEntry
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidSidebarSection
 import kotlinx.coroutines.CancellationException
@@ -190,6 +192,7 @@ data class MobileBotUiState(
     val activeBot: MobileBotSummaryAndroid? = null,
     val draft: String = "",
     val messages: List<MobileChatMessage> = emptyList(),
+    val findEntries: List<AndroidFindInChatEntry> = emptyList(),
     val busy: Boolean = false,
     val operationId: String? = null,
     val pendingApproval: PendingAgentApproval? = null,
@@ -973,14 +976,17 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
                     loadDurableAgentTranscript(bot.id, rosterSelectionAccountSlot)
                 }
                 if (generation != openBotGeneration || mutableState.value.activeBot?.id != bot.id) return@launch
-                val merged = mergeCanonicalMobileTranscript(
-                    baselineEntryIds = baselineEntryIds,
-                    current = mutableState.value.messages,
-                    canonical = durable,
+                val merged = durable.copy(
+                    messages = mergeCanonicalMobileTranscript(
+                        baselineEntryIds = baselineEntryIds,
+                        current = mutableState.value.messages,
+                        canonical = durable.messages,
+                    ),
                 )
                 commitState(
                     mutableState.value.copy(
-                        messages = merged,
+                        messages = merged.messages,
+                        findEntries = merged.findEntries,
                         messageTargetId = targetEntryId,
                         error = null,
                     ),
@@ -1024,6 +1030,7 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
                 activeBot = null,
                 draft = "",
                 messages = emptyList(),
+                findEntries = emptyList(),
                 pendingApproval = null,
                 approvalCleanup = MobileApprovalCleanupState(),
                 widgetPendingEntryIds = emptySet(),
@@ -1920,18 +1927,26 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
+    private data class DurableAgentTranscriptProjection(
+        val messages: List<MobileChatMessage>,
+        val findEntries: List<AndroidFindInChatEntry>,
+    )
+
     private fun loadDurableAgentTranscript(
         agentId: String,
         accountSlot: String?,
-    ): List<MobileChatMessage> {
+    ): DurableAgentTranscriptProjection {
         val transcript = coordinator.transcriptSnapshot()
         val canonical = canonicalMobileTranscriptForAgent(transcript, agentId)
         val acknowledgements = coordinator.sendAcknowledgementSnapshot(accountSlot, agentId)
         val durableMessages = projectDurableSendAcknowledgements(canonical, acknowledgements)
-        return joinClientSideToolResultCards(
-            canonical = durableMessages,
-            events = coordinator.replayClientSideToolV2(),
-            agentId = agentId,
+        return DurableAgentTranscriptProjection(
+            messages = joinClientSideToolResultCards(
+                canonical = durableMessages,
+                events = coordinator.replayClientSideToolV2(),
+                agentId = agentId,
+            ),
+            findEntries = parseAndroidFindInChatEntries(transcript, agentId),
         )
     }
 
@@ -1947,9 +1962,14 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
         val merged = mergeCanonicalMobileTranscript(
             baselineEntryIds = emptySet(),
             current = mutableState.value.messages,
-            canonical = durable,
+            canonical = durable.messages,
         )
-        commitState(mutableState.value.copy(messages = merged))
+        commitState(
+            mutableState.value.copy(
+                messages = merged,
+                findEntries = durable.findEntries,
+            ),
+        )
     }
 
     private fun sendMiniApp(pluginId: String, text: String, operationId: String) {

@@ -99,6 +99,64 @@ data class AndroidClientSideToolV2Event(
     val projection: AndroidToolResultCard?,
 )
 
+
+data class AndroidFindInChatEntry(
+    val entryId: String,
+    val searchText: String,
+)
+
+fun parseAndroidFindInChatEntries(
+    entries: JSONArray,
+    agentId: String,
+): List<AndroidFindInChatEntry> {
+    require(agentId.isNotBlank()) { "Find in chat requires a non-empty Agent id" }
+    val byId = linkedMapOf<String, AndroidFindInChatEntry>()
+    for (index in 0 until entries.length()) {
+        val entry = entries.optJSONObject(index) ?: continue
+        if (entry.optString("agentId").trim() != agentId) continue
+        val id = entry.optString("id").trim()
+        if (id.isEmpty()) continue
+        val searchText = when (entry.optString("kind")) {
+            "message" -> {
+                val parts = mutableListOf<String>()
+                entry.optString("content").takeIf(String::isNotEmpty)?.let(parts::add)
+                entry.optString("author").takeIf(String::isNotEmpty)?.let(parts::add)
+                val attachments = entry.optJSONArray("attachments")
+                if (attachments != null) {
+                    for (attachmentIndex in 0 until attachments.length()) {
+                        attachments.optJSONObject(attachmentIndex)
+                            ?.optString("name")
+                            ?.takeIf(String::isNotEmpty)
+                            ?.let(parts::add)
+                    }
+                }
+                parts.joinToString("\n")
+            }
+            "notice" -> entry.optString("text")
+            "send-message" -> {
+                val message = entry.optJSONObject("message") ?: continue
+                when (message.optString("type")) {
+                    "text" -> message.optString("content")
+                    "widget" -> message.optJSONObject("widget")?.optString("prompt").orEmpty()
+                    "email-draft" -> {
+                        val draft = message.optJSONObject("draft") ?: continue
+                        val subject = draft.optString("subject")
+                        val body = draft.optString("body")
+                        if (subject.isEmpty() || body.isEmpty()) "" else "$subject\n$body"
+                    }
+                    "slack-draft" -> message.optJSONObject("draft")?.optString("body").orEmpty()
+                    else -> ""
+                }
+            }
+            else -> ""
+        }
+        if (searchText.isNotEmpty()) {
+            byId[id] = AndroidFindInChatEntry(entryId = id, searchText = searchText)
+        }
+    }
+    return byId.values.toList()
+}
+
 data class AndroidConversationOutlineItem(
     val kind: String,
     val id: String,

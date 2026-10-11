@@ -1,5 +1,7 @@
 package com.ombhrum.fabushi
 
+import com.ombhrum.fabushi.androidpreload.runtime.AndroidFindInChatEntry
+
 internal data class FindInChatMatch(
     val messageId: String,
     val occurrence: Int,
@@ -92,4 +94,25 @@ internal fun stepAgentFindInChatIndex(current: Int, delta: Int, count: Int): Int
     if (count <= 0) return -1
     val base = current.takeIf { it in 0 until count } ?: (count - 1)
     return ((base + delta) % count + count) % count
+}
+
+
+internal fun findInCanonicalAgentChatMatches(
+    entries: List<AndroidFindInChatEntry>,
+    query: String,
+): List<FindInChatMatch> {
+    if (query.trim().isEmpty()) return emptyList()
+    val needle = query.lowercase()
+    return buildList {
+        entries.forEach { entry ->
+            val text = entry.searchText.lowercase()
+            var at = text.indexOf(needle)
+            var occurrence = 0
+            while (at >= 0) {
+                add(FindInChatMatch(entry.entryId, occurrence))
+                occurrence += 1
+                at = text.indexOf(needle, at + needle.length.coerceAtLeast(1))
+            }
+        }
+    }
 }
