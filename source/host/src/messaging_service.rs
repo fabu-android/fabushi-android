@@ -16,8 +16,18 @@ use std::{
 };
 
 const MESSAGING_PROTOCOL_VERSION: u64 = 2;
-const MESSAGING_REPOSITORY_SCHEMA_VERSION: u32 = 1;
+const MESSAGING_REPOSITORY_SCHEMA_VERSION: u32 = 2;
+const LEGACY_MESSAGING_REPOSITORY_SCHEMA_VERSION: u32 = 1;
 const MAX_REPLAY_RESULTS: usize = 512;
+const MESSAGING_EVENT_JOURNAL_LIMIT: usize = 10_000;
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct MessagingJournalEntry {
+    cursor: u64,
+    audience: Vec<String>,
+    envelope: Value,
+}
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -50,6 +60,10 @@ struct MessagingRepositoryState {
     agent_delivery_call_order: Vec<String>,
     #[serde(default)]
     agent_wakes: BTreeMap<String, Value>,
+    #[serde(default)]
+    event_journal: Vec<MessagingJournalEntry>,
+    #[serde(default)]
+    journal_floor_cursor: u64,
 }
 
 impl Default for MessagingRepositoryState {
@@ -70,6 +84,8 @@ impl Default for MessagingRepositoryState {
             agent_delivery_calls: BTreeMap::new(),
             agent_delivery_call_order: Vec::new(),
             agent_wakes: BTreeMap::new(),
+            event_journal: Vec::new(),
+            journal_floor_cursor: 0,
         }
     }
 }
@@ -90,37 +106,53 @@ impl AndroidMessagingService {
     pub fn open(app_data_dir: impl AsRef<Path>) -> io::Result<Self> {
         let app_data_dir = app_data_dir.as_ref();
         let path = app_data_dir.join("messaging-repository.json");
-        let state = match fs::read(&path) {
+        let (state, migrated_legacy_repository) = match fs::read(&path) {
             Ok(bytes) => {
-                let state: MessagingRepositoryState = serde_json::from_slice(&bytes).map_err(|error| {
+                let mut state: MessagingRepositoryState = serde_json::from_slice(&bytes).map_err(|error| {
                     io::Error::new(
                         io::ErrorKind::InvalidData,
                         format!("invalid Android messaging repository: {error}"),
                     )
                 })?;
-                if state.schema_version != MESSAGING_REPOSITORY_SCHEMA_VERSION {
-                    return Err(io::Error::new(
-                        io::ErrorKind::InvalidData,
-                        format!(
-                            "unsupported Android messaging repository schema {}; expected {}",
-                            state.schema_version, MESSAGING_REPOSITORY_SCHEMA_VERSION
-                        ),
-                    ));
-                }
+                let migrated = match state.schema_version {
+                    MESSAGING_REPOSITORY_SCHEMA_VERSION => false,
+                    LEGACY_MESSAGING_REPOSITORY_SCHEMA_VERSION => {
+                        // v1 had an atomic canonical snapshot but no replay journal. Preserve
+                        // the snapshot and force older cursors through a full snapshot once.
+                        state.schema_version = MESSAGING_REPOSITORY_SCHEMA_VERSION;
+                        state.event_journal.clear();
+                        state.journal_floor_cursor = state.cursor;
+                        true
+                    }
+                    actual => {
+                        return Err(io::Error::new(
+                            io::ErrorKind::InvalidData,
+                            format!(
+                                "unsupported Android messaging repository schema {actual}; expected at most {MESSAGING_REPOSITORY_SCHEMA_VERSION}"
+                            ),
+                        ));
+                    }
+                };
                 validate_loaded_state(&state)?;
-                state
+                (state, migrated)
             }
-            Err(error) if error.kind() == io::ErrorKind::NotFound => MessagingRepositoryState::default(),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                (MessagingRepositoryState::default(), false)
+            }
             Err(error) => return Err(error),
         };
         let children = ConversationChildStore::open(app_data_dir.join("conversation-children.json"))?;
         let blobs = FileBlobStore::new(app_data_dir.join("messaging-blobs"));
-        Ok(Self {
+        let service = Self {
             path,
             state,
             children,
             blobs,
-        })
+        };
+        if migrated_legacy_repository {
+            service.persist()?;
+        }
+        Ok(service)
     }
 
     pub fn execute(
@@ -173,13 +205,23 @@ impl AndroidMessagingService {
             .ok_or("messaging command type is required")?;
 
         let previous = self.state.clone();
-        let result = match self.execute_command(command_type, command, authenticated_actor_id, now_ms) {
-            Ok(envelopes) => json!({"requestId":request_id,"envelopes":envelopes}),
+        let previous_cursor = previous.cursor;
+        let envelopes = match self.execute_command(command_type, command, authenticated_actor_id, now_ms) {
+            Ok(envelopes) => envelopes,
             Err(error) => {
                 self.state = previous;
                 return Err(error);
             }
         };
+        if let Err(error) = self.record_journal_result(
+            authenticated_actor_id,
+            previous_cursor,
+            &envelopes,
+        ) {
+            self.state = previous;
+            return Err(error);
+        }
+        let result = json!({"requestId":request_id,"envelopes":envelopes});
 
         self.remember_result(replay_key, result.clone());
         if let Err(error) = self.persist() {
@@ -197,7 +239,7 @@ impl AndroidMessagingService {
         now_ms: i64,
     ) -> Result<Vec<Value>, String> {
         match command_type {
-            "sync" => Ok(vec![self.sync_envelope(actor_id, now_ms)]),
+            "sync" => self.sync_response(command, actor_id, now_ms),
             "upsertProfile" => self.upsert_profile(command, actor_id, now_ms),
             "createConversation" => self.create_conversation(command, actor_id, now_ms),
             "sendMessage" => self.send_message(command, actor_id, now_ms),
@@ -2038,6 +2080,7 @@ impl AndroidMessagingService {
         self.server_envelope(
             json!({
                 "type":"syncBatch",
+                "fullSnapshot":true,
                 "actors":actors,
                 "conversations":conversations,
                 "messages":messages,
@@ -2057,6 +2100,262 @@ impl AndroidMessagingService {
             }),
             now_ms,
         )
+    }
+
+    fn sync_response(
+        &self,
+        command: &Map<String, Value>,
+        actor_id: &str,
+        now_ms: i64,
+    ) -> Result<Vec<Value>, String> {
+        let limit = command
+            .get("limit")
+            .and_then(Value::as_u64)
+            .unwrap_or(1000)
+            .clamp(1, 10_000) as usize;
+        let Some(requested_cursor) = command
+            .get("cursor")
+            .and_then(Value::as_str)
+            .and_then(|value| value.parse::<u64>().ok())
+        else {
+            return Ok(vec![self.sync_envelope(actor_id, now_ms)]);
+        };
+        if requested_cursor > self.state.cursor
+            || requested_cursor < self.state.journal_floor_cursor
+        {
+            return Ok(vec![self.sync_envelope(actor_id, now_ms)]);
+        }
+
+        let (slice, checkpoint_cursor, has_more) =
+            self.journal_slice_after(requested_cursor, limit)?;
+        if slice.is_empty() && requested_cursor < self.state.cursor {
+            // A cursor-advancing command without a replayable public event invalidates
+            // older deltas by moving journal_floor_cursor. Reaching this branch means
+            // persisted state/journal was inconsistent, so heal with the canonical snapshot.
+            return Ok(vec![self.sync_envelope(actor_id, now_ms)]);
+        }
+
+        let mut responses = slice
+            .into_iter()
+            .filter(|entry| entry.audience.iter().any(|candidate| candidate == actor_id))
+            .filter(|entry| {
+                let event = entry.envelope.get("event").and_then(Value::as_object);
+                if event.and_then(|event| event.get("type")).and_then(Value::as_str)
+                    != Some("typingChanged")
+                {
+                    return true;
+                }
+                event.and_then(|event| event.get("expiresAtMs"))
+                    .and_then(Value::as_i64)
+                    .is_none_or(|expires_at_ms| expires_at_ms > now_ms)
+            })
+            .map(|entry| entry.envelope)
+            .collect::<Vec<_>>();
+        responses.push(self.sync_checkpoint_envelope(
+            checkpoint_cursor,
+            has_more,
+            now_ms,
+        ));
+        Ok(responses)
+    }
+
+    fn sync_checkpoint_envelope(
+        &self,
+        cursor: u64,
+        has_more: bool,
+        now_ms: i64,
+    ) -> Value {
+        json!({
+            "protocolVersion":MESSAGING_PROTOCOL_VERSION,
+            "cursor":cursor.to_string(),
+            "serverTimeMs":now_ms,
+            "event":{
+                "type":"syncBatch",
+                "fullSnapshot":false,
+                "hasMore":has_more,
+                "actors":[],
+                "conversations":[],
+                "messages":[],
+                "folders":[],
+                "drafts":[],
+                "topicDrafts":[],
+                "pendingPresenceSends":[],
+                "conversationChildren":[],
+                "invoices":[],
+                "orders":[],
+                "stories":[],
+                "communities":[],
+                "bots":[],
+                "botExecutions":[],
+                "miniApps":[],
+                "nextCursor":cursor.to_string()
+            }
+        })
+    }
+
+    fn journal_slice_after(
+        &self,
+        requested_cursor: u64,
+        cursor_group_limit: usize,
+    ) -> Result<(Vec<MessagingJournalEntry>, u64, bool), String> {
+        let limit = cursor_group_limit.max(1);
+        let mut selected = Vec::new();
+        let mut selected_groups = 0usize;
+        let mut last_selected_cursor = None;
+        let mut has_more = false;
+
+        for entry in &self.state.event_journal {
+            if entry.cursor <= requested_cursor {
+                continue;
+            }
+            if last_selected_cursor != Some(entry.cursor) {
+                if selected_groups >= limit {
+                    has_more = true;
+                    break;
+                }
+                selected_groups += 1;
+                last_selected_cursor = Some(entry.cursor);
+            }
+            selected.push(entry.clone());
+        }
+        let checkpoint_cursor = if has_more {
+            last_selected_cursor.unwrap_or(requested_cursor)
+        } else {
+            self.state.cursor
+        };
+        Ok((selected, checkpoint_cursor, has_more))
+    }
+
+    fn record_journal_result(
+        &mut self,
+        initiator: &str,
+        previous_cursor: u64,
+        envelopes: &[Value],
+    ) -> Result<(), String> {
+        let mut recorded = 0usize;
+        for envelope in envelopes {
+            let Some(event) = envelope.get("event").and_then(Value::as_object) else {
+                continue;
+            };
+            if event.get("type").and_then(Value::as_str) == Some("syncBatch") {
+                continue;
+            }
+            let cursor = envelope
+                .get("cursor")
+                .and_then(Value::as_str)
+                .ok_or("messaging event is missing a server cursor")?
+                .parse::<u64>()
+                .map_err(|_| "messaging event cursor is invalid".to_string())?;
+            self.state.event_journal.push(MessagingJournalEntry {
+                cursor,
+                audience: self.journal_event_audience(initiator, event),
+                envelope: envelope.clone(),
+            });
+            recorded += 1;
+        }
+
+        if self.state.cursor > previous_cursor && recorded == 0 {
+            // Some durable child/state mutations intentionally have no public delta event.
+            // Make every older cursor reconcile through a full canonical snapshot instead
+            // of pretending the invisible cursor step can be replayed.
+            self.state.journal_floor_cursor = self.state.cursor;
+            self.state
+                .event_journal
+                .retain(|entry| entry.cursor > self.state.journal_floor_cursor);
+        }
+        self.prune_event_journal();
+        Ok(())
+    }
+
+    fn prune_event_journal(&mut self) {
+        if self.state.event_journal.len() <= MESSAGING_EVENT_JOURNAL_LIMIT {
+            return;
+        }
+        let excess = self.state.event_journal.len() - MESSAGING_EVENT_JOURNAL_LIMIT;
+        let prune_cursor = self.state.event_journal[excess - 1].cursor;
+        self.state
+            .event_journal
+            .retain(|entry| entry.cursor > prune_cursor);
+        self.state.journal_floor_cursor =
+            self.state.journal_floor_cursor.max(prune_cursor);
+    }
+
+    fn journal_event_audience(
+        &self,
+        initiator: &str,
+        event: &Map<String, Value>,
+    ) -> Vec<String> {
+        let mut audience = BTreeSet::from([initiator.to_string()]);
+        let event_type = event.get("type").and_then(Value::as_str).unwrap_or_default();
+
+        let conversation_id = match event_type {
+            "conversationChanged" | "conversationParticipantChanged" => event
+                .get("conversation")
+                .and_then(|conversation| conversation.get("id"))
+                .and_then(Value::as_str),
+            "messageAdded" | "messageChanged" => event
+                .get("message")
+                .and_then(|message| message.get("conversationId"))
+                .and_then(Value::as_str),
+            "messagesDeleted" | "typingChanged" => {
+                event.get("conversationId").and_then(Value::as_str)
+            }
+            _ => None,
+        };
+        if let Some(conversation_id) = conversation_id {
+            self.extend_conversation_audience(&mut audience, conversation_id);
+        }
+        if event_type == "conversationParticipantChanged" {
+            if let Some(removed_actor_id) =
+                event.get("removedActorId").and_then(Value::as_str)
+            {
+                if !removed_actor_id.trim().is_empty() {
+                    audience.insert(removed_actor_id.to_string());
+                }
+            }
+        }
+        if event_type == "actorChanged" {
+            if let Some(actor_id) = event
+                .get("actor")
+                .and_then(|actor| actor.get("id"))
+                .and_then(Value::as_str)
+            {
+                audience.insert(actor_id.to_string());
+                for conversation in self.state.conversations.values() {
+                    if conversation_has_access(conversation, actor_id) {
+                        if let Some(conversation_id) =
+                            conversation.get("id").and_then(Value::as_str)
+                        {
+                            self.extend_conversation_audience(
+                                &mut audience,
+                                conversation_id,
+                            );
+                        }
+                    }
+                }
+            }
+        }
+        audience.into_iter().collect()
+    }
+
+    fn extend_conversation_audience(
+        &self,
+        audience: &mut BTreeSet<String>,
+        conversation_id: &str,
+    ) {
+        let Some(conversation) = self.state.conversations.get(conversation_id) else {
+            return;
+        };
+        if let Some(owner_id) = conversation.get("ownerId").and_then(Value::as_str) {
+            audience.insert(owner_id.to_string());
+        }
+        if let Some(participants) = conversation.get("participants").and_then(Value::as_array) {
+            for participant in participants {
+                if let Some(actor_id) = participant.get("actorId").and_then(Value::as_str) {
+                    audience.insert(actor_id.to_string());
+                }
+            }
+        }
     }
 
     fn server_envelope(&self, event: Value, now_ms: i64) -> Value {
@@ -2125,6 +2424,26 @@ fn validate_loaded_state(state: &MessagingRepositoryState) -> io::Result<()> {
                 "messaging conversation key does not match stored id",
             ));
         }
+    }
+    let mut previous_journal_cursor = state.journal_floor_cursor;
+    for entry in &state.event_journal {
+        if entry.cursor <= state.journal_floor_cursor
+            || entry.cursor < previous_journal_cursor
+            || entry.cursor > state.cursor
+            || entry.audience.is_empty()
+            || entry
+                .envelope
+                .get("cursor")
+                .and_then(Value::as_str)
+                .and_then(|value| value.parse::<u64>().ok())
+                != Some(entry.cursor)
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "messaging event journal cursor/audience is inconsistent",
+            ));
+        }
+        previous_journal_cursor = entry.cursor;
     }
     for (conversation_id, messages) in &state.messages {
         if !state.conversations.contains_key(conversation_id) {
@@ -2509,6 +2828,145 @@ mod tests {
         assert!(service
             .execute(&request, "human:new-account", 100)
             .is_err());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn legacy_repository_migrates_to_v2_and_forces_snapshot_reconcile() {
+        let root = temp_root("legacy-v1");
+        fs::create_dir_all(&root).unwrap();
+        let legacy = json!({
+            "schemaVersion":1,
+            "cursor":7,
+            "actors":{},
+            "conversations":{},
+            "messages":{},
+            "drafts":{},
+            "folders":{},
+            "conversationPreferences":{},
+            "reactionActors":{},
+            "pollVotes":{},
+            "requestResults":{},
+            "requestOrder":[],
+            "agentDeliveryCalls":{},
+            "agentDeliveryCallOrder":[],
+            "agentWakes":{}
+        });
+        fs::write(
+            root.join("messaging-repository.json"),
+            serde_json::to_vec(&legacy).unwrap(),
+        )
+        .unwrap();
+
+        let mut service = AndroidMessagingService::open(&root).unwrap();
+        assert_eq!(service.state.schema_version, MESSAGING_REPOSITORY_SCHEMA_VERSION);
+        assert_eq!(service.state.journal_floor_cursor, 7);
+        let response = execute(
+            &mut service,
+            "sync-legacy",
+            "human:owner",
+            json!({"type":"sync","cursor":"0","limit":10}),
+        )
+        .unwrap();
+        assert_eq!(
+            response["envelopes"][0]["event"]["fullSnapshot"],
+            Value::Bool(true)
+        );
+        let persisted: Value = serde_json::from_slice(
+            &fs::read(root.join("messaging-repository.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(persisted["schemaVersion"], MESSAGING_REPOSITORY_SCHEMA_VERSION);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn delta_sync_replays_whole_cursor_groups_and_emits_checkpoint() {
+        let root = temp_root("delta-sync");
+        let owner = "human:owner";
+        let peer = "human:peer";
+        let mut service = AndroidMessagingService::open(&root).unwrap();
+        seed(&mut service, owner);
+        execute(
+            &mut service,
+            "peer-profile",
+            peer,
+            json!({"type":"upsertProfile","actor":{"id":peer,"kind":"human","displayName":"Peer"}}),
+        )
+        .unwrap();
+        execute(
+            &mut service,
+            "participant",
+            owner,
+            json!({"type":"setConversationParticipant","conversationId":"conversation:parent",
+                "participant":{"actorId":peer,"role":"member","joinedAtMs":2}}),
+        )
+        .unwrap();
+        let checkpoint = service.state.cursor;
+        execute(
+            &mut service,
+            "message-after-checkpoint",
+            owner,
+            json!({"type":"sendMessage","conversationId":"conversation:parent","clientMessageId":"message:delta",
+                "content":{"type":"text","data":{"text":{"text":"delta","entities":[]}}}}),
+        )
+        .unwrap();
+
+        let response = execute(
+            &mut service,
+            "peer-delta",
+            peer,
+            json!({"type":"sync","cursor":checkpoint.to_string(),"limit":1}),
+        )
+        .unwrap();
+        let envelopes = response["envelopes"].as_array().unwrap();
+        assert!(envelopes.iter().any(|envelope| {
+            envelope["event"]["type"] == "messageAdded"
+                && envelope["event"]["message"]["id"] == "message:delta"
+        }));
+        let checkpoint_event = &envelopes.last().unwrap()["event"];
+        assert_eq!(checkpoint_event["type"], "syncBatch");
+        assert_eq!(checkpoint_event["fullSnapshot"], false);
+        assert_eq!(
+            checkpoint_event["nextCursor"].as_str().unwrap(),
+            service.state.cursor.to_string()
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn invisible_cursor_gap_invalidates_older_delta_and_falls_back_to_snapshot() {
+        let root = temp_root("delta-gap");
+        let actor = "human:owner";
+        let mut service = AndroidMessagingService::open(&root).unwrap();
+        seed(&mut service, actor);
+        let before = service.state.cursor;
+        execute(
+            &mut service,
+            "child-pin-gap",
+            actor,
+            json!({"type":"setConversationChildPinned","destination":{
+                "conversationId":"conversation:parent",
+                "child":{"kind":"topic","rootMessageId":"message:root"}
+            },"pinned":true}),
+        )
+        .unwrap();
+        assert!(service.state.journal_floor_cursor > before);
+        let response = execute(
+            &mut service,
+            "sync-gap",
+            actor,
+            json!({"type":"sync","cursor":before.to_string(),"limit":10}),
+        )
+        .unwrap();
+        assert_eq!(
+            response["envelopes"][0]["event"]["fullSnapshot"],
+            Value::Bool(true)
+        );
+        assert_eq!(
+            response["envelopes"][0]["event"]["conversationChildren"][0]["pinned"],
+            Value::Bool(true)
+        );
         let _ = fs::remove_dir_all(root);
     }
 

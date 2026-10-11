@@ -180,6 +180,8 @@ internal class MessagingViewModel(application: Application) : AndroidViewModel(a
     private var displayName = "当前用户"
     private val deviceId = "android:native"
     private val sessionId = "account-session:android-native"
+    private var syncCursor: String? = null
+    private var hasCanonicalSnapshot = false
     val currentActorId: String get() = actorId
 
     init { refresh() }
@@ -187,7 +189,17 @@ internal class MessagingViewModel(application: Application) : AndroidViewModel(a
     fun refresh() {
         mutableState.value = mutableState.value.copy(loading = true)
         viewModelScope.launch {
-            runCatching { withContext(Dispatchers.IO) { ensureIdentity(); execute(JSONObject().put("type", "sync").put("cursor", JSONObject.NULL).put("limit", 1000)) } }
+            runCatching {
+                withContext(Dispatchers.IO) {
+                    ensureIdentity()
+                    execute(
+                        JSONObject()
+                            .put("type", "sync")
+                            .put("cursor", if (hasCanonicalSnapshot) syncCursor ?: JSONObject.NULL else JSONObject.NULL)
+                            .put("limit", 1000),
+                    )
+                }
+            }
                 .onSuccess { mutableState.value = mutableState.value.copy(loading = false, error = null) }
                 .onFailure { mutableState.value = mutableState.value.copy(loading = false, error = it.message) }
         }
@@ -460,16 +472,22 @@ internal class MessagingViewModel(application: Application) : AndroidViewModel(a
         val draftMap = mutableState.value.draftsByConversation.toMutableMap()
         val typingMap = mutableState.value.typingActorByConversation.toMutableMap()
         val messageMap = mutableState.value.messagesByConversation.mapValues { it.value.toMutableList() }.toMutableMap()
+        var nextSyncCursor = syncCursor
         for (i in 0 until envelopes.length()) {
-            val event = envelopes.optJSONObject(i)?.optJSONObject("event") ?: continue
+            val envelope = envelopes.optJSONObject(i) ?: continue
+            val event = envelope.optJSONObject("event") ?: continue
             when (event.optString("type")) {
                 "syncBatch" -> {
-                    conversations = parseConversations(event.optJSONArray("conversations") ?: JSONArray()).toMutableList()
-                    contacts = parseContacts(event.optJSONArray("actors") ?: JSONArray())
-                    folders = parseFolders(event.optJSONArray("folders") ?: JSONArray())
-                    draftMap.clear(); parseDrafts(event.optJSONArray("drafts") ?: JSONArray()).forEach { draftMap[it.conversationId] = it }
-                    messageMap.clear()
-                    parseMessages(event.optJSONArray("messages") ?: JSONArray()).forEach { messageMap.getOrPut(it.conversationId) { mutableListOf() }.add(it) }
+                    if (event.optBoolean("fullSnapshot", true)) {
+                        conversations = parseConversations(event.optJSONArray("conversations") ?: JSONArray()).toMutableList()
+                        contacts = parseContacts(event.optJSONArray("actors") ?: JSONArray())
+                        folders = parseFolders(event.optJSONArray("folders") ?: JSONArray())
+                        draftMap.clear(); parseDrafts(event.optJSONArray("drafts") ?: JSONArray()).forEach { draftMap[it.conversationId] = it }
+                        messageMap.clear()
+                        parseMessages(event.optJSONArray("messages") ?: JSONArray()).forEach { messageMap.getOrPut(it.conversationId) { mutableListOf() }.add(it) }
+                        hasCanonicalSnapshot = true
+                    }
+                    event.optString("nextCursor").takeIf { it.isNotBlank() }?.let { nextSyncCursor = it }
                 }
                 "conversationChanged" -> parseConversation(event.optJSONObject("conversation"))?.let { item ->
                     val index = conversations.indexOfFirst { it.id == item.id }; if (index >= 0) conversations[index] = item else conversations.add(item)
@@ -503,7 +521,11 @@ internal class MessagingViewModel(application: Application) : AndroidViewModel(a
                     else typingMap[conversationId] = contacts.firstOrNull { it.id == typingActorId }?.displayName ?: "对方"
                 }
             }
+            if (hasCanonicalSnapshot && event.optString("type") != "syncBatch") {
+                envelope.optString("cursor").takeIf { it.isNotBlank() }?.let { nextSyncCursor = it }
+            }
         }
+        if (hasCanonicalSnapshot) syncCursor = nextSyncCursor
         conversations = conversations.map { conversation ->
             val draft = draftMap[conversation.id]
             val last = messageMap[conversation.id]?.lastOrNull()
