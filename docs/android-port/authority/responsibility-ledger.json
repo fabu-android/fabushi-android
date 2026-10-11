@@ -6387,6 +6387,209 @@
       "artifact": null,
       "verification_status": "not-verified",
       "notes": "Fresh semantic audit of the three Desktop 92fcc2b0 Agent-info Channels files. This records a missing Android product responsibility; it does not claim the existing MCP/connector surfaces are equivalent because Desktop explicitly separates this Channels surface from MCP server/tool UI."
+    },
+    {
+      "responsibility_id": "AGENT-SETTINGS-PROFILE-ANDROID-001",
+      "domain": "agent",
+      "desktop_sources": [
+        {
+          "path": "frontend/src/recovered/features/agent-info/settings/model.ts",
+          "blob_sha": "5d641cd3c8da63aab780e9bf1b56dae71a59ede4",
+          "symbols": [
+            "createAgentInfoSettingsModel",
+            "AgentInfoSettingsSnapshot",
+            "updateAgent",
+            "setAgentNotifyOnUpdates"
+          ]
+        },
+        {
+          "path": "frontend/src/recovered/features/agent-info/settings/view.tsx",
+          "blob_sha": "c1cb6bb94d6d0557ed6f6d8a653e04b8f5771b64",
+          "symbols": [
+            "AgentInfoSettingsView",
+            "authoritative agents/agent-upserted projection",
+            "selection/dispose generation fencing"
+          ]
+        },
+        {
+          "path": "frontend/src/recovered/features/agent-info/settings/view.css",
+          "blob_sha": "42dba2c3eb9e5ef3a1ad37434307b64cd69e1a88",
+          "symbols": [
+            "shipping Agent settings layout/styles"
+          ]
+        }
+      ],
+      "source_commit": "92fcc2b0f64b6b8f8f8829305b30874b558d6b35",
+      "responsibility": "Own Agent profile title and notify-on-updates settings in the canonical roster, expose typed mutations, project authoritative roster changes, and fence stale settings replies across Agent selection, account changes, panel disposal, and duplicate mutation races.",
+      "source_owner": "Desktop Agent-info settings model over canonical Coordinator Agent roster projection",
+      "direct_callers": [
+        "Agent information settings surface",
+        "production Agent roster subscriptions"
+      ],
+      "downstream_dependencies": [
+        "canonical Agent roster",
+        "typed Coordinator bridge",
+        "native Agent profile dialog",
+        "feature event projection"
+      ],
+      "state_owner": "Rust AndroidAgentRoster owns durable title/notification truth; Coordinator publishes invalidation/upsert events; ViewModel/Compose own only draft and panel lifecycle state.",
+      "persistent_state": [
+        "title optional string with backward-compatible serde default",
+        "notifyOnUpdatesEnabled boolean with backward-compatible serde default",
+        "durable mutation journal survives process recreation"
+      ],
+      "protocol_wire_contract": [
+        "agentUpdateProfile(id,name,description,title,avatarShape,avatarColor)",
+        "agentSetNotifyOnUpdates(id,isEnabled)",
+        "agentList returns title/notifyOnUpdatesEnabled",
+        "agent-upserted/agents events invalidate native projection"
+      ],
+      "visible_effect": "Native Agent settings lets a user edit profile title and toggle completion/input notifications, then re-renders the authoritative Host roster value.",
+      "failure_behavior": [
+        "group notification mutation rejects fail-closed",
+        "invalid/stale panel callbacks are discarded",
+        "mutation rejection is surfaced without mutating UI canonical truth",
+        "event publication failure never replays an already-settled side effect"
+      ],
+      "cancellation_behavior": "Closing the panel, selecting another Agent, account switch, or ViewModel disposal invalidates outstanding callback tokens; the durable Host operation still settles canonically.",
+      "retry_semantics": "Reads may refresh freely; settings side effects are serialized and are not blindly retried by Compose after unknown outcome. Durable mutation reconciliation owns recovery.",
+      "idempotency_semantics": "One pending settings mutation is admitted per selected Agent/account fence; duplicate concurrent intent is rejected until finish; Host operation IDs replay durable settlement.",
+      "process_death_recovery": "title/notification fields persist in Host roster; pending durable operations remain in AgentRosterMutationOwner journal and canonical roster is re-read after recreation.",
+      "account_fencing": "AgentSettingsMutationFence binds selected Agent, account slot and generation; accountChanged clears selection/pending token and late replies cannot write presentation state.",
+      "security_boundary": "Compose -> MobileBotViewModel -> typed AndroidCoordinatorPort -> AndroidCoordinatorRuntime durable mutation owner -> JNI/Rust Host; no presentation Host string dispatch.",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "source/host/src/android_agent_roster.rs",
+        "source/android-preload/src/main/kotlin/com/ombhrum/fabushi/androidpreload/runtime/AndroidCoordinatorPort.kt",
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/coordinator/AndroidCoordinatorRuntime.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/production/agent-name-editor-model.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/presentation/MobileBotViewModel.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/production/AgentProfileEditor_view.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/features/bots/GrokHomeSurface.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/production/ProductionRenderer_view.kt",
+        "mobile/android/app/src/test/java/com/ombhrum/fabushi/AgentProfileEditorTest.kt"
+      ],
+      "android_owner": "Rust AndroidAgentRoster + durable Coordinator mutation owner; native settings fence is transient lifecycle protection only.",
+      "platform_delta": "Desktop React subscriptions/generation guards become native Compose lifecycle plus a typed Kotlin mutation fence; canonical state remains in Rust Host and is re-read from agentList.",
+      "implementation_status": "implemented",
+      "production_wiring": "Shipping GrokHomeSurface opens native AgentProfileEditor, binds begin/end lifecycle, dispatches typed profile/notification commands through Coordinator durable mutation ownership, receives canonical roster invalidation/upsert events, and refreshes from Host agentList.",
+      "unit_test": "Rust roster tests cover title/notification persistence, duplicate preservation, legacy serde defaults, durable replay and group rejection; AgentProfileEditorTest covers title normalization and Agent/account/dispose/serialized-mutation fencing.",
+      "contract_test": "Rust Android runtime contract suite exercises canonical roster mutation settlement; typed Kotlin port exposes explicit profile/notification methods rather than arbitrary Host dispatch.",
+      "integration_test": "Exact-head CI must rerun after this authority commit; predecessor 723895 Rust foundation and Rust contract/runtime were successful but are not final evidence for this descendant.",
+      "packaged_test": "required: native Agent settings title/notification journey from final packaged artifact with authoritative refresh, account switch and process-death reopen",
+      "device_test": "required: supported-device notification setting/title edit, late callback/account switch/process death/reopen",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Production implementation is present, but this responsibility is intentionally not verified until the authority descendant HEAD passes required JVM/native/APK plus packaged/device evidence. Do not inherit predecessor green."
+    },
+    {
+      "responsibility_id": "AGENT-SHARED-ROOM-ANDROID-001",
+      "domain": "agent-collaboration",
+      "desktop_sources": [
+        {
+          "path": "frontend/src/recovered/features/agent-info/shared-room/bridge.ts",
+          "blob_sha": "52bdec870823f24b27f2f8bf24362857c298b439",
+          "symbols": [
+            "typedGetSharingState",
+            "typedCreateRoomInvite",
+            "typedRespondToRoomJoinRequest",
+            "typedAddOwnAgentToSharedRoom",
+            "typedRemoveOwnAgentFromSharedRoom",
+            "typedLeaveSharedRoom"
+          ]
+        },
+        {
+          "path": "frontend/src/recovered/features/agent-info/shared-room/controller.ts",
+          "blob_sha": "e0ccc2adf36551e7fbb8429476720748a0b9b9ca",
+          "symbols": [
+            "createSharedRoomProvider",
+            "lifecycleGeneration",
+            "sharing/transport subscriptions"
+          ]
+        },
+        {
+          "path": "frontend/src/recovered/features/agent-info/shared-room/model.ts",
+          "blob_sha": "8c47431d155534fa9932360d5d61d36c564614ff",
+          "symbols": [
+            "projectSharingState",
+            "projectInviteResult",
+            "projectSharedRoomAgent"
+          ]
+        },
+        {
+          "path": "frontend/src/recovered/features/agent-info/shared-room/trigger.tsx",
+          "blob_sha": "f04f952fe7a5cd709718ab755b3ddf14f4604118",
+          "symbols": [
+            "SharedRoomHeaderTrigger"
+          ]
+        },
+        {
+          "path": "frontend/src/recovered/features/agent-info/shared-room/view.tsx",
+          "blob_sha": "5603d2b7dc1ee9dde296a3689786d068cde245a1",
+          "symbols": [
+            "SharedRoomDialog",
+            "InviteLink"
+          ]
+        }
+      ],
+      "source_commit": "92fcc2b0f64b6b8f8f8829305b30874b558d6b35",
+      "responsibility": "Own shared-room collaboration state and typed room invite/join/member/Agent mutations with strict projection validation, host/member authorization, transport reconnect, lifecycle/account generation fencing, pending de-duplication and accessible management UI.",
+      "source_owner": "Desktop sharing Coordinator state plus SharedRoomProvider transient presentation controller",
+      "direct_callers": [
+        "Agent shared-room header trigger",
+        "shared-room management dialog"
+      ],
+      "downstream_dependencies": [
+        "sharing service state",
+        "Coordinator sharing event stream",
+        "account identity",
+        "Agent roster candidates"
+      ],
+      "state_owner": "Desktop canonical sharing service/Coordinator owns room/member/request truth; presentation provider owns only transient pending/invite/loading/failure state.",
+      "persistent_state": [
+        "canonical shared room/member/join-request state is service-owned",
+        "no renderer-owned durable room database"
+      ],
+      "protocol_wire_contract": [
+        "getSharingState",
+        "createRoomInvite(roomId)",
+        "respondToRoomJoinRequest(requestId,isApproved)",
+        "addOwnAgentToSharedRoom(roomId,agentId,agentName)",
+        "removeOwnAgentFromSharedRoom(roomId,agentId)",
+        "leaveSharedRoom(roomId,targetAuthId?)"
+      ],
+      "visible_effect": "User can manage a shared room, copy invite link, approve/deny join requests, inspect people, add/remove own Agents, remove members when host, and leave the room.",
+      "failure_behavior": [
+        "malformed sharing/invite projections reject",
+        "transport down clears transient canonical projection",
+        "non-host invite/member removal is rejected",
+        "duplicate pending action is not dispatched"
+      ],
+      "cancellation_behavior": "context change, transport generation change, reset or dispose invalidates late async replies and subscriptions.",
+      "retry_semantics": "Reconnect performs a canonical refresh; mutation retries are guarded by per-action pending identity and generation.",
+      "idempotency_semantics": "pending key prevents duplicate request/Agent actions in one lifecycle; canonical service decides mutation identity beyond presentation.",
+      "process_death_recovery": "requires Android canonical sharing owner/reconnect implementation; current Android product has no equivalent owner yet.",
+      "account_fencing": "Desktop context includes accountGeneration and lifecycleGeneration; Android equivalent remains missing.",
+      "security_boundary": "Host-only operations are checked before typed Coordinator call and must be revalidated by canonical sharing service; Android must not expose sharing through generic UI-owned dispatch.",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "source/host/src/android_json_runtime.rs",
+        "source/android-preload/src/main/kotlin/com/ombhrum/fabushi/androidpreload/runtime/AndroidCoordinatorPort.kt",
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/coordinator/AndroidCoordinatorRuntime.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/features/bots/GrokHomeSurface.kt"
+      ],
+      "android_owner": "missing; requires canonical Host sharing owner + typed Coordinator transport + transient native Compose controller",
+      "platform_delta": "React provider/dialog should become typed Coordinator-backed native Compose UI while retaining service canonical ownership, lifecycle/account fencing and Android accessibility/focus semantics.",
+      "implementation_status": "mapped",
+      "production_wiring": "Fresh audit found no getSharingState/createRoomInvite/respondToRoomJoinRequest/addOwnAgentToSharedRoom/removeOwnAgentFromSharedRoom/leaveSharedRoom production methods in Android Host/Coordinator and no native shared-room management surface.",
+      "unit_test": "missing: projection validation, host/member permissions, pending duplicate guard, reconnect/generation/dispose fencing",
+      "contract_test": "missing typed Android sharing command/event contract",
+      "integration_test": "missing canonical sharing service/Coordinator/native UI integration",
+      "packaged_test": "required in final packaged Agent shared-room journey",
+      "device_test": "required for invite/join approval/add-remove/leave/reconnect/account switch/process death/accessibility",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Mapped from five Desktop 92fcc2b0 shared-room files. Existing Android group, MCP, or Remote features are not treated as substitutes. Do not mark implemented until a canonical sharing owner and shipping native surface exist."
     }
   ],
   "traceability": {
