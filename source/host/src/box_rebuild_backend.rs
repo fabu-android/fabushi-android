@@ -388,10 +388,12 @@ fn parse_statsig_update_policy(input: &str) -> Result<(Option<String>, bool), St
         .ok_or("Statsig bootstrap omitted config")?;
     let document: Value =
         serde_json::from_str(config).map_err(|error| format!("Statsig config JSON invalid: {error}"))?;
-    let minimum_version = document
+    let dynamic_configs = document
         .get("dynamic_configs")
         .and_then(Value::as_object)
-        .and_then(|configs| configs.get("sand_min_client_version"))
+        .ok_or("Statsig config omitted dynamic_configs")?;
+    let minimum_version = dynamic_configs
+        .get("sand_min_client_version")
         .and_then(|entry| entry.get("value"))
         .and_then(|value| value.get("min_version"))
         .and_then(Value::as_str)
