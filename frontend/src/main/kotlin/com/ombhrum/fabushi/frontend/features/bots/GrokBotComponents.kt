@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -252,6 +253,28 @@ internal fun formatTranscriptAttachmentBytes(bytes: Long): String = when {
 }
 
 
+internal fun mobileTranscriptBubbleShape(
+    role: MobileChatRole,
+    adjacency: TranscriptAdjacency,
+): RoundedCornerShape {
+    val large = 18.dp
+    val seam = 6.dp
+    return when (role) {
+        MobileChatRole.USER -> RoundedCornerShape(
+            topStart = large,
+            topEnd = if (adjacency.isContinuedFromPrev) seam else large,
+            bottomStart = large,
+            bottomEnd = if (adjacency.isContinuedToNext) seam else large,
+        )
+        MobileChatRole.ASSISTANT -> RoundedCornerShape(
+            topStart = if (adjacency.isContinuedFromPrev) seam else large,
+            topEnd = large,
+            bottomStart = if (adjacency.isContinuedToNext) seam else large,
+            bottomEnd = large,
+        )
+    }
+}
+
 @Composable
 internal fun GrokBotRowAndroid(
     bot: MobileBotSummaryAndroid,
@@ -348,6 +371,12 @@ internal fun GrokBotChatAndroid(
         findInCanonicalAgentChatMatches(state.findEntries, findQuery)
     }
     val currentFindMessageId = findMatches.getOrNull(findIndex)?.messageId
+    val transcriptAdjacency = remember(state.messages, bot.name) {
+        projectAgentTranscriptAdjacency(
+            messages = state.messages,
+            assistantAuthor = bot.name,
+        )
+    }
 
     LaunchedEffect(bot.id, findQuery, findMatches.size) {
         if (findIndex !in findMatches.indices) findIndex = -1
@@ -555,7 +584,11 @@ internal fun GrokBotChatAndroid(
                     if (bot.description.isNotBlank()) Text(bot.description, color = GrokMobileMuted, fontSize = 14.sp)
                 }
             }
-            items(if (state.transcriptLoadError) emptyList() else state.messages, key = { it.id }) { entry ->
+            itemsIndexed(
+                items = if (state.transcriptLoadError) emptyList() else state.messages,
+                key = { _, entry -> entry.id },
+            ) { index, entry ->
+                val adjacency = transcriptAdjacency.getOrElse(index) { emptyTranscriptAdjacency() }
                 val findHighlight = currentFindMessageId == entry.id
                 Column(
                     Modifier
@@ -601,7 +634,13 @@ internal fun GrokBotChatAndroid(
                                 color = Color.White,
                                 fontSize = 16.sp,
                                 modifier = Modifier
-                                    .background(Color.Black, RoundedCornerShape(18.dp))
+                                    .background(
+                                        Color.Black,
+                                        mobileTranscriptBubbleShape(
+                                            role = MobileChatRole.USER,
+                                            adjacency = adjacency,
+                                        ),
+                                    )
                                     .padding(horizontal = 15.dp, vertical = 10.dp),
                             )
                         }
@@ -653,9 +692,20 @@ internal fun GrokBotChatAndroid(
                         }
                     }
                     else -> Column {
-                        Text(bot.name, color = GrokMobileMuted, fontSize = 11.sp, modifier = Modifier.padding(start = 29.dp, bottom = 2.dp))
+                        if (adjacency.isRunStart || adjacency.isGroupStart) {
+                            Text(
+                                entry.transcriptAuthor?.takeIf(String::isNotBlank) ?: bot.name,
+                                color = GrokMobileMuted,
+                                fontSize = 11.sp,
+                                modifier = Modifier.padding(start = 29.dp, bottom = 2.dp),
+                            )
+                        }
                         Row(verticalAlignment = Alignment.Bottom) {
-                            AgentAvatarAndroid(bot, 20.dp)
+                            if (adjacency.isContinuedFromPrev) {
+                                Spacer(Modifier.size(20.dp))
+                            } else {
+                                AgentAvatarAndroid(bot, 20.dp)
+                            }
                             Column(
                                 Modifier.padding(start = 7.dp),
                                 verticalArrangement = Arrangement.spacedBy(5.dp),
@@ -666,7 +716,13 @@ internal fun GrokBotChatAndroid(
                                         color = GrokMobileInk,
                                         fontSize = 16.sp,
                                         modifier = Modifier
-                                            .background(Color.Black.copy(alpha = 0.055f), RoundedCornerShape(18.dp))
+                                            .background(
+                                                Color.Black.copy(alpha = 0.055f),
+                                                mobileTranscriptBubbleShape(
+                                                    role = MobileChatRole.ASSISTANT,
+                                                    adjacency = adjacency,
+                                                ),
+                                            )
                                             .padding(horizontal = 15.dp, vertical = 10.dp),
                                     )
                                 }
