@@ -1,6 +1,8 @@
 use crate::runner::AndroidRoutedToolBridge;
 use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
-use fabushi_android_shared::media::attachment_limits::attachment_byte_limit_for_name;
+use fabushi_android_shared::media::attachment_limits::{
+    attachment_byte_limit_for_name, ATTACHMENT_BYTE_LIMIT, VIDEO_BYTE_LIMIT,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::{
@@ -152,8 +154,11 @@ impl DurableAgentAttachmentOwner {
         validate_scope(account_slot, account_fence, agent_id)?;
         validate_identity(name, "attachment name")?;
         let limit = attachment_byte_limit_for_name(name);
+        if declared_size_bytes == Some(0) {
+            return Err(format!("\"{name}\" is empty, so it wasn't attached."));
+        }
         if declared_size_bytes.is_some_and(|size| size > limit) {
-            return Err("attachment exceeds the canonical Android byte limit".into());
+            return Err(stage_too_large_message(name, limit));
         }
         if let Some(mime) = mime_type {
             if mime.len() > 255 || mime.chars().any(char::is_control) {
@@ -199,8 +204,11 @@ impl DurableAgentAttachmentOwner {
         let end = offset
             .checked_add(bytes.len() as u64)
             .ok_or("Agent attachment offset overflow")?;
-        if end > limit || staged.declared_size_bytes.is_some_and(|size| end > size) {
-            return Err("Agent attachment chunk exceeds declared or canonical size".into());
+        if end > limit {
+            return Err(stage_too_large_message(&staged.name, limit));
+        }
+        if staged.declared_size_bytes.is_some_and(|size| end > size) {
+            return Err("Agent attachment chunk exceeds the declared size".into());
         }
         let path = self.staging_path(attachment_id);
         if offset < staged.received_bytes {
@@ -242,6 +250,12 @@ impl DurableAgentAttachmentOwner {
             .cloned()
             .ok_or("Agent attachment stage is missing")?;
         assert_stage_scope(&staged, account_slot, account_fence, agent_id)?;
+        if staged.received_bytes == 0 {
+            self.state.staged.remove(attachment_id);
+            let _ = fs::remove_file(self.staging_path(attachment_id));
+            self.persist()?;
+            return Err(format!("\"{}\" is empty, so it wasn't attached.", staged.name));
+        }
         if staged.declared_size_bytes.is_some_and(|size| size != staged.received_bytes) {
             return Err("Agent attachment upload is incomplete".into());
         }
@@ -492,6 +506,16 @@ impl AndroidRoutedToolBridge for AgentAttachmentTools {
     }
 }
 
+fn stage_too_large_message(name: &str, limit: u64) -> String {
+    if limit == VIDEO_BYTE_LIMIT {
+        format!("\"{name}\" is too large to attach (max 200 MB for video).")
+    } else if limit == ATTACHMENT_BYTE_LIMIT {
+        format!("\"{name}\" is too large to attach (max 25 MB).")
+    } else {
+        format!("\"{name}\" is too large to attach.")
+    }
+}
+
 fn assert_stage_scope(
     staged: &StagedAttachment,
     account_slot: Option<&str>,
@@ -564,6 +588,27 @@ mod tests {
         let value = tools.call_tool("FabushiAttachmentRead", json!({"attachmentId":attachment.id,"offset":1,"limit":3}), "tool-1").unwrap();
         assert_eq!(value["text"], "ell");
         assert_eq!(value["eof"], false);
+    }
+
+    #[test]
+    fn empty_and_oversized_files_fail_with_desktop_equivalent_notices() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("attachments");
+        let mut owner = DurableAgentAttachmentOwner::open(&root).unwrap();
+        let empty = owner.begin(None, "session:a", "agent-a", "empty.txt", Some("text/plain"), Some(0));
+        assert_eq!(empty.unwrap_err(), "\"empty.txt\" is empty, so it wasn't attached.");
+        let oversized = owner.begin(
+            None,
+            "session:a",
+            "agent-a",
+            "movie.mp4",
+            Some("video/mp4"),
+            Some(VIDEO_BYTE_LIMIT + 1),
+        );
+        assert_eq!(
+            oversized.unwrap_err(),
+            "\"movie.mp4\" is too large to attach (max 200 MB for video)."
+        );
     }
 
     #[test]

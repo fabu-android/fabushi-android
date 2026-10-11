@@ -1562,6 +1562,7 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
         val scope = draftScopeGeneration
         commitState(snapshot.copy(attachmentBusy = true, error = null))
         viewModelScope.launch {
+            val failures = mutableListOf<String>()
             for (contentUri in uris) {
                 val result = withContext(Dispatchers.IO) {
                     runCatching { coordinator.composerDraftStageAttachment(accountSlot, bot.id, contentUri) }
@@ -1573,8 +1574,7 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
                 ) {
                     return@launch
                 }
-                val draft = result.getOrNull()
-                if (draft != null) {
+                result.onSuccess { draft ->
                     activeDraftId = draft.draftId
                     commitState(
                         mutableState.value.copy(
@@ -1582,34 +1582,44 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
                             error = null,
                         ),
                     )
-                    continue
+                }.onFailure { error ->
+                    failures += error.message ?: "Attachment could not be staged"
+                    val recovered = withContext(Dispatchers.IO) {
+                        runCatching { coordinator.composerDraftRead(accountSlot, bot.id) }.getOrNull()
+                    }
+                    if (
+                        scope != draftScopeGeneration ||
+                        mutableState.value.activeBot?.id != bot.id ||
+                        accountSlot != rosterSelectionAccountSlot
+                    ) {
+                        return@launch
+                    }
+                    activeDraftId = recovered?.draftId
+                    commitState(
+                        mutableState.value.copy(
+                            draftAttachments = recovered?.attachments.orEmpty(),
+                        ),
+                    )
                 }
-                val recovered = withContext(Dispatchers.IO) {
-                    runCatching { coordinator.composerDraftRead(accountSlot, bot.id) }.getOrNull()
-                }
-                if (
-                    scope != draftScopeGeneration ||
-                    mutableState.value.activeBot?.id != bot.id ||
-                    accountSlot != rosterSelectionAccountSlot
-                ) {
-                    return@launch
-                }
-                activeDraftId = recovered?.draftId
-                commitState(
-                    mutableState.value.copy(
-                        draftAttachments = recovered?.attachments.orEmpty(),
-                        attachmentBusy = false,
-                        error = result.exceptionOrNull()?.message ?: "Attachment could not be staged",
-                    ),
-                )
-                return@launch
             }
             if (
                 scope == draftScopeGeneration &&
                 mutableState.value.activeBot?.id == bot.id &&
                 accountSlot == rosterSelectionAccountSlot
             ) {
-                commitState(mutableState.value.copy(attachmentBusy = false))
+                val notice = when {
+                    failures.isEmpty() -> null
+                    failures.size == 1 -> failures.single()
+                    failures.all { it.contains("too large to attach") } ->
+                        "${failures.size} files are too large to attach (max 25 MB, or 200 MB for video)."
+                    else -> "${failures.size} files couldn't be attached."
+                }
+                commitState(
+                    mutableState.value.copy(
+                        attachmentBusy = false,
+                        error = notice,
+                    ),
+                )
             }
         }
     }
