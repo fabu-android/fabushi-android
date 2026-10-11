@@ -742,6 +742,42 @@ mod tests {
     }
 
     #[test]
+    fn completion_event_is_published_after_profile_lifecycle_commit() {
+        let profiles = Arc::new(AtomicUsize::new(0));
+        let profile_count = Arc::clone(&profiles);
+        let lifecycle = ProductionTurnAgentLifecycleBindings::new("acct", "agent", "op")
+            .with_profile_announcement(
+                Some("<agent_profile>Renamed</agent_profile>".into()),
+                Some(Arc::new(move || {
+                    profile_count.fetch_add(1, AtomicOrdering::SeqCst);
+                })),
+            );
+
+        let mut owner = ProductionTurnAgentOwner::new(Provider {
+            prompts: Arc::new(Mutex::new(Vec::new())),
+            fail: false,
+        })
+        .with_build_bindings(bindings(Arc::new(AtomicUsize::new(0))))
+        .with_lifecycle_bindings(lifecycle)
+        .unwrap();
+
+        let observed_profiles = Arc::clone(&profiles);
+        owner
+            .run_with_event_sink(input(), &mut |event| {
+                if matches!(event, ProductionTurnEvent::Completed { .. }) {
+                    assert_eq!(
+                        observed_profiles.load(AtomicOrdering::SeqCst),
+                        1,
+                        "terminal completion must follow durable lifecycle commit",
+                    );
+                }
+                Ok(())
+            })
+            .unwrap();
+        assert_eq!(profiles.load(AtomicOrdering::SeqCst), 1);
+    }
+
+    #[test]
     fn failure_and_dispose_release_uncommitted_claim_without_profile_commit() {
         let releases = Arc::new(AtomicUsize::new(0));
         let profiles = Arc::new(AtomicUsize::new(0));
