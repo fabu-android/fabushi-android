@@ -131,7 +131,9 @@ class TranscriptAdjacencyProjectionTest {
         )
 
         assertTrue(projected[0].isRunStart)
-        assertFalse(projected[0].isContinuedToNext)
+        // Desktop indicator seaming extends an assistant bubble into a following
+        // send-message card even though the card itself is not a bubble.
+        assertTrue(projected[0].isContinuedToNext)
         assertTrue(projected[1].isGroupStart)
         assertTrue(projected[1].isRunStart)
     }
@@ -232,7 +234,10 @@ class TranscriptAdjacencyProjectionTest {
         assertFalse(projected[1].isContinuedToNext)
         assertFalse(projected[2].isContinuedToNext)
         assertTrue(projected[3].isFollowedByThreadChip)
-        assertFalse(projected[3].isContinuedToNext)
+        // Desktop keeps forward continuity when the following row is a same-group bubble;
+        // the thread chip instead fences the following row from continuing backward.
+        assertTrue(projected[3].isContinuedToNext)
+        assertFalse(projected[4].isContinuedFromPrev)
         assertFalse(projected[4].isContinuedToNext)
     }
 
