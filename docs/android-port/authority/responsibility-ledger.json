@@ -10219,15 +10219,15 @@
       "android_owner": "Rust Host durable acknowledgement owner + Android Coordinator transport admission scheduler",
       "platform_delta": "Desktop's Electron renderer transport queue is not copied into Compose. Android moves durable truth into Rust Host and uses ConnectivityManager plus a typed Coordinator scheduler for platform transport availability/reconnect.",
       "implementation_status": "implemented",
-      "production_wiring": "Production path is wired through AndroidCoordinatorPort/Runtime, Host acknowledgement routes, canonical Agent transcript projection, and GrokBotComponents as of Android code 0d596e4820242e259f7bc2d2d91f25fe0c6d5bfe.",
-      "unit_test": "SendSubmissionTransportQueueTest covers transport-down queue/reconnect FIFO, queued cancel, process rediscovery and dispose fencing; AgentSendAcknowledgementProjectionTest covers queued-only cancellation; Host contract tests cover durable queue/cancel/stale generation.",
+      "production_wiring": "Production path is wired through AndroidCoordinatorPort/Runtime, Host durable acknowledgement routes, canonical Agent transcript projection, and GrokBotComponents. AndroidSendSubmissionTransportQueue is only an admission/flush scheduler: Rust acknowledgement storage remains canonical. b1d2c0a07985fafdd3d2a6eae9874e2bf941116c adds account-epoch fencing so logout/account switch clears only scheduler-local queued/active state, and a snapshot begun under an old epoch cannot rediscover stale rows into the live scheduler.",
+      "unit_test": "SendSubmissionTransportQueueTest covers transport-down queue/reconnect FIFO, queued cancel, process rediscovery, dispose fencing, account-switch scheduler clearing and late-flush projection fencing; AgentSendAcknowledgementProjectionTest covers queued-only cancellation; Host contract tests cover durable queue/cancel/stale generation. Exact-head Actions remain required.",
       "contract_test": "source/host/tests/send_acknowledgement_android_contract.rs validates durable journal phase/cancellation contracts.",
       "integration_test": "Production ViewModel/Coordinator/Host path is wired; same-head GitHub Actions result is pending.",
       "packaged_test": "required on final minified githubRelease APK/AAB with offline/reconnect/process-death journey",
       "device_test": "required: transport-down queued visibility/cancel, reconnect flush, account switch, process death and outcome-unknown reconciliation",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Do not mark verified until this exact implementation head or a descendant passes required architecture/Rust/Android/package/device gates.",
+      "notes": "Implemented, not verified. Rust remains the durable queued-send truth. 92bd8d8333e6d3c5bd6b6dff56df825f4ce2cb61 adds focused account-epoch tests; final verification still requires same-exact-head architecture/Rust/Android/package/device gates, including account-switch and process-death acceptance.",
       "android_head_at_update": "0d596e4820242e259f7bc2d2d91f25fe0c6d5bfe"
     },
     {
