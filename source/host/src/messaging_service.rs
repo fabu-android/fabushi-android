@@ -547,6 +547,26 @@ impl AndroidMessagingService {
         if target_id != actor_id {
             return Err("profile actor id does not match authenticated actor".into());
         }
+        if !valid_actor_id(target_id) {
+            return Err("messaging actor id is invalid".into());
+        }
+        let display_name = required_non_empty(actor.get("displayName"), "messaging actor displayName")?;
+        if display_name.trim().is_empty() {
+            return Err("messaging actor displayName is invalid".into());
+        }
+        let kind = required_non_empty(actor.get("kind"), "messaging actor kind")?;
+        if !matches!(kind, "human" | "assistant" | "bot" | "service") {
+            return Err("messaging actor kind is invalid".into());
+        }
+        if let Some(presence) = actor.get("presence").filter(|value| !value.is_null()) {
+            let presence = presence
+                .as_object()
+                .ok_or("messaging actor presence must be an object")?;
+            let status = required_non_empty(presence.get("status"), "messaging presence status")?;
+            if !matches!(status, "offline" | "online" | "away" | "doNotDisturb") {
+                return Err("messaging presence status is invalid".into());
+            }
+        }
         self.state
             .actors
             .insert(target_id.to_string(), Value::Object(actor.clone()));
@@ -565,13 +585,69 @@ impl AndroidMessagingService {
     ) -> Result<Vec<Value>, String> {
         let conversation = required_object(command.get("conversation"), "conversation")?.clone();
         let conversation_id = required_non_empty(conversation.get("id"), "conversation id")?;
+        if !bounded_id(conversation_id) {
+            return Err("conversation id is invalid".into());
+        }
+        let title = required_non_empty(conversation.get("title"), "conversation title")?;
+        if title.trim().is_empty() {
+            return Err("conversation title is invalid".into());
+        }
+        let kind = required_non_empty(conversation.get("kind"), "conversation kind")?;
+        if !matches!(kind, "direct" | "group" | "channel" | "savedMessages" | "secret") {
+            return Err("conversation kind is invalid".into());
+        }
+        let participants = conversation
+            .get("participants")
+            .and_then(Value::as_array)
+            .ok_or("conversation participants are required")?;
+        if !participants.iter().any(|participant| {
+            participant.get("actorId").and_then(Value::as_str) == Some(actor_id)
+        }) {
+            return Err("conversation creator must be an owner/participant".into());
+        }
         if conversation
             .get("ownerId")
             .and_then(Value::as_str)
             .is_some_and(|owner| owner != actor_id)
-            || !conversation_has_access(&Value::Object(conversation.clone()), actor_id)
         {
             return Err("conversation creator must be its owner/participant".into());
+        }
+        for participant in participants {
+            let participant = participant
+                .as_object()
+                .ok_or("conversation participant must be an object")?;
+            let participant_id =
+                required_non_empty(participant.get("actorId"), "participant actorId")?;
+            let role = required_non_empty(participant.get("role"), "participant role")?;
+            if !valid_actor_id(participant_id)
+                || !matches!(role, "owner" | "admin" | "member" | "restricted")
+            {
+                return Err("conversation participant data is invalid".into());
+            }
+            if !self.state.actors.contains_key(participant_id) {
+                return Err("conversation participant actor does not exist".into());
+            }
+        }
+        if kind == "secret" && participants.len() != 2 {
+            return Err("secret conversations must contain exactly two participants".into());
+        }
+        if let Some(existing) = self.state.conversations.get(conversation_id) {
+            if matches!(conversation_kind(existing), Some("group") | Some("channel")) {
+                let owner_changed =
+                    existing.get("ownerId").cloned().unwrap_or(Value::Null)
+                        != conversation.get("ownerId").cloned().unwrap_or(Value::Null);
+                let participants_changed =
+                    existing.get("participants").cloned().unwrap_or(Value::Array(Vec::new()))
+                        != conversation.get("participants").cloned().unwrap_or(Value::Array(Vec::new()));
+                let topics_changed =
+                    existing.get("topics").cloned().unwrap_or(Value::Array(Vec::new()))
+                        != conversation.get("topics").cloned().unwrap_or(Value::Array(Vec::new()));
+                if owner_changed || participants_changed || topics_changed {
+                    return Err(
+                        "group/channel membership and topic state require dedicated mutations".into(),
+                    );
+                }
+            }
         }
         self.state.conversations.insert(
             conversation_id.to_string(),
@@ -1643,6 +1719,33 @@ impl AndroidMessagingService {
             return Err("clientMessageId is invalid".into());
         }
         let stable_id = stable_message_id(actor_id, client_message_id);
+        let privacy = command.get("privacy").and_then(Value::as_object);
+        let drop_captions = privacy
+            .and_then(|privacy| privacy.get("dropCaptions"))
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        let drop_sender_names = drop_captions
+            || privacy
+                .and_then(|privacy| privacy.get("dropSenderNames"))
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+        let mut content = source.get("content").cloned().ok_or("source message content is missing")?;
+        if drop_captions {
+            clear_forward_caption(&mut content);
+        }
+        let forward_origin = if drop_sender_names {
+            Value::Null
+        } else {
+            source
+                .get("forwardOrigin")
+                .filter(|value| !value.is_null())
+                .cloned()
+                .unwrap_or_else(|| Value::String(format!("{source_id}:{message_id}")))
+        };
+        let thread_root =
+            command.get("threadRootMessageId").cloned().unwrap_or(Value::Null);
+        let scheduled_at = command.get("scheduledAtMs").cloned().unwrap_or(Value::Null);
+        let silent = command.get("silent").and_then(Value::as_bool).unwrap_or(false);
         if let Some(existing) = self
             .state
             .messages
@@ -1654,12 +1757,23 @@ impl AndroidMessagingService {
             })
             .cloned()
         {
+            let same_payload =
+                existing.get("senderId").and_then(Value::as_str) == Some(actor_id)
+                    && existing.get("forwardOrigin").cloned().unwrap_or(Value::Null) == forward_origin
+                    && existing.get("content").cloned().unwrap_or(Value::Null) == content
+                    && existing.get("threadRootMessageId").cloned().unwrap_or(Value::Null) == thread_root
+                    && existing.get("scheduledAtMs").cloned().unwrap_or(Value::Null) == scheduled_at
+                    && existing.get("silent").and_then(Value::as_bool).unwrap_or(false) == silent;
+            if !same_payload {
+                return Err(format!(
+                    "clientMessageId {client_message_id} conflicts with the canonical forward payload"
+                ));
+            }
             return Ok(vec![self.server_envelope(
-                json!({"type":"messageAdded","message":self.project_message(&existing, actor_id)}),
+                json!({"type":"messageChanged","message":self.project_message(&existing, actor_id)}),
                 now_ms,
             )]);
         }
-        let content = source.get("content").cloned().ok_or("source message content is missing")?;
         if !conversation_can_send(&destination, actor_id, &content) {
             return Err("destination conversation does not permit this message".into());
         }
@@ -1670,17 +1784,17 @@ impl AndroidMessagingService {
             "senderId":actor_id,
             "content":content,
             "replyToMessageId":Value::Null,
-            "threadRootMessageId":command.get("threadRootMessageId").cloned().unwrap_or(Value::Null),
+            "threadRootMessageId":thread_root,
             "createdAtMs":now_ms,
             "editedAtMs":Value::Null,
-            "scheduledAtMs":command.get("scheduledAtMs").cloned().unwrap_or(Value::Null),
-            "silent":command.get("silent").and_then(Value::as_bool).unwrap_or(false),
+            "scheduledAtMs":scheduled_at,
+            "silent":silent,
             "protectedContent":false,
             "deliveryState":"sent",
             "reactions":[],
             "pinned":false,
             "deleted":false,
-            "forwardOrigin":source.get("senderId").cloned().unwrap_or(Value::Null)
+            "forwardOrigin":forward_origin
         });
         self.state
             .messages
@@ -2923,9 +3037,30 @@ fn optional_u32(value: Option<&Value>) -> Result<Option<u32>, String> {
     }
 }
 
+fn valid_actor_id(value: &str) -> bool {
+    let value = value.trim();
+    !value.is_empty() && value.len() <= 160
+}
+
 fn bounded_id(value: &str) -> bool {
     let value = value.trim();
     !value.is_empty() && value.len() <= 200
+}
+
+fn clear_forward_caption(content: &mut Value) {
+    let kind = content.get("type").and_then(Value::as_str);
+    if !matches!(
+        kind,
+        Some("photo" | "video" | "animation" | "audio" | "voice" | "document")
+    ) {
+        return;
+    }
+    if let Some(data) = content.get_mut("data").and_then(Value::as_object_mut) {
+        data.insert(
+            "caption".into(),
+            json!({"text":"","entities":[]}),
+        );
+    }
 }
 
 #[cfg(test)]
@@ -3277,6 +3412,164 @@ mod tests {
         )
         .unwrap_err();
         assert!(conflict.contains("conflicts with the canonical message payload"));
+        assert_eq!(service.state.cursor, cursor);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn actor_and_conversation_structural_validation_fail_closed() {
+        let root = temp_root("structural-validation");
+        let actor = "human:owner";
+        let peer = "human:peer";
+        let mut service = AndroidMessagingService::open(&root).unwrap();
+
+        assert!(execute(
+            &mut service,
+            "invalid-kind",
+            actor,
+            json!({"type":"upsertProfile","actor":{"id":actor,"kind":"alien","displayName":"Owner"}}),
+        )
+        .is_err());
+        assert!(execute(
+            &mut service,
+            "blank-name",
+            actor,
+            json!({"type":"upsertProfile","actor":{"id":actor,"kind":"human","displayName":"   "}}),
+        )
+        .is_err());
+        execute(
+            &mut service,
+            "valid-owner",
+            actor,
+            json!({"type":"upsertProfile","actor":{"id":actor,"kind":"human","displayName":"Owner"}}),
+        )
+        .unwrap();
+
+        assert!(execute(
+            &mut service,
+            "missing-peer",
+            actor,
+            json!({"type":"createConversation","conversation":{
+                "id":"conversation:missing-peer","kind":"direct","title":"Missing peer",
+                "participants":[
+                    {"actorId":actor,"role":"owner","joinedAtMs":1},
+                    {"actorId":peer,"role":"member","joinedAtMs":1}
+                ]
+            }}),
+        )
+        .is_err());
+
+        execute(
+            &mut service,
+            "valid-peer",
+            peer,
+            json!({"type":"upsertProfile","actor":{"id":peer,"kind":"human","displayName":"Peer"}}),
+        )
+        .unwrap();
+        assert!(execute(
+            &mut service,
+            "invalid-secret-cardinality",
+            actor,
+            json!({"type":"createConversation","conversation":{
+                "id":"conversation:secret","kind":"secret","title":"Secret",
+                "participants":[{"actorId":actor,"role":"owner","joinedAtMs":1}]
+            }}),
+        )
+        .is_err());
+
+        execute(
+            &mut service,
+            "group-create",
+            actor,
+            json!({"type":"createConversation","conversation":{
+                "id":"conversation:group-guard","kind":"group","title":"Group","ownerId":actor,
+                "participants":[{"actorId":actor,"role":"owner","joinedAtMs":1}],
+                "topics":[]
+            }}),
+        )
+        .unwrap();
+        assert!(execute(
+            &mut service,
+            "group-overwrite-membership",
+            actor,
+            json!({"type":"createConversation","conversation":{
+                "id":"conversation:group-guard","kind":"group","title":"Group renamed","ownerId":actor,
+                "participants":[
+                    {"actorId":actor,"role":"owner","joinedAtMs":1},
+                    {"actorId":peer,"role":"member","joinedAtMs":2}
+                ],
+                "topics":[]
+            }}),
+        )
+        .is_err());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn forward_retries_compare_options_and_privacy_fail_closed() {
+        let root = temp_root("forward-idempotency");
+        let actor = "human:forwarder";
+        let mut service = AndroidMessagingService::open(&root).unwrap();
+        execute(
+            &mut service,
+            "forward-profile",
+            actor,
+            json!({"type":"upsertProfile","actor":{"id":actor,"kind":"human","displayName":"Forwarder"}}),
+        )
+        .unwrap();
+        for (id, title) in [
+            ("conversation:forward-source", "Source"),
+            ("conversation:forward-destination", "Destination"),
+        ] {
+            execute(
+                &mut service,
+                &format!("create:{id}"),
+                actor,
+                json!({"type":"createConversation","conversation":{
+                    "id":id,"kind":"direct","title":title,
+                    "participants":[{"actorId":actor,"role":"owner","joinedAtMs":1}]
+                }}),
+            )
+            .unwrap();
+        }
+        execute(
+            &mut service,
+            "forward-source-message",
+            actor,
+            json!({"type":"sendMessage","conversationId":"conversation:forward-source",
+                "clientMessageId":"client:source","content":{"type":"text","data":{"text":{"text":"forward me","entities":[]}}}}),
+        )
+        .unwrap();
+        let source_id = stable_message_id(actor, "client:source");
+        let base = json!({"type":"forwardMessage",
+            "sourceConversationId":"conversation:forward-source",
+            "messageId":source_id,
+            "destinationConversationId":"conversation:forward-destination",
+            "clientMessageId":"client:forward",
+            "threadRootMessageId":Value::Null,
+            "scheduledAtMs":50,
+            "silent":true,
+            "privacy":{"dropSenderNames":false,"dropCaptions":false}
+        });
+        execute(&mut service, "forward-first", actor, base.clone()).unwrap();
+        let cursor = service.state.cursor;
+        let replay = execute(&mut service, "forward-replay", actor, base.clone()).unwrap();
+        assert_eq!(service.state.cursor, cursor);
+        assert!(replay["envelopes"].as_array().unwrap().iter().any(|envelope| {
+            envelope["event"]["type"] == "messageChanged"
+        }));
+
+        let mut silent_conflict = base.clone();
+        silent_conflict["silent"] = json!(false);
+        let error = execute(&mut service, "forward-silent-conflict", actor, silent_conflict)
+            .unwrap_err();
+        assert!(error.contains("conflicts with the canonical forward payload"));
+
+        let mut privacy_conflict = base;
+        privacy_conflict["privacy"]["dropSenderNames"] = json!(true);
+        let error = execute(&mut service, "forward-privacy-conflict", actor, privacy_conflict)
+            .unwrap_err();
+        assert!(error.contains("conflicts with the canonical forward payload"));
         assert_eq!(service.state.cursor, cursor);
         let _ = fs::remove_dir_all(root);
     }
