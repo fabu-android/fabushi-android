@@ -5,9 +5,9 @@
     "desktop_commit": "d575b4f77b6895eea4ecaced96e5c512964bf3ed",
     "android_repository": "fabu-android/fabushi-android",
     "android_pr": 3,
-    "android_head_at_update": "c727506ab253c3df246de322003bdc68067a19f7",
+    "android_head_at_update": "4a7f591fcad256e3fcea414fa0f4f51e9a389b15",
     "status": "incomplete",
-    "note": "Incrementally rebased to Desktop main d575b4f7. Relative to 92fcc2b0, Desktop changed only three tracked specification documents (two added, one modified); no shipping source blob changed. Existing responsibility mappings are retained only where source blobs are identical. The modified canonical runtime spec was human-reviewed for its OMA-001/FPM-001 additions; those two newly added extension specs remain unreviewed source rows pending dedicated responsibility mapping. No verification is inherited. COMPUTER-UPDATE-CONFIRMATION-ANDROID-001 added as implemented/not-verified at c727506a; busy when-idle queue and same-head packaged/device evidence remain open."
+    "note": "Incrementally rebased to Desktop main d575b4f7. Relative to 92fcc2b0, Desktop changed only three tracked specification documents (two added, one modified); no shipping source blob changed. Existing responsibility mappings are retained only where source blobs are identical. The modified canonical runtime spec was human-reviewed for its OMA-001/FPM-001 additions; those two newly added extension specs remain unreviewed source rows pending dedicated responsibility mapping. No verification is inherited. COMPUTER-UPDATE-CONFIRMATION-ANDROID-001 added as implemented/not-verified at c727506a; busy when-idle queue and same-head packaged/device evidence remain open. TEACH-RECORDING-ANDROID-001 mapped at 4a7f591f with durable Rust owner only; production Remote Runner/API/UI remains open."
   },
   "responsibilities": [
     {
@@ -7019,6 +7019,99 @@
       "artifact": null,
       "verification_status": "not-verified",
       "notes": "Do not promote to verified until same exact HEAD tests pass and the Desktop busy when-idle semantic is implemented with a durable owner. This row intentionally records implemented production wiring without claiming full Desktop parity."
+    },
+    {
+      "responsibility_id": "TEACH-RECORDING-ANDROID-001",
+      "domain": "remote-computer",
+      "desktop_sources": [
+        {
+          "path": "frontend/src/recovered/features/computer/teach-recording/store.ts",
+          "blob_sha": "13268c6f504eae64c3138cdf1d6a6e941c3184bb"
+        },
+        {
+          "path": "frontend/src/recovered/features/computer/teach-recording/composition.ts",
+          "blob_sha": "0af5ede61f466d9cb0af5f2bb3f19d3a66ef3a60"
+        },
+        {
+          "path": "frontend/src/recovered/features/computer/teach-recording/primitives.tsx",
+          "blob_sha": "c85713e4e0ecab7748d5977832a946d8b4d70b86"
+        },
+        {
+          "path": "frontend/src/recovered/features/computer/teach-recording/view.tsx",
+          "blob_sha": "71e1e24ce8d62a86ea9f96e9593d6f0f131f1551"
+        },
+        {
+          "path": "source/host/src/extensions/teach_recording/mod.rs",
+          "blob_sha": "fd7e6f8baee1090d1236d7c20ebac9b4044902a9"
+        },
+        {
+          "path": "source/host/src/extensions/teach_recording/extension.rs",
+          "blob_sha": "c53d3ccd3d8536292628c725cdc16519d5f344d6"
+        },
+        {
+          "path": "source/host/src/extensions/teach_recording/teach_recording_service.rs",
+          "blob_sha": "021df34c0d47f61a863959429a10cc614e70817a"
+        }
+      ],
+      "source_commit": "d575b4f77b6895eea4ecaced96e5c512964bf3ed",
+      "responsibility": "Teach an Agent from a bounded private desktop demonstration: single canonical recording episode, ten-minute cap, start/stop/discard semantics, stale completion fencing, authenticated durable learning queue/recovery, and learning workflow delivery.",
+      "source_owner": "Desktop Host teach-recording extension plus recovered presentation store/composition",
+      "direct_callers": [
+        "ProductionRenderer Remote Computer/fullscreen shell",
+        "Host teach-recording extension API"
+      ],
+      "downstream_dependencies": [
+        "Forever Box/private desktop monitor",
+        "remote shell/ffmpeg recorder",
+        "learning workflow",
+        "transcript",
+        "experiments/feature gate",
+        "telemetry"
+      ],
+      "state_owner": "Host teach-recording service owns recording/finalization and durable queue truth; presentation owns only arm state and transient controls.",
+      "persistent_state": [
+        "Desktop signed teach queue under workspace teach-sessions",
+        "Android durable teach-recording episode owner introduced on PR #3; remote queue adapter still pending"
+      ],
+      "protocol_wire_contract": [
+        "getTeachRecordingStatus",
+        "startTeachRecording(agentId, entryPoint)",
+        "stopTeachRecording(agentId, save)",
+        "maxDurationMs=600000",
+        "authenticated queue/client nonce",
+        "private monitor requirement"
+      ],
+      "visible_effect": "Remote Computer can arm 'Teach a task', show REC duration, Stop & save or Discard, then deliver a learn-from-demonstration workflow to the same Agent.",
+      "failure_behavior": [
+        "feature disabled fails closed",
+        "missing private monitor fails closed",
+        "failed start is cleaned up",
+        "forged queue entries quarantined",
+        "ambiguous remote side effect requires reconciliation"
+      ],
+      "cancellation_behavior": "Discard stops the exact owned recording and removes queue/session artifacts; reset/account switch must fence stale completions and never save implicitly.",
+      "retry_semantics": "No blind replay of recording start/stop after process or transport uncertainty; pending learning delivery is recovered by signed durable queue.",
+      "idempotency_semantics": "One active episode; stable queue identity/client nonce prevents duplicate learning delivery.",
+      "process_death_recovery": "Desktop recovers signed pending learning queue. Android durable owner converts any locally active start/record/stop phase to outcome-unknown on reopen until the Remote Runner is reconciled.",
+      "account_fencing": "Android owner persists account fence/epoch and rejects stale callbacks or settlement from another account.",
+      "security_boundary": "Android must not run Desktop X11/ffmpeg locally. Recording execution must cross the existing authorized Remote Runner + Capability Broker boundary; no direct Compose/Host shell escape.",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "source/host/src/extensions/teach_recording.rs",
+        "source/host/src/extensions/mod.rs"
+      ],
+      "android_owner": "Rust Host durable TeachRecording owner; authenticated Remote Runner adapter and Compose Remote Computer surface remain pending",
+      "platform_delta": "Desktop Forever Box/X11 ffmpeg execution cannot run in the Android app. Android keeps the state/identity/recovery contract in Rust and must execute the actual private-desktop recording only through an explicitly authorized Remote Runner. Current commit migrates only the durable canonical owner.",
+      "implementation_status": "mapped",
+      "production_wiring": "Partial at 4a7f591fcad256e3fcea414fa0f4f51e9a389b15: Rust DurableTeachRecordingOwner is compiled into Host extensions and owns account/request/operation identity, 10-minute contract and process-reopen outcome-unknown recovery. get/start/stop Host API, Remote Runner recording adapter, signed learning queue delivery and native Remote Computer controls are not yet production-wired.",
+      "unit_test": "Rust module includes tests for start/stop identity fencing, duplicate episode rejection, account-switch fencing, ten-minute cap and process-reopen outcome-unknown recovery; same-head GitHub Actions pending.",
+      "contract_test": "Pending exact-head GitHub Actions. Desktop API/queue and authorized Remote Runner replacement still need end-to-end contract tests.",
+      "integration_test": "not yet; Remote Runner enrollment is an external prerequisite for real recording execution",
+      "packaged_test": "not yet",
+      "device_test": "not yet",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Do not promote beyond mapped until Host APIs, authorized Remote Runner adapter, signed queue recovery and native UI are wired. Actual Remote Runner protected enrollment remains externally blocked, but core owner work is independently implemented."
     }
   ],
   "traceability": {
