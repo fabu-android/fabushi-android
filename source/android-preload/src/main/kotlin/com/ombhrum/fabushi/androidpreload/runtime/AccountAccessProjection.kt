@@ -13,6 +13,41 @@ enum class AccountRecoveryState { READY, RECONNECTING, OUTCOME_UNKNOWN, UNKNOWN 
 enum class AccountRebuildState { IDLE, RECONNECTING, OUTCOME_UNKNOWN, UNKNOWN }
 enum class AccountRosterLoadState { LOADING, READY, ERROR, UNKNOWN }
 
+enum class RootConnectionTransportState { CONNECTING, CONNECTED, DOWN }
+enum class RootConnectionPhase { HIDDEN, LOADING, CONNECTED, RECONNECTING, UNREACHABLE }
+
+/**
+ * Immutable root-connection projection. Account/auth/roster truth remains Coordinator-owned;
+ * presentation can only render this derived state and request a fenced retry.
+ */
+data class RootConnectionResilienceProjection(
+    val accountGeneration: Long,
+    val accountEpoch: Long,
+    val accountIdentity: String?,
+    val transport: RootConnectionTransportState,
+    val phase: RootConnectionPhase,
+    val hasReachedBox: Boolean,
+    val isPrivacyBlocked: Boolean,
+    val failureCode: String?,
+    val isRetrying: Boolean,
+    val retryQueued: Boolean,
+) {
+    companion object {
+        fun initial() = RootConnectionResilienceProjection(
+            accountGeneration = 0L,
+            accountEpoch = 0L,
+            accountIdentity = null,
+            transport = RootConnectionTransportState.CONNECTING,
+            phase = RootConnectionPhase.HIDDEN,
+            hasReachedBox = false,
+            isPrivacyBlocked = false,
+            failureCode = null,
+            isRetrying = false,
+            retryQueued = false,
+        )
+    }
+}
+
 /** Immutable projection only; canonical account/payment/entitlement/remote truth stays with domain owners. */
 data class AccountAccessProjection(
     val accountEpoch: Long,
