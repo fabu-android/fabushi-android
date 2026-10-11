@@ -63,6 +63,132 @@ internal fun MobileAssistantRichTranscriptContent(
 }
 
 @Composable
+internal fun MobileUserRichTranscriptContent(
+    text: String,
+    richTextJson: String?,
+    bubbleShape: RoundedCornerShape,
+) {
+    val blocks = projectTranscriptTipTapDocument(richTextJson)
+    Column(
+        Modifier
+            .background(Color.Black, bubbleShape)
+            .padding(horizontal = 15.dp, vertical = 10.dp),
+        verticalArrangement = Arrangement.spacedBy(7.dp),
+    ) {
+        if (blocks == null) {
+            if (text.isNotBlank()) Text(text, color = Color.White, fontSize = 16.sp)
+        } else {
+            blocks.forEach { block -> MobileUserTipTapBlock(block) }
+        }
+    }
+}
+
+@Composable
+private fun MobileUserTipTapBlock(block: TranscriptTipTapBlock) {
+    when (block) {
+        is TranscriptTipTapBlock.Paragraph -> MobileUserTipTapInline(block.inline, 16)
+        is TranscriptTipTapBlock.Heading -> MobileUserTipTapInline(
+            block.inline,
+            when (block.level) {
+                1 -> 21
+                2 -> 19
+                3 -> 18
+                else -> 16
+            },
+            forceBold = true,
+        )
+        is TranscriptTipTapBlock.Quote -> Column(
+            Modifier
+                .fillMaxWidth()
+                .background(Color.White.copy(alpha = 0.10f), RoundedCornerShape(6.dp))
+                .padding(horizontal = 9.dp, vertical = 7.dp),
+            verticalArrangement = Arrangement.spacedBy(5.dp),
+        ) {
+            block.blocks.forEach { MobileUserTipTapBlock(it) }
+        }
+        is TranscriptTipTapBlock.ListBlock -> Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            block.items.forEachIndexed { index, item ->
+                Row(horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                    Text(
+                        if (block.ordered) "${block.start + index}." else "•",
+                        color = Color.White,
+                        fontSize = 15.sp,
+                    )
+                    Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                        item.forEach { MobileUserTipTapBlock(it) }
+                    }
+                }
+            }
+        }
+        is TranscriptTipTapBlock.Code -> Text(
+            block.text,
+            color = Color.White,
+            fontFamily = FontFamily.Monospace,
+            fontSize = 13.sp,
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(Color.White.copy(alpha = 0.10f), RoundedCornerShape(6.dp))
+                .padding(7.dp),
+        )
+        TranscriptTipTapBlock.HorizontalRule -> Box(
+            Modifier
+                .fillMaxWidth()
+                .height(1.dp)
+                .background(Color.White.copy(alpha = 0.24f)),
+        )
+    }
+}
+
+@Composable
+private fun MobileUserTipTapInline(
+    inline: List<TranscriptTipTapInline>,
+    fontSize: Int,
+    forceBold: Boolean = false,
+) {
+    val uriHandler = LocalUriHandler.current
+    val annotated = buildAnnotatedString {
+        inline.forEach { span ->
+            val start = length
+            append(span.text)
+            val end = length
+            if (start == end) return@forEach
+            val decorations = buildList {
+                if (span.strike) add(TextDecoration.LineThrough)
+                if (span.underline) add(TextDecoration.Underline)
+            }
+            addStyle(
+                SpanStyle(
+                    fontWeight = if (forceBold || span.bold) FontWeight.Bold else null,
+                    fontStyle = if (span.italic) FontStyle.Italic else null,
+                    textDecoration = decorations.takeIf { it.isNotEmpty() }?.let(TextDecoration::combine),
+                    fontFamily = if (span.code) FontFamily.Monospace else null,
+                    color = if (span.url != null) Color(0xFF8CCBFF) else Color.White,
+                ),
+                start,
+                end,
+            )
+            span.url?.let { url ->
+                addStringAnnotation(tag = "url", annotation = url, start = start, end = end)
+            }
+        }
+    }
+    ClickableText(
+        text = annotated,
+        style = androidx.compose.ui.text.TextStyle(
+            color = Color.White,
+            fontSize = fontSize.sp,
+        ),
+        onClick = { offset ->
+            annotated
+                .getStringAnnotations(tag = "url", start = offset, end = offset)
+                .firstOrNull()
+                ?.item
+                ?.let { url -> runCatching { uriHandler.openUri(url) } }
+        },
+    )
+}
+
+@Composable
 private fun MobileTranscriptRichBlock(block: TranscriptRichBlock) {
     when (block) {
         is TranscriptRichBlock.Paragraph -> MobileTranscriptParagraph(block.text)
