@@ -27,19 +27,30 @@ data class CommandPaletteLinkSnapshot(
     val metadata: Map<String, CommandPaletteLinkMetadata> = emptyMap(),
 )
 
+internal data class CommandPaletteLinkRequestScope(
+    val accountSlot: String?,
+    val conversationId: String?,
+)
+
 internal class CommandPaletteLinkRequestFence {
     private var generation = 0L
+    private var scope: CommandPaletteLinkRequestScope? = null
 
-    fun begin(): Long {
+    fun begin(scope: CommandPaletteLinkRequestScope): Long {
         generation += 1
+        this.scope = scope
         return generation
     }
 
     fun cancel() {
         generation += 1
+        scope = null
     }
 
-    fun accepts(token: Long): Boolean = generation == token
+    fun accepts(
+        token: Long,
+        currentScope: CommandPaletteLinkRequestScope,
+    ): Boolean = generation == token && scope == currentScope
 }
 
 internal fun normalizeCommandPaletteLink(value: String): String? {
@@ -64,6 +75,14 @@ private val commandPaletteMarkdownLinkRegex =
 private val commandPaletteBareLinkRegex =
     Regex("""https?://[^\s<>"'`()\]]+""", RegexOption.IGNORE_CASE)
 
+private fun trimCommandPaletteBareLink(value: String): String {
+    var candidate = value.trimEnd()
+    while (candidate.lastOrNull() in setOf('.', ',', ';', ':', '!', '?')) {
+        candidate = candidate.dropLast(1)
+    }
+    return candidate
+}
+
 internal fun commandPaletteLinksFromConversation(
     messageTexts: List<String>,
 ): List<CommandPaletteLink> {
@@ -77,10 +96,24 @@ internal fun commandPaletteLinksFromConversation(
         commandPaletteMarkdownLinkRegex.findAll(text).forEach { match ->
             collect(match.groupValues.getOrElse(1) { "" })
         }
-        commandPaletteBareLinkRegex.findAll(text).forEach { match -> collect(match.value) }
+        commandPaletteBareLinkRegex.findAll(text).forEach { match ->
+            collect(trimCommandPaletteBareLink(match.value))
+        }
         collect(text)
     }
     return result
+}
+
+internal fun commandPaletteLinkMetadataProjection(
+    snapshot: TranscriptLinkCardSnapshot,
+): CommandPaletteLinkMetadata? {
+    if (snapshot.status != TranscriptLinkCardStatus.READY) return null
+    val metadata = snapshot.metadata ?: return null
+    return CommandPaletteLinkMetadata(
+        title = metadata.title,
+        description = metadata.description,
+        hostname = metadata.hostname,
+    )
 }
 
 internal fun commandPaletteLinkEntries(
