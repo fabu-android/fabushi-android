@@ -620,11 +620,16 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
 
     private fun parseClientSideToolV2Event(value: JSONObject): AndroidClientSideToolV2Event =
         AndroidClientSideToolV2Event(
+            accountSlot = value.getString("accountSlot"),
             agentId = value.getString("agentId"),
             epoch = value.getString("epoch"),
             sequence = value.getLong("sequence"),
             projection = value.optJSONObject("projection")?.let(::parseToolResultCard),
-        )
+        ).also {
+            check(it.accountSlot == "host") {
+                "client-side-tool-v2 event crossed an unexpected account slot"
+            }
+        }
 
     private fun parseToolResultCard(value: JSONObject): AndroidToolResultCard =
         AndroidToolResultCard(

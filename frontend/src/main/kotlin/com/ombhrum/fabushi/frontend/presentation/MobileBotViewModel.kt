@@ -1401,14 +1401,11 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
         val canonical = canonicalMobileTranscriptForAgent(transcript, agentId)
         val acknowledgements = coordinator.sendAcknowledgementSnapshot(accountSlot, agentId)
         val durableMessages = projectDurableSendAcknowledgements(canonical, acknowledgements)
-        val toolCards = projectClientSideToolResultCards(
-            coordinator.replayClientSideToolV2(),
-            agentId,
+        return joinClientSideToolResultCards(
+            canonical = durableMessages,
+            events = coordinator.replayClientSideToolV2(),
+            agentId = agentId,
         )
-        val joined = linkedMapOf<String, MobileChatMessage>()
-        durableMessages.forEach { joined[it.id] = it }
-        toolCards.forEach { joined[it.id] = it }
-        return joined.values.toList()
     }
 
     private suspend fun refreshDurableSendProjection(
@@ -1589,10 +1586,18 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
                     )
                     return@launch
                 }
-                if (accepted.agentId != active.id) return@launch
-                val card = projectClientSideToolResultCards(listOf(accepted), active.id).singleOrNull()
-                    ?: return@launch
-                upsert(card)
+                if (accepted.accountSlot != "host" || accepted.agentId != active.id) return@launch
+                runCatching {
+                    refreshDurableSendProjection(active.id, accountSlot, scopeGeneration)
+                }.onFailure { error ->
+                    if (isCurrentSendScope(active.id, accountSlot, scopeGeneration)) {
+                        commitState(
+                            mutableState.value.copy(
+                                error = error.message ?: "Tool result reconciliation failed",
+                            ),
+                        )
+                    }
+                }
             }
             return
         }

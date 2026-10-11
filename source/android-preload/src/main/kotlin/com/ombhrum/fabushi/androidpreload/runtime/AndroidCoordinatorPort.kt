@@ -79,6 +79,7 @@ data class AndroidToolResultCard(
 )
 
 data class AndroidClientSideToolV2Event(
+    val accountSlot: String,
     val agentId: String,
     val epoch: String,
     val sequence: Long,

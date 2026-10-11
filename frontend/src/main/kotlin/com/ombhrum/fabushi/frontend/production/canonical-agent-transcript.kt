@@ -76,6 +76,23 @@ internal fun canonicalMobileTranscriptForAgent(
                     clientNonce = entry.optString("clientNonce").takeIf(String::isNotBlank),
                 )
             }
+            "tool-call" -> {
+                val name = entry.optString("name").trim()
+                val status = entry.optString("status").trim()
+                if (name.isBlank() || status !in setOf("pending", "running", "done", "failed", "error", "aborted")) {
+                    continue
+                }
+                projected[id] = MobileChatMessage(
+                    id = id,
+                    role = MobileChatRole.ASSISTANT,
+                    text = "",
+                    kind = MobileChatEntryKind.ACTION,
+                    actionTitle = name,
+                    actionDetail = entry.optString("summary").trim().takeIf(String::isNotEmpty),
+                    actionStatus = status,
+                    toolCallId = id,
+                )
+            }
             "send-message" -> {
                 val message = entry.optJSONObject("message") ?: continue
                 if (message.optString("type") != "widget") continue
@@ -163,32 +180,32 @@ internal fun isExplicitSendRetryAllowed(message: MobileChatMessage): Boolean =
         (message.sendAcknowledgementGeneration ?: 0L) > 0L
 
 
-internal fun projectClientSideToolResultCards(
+internal fun joinClientSideToolResultCards(
+    canonical: List<MobileChatMessage>,
     events: List<AndroidClientSideToolV2Event>,
     agentId: String,
 ): List<MobileChatMessage> {
     val byToolCallId = linkedMapOf<String, MobileToolResultCard>()
     events
         .asSequence()
-        .filter { it.agentId == agentId }
+        .filter { it.accountSlot == "host" && it.agentId == agentId }
         .sortedBy { it.sequence }
         .forEach { event ->
             val projection = event.projection ?: return@forEach
             byToolCallId[projection.toolCallId] = projection.toMobileToolResultCard()
         }
-    return byToolCallId.values.map { card ->
-        MobileChatMessage(
-            id = "tool-result:${card.toolCallId}",
-            role = MobileChatRole.ASSISTANT,
-            text = "",
+    return canonical.map { row ->
+        val id = row.toolCallId ?: return@map row
+        val card = byToolCallId[id] ?: return@map row
+        row.copy(
             kind = MobileChatEntryKind.TOOL_RESULT,
             actionTitle = when (card.kind) {
                 "file-edit" -> "Edited file"
                 "file-write" -> "Wrote file"
                 "shell" -> "Terminal"
-                else -> "Tool"
+                else -> row.actionTitle ?: "Tool"
             },
-            actionDetail = card.path ?: card.command ?: card.summary,
+            actionDetail = card.path ?: card.command ?: card.summary.ifBlank { row.actionDetail.orEmpty() },
             actionStatus = card.status,
             toolResult = card,
         )

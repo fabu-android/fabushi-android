@@ -15,6 +15,7 @@ class AgentToolResultCardProjectionTest {
         diff: String = "",
         kind: String = "shell",
     ) = AndroidClientSideToolV2Event(
+        accountSlot = "host",
         agentId = agentId,
         epoch = "epoch-a",
         sequence = sequence,
@@ -35,7 +36,19 @@ class AgentToolResultCardProjectionTest {
 
     @Test
     fun latestSequenceWinsAndOtherAgentIsFencedOut() {
-        val projected = projectClientSideToolResultCards(
+        val canonical = listOf(
+            MobileChatMessage(
+                id = "transcript-tool-a",
+                role = MobileChatRole.ASSISTANT,
+                text = "",
+                kind = MobileChatEntryKind.ACTION,
+                actionTitle = "Terminal",
+                actionStatus = "running",
+                toolCallId = "tool-a",
+            ),
+        )
+        val projected = joinClientSideToolResultCards(
+            canonical,
             listOf(
                 event(1, output = "partial\r\n"),
                 event(2, status = "success", output = "done\r", diff = "@@\r\n"),
@@ -44,6 +57,7 @@ class AgentToolResultCardProjectionTest {
             "agent-a",
         )
         assertEquals(1, projected.size)
+        assertEquals("transcript-tool-a", projected.single().id)
         val card = projected.single().toolResult!!
         assertEquals("success", card.status)
         assertEquals("done\n", card.output)
@@ -53,19 +67,42 @@ class AgentToolResultCardProjectionTest {
     }
 
     @Test
+    fun typedUpdateNeverCreatesASecondTranscriptRowWithoutCanonicalToolCall() {
+        val ordinary = MobileChatMessage("message-1", MobileChatRole.ASSISTANT, "hello")
+        val projected = joinClientSideToolResultCards(
+            listOf(ordinary),
+            listOf(event(1, status = "success")),
+            "agent-a",
+        )
+        assertEquals(listOf(ordinary), projected)
+    }
+
+    @Test
     fun fileWriteAndBackgroundStatusRemainTyped() {
-        val file = projectClientSideToolResultCards(
+        val canonical = listOf(
+            MobileChatMessage(
+                id = "tool-row",
+                role = MobileChatRole.ASSISTANT,
+                text = "",
+                kind = MobileChatEntryKind.ACTION,
+                toolCallId = "tool-a",
+            ),
+        )
+        val file = joinClientSideToolResultCards(
+            canonical,
             listOf(event(1, status = "success", kind = "file-write")),
             "agent-a",
         ).single().toolResult!!
         assertEquals("file-write", file.kind)
         assertEquals("src/main.rs", file.path)
 
-        val background = projectClientSideToolResultCards(
+        val background = joinClientSideToolResultCards(
+            canonical,
             listOf(event(1, status = "background")),
             "agent-a",
         ).single().toolResult!!
         assertTrue(background.isBackground)
         assertEquals("background", background.status)
     }
+
 }

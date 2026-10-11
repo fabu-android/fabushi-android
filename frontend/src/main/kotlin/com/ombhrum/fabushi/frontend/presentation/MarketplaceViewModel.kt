@@ -108,6 +108,7 @@ data class MobileChatMessage(
     val sendFailureReason: String? = null,
     val widget: MobileWidgetCard? = null,
     val toolResult: MobileToolResultCard? = null,
+    val toolCallId: String? = null,
 )
 
 data class MarketplaceUiState(
