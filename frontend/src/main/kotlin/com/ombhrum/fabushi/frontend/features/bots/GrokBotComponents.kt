@@ -346,6 +346,7 @@ internal fun GrokBotRowAndroid(
 internal fun GrokBotChatAndroid(
     bot: MobileBotSummaryAndroid,
     state: MobileBotUiState,
+    interactionReady: Boolean,
     appAgentSurface: FabushiAppAgentSurface,
     onClose: () -> Unit,
     onOpenCommandPalette: () -> Unit,
@@ -416,7 +417,7 @@ internal fun GrokBotChatAndroid(
         else messageListState.animateScrollToItem(targetIndex)
         onMessageTargetConsumed(targetId)
     }
-    LaunchedEffect(bot.id, state.draft, state.busy, state.error, state.messages, state.pendingApproval, appAgentSurface) {
+    LaunchedEffect(bot.id, state.draft, state.busy, state.error, state.messages, state.pendingApproval, interactionReady, appAgentSurface) {
         val elements = mutableListOf(
             FabushiAppAgentSurface.Element("mobile-bot-chat", "application", "Bot ${bot.name}"),
             FabushiAppAgentSurface.Element("mobile-bot-close", "button", "关闭 Bot 对话"),
@@ -429,7 +430,7 @@ internal fun GrokBotChatAndroid(
             sendId,
             "button",
             if (state.busy) "停止 Bot" else "发送 Bot 消息",
-            enabled = state.busy || state.draft.trim().isNotEmpty(),
+            enabled = state.busy || (interactionReady && state.draft.trim().isNotEmpty()),
         )
         state.messages.takeLast(50).forEach { entry ->
             val id = "mobile-bot-entry-${entry.id}".replace(Regex("[^A-Za-z0-9._:/@-]"), "-").take(200)
@@ -458,7 +459,9 @@ internal fun GrokBotChatAndroid(
             "mobile-bot-settings" to FabushiAppAgentSurface.Action(setOf("invoke")) { onOpenSettings() },
             "mobile-bot-outline" to FabushiAppAgentSurface.Action(setOf("invoke")) { onOpenConversationOutline() },
             "mobile-bot-draft" to FabushiAppAgentSurface.Action(setOf("setValue")) { onDraftChange(it.orEmpty()) },
-            sendId to FabushiAppAgentSurface.Action(setOf("invoke")) { if (state.busy) onStop() else onSend() },
+            sendId to FabushiAppAgentSurface.Action(setOf("invoke")) {
+                if (state.busy) onStop() else if (interactionReady) onSend()
+            },
         )
         state.pendingApproval?.takeIf { !it.resolving }?.let {
             actions["mobile-bot-approval-approve"] = FabushiAppAgentSurface.Action(setOf("invoke")) { onResolveApproval(true) }
@@ -905,7 +908,8 @@ internal fun GrokBotChatAndroid(
             Button(
                 onClick = if (state.busy) onStop else onSend,
                 enabled = state.busy || (
-                    !state.attachmentBusy &&
+                    interactionReady &&
+                        !state.attachmentBusy &&
                         (state.draft.trim().isNotEmpty() || state.draftAttachments.isNotEmpty())
                     ),
                 modifier = Modifier.size(48.dp).testTag(if (state.busy) "mobile-bot-stop" else "mobile-bot-send"),
