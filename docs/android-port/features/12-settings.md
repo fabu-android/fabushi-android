@@ -42,6 +42,18 @@ Android 13+ 的非豁免通知有运行时权限要求，权限被拒时保留�
 
 设置迁移与业务数据库迁移均带版本；新增字段有明确默认，删除字段不悄悄重启危险能力。渠道更新、签名、版本单调性和 rollback 规则见 release/distribution。生产 release 禁止开启测试会话注入；githubRelease 当前开关风险已列入安全手册，须用真实产物验收关闭。
 
+## Android 应用更新的空闲策略与遥测
+
+Desktop `371b72f1cd20de03dc4dff9a15ed761054968093` 的更新责任由 `source/electron-main/update/update-wiring.ts`、`sand-update-service.ts`、`idle-relaunch-apply.ts`、`safe-relaunch-gate.ts` 和 `update-telemetry.ts` 联合定义。Android 必须保留同一组安全决策输入：用户设备级 opt-in、Statsig `sand_auto_update_when_idle` gate、真实签名包 transport、canonical Host idle、用户离开状态，以及更新下载/暂存/申请安装/恢复的结构化 telemetry；Compose 不能自己判定 Host 是否空闲。
+
+普通 Android 应用不能绕过系统 Package Installer 静默完成 APK 升级，因此 Desktop 的“safe relaunch + quitAndInstall”在 Android 上采用 `android-adapted` 替代：只有 opt-in 与 gate 同时为真、设备已锁定或非交互并持续至少 10 分钟、Host canonical Agent roster 没有任何 running Agent、且当前 effective track 有真实签名 package transport 时，进程存活期间才允许自动下载、校验并把包持久化为 `STAGED`。后台不得启动系统安装 Activity，不得把 opt-in 当成绕过平台安装确认的授权；恢复到前台后仍需用户显式继续。进程死亡后由 durable apply marker 恢复同一 staged/requested 状态；`REQUESTED` 且无法证明结果时保持 `OUTCOME_UNKNOWN`，绝不自动重放安装。
+
+当前 GitHub signed APK transport 只覆盖 stable；Rust policy 投影出的 nightly/dogfood 在没有独立签名 manifest/feed/包证据前必须 fail closed。空闲任务是 opportunistic，不得为了保证定时执行而滥用前台服务、AlarmManager 或要求关闭省电；OS 杀进程后下次正常启动再从 durable marker / release truth 恢复。
+
+Updater telemetry 仅记录稳定事件 schema 与低敏元数据，例如 check/stage/apply/recovery/idle-gate 的 action、result、trigger、track、版本、phase、耗时和 error class；禁止记录 bearer、cookie、账户邮箱、消息正文、文件绝对路径、release notes 或下载 URL。遥测 sink 故障不得改变更新状态机结果。
+
+Focused Actions 至少覆盖：opt-in=false、gate=false、未离开 10 分钟、Host busy、Host unavailable、signed stable 可用、non-stable 无 transport、自动暂存但不后台拉起 installer、process-death staged recovery、requested outcome-unknown、spawn failure 可显式重试、以及 telemetry 脱敏/容量边界。最终 `verified` 仍要求同 exact HEAD 的 release/R8、签名 package 与设备升级证据。
+
 ## Actions 必须验证
 
 通知允许/拒绝/渠道关闭、push 重复和乱序、token 轮换、退出后旧推送、冷启动目标恢复、已经处理的审批通知、锁屏隐藏内容、设置跨账户隔离、存储不足、清理不删 pending 上传、导出不含秘密、旧 schema 升级、损坏备份恢复、日志负例检测和公开 release 不含测试入口。
