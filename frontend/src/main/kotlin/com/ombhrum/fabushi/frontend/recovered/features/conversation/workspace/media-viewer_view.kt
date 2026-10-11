@@ -3,7 +3,10 @@ package com.ombhrum.fabushi
 import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
+import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.pdf.PdfRenderer
+import android.os.ParcelFileDescriptor
 import android.net.Uri
 import android.widget.MediaController
 import android.widget.VideoView
@@ -48,6 +51,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.FileProvider
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import java.io.File
 
 private const val ANDROID_MEDIA_MIN_ZOOM = 1f
@@ -55,6 +60,44 @@ private const val ANDROID_MEDIA_MAX_ZOOM = 5f
 
 internal fun isAndroidMediaPreviewable(message: ChatMessage): Boolean =
     message.contentType == "photo" || message.contentType == "video"
+
+internal fun isAndroidPdfMessage(message: ChatMessage): Boolean {
+    val mime = message.mediaMimeType
+        ?.substringBefore(';')
+        ?.trim()
+        ?.lowercase()
+    val name = message.mediaFileName?.trim()?.lowercase()
+    return mime == "application/pdf" || name?.endsWith(".pdf") == true
+}
+
+internal fun stepAndroidPdfPageIndex(current: Int, delta: Int, count: Int): Int {
+    if (count <= 0) return -1
+    return (current.coerceIn(0, count - 1) + delta).coerceIn(0, count - 1)
+}
+
+private data class AndroidRenderedPdfPage(
+    val bitmap: Bitmap,
+    val pageCount: Int,
+)
+
+private fun renderAndroidPdfPage(file: File, requestedPage: Int): AndroidRenderedPdfPage =
+    ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY).use { descriptor ->
+        PdfRenderer(descriptor).use { renderer ->
+            check(renderer.pageCount > 0) { "PDF has no pages" }
+            val pageIndex = requestedPage.coerceIn(0, renderer.pageCount - 1)
+            renderer.openPage(pageIndex).use { page ->
+                val maxEdge = 2048f
+                val sourceWidth = page.width.coerceAtLeast(1)
+                val sourceHeight = page.height.coerceAtLeast(1)
+                val scale = (maxEdge / maxOf(sourceWidth, sourceHeight)).coerceAtMost(1f)
+                val width = (sourceWidth * scale).toInt().coerceAtLeast(1)
+                val height = (sourceHeight * scale).toInt().coerceAtLeast(1)
+                val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+                page.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+                AndroidRenderedPdfPage(bitmap = bitmap, pageCount = renderer.pageCount)
+            }
+        }
+    }
 
 internal fun projectAndroidMediaGallery(
     messages: List<ChatMessage>,
@@ -107,9 +150,18 @@ internal fun AndroidMediaViewer(
     var scale by remember(message.id) { mutableStateOf(ANDROID_MEDIA_MIN_ZOOM) }
     var offset by remember(message.id) { mutableStateOf(Offset.Zero) }
     var loadGeneration by remember { mutableStateOf(0L) }
+    var pdfPageIndex by remember(message.id) { mutableStateOf(0) }
+    var pdfPageCount by remember(message.id) { mutableStateOf(0) }
+    var pdfBitmap by remember(message.id) { mutableStateOf<Bitmap?>(null) }
+    var pdfLoading by remember(message.id) { mutableStateOf(false) }
+    var pdfError by remember(message.id) { mutableStateOf<String?>(null) }
+    var pdfGeneration by remember { mutableStateOf(0L) }
 
     DisposableEffect(Unit) {
-        onDispose { loadGeneration += 1 }
+        onDispose {
+            loadGeneration += 1
+            pdfGeneration += 1
+        }
     }
 
     LaunchedEffect(message.id) {
@@ -121,6 +173,12 @@ internal fun AndroidMediaViewer(
         loading = true
         scale = ANDROID_MEDIA_MIN_ZOOM
         offset = Offset.Zero
+        pdfPageIndex = 0
+        pdfPageCount = 0
+        pdfBitmap = null
+        pdfLoading = false
+        pdfError = null
+        pdfGeneration += 1
 
         val blobId = message.mediaBlobId
         if (blobId == null || message.mediaSizeBytes <= 0) {
@@ -250,6 +308,97 @@ internal fun AndroidMediaViewer(
                         )
                     } else {
                         Text("无法解码图片", color = Color.White)
+                    }
+                }
+                isAndroidPdfMessage(message) && file != null -> {
+                    LaunchedEffect(message.id, file, pdfPageIndex) {
+                        pdfGeneration += 1
+                        val generation = pdfGeneration
+                        pdfLoading = true
+                        pdfError = null
+                        pdfBitmap = null
+                        val rendered = withContext(Dispatchers.IO) {
+                            runCatching { renderAndroidPdfPage(file!!, pdfPageIndex) }
+                        }
+                        if (generation != pdfGeneration) return@LaunchedEffect
+                        rendered.onSuccess { page ->
+                            pdfPageCount = page.pageCount
+                            pdfPageIndex = pdfPageIndex.coerceIn(0, page.pageCount - 1)
+                            pdfBitmap = page.bitmap
+                            pdfLoading = false
+                        }.onFailure { failure ->
+                            pdfError = failure.message ?: "无法读取 PDF"
+                            pdfLoading = false
+                        }
+                    }
+                    Column(
+                        Modifier.fillMaxSize().padding(8.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            TextButton(
+                                onClick = {
+                                    pdfPageIndex = stepAndroidPdfPageIndex(
+                                        pdfPageIndex,
+                                        -1,
+                                        pdfPageCount,
+                                    )
+                                },
+                                enabled = pdfPageCount > 0 && pdfPageIndex > 0 && !pdfLoading,
+                                modifier = Modifier.testTag("android-pdf-previous"),
+                            ) { Text("上一页", color = Color.White) }
+                            Text(
+                                if (pdfPageCount > 0) {
+                                    "${pdfPageIndex + 1} / $pdfPageCount"
+                                } else {
+                                    "PDF"
+                                },
+                                color = Color.White,
+                                modifier = Modifier.testTag("android-pdf-page-indicator"),
+                            )
+                            TextButton(
+                                onClick = {
+                                    pdfPageIndex = stepAndroidPdfPageIndex(
+                                        pdfPageIndex,
+                                        1,
+                                        pdfPageCount,
+                                    )
+                                },
+                                enabled = pdfPageCount > 0 &&
+                                    pdfPageIndex < pdfPageCount - 1 &&
+                                    !pdfLoading,
+                                modifier = Modifier.testTag("android-pdf-next"),
+                            ) { Text("下一页", color = Color.White) }
+                        }
+                        Box(
+                            Modifier.weight(1f).fillMaxWidth(),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            when {
+                                pdfLoading -> CircularProgressIndicator(
+                                    modifier = Modifier.testTag("android-pdf-loading"),
+                                )
+                                pdfError != null -> Text(
+                                    pdfError.orEmpty(),
+                                    color = Color.White,
+                                    modifier = Modifier
+                                        .padding(24.dp)
+                                        .testTag("android-pdf-error"),
+                                )
+                                pdfBitmap != null -> Image(
+                                    bitmap = pdfBitmap!!.asImageBitmap(),
+                                    contentDescription = message.mediaFileName ?: "PDF",
+                                    contentScale = ContentScale.Fit,
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .testTag("android-pdf-page"),
+                                )
+                            }
+                        }
                     }
                 }
                 message.contentType == "video" && file != null -> {
