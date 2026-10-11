@@ -5,9 +5,9 @@
     "desktop_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
     "android_repository": "fabu-android/fabushi-android",
     "android_pr": 3,
-    "android_head_at_update": "e6fc1e328f7d2f6960d5e1c8f3182ca115e6c513",
+    "android_head_at_update": "ec41b2c71122c370cf914fc45d58231bde7d9ba3",
     "status": "incomplete",
-    "note": "Incrementally rebased to Desktop main 371b72f1cd20de03dc4dff9a15ed761054968093, root tree 3116c54a1e36da95189c740bdc789ad543ce2d20. Compare from 62d0c99f changes only Marketplace owner inventory; shipping source blobs and 8177-row set are unchanged. Skills Host owner audit was re-read and mapped without inherited verification. Deterministic transcript audit advanced through registry/resolver/root, secret-request, send-message:text, thread affordance/loader/summary, transcript feed fanout and URL-card; confirmed Android secret/thread/link-metadata gaps remain mapped. Deterministic audit advanced through transcript card leaf CSS/barrel/shared plus attachment/approval/cloud-agent/connector/draft/link/listener/local-tool/secret/text views; draft leaves preserve source no-op send/discard semantics rather than inventing execution."
+    "note": "Incrementally rebased to Desktop main 371b72f1cd20de03dc4dff9a15ed761054968093, root tree 3116c54a1e36da95189c740bdc789ad543ce2d20. Compare from 62d0c99f changes only Marketplace owner inventory; shipping source blobs and 8177-row set are unchanged. Skills Host owner audit was re-read and mapped without inherited verification. Deterministic transcript audit advanced through registry/resolver/root, secret-request, send-message:text, thread affordance/loader/summary, transcript feed fanout and URL-card; confirmed Android secret/thread/link-metadata gaps remain mapped. Deterministic audit advanced through transcript card leaf CSS/barrel/shared plus attachment/approval/cloud-agent/connector/draft/link/listener/local-tool/secret/text views; draft leaves preserve source no-op send/discard semantics rather than inventing execution. Deterministic audit advanced through widget leaf/actions; Android lacks typed respond/dismiss wiring, so widget remains mapped/not-verified."
   },
   "responsibilities": [
     {
@@ -8337,6 +8337,80 @@
       "artifact": null,
       "verification_status": "not-verified",
       "notes": "Source explicitly documents empty Send/Discard callbacks; parity requires presenting source facts, not inventing a new outbound-mail/Slack side effect."
+    },
+    {
+      "responsibility_id": "TRANSCRIPT-WIDGET-CARD-ANDROID-001",
+      "domain": "conversation-transcript-widget",
+      "desktop_sources": [
+        {
+          "path": "frontend/src/recovered/features/conversation/cards/transcript-card/views/widget.tsx",
+          "blob_sha": "e9b09c9758e98ecb4fd3e2ba5cc67a46fcec7a72",
+          "symbols": [
+            "WidgetTranscriptCard"
+          ]
+        },
+        {
+          "path": "frontend/src/recovered/features/conversation/cards/transcript-card/widget-interactions.ts",
+          "blob_sha": "008be3e8fe73c4e599bfc240f6c1e4914120092f",
+          "symbols": [
+            "createWidgetInteractionTransport",
+            "createWidgetInteractionAdapter"
+          ]
+        }
+      ],
+      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "responsibility": "Render Agent choice/custom-answer widgets and resolve or dismiss them through typed Agent-scoped actions with single-flight pending state, rejection/failure rollback, canonical settled reconciliation, keyboard-target rules and stale scope/dispose fencing.",
+      "source_owner": "Canonical transcript owns respondedValue/widgetDismissed; scoped action adapter owns only ephemeral pending optimistic projection.",
+      "direct_callers": [
+        "widget transcript leaf",
+        "transcript interactions provider"
+      ],
+      "downstream_dependencies": [
+        "respondToWidget",
+        "dismissWidget",
+        "canonical transcript entries"
+      ],
+      "state_owner": "Host/transcript owns settled widget truth; action adapter owns pending state only.",
+      "persistent_state": [
+        "respondedValue/widgetDismissed recover from canonical transcript; custom input/pending state is not a second durable owner."
+      ],
+      "protocol_wire_contract": [
+        "respondToWidget {entryId,value,agentId} -> {accepted:boolean}|null",
+        "dismissWidget {entryId,agentId} -> {accepted:boolean}"
+      ],
+      "visible_effect": "User can choose an option, enter a custom answer, dismiss a question, and see canonical answered/dismissed state without duplicate actions.",
+      "failure_behavior": [
+        "malformed/no/accepted=false reply rolls back",
+        "transport failure rolls back if current",
+        "stale completion is discarded",
+        "unavailable/not-widget/settled actions are ignored"
+      ],
+      "cancellation_behavior": "scope change/dispose increments generation and invalidates in-flight completion.",
+      "retry_semantics": "Explicit user retry only after rollback/current-state reconciliation; no automatic side-effect replay.",
+      "idempotency_semantics": "One pending action per entry; canonical settled values prevent duplicate submission.",
+      "process_death_recovery": "Reload canonical respondedValue/widgetDismissed; never replay in-memory pending answer as a new request.",
+      "account_fencing": "accountSlot + agentId + generation.",
+      "security_boundary": "Widget actions are Agent-scoped typed commands; UI cannot self-assert another agent/account.",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/features/chat/AgentChatSurfaces.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/presentation/MobileBotViewModel.kt",
+        "source/android-preload/src/main/kotlin/com/ombhrum/fabushi/androidpreload/runtime/AndroidCoordinatorPort.kt",
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/coordinator/AndroidCoordinatorRuntime.kt",
+        "source/host/src/android_json_runtime.rs"
+      ],
+      "android_owner": "Host canonical Agent transcript plus native widget presentation/action adapter.",
+      "platform_delta": "Compose input/accessibility replaces DOM keyboard mechanics while retaining scoped action semantics.",
+      "implementation_status": "mapped",
+      "production_wiring": "Current exact-head Android production search found no respondToWidget/dismissWidget methods or widget transcript union.",
+      "unit_test": "missing focused option/custom/dismiss/pending/rollback/stale/account-switch tests",
+      "contract_test": "missing typed widget action/reply contract",
+      "integration_test": "missing exact-head widget answer/dismiss/process-reopen journey",
+      "packaged_test": "required final package",
+      "device_test": "required protected/device Agent journey",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Android input shortcuts should follow Android accessibility/input conventions rather than mechanically copy desktop A/B keyboard behavior."
     }
   ],
   "traceability": {
