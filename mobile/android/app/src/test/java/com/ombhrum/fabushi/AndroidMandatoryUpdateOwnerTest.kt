@@ -73,7 +73,7 @@ class AndroidMandatoryUpdateOwnerTest {
     }
 
     @Test
-    fun idleGateSurvivesProcessDeathAndSupportsClearAndReassert() {
+    fun idleGateFailsClosedWhenRefreshIsUnobservedAndSupportsReassert() {
         val store = MemoryStore()
         val first = AndroidMandatoryUpdateOwner(store, processGeneration = 31)
         val enabledToken = first.begin(accountEpoch = 12)
@@ -104,23 +104,8 @@ class AndroidMandatoryUpdateOwnerTest {
             ),
             currentAccountEpoch = 12,
         )
-        assertTrue(unavailable.autoUpdateWhenIdleGateObserved)
-        assertTrue(unavailable.autoUpdateWhenIdleGateEnabled)
-
-        val clearToken = recreated.begin(accountEpoch = 12)
-        val cleared = recreated.settle(
-            token = clearToken,
-            facts = AndroidMandatoryUpdateFacts(
-                minimumVersionObserved = false,
-                minimumVersion = null,
-                backendSignal = AndroidBackendUpdateSignal.UNCHANGED,
-                autoUpdateWhenIdleGateObserved = true,
-                autoUpdateWhenIdleGateEnabled = false,
-            ),
-            currentAccountEpoch = 12,
-        )
-        assertTrue(cleared.autoUpdateWhenIdleGateObserved)
-        assertFalse(cleared.autoUpdateWhenIdleGateEnabled)
+        assertFalse(unavailable.autoUpdateWhenIdleGateObserved)
+        assertFalse(unavailable.autoUpdateWhenIdleGateEnabled)
 
         val reassertToken = recreated.begin(accountEpoch = 12)
         val reasserted = recreated.settle(
@@ -134,6 +119,7 @@ class AndroidMandatoryUpdateOwnerTest {
             ),
             currentAccountEpoch = 12,
         )
+        assertTrue(reasserted.autoUpdateWhenIdleGateObserved)
         assertTrue(reasserted.autoUpdateWhenIdleGateEnabled)
     }
 

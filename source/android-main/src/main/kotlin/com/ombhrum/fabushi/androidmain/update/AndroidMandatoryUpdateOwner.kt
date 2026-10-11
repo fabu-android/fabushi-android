@@ -149,14 +149,12 @@ class AndroidMandatoryUpdateOwner(
                 AndroidBackendUpdateSignal.CLEAR -> false
                 AndroidBackendUpdateSignal.UNCHANGED -> previous.backendRequiresUpdate
             },
-            autoUpdateWhenIdleGateObserved =
-                if (facts.autoUpdateWhenIdleGateObserved) true else previous.autoUpdateWhenIdleGateObserved,
+            // Feature-gate availability is intentionally not sticky. Desktop's live
+            // experiment service returns false when the gate cannot be observed; retaining a prior
+            // true value here would turn a transient Statsig failure into permission to auto-stage.
+            autoUpdateWhenIdleGateObserved = facts.autoUpdateWhenIdleGateObserved,
             autoUpdateWhenIdleGateEnabled =
-                if (facts.autoUpdateWhenIdleGateObserved) {
-                    facts.autoUpdateWhenIdleGateEnabled
-                } else {
-                    previous.autoUpdateWhenIdleGateEnabled
-                },
+                facts.autoUpdateWhenIdleGateObserved && facts.autoUpdateWhenIdleGateEnabled,
         )
         store.write(state)
         return state

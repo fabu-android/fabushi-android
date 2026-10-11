@@ -259,14 +259,27 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
             host.probeUpdatePolicy("android-update-policy-" + UUID.randomUUID())
         }.getOrElse {
             val currentEpoch = accountAccessOwner.currentProjection().accountEpoch
-            val current = mandatoryUpdateOwner.snapshot(currentEpoch)
+            // Minimum-version and backend-required are durable producers, but the experiment gate
+            // is live policy. If the Host/Statsig probe is unavailable, auto-staging must fail
+            // closed instead of inheriting a previously observed true gate.
+            val current = mandatoryUpdateOwner.settle(
+                token = token,
+                facts = AndroidMandatoryUpdateFacts(
+                    minimumVersionObserved = false,
+                    minimumVersion = null,
+                    backendSignal = AndroidBackendUpdateSignal.UNCHANGED,
+                    autoUpdateWhenIdleGateObserved = false,
+                    autoUpdateWhenIdleGateEnabled = false,
+                ),
+                currentAccountEpoch = currentEpoch,
+            )
             return AndroidMandatoryUpdatePolicy(
                 accountEpoch = current.accountEpoch,
                 processGeneration = processGeneration,
                 minimumVersion = current.minimumVersion,
                 backendRequiresUpdate = current.backendRequiresUpdate,
-                autoUpdateWhenIdleGateObserved = current.autoUpdateWhenIdleGateObserved,
-                autoUpdateWhenIdleGateEnabled = current.autoUpdateWhenIdleGateEnabled,
+                autoUpdateWhenIdleGateObserved = false,
+                autoUpdateWhenIdleGateEnabled = false,
             )
         }
         val currentEpoch = accountAccessOwner.currentProjection().accountEpoch

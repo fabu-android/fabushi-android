@@ -295,7 +295,13 @@ class AndroidUpdateViewModel(application: Application) : AndroidViewModel(applic
     private suspend fun refreshMandatoryUpdatePolicy() {
         val projection = runCatching {
             withContext(Dispatchers.IO) { coordinator.refreshMandatoryUpdatePolicy() }
-        }.getOrNull() ?: return
+        }.getOrElse {
+            // Never let an earlier true experiment gate survive a failed refresh in presentation
+            // memory. The next successful Coordinator projection may explicitly re-enable it.
+            autoUpdateGateObserved = false
+            _autoUpdateWhenIdleGateEnabled.value = false
+            return
+        }
         publishMandatoryUpdate(
             minimumVersion = projection.minimumVersion,
             backendRequiresUpdate = projection.backendRequiresUpdate,
