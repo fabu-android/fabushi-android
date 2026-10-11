@@ -10633,6 +10633,66 @@
       "verification_status": "not-verified",
       "notes": "Implemented in source but intentionally not verified until exact-head Actions and offline device acceptance pass.",
       "android_head_at_update": "9e8678ec8c7504c602cb4c7a7d55f11790084fd9"
+    },
+    {
+      "responsibility_id": "CONVERSATION-WORKSPACE-VISUAL-LAYOUT-ANDROID-001",
+      "domain": "conversation",
+      "desktop_sources": [
+        {
+          "path": "frontend/src/recovered/features/conversation/workspace/view.css",
+          "blob_sha": "9e45e4ffdbd1669817bbdd1def33c25c8312b644",
+          "symbols": [
+            "shipping conversation workspace, transcript, composer, notice, attachment and message-state presentation styles"
+          ]
+        }
+      ],
+      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "responsibility": "Preserve the shipping conversation workspace visual hierarchy and interaction-state presentation across transcript rows, message bubbles, queued/failed notices, composer/attachments and surrounding workspace chrome without making presentation the canonical state owner.",
+      "source_owner": "Desktop recovered conversation workspace CSS layered over transcript/composer/workspace DOM projections",
+      "direct_callers": [
+        "Conversation workspace recovered views and transcript/composer card surfaces"
+      ],
+      "downstream_dependencies": [
+        "transcript projection",
+        "send acknowledgement/submission state",
+        "composer and attachment projection",
+        "native accessibility/layout system"
+      ],
+      "state_owner": "No canonical product state is owned by styling. Android Compose consumes immutable transcript/composer/acknowledgement projections from existing owners.",
+      "persistent_state": [],
+      "protocol_wire_contract": [
+        "No wire protocol; presentation must reflect canonical delivery, attachment and workspace state without synthesizing a second owner."
+      ],
+      "visible_effect": "Conversation content remains readable, grouped and distinguishable; queued/failed/send states, attachments and composer surfaces remain visibly actionable with Android-native responsive geometry.",
+      "failure_behavior": [
+        "Do not hide canonical failed/queued states through styling",
+        "unsupported Desktop-only hover/window chrome must have an explicit Android replacement or be documented as non-applicable"
+      ],
+      "cancellation_behavior": "Presentation-only animations/gestures follow Android lifecycle; cancelling a visual interaction cannot mutate canonical transcript/send state unless an explicit typed action is invoked.",
+      "retry_semantics": "No styling-layer retry ownership.",
+      "idempotency_semantics": "Recomposition from the same immutable projection must be side-effect free.",
+      "process_death_recovery": "Layout is reconstructed from canonical restored projections; no CSS-derived state is persisted.",
+      "account_fencing": "Visual state is rendered only from current account/Agent projections; stale account callbacks must be fenced by their existing owners.",
+      "security_boundary": "Compose styling has no Host/capability authority and cannot expose Desktop renderer-only privileged surfaces.",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/recovered/features/conversation/workspace/transcript_view.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/recovered/features/conversation/workspace/composer_view.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/features/bots/GrokBotComponents.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/features/bots/GrokHomeSurface.kt"
+      ],
+      "android_owner": "Native Jetpack Compose presentation over existing immutable transcript/composer/send projections",
+      "platform_delta": "Desktop CSS/DOM selectors, hover-only affordances, macOS/desktop titlebar geometry and browser layout mechanics are not mechanically portable. Android uses Compose dp/text/accessibility semantics, touch gestures and system insets while retaining the same user-visible content/state distinctions. Current native surfaces cover only part of this large style contract.",
+      "implementation_status": "mapped",
+      "production_wiring": "Partial native equivalents already exist: ConversationTranscript renders bounded native bubbles/grouping/reactions/media rows; GrokBotComponents renders queued/failed acknowledgement state and cancellation/retry affordances; native composer surfaces replace browser textarea/DOM layout. A complete rule-by-rule responsive/accessibility/platform-delta audit has not yet been closed, so this responsibility remains mapped.",
+      "unit_test": "Existing transcript adjacency/action/send-ack projection tests cover semantic state inputs, but focused Android layout/accessibility/state-style coverage for this CSS authority remains incomplete.",
+      "contract_test": "Required: immutable presentation must preserve canonical delivery/attachment/composer states without presentation-owned mutation.",
+      "integration_test": "Required on same exact HEAD across Human and Agent workspace composition.",
+      "packaged_test": "Required on final minified packaged artifact for representative transcript/composer/queued/failed/attachment surfaces.",
+      "device_test": "Required across supported phone/tablet/foldable sizes, font scaling, dark/light themes and accessibility services.",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Fresh deterministic audit of Desktop view.css blob 9e45e4ffdbd1669817bbdd1def33c25c8312b644. This is a platform-delta mapping only, not a claim that every Desktop visual rule is implemented. Desktop-only hover/window/DOM mechanics require explicit replacement decisions; user-visible workspace semantics still require focused same-head/package/device evidence."
     }
   ],
   "traceability": {
