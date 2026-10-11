@@ -166,6 +166,7 @@ internal fun AndroidMediaViewer(
     var pdfOffset by remember(message.id) { mutableStateOf(Offset.Zero) }
     var pdfGeneration by remember { mutableStateOf(0L) }
     var spreadsheetSelectedCell by remember(message.id) { mutableStateOf<Pair<String, String>?>(null) }
+    var spreadsheetSelectedSheet by remember(message.id) { mutableStateOf(0) }
 
     DisposableEffect(Unit) {
         onDispose {
@@ -192,6 +193,7 @@ internal fun AndroidMediaViewer(
         pdfOffset = Offset.Zero
         pdfGeneration += 1
         spreadsheetSelectedCell = null
+        spreadsheetSelectedSheet = 0
 
         val blobId = message.mediaBlobId
         if (blobId == null || message.mediaSizeBytes <= 0) {
@@ -469,90 +471,162 @@ internal fun AndroidMediaViewer(
                         }
                     }
                 }
-                isAndroidDelimitedSpreadsheet(message.mediaFileName, message.mediaMimeType) && bytes != null -> {
+                isAndroidSpreadsheet(message.mediaFileName, message.mediaMimeType) && bytes != null -> {
                     val parsed = remember(message.id, bytes) {
-                        runCatching { parseAndroidDelimitedSpreadsheet(bytes!!, message.mediaFileName) }
-                    }
-                    parsed.onSuccess { table ->
-                        val header = table.rows.firstOrNull().orEmpty()
-                        val dataRows = table.rows.drop(1).take(ANDROID_SPREADSHEET_RENDER_ROWS)
-                        val columnCount = table.rows.maxOfOrNull { it.size }
-                            ?.coerceAtMost(ANDROID_SPREADSHEET_RENDER_ROWS) ?: 0
-                        Column(
-                            Modifier.fillMaxSize().padding(8.dp).testTag("android-spreadsheet-viewer"),
-                            verticalArrangement = Arrangement.spacedBy(8.dp),
-                        ) {
-                            Text(
-                                ((table.totalRows - 1).coerceAtLeast(0)).toString() + " rows" +
-                                    if (table.totalRows > ANDROID_SPREADSHEET_RENDER_ROWS + 1) {
-                                        " · showing first " + ANDROID_SPREADSHEET_RENDER_ROWS
-                                    } else "",
-                                color = Color.White,
-                                modifier = Modifier.testTag("android-spreadsheet-row-count"),
+                        runCatching {
+                            parseAndroidSpreadsheet(
+                                bytes = bytes!!,
+                                fileName = message.mediaFileName,
+                                mimeType = message.mediaMimeType,
                             )
+                        }
+                    }
+                    parsed.onSuccess { sheets ->
+                        val selectedIndex = spreadsheetSelectedSheet.coerceIn(
+                            0,
+                            (sheets.size - 1).coerceAtLeast(0),
+                        )
+                        val table = sheets.getOrNull(selectedIndex)
+                        if (table == null) {
+                            Text(
+                                "File unavailable",
+                                color = Color.White,
+                                modifier = Modifier.testTag("android-spreadsheet-error"),
+                            )
+                        } else {
+                            val header = table.rows.firstOrNull().orEmpty()
+                            val dataRows = table.rows.drop(1).take(ANDROID_SPREADSHEET_RENDER_ROWS)
+                            val columnCount = table.rows.maxOfOrNull { it.size }
+                                ?.coerceAtMost(ANDROID_SPREADSHEET_RENDER_ROWS) ?: 0
                             Column(
-                                Modifier.weight(1f).fillMaxWidth()
-                                    .horizontalScroll(rememberScrollState())
-                                    .verticalScroll(rememberScrollState())
-                                    .testTag("android-spreadsheet-table"),
+                                Modifier.fillMaxSize().padding(8.dp).testTag("android-spreadsheet-viewer"),
+                                verticalArrangement = Arrangement.spacedBy(8.dp),
                             ) {
-                                @Composable
-                                fun tableCell(value: String, label: String, isHeader: Boolean) {
-                                    TextButton(
-                                        onClick = {
-                                            spreadsheetSelectedCell =
-                                                if (value.isBlank()) null else label to value
-                                        },
-                                        modifier = Modifier.width(160.dp).testTag("android-spreadsheet-cell"),
-                                    ) {
-                                        Text(
-                                            value,
-                                            color = if (isHeader) Color.White else Color.LightGray,
-                                            maxLines = 2,
-                                        )
-                                    }
-                                }
-                                if (columnCount > 0) {
-                                    Row {
-                                        Text("#", color = Color.Gray, modifier = Modifier.width(48.dp).padding(8.dp))
-                                        repeat(columnCount) { column ->
-                                            val label = header.getOrNull(column).takeUnless(String?::isNullOrBlank)
-                                                ?: ("Column " + (column + 1))
-                                            tableCell(header.getOrNull(column).orEmpty(), label, true)
-                                        }
-                                    }
-                                }
-                                dataRows.forEachIndexed { rowIndex, row ->
-                                    Row {
-                                        Text(
-                                            (rowIndex + 1).toString(),
-                                            color = Color.Gray,
-                                            modifier = Modifier.width(48.dp).padding(8.dp),
-                                        )
-                                        repeat(columnCount) { column ->
-                                            val label = (
-                                                header.getOrNull(column).takeUnless(String?::isNullOrBlank)
-                                                    ?: ("Column " + (column + 1))
-                                                ) + " · row " + (rowIndex + 1)
-                                            tableCell(row.getOrNull(column).orEmpty(), label, false)
-                                        }
-                                    }
-                                }
-                            }
-                            spreadsheetSelectedCell?.let { selected ->
-                                Column(
-                                    Modifier.fillMaxWidth()
-                                        .background(Color.White.copy(alpha = 0.08f))
-                                        .padding(10.dp)
-                                        .testTag("android-spreadsheet-cell-detail"),
+                                Row(
+                                    Modifier.fillMaxWidth(),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
                                 ) {
-                                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                                        Text(selected.first, color = Color.Gray)
-                                        TextButton(onClick = { spreadsheetSelectedCell = null }) {
-                                            Text("×", color = Color.White)
+                                    Text(
+                                        ((table.totalRows - 1).coerceAtLeast(0)).toString() + " rows" +
+                                            if (table.totalRows > ANDROID_SPREADSHEET_RENDER_ROWS + 1) {
+                                                " · showing first " + ANDROID_SPREADSHEET_RENDER_ROWS
+                                            } else "",
+                                        color = Color.White,
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .testTag("android-spreadsheet-row-count"),
+                                    )
+                                    if (sheets.size > 1) {
+                                        LazyRow(
+                                            modifier = Modifier
+                                                .weight(2f)
+                                                .testTag("android-spreadsheet-sheets"),
+                                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                                        ) {
+                                            itemsIndexed(sheets, key = { index, sheet -> sheet.name + ":" + index }) { index, sheet ->
+                                                TextButton(
+                                                    onClick = {
+                                                        spreadsheetSelectedSheet = index
+                                                        spreadsheetSelectedCell = null
+                                                    },
+                                                    modifier = Modifier.testTag("android-spreadsheet-sheet-" + index),
+                                                ) {
+                                                    Text(
+                                                        (if (index == selectedIndex) "● " else "") + sheet.name,
+                                                        color = if (index == selectedIndex) Color.White else Color.Gray,
+                                                        maxLines = 1,
+                                                    )
+                                                }
+                                            }
                                         }
                                     }
-                                    Text(selected.second, color = Color.White)
+                                }
+                                if (dataRows.isEmpty()) {
+                                    Text(
+                                        "This sheet is empty",
+                                        color = Color.White,
+                                        modifier = Modifier.testTag("android-spreadsheet-empty"),
+                                    )
+                                } else {
+                                    Column(
+                                        Modifier.weight(1f).fillMaxWidth()
+                                            .horizontalScroll(rememberScrollState())
+                                            .verticalScroll(rememberScrollState())
+                                            .testTag("android-spreadsheet-table"),
+                                    ) {
+                                        @Composable
+                                        fun tableCell(value: String, label: String, isHeader: Boolean) {
+                                            TextButton(
+                                                onClick = {
+                                                    spreadsheetSelectedCell =
+                                                        if (value.isBlank()) null else label to value
+                                                },
+                                                modifier = Modifier.width(160.dp).testTag("android-spreadsheet-cell"),
+                                            ) {
+                                                Text(
+                                                    value,
+                                                    color = if (isHeader) Color.White else Color.LightGray,
+                                                    maxLines = 2,
+                                                )
+                                            }
+                                        }
+                                        if (columnCount > 0) {
+                                            Row {
+                                                Text(
+                                                    "#",
+                                                    color = Color.Gray,
+                                                    modifier = Modifier.width(48.dp).padding(8.dp),
+                                                )
+                                                repeat(columnCount) { column ->
+                                                    val label = header.getOrNull(column)
+                                                        .takeUnless(String?::isNullOrBlank)
+                                                        ?: ("Column " + (column + 1))
+                                                    tableCell(
+                                                        header.getOrNull(column).orEmpty(),
+                                                        label + " · header",
+                                                        true,
+                                                    )
+                                                }
+                                            }
+                                        }
+                                        dataRows.forEachIndexed { rowIndex, row ->
+                                            Row {
+                                                Text(
+                                                    (rowIndex + 1).toString(),
+                                                    color = Color.Gray,
+                                                    modifier = Modifier.width(48.dp).padding(8.dp),
+                                                )
+                                                repeat(columnCount) { column ->
+                                                    val label = (
+                                                        header.getOrNull(column)
+                                                            .takeUnless(String?::isNullOrBlank)
+                                                            ?: ("Column " + (column + 1))
+                                                        ) + " · row " + (rowIndex + 1)
+                                                    tableCell(row.getOrNull(column).orEmpty(), label, false)
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                spreadsheetSelectedCell?.let { selected ->
+                                    Column(
+                                        Modifier.fillMaxWidth()
+                                            .background(Color.White.copy(alpha = 0.08f))
+                                            .padding(10.dp)
+                                            .testTag("android-spreadsheet-cell-detail"),
+                                    ) {
+                                        Row(
+                                            Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                        ) {
+                                            Text(selected.first, color = Color.Gray)
+                                            TextButton(onClick = { spreadsheetSelectedCell = null }) {
+                                                Text("×", color = Color.White)
+                                            }
+                                        }
+                                        Text(selected.second, color = Color.White)
+                                    }
                                 }
                             }
                         }
