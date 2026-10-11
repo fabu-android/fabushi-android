@@ -195,3 +195,204 @@ internal class AccountAccessProjectionOwner(private val epochStore: AccountAcces
     private fun current(token: AccountAccessRefreshToken) = token.generation == generation && token.accountEpoch == accountEpoch
     private fun next(value: Long) = if (value == Long.MAX_VALUE) Long.MAX_VALUE else (value + 1L).coerceAtLeast(1L)
 }
+
+internal data class RootConnectionRetryToken(
+    val accountGeneration: Long,
+    val accountEpoch: Long,
+    val attempt: Long,
+)
+
+/**
+ * Process-scoped owner for the Desktop root connection resilience contract.
+ *
+ * This owner never becomes a second account/roster source of truth. It consumes canonical
+ * auth epoch + immutable AccountAccessProjection facts and owns only derived connection phase,
+ * a single retry flight, and the in-memory queued user retry intent. Retry intent is deliberately
+ * not persisted, so a cold process starts from auth/Coordinator/roster truth instead of replaying
+ * an old side effect.
+ */
+internal class RootConnectionResilienceOwner {
+    private var accountGeneration = 0L
+    private var accountEpoch = 0L
+    private var accountIdentity: String? = null
+    private var loggedIn = false
+    private var transport = RootConnectionTransportState.CONNECTING
+    private var hasReachedBox = false
+    private var privacyBlocked = false
+    private var failureCode: String? = null
+    private var retryQueued = false
+    private var inFlight: RootConnectionRetryToken? = null
+    private var retryAttempt = 0L
+    private var disposed = false
+
+    @Synchronized
+    fun observeAccount(
+        loggedIn: Boolean,
+        identity: String?,
+        accountEpoch: Long,
+    ): RootConnectionResilienceProjection {
+        if (disposed) return projection()
+        val normalizedIdentity = identity?.trim()?.takeIf { loggedIn && it.isNotEmpty() }
+        val changed =
+            this.loggedIn != loggedIn ||
+                this.accountIdentity != normalizedIdentity ||
+                this.accountEpoch != accountEpoch
+        if (changed) {
+            accountGeneration = next(accountGeneration)
+            this.loggedIn = loggedIn
+            this.accountIdentity = normalizedIdentity
+            this.accountEpoch = accountEpoch
+            transport = RootConnectionTransportState.CONNECTING
+            hasReachedBox = false
+            privacyBlocked = false
+            failureCode = null
+            retryQueued = false
+            inFlight = null
+        }
+        return projection()
+    }
+
+    @Synchronized
+    fun observeReadiness(access: AccountAccessProjection): RootConnectionResilienceProjection {
+        if (disposed || access.accountEpoch != accountEpoch) return projection()
+        loggedIn = access.loggedIn
+        hasReachedBox = access.hasReachedBox
+        privacyBlocked =
+            access.rosterFailureCode == "CLOUD_AGENT_STORAGE_DISABLED" ||
+                access.rosterFailureTransportKind == "no_storage"
+        failureCode = access.rosterFailureCode
+        if (!loggedIn) {
+            retryQueued = false
+            inFlight = null
+            failureCode = null
+        }
+        return projection()
+    }
+
+    /**
+     * Returns a newly-owned retry token only when a dispatch should start now.
+     * A duplicate request in the same generation never creates a second flight.
+     */
+    @Synchronized
+    fun requestRetry(): RootConnectionRetryToken? {
+        if (disposed || !loggedIn || privacyBlocked) return null
+        if (inFlight != null) return null
+        if (transport != RootConnectionTransportState.CONNECTED) {
+            retryQueued = true
+            return null
+        }
+        return beginRetry()
+    }
+
+    /**
+     * A canonical transport transition may release one queued user retry.
+     * No queued intent is persisted across process recreation.
+     */
+    @Synchronized
+    fun observeTransport(state: RootConnectionTransportState): RootConnectionRetryToken? {
+        if (disposed) return null
+        transport = state
+        if (
+            state == RootConnectionTransportState.CONNECTED &&
+            retryQueued &&
+            inFlight == null &&
+            loggedIn &&
+            !privacyBlocked
+        ) {
+            return beginRetry()
+        }
+        return null
+    }
+
+    @Synchronized
+    fun completeRetrySuccess(token: RootConnectionRetryToken): Boolean {
+        if (!current(token)) return false
+        inFlight = null
+        retryQueued = false
+        failureCode = null
+        return true
+    }
+
+    /**
+     * A replacement transport disappearing during the retry is not a terminal failure.
+     * Keep the single user retry queued until a later CONNECTED transition.
+     */
+    @Synchronized
+    fun completeRetryFailure(
+        token: RootConnectionRetryToken,
+        code: String?,
+        transportDown: Boolean,
+    ): Boolean {
+        if (!current(token)) return false
+        inFlight = null
+        if (transportDown || transport != RootConnectionTransportState.CONNECTED) {
+            transport = RootConnectionTransportState.DOWN
+            failureCode = null
+            retryQueued = true
+        } else {
+            failureCode = code?.trim()?.takeIf(String::isNotEmpty) ?: "roster-load-failed"
+            retryQueued = false
+        }
+        return true
+    }
+
+    @Synchronized fun currentProjection(): RootConnectionResilienceProjection = projection()
+
+    @Synchronized
+    fun dispose() {
+        if (disposed) return
+        disposed = true
+        accountGeneration = next(accountGeneration)
+        loggedIn = false
+        accountIdentity = null
+        retryQueued = false
+        inFlight = null
+        failureCode = null
+        privacyBlocked = false
+        hasReachedBox = false
+        transport = RootConnectionTransportState.CONNECTING
+    }
+
+    private fun beginRetry(): RootConnectionRetryToken {
+        retryQueued = false
+        retryAttempt = next(retryAttempt)
+        return RootConnectionRetryToken(
+            accountGeneration = accountGeneration,
+            accountEpoch = accountEpoch,
+            attempt = retryAttempt,
+        ).also { inFlight = it }
+    }
+
+    private fun current(token: RootConnectionRetryToken): Boolean =
+        !disposed &&
+            token == inFlight &&
+            token.accountGeneration == accountGeneration &&
+            token.accountEpoch == accountEpoch
+
+    private fun projection(): RootConnectionResilienceProjection {
+        val phase = when {
+            !loggedIn || privacyBlocked -> RootConnectionPhase.HIDDEN
+            transport == RootConnectionTransportState.CONNECTING -> RootConnectionPhase.LOADING
+            transport == RootConnectionTransportState.CONNECTED && failureCode == null ->
+                RootConnectionPhase.CONNECTED
+            hasReachedBox -> RootConnectionPhase.RECONNECTING
+            else -> RootConnectionPhase.UNREACHABLE
+        }
+        return RootConnectionResilienceProjection(
+            accountGeneration = accountGeneration,
+            accountEpoch = accountEpoch,
+            accountIdentity = accountIdentity,
+            transport = transport,
+            phase = phase,
+            hasReachedBox = hasReachedBox,
+            isPrivacyBlocked = privacyBlocked,
+            failureCode = failureCode,
+            isRetrying = retryQueued || inFlight != null,
+            retryQueued = retryQueued,
+        )
+    }
+
+    private fun next(value: Long) =
+        if (value == Long.MAX_VALUE) Long.MAX_VALUE else (value + 1L).coerceAtLeast(1L)
+}
+
