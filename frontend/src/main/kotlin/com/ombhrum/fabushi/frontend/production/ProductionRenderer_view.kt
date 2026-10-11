@@ -5,16 +5,17 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -68,6 +69,15 @@ internal fun ProductionRenderer(
                     mutableStateOf<CommandPaletteComputerUpdateAction?>(null)
                 }
                 var deepLinkInfo by remember { mutableStateOf<DeepLinkInfo?>(null) }
+
+                val coroutineScope = rememberCoroutineScope()
+                val appAlertController = remember(coroutineScope) {
+                    AppAlertController(coroutineScope)
+                }
+                DisposableEffect(appAlertController) {
+                    onDispose(appAlertController::dispose)
+                }
+                AppAlertHost(controller = appAlertController)
 
                 BackHandler(enabled = rendererRoute != RendererRoute.GROK_HOME && state.loggedIn) {
                     rendererRoute = RendererRoute.GROK_HOME
@@ -125,55 +135,43 @@ internal fun ProductionRenderer(
                         onClose = { showSettings = false },
                     )
                 }
-                computerUpdateConfirmAction?.let { action ->
+                LaunchedEffect(computerUpdateConfirmAction, appAlertController) {
+                    val action = computerUpdateConfirmAction ?: return@LaunchedEffect
                     val busy = action == CommandPaletteComputerUpdateAction.BUSY_OVERRIDE
-                    AlertDialog(
-                        onDismissRequest = { computerUpdateConfirmAction = null },
-                        title = {
-                            Text(if (busy) "An agent is working" else "Update Fabushi's Computer?")
-                        },
-                        text = {
-                            Text(
-                                if (busy) {
-                                    "Waiting lets current Agent turns finish. Fabushi will update the shared computer " +
-                                        "when the canonical Agent roster is idle. Files and logins are kept."
-                                } else {
-                                    "This updates the shared computer your agents run on to the latest version. " +
-                                        "Files and logins are kept. Android will not retry an update whose outcome is unknown."
-                                },
-                            )
-                        },
-                        confirmButton = {
-                            Row {
-                                if (busy) {
-                                    TextButton(
-                                        onClick = {
-                                            computerUpdateConfirmAction = null
-                                            botModel.requestComputerUpdate(
-                                                action = action,
-                                                forceNow = true,
-                                            )
-                                        },
-                                    ) {
-                                        Text("Update anyway")
-                                    }
-                                }
-                                TextButton(
-                                    onClick = {
-                                        computerUpdateConfirmAction = null
-                                        botModel.requestComputerUpdate(action)
+                    appAlertController.alert(
+                        AppAlertRequest(
+                            title = if (busy) "An agent is working" else "Update Fabushi's Computer?",
+                            body = if (busy) {
+                                "Waiting lets current Agent turns finish. Fabushi will update the shared computer " +
+                                    "when the canonical Agent roster is idle. Files and logins are kept."
+                            } else {
+                                "This updates the shared computer your agents run on to the latest version. " +
+                                    "Files and logins are kept. Android will not retry an update whose outcome is unknown."
+                            },
+                            confirmLabel = if (busy) "Update when done" else "Update Fabushi's Computer",
+                            cancelLabel = if (busy) "Cancel" else "Not now",
+                            secondary = if (busy) {
+                                AppAlertSecondaryAction(
+                                    label = "Update anyway",
+                                    destructive = true,
+                                    perform = {
+                                        botModel.requestComputerUpdate(action = action, forceNow = true)
+                                        null
                                     },
-                                ) {
-                                    Text(if (busy) "Update when done" else "Update Fabushi's Computer")
-                                }
-                            }
-                        },
-                        dismissButton = {
-                            TextButton(onClick = { computerUpdateConfirmAction = null }) {
-                                Text(if (busy) "Cancel" else "Not now")
-                            }
-                        },
-                    )
+                                )
+                            } else {
+                                null
+                            },
+                            perform = {
+                                botModel.requestComputerUpdate(action)
+                                null
+                            },
+                        ),
+                    ) {
+                        if (computerUpdateConfirmAction == action) {
+                            computerUpdateConfirmAction = null
+                        }
+                    }
                 }
 
                 LaunchedEffect(state.loggedIn) {

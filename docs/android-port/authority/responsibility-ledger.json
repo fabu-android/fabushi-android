@@ -12784,6 +12784,87 @@
       "artifact": null,
       "verification_status": "not-verified",
       "notes": "Core policy plus shipping consumer wiring are implemented. Keep verification_status=not-verified until the new exact-head Actions pass; keep broader app-update responsibility mapped because non-stable delivery/auto-update-when-idle remain open."
+    },
+    {
+      "responsibility_id": "WINDOW-CHROME-APP-ALERT-ANDROID-001",
+      "domain": "window-chrome",
+      "desktop_sources": [
+        {
+          "path": "frontend/src/recovered/features/window-chrome/app-alert/controller.contract.test.ts",
+          "blob_sha": "dd70ac4e54628ce5631711fc68e10b8c4ed5d449",
+          "symbols": [
+            "app-alert controller contract tests"
+          ]
+        },
+        {
+          "path": "frontend/src/recovered/features/window-chrome/app-alert/controller.ts",
+          "blob_sha": "4c1b5dc5b392ce315b6f6fc01bba9a8a08bc4e0a",
+          "symbols": [
+            "createAppAlertController",
+            "alert",
+            "confirm",
+            "confirmSecondary",
+            "cancel",
+            "reset",
+            "dispose"
+          ]
+        },
+        {
+          "path": "frontend/src/recovered/features/window-chrome/app-alert/view.tsx",
+          "blob_sha": "fb5b005125e1f87060634261c1e331adaa7d459e",
+          "symbols": [
+            "AppAlertHost"
+          ]
+        }
+      ],
+      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "responsibility": "Present one root app alert with deterministic queueing, async action settlement, explicit retry after failure, stale-completion fencing and accessible pending/destructive semantics without moving canonical domain truth into presentation.",
+      "source_owner": "Desktop root app-context app-alert controller plus AppAlertHost",
+      "direct_callers": [
+        "root shell app-context alert callers",
+        "window-chrome modal host"
+      ],
+      "downstream_dependencies": [
+        "root modal stack",
+        "domain actions supplied by caller"
+      ],
+      "state_owner": "ephemeral Android AppAlertController only; domain state remains with existing Coordinator/Host owners",
+      "persistent_state": [],
+      "protocol_wire_contract": [
+        "boolean accepted settlement to caller; no domain protocol ownership"
+      ],
+      "visible_effect": "Android presents the same deterministic confirm/cancel/secondary alert semantics, including pending labels, retryable failures and destructive affordances.",
+      "failure_behavior": [
+        "returned failure string or thrown exception keeps modal open",
+        "user must explicitly retry",
+        "late completion after reset/dispose is ignored"
+      ],
+      "cancellation_behavior": "cancel/backdrop/back are suppressed while perform/secondary action is pending; reset/dispose settle active and waiting false",
+      "retry_semantics": "failure never auto-replays; confirm is explicit and single-flight",
+      "idempotency_semantics": "duplicate confirm while pending is ignored; queued third request rejects false",
+      "process_death_recovery": "ephemeral alert owner is disposed on Activity recreation/process death and does not replay domain side effects",
+      "account_fencing": "alert owns no account truth; supplied domain action remains responsible for canonical account/epoch fencing",
+      "security_boundary": "presentation cannot mint capabilities or mutate canonical business state except by invoking supplied typed production action",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/recovered/features/window-chrome/app-alert/AppAlertController.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/recovered/features/window-chrome/app-alert/AppAlertHost.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/production/ProductionRenderer_view.kt",
+        "mobile/android/app/src/test/java/com/ombhrum/fabushi/AppAlertControllerTest.kt",
+        "tests/test_app_alert_production_wiring.py"
+      ],
+      "android_owner": "AppAlertController + AppAlertHost presentation owner mounted by ProductionRenderer",
+      "platform_delta": "Compose Material3 AlertDialog replaces Desktop OverlayDialog while keeping queue, pending, failure, focus and dismissal semantics.",
+      "implementation_status": "implemented",
+      "production_wiring": "implemented: ProductionRenderer owns one lifecycle-scoped controller and routes the shipping computer-update confirmation through the native host; controller is disposed with composition/Activity recreation.",
+      "unit_test": "implemented in AppAlertControllerTest.kt; exact-head CI pending",
+      "contract_test": "implemented via controller JVM contract plus test_app_alert_production_wiring.py; exact-head CI pending",
+      "integration_test": "shipping ProductionRenderer wiring authored; exact-head CI pending",
+      "packaged_test": "required; not yet available on this implementation head",
+      "device_test": "required: focus/backdrop/back/pending semantics on packaged emulator/device; not yet available",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Implementation and production wiring are present, but this responsibility must not be upgraded to verified until same exact HEAD CI plus packaged/device evidence exists."
     }
   ],
   "traceability": {
