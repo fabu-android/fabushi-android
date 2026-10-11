@@ -7549,6 +7549,298 @@
       "artifact": null,
       "verification_status": "not-verified",
       "notes": "Do not mark implemented from Marketplace existence alone; this is a distinct Desktop source responsibility and user journey."
+    },
+    {
+      "responsibility_id": "TRANSCRIPT-EMOJI-PICKER-ANDROID-001",
+      "domain": "conversation-transcript-reactions",
+      "desktop_sources": [
+        {
+          "path": "frontend/src/recovered/features/conversation/cards/transcript-card/emoji-catalog.ts",
+          "blob_sha": "e526884f4d6bcd483476fc9f9ae9f667f5e4d625",
+          "symbols": [
+            "buildEmojiCatalog",
+            "searchEmoji",
+            "createEmojiCatalogStore"
+          ]
+        },
+        {
+          "path": "frontend/src/recovered/features/conversation/cards/transcript-card/emoji-picker-content.css",
+          "blob_sha": "757849094c1fd16e397141d5b5dd2875e83fcba8",
+          "symbols": [
+            "sand-emoji-picker__grid",
+            "sand-emoji-cell"
+          ]
+        },
+        {
+          "path": "frontend/src/recovered/features/conversation/cards/transcript-card/emoji-picker-content.tsx",
+          "blob_sha": "329821ce3db08b39ca0fa287df3310f5d7122814",
+          "symbols": [
+            "EmojiPickerContentView",
+            "emojiGridDestination",
+            "EmojiCell"
+          ]
+        }
+      ],
+      "source_commit": "d575b4f77b6895eea4ecaced96e5c512964bf3ed",
+      "responsibility": "Provide the transcript reaction emoji picker with deterministic shipped emoji catalog/alias merge, search ranking and 96-result cap, recent ordering, fail/reload store lifecycle, 8-column keyboard navigation, selected-reaction a11y state and bounded picker geometry.",
+      "source_owner": "Desktop transcript reaction picker presentation/cache; canonical reaction mutation remains messaging/transcript owner.",
+      "direct_callers": [
+        "Transcript reaction actions/picker"
+      ],
+      "downstream_dependencies": [
+        "shipped emoji runtime assets",
+        "reaction selection callback",
+        "recent reaction projection"
+      ],
+      "state_owner": "Picker owns only catalog cache/query/focus; canonical reactions remain transcript/messaging owned.",
+      "persistent_state": [
+        "No canonical reaction persistence in picker; recents are input projection."
+      ],
+      "protocol_wire_contract": [
+        "iamcal aliases precede emojibase aliases with first duplicate retained",
+        "component group omitted",
+        "search exact/secondary ranking with recents then cap 96",
+        "grid 8 columns and 34px cells",
+        "skin tone metadata is not an exposed control"
+      ],
+      "visible_effect": "User can search/browse emoji, see existing reaction pressed state, keyboard-navigate the grid and select/remove a reaction.",
+      "failure_behavior": [
+        "catalog load error fails closed with error state and reset permits a later load",
+        "invalid/empty search never invents entries"
+      ],
+      "cancellation_behavior": "store reset/dispose invalidates generation and late catalog load; picker selection is explicit user action.",
+      "retry_semantics": "catalog retry only after reset/new load; no automatic reaction mutation retry.",
+      "idempotency_semantics": "same catalog/query/recents produce stable ordered results; duplicate catalog load shares pending promise.",
+      "process_death_recovery": "recreate picker from packaged/native emoji source and canonical reaction state; no replay of prior selection.",
+      "account_fencing": "reaction selection applies only through current transcript scope/message owner.",
+      "security_boundary": "emoji assets are presentation data; selected glyph cannot bypass reaction permissions.",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/recovered/features/conversation/workspace/transcript_view.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/presentation/MessagingViewModel.kt"
+      ],
+      "android_owner": "Native Compose reaction picker + canonical messaging reaction owner.",
+      "platform_delta": "Android should use native/packaged Unicode emoji data and Compose focus semantics rather than loading Desktop JS chunks, while preserving search/order/a11y behavior.",
+      "implementation_status": "mapped",
+      "production_wiring": "Android transcript currently displays up to five reactions and supports setReaction in MessagingViewModel, but no audited native emoji picker/search/grid/a11y parity is present.",
+      "unit_test": "missing emoji catalog/search/keyboard/navigation/pressed-state focused tests",
+      "contract_test": "missing native reaction picker contract bound to setReaction",
+      "integration_test": "missing exact-head reaction picker/select/remove/reopen journey",
+      "packaged_test": "required final packaged reaction picker acceptance",
+      "device_test": "required device IME/a11y/touch/keyboard acceptance",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Mapped; generic reaction chips are not equivalent to the Desktop picker."
+    },
+    {
+      "responsibility_id": "TRANSCRIPT-LISTENER-INTEGRATIONS-ANDROID-001",
+      "domain": "conversation-transcript-integrations",
+      "desktop_sources": [
+        {
+          "path": "frontend/src/recovered/features/conversation/cards/transcript-card/listener-integrations.ts",
+          "blob_sha": "0a0498e8cac1f1ffae850591e30528a02b65cc81",
+          "symbols": [
+            "projectListenerIntegrations",
+            "createListenerIntegrationsProvider"
+          ]
+        }
+      ],
+      "source_commit": "d575b4f77b6895eea4ecaced96e5c512964bf3ed",
+      "responsibility": "Project GitHub/Slack listener connection state in transcript cards with strict platform decoding, 5-second read polling while observed, previous-value continuity, explicit external connect URL handoff, reconnect refresh and account/Agent scope-generation fencing.",
+      "source_owner": "Desktop transcript-card listener integration provider over canonical listener Coordinator methods.",
+      "direct_callers": [
+        "listener integration transcript card"
+      ],
+      "downstream_dependencies": [
+        "getListenerIntegrations",
+        "getListenerConnectUrl",
+        "openExternal",
+        "TranscriptCardScope"
+      ],
+      "state_owner": "Listener backend/Coordinator owns integration truth; card provider owns polling/display lifecycle only.",
+      "persistent_state": [
+        "None in card; connections remain canonical service state."
+      ],
+      "protocol_wire_contract": [
+        "only github|slack accepted",
+        "integration requires boolean isConnected",
+        "default 5s poll with subscribers only",
+        "connect URL is obtained from canonical source then opened externally"
+      ],
+      "visible_effect": "User sees whether supported listener integrations are connected and can start the supported external connection flow.",
+      "failure_behavior": [
+        "malformed rows ignored",
+        "read failure retains previous value when present",
+        "unsupported platform omitted"
+      ],
+      "cancellation_behavior": "unsubscribe stops polling when last subscriber leaves; scope/reset/dispose invalidates request versions/timers.",
+      "retry_semantics": "read-only polling/reconnect refresh may retry; external connect is user initiated and not auto-replayed.",
+      "idempotency_semantics": "single in-flight refresh, generation/version stale-result fencing.",
+      "process_death_recovery": "re-read listener state; do not repeat OAuth/connect action.",
+      "account_fencing": "accountSlot + agentId scope changes invalidate prior requests.",
+      "security_boundary": "auth/connect URL comes from canonical source and opens external browser; card stores no token.",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/features/chat/AgentChatSurfaces.kt",
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/coordinator/AndroidCoordinatorRuntime.kt"
+      ],
+      "android_owner": "Native transcript integration card plus canonical Coordinator integration owner.",
+      "platform_delta": "Android uses system browser/Custom Tabs rather than Desktop openExternal but keeps source-issued URL and scope fencing.",
+      "implementation_status": "mapped",
+      "production_wiring": "No audited native transcript GitHub/Slack listener card/provider matching this source was found in current Android production composition.",
+      "unit_test": "missing listener projection/poll/scope/dispose/connect focused tests",
+      "contract_test": "missing listener Coordinator source contract on Android",
+      "integration_test": "missing connect/reconnect/process-reopen journey",
+      "packaged_test": "required final packaged listener-card acceptance",
+      "device_test": "required protected-account browser/OAuth acceptance",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Mapped from actual provider lifecycle; not conflated with generic MCP Connector OAuth."
+    },
+    {
+      "responsibility_id": "TRANSCRIPT-MESSAGE-ACTIONS-ANDROID-001",
+      "domain": "conversation-transcript-actions",
+      "desktop_sources": [
+        {
+          "path": "frontend/src/recovered/features/conversation/cards/transcript-card/message-actions.tsx",
+          "blob_sha": "517029e6b5addca641f1a53b6f3e149c404d0ba8",
+          "symbols": [
+            "TranscriptCardActionAnchor",
+            "projectTranscriptCardCopy",
+            "replyTargetIdForTranscriptCardEntry",
+            "isMessageContextTargetExcluded",
+            "restoreTranscriptActionFocus"
+          ]
+        }
+      ],
+      "source_commit": "d575b4f77b6895eea4ecaced96e5c512964bf3ed",
+      "responsibility": "Expose transcript message/card actions only for eligible canonical entries: reply/thread/copy/reaction, preserve parent-reply navigation and thread summaries, exclude interactive/media/text-selection context targets, and restore focus across action menus.",
+      "source_owner": "Desktop transcript interaction outer owner; canonical reply/thread/reaction/message mutation stays downstream.",
+      "direct_callers": [
+        "message/card transcript rows"
+      ],
+      "downstream_dependencies": [
+        "TranscriptCardInteractionContext",
+        "thread summary/affordance",
+        "reaction actions",
+        "clipboard"
+      ],
+      "state_owner": "Presentation owns menu/focus only; messaging/thread/reaction canonical state is external.",
+      "persistent_state": [
+        "None in action anchor; reply/thread/reaction state remains canonical."
+      ],
+      "protocol_wire_contract": [
+        "only message|send-message|user-attachment entry kinds with nonempty id",
+        "copy only plain message text or non-URL send-message:text",
+        "read-only/thread-root/delivery gates action availability"
+      ],
+      "visible_effect": "Hover/context/long-press actions expose correct reply/thread/copy/reaction controls without stealing interaction from links/media/text selection.",
+      "failure_behavior": [
+        "unsupported entry or copy shape fails closed",
+        "clipboard errors are swallowed by the presentation owner as shipped"
+      ],
+      "cancellation_behavior": "closing/Escape/outside pointer closes menu and restores focus; no mutation is started unless explicit action selected.",
+      "retry_semantics": "UI does not retry message/thread/reaction side effects.",
+      "idempotency_semantics": "menu/focus projection is local; canonical mutation ids remain downstream.",
+      "process_death_recovery": "menu is transient and discarded; canonical reply/thread/reaction transcript is reloaded.",
+      "account_fencing": "all actions resolve against current transcript context and scoped entry resolver.",
+      "security_boundary": "copy excludes non-text/URL card payloads; action anchor cannot mutate canonical state without injected owner callbacks.",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/recovered/features/conversation/workspace/transcript_view.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/presentation/MessagingViewModel.kt"
+      ],
+      "android_owner": "Compose transcript gestures/action sheet + canonical messaging owner.",
+      "platform_delta": "Desktop hover/context/focus lifecycle maps to Android long-press/action sheet/accessibility focus; touch has no hover but eligibility must remain equivalent.",
+      "implementation_status": "mapped",
+      "production_wiring": "Android currently has long-click selection and swipe-to-reply plus basic reactions, but no audited parity for thread/copy/reaction action gating, user-attachment/card action union, focus/a11y restoration or reply-target navigation.",
+      "unit_test": "missing action eligibility/copy/reply/thread/read-only/delivery-gate tests",
+      "contract_test": "missing action-to-canonical messaging/thread/reaction contract",
+      "integration_test": "missing long-press/reply/thread/copy/reaction journey",
+      "packaged_test": "required final packaged message-action acceptance",
+      "device_test": "required touch/a11y/keyboard acceptance",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Mapped; existing swipe reply is partial evidence only."
+    },
+    {
+      "responsibility_id": "TRANSCRIPT-CARD-COMPOSITION-ANDROID-001",
+      "domain": "conversation-transcript-composition",
+      "desktop_sources": [
+        {
+          "path": "frontend/src/recovered/features/conversation/cards/transcript-card/frame.tsx",
+          "blob_sha": "70706b3a8c3a1bc02797e1f3460bbabd27f2aeda",
+          "symbols": [
+            "TranscriptCardFrame",
+            "TRANSCRIPT_CARD_FRAME_STYLES"
+          ]
+        },
+        {
+          "path": "frontend/src/recovered/features/conversation/cards/transcript-card/index.ts",
+          "blob_sha": "b64f93c58b58151303d0d97cbfb93c52dac98d28",
+          "symbols": [
+            "transcript-card public exports"
+          ]
+        },
+        {
+          "path": "frontend/src/recovered/features/conversation/cards/transcript-card/mount-contract.ts",
+          "blob_sha": "4632eaf7659c8e2c01021b5b7f4e434a0ee09750",
+          "symbols": [
+            "TranscriptCardRootMountContract",
+            "createTranscriptCardRootMountContract"
+          ]
+        }
+      ],
+      "source_commit": "d575b4f77b6895eea4ecaced96e5c512964bf3ed",
+      "responsibility": "Compose one scoped transcript-card root from the canonical registry, widget interactions, Cloud Agent provider and leaf providers; project only validated card entries; apply typed frame variants/group-start semantics without moving reply/thread/action ownership into leaf frames.",
+      "source_owner": "Desktop transcript-card root composition/registry boundary.",
+      "direct_callers": [
+        "conversation transcript card root"
+      ],
+      "downstream_dependencies": [
+        "protocol projector",
+        "registry",
+        "widget interactions",
+        "Cloud Agent provider",
+        "leaf providers"
+      ],
+      "state_owner": "Root composition owns dependency lifetime/scope only; canonical transcript and individual feature owners retain state.",
+      "persistent_state": [
+        "None in frame/barrel/mount composition."
+      ],
+      "protocol_wire_contract": [
+        "scope is propagated to leaf providers",
+        "projectEntries delegates to strict transcript-card projector",
+        "frame variant tab|link|file|widget|question with group-start semantics",
+        "frame ignores timestamp as DOM authority"
+      ],
+      "visible_effect": "All supported transcript cards share one scoped composition and consistent native grouping/frame semantics.",
+      "failure_behavior": [
+        "invalid raw card entries are filtered by projector; missing feature provider must fail closed rather than create a second runtime owner"
+      ],
+      "cancellation_behavior": "provider disposal belongs to root scope; passive frame has no operation.",
+      "retry_semantics": "No retry at composition/frame layer.",
+      "idempotency_semantics": "same dependencies/scope and canonical entries yield same card composition.",
+      "process_death_recovery": "reconstruct scoped root/providers and reproject canonical entries; no leaf side effect replay.",
+      "account_fencing": "TranscriptCardScope is passed into scoped providers and replaced on account/Agent change.",
+      "security_boundary": "Root only wires bounded providers; no card receives an unscoped arbitrary Host/bridge object.",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/recovered/features/conversation/workspace/transcript_view.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/production/ProductionRenderer_view.kt"
+      ],
+      "android_owner": "Native transcript composition with typed feature dependencies.",
+      "platform_delta": "React frame classes/lazy exports become Compose components/DI; semantic variants, scope and single-owner dependency graph remain.",
+      "implementation_status": "mapped",
+      "production_wiring": "Android has one ConversationTranscript/ProductionRenderer path, but no audited typed transcript-card registry/root composition covering the recovered card union and scoped providers.",
+      "unit_test": "missing root scope/provider propagation and frame/grouping projection tests",
+      "contract_test": "missing full card-union composition contract",
+      "integration_test": "missing exact-head mixed-card transcript/reopen/account-switch journey",
+      "packaged_test": "required final packaged mixed transcript-card acceptance",
+      "device_test": "required device transcript composition acceptance",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Barrel index is mapped here as public composition surface, not treated as a separate product feature."
     }
   ],
   "traceability": {
