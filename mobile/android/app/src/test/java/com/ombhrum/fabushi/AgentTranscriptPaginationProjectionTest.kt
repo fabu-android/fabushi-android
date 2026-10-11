@@ -20,9 +20,9 @@ class AgentTranscriptPaginationProjectionTest {
 
         assertEquals(listOf("m1", "m2", "m3", "m4", "m5"), merged.map { it.id })
         assertEquals(
+            "the canonical older page wins a duplicate cursor-boundary row",
             "older-boundary",
             merged.single { it.id == "m3" }.text,
-            "the canonical older page wins a duplicate cursor-boundary row",
         )
     }
 
