@@ -329,6 +329,8 @@ internal fun ProductionRenderer(
                             onSetGroupMembers = botModel::setGroupMembers,
                             onOpenBot = { bot -> botModel.openBot(bot) },
                             onRenameBot = botModel::renameBot,
+                            onBeginAgentSettings = botModel::beginAgentSettings,
+                            onEndAgentSettings = botModel::endAgentSettings,
                             onUpdateBotProfile = botModel::updateBotProfile,
                             onSetBotNotifyOnUpdates = botModel::setBotNotifyOnUpdates,
                             onHideBot = botModel::hideBot,
