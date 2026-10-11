@@ -1085,6 +1085,56 @@ mod tests {
         let _ = fs::remove_file(path);
     }
 
+
+    #[test]
+    fn settings_notifications_replay_durably_and_groups_fail_closed() {
+        let path = temp_path("settings-notifications-replay");
+        let mut roster = AndroidAgentRoster::open(&path).unwrap();
+        let agent = roster.create("Agent", "description").unwrap();
+        let member = roster.create("Member", "description").unwrap();
+        let group = roster
+            .create_group("Group", "description", std::slice::from_ref(&member.id))
+            .unwrap();
+
+        let mutation = json!({"kind":"notifications","id":agent.id,"value":true});
+        let first = roster
+            .apply_presentation_operation(
+                "session:account-a",
+                "settings-notification-replay",
+                &mutation,
+            )
+            .unwrap();
+        assert_eq!(first["status"], "completed");
+        assert_eq!(first["result"]["notifyOnUpdatesEnabled"], true);
+        drop(roster);
+
+        let mut reopened = AndroidAgentRoster::open(&path).unwrap();
+        let replay = reopened
+            .apply_presentation_operation(
+                "session:account-a",
+                "settings-notification-replay",
+                &mutation,
+            )
+            .unwrap();
+        assert_eq!(replay, first);
+        assert!(reopened.get(&agent.id).unwrap().notify_on_updates_enabled);
+
+        let rejected = reopened
+            .apply_presentation_operation(
+                "session:account-a",
+                "settings-group-notification",
+                &json!({"kind":"notifications","id":group.id,"value":true}),
+            )
+            .unwrap();
+        assert_eq!(rejected["status"], "rejected");
+        assert_eq!(
+            rejected["error"],
+            "Agent group notifications are not supported"
+        );
+        assert!(!reopened.get(&group.id).unwrap().notify_on_updates_enabled);
+        let _ = fs::remove_file(path);
+    }
+
     #[test]
     fn legacy_persisted_agent_without_avatar_persona_uses_serde_defaults() {
         let path = temp_path("legacy-avatar-defaults");
