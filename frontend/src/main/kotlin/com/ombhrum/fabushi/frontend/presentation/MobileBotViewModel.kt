@@ -1550,7 +1550,7 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
-    private suspend fun handleOperationEvent(event: JSONObject) {
+    private fun handleOperationEvent(event: JSONObject) {
         val type = event.optString("type")
         if (type == "agents" || type == "agent-upserted" || type == "agent-deleted") {
             refreshBots()
@@ -1576,23 +1576,24 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
             val wireEvent = event.optJSONObject("event")
                 ?: event.optJSONObject("clientSideToolV2")
                 ?: return
-            val accepted = withContext(Dispatchers.IO) {
-                runCatching { coordinator.acceptClientSideToolV2(wireEvent) }
-            }.getOrElse { error ->
-                if (isCurrentSendScope(active.id, accountSlot, scopeGeneration)) {
+            viewModelScope.launch {
+                val result = withContext(Dispatchers.IO) {
+                    runCatching { coordinator.acceptClientSideToolV2(wireEvent) }
+                }
+                if (!isCurrentSendScope(active.id, accountSlot, scopeGeneration)) return@launch
+                val accepted = result.getOrElse { error ->
                     commitState(
                         mutableState.value.copy(
                             error = error.message ?: "Tool result projection was rejected",
                         ),
                     )
+                    return@launch
                 }
-                return
+                if (accepted.agentId != active.id) return@launch
+                val card = projectClientSideToolResultCards(listOf(accepted), active.id).singleOrNull()
+                    ?: return@launch
+                upsert(card)
             }
-            if (!isCurrentSendScope(active.id, accountSlot, scopeGeneration)) return
-            if (accepted.agentId != active.id) return
-            val card = projectClientSideToolResultCards(listOf(accepted), active.id).singleOrNull()
-                ?: return
-            upsert(card)
             return
         }
 
