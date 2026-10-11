@@ -3,6 +3,9 @@ package com.ombhrum.fabushi
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.io.ByteArrayOutputStream
+import java.util.zip.ZipEntry
+import java.util.zip.ZipOutputStream
 
 class AndroidMediaViewerProjectionTest {
     private fun message(
@@ -116,6 +119,144 @@ class AndroidMediaViewerProjectionTest {
         val sheet = parseAndroidDelimitedSpreadsheet(input.toByteArray(), "rows.csv", maxRows = 3)
         assertEquals(3, sheet.rows.size)
         assertEquals(11, sheet.totalRows)
+    }
+
+    private fun workbookZip(entries: Map<String, String>): ByteArray {
+        val output = ByteArrayOutputStream()
+        ZipOutputStream(output).use { zip ->
+            entries.forEach { (name, body) ->
+                zip.putNextEntry(ZipEntry(name))
+                zip.write(body.toByteArray())
+                zip.closeEntry()
+            }
+        }
+        return output.toByteArray()
+    }
+
+    private fun twoSheetWorkbook(): ByteArray = workbookZip(
+        mapOf(
+            "xl/workbook.xml" to """
+                <workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"
+                    xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+                  <sheets>
+                    <sheet name="People" sheetId="1" r:id="rId1"/>
+                    <sheet name="Flags" sheetId="2" r:id="rId2"/>
+                  </sheets>
+                </workbook>
+            """.trimIndent(),
+            "xl/_rels/workbook.xml.rels" to """
+                <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+                  <Relationship Id="rId1" Type="worksheet" Target="worksheets/sheet1.xml"/>
+                  <Relationship Id="rId2" Type="worksheet" Target="worksheets/sheet2.xml"/>
+                </Relationships>
+            """.trimIndent(),
+            "xl/sharedStrings.xml" to """
+                <sst xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+                  <si><t>Name</t></si>
+                  <si><t>Alice</t></si>
+                </sst>
+            """.trimIndent(),
+            "xl/worksheets/sheet1.xml" to """
+                <worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+                  <sheetData>
+                    <row r="1">
+                      <c r="A1" t="s"><v>0</v></c>
+                      <c r="B1" t="inlineStr"><is><t>Score</t></is></c>
+                    </row>
+                    <row r="2">
+                      <c r="A2" t="s"><v>1</v></c>
+                      <c r="B2"><v>42</v></c>
+                    </row>
+                  </sheetData>
+                </worksheet>
+            """.trimIndent(),
+            "xl/worksheets/sheet2.xml" to """
+                <worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+                  <sheetData>
+                    <row r="1"><c r="A1" t="str"><v>Enabled</v></c></row>
+                    <row r="2"><c r="A2" t="b"><v>1</v></c></row>
+                  </sheetData>
+                </worksheet>
+            """.trimIndent(),
+        ),
+    )
+
+    @Test
+    fun openXmlSpreadsheetDetectionMatchesDesktopXlsxSurface() {
+        assertTrue(isAndroidOpenXmlSpreadsheet("report.XLSX", null))
+        assertTrue(
+            isAndroidOpenXmlSpreadsheet(
+                "report.bin",
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            ),
+        )
+        assertEquals(false, isAndroidOpenXmlSpreadsheet("legacy.xls", "application/vnd.ms-excel"))
+    }
+
+    @Test
+    fun xlsxParserProjectsMultipleSheetsSharedStringsAndTypedCells() {
+        val sheets = parseAndroidSpreadsheet(
+            bytes = twoSheetWorkbook(),
+            fileName = "report.xlsx",
+            mimeType = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+        assertEquals(listOf("People", "Flags"), sheets.map { it.name })
+        assertEquals(2, sheets[0].totalRows)
+        assertEquals(listOf("Name", "Score"), sheets[0].rows[0])
+        assertEquals(listOf("Alice", "42"), sheets[0].rows[1])
+        assertEquals(listOf("Enabled"), sheets[1].rows[0])
+        assertEquals(listOf("TRUE"), sheets[1].rows[1])
+    }
+
+    @Test
+    fun xlsxParserRejectsDoctypeAndRelationshipTraversal() {
+        val doctypeWorkbook = workbookZip(
+            mapOf(
+                "xl/workbook.xml" to """
+                    <!DOCTYPE workbook [<!ENTITY xxe SYSTEM "file:///etc/passwd">]>
+                    <workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"
+                        xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+                      <sheets><sheet name="Bad" sheetId="1" r:id="rId1"/></sheets>
+                    </workbook>
+                """.trimIndent(),
+                "xl/_rels/workbook.xml.rels" to """
+                    <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+                      <Relationship Id="rId1" Type="worksheet" Target="worksheets/sheet1.xml"/>
+                    </Relationships>
+                """.trimIndent(),
+                "xl/worksheets/sheet1.xml" to """
+                    <worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+                      <sheetData/>
+                    </worksheet>
+                """.trimIndent(),
+            ),
+        )
+        assertTrue(
+            runCatching {
+                parseAndroidSpreadsheet(doctypeWorkbook, "bad.xlsx", null)
+            }.isFailure,
+        )
+
+        val traversalWorkbook = workbookZip(
+            mapOf(
+                "xl/workbook.xml" to """
+                    <workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"
+                        xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+                      <sheets><sheet name="Bad" sheetId="1" r:id="rId1"/></sheets>
+                    </workbook>
+                """.trimIndent(),
+                "xl/_rels/workbook.xml.rels" to """
+                    <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+                      <Relationship Id="rId1" Type="worksheet" Target="../../evil.xml"/>
+                    </Relationships>
+                """.trimIndent(),
+            ),
+        )
+        assertTrue(
+            runCatching {
+                parseAndroidSpreadsheet(traversalWorkbook, "bad.xlsx", null)
+            }.isFailure,
+        )
     }
 
 }
