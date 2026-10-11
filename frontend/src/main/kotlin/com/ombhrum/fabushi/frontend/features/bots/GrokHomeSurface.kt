@@ -80,6 +80,8 @@ fun GrokHomeSurface(
     onSetGroupMembers: (String, List<String>, (() -> Unit)?) -> Unit,
     onOpenBot: (MobileBotSummaryAndroid) -> Unit,
     onRenameBot: (String, String) -> Unit,
+    onBeginAgentSettings: (String) -> Unit,
+    onEndAgentSettings: (String) -> Unit,
     onUpdateBotProfile: (String, String, String?, String, String?, String?) -> Unit,
     onSetBotNotifyOnUpdates: (String, Boolean) -> Unit,
     onHideBot: (String) -> Unit,
@@ -635,7 +637,10 @@ fun GrokHomeSurface(
                                             hasUnread = bot.hasUnread,
                                             isHidden = bot.isHidden,
                                             onEditName = { editingBotId = it },
-                                            onEditProfile = { profileTarget = bot },
+                                            onEditProfile = {
+                                                onBeginAgentSettings(bot.id)
+                                                profileTarget = bot
+                                            },
                                             onShowFullConversation = { onOpenBot(bot) },
                                             onShowAsyncTasks = { onShowBotAsyncTasks(bot) },
                                             sections = botState.sidebarSections,
@@ -686,6 +691,22 @@ fun GrokHomeSurface(
                 }
             }
             item { Spacer(Modifier.height(44.dp)) }
+        }
+
+        val profileTargetId = profileTarget?.id
+        DisposableEffect(profileTargetId) {
+            onDispose {
+                profileTargetId?.let(onEndAgentSettings)
+            }
+        }
+        LaunchedEffect(profileTargetId, botState.bots) {
+            val currentId = profileTargetId ?: return@LaunchedEffect
+            val authoritative = botState.bots.firstOrNull { it.id == currentId }
+            if (authoritative == null) {
+                profileTarget = null
+            } else if (authoritative != profileTarget) {
+                profileTarget = authoritative
+            }
         }
 
         AgentProfileEditor(
