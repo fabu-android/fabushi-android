@@ -7,7 +7,7 @@
     "android_pr": 3,
     "android_head_at_update": "e6fc1e328f7d2f6960d5e1c8f3182ca115e6c513",
     "status": "incomplete",
-    "note": "Incrementally rebased to Desktop main 62d0c99f95d83f0c7c135a802a31c8b2fcf2cc8d, root tree a7d8b9182bc9a586d5b9f40f5613237389f74737. Compare from d575b4f7 changes only FPM-001 and adds the Marketplace owner inventory; shipping source blobs are unchanged. Existing mappings are retained only for unchanged blobs; FPM-001 was re-audited and owner-inventory is mapped without inherited verification. COMPUTER-REBUILD-PRESENTATION-ANDROID-001 remains implemented/not-verified pending same-head integration, packaged and device evidence."
+    "note": "Incrementally rebased to Desktop main 62d0c99f95d83f0c7c135a802a31c8b2fcf2cc8d, root tree a7d8b9182bc9a586d5b9f40f5613237389f74737. Compare from d575b4f7 changes only FPM-001 and adds the Marketplace owner inventory; shipping source blobs are unchanged. Existing mappings are retained only for unchanged blobs; FPM-001 was re-audited and owner-inventory is mapped without inherited verification. COMPUTER-REBUILD-PRESENTATION-ANDROID-001 remains implemented/not-verified pending same-head integration, packaged and device evidence. Transcript-card protocol plus Agent reaction action/feed/picker lifecycle were semantically mapped at this Android head; Agent reaction production wiring remains a confirmed gap."
   },
   "responsibilities": [
     {
@@ -7841,6 +7841,109 @@
       "artifact": null,
       "verification_status": "not-verified",
       "notes": "Barrel index is mapped here as public composition surface, not treated as a separate product feature."
+    },
+    {
+      "responsibility_id": "TRANSCRIPT-REACTION-ACTIONS-ANDROID-001",
+      "domain": "conversation-transcript-reactions",
+      "desktop_sources": [
+        {
+          "path": "frontend/src/recovered/features/conversation/cards/transcript-card/reaction-actions.ts",
+          "blob_sha": "7b373d2bce6002060b26db7430f6a7ef7e9cd00b",
+          "symbols": [
+            "projectTranscriptReactions",
+            "createReactionActionController",
+            "createReactToMessageTransport"
+          ]
+        },
+        {
+          "path": "frontend/src/recovered/features/conversation/cards/transcript-card/reaction-feed.ts",
+          "blob_sha": "c660da4d8fc2d8e3c8fcbd7179c2aaeff94d63a7",
+          "symbols": [
+            "createReactionFeedAdapter"
+          ]
+        },
+        {
+          "path": "frontend/src/recovered/features/conversation/cards/transcript-card/reaction-picker-handoff.ts",
+          "blob_sha": "380d2b6f81fd092b70edcc2563576226cbc4a5a9",
+          "symbols": [
+            "projectReactionPickerExpansionHandoff"
+          ]
+        },
+        {
+          "path": "frontend/src/recovered/features/conversation/cards/transcript-card/reaction-picker.tsx",
+          "blob_sha": "2e994a8dab32c085875b927342c9cb3d99544382",
+          "symbols": [
+            "projectReactionCounts",
+            "ReactionPicker",
+            "ReactionPills",
+            "MessageReactionAction"
+          ]
+        },
+        {
+          "path": "frontend/src/recovered/features/conversation/cards/transcript-card/reaction-workspace-handoff.ts",
+          "blob_sha": "593743d77c651de4739e9f06904b95d7e84e15e3",
+          "symbols": [
+            "createScopedReactionWorkspacePair"
+          ]
+        }
+      ],
+      "source_commit": "62d0c99f95d83f0c7c135a802a31c8b2fcf2cc8d",
+      "responsibility": "Own Agent transcript reaction projection and mutation as an account/Agent-scoped lifecycle: strict reaction decoding, deterministic grouped counts/tooltips, optimistic react callback, authoritative feed reconciliation, reconnect/reset/dispose generation fencing, and bounded picker handoff without making Compose the reaction truth.",
+      "source_owner": "Desktop transcript reaction controller + canonical transcript entries feed.",
+      "direct_callers": [
+        "Transcript card root/message action consumer",
+        "canonical entries feed observer"
+      ],
+      "downstream_dependencies": [
+        "reactToMessage call source",
+        "canonical transcript reactions",
+        "accountSlot/agentId scope",
+        "emoji picker presentation"
+      ],
+      "state_owner": "Canonical transcript/feed owns authoritative reactions; presentation controller owns only optimistic intent and scoped projection.",
+      "persistent_state": [
+        "No new durable reaction store in presentation; process recovery rehydrates from canonical transcript/feed."
+      ],
+      "protocol_wire_contract": [
+        "reactToMessage {entryId,emoji,agentId}",
+        "reaction {emoji,by} with by=me marking own reaction",
+        "quick emoji set 👍 👎 ❤️ 😂 🎉 😮",
+        "agent/account scoped generation"
+      ],
+      "visible_effect": "Agent transcript messages display grouped reactions and allow toggle/add reaction; authoritative updates replace optimistic presentation without cross-conversation bleed.",
+      "failure_behavior": [
+        "Malformed reactions are ignored",
+        "missing agent/source disables action",
+        "transport failure does not fabricate authoritative rollback",
+        "late old-scope events are fenced"
+      ],
+      "cancellation_behavior": "Scope change/reconnect/reset/dispose increments generation and detaches old feed callbacks.",
+      "retry_semantics": "No UI auto-retry of reaction side effects; a later canonical feed reconciles outcome.",
+      "idempotency_semantics": "Duplicate authoritative fingerprints are ignored; same canonical reaction set projects deterministically.",
+      "process_death_recovery": "Reload canonical transcript/feed; do not replay prior optimistic reactToMessage requests.",
+      "account_fencing": "accountSlot + agentId scope and generation fence all action/feed callbacks.",
+      "security_boundary": "UI never grants capabilities; reaction mutation must traverse typed Coordinator/Host transport for the selected Agent.",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/production/canonical-agent-transcript.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/features/chat/AgentChatSurfaces.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/presentation/MobileBotViewModel.kt",
+        "source/android-preload/src/main/kotlin/com/ombhrum/fabushi/androidpreload/runtime/AndroidCoordinatorPort.kt",
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/coordinator/AndroidCoordinatorRuntime.kt",
+        "source/host/src/android_json_runtime.rs"
+      ],
+      "android_owner": "Host-owned canonical Agent transcript + native presentation projection.",
+      "platform_delta": "React hover/menu DOM behavior becomes native Compose interaction, but protocol, canonical reconciliation and scope fencing remain.",
+      "implementation_status": "mapped",
+      "production_wiring": "Gap confirmed at current Android HEAD: canonical-agent-transcript.kt currently projects only kind=message id/agentId/role/content/operationId/timestamp and does not carry reactions; Human MessagingViewModel has a separate canonical message reaction path, which is not evidence for Agent transcript reactToMessage/feed semantics.",
+      "unit_test": "missing focused Agent transcript reaction projection/controller scope tests",
+      "contract_test": "missing typed Agent reactToMessage + authoritative transcript-feed reconciliation contract",
+      "integration_test": "missing exact-head Agent reaction mutation/reconnect/account-switch/process-reopen journey",
+      "packaged_test": "required in final minified package",
+      "device_test": "required protected/device Agent chat acceptance",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Do not alias Human messaging setReaction to this responsibility without proving Agent transcript protocol and canonical feed ownership."
     }
   ],
   "traceability": {
