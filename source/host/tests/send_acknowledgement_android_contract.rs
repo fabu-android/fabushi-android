@@ -69,6 +69,56 @@ fn acknowledged_send_runs_through_host_and_reconciles_canonical_echo() {
     );
 }
 
+
+#[test]
+fn acknowledged_send_persists_user_rich_text_in_canonical_transcript() {
+    let root = tempfile::tempdir().unwrap();
+    let mut host = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+    let nonce = "rich-text-contract-nonce";
+    let rich_text = json!({
+        "type":"doc",
+        "content":[{
+            "type":"paragraph",
+            "content":[{"type":"text","text":"hello rich text","marks":[{"type":"bold"}]}]
+        }]
+    });
+
+    let began = host
+        .dispatch(
+            "feature.sendAcknowledgement.begin",
+            &json!({
+                "accountSlot":"slot-a",
+                "agentId":"agent-a",
+                "nonce":nonce,
+                "text":"hello rich text",
+                "richText":rich_text,
+                "entries":[{"id":nonce,"kind":"message","clientNonce":nonce}]
+            }),
+        )
+        .unwrap();
+    assert_eq!(began["messageRichText"], rich_text);
+
+    host.dispatch(
+        "feature.sendAcknowledgement.dispatch",
+        &json!({
+            "accountSlot":"slot-a",
+            "agentId":"agent-a",
+            "nonce":nonce,
+            "generation":began["generation"]
+        }),
+    )
+    .unwrap();
+
+    let transcript = host.dispatch("feature.transcript.snapshot", &json!({})).unwrap();
+    let user = transcript
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|entry| entry["id"] == nonce)
+        .expect("canonical rich-text user echo");
+    assert_eq!(user["richText"], rich_text);
+}
+
 #[test]
 fn acknowledgement_generation_and_agent_scope_fail_closed() {
     let root = tempfile::tempdir().unwrap();
