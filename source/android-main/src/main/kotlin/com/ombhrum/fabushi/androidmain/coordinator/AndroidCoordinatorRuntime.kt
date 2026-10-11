@@ -19,6 +19,8 @@ import com.ombhrum.fabushi.androidpreload.runtime.AccountRebuildState
 import com.ombhrum.fabushi.androidpreload.runtime.AccountRecoveryState
 import com.ombhrum.fabushi.androidpreload.runtime.AccountRosterLoadState
 import com.ombhrum.fabushi.androidpreload.runtime.AccountTruthState
+import com.ombhrum.fabushi.androidpreload.runtime.RootConnectionResilienceProjection
+import com.ombhrum.fabushi.androidpreload.runtime.RootConnectionTransportState
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidCoordinatorPort
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidMandatoryUpdatePolicy
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidUpdateTrackPolicy
@@ -119,6 +121,12 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
     private val accountAccessOwner = AccountAccessProjectionOwner(
         SharedPreferencesAccountAccessEpochStore(application),
     )
+    private val rootConnectionOwner = RootConnectionResilienceOwner()
+    private val rootConnectionListeners =
+        CopyOnWriteArrayList<(RootConnectionResilienceProjection) -> Unit>()
+    private val rootConnectionRetryExecutor = Executors.newSingleThreadExecutor { runnable ->
+        Thread(runnable, "fabushi-root-connection-retry").apply { isDaemon = true }
+    }
     private val mandatoryUpdateOwner = AndroidMandatoryUpdateOwner(
         SharedPreferencesMandatoryUpdateStateStore(application),
         processGeneration = processGeneration,
@@ -168,6 +176,11 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
     private val sendNetworkCallback = object : ConnectivityManager.NetworkCallback() {
         override fun onAvailable(network: Network) {
             scheduleSendSubmissionFlush()
+            observeRootConnectionTransport(RootConnectionTransportState.CONNECTED)
+        }
+
+        override fun onLost(network: Network) {
+            observeRootConnectionTransport(RootConnectionTransportState.DOWN)
         }
     }
 
@@ -365,13 +378,39 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
     }
 
     override fun authStatus(): JSONObject =
-        host.request("feature.auth.status").also(::observeAccountAccessAuth)
+        try {
+            host.request("feature.auth.status").also {
+                observeAccountAccessAuth(it)
+                observeRootConnectionTransport(RootConnectionTransportState.CONNECTED)
+            }
+        } catch (error: Throwable) {
+            observeRootConnectionTransport(RootConnectionTransportState.DOWN)
+            throw error
+        }
+
+    override fun rootConnectionResilienceProjection(): RootConnectionResilienceProjection =
+        rootConnectionOwner.currentProjection()
+
+    override fun addRootConnectionResilienceListener(
+        listener: (RootConnectionResilienceProjection) -> Unit,
+    ): AutoCloseable {
+        rootConnectionListeners += listener
+        listener(rootConnectionOwner.currentProjection())
+        return AutoCloseable { rootConnectionListeners.remove(listener) }
+    }
+
+    override fun rootConnectionRetry(): RootConnectionResilienceProjection {
+        val token = rootConnectionOwner.requestRetry()
+        publishRootConnectionProjection()
+        if (token != null) dispatchRootConnectionRetry(token)
+        return rootConnectionOwner.currentProjection()
+    }
 
     override fun accountAccessProjection(): AccountAccessProjection {
         val auth = authStatus()
         val token = accountAccessOwner.beginRefresh()
         if (!auth.optBoolean("loggedIn", false)) {
-            return accountAccessOwner.settle(
+            val settled = accountAccessOwner.settle(
                 token,
                 AccountAccessFacts(
                     loggedIn = false,
@@ -379,6 +418,8 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
                     recoveryState = AccountRecoveryState.READY,
                 ),
             )
+            publishRootConnectionProjection(rootConnectionOwner.observeReadiness(settled))
+            return settled
         }
 
         val failures = mutableListOf<String>()
@@ -497,7 +538,7 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
             AccountRebuildState.UNKNOWN
         }
 
-        return accountAccessOwner.settle(
+        val settled = accountAccessOwner.settle(
             token,
             AccountAccessFacts(
                 loggedIn = true,
@@ -534,6 +575,8 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
                 detail = failures.takeIf { it.isNotEmpty() }?.joinToString("; ")?.take(240),
             ),
         )
+        publishRootConnectionProjection(rootConnectionOwner.observeReadiness(settled))
+        return settled
     }
 
     override fun authDeviceAgentSession() = host.request("feature.auth.deviceAgentSession")
@@ -562,6 +605,13 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
             identity = identity,
         )
         val currentEpoch = accountAccessOwner.currentProjection().accountEpoch
+        publishRootConnectionProjection(
+            rootConnectionOwner.observeAccount(
+                loggedIn = loggedIn,
+                identity = identity,
+                accountEpoch = currentEpoch,
+            ),
+        )
         if (!loggedIn || currentEpoch != previousEpoch) {
             sendSubmissionQueue.fenceForAccountChange()
             remoteControlSessionStore.clear()
@@ -571,6 +621,51 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
         computerRebuildOwner.observeAccount(currentEpoch)
         if (loggedIn) resumeQueuedComputerUpdateIfNeeded()
     }
+    private fun publishRootConnectionProjection(
+        projection: RootConnectionResilienceProjection = rootConnectionOwner.currentProjection(),
+    ) {
+        rootConnectionListeners.forEach { listener ->
+            runCatching { listener(projection) }
+        }
+    }
+
+    private fun observeRootConnectionTransport(state: RootConnectionTransportState) {
+        val retryToken = rootConnectionOwner.observeTransport(state)
+        publishRootConnectionProjection()
+        if (retryToken != null) dispatchRootConnectionRetry(retryToken)
+    }
+
+    private fun dispatchRootConnectionRetry(token: RootConnectionRetryToken) {
+        rootConnectionRetryExecutor.execute {
+            try {
+                val access = accountAccessProjection()
+                val code = access.rosterFailureCode
+                if (code == null) {
+                    rootConnectionOwner.completeRetrySuccess(token)
+                } else {
+                    rootConnectionOwner.completeRetryFailure(
+                        token = token,
+                        code = code,
+                        transportDown = rootConnectionOwner.currentProjection().transport !=
+                            RootConnectionTransportState.CONNECTED,
+                    )
+                }
+            } catch (error: Throwable) {
+                val classification = classifyRosterAccessFailure(
+                    error.message ?: error::class.java.simpleName,
+                )
+                observeRootConnectionTransport(RootConnectionTransportState.DOWN)
+                rootConnectionOwner.completeRetryFailure(
+                    token = token,
+                    code = classification.code,
+                    transportDown = true,
+                )
+            } finally {
+                publishRootConnectionProjection()
+            }
+        }
+    }
+
     override fun automationUpsert(params: JSONObject) = host.request("feature.automation.upsert", params)
     override fun automationList(): JSONArray = host.requestValue("feature.automation.list") as? JSONArray ?: JSONArray()
     override fun automationStart(params: JSONObject) = host.request("feature.automation.start", params)
