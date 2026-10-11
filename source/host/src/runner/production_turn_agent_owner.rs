@@ -386,8 +386,12 @@ impl<P: TurnStreamProvider> ProductionTurnAgentOwner<P> {
                     finish_reason: result.finish_reason.clone(),
                     attempts: result.attempts,
                 };
-                sink(completed.clone()).map_err(ProviderFailure::new)?;
 
+                // A terminal completion must not become externally observable before the
+                // durable checkpoint/settlement and successful lifecycle side effects have
+                // committed. Android consumers can immediately reconcile after receiving the
+                // terminal event, so publishing it first creates a real completion-vs-persistence
+                // race for profile announcements and disk-pressure claims.
                 let checkpoint = prepare_checkpoint(
                     &input.operation_id,
                     result.attempts,
@@ -399,6 +403,7 @@ impl<P: TurnStreamProvider> ProductionTurnAgentOwner<P> {
                     settle_completed_turn(checkpoint, result.finish_reason)
                         .map_err(ProviderFailure::new)?;
                 self.commit_successful_lifecycle();
+                sink(completed.clone()).map_err(ProviderFailure::new)?;
 
                 let mut events = emitted_retries
                     .iter()
