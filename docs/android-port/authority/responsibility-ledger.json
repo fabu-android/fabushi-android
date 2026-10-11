@@ -5,7 +5,7 @@
     "desktop_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
     "android_repository": "fabu-android/fabushi-android",
     "android_pr": 3,
-    "android_head_at_update": "d614f02a5f126aceb83c28baea62c30b29795b24",
+    "android_head_at_update": "c3523f6ddf474c507e1d724592f400bf6437ea0f",
     "status": "incomplete",
     "note": "Incrementally rebased to Desktop main 371b72f1cd20de03dc4dff9a15ed761054968093. Durable send acknowledgement, transcript widget actions and client-side tool-result projection remain Host/Coordinator-owned. At Android code head 8927278b8ec61145700abb906f226f97f6497195, Agent avatar presentation has Desktop-order photo/shared-room/group/persona dispatch and activity-state mapping; Agent composer prompt drafts are durably Host-owned with account/Agent fencing, process-reopen restore, corrupt-store quarantine and clear-if-current; conversation outline is a retained read-only projection over canonical transcript with Agent/subagent tabs and running-subagent polling; Agent find-in-chat searches canonical transcript semantic payloads and has native Enter/Shift+Enter/Escape focus navigation. Rows stay mapped/not-verified where upstream roster fields, full ComposerDraft attachments/recovery, exact occurrence-span highlighting, composed header controls or same-head packaged/device evidence are still missing. Full source closure remains incomplete. Spreadsheet preview audit now records CSV/TSV and bounded OOXML multi-sheet production wiring at 1e66eb907c46043bcb429c15abeae253b44ef443; Desktop legacy BIFF .xls remains mapped/not-verified."
   },
@@ -11359,6 +11359,278 @@
       "verification_status": "not-verified",
       "notes": "Keep mapped. Do not equate the existing binary approval card or generic plugin grants with Desktop local-tool permission policy.",
       "android_head_at_update": "d614f02a5f126aceb83c28baea62c30b29795b24"
+    },
+    {
+      "responsibility_id": "PLUGIN-OVERLAY-PRESENTATION-ANDROID-001",
+      "domain": "mcp-plugins",
+      "desktop_sources": [
+        {
+          "path": "frontend/src/recovered/features/plugins/overlay/browser.css",
+          "blob_sha": "f5c226070326a45ff5ba8942c3c515cadc84f7f5",
+          "symbols": [
+            "plugins overlay native presentation/model semantics"
+          ]
+        },
+        {
+          "path": "frontend/src/recovered/features/plugins/overlay/browser.tsx",
+          "blob_sha": "cf58ddbcaec0c119f23489decf243bbdf3c65ff1",
+          "symbols": [
+            "plugins overlay native presentation/model semantics"
+          ]
+        },
+        {
+          "path": "frontend/src/recovered/features/plugins/overlay/desktop-preview.tsx",
+          "blob_sha": "df615851fe103f535c2b690f325b9774fa809bb2",
+          "symbols": [
+            "plugins overlay native presentation/model semantics"
+          ]
+        },
+        {
+          "path": "frontend/src/recovered/features/plugins/overlay/desktop-surface.tsx",
+          "blob_sha": "bc259edbbe8ff8f4639af6e557e7914163391517",
+          "symbols": [
+            "plugins overlay native presentation/model semantics"
+          ]
+        },
+        {
+          "path": "frontend/src/recovered/features/plugins/overlay/entrypoint.ts",
+          "blob_sha": "98096b909a7c936ba5094339fd5333f76b68f99c",
+          "symbols": [
+            "plugins overlay native presentation/model semantics"
+          ]
+        },
+        {
+          "path": "frontend/src/recovered/features/plugins/overlay/model.ts",
+          "blob_sha": "dbb6df5ed1fecf1cfc7e731c6b0188fdf1c0b66d",
+          "symbols": [
+            "plugins overlay native presentation/model semantics"
+          ]
+        },
+        {
+          "path": "frontend/src/recovered/features/plugins/overlay/view.tsx",
+          "blob_sha": "cfab87428ce2a74eb6cc48abb53971f090aee3a1",
+          "symbols": [
+            "plugins overlay native presentation/model semantics"
+          ]
+        }
+      ],
+      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "responsibility": "Preserve the Desktop Plugins overlay as an Android-native Marketplace surface: focus/deep-link selection, browse/filter/detail/setup, required variables, account grouping/actions, team-required/default removal rules, installed/private-skill projections, notices and lifecycle fencing without making Compose a second plugin owner.",
+      "source_owner": "Desktop plugins/overlay browser/model/view/desktop-surface",
+      "direct_callers": [
+        "plugins overlay entrypoint",
+        "Marketplace navigation/deep links"
+      ],
+      "downstream_dependencies": [
+        "canonical marketplace catalog",
+        "plugin install runtime",
+        "MCP accounts/auth",
+        "private Skills lifecycle",
+        "server tool catalog"
+      ],
+      "state_owner": "Rust Host/Coordinator own plugin/install/account/tool/skill truth; Kotlin projector/ViewModel own only immutable presentation state.",
+      "persistent_state": [
+        "none in presentation; canonical plugin/account/skill state remains below Coordinator"
+      ],
+      "protocol_wire_contract": [
+        "entrypoint is always available and accepts focusBrowseQuery/focusPlugin/focusServerId/focusWorkflowId",
+        "team-required cannot be removed/uninstalled; team-default may be removed; user/unknown may uninstall",
+        "required variable defaults satisfy validation while only explicitly entered non-empty values are normalized for submission",
+        "default MCP account sorts first; existing account label means authenticate, new label means add",
+        "OAuth status is projected into explicit success/error notices"
+      ],
+      "visible_effect": "Android Marketplace can present Desktop-equivalent plugin setup/account/team-policy semantics natively rather than reducing all entries to a single Install button.",
+      "failure_behavior": [
+        "failed catalog/setup/auth projections remain visible and retryable",
+        "presentation never mutates canonical state optimistically beyond explicitly fenced projections"
+      ],
+      "cancellation_behavior": "route/account/dispose changes fence stale presentation completions.",
+      "retry_semantics": "read-only browse/setup reads may retry; side-effecting install/remove/account mutations require canonical stable operation identity.",
+      "idempotency_semantics": "presentation keys use stable plugin/server/account/skill identities and never synthesize a second install owner.",
+      "process_death_recovery": "rebuild from canonical Marketplace/Host state; do not replay prior side effects from UI state.",
+      "account_fencing": "MCP/account/plugin projections must bind to active account epoch.",
+      "security_boundary": "Compose never handles plugin secrets or grants as canonical authority; protected variable/OAuth/grant owners stay below Coordinator.",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/recovered/features/plugins/overlay/PluginOverlayModel.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/features/marketplace/MarketplaceContent.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/presentation/MarketplaceViewModel.kt",
+        "mobile/android/app/src/test/java/com/ombhrum/fabushi/PluginOverlayModelTest.kt"
+      ],
+      "android_owner": "MarketplaceViewModel + native MarketplaceContent projection over canonical Host owners",
+      "platform_delta": "React overlay/dialog becomes native Compose route. Desktop opt-in preview export has no separate Android owner; Android production surface is already native.",
+      "implementation_status": "mapped",
+      "production_wiring": "Core Marketplace browse/variables/install/grants/runtime is wired. c3523f6d adds Desktop-equivalent pure overlay policy/account/setup projector semantics, but complete filters/details/account/private-skill actions and focused route parameters are not yet production-wired in MarketplaceContent.",
+      "unit_test": "PluginOverlayModelTest covers team rules, required/default variable semantics, account grouping/action, auth notices and server-tool projection fencing. Same-head CI pending.",
+      "contract_test": "Desktop overlay source blobs above audited against Android canonical Marketplace/MCP/Skills owners.",
+      "integration_test": "missing for full browser/detail/account/private-skill journey",
+      "packaged_test": "required",
+      "device_test": "required",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Keep mapped until the full overlay interaction set is production-wired and same-head package/device evidence passes.",
+      "android_head_at_update": "c3523f6ddf474c507e1d724592f400bf6437ea0f"
+    },
+    {
+      "responsibility_id": "PLUGIN-SERVER-TOOLS-ANDROID-001",
+      "domain": "mcp",
+      "desktop_sources": [
+        {
+          "path": "frontend/src/recovered/features/plugins/overlay/server-tools.ts",
+          "blob_sha": "0077e0cb2f30b0cfd9f98e191018d1fddadb5ad6",
+          "symbols": [
+            "createPluginServerToolsController",
+            "togglePluginServerToolOptimistically"
+          ]
+        },
+        {
+          "path": "frontend/src/recovered/features/plugins/overlay/browser.tsx",
+          "blob_sha": "cf58ddbcaec0c119f23489decf243bbdf3c65ff1",
+          "symbols": [
+            "PluginServerTools",
+            "pluginToolSummary"
+          ]
+        }
+      ],
+      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "responsibility": "Present and mutate the per-server MCP tool catalog with Desktop lifecycle semantics: load/retry, optimistic single-tool toggle, one pending mutation at a time, remote settlement/failure visibility, stale request/generation fencing and dispose.",
+      "source_owner": "Desktop PluginServerToolsController over MCP server tool list/toggle bridge",
+      "direct_callers": [
+        "PluginsBrowser installed server detail"
+      ],
+      "downstream_dependencies": [
+        "canonical MCP server identity/account",
+        "Host tool catalog",
+        "durable disabled-tool policy"
+      ],
+      "state_owner": "Host/MCP manager owns actual tool enablement; Kotlin projector owns only optimistic presentation state.",
+      "persistent_state": [
+        "server tool disabled state belongs to canonical MCP owner, not Compose"
+      ],
+      "protocol_wire_contract": [
+        "open starts one load and generation",
+        "retry increments request identity",
+        "toggle is ignored while another tool mutation is pending",
+        "optimistic toggle is shown immediately",
+        "remote success replaces projection from canonical tool list",
+        "remote failure clears pending and exposes failure while retaining optimistic projection",
+        "dispose invalidates late load/toggle completions"
+      ],
+      "visible_effect": "Users can inspect and enable/disable individual MCP tools for a server with truthful pending/failure state.",
+      "failure_behavior": [
+        "load failure exposes failed snapshot",
+        "toggle failure remains visible and never pretends canonical settlement succeeded"
+      ],
+      "cancellation_behavior": "dispose/account/server switch fences late callbacks.",
+      "retry_semantics": "list may retry; toggle retry requires an explicit new user action after settlement/failure.",
+      "idempotency_semantics": "remote mutation must bind to stable server/account/tool identity and current generation.",
+      "process_death_recovery": "reload canonical server tool state; do not persist optimistic UI state.",
+      "account_fencing": "server/account identity and generation must match active account.",
+      "security_boundary": "disabled tools must be enforced by Host catalog/execution boundary, not merely hidden in UI.",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/recovered/features/plugins/overlay/PluginOverlayModel.kt",
+        "source/android-preload/src/main/kotlin/com/ombhrum/fabushi/androidpreload/runtime/AndroidCoordinatorPort.kt",
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/coordinator/AndroidCoordinatorRuntime.kt",
+        "source/host/src/android_json_runtime.rs",
+        "mobile/android/app/src/test/java/com/ombhrum/fabushi/PluginOverlayModelTest.kt"
+      ],
+      "android_owner": "Host MCP tool catalog + PluginServerToolsProjector presentation",
+      "platform_delta": "Desktop React external-store controller becomes immutable Kotlin projector. The remote list/toggle contract still needs typed Coordinator/Host wiring.",
+      "implementation_status": "mapped",
+      "production_wiring": "c3523f6d implements the projector/state machine only. AndroidCoordinatorPort currently has no dedicated per-server tool list/toggle method, so this responsibility remains intentionally incomplete.",
+      "unit_test": "PluginOverlayModelTest covers load, optimistic toggle, stale request rejection, failure projection and dispose fencing; same-head CI pending.",
+      "contract_test": "Desktop server-tools.ts exact source audited.",
+      "integration_test": "missing until Host list/toggle is wired",
+      "packaged_test": "required",
+      "device_test": "required with a real MCP server",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Do not equate runtime tool invocation or generic plugin grants with per-server tool enable/disable parity.",
+      "android_head_at_update": "c3523f6ddf474c507e1d724592f400bf6437ea0f"
+    },
+    {
+      "responsibility_id": "PLUGIN-GIT-AUTH-RECOVERY-ANDROID-001",
+      "domain": "plugins-skills",
+      "desktop_sources": [
+        {
+          "path": "frontend/src/recovered/features/plugins/overlay/github-auth.ts",
+          "blob_sha": "9a69ec31d74fa2642cb4a21dda05b371b020be23",
+          "symbols": [
+            "createPluginAuthController",
+            "PLUGIN_AUTH_AGENT_PURPOSE",
+            "PLUGIN_AUTH_PROMPT"
+          ]
+        },
+        {
+          "path": "frontend/src/recovered/features/plugins/overlay/github-auth-banner.tsx",
+          "blob_sha": "c6f93641d3a785e0591b55ac088425a9ea3b46da",
+          "symbols": [
+            "PluginGitHubAuthBanner"
+          ]
+        },
+        {
+          "path": "frontend/src/recovered/features/plugins/overlay/production-adapter.ts",
+          "blob_sha": "4316786ab1696803e005b57cc04dd1c2d81a31a9",
+          "symbols": [
+            "createPluginAuthProductionAdapter"
+          ]
+        }
+      ],
+      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "responsibility": "Recover installed private-Git plugin/skill source access by projecting auth-blocked sync state, reusing or creating one account-scoped purpose=plugin-auth Agent, selecting it, sending the constrained GitHub credential setup/read-only verification prompt, and fencing stale account/generation callbacks.",
+      "source_owner": "Desktop PluginAuthController + production adapter",
+      "direct_callers": [
+        "plugins overlay GitHub auth banner"
+      ],
+      "downstream_dependencies": [
+        "plugin sync status/authBlocked projection",
+        "canonical Agent roster/create/select/send",
+        "Authorized Remote Runner/local execution boundary"
+      ],
+      "state_owner": "Canonical Agent roster/transcript and plugin sync state remain Host-owned; auth-recovery controller owns only orchestration generation/presentation.",
+      "persistent_state": [
+        "no second auth credential store; GitHub credentials live on the explicitly authorized execution machine"
+      ],
+      "protocol_wire_contract": [
+        "authBlocked rows require non-empty pluginId/pluginName",
+        "fix reuses existing Agent whose purpose is plugin-auth",
+        "if roster is incomplete, do not create a duplicate Agent",
+        "new recovery Agent uses fixed Plugin Setup name/description/purpose and suppresses introduction",
+        "prompt instructs gh auth login + gh auth setup-git, human handoff for device/2FA/OAuth, then read-only git ls-remote verification",
+        "account switch/reset/dispose increments generation and rejects stale callbacks"
+      ],
+      "visible_effect": "When private repositories cannot be fetched, Android offers a targeted recovery path rather than a generic auth error.",
+      "failure_behavior": [
+        "malformed Agent creation or send failure is surfaced; no guessed credentials or repository mutation"
+      ],
+      "cancellation_behavior": "account switch/reset/dispose invalidates orchestration callbacks; settled Agent/send truth remains canonical.",
+      "retry_semantics": "refresh is read-only; fix may be explicitly retried but must first reuse an existing purpose Agent and avoid duplicate side effects.",
+      "idempotency_semantics": "purpose=plugin-auth is the stable roster identity for recovery Agent reuse.",
+      "process_death_recovery": "re-read authBlocked sync status and canonical roster; reuse existing purpose Agent rather than creating another.",
+      "account_fencing": "production adapter rebuilds controller whenever accountKey changes.",
+      "security_boundary": "Recovery never imports GitHub tokens into renderer/Compose. Credential setup occurs only on the explicitly authorized execution machine with human takeover for interactive auth.",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/presentation/MarketplaceViewModel.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/presentation/MobileBotViewModel.kt",
+        "source/android-preload/src/main/kotlin/com/ombhrum/fabushi/androidpreload/runtime/AndroidCoordinatorPort.kt",
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/coordinator/AndroidCoordinatorRuntime.kt",
+        "source/host/src/android_json_runtime.rs"
+      ],
+      "android_owner": "Canonical Agent/Host owner plus Android plugin-auth orchestration projection",
+      "platform_delta": "Desktop recovery targets Grok Bot's computer. Android must route the same constrained setup through the bounded Local/Authorized Remote Runner execution boundary and cannot pretend phone-local git is equivalent.",
+      "implementation_status": "mapped",
+      "production_wiring": "MCP OAuth auth-watch exists, and Android has canonical Agent create/send, but there is no production plugin-sync authBlocked projection or purpose=plugin-auth create/reuse orchestration wired to Marketplace UI yet.",
+      "unit_test": "missing focused authBlocked parsing/reuse/roster-incomplete/create-send/account-switch/dispose tests",
+      "contract_test": "Desktop github-auth/banner/production-adapter exact source audited.",
+      "integration_test": "missing with a private Git source and Authorized Remote Runner",
+      "packaged_test": "required",
+      "device_test": "required",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Separate from normal MCP OAuth. This responsibility repairs Git repository fetch credentials for installed private plugin/skill content.",
+      "android_head_at_update": "c3523f6ddf474c507e1d724592f400bf6437ea0f"
     }
   ],
   "traceability": {
@@ -11393,7 +11665,7 @@
   },
   "metadata": {
     "android_head_at_update": "1e66eb907c46043bcb429c15abeae253b44ef443",
-    "note": " Deterministic editor cursor now records the shipped suggestion boundary: Android has production-wired Agent/scheduled-automation projection with stale fencing, while Desktop PR/MCP providers are explicitly dormant in the current production adapter. Agent find-in-chat is now production-wired for message/widget semantic search and wrap navigation, while occurrence-span highlighting and richer searchable payloads remain mapped gaps. Native media viewer gallery is production-wired for Human conversations with navigation/zoom/stale-load fencing; in-app PDF rendering is now implemented at 499519f… and pending exact-head CI/device evidence, while Agent attachment/audio/focus semantics remain mapped. Spreadsheet preview responsibility is explicit; legacy .xls remains a deterministic gap. Signed-in onboarding rows are now explicitly mapped to native route/persona/create presentation and a separate unresolved computer-readiness/kickstart responsibility; neither is verified. Desktop permissions/local-tool renderer/store rows are now mapped to a dedicated unresolved Host-owned always/ask/never + team ceiling policy responsibility.",
-    "last_updated_android_head": "d614f02a5f126aceb83c28baea62c30b29795b24"
+    "note": " Deterministic editor cursor now records the shipped suggestion boundary: Android has production-wired Agent/scheduled-automation projection with stale fencing, while Desktop PR/MCP providers are explicitly dormant in the current production adapter. Agent find-in-chat is now production-wired for message/widget semantic search and wrap navigation, while occurrence-span highlighting and richer searchable payloads remain mapped gaps. Native media viewer gallery is production-wired for Human conversations with navigation/zoom/stale-load fencing; in-app PDF rendering is now implemented at 499519f… and pending exact-head CI/device evidence, while Agent attachment/audio/focus semantics remain mapped. Spreadsheet preview responsibility is explicit; legacy .xls remains a deterministic gap. Signed-in onboarding rows are now explicitly mapped to native route/persona/create presentation and a separate unresolved computer-readiness/kickstart responsibility; neither is verified. Desktop permissions/local-tool renderer/store rows are now mapped to a dedicated unresolved Host-owned always/ask/never + team ceiling policy responsibility. Desktop plugins/overlay rows are now split across native overlay presentation, server-tool lifecycle, Git private-source auth recovery, and existing Skills/MCP owners; all remain mapped until production wiring/evidence closes.",
+    "last_updated_android_head": "c3523f6ddf474c507e1d724592f400bf6437ea0f"
   }
 }
