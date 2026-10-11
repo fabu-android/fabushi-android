@@ -1,0 +1,51 @@
+name: Grok Android Architecture
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+
+jobs:
+  parity-ledger:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.SOURCE_SHA }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Validate complete file-level parity ledger
+        run: python scripts/check_grok_android_parity.py
+      - name: Test architecture checker
+        run: python -m unittest discover -s tests -p 'test_*.py'
+
+  rust-runtime-foundation:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.SOURCE_SHA }}
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Test Android-owned Coordinator Host Runner foundation
+        run: cargo test --workspace --all-targets
+
+  existing-android-regression:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.SOURCE_SHA }}
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Run existing Android unit tests
+        working-directory: mobile/android
+        run: ./gradlew testCiAcceptanceUnitTest

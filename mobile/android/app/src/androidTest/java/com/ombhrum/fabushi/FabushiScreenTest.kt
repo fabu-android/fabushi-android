@@ -23,7 +23,7 @@ class FabushiScreenTest {
     @Test
     fun homeMatchesConversationReferenceAndSearchesMessages() {
         compose.setContent {
-            FabushiScreen(
+            FabushiMessagingSurface(
                 state = MarketplaceUiState(),
                 onQueryChange = {},
                 onSearch = {},
@@ -31,6 +31,8 @@ class FabushiScreenTest {
                 onOpen = {},
                 onApprovePermissions = {},
                 onDenyPermissions = {},
+                onSubmitPluginVariables = {},
+                onCancelPluginVariables = {},
             )
         }
 
@@ -50,7 +52,7 @@ class FabushiScreenTest {
     fun signedOutMobileSurfaceUsesSingleNativeLoginAction() {
         var loginRequests = 0
         compose.setContent {
-            FabushiScreen(
+            FabushiMessagingSurface(
                 state = MarketplaceUiState(
                     authResolved = true,
                     loggedIn = false,
@@ -62,6 +64,8 @@ class FabushiScreenTest {
                 onOpen = {},
                 onApprovePermissions = {},
                 onDenyPermissions = {},
+                onSubmitPluginVariables = {},
+                onCancelPluginVariables = {},
                 authGateEnabled = true,
                 onBeginBrowserLogin = { loginRequests += 1 },
             )
@@ -83,7 +87,7 @@ class FabushiScreenTest {
         var opened: MarketplacePlugin? = null
         val plugin = MarketplacePlugin("example-plugin", "示例插件", "描述", "1.0.0")
         compose.setContent {
-            FabushiScreen(
+            FabushiMessagingSurface(
                 state = MarketplaceUiState(message = "ready", query = query, plugins = listOf(plugin)),
                 onQueryChange = { query = it },
                 onSearch = { searches += 1 },
@@ -91,6 +95,8 @@ class FabushiScreenTest {
                 onOpen = { opened = it },
                 onApprovePermissions = {},
                 onDenyPermissions = {},
+                onSubmitPluginVariables = {},
+                onCancelPluginVariables = {},
             )
         }
 
@@ -114,7 +120,7 @@ class FabushiScreenTest {
     @Test
     fun addMenuOpensAndClosesRestrictedRemoteComputerSurface() {
         compose.setContent {
-            FabushiScreen(
+            FabushiMessagingSurface(
                 state = MarketplaceUiState(),
                 onQueryChange = {},
                 onSearch = {},
@@ -122,6 +128,8 @@ class FabushiScreenTest {
                 onOpen = {},
                 onApprovePermissions = {},
                 onDenyPermissions = {},
+                onSubmitPluginVariables = {},
+                onCancelPluginVariables = {},
             )
         }
 
@@ -136,7 +144,7 @@ class FabushiScreenTest {
     fun availableUpdateAppearsOnHomeAndStartsInstall() {
         var installRequests = 0
         compose.setContent {
-            FabushiScreen(
+            FabushiMessagingSurface(
                 state = MarketplaceUiState(),
                 onQueryChange = {},
                 onSearch = {},
@@ -144,6 +152,8 @@ class FabushiScreenTest {
                 onOpen = {},
                 onApprovePermissions = {},
                 onDenyPermissions = {},
+                onSubmitPluginVariables = {},
+                onCancelPluginVariables = {},
                 updateState = AndroidUpdateUiState(
                     phase = AndroidUpdatePhase.AVAILABLE,
                     currentVersion = "1.0.4",
@@ -163,7 +173,7 @@ class FabushiScreenTest {
     @Test
     fun permissionDialogHasStableApproveAndDenyControls() {
         compose.setContent {
-            FabushiScreen(
+            FabushiMessagingSurface(
                 state = MarketplaceUiState(
                     permissionRequest = PermissionRequest(
                         pluginId = "example-plugin",
@@ -177,6 +187,8 @@ class FabushiScreenTest {
                 onOpen = {},
                 onApprovePermissions = {},
                 onDenyPermissions = {},
+                onSubmitPluginVariables = {},
+                onCancelPluginVariables = {},
             )
         }
 
@@ -188,7 +200,7 @@ class FabushiScreenTest {
     fun appAgentSurfaceNavigatesWithStableSemanticIdsWithoutScreenshotCoordinates() {
         val surface = FabushiAppAgentSurface()
         compose.setContent {
-            FabushiScreen(
+            FabushiMessagingSurface(
                 state = MarketplaceUiState(message = "ready"),
                 onQueryChange = {},
                 onSearch = {},
@@ -196,6 +208,8 @@ class FabushiScreenTest {
                 onOpen = {},
                 onApprovePermissions = {},
                 onDenyPermissions = {},
+                onSubmitPluginVariables = {},
+                onCancelPluginVariables = {},
                 appAgentSurface = surface,
             )
         }
@@ -217,6 +231,88 @@ class FabushiScreenTest {
         compose.onNodeWithTag(TestTags.RuntimeBadge).assertIsDisplayed()
         compose.waitForIdle()
         assertEquals("marketplace", surface.snapshot().screen)
+    }
+
+    @Test
+    fun conversationTranscriptRendersMessageAndPollChoices() {
+        val poll = ChatMessage(
+            id = "poll-1",
+            conversationId = "c1",
+            text = "",
+            contentType = "poll",
+            pollQuestion = "Choose",
+            pollOptions = listOf(
+                ChatPollOption("a", "A", 2, false),
+                ChatPollOption("b", "B", 1, true),
+            ),
+            outgoing = false,
+            time = "now",
+        )
+        compose.setContent {
+            ConversationTranscript(
+                conversationTitle = "Room",
+                messages = listOf(
+                    ChatMessage(
+                        id = "m1",
+                        conversationId = "c1",
+                        text = "hello transcript",
+                        outgoing = false,
+                        time = "now",
+                    ),
+                    poll,
+                ),
+                searchQuery = "",
+                playingVoiceMessageId = null,
+                onPlayVoice = {},
+                onOpenMedia = {},
+                onVotePoll = { _, _ -> },
+                onSelectMessage = {},
+                onReply = {},
+            )
+        }
+
+        compose.onNodeWithText("hello transcript").assertIsDisplayed()
+        compose.onNodeWithText("Choose").assertIsDisplayed()
+        compose.onNodeWithText("A").assertIsDisplayed()
+        compose.onNodeWithText("B").assertIsDisplayed()
+    }
+
+    @Test
+    fun conversationComposerSendsDraftAndRoutesAttachmentPicker() {
+        var draft by mutableStateOf("")
+        var sent: Pair<String, String?>? = null
+        var selectedMime: String? = null
+        compose.setContent {
+            ConversationComposer(
+                draft = draft,
+                editingMessage = null,
+                replyTarget = null,
+                isRecordingVoice = false,
+                recordingSeconds = 0,
+                voiceError = null,
+                onDraftChange = { draft = it },
+                onTypingChanged = {},
+                onClearContext = {},
+                onPickAttachment = { selectedMime = it },
+                onRequestLocation = {},
+                onRequestContact = {},
+                onRequestPoll = {},
+                onCancelRecording = {},
+                onFinishRecording = {},
+                onStartRecording = {},
+                onEdit = { _, _ -> },
+                onSend = { text, replyTo -> sent = text to replyTo },
+                onRequestSendModes = {},
+            )
+        }
+
+        compose.onNodeWithTag("conversation-composer").performTextInput("hello")
+        compose.onNodeWithTag("conversation-send").assertIsDisplayed().performClick()
+        assertEquals("hello" to null, sent)
+
+        compose.onNodeWithTag("conversation-attach").performClick()
+        compose.onNodeWithText("照片").assertIsDisplayed().performClick()
+        assertEquals("image/*", selectedMime)
     }
 
 }
