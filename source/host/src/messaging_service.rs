@@ -1282,7 +1282,7 @@ impl AndroidMessagingService {
             .ok_or("conversation does not exist")?
             .clone();
         let mut responses = vec![self.server_envelope(
-            json!({"type":"conversationChanged","conversation":self.project_conversation(&conversation, actor_id)}),
+            json!({"type":"conversationChanged","conversation":self.project_conversation(&conversation, actor_id, now_ms)}),
             now_ms,
         )];
         if should_mark_message_read {
@@ -1377,7 +1377,7 @@ impl AndroidMessagingService {
             .get(conversation_id)
             .ok_or("conversation does not exist")?;
         Ok(vec![self.server_envelope(
-            json!({"type":"conversationChanged","conversation":self.project_conversation(conversation, actor_id)}),
+            json!({"type":"conversationChanged","conversation":self.project_conversation(conversation, actor_id, now_ms)}),
             now_ms,
         )])
     }
@@ -1466,7 +1466,7 @@ impl AndroidMessagingService {
             .get(conversation_id)
             .ok_or("conversation does not exist")?;
         Ok(vec![self.server_envelope(
-            json!({"type":"conversationChanged","conversation":self.project_conversation(conversation, actor_id)}),
+            json!({"type":"conversationChanged","conversation":self.project_conversation(conversation, actor_id, now_ms)}),
             now_ms,
         )])
     }
@@ -1506,7 +1506,7 @@ impl AndroidMessagingService {
             .insert(conversation_id.to_string(), conversation.clone());
         self.bump_cursor();
         Ok(vec![self.server_envelope(
-            json!({"type":"conversationChanged","conversation":self.project_conversation(&conversation, actor_id)}),
+            json!({"type":"conversationChanged","conversation":self.project_conversation(&conversation, actor_id, now_ms)}),
             now_ms,
         )])
     }
@@ -1563,7 +1563,7 @@ impl AndroidMessagingService {
             .insert(conversation_id.to_string(), conversation.clone());
         self.bump_cursor();
         Ok(vec![self.server_envelope(
-            json!({"type":"conversationParticipantChanged","conversation":self.project_conversation(&conversation, actor_id),"participant":Value::Object(participant)}),
+            json!({"type":"conversationParticipantChanged","conversation":self.project_conversation(&conversation, actor_id, now_ms),"participant":Value::Object(participant)}),
             now_ms,
         )])
     }
@@ -1605,7 +1605,7 @@ impl AndroidMessagingService {
             .insert(conversation_id.to_string(), conversation.clone());
         self.bump_cursor();
         Ok(vec![self.server_envelope(
-            json!({"type":"conversationParticipantChanged","conversation":self.project_conversation(&conversation, actor_id),"removedActorId":target_actor_id}),
+            json!({"type":"conversationParticipantChanged","conversation":self.project_conversation(&conversation, actor_id, now_ms),"removedActorId":target_actor_id}),
             now_ms,
         )])
     }
@@ -1935,23 +1935,93 @@ impl AndroidMessagingService {
         value.as_object_mut().expect("preference value is object")
     }
 
-    fn project_conversation(&self, conversation: &Value, actor_id: &str) -> Value {
+    fn project_conversation(
+        &self,
+        conversation: &Value,
+        actor_id: &str,
+        now_ms: i64,
+    ) -> Value {
         let mut projected = conversation.clone();
         let Some(conversation_id) = conversation.get("id").and_then(Value::as_str) else {
             return projected;
         };
-        if let Some(preferences) = self
+        let preferences = self
             .state
             .conversation_preferences
             .get(actor_id)
             .and_then(|values| values.get(conversation_id))
-            .and_then(Value::as_object)
-        {
+            .and_then(Value::as_object);
+        if let Some(preferences) = preferences {
             if let Some(object) = projected.as_object_mut() {
                 for (key, value) in preferences {
                     object.insert(key.clone(), value.clone());
                 }
             }
+        }
+
+        let last_read_message_id = preferences
+            .and_then(|values| values.get("lastReadMessageId"))
+            .and_then(Value::as_str)
+            .filter(|value| !value.trim().is_empty());
+        let mut ordered_messages = self
+            .state
+            .messages
+            .get(conversation_id)
+            .into_iter()
+            .flat_map(|messages| messages.values())
+            .collect::<Vec<_>>();
+        ordered_messages.sort_by(|left, right| {
+            left.get("createdAtMs")
+                .and_then(Value::as_i64)
+                .unwrap_or_default()
+                .cmp(
+                    &right
+                        .get("createdAtMs")
+                        .and_then(Value::as_i64)
+                        .unwrap_or_default(),
+                )
+                .then_with(|| {
+                    left.get("id")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .cmp(right.get("id").and_then(Value::as_str).unwrap_or_default())
+                })
+        });
+        let read_index = last_read_message_id.and_then(|message_id| {
+            ordered_messages
+                .iter()
+                .position(|message| message.get("id").and_then(Value::as_str) == Some(message_id))
+        });
+        let unread_count = ordered_messages
+            .iter()
+            .enumerate()
+            .filter(|(index, message)| {
+                let after_read = read_index.is_none_or(|read_index| *index > read_index);
+                let scheduled_is_visible = message
+                    .get("scheduledAtMs")
+                    .and_then(Value::as_i64)
+                    .is_none_or(|scheduled_at_ms| scheduled_at_ms <= now_ms);
+                after_read
+                    && scheduled_is_visible
+                    && !message.get("deleted").and_then(Value::as_bool).unwrap_or(false)
+                    && message.get("senderId").and_then(Value::as_str) != Some(actor_id)
+            })
+            .count();
+        if let Some(object) = projected.as_object_mut() {
+            object.insert(
+                "lastReadMessageId".into(),
+                last_read_message_id
+                    .map(|value| Value::String(value.to_string()))
+                    .unwrap_or(Value::Null),
+            );
+            object.insert("unreadCount".into(), json!(unread_count.min(u32::MAX as usize)));
+            object.insert(
+                "markedUnread".into(),
+                json!(preferences
+                    .and_then(|values| values.get("markedUnread"))
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false)),
+            );
         }
         projected
     }
@@ -2172,7 +2242,7 @@ impl AndroidMessagingService {
         let conversations = visible_ids
             .iter()
             .filter_map(|id| self.state.conversations.get(id))
-            .map(|conversation| self.project_conversation(conversation, actor_id))
+            .map(|conversation| self.project_conversation(conversation, actor_id, now_ms))
             .collect::<Vec<_>>();
         let messages = visible_ids
             .iter()
@@ -2298,7 +2368,7 @@ impl AndroidMessagingService {
                     .and_then(Value::as_i64)
                     .is_none_or(|expires_at_ms| expires_at_ms > now_ms)
             })
-            .map(|entry| self.project_journal_envelope_for_actor(actor_id, &entry.envelope))
+            .map(|entry| self.project_journal_envelope_for_actor(actor_id, &entry.envelope, now_ms))
             .collect::<Vec<_>>();
         responses.push(self.sync_checkpoint_envelope(
             checkpoint_cursor,
@@ -2312,6 +2382,7 @@ impl AndroidMessagingService {
         &self,
         actor_id: &str,
         envelope: &Value,
+        now_ms: i64,
     ) -> Value {
         let mut projected = envelope.clone();
         let Some(event) = projected.get_mut("event").and_then(Value::as_object_mut) else {
@@ -2328,7 +2399,7 @@ impl AndroidMessagingService {
                     if let Some(conversation) = self.state.conversations.get(&conversation_id) {
                         event.insert(
                             "conversation".into(),
-                            self.project_conversation(conversation, actor_id),
+                            self.project_conversation(conversation, actor_id, now_ms),
                         );
                     }
                 }
@@ -3265,6 +3336,98 @@ mod tests {
             "read",
             "delivery/read transition must survive Host process recreation"
         );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn unread_projection_is_actor_scoped_and_read_cursor_survives_reopen() {
+        let root = temp_root("unread-projection");
+        let me = "human:me";
+        let peer = "human:peer";
+        let conversation_id = "direct:unread-contract";
+        let mut service = AndroidMessagingService::open(&root).unwrap();
+        execute(
+            &mut service,
+            "unread-me",
+            me,
+            json!({"type":"upsertProfile","actor":{"id":me,"kind":"human","displayName":"Me"}}),
+        )
+        .unwrap();
+        execute(
+            &mut service,
+            "unread-peer",
+            peer,
+            json!({"type":"upsertProfile","actor":{"id":peer,"kind":"human","displayName":"Peer"}}),
+        )
+        .unwrap();
+        execute(
+            &mut service,
+            "unread-conversation",
+            me,
+            json!({"type":"createConversation","conversation":{
+                "id":conversation_id,
+                "kind":"direct",
+                "title":"Unread contract",
+                "ownerId":me,
+                "participants":[
+                    {"actorId":me,"role":"owner","joinedAtMs":3},
+                    {"actorId":peer,"role":"member","joinedAtMs":3}
+                ]
+            }}),
+        )
+        .unwrap();
+        execute(
+            &mut service,
+            "unread-incoming",
+            peer,
+            json!({"type":"sendMessage","conversationId":conversation_id,"clientMessageId":"message:unread",
+                "content":{"type":"text","data":{"text":{"text":"first unread","entities":[]}}}}),
+        )
+        .unwrap();
+
+        let mine = execute(&mut service, "unread-sync-me", me, json!({"type":"sync","limit":100}))
+            .unwrap();
+        let my_conversation = mine["envelopes"][0]["event"]["conversations"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|conversation| conversation["id"] == conversation_id)
+            .unwrap();
+        assert_eq!(my_conversation["unreadCount"], 1);
+        assert_eq!(my_conversation["lastReadMessageId"], Value::Null);
+
+        let theirs =
+            execute(&mut service, "unread-sync-peer", peer, json!({"type":"sync","limit":100}))
+                .unwrap();
+        let peer_conversation = theirs["envelopes"][0]["event"]["conversations"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|conversation| conversation["id"] == conversation_id)
+            .unwrap();
+        assert_eq!(peer_conversation["unreadCount"], 0);
+
+        execute(
+            &mut service,
+            "unread-mark-read",
+            me,
+            json!({"type":"markRead","conversationId":conversation_id,"messageId":"message:unread"}),
+        )
+        .unwrap();
+        drop(service);
+
+        let mut reopened = AndroidMessagingService::open(&root).unwrap();
+        let restored =
+            execute(&mut reopened, "unread-restored", me, json!({"type":"sync","limit":100}))
+                .unwrap();
+        let restored_conversation = restored["envelopes"][0]["event"]["conversations"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|conversation| conversation["id"] == conversation_id)
+            .unwrap();
+        assert_eq!(restored_conversation["unreadCount"], 0);
+        assert_eq!(restored_conversation["lastReadMessageId"], "message:unread");
         let _ = fs::remove_dir_all(root);
     }
 
