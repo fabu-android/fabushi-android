@@ -9324,6 +9324,47 @@
       "artifact": null,
       "verification_status": "not-verified",
       "notes": "Do not mark implemented or verified from the plain-text OutlinedTextField or suggestion projection alone. Typed rich-text and composition fencing remain production gaps."
+    },
+    {
+      "responsibility_id": "CONVERSATION-SEND-JOURNAL-APPROVAL-CLEANUP-ANDROID-001",
+      "domain": "conversation-workspace",
+      "desktop_sources": [
+        {
+          "path": "frontend/src/recovered/features/conversation/workspace/send-journal-approval-lifecycle.ts",
+          "blob_sha": "84045b324a4d9bbc034dcd63e8871b51a0d99681",
+          "symbols": [
+            "createSendJournalApprovalLifecycle",
+            "sendPrompt",
+            "resendFailed",
+            "clearAfterJournal",
+            "reset",
+            "dispose"
+          ]
+        }
+      ],
+      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "responsibility": "After a send is durably journaled, dispatch approval cleanup as a separate lifecycle whose failure never reverses accepted send state; clear after resend only when a new journal entry was actually created; never clear on delete/cancel; fence late clear completion across account reset/dispose and expose cleanup failure independently.",
+      "source_owner": "Durable send journal remains the send-state owner; approval cleanup remains the approval-store owner. Presentation must not conflate cleanup failure with send failure or directly clear canonical approval truth.",
+      "visible_effect": "Accepted sends remain accepted even if stale approval cleanup fails, retry/delete/cancel preserve correct approval semantics, and account switches cannot apply late cleanup results to the next scope.",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "source/android-preload/src/main/kotlin/com/ombhrum/fabushi/androidpreload/runtime/AndroidCoordinatorPort.kt",
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/coordinator/AndroidCoordinatorRuntime.kt",
+        "source/host/src/android_json_runtime.rs",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/presentation/MobileBotViewModel.kt"
+      ],
+      "android_owner": "Existing durable send acknowledgement chain owns send journal/retry; Host owns approval registries. No Android post-journal approval-cleanup owner is currently exposed.",
+      "platform_delta": "Android has durable send begin/dispatch/retry/snapshot, explicit retry and scope-generation fencing, plus Host approval registries/resolution. Audit found no typed clearApprovals/post-journal cleanup route on AndroidCoordinatorPort and no equivalent production lifecycle proving Desktop's clear-only-after-journal semantics. This is a real production gap, not satisfied by clearing ViewModel pendingApproval state.",
+      "implementation_status": "mapped",
+      "production_wiring": "Durable acknowledgement/retry remains production-wired, but post-journal approval cleanup is not yet wired end-to-end through Host→Coordinator→typed Android port.",
+      "unit_test": "Required focused tests: accepted send + cleanup success, accepted send + cleanup failure, resend without journal does not clear, resend with journal clears, delete/cancel do not clear, account reset and dispose discard late completion.",
+      "contract_test": "Required: cleanup failure must never turn accepted send into failed; no UI-owned canonical approval clear; account/Agent/generation fencing.",
+      "integration_test": "Required exact-head Host/Coordinator/ViewModel integration with canonical approval registry/store.",
+      "packaged_test": "required final minified githubRelease package",
+      "device_test": "required send/retry/account-switch/process-reopen acceptance",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Production gap discovered during deterministic source audit. Implement at the existing Host/Coordinator approval owner; do not patch by deleting presentation-only approval cards."
     }
   ],
   "traceability": {
