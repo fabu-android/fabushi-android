@@ -4,7 +4,6 @@ import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.net.URI
 import java.util.zip.ZipInputStream
-import javax.xml.XMLConstants
 import javax.xml.parsers.DocumentBuilderFactory
 import org.w3c.dom.Document
 import org.w3c.dom.Element
@@ -168,8 +167,8 @@ private fun parseAndroidSpreadsheetXml(bytes: ByteArray): Document {
     requireFeature("http://xml.org/sax/features/external-general-entities", false)
     requireFeature("http://xml.org/sax/features/external-parameter-entities", false)
     requireFeature("http://apache.org/xml/features/nonvalidating/load-external-dtd", false)
-    runCatching { factory.setAttribute(XMLConstants.ACCESS_EXTERNAL_DTD, "") }
-    runCatching { factory.setAttribute(XMLConstants.ACCESS_EXTERNAL_SCHEMA, "") }
+    runCatching { factory.setAttribute("http://javax.xml.XMLConstants/property/accessExternalDTD", "") }
+    runCatching { factory.setAttribute("http://javax.xml.XMLConstants/property/accessExternalSchema", "") }
     return factory.newDocumentBuilder().parse(ByteArrayInputStream(bytes))
 }
 
