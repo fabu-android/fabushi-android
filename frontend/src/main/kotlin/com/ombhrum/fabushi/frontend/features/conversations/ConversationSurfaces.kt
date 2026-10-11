@@ -479,7 +479,7 @@ internal fun ConversationDetail(
     var forwardingMessage by remember { mutableStateOf<ChatMessage?>(null) }
     var forwardQuery by remember { mutableStateOf("") }
     var forwardSelection by remember { mutableStateOf(setOf<String>()) }
-    var mediaViewerMessage by remember { mutableStateOf<ChatMessage?>(null) }
+    var mediaViewerMessageId by remember(conversation.id) { mutableStateOf<String?>(null) }
     var showConversationInfo by remember { mutableStateOf(false) }
     var showChatSearch by remember { mutableStateOf(false) }
     var chatSearchQuery by remember { mutableStateOf("") }
@@ -564,8 +564,13 @@ internal fun ConversationDetail(
         return
     }
 
-    mediaViewerMessage?.let { mediaMessage ->
-        AndroidMediaViewer(message = mediaMessage, onLoadBlob = onLoadBlob, onClose = { mediaViewerMessage = null })
+    mediaViewerMessageId?.let { mediaMessageId ->
+        AndroidMediaViewer(
+            messages = messages,
+            startMessageId = mediaMessageId,
+            onLoadBlob = onLoadBlob,
+            onClose = { mediaViewerMessageId = null },
+        )
         return
     }
 
@@ -822,7 +827,7 @@ internal fun ConversationDetail(
                         }
                     }
                 },
-                onOpenMedia = { mediaViewerMessage = it },
+                onOpenMedia = { mediaViewerMessageId = it.id },
                 onVotePoll = onVotePoll,
                 onSelectMessage = { selectedMessage = it },
                 onReply = {
