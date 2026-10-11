@@ -414,7 +414,9 @@ mod tests {
         let signature = teach_queue_signature(key, agent, queue_file).unwrap();
         assert_eq!(signature.len(), 64);
         assert!(verify_teach_queue_signature(key, agent, queue_file, &signature).unwrap());
-        assert!(!verify_teach_queue_signature(key, agent, queue_file, &format!("0{}", &signature[1..])).unwrap());
+        let forged_prefix = if signature.starts_with('0') { "1" } else { "0" };
+        let forged = format!("{forged_prefix}{}", &signature[1..]);
+        assert!(!verify_teach_queue_signature(key, agent, queue_file, &forged).unwrap());
 
         assert_eq!(
             teach_learning_client_nonce(agent, queue_file).unwrap(),
