@@ -71,6 +71,43 @@ class TranscriptRichContentProjectionTest {
     }
 
     @Test
+    fun projectsAssistantInlineMarksMathAndSafeLinks() {
+        val spans = projectTranscriptInlineContent(
+            "plain **bold** *italic* ~~strike~~ `code` \\(x + y\\) [docs](https://example.test/path) https://example.test/end).",
+        )
+
+        assertTrue(spans.any { it.text == "bold" && it.bold })
+        assertTrue(spans.any { it.text == "italic" && it.italic })
+        assertTrue(spans.any { it.text == "strike" && it.strike })
+        assertTrue(spans.any { it.text == "code" && it.code })
+        assertTrue(spans.any { it.text == "x + y" && it.math })
+        assertTrue(spans.any { it.text == "docs" && it.url == "https://example.test/path" })
+        assertTrue(spans.any { it.text == "https://example.test/end" && it.url == "https://example.test/end" })
+        assertTrue(spans.any { it.text == ")." && it.url == null })
+    }
+
+    @Test
+    fun unsafeOrMalformedInlineLinksRemainInertText() {
+        val javascript = projectTranscriptInlineContent("[bad](javascript:alert(1))")
+        assertEquals("[bad](javascript:alert(1))", javascript.joinToString("") { it.text })
+        assertTrue(javascript.none { it.url != null })
+
+        val hostless = projectTranscriptInlineContent("https:///private/path")
+        assertEquals("https:///private/path", hostless.joinToString("") { it.text })
+        assertTrue(hostless.none { it.url != null })
+
+        assertNull(normalizeTranscriptHttpUrl("https:///private/path"))
+        assertNull(normalizeTranscriptHttpUrl("https:relative"))
+    }
+
+    @Test
+    fun nestedInlineMarksPreserveRecursivePresentationOnlyProjection() {
+        val spans = projectTranscriptInlineContent("**bold and `code`**")
+        assertTrue(spans.any { it.text == "bold and " && it.bold })
+        assertTrue(spans.any { it.text == "code" && it.bold && it.code })
+    }
+
+    @Test
     fun normalizesOnlyBoundedHttpAndHttpsLinks() {
         assertEquals("https://example.test/path", normalizeTranscriptHttpUrl(" https://example.test/path "))
         assertEquals("http://example.test", normalizeTranscriptHttpUrl("http://example.test"))
