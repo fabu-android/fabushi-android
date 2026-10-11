@@ -13,6 +13,7 @@ use crate::mcp_auth::{
     McpAuthBackendPort, McpAuthOwnerEvent, McpAuthenticateResult,
     SandPrivacyMode as BackendSandPrivacyMode,
 };
+use crate::extensions::teach_recording::{DurableTeachRecordingOwner, TeachRecordingPhase};
 use crate::extensions::transcript::{AsyncTask, SandPendingWakeStore, TranscriptStore, merge_async_tasks};
 use crate::extensions::transcript::pending_wake_rearm::PENDING_WAKE_STALE_MAX_AGE_MS;
 use crate::extensions::webauthn_proxy::{
@@ -626,6 +627,7 @@ pub struct AndroidJsonHost {
     subagent_tools: SubagentToolBridge,
     subagent_events: Arc<Mutex<VecDeque<Value>>>,
     subagent_review_approvals: Arc<SubagentReviewApprovalRegistry>,
+    teach_recording: Arc<Mutex<DurableTeachRecordingOwner>>,
     installed_plugins: BTreeSet<String>,
     plugin_installer: PluginInstaller,
     plugin_permissions: PermissionManager,
@@ -742,6 +744,10 @@ impl AndroidJsonHost {
         let subagent_tools = SubagentToolBridge::new(Arc::clone(&subagent_owner));
         let subagent_events = Arc::new(Mutex::new(VecDeque::new()));
         let subagent_review_approvals = Arc::new(SubagentReviewApprovalRegistry::default());
+        let teach_recording = Arc::new(Mutex::new(
+            DurableTeachRecordingOwner::open(app_data_dir.join("teach-recording.json"), now_ms())
+                .unwrap_or_else(|error| panic!("failed to open durable Teach Recording owner: {error}")),
+        ));
         Self {
             mode,
             account,
@@ -792,6 +798,7 @@ impl AndroidJsonHost {
             subagent_tools,
             subagent_events,
             subagent_review_approvals,
+            teach_recording,
             installed_plugins: BTreeSet::new(),
             plugin_installer,
             plugin_permissions,
@@ -866,6 +873,51 @@ impl AndroidJsonHost {
         }
     }
 
+
+    fn teach_recording_status(&self) -> Result<Value, String> {
+        let snapshot = self
+            .teach_recording
+            .lock()
+            .map_err(|_| "Teach Recording owner lock poisoned".to_string())?
+            .snapshot()
+            .clone();
+        let remote = self.remote_binding_status();
+        // Generic shell/computer enrollment is not Teach Recording authority. Actual recording
+        // remains unavailable until the protected binding explicitly names a bounded Teach
+        // executor; this prevents UI code from smuggling ffmpeg through arbitrary shell access.
+        let remote_recording_ready = remote
+            .get("executors")
+            .and_then(Value::as_array)
+            .is_some_and(|executors| {
+                executors.iter().any(|value| value.as_str() == Some("teach-recording"))
+            });
+        Ok(json!({
+            "phase": match snapshot.phase {
+                TeachRecordingPhase::Idle => "idle",
+                TeachRecordingPhase::Starting => "starting",
+                TeachRecordingPhase::Recording => "recording",
+                TeachRecordingPhase::Stopping => "stopping",
+                TeachRecordingPhase::OutcomeUnknown => "outcome-unknown",
+            },
+            "accountFence": snapshot.account_fence,
+            "accountEpoch": if snapshot.account_epoch == 0 { Value::Null } else { json!(snapshot.account_epoch) },
+            "agentId": snapshot.agent_id,
+            "requestId": snapshot.request_id,
+            "operationId": snapshot.operation_id,
+            "startedAtMs": snapshot.started_at_ms,
+            "saveRequested": snapshot.save_requested,
+            "maxDurationMs": snapshot.max_duration_ms,
+            "outcomeUnknownReason": snapshot.outcome_unknown_reason,
+            "requiresReconciliation": snapshot.requires_reconciliation(),
+            "remoteRecordingReady": remote_recording_ready,
+            "unavailableReason": if remote_recording_ready {
+                Value::Null
+            } else {
+                json!("authorized_remote_runner_teach_recording_executor_unavailable")
+            },
+        }))
+    }
+
     pub fn runtime_call_control(&self) -> Arc<RuntimeCallCancellationRegistry> {
         Arc::clone(&self.runtime_call_cancellations)
     }
@@ -887,6 +939,7 @@ impl AndroidJsonHost {
             "feature.account.privacyMode" => Ok(self.account_privacy_mode()),
             "feature.account.teamRules" => self.account_team_rules(),
             "feature.remote.binding.status" => Ok(self.remote_binding_status()),
+            "feature.teachRecording.status" => self.teach_recording_status(),
             "feature.auth.deviceAgentSession" => Ok(self.device_agent_session()),
             "feature.auth.providers" => Ok(json!([
                 {"id":"google","displayName":"Google"},
@@ -2294,6 +2347,20 @@ impl AndroidJsonHost {
         let previous_fence = self.current_turn_account_fence().ok();
         if let Some(previous_fence) = previous_fence.as_deref() {
             self.fence_turns_for_account_change(previous_fence, "account-logout")?;
+            let teach_identity = self
+                .teach_recording
+                .lock()
+                .map_err(|_| "Teach Recording owner lock poisoned".to_string())?
+                .snapshot()
+                .clone();
+            if teach_identity.phase != TeachRecordingPhase::Idle
+                && teach_identity.account_fence.as_deref() == Some(previous_fence)
+            {
+                self.teach_recording
+                    .lock()
+                    .map_err(|_| "Teach Recording owner lock poisoned".to_string())?
+                    .fence_account_switch(previous_fence, teach_identity.account_epoch)?;
+            }
         }
         self.pending_plugin_variable_writes.clear();
         self.cancel_mcp_auth_watches_for_account_change("account-logout")?;
@@ -5423,6 +5490,41 @@ fn encode_api_path_segment(value: &str) -> Result<String, String> {
 mod tests {
     use super::*;
     use crate::runner::SubagentLineage;
+
+
+    #[test]
+    fn teach_recording_status_is_durable_and_never_promotes_generic_remote_shell() {
+        let root = tempfile::tempdir().unwrap();
+        let mut host = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+        let initial = host.dispatch("feature.teachRecording.status", &json!({})).unwrap();
+        assert_eq!(initial["phase"], "idle");
+        assert_eq!(initial["maxDurationMs"], 600_000);
+        assert_eq!(initial["requiresReconciliation"], false);
+        assert_eq!(initial["remoteRecordingReady"], false);
+        assert_eq!(
+            initial["unavailableReason"],
+            "authorized_remote_runner_teach_recording_executor_unavailable"
+        );
+
+        {
+            let mut owner = host.teach_recording.lock().unwrap();
+            owner
+                .begin_start("session:account-a", 7, "agent-a", "request-a", "operation-a")
+                .unwrap();
+            owner
+                .mark_recording("session:account-a", 7, "operation-a", 11)
+                .unwrap();
+        }
+        drop(host);
+
+        let mut reopened = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+        let recovered = reopened
+            .dispatch("feature.teachRecording.status", &json!({}))
+            .unwrap();
+        assert_eq!(recovered["phase"], "outcome-unknown");
+        assert_eq!(recovered["requiresReconciliation"], true);
+        assert_eq!(recovered["operationId"], "operation-a");
+    }
 
     #[test]
     fn sidebar_sections_dispatch_is_account_fenced_durable_and_idempotent() {
