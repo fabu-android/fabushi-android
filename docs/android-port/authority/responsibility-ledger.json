@@ -5,9 +5,9 @@
     "desktop_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
     "android_repository": "fabu-android/fabushi-android",
     "android_pr": 3,
-    "android_head_at_update": "ec41b2c71122c370cf914fc45d58231bde7d9ba3",
+    "android_head_at_update": "ba9286c83b068cfb49cdad83e7297d126ad1d40f",
     "status": "incomplete",
-    "note": "Incrementally rebased to Desktop main 371b72f1cd20de03dc4dff9a15ed761054968093, root tree 3116c54a1e36da95189c740bdc789ad543ce2d20. Compare from 62d0c99f changes only Marketplace owner inventory; shipping source blobs and 8177-row set are unchanged. Skills Host owner audit was re-read and mapped without inherited verification. Deterministic transcript audit advanced through registry/resolver/root, secret-request, send-message:text, thread affordance/loader/summary, transcript feed fanout and URL-card; confirmed Android secret/thread/link-metadata gaps remain mapped. Deterministic audit advanced through transcript card leaf CSS/barrel/shared plus attachment/approval/cloud-agent/connector/draft/link/listener/local-tool/secret/text views; draft leaves preserve source no-op send/discard semantics rather than inventing execution. Deterministic audit advanced through widget leaf/actions; Android lacks typed respond/dismiss wiring, so widget remains mapped/not-verified."
+    "note": "Incrementally rebased to Desktop main 371b72f1cd20de03dc4dff9a15ed761054968093, root tree 3116c54a1e36da95189c740bdc789ad543ce2d20. Compare from 62d0c99f changes only Marketplace owner inventory; shipping source blobs and 8177-row set are unchanged. Skills Host owner audit was re-read and mapped without inherited verification. Deterministic transcript audit advanced through registry/resolver/root, secret-request, send-message:text, thread affordance/loader/summary, transcript feed fanout and URL-card; confirmed Android secret/thread/link-metadata gaps remain mapped. Deterministic audit advanced through transcript card leaf CSS/barrel/shared plus attachment/approval/cloud-agent/connector/draft/link/listener/local-tool/secret/text views; draft leaves preserve source no-op send/discard semantics rather than inventing execution. Deterministic audit advanced through widget leaf/actions; Android lacks typed respond/dismiss wiring, so widget remains mapped/not-verified. Deterministic audit advanced through message-card seam and tool-results model/proto/boundary/view; Android relay exists but tool-result transcript presentation remains mapped/not-verified."
   },
   "responsibilities": [
     {
@@ -8411,6 +8411,96 @@
       "artifact": null,
       "verification_status": "not-verified",
       "notes": "Android input shortcuts should follow Android accessibility/input conventions rather than mechanically copy desktop A/B keyboard behavior."
+    },
+    {
+      "responsibility_id": "TRANSCRIPT-TOOL-RESULT-CARDS-ANDROID-001",
+      "domain": "conversation-transcript-tools",
+      "desktop_sources": [
+        {
+          "path": "frontend/src/recovered/features/conversation/tool-results/model.ts",
+          "blob_sha": "05eb5607d3c303ee2ba3d00b77ea187d195e9257",
+          "symbols": [
+            "projectToolResultCard",
+            "mergeToolResultCard"
+          ]
+        },
+        {
+          "path": "frontend/src/recovered/features/conversation/tool-results/proto-adapter.ts",
+          "blob_sha": "ab2ba26c695eeae49deb73d2b209183e0def94fc",
+          "symbols": [
+            "mergeClientSideToolResultUpdate",
+            "createClientSideToolResultMergeState"
+          ]
+        },
+        {
+          "path": "frontend/src/recovered/features/conversation/tool-results/transcript-boundary.ts",
+          "blob_sha": "035a06c5f2fe4786b1e53b4e90538dcc3b8566f8",
+          "symbols": [
+            "createToolResultTranscriptBoundary"
+          ]
+        },
+        {
+          "path": "frontend/src/recovered/features/conversation/tool-results/view.tsx",
+          "blob_sha": "e281ec2b2e4655b7d26f7978ac24b97fec30cea4",
+          "symbols": [
+            "ToolResultCard"
+          ]
+        }
+      ],
+      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "responsibility": "Project supported ClientSideToolV2 call/result lifecycles into read-only file-edit/file-write/shell transcript cards, preserving toolCall identity, monotonic sequence, canonical transcript-row ownership, terminal/error/background/cancelled states, streaming merges and account/Agent generation fencing.",
+      "source_owner": "Coordinator relay owns validated fenced wire events; canonical Agent transcript owns row existence; presentation boundary owns only the derived tool-result card projection.",
+      "direct_callers": [
+        "canonical transcript feed",
+        "ClientSideToolV2 renderer event consumer"
+      ],
+      "downstream_dependencies": [
+        "ClientSideToolV2 relay",
+        "generated aiserver.v1 tool protobuf",
+        "canonical transcript entries"
+      ],
+      "state_owner": "Relay owns call/result event lifecycle; transcript owns durable row; UI card owns no execution truth.",
+      "persistent_state": [
+        "No independent card persistence; process reopen must replay/reload relay/transcript state from canonical owners."
+      ],
+      "protocol_wire_contract": [
+        "ClientSideToolV2Call/Result toolCallId",
+        "supported tools 7/15/38",
+        "strict call-before-result and monotonic sequence",
+        "file-edit/write/shell result status/output/diff projection"
+      ],
+      "visible_effect": "Agent tool operations render bounded, read-only running/final result cards with output/diff/status without granting new execution controls.",
+      "failure_behavior": [
+        "unsupported/malformed tools are ignored",
+        "mismatched result/toolCall is ignored",
+        "permission denial/rejection/cancel/error remain distinct visible terminal states",
+        "stale scope/generation updates are discarded"
+      ],
+      "cancellation_behavior": "Relay/transcript scope reset, reconnect, account switch and dispose invalidate stale projections; card itself issues no cancellation side effect.",
+      "retry_semantics": "No UI auto-retry of tool side effects; outcome and retry authority remain with Host/Capability Broker/Runner.",
+      "idempotency_semantics": "Monotonic sequence + toolCallId + call-before-result fences duplicate/out-of-order result projection.",
+      "process_death_recovery": "Rehydrate/replay canonical relay events and transcript; do not synthesize new tool calls from cards.",
+      "account_fencing": "Relay epoch/account fence plus transcript accountSlot+agentId generation.",
+      "security_boundary": "Result cards are read-only; tool authorization/execution remains outside presentation in Capability Broker/Runner.",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "source/mahayana-agent-coordinator/src/client_side_tool_v2_relay.rs",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/production/canonical-agent-transcript.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/features/chat/AgentChatSurfaces.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/presentation/MobileBotViewModel.kt"
+      ],
+      "android_owner": "Existing Rust ClientSideToolV2 relay plus native Agent transcript projection.",
+      "platform_delta": "React details/pre becomes native Compose expandable/log presentation; protobuf identity/state rules remain unchanged.",
+      "implementation_status": "mapped",
+      "production_wiring": "Android Rust relay is implemented and focused-tested, but exact-head production UI search found no protobuf-to-card adapter/transcript boundary/result card composition.",
+      "unit_test": "relay unit tests exist; missing Android result projection/merge/transcript-boundary/card tests",
+      "contract_test": "relay wire contract exists; missing typed card projection parity contract",
+      "integration_test": "missing exact-head relay→canonical transcript→Compose result-card journey",
+      "packaged_test": "required final minified package",
+      "device_test": "required protected/device Agent tool journey",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Do not upgrade this responsibility from the existing relay status alone; relay transport and transcript presentation are separate responsibilities."
     }
   ],
   "traceability": {
