@@ -200,6 +200,57 @@ private fun MobileWidgetTranscriptCard(
 
 
 @Composable
+private fun MobileTranscriptAttachments(
+    attachments: List<MobileTranscriptAttachment>,
+    alignEnd: Boolean,
+) {
+    if (attachments.isEmpty()) return
+    Column(
+        Modifier.fillMaxWidth(),
+        horizontalAlignment = if (alignEnd) Alignment.End else Alignment.Start,
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        attachments.forEach { attachment ->
+            Column(
+                Modifier
+                    .background(Color.Black.copy(alpha = if (alignEnd) 0.08f else 0.045f), RoundedCornerShape(12.dp))
+                    .padding(horizontal = 10.dp, vertical = 7.dp)
+                    .testTag("mobile-bot-attachment-" + attachment.name.replace(Regex("[^A-Za-z0-9._-]"), "-").take(120)),
+            ) {
+                Text(
+                    attachment.name,
+                    color = GrokMobileInk,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                val metadata = buildList {
+                    attachment.mimeType?.takeIf(String::isNotBlank)?.let(::add)
+                    attachment.sizeBytes?.let { add(formatTranscriptAttachmentBytes(it)) }
+                }.joinToString(" · ")
+                if (metadata.isNotBlank()) {
+                    Text(metadata, color = GrokMobileMuted, fontSize = 10.sp)
+                }
+            }
+        }
+    }
+}
+
+internal fun formatTranscriptAttachmentBytes(bytes: Long): String = when {
+    bytes < 1024L -> "$bytes B"
+    bytes < 1024L * 1024L -> {
+        val tenths = (bytes * 10L + 512L) / 1024L
+        if (tenths < 100L && tenths % 10L != 0L) "${tenths / 10L}.${tenths % 10L} KB" else "${(bytes + 512L) / 1024L} KB"
+    }
+    else -> {
+        val tenths = (bytes * 10L + (1024L * 1024L) / 2L) / (1024L * 1024L)
+        "${tenths / 10L}.${tenths % 10L} MB"
+    }
+}
+
+
+@Composable
 internal fun GrokBotRowAndroid(
     bot: MobileBotSummaryAndroid,
     badge: String,
@@ -481,15 +532,19 @@ internal fun GrokBotChatAndroid(
                     entry.role == MobileChatRole.USER -> Column(
                         Modifier.fillMaxWidth(),
                         horizontalAlignment = Alignment.End,
+                        verticalArrangement = Arrangement.spacedBy(5.dp),
                     ) {
-                        Text(
-                            entry.text,
-                            color = Color.White,
-                            fontSize = 16.sp,
-                            modifier = Modifier
-                                .background(Color.Black, RoundedCornerShape(18.dp))
-                                .padding(horizontal = 15.dp, vertical = 10.dp),
-                        )
+                        if (entry.text.isNotBlank()) {
+                            Text(
+                                entry.text,
+                                color = Color.White,
+                                fontSize = 16.sp,
+                                modifier = Modifier
+                                    .background(Color.Black, RoundedCornerShape(18.dp))
+                                    .padding(horizontal = 15.dp, vertical = 10.dp),
+                            )
+                        }
+                        MobileTranscriptAttachments(entry.attachments, alignEnd = true)
                         when (entry.sendStatus) {
                             "pending" -> Text("等待入队…", color = GrokMobileMuted, fontSize = 11.sp)
                             "queued" -> Text("已入队…", color = GrokMobileMuted, fontSize = 11.sp)
@@ -523,7 +578,22 @@ internal fun GrokBotChatAndroid(
                         Text(bot.name, color = GrokMobileMuted, fontSize = 11.sp, modifier = Modifier.padding(start = 29.dp, bottom = 2.dp))
                         Row(verticalAlignment = Alignment.Bottom) {
                             AgentAvatarAndroid(bot, 20.dp)
-                            Text(entry.text + if (entry.streaming) "▌" else "", color = GrokMobileInk, fontSize = 16.sp, modifier = Modifier.padding(start = 7.dp).background(Color.Black.copy(alpha = 0.055f), RoundedCornerShape(18.dp)).padding(horizontal = 15.dp, vertical = 10.dp))
+                            Column(
+                                Modifier.padding(start = 7.dp),
+                                verticalArrangement = Arrangement.spacedBy(5.dp),
+                            ) {
+                                if (entry.text.isNotBlank() || entry.streaming) {
+                                    Text(
+                                        entry.text + if (entry.streaming) "▌" else "",
+                                        color = GrokMobileInk,
+                                        fontSize = 16.sp,
+                                        modifier = Modifier
+                                            .background(Color.Black.copy(alpha = 0.055f), RoundedCornerShape(18.dp))
+                                            .padding(horizontal = 15.dp, vertical = 10.dp),
+                                    )
+                                }
+                                MobileTranscriptAttachments(entry.attachments, alignEnd = false)
+                            }
                         }
                     }
                 }
