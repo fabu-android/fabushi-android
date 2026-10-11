@@ -5,9 +5,9 @@
     "desktop_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
     "android_repository": "fabu-android/fabushi-android",
     "android_pr": 3,
-    "android_head_at_update": "ddec852eb53476a6c498af5d311914d0659e91af",
+    "android_head_at_update": "437096413df1118001f7bb080a0b87e41446261f",
     "status": "incomplete",
-    "note": "Incrementally rebased to Desktop main 371b72f1cd20de03dc4dff9a15ed761054968093. Durable Android Agent send acknowledgement is Host-owned and production-wired. Transcript widget respond/dismiss now uses typed Kotlin/Coordinator/Host routes with canonical respondedValue/widgetDismissed settlement, hidden continuation dispatch, rollback and presentation-generation fencing. ClientSideToolV2 relay is durable across process reopen and projects supported 7/15/38 file-edit/file-write/shell cards; Android joins typed results only onto matching canonical tool-call rows and keeps unmatched updates out of the transcript. Exact-head GitHub Actions/package/device verification remains pending and full source closure remains incomplete. Deterministic workspace cursor now has explicit Agent avatar, Agent header and composer responsibilities with current Android gaps recorded separately from unrelated human-conversation surfaces. Deterministic cursor now explicitly maps conversation outline provider/view as one read-only projection responsibility; production outline UI remains open."
+    "note": "Incrementally rebased to Desktop main 371b72f1cd20de03dc4dff9a15ed761054968093. Durable Android Agent send acknowledgement is Host-owned and production-wired. Transcript widget respond/dismiss now uses typed Kotlin/Coordinator/Host routes with canonical respondedValue/widgetDismissed settlement, hidden continuation dispatch, rollback and presentation-generation fencing. ClientSideToolV2 relay is durable across process reopen and projects supported 7/15/38 file-edit/file-write/shell cards; Android joins typed results only onto matching canonical tool-call rows and keeps unmatched updates out of the transcript. Exact-head GitHub Actions/package/device verification remains pending and full source closure remains incomplete. Deterministic workspace cursor now has explicit Agent avatar, Agent header and composer responsibilities with current Android gaps recorded separately from unrelated human-conversation surfaces. Deterministic cursor now explicitly maps conversation outline provider/view as one read-only projection responsibility; production outline UI remains open. Deterministic workspace cursor now maps controller composition, Agent attachment staging, durable Agent draft recovery, and native icon replacement."
   },
   "responsibilities": [
     {
@@ -8866,6 +8866,147 @@
       "artifact": null,
       "verification_status": "not-verified",
       "notes": "Do not treat the ordinary transcript list as outline parity; Desktop has a separate retained read-only projection lifecycle."
+    },
+    {
+      "responsibility_id": "CONVERSATION-WORKSPACE-CONTROLLER-ANDROID-001",
+      "domain": "conversation-workspace",
+      "desktop_sources": [
+        {
+          "path": "frontend/src/recovered/features/conversation/workspace/conversation-workspace-controller.ts",
+          "blob_sha": "1a918aaa73499fd440e8a5c6a6c48ca1e3443e2d",
+          "symbols": [
+            "createConversationWorkspaceController"
+          ]
+        }
+      ],
+      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "responsibility": "Compose reply/thread selection, transcript pagination, find-in-chat and reaction feed lifecycles under one account+Agent scope; clear reply before dispatch, project reply/fork submissions, synchronize paginated entries into reply resolution, and dispose all child controllers exactly once.",
+      "source_owner": "Child controllers retain canonical responsibility for transcript/reply/find/reaction state; workspace controller is lifecycle/scoping composition only.",
+      "visible_effect": "Reply, fork/thread, load-older, find, reactions and composer reply context behave as one coherent conversation workspace.",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/presentation/MobileBotViewModel.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/recovered/features/conversation/workspace/transcript_view.kt"
+      ],
+      "android_owner": "Planned native workspace orchestration over typed Coordinator and existing canonical transcript; no UI-owned second transcript.",
+      "platform_delta": "ViewModel/coroutine lifecycle replaces React controller composition while preserving child owner boundaries.",
+      "implementation_status": "mapped",
+      "production_wiring": "Android has separate transcript/send/reply/search mechanisms in different surfaces, but Agent workspace does not yet have one production composition carrying Desktop scope/dispose/pagination/find/reaction semantics.",
+      "unit_test": "missing focused child-lifecycle/scope/dispose tests for Agent workspace composition.",
+      "contract_test": "missing composed typed workspace contract.",
+      "integration_test": "missing exact-head Agent reply+pagination+find+reaction journey.",
+      "packaged_test": "required final minified package",
+      "device_test": "required",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Must not collapse reply/pagination/find/reaction canonical owners into MobileBotViewModel."
+    },
+    {
+      "responsibility_id": "COMPOSER-ATTACHMENT-STAGING-ANDROID-001",
+      "domain": "conversation-attachments",
+      "desktop_sources": [
+        {
+          "path": "frontend/src/recovered/features/conversation/workspace/desktop.ts",
+          "blob_sha": "489b066d8cb3727dec1539c63409ef33aa4f90b8",
+          "symbols": [
+            "stageComposerFiles",
+            "commitComposerAttachments",
+            "formatStageAttachmentFailureNotice"
+          ]
+        }
+      ],
+      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "responsibility": "Stage picked files into a temporary attachment owner, preserve names/MIME/size, enforce empty/too-large/failure semantics including video 200MB vs other 25MB messaging, and atomically commit staged paths before canonical Agent send.",
+      "source_owner": "Attachment staging/commit runtime owns temporary paths; composer owns only selection presentation.",
+      "visible_effect": "Agent composer can attach files with deterministic size/failure notices and only committed attachment paths enter send.",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "source/shared/src/media/attachments.rs",
+        "source/shared/src/media/attachment_limits.rs",
+        "source/host/src/attachment_paths.rs",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/features/bots/GrokBotComponents.kt"
+      ],
+      "android_owner": "Required Android SAF/private-storage attachment staging owner plus Host commit bridge.",
+      "platform_delta": "ContentResolver/SAF URI reads replace browser File/DesktopBridge byte staging; limits/atomic commit/user-visible failures remain.",
+      "implementation_status": "mapped",
+      "production_wiring": "Shared media limits/path helpers exist and human chat picker exists, but no canonical Agent composer SAF staging→Host commit→durable send production chain is wired.",
+      "unit_test": "shared attachment helpers have partial tests; Agent stage/commit/failure/duplicate/process-death tests missing.",
+      "contract_test": "missing typed Android Agent attachment staging contract.",
+      "integration_test": "missing picker→stage→commit→durable acknowledgement journey.",
+      "packaged_test": "required final minified package",
+      "device_test": "required picker/scoped-storage acceptance",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Do not reuse human-composer local URI state as a second Agent attachment owner."
+    },
+    {
+      "responsibility_id": "COMPOSER-DRAFT-ANDROID-001",
+      "domain": "conversation-draft",
+      "desktop_sources": [
+        {
+          "path": "frontend/src/recovered/features/conversation/workspace/draft-state.ts",
+          "blob_sha": "638a2df9675ec9809ab63c0684222e65f416d0e9",
+          "symbols": [
+            "createComposerDraftStateStore",
+            "composerDraftPersistenceKey"
+          ]
+        }
+      ],
+      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "responsibility": "Persist per-account/per-Agent draft plus recovery draft, assign draftId, conditionally clear only the accepted/current draft, fence restore by account+generation+mutation revision, clear corrupt/schema-mismatched state, and prevent late restore from overwriting newer edits.",
+      "source_owner": "Canonical draft store owns durable Agent draft/recovery; UI owns only current editing projection.",
+      "visible_effect": "Agent draft survives reopen/account restore without resurrecting stale text or clearing edits made after send/restore races.",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/recovered/features/conversation/workspace/draft-state.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/presentation/MobileBotViewModel.kt"
+      ],
+      "android_owner": "Required Host/Coordinator-backed Agent draft owner; current human MessagingDraft adapter is precedent but not proof for Agent Bot drafts.",
+      "platform_delta": "Android process-death recovery requires canonical Host/Coordinator persistence instead of renderer clientPersistence.",
+      "implementation_status": "mapped",
+      "production_wiring": "Human messaging drafts project canonical Coordinator state, while MobileBotViewModel Bot draft remains presentation state; durable per-Agent Bot draft/recovery and accepted-draft conditional clearing are not production-wired.",
+      "unit_test": "human draft adapter tests do not establish Agent draft parity; focused Agent restore/corruption/race/account-switch tests missing.",
+      "contract_test": "missing typed Agent draft read/write/clear-if-current contract.",
+      "integration_test": "missing process-death/reopen and accepted-send clearing journey.",
+      "packaged_test": "required final minified package",
+      "device_test": "required",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Do not add a second local preference store; follow Android canonical Host/Coordinator ownership."
+    },
+    {
+      "responsibility_id": "WORKSPACE-ICON-ANDROID-001",
+      "domain": "conversation-presentation",
+      "desktop_sources": [
+        {
+          "path": "frontend/src/recovered/features/conversation/workspace/cursor-icon.tsx",
+          "blob_sha": "055ae7960f88cdbf853da7444f256671150da474",
+          "symbols": [
+            "CursorIcon"
+          ]
+        }
+      ],
+      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "responsibility": "Render named decorative workspace icons at small/base sizes using the canonical visual icon vocabulary while remaining hidden from accessibility semantics.",
+      "source_owner": "Presentation-only; no canonical product state.",
+      "visible_effect": "Workspace actions retain recognizable iconography without duplicate accessibility announcements.",
+      "android_disposition": "not-applicable-with-replacement",
+      "android_target": [
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/features/bots/GrokBotComponents.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/recovered/features/conversation/workspace/transcript_view.kt"
+      ],
+      "android_owner": "Native Compose presentation icons/text glyphs.",
+      "platform_delta": "React span + Sand registry does not exist on Android; Compose-native icons/glyphs replace it and accessibility labels stay on parent controls.",
+      "implementation_status": "implemented",
+      "production_wiring": "Native Compose controls render platform-native visual glyphs and parent control semantics; no React/Sand icon registry is shipped in Android.",
+      "unit_test": "presentation replacement is covered indirectly by Compose/accessibility surface tests; exact-head regression still required.",
+      "contract_test": "not applicable; no protocol/state contract.",
+      "integration_test": "native controls exercised in workspace UI tests.",
+      "packaged_test": "required final minified package",
+      "device_test": "required accessibility review",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Replacement preserves user capability; exact visual glyph set may differ by Android design system."
     }
   ],
   "traceability": {
