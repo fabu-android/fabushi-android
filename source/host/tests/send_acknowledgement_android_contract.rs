@@ -110,3 +110,103 @@ fn acknowledgement_generation_and_agent_scope_fail_closed() {
         )
         .is_err());
 }
+
+#[test]
+fn staged_attachment_flows_through_acknowledgement_and_canonical_echo() {
+    let root = tempfile::tempdir().unwrap();
+    let mut host = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+
+    let begun_attachment = host
+        .dispatch(
+            "feature.composerDraft.attachment.begin",
+            &json!({
+                "accountSlot":"slot-a",
+                "agentId":"agent-a",
+                "name":"notes.txt",
+                "mimeType":"text/plain",
+                "sizeBytes":5
+            }),
+        )
+        .unwrap();
+    let attachment_id = begun_attachment["attachmentId"].as_str().unwrap().to_string();
+    let appended = host
+        .dispatch(
+            "feature.composerDraft.attachment.append",
+            &json!({
+                "accountSlot":"slot-a",
+                "agentId":"agent-a",
+                "attachmentId":attachment_id,
+                "offset":0,
+                "dataBase64":"aGVsbG8="
+            }),
+        )
+        .unwrap();
+    assert_eq!(appended["nextOffset"], 5);
+    let finished = host
+        .dispatch(
+            "feature.composerDraft.attachment.finish",
+            &json!({
+                "accountSlot":"slot-a",
+                "agentId":"agent-a",
+                "attachmentId":attachment_id
+            }),
+        )
+        .unwrap();
+    let attachment = finished["attachment"].clone();
+    assert_eq!(attachment["name"], "notes.txt");
+    assert_eq!(finished["draft"]["attachments"].as_array().unwrap().len(), 1);
+
+    let nonce = "attachment-contract-nonce";
+    let began = host
+        .dispatch(
+            "feature.sendAcknowledgement.begin",
+            &json!({
+                "accountSlot":"slot-a",
+                "agentId":"agent-a",
+                "nonce":nonce,
+                "text":"",
+                "attachments":[attachment],
+                "entries":[{
+                    "id":nonce,
+                    "kind":"message",
+                    "clientNonce":nonce
+                }]
+            }),
+        )
+        .unwrap();
+    assert_eq!(began["phase"], "pending");
+    assert_eq!(began["attachments"][0]["name"], "notes.txt");
+
+    let dispatched = host
+        .dispatch(
+            "feature.sendAcknowledgement.dispatch",
+            &json!({
+                "accountSlot":"slot-a",
+                "agentId":"agent-a",
+                "nonce":nonce,
+                "generation":began["generation"]
+            }),
+        )
+        .unwrap();
+    assert_eq!(dispatched["acknowledgement"]["phase"], "accepted-awaiting-echo");
+
+    let transcript = host.dispatch("feature.transcript.snapshot", &json!({})).unwrap();
+    let user = transcript
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|entry| entry["id"] == nonce)
+        .expect("attachment-only canonical user echo");
+    assert_eq!(user["content"], "");
+    assert_eq!(user["attachments"][0]["name"], "notes.txt");
+    assert_eq!(user["attachments"][0]["size"], 5);
+
+    let projection = host
+        .dispatch(
+            "feature.sendAcknowledgement.snapshot",
+            &json!({"accountSlot":"slot-a","agentId":"agent-a"}),
+        )
+        .unwrap();
+    assert!(projection["records"].as_array().unwrap().is_empty());
+}
+

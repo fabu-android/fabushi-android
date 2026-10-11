@@ -1,5 +1,6 @@
 package com.ombhrum.fabushi
 
+import com.ombhrum.fabushi.androidpreload.runtime.AndroidAgentAttachment
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidSendAcknowledgement
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidSendAcknowledgementEntry
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidSendAcknowledgementPhase
@@ -14,6 +15,8 @@ class AgentSendAcknowledgementProjectionTest {
         nonce: String = "nonce-a",
         generation: Long = 7L,
         reason: String? = null,
+        attachments: List<AndroidAgentAttachment> = emptyList(),
+        messageText: String = "hello",
     ) = AndroidSendAcknowledgement(
         accountSlot = "slot-a",
         agentId = "agent-a",
@@ -26,11 +29,12 @@ class AgentSendAcknowledgementProjectionTest {
                 clientNonce = nonce,
             ),
         ),
-        messageText = "hello",
+        messageText = messageText,
         phase = phase,
         generation = generation,
         failedAtMs = reason?.let { 123L },
         reason = reason,
+        attachments = attachments,
     )
 
     @Test
@@ -76,6 +80,32 @@ class AgentSendAcknowledgementProjectionTest {
         assertEquals(1, projection.size)
         assertEquals(canonical, projection.single())
         assertEquals(null, projection.single().sendStatus)
+    }
+
+
+    @Test
+    fun optimisticAcknowledgementProjectsDurableAttachmentsUntilCanonicalEcho() {
+        val attachment = AndroidAgentAttachment(
+            id = "agent-attachment-1",
+            path = "fabushi-attachment://agent-attachment-1",
+            name = "notes.txt",
+            sizeBytes = 5L,
+            mimeType = "text/plain",
+        )
+        val optimistic = projectDurableSendAcknowledgements(
+            canonical = emptyList(),
+            acknowledgements = listOf(
+                acknowledgement(
+                    phase = AndroidSendAcknowledgementPhase.ACCEPTED_AWAITING_ECHO,
+                    attachments = listOf(attachment),
+                    messageText = "",
+                ),
+            ),
+        ).single()
+        assertEquals("", optimistic.text)
+        assertEquals(listOf("notes.txt"), optimistic.attachments.map { it.name })
+        assertEquals(5L, optimistic.attachments.single().sizeBytes)
+        assertEquals("fabushi-attachment://agent-attachment-1", optimistic.attachments.single().path)
     }
 
     @Test
