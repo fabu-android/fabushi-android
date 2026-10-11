@@ -8,7 +8,16 @@ import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.isShiftPressed
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
@@ -23,6 +32,10 @@ internal fun FindInChatBar(
     onNext: () -> Unit,
     onClose: () -> Unit,
 ) {
+    val focusRequester = FocusRequester()
+    LaunchedEffect(Unit) {
+        focusRequester.requestFocus()
+    }
     Row(
         Modifier
             .fillMaxWidth()
@@ -34,6 +47,21 @@ internal fun FindInChatBar(
             onValueChange = onQueryChange,
             modifier = Modifier
                 .weight(1f)
+                .focusRequester(focusRequester)
+                .onPreviewKeyEvent { event ->
+                    if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                    when (event.key) {
+                        Key.Enter -> {
+                            if (event.isShiftPressed) onPrevious() else onNext()
+                            true
+                        }
+                        Key.Escape -> {
+                            onClose()
+                            true
+                        }
+                        else -> false
+                    }
+                }
                 .testTag("find-in-chat-input"),
             singleLine = true,
             placeholder = { Text("搜索此聊天", color = homeSecondaryText) },
