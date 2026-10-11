@@ -46,4 +46,60 @@ class AgentSidebarSectionsModelTest {
         assertNull(moveAgentToSidebarSection(sections, "agent-1", "missing"))
         assertNull(createSidebarSectionForAgent(sections, "agent-1", "section-a"))
     }
+    @Test
+    fun sectionRenameDeleteAndMovePreserveSyntheticOwnershipRules() {
+        val renamed = requireNotNull(renameAgentSidebarSection(sections, "section-a", "  Team   Alpha  "))
+        assertEquals("Team Alpha", renamed.first { it.id == "section-a" }.name)
+        assertEquals(false, renamed.any { it.id == AGENT_UNASSIGNED_SECTION_ID })
+        assertNull(renameAgentSidebarSection(sections, AGENT_UNASSIGNED_SECTION_ID, "Nope"))
+
+        val deleted = requireNotNull(deleteAgentSidebarSection(sections, "section-a"))
+        assertEquals(listOf("section-b"), deleted.map { it.id })
+        assertEquals(
+            "Its agents move to Unassigned. No agents are deleted.",
+            agentSidebarSectionDeleteCopy("A").description,
+        )
+
+        val moved = requireNotNull(
+            moveAgentSidebarSection(
+                sections,
+                sectionId = "section-b",
+                targetId = "section-a",
+                position = AgentSidebarSectionMovePosition.BEFORE,
+            ),
+        )
+        assertEquals(listOf("section-b", "section-a"), moved.map { it.id })
+        assertNull(
+            moveAgentSidebarSection(
+                sections,
+                sectionId = AGENT_UNASSIGNED_SECTION_ID,
+                targetId = "section-a",
+                position = AgentSidebarSectionMovePosition.AFTER,
+            ),
+        )
+    }
+
+    @Test
+    fun sectionActionsRejectBlankNoopAndUnknownTargets() {
+        assertNull(renameAgentSidebarSection(sections, "section-a", "   "))
+        assertNull(renameAgentSidebarSection(sections, "missing", "Name"))
+        assertNull(deleteAgentSidebarSection(sections, "missing"))
+        assertNull(
+            moveAgentSidebarSection(
+                sections,
+                sectionId = "section-a",
+                targetId = "missing",
+                position = AgentSidebarSectionMovePosition.BEFORE,
+            ),
+        )
+        assertNull(
+            moveAgentSidebarSection(
+                sections,
+                sectionId = "section-a",
+                targetId = "section-a",
+                position = AgentSidebarSectionMovePosition.AFTER,
+            ),
+        )
+    }
+
 }
