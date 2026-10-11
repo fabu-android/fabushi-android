@@ -7118,6 +7118,167 @@
       "artifact": null,
       "verification_status": "not-verified",
       "notes": "Partial implementation advanced through 22bcaa9e: canonical status owner + queue crypto protocol exist. Keep mapped/not-verified until bounded Remote Runner start/stop, remote queue recovery, learning delivery and native UI are wired and same-head evidence passes."
+    },
+    {
+      "responsibility_id": "TRANSCRIPT-PASSIVE-CARDS-ANDROID-001",
+      "domain": "conversation-transcript",
+      "desktop_sources": [
+        {
+          "path": "frontend/src/recovered/features/conversation/cards/notice/view.tsx",
+          "blob_sha": "54c658b89a22dd494283a76bf2e3030082eb6164",
+          "symbols": [
+            "TranscriptNoticeCard"
+          ]
+        },
+        {
+          "path": "frontend/src/recovered/features/conversation/cards/permission-request/view.tsx",
+          "blob_sha": "000d12b1e9b8696b7a1968599ae4b23eaf93ec91",
+          "symbols": [
+            "PERMISSION_REQUEST_LEAF_CONTRACT",
+            "projectPermissionRequestLeaf",
+            "PermissionRequestLeaf"
+          ]
+        }
+      ],
+      "source_commit": "d575b4f77b6895eea4ecaced96e5c512964bf3ed",
+      "responsibility": "Project passive transcript notice rows and the retired permission-request title leaf exactly as read-only conversation history, preserving row identity/timestamp/group-start semantics without creating a permission execution path.",
+      "source_owner": "Desktop recovered conversation transcript entry union and row renderer.",
+      "direct_callers": [
+        "Conversation transcript union branch for notice and retired permission-request entries"
+      ],
+      "downstream_dependencies": [
+        "TranscriptNotice / TranscriptPermissionRequest canonical entry data",
+        "shared transcript row timestamp"
+      ],
+      "state_owner": "Canonical transcript owner; presentation only validates and renders immutable entry data.",
+      "persistent_state": [
+        "Transcript entry id/text or title/timestamp are durable only through the canonical transcript owner; the leaf owns no persistence."
+      ],
+      "protocol_wire_contract": [
+        "notice: id/text/timestampMs",
+        "permission-request: permission.title with optional finite timestampMs and boolean isGroupStart",
+        "retired permission-request leaf has no request id, bridge or action callback"
+      ],
+      "visible_effect": "Users can see durable informational notice rows and historical retired permission-request titles in the transcript with correct timestamp/group placement.",
+      "failure_behavior": [
+        "Malformed or blank permission-request leaf fails closed and renders nothing",
+        "No generic actionable permission UI is fabricated from a retired transcript entry"
+      ],
+      "cancellation_behavior": "No side effect or cancellable operation belongs to these passive cards.",
+      "retry_semantics": "Pure presentation; no retry.",
+      "idempotency_semantics": "Rendering the same canonical entry is side-effect free.",
+      "process_death_recovery": "Recreated Android presentation must re-project the same canonical transcript rows after reload; it must not turn a historical permission row into a new approval.",
+      "account_fencing": "Rows follow the canonical conversation/account transcript scope.",
+      "security_boundary": "Historical permission-request presentation is not authority to grant or consume a capability; live approval remains owned by the Capability Broker/approval runtime.",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/recovered/features/conversation/workspace/transcript_view.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/production/canonical-agent-transcript.kt"
+      ],
+      "android_owner": "Native transcript presentation over canonical transcript data.",
+      "platform_delta": "React transcript leaf becomes native Compose; the retired permission row remains non-actionable.",
+      "implementation_status": "mapped",
+      "production_wiring": "Current Android native human transcript projects ChatMessage content types, while canonical Agent transcript projection currently accepts only kind=message. No equivalent passive notice/retired permission-request transcript branch is proven in production wiring.",
+      "unit_test": "missing focused passive notice / retired permission-request projection tests",
+      "contract_test": "missing canonical transcript union contract proving passive rows survive reload without becoming live approval actions",
+      "integration_test": "missing exact-head transcript reload/process-reopen journey for passive cards",
+      "packaged_test": "required final packaged transcript acceptance",
+      "device_test": "required protected/device transcript reload acceptance where the source entries can be produced",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Do not reuse AgentApprovalPresentationTest as evidence for this responsibility: that test covers live approval.requested operation fencing, while Desktop permission-request/view.tsx is explicitly a retired read-only leaf."
+    },
+    {
+      "responsibility_id": "TRANSCRIPT-TIMELINE-EVENTS-ANDROID-001",
+      "domain": "conversation-transcript",
+      "desktop_sources": [
+        {
+          "path": "frontend/src/recovered/features/conversation/cards/timeline-event-automation.tsx",
+          "blob_sha": "17e3c6100ce53c39c2953e83fd1375dd8d4c5e23",
+          "symbols": [
+            "AutomationChangedTimelineEventCard",
+            "automationOpenId"
+          ]
+        },
+        {
+          "path": "frontend/src/recovered/features/conversation/cards/timeline-event-registry.ts",
+          "blob_sha": "ed591cd5b0b04352b63514d8642f8b11752d662f",
+          "symbols": [
+            "TIMELINE_EVENT_TYPES",
+            "TIMELINE_EVENT_REGISTRY",
+            "projectTimelineEvent",
+            "timelineEventDescription"
+          ]
+        },
+        {
+          "path": "frontend/src/recovered/features/conversation/cards/timeline-event-resolver.tsx",
+          "blob_sha": "b71c330e31b87e2ab35708eb7723d8c103525a80",
+          "symbols": [
+            "createTimelineEventResolver",
+            "TimelineEventRootEntry"
+          ]
+        },
+        {
+          "path": "frontend/src/recovered/features/conversation/cards/timeline-event.tsx",
+          "blob_sha": "6388dbdea3d2768a3f2dbc3292825a1ee1252545",
+          "symbols": [
+            "TranscriptCardTimestamp",
+            "describeTimelineEventCard",
+            "TimelineEventCard"
+          ]
+        }
+      ],
+      "source_commit": "d575b4f77b6895eea4ecaced96e5c512964bf3ed",
+      "responsibility": "Decode and render the typed transcript timeline-event union for channel-connected, channel-disconnected, name-changed and automation-changed events, with stable descriptions/timestamps and a bounded Open routine action only for a valid automation id.",
+      "source_owner": "Desktop conversation timeline-event registry/resolver over canonical transcript event entries.",
+      "direct_callers": [
+        "Conversation transcript timeline-event branch"
+      ],
+      "downstream_dependencies": [
+        "SandTimelineEvent descriptions",
+        "automation route/open action",
+        "shared transcript timestamp"
+      ],
+      "state_owner": "Canonical transcript/event owner; registry and native presentation own decoding/rendering only.",
+      "persistent_state": [
+        "Event identity/type/payload/timestamp persist with canonical transcript; resolver owns no durable state."
+      ],
+      "protocol_wire_contract": [
+        "event:name-changed {to}",
+        "event:channel-connected/disconnected {label}",
+        "event:automation-changed {automationId,action,automationName}",
+        "unknown/malformed events reject",
+        "32px Desktop placeholder is presentation-only"
+      ],
+      "visible_effect": "Users see historical channel/name/automation changes in sequence; valid automation events can open the referenced routine.",
+      "failure_behavior": [
+        "Unknown or malformed event renders nothing rather than a misleading generic event",
+        "automation Open routine remains disabled/absent when id or callback is invalid"
+      ],
+      "cancellation_behavior": "No background side effect; navigation callback is user initiated.",
+      "retry_semantics": "Pure projection/navigation; no hidden retry.",
+      "idempotency_semantics": "Same canonical event produces the same presentation; open action does not mutate transcript.",
+      "process_death_recovery": "After recreation/reload, timeline rows come from canonical transcript and do not synthesize duplicate automation changes.",
+      "account_fencing": "Timeline entries and automation navigation stay scoped to the current canonical conversation/account.",
+      "security_boundary": "Event payload is untrusted display/navigation input; it cannot grant capabilities or execute automation merely by rendering.",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/recovered/features/conversation/workspace/transcript_view.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/presentation/MessagingViewModel.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/presentation/AutomationViewModel.kt"
+      ],
+      "android_owner": "Native transcript presentation plus canonical automation navigation owner.",
+      "platform_delta": "React lazy card registry becomes typed native event projection/Compose rows; Android does not need Desktop chunk loading but must preserve discriminants and fail-closed decoding.",
+      "implementation_status": "mapped",
+      "production_wiring": "Current Android MessagingViewModel syncs canonical messages and ConversationTranscript renders message content, but no typed transcript timeline-event union/registry branch for these four Desktop event variants is proven.",
+      "unit_test": "missing focused event decoder/description/Open routine tests for all four variants and malformed payloads",
+      "contract_test": "missing source-neutral transcript timeline-event contract bound to Android canonical owner",
+      "integration_test": "missing exact-head event replay/reload and automation-open journey",
+      "packaged_test": "required final packaged transcript timeline-event acceptance",
+      "device_test": "required device/protected-account acceptance where source events can be generated",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Mapped from real Desktop event registry/resolver/card behavior; no claim that generic Android message rendering is equivalent."
     }
   ],
   "traceability": {
