@@ -5,9 +5,9 @@
     "desktop_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
     "android_repository": "fabu-android/fabushi-android",
     "android_pr": 3,
-    "android_head_at_update": "437096413df1118001f7bb080a0b87e41446261f",
+    "android_head_at_update": "8927278b8ec61145700abb906f226f97f6497195",
     "status": "incomplete",
-    "note": "Incrementally rebased to Desktop main 371b72f1cd20de03dc4dff9a15ed761054968093. Durable Android Agent send acknowledgement is Host-owned and production-wired. Transcript widget respond/dismiss now uses typed Kotlin/Coordinator/Host routes with canonical respondedValue/widgetDismissed settlement, hidden continuation dispatch, rollback and presentation-generation fencing. ClientSideToolV2 relay is durable across process reopen and projects supported 7/15/38 file-edit/file-write/shell cards; Android joins typed results only onto matching canonical tool-call rows and keeps unmatched updates out of the transcript. Exact-head GitHub Actions/package/device verification remains pending and full source closure remains incomplete. Deterministic workspace cursor now has explicit Agent avatar, Agent header and composer responsibilities with current Android gaps recorded separately from unrelated human-conversation surfaces. Deterministic cursor now explicitly maps conversation outline provider/view as one read-only projection responsibility; production outline UI remains open. Deterministic workspace cursor now maps controller composition, Agent attachment staging, durable Agent draft recovery, and native icon replacement."
+    "note": "Incrementally rebased to Desktop main 371b72f1cd20de03dc4dff9a15ed761054968093. Durable send acknowledgement, transcript widget actions and client-side tool-result projection remain Host/Coordinator-owned. At Android code head 8927278b8ec61145700abb906f226f97f6497195, Agent avatar presentation has Desktop-order photo/shared-room/group/persona dispatch and activity-state mapping; Agent composer prompt drafts are durably Host-owned with account/Agent fencing, process-reopen restore, corrupt-store quarantine and clear-if-current; conversation outline is a retained read-only projection over canonical transcript with Agent/subagent tabs and running-subagent polling; Agent find-in-chat searches canonical transcript semantic payloads and has native Enter/Shift+Enter/Escape focus navigation. Rows stay mapped/not-verified where upstream roster fields, full ComposerDraft attachments/recovery, exact occurrence-span highlighting, composed header controls or same-head packaged/device evidence are still missing. Full source closure remains incomplete."
   },
   "responsibilities": [
     {
@@ -8648,15 +8648,15 @@
       "android_owner": "Native Agent identity/avatar presentation.",
       "platform_delta": "Compose Canvas/Image replaces DOM/SVG while preserving identity dispatcher and activity semantics.",
       "implementation_status": "mapped",
-      "production_wiring": "Current production Bot surfaces use ClothGhostAvatarAndroid with agentId/shape/color and busy animation, but do not yet expose Desktop-equivalent avatarDataUrl/shared-room/group dispatcher or full activity-state mapping.",
-      "unit_test": "existing avatar normalization/animation tests cover only part of persona branch; focused dispatcher/activity/group tests required.",
-      "contract_test": "missing typed full Agent avatar projection contract.",
-      "integration_test": "missing exact-head roster→header/transcript avatar branch journey.",
+      "production_wiring": "10fad7a3b9e6daaaad87a5ca0b1a3ec56696b71f production-wires Desktop-order photo → shared-room → group → persona dispatch, bounded image data-URL decode/fallback and thinking/searching/working/loading/orbit/sending activity visual mapping in native Compose. MobileBotSummaryAndroid has typed immutable avatar/activity projection fields. Canonical Host roster still does not populate every Desktop photo/shared-room/activity field, so full end-to-end parity remains open.",
+      "unit_test": "AvatarMotionParityTest covers idle/active motion, awaiting-user precedence, Desktop activity/tool/verb mapping, composing fallback and dispatcher precedence; exact-head later commits still require current CI confirmation.",
+      "contract_test": "Typed immutable MobileBotSummaryAndroid projection exists, but upstream Host roster population for all new avatar/activity fields remains incomplete.",
+      "integration_test": "Native Bot header/transcript use AgentAvatarAndroid; full roster→photo/shared-room/activity branch journey remains missing.",
       "packaged_test": "required final minified package",
       "device_test": "required Agent/group/shared-room visual/accessibility acceptance",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Do not treat generic conversation member avatar/header as equivalent to Agent workspace avatar."
+      "notes": "Mapped, not verified: presentation semantics were added without creating a second canonical identity/activity owner."
     },
     {
       "responsibility_id": "CHAT-HEADER-AGENT-ANDROID-001",
@@ -8712,15 +8712,15 @@
       "android_owner": "Native Bot chat header plus existing settings/Computer/shared-room typed surfaces.",
       "platform_delta": "Compose top bar replaces DOM header; Android navigation/accessibility conventions apply.",
       "implementation_status": "mapped",
-      "production_wiring": "Current GrokBotChatAndroid shows Bot avatar/name and command palette, but exact-head production header does not yet wire settings/details identity action, Computer control, shared-room trigger, group gating or Desktop working-state copy.",
-      "unit_test": "missing focused Agent header branch/gating tests.",
+      "production_wiring": "Current GrokBotChatAndroid shows canonical Bot avatar/name, native working state, settings action, command palette, Find in chat and the Full conversation outline action. Desktop-composed Computer control/shared-room trigger/group gating are still not all present in this header, so the responsibility remains mapped.",
+      "unit_test": "Avatar/header-dependent projection tests exist for avatar and outline entry; focused Computer/shared-room/group header composition tests remain required.",
       "contract_test": "existing settings/Computer/shared-room contracts are separate; missing composed header contract.",
       "integration_test": "missing exact-head Bot header→settings/Computer/shared-room journey.",
       "packaged_test": "required final minified package",
       "device_test": "required phone/tablet accessibility/navigation acceptance",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Human/group ConversationChatHeader is a different product surface and is not replacement evidence for the Agent workspace header."
+      "notes": "Do not promote to implemented/verified until composed Computer/shared-room controls and exact-head UI evidence exist."
     },
     {
       "responsibility_id": "COMPOSER-WORKSPACE-ANDROID-001",
@@ -8850,22 +8850,26 @@
       "security_boundary": "outline is read-only and cannot grant execution capability.",
       "android_disposition": "android-adapted",
       "android_target": [
-        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/production/canonical-agent-transcript.kt",
-        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/recovered/features/conversation/workspace/transcript_view.kt",
-        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/presentation/MobileBotViewModel.kt"
+        "source/android-preload/src/main/kotlin/com/ombhrum/fabushi/androidpreload/runtime/AndroidCoordinatorPort.kt",
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/coordinator/AndroidCoordinatorRuntime.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/presentation/MobileBotViewModel.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/recovered/features/conversation/workspace/conversation-outline_view.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/features/bots/GrokBotComponents.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/features/bots/GrokHomeSurface.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/production/ProductionRenderer_view.kt"
       ],
-      "android_owner": "Planned native read-only outline projection over existing canonical transcript/Coordinator; no second transcript owner.",
+      "android_owner": "Canonical Host transcript remains sole conversation owner; AndroidCoordinator projects typed outline rows and MobileBotViewModel owns only retained read-only panel lifecycle.",
       "platform_delta": "Compose modal/panel and coroutine cancellation replace DOM movable panel/AbortController; lifecycle semantics remain.",
       "implementation_status": "mapped",
-      "production_wiring": "Canonical transcript and Agent/subagent mechanisms exist, but no dedicated retained outline provider/panel, outline family subscription, subagent tabs or 2s running-subagent refresh is production-wired yet.",
-      "unit_test": "missing focused outline parsing/retain/generation/duplicate/update tests.",
-      "contract_test": "missing typed Kotlin Coordinator outline projection contract.",
-      "integration_test": "missing exact-head open/switch/reconnect/dispose journey.",
+      "production_wiring": "ff37e20443db4fbc57e61b71910b274964e6c0d4 adds typed Agent-scoped outline parsing over Host transcript with canonical-ID reconciliation/fail-closed supported rows; 61f2206d5eb9eede8b32ed7b34510e1317ce1f4b adds generation/account fencing, single-flight refresh, pending refresh merge, subagent selection and 2s running-subagent polling; 7e3cc4f807736370d2ae158033fab5a3d23d91b8 wires the native header action, Agent/subagent tabs and expandable read-only panel into ProductionRenderer. Historical/current subagent status richness and same-head packaged/device accessibility evidence remain open.",
+      "unit_test": "ConversationOutlineProjectionTest, ConversationOutlineLifecycleProjectionTest and ConversationOutlineUiProjectionTest cover typed rows, Agent filtering, duplicate-ID reconciliation, malformed fail-closed parsing, subagent dedupe and deterministic UI labels/previews; current exact-head Actions still required.",
+      "contract_test": "AndroidCoordinatorPort conversationOutlineSnapshot is typed and derives from existing transcriptSnapshot; no second transcript store was introduced.",
+      "integration_test": "ProductionRenderer→GrokHomeSurface→GrokBotChatAndroid opens/closes/selects/refreshes outline. Reconnect/device/back/accessibility acceptance remains required.",
       "packaged_test": "required final minified package",
       "device_test": "required phone/tablet accessibility/back/navigation acceptance",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Do not treat the ordinary transcript list as outline parity; Desktop has a separate retained read-only projection lifecycle."
+      "notes": "Mapped pending exact-head green build plus remaining Desktop status/reconnect/accessibility details; ordinary transcript is still the canonical owner."
     },
     {
       "responsibility_id": "CONVERSATION-WORKSPACE-CONTROLLER-ANDROID-001",
@@ -8958,21 +8962,25 @@
       "visible_effect": "Agent draft survives reopen/account restore without resurrecting stale text or clearing edits made after send/restore races.",
       "android_disposition": "android-adapted",
       "android_target": [
-        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/recovered/features/conversation/workspace/draft-state.kt",
-        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/presentation/MobileBotViewModel.kt"
+        "source/host/src/composer_draft.rs",
+        "source/host/src/android_json_runtime.rs",
+        "source/android-preload/src/main/kotlin/com/ombhrum/fabushi/androidpreload/runtime/AndroidCoordinatorPort.kt",
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/coordinator/AndroidCoordinatorRuntime.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/presentation/MobileBotViewModel.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/recovered/features/conversation/workspace/draft-state.kt"
       ],
-      "android_owner": "Required Host/Coordinator-backed Agent draft owner; current human MessagingDraft adapter is precedent but not proof for Agent Bot drafts.",
+      "android_owner": "Host DurableComposerDraftOwner is the durable Agent prompt-draft owner; Coordinator exposes typed read/write/clearIfCurrent and presentation owns only current edit projection.",
       "platform_delta": "Android process-death recovery requires canonical Host/Coordinator persistence instead of renderer clientPersistence.",
       "implementation_status": "mapped",
-      "production_wiring": "Human messaging drafts project canonical Coordinator state, while MobileBotViewModel Bot draft remains presentation state; durable per-Agent Bot draft/recovery and accepted-draft conditional clearing are not production-wired.",
-      "unit_test": "human draft adapter tests do not establish Agent draft parity; focused Agent restore/corruption/race/account-switch tests missing.",
-      "contract_test": "missing typed Agent draft read/write/clear-if-current contract.",
-      "integration_test": "missing process-death/reopen and accepted-send clearing journey.",
+      "production_wiring": "590046326ac657238b24e9839f2302507d9ad932 replaced process-memory draftsByBot with Host composer-drafts.json scoped by account fence + account slot + Agent, durable draftId, process-reopen restore, corrupt-store quarantine and clearIfCurrent so an older accepted send cannot clear a newer edit. Agent and Mini App send journal the exact draft before side effects. Full Desktop ComposerDraft attachments/richText/replyToId/isFork plus separate recovery-draft semantics remain missing.",
+      "unit_test": "source/host/tests/composer_draft_android_contract.rs ran 4/4 success in rust-runtime-foundation job 114492153343 at 590046326ac657238b24e9839f2302507d9ad932: process reopen/account-agent fencing, stale conditional clear, Host contract restore, corrupt quarantine.",
+      "contract_test": "Typed composerDraftRead/write/clearIfCurrent Coordinator contract is production-wired; full structured ComposerDraft schema is still incomplete.",
+      "integration_test": "Presentation restore/write/send-clear is wired with scope/edit-generation fencing; full structured attachment/recovery process-death journey remains required.",
       "packaged_test": "required final minified package",
       "device_test": "required",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Do not add a second local preference store; follow Android canonical Host/Coordinator ownership."
+      "notes": "Keep mapped: durable prompt correctness is real, but Desktop structured draft and recovery payload is broader than prompt-only Android implementation."
     },
     {
       "responsibility_id": "WORKSPACE-ICON-ANDROID-001",
@@ -9131,17 +9139,17 @@
         "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/features/conversations/ConversationSurfaces.kt"
       ],
       "android_owner": "Compose presentation owns only ephemeral find projection. Human and Agent surfaces both derive matches from their current immutable transcript; neither writes canonical transcript state.",
-      "platform_delta": "Compose list scrolling and row-level selection replace DOM Range/CSS Highlights. Android must use native focus/IME/accessibility semantics. Exact per-occurrence text-span highlighting and Desktop message author/attachment-name indexing require richer Android transcript projection than currently available.",
+      "platform_delta": "Compose list scrolling and native key/focus APIs replace DOM Range/CSS Highlights. Android now indexes Desktop semantic payload classes, but current visual highlight remains row-level rather than exact occurrence span.",
       "implementation_status": "mapped",
-      "production_wiring": "765ed696ded43de194efbdef23522324f1d4be21 wires find-in-chat into Agent Bot production UI using Desktop-compatible message/widget semantic payload projection, every-occurrence matching, null-selection/next wrap behavior, current-row scroll/highlight and the shared FindInChatBar. Human messaging already had a separate find surface. Remaining gaps are typed Agent author/attachment indexing, exact occurrence-span highlighting, focus/select and Enter/Shift+Enter/Escape parity, and one unified scoped lifecycle owner.",
-      "unit_test": "mobile/android/app/src/test/java/com/ombhrum/fabushi/AgentFindInChatProjectionTest.kt covers message occurrence enumeration, widget prompt indexing, action exclusion, blank/literal query behavior and Desktop-compatible stepping; exact-head GitHub Actions pending.",
-      "contract_test": "No network/Host mutation contract is introduced; search consumes immutable transcript projections only.",
-      "integration_test": "Agent production Compose wiring exists at 765ed696ded43de194efbdef23522324f1d4be21; focused instrumentation for keyboard/focus/accessibility and account/Agent reopen remains required.",
+      "production_wiring": "78fc92888985e4387da9a226dabe83916e4f27c5 changes Agent find from rendered MESSAGE/WIDGET-only data to a typed semantic projection of the same canonical Host transcript snapshot: message content+author+attachment names, notice text, send-message text/widget/email-draft/slack-draft; Agent scope is filtered before UI state. e44961d60b143940d11d296c77a3718af31d27f0 adds native Enter next / Shift+Enter previous / Escape close and auto-focus; 8927278b8ec61145700abb906f226f97f6497195 retains the FocusRequester across recomposition. Current selected result scrolls to canonical rendered row. Exact text-occurrence span highlighting and a single unified Human/Agent controller remain open.",
+      "unit_test": "AgentFindInChatCanonicalProjectionTest covers Agent isolation, message author/attachment, notice/widget/email/slack payloads, per-occurrence enumeration and Desktop null-selection stepping. Existing AgentFindInChatProjectionTest covers prior visible projection behavior. Current exact-head GitHub Actions pending.",
+      "contract_test": "Search remains read-only: AndroidFindInChatEntry is derived from canonical transcript JSON and introduces no Host mutation or second transcript owner.",
+      "integration_test": "Production Agent chat consumes state.findEntries for match navigation with native focus/keyboard controls. Instrumented keyboard/IME/TalkBack and exact occurrence-span highlight tests remain required.",
       "packaged_test": "required final minified package",
       "device_test": "required keyboard/IME/accessibility and account-switch acceptance",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Keep mapped until exact per-occurrence highlighting, full searchable payload projection and lifecycle/keyboard semantics are demonstrated on the same exact HEAD."
+      "notes": "Keep mapped until exact occurrence-span visual semantics, unified scoped lifecycle, same-head CI and device accessibility evidence are complete."
     },
     {
       "responsibility_id": "CONVERSATION-MEDIA-VIEWER-ANDROID-001",
@@ -9398,7 +9406,7 @@
     }
   },
   "metadata": {
-    "android_head_at_update": "499519f84427b935cd41fff49c0f49e84f31d6a8",
+    "android_head_at_update": "8927278b8ec61145700abb906f226f97f6497195",
     "note": " Deterministic editor cursor now records the shipped suggestion boundary: Android has production-wired Agent/scheduled-automation projection with stale fencing, while Desktop PR/MCP providers are explicitly dormant in the current production adapter. Agent find-in-chat is now production-wired for message/widget semantic search and wrap navigation, while occurrence-span highlighting and richer searchable payloads remain mapped gaps. Native media viewer gallery is production-wired for Human conversations with navigation/zoom/stale-load fencing; in-app PDF rendering is now implemented at 499519f… and pending exact-head CI/device evidence, while Agent attachment/audio/focus semantics remain mapped."
   }
 }
