@@ -1204,6 +1204,17 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
             .put("acknowledged", snapshot.acknowledged)
             .put("outcomeUnknown", snapshot.outcomeUnknown)
             .put("kind", snapshot.kind?.name?.lowercase() ?: JSONObject.NULL)
+            .put("source", snapshot.source?.name?.lowercase() ?: JSONObject.NULL)
+            .put("boxPhase", snapshot.boxPhase ?: JSONObject.NULL)
+            .put("pullPercent", snapshot.pullPercent ?: JSONObject.NULL)
+            .put("migrationPhases", JSONArray(snapshot.migrationPhases.map { phase ->
+                phase.name.lowercase().replace('_', '-')
+            }))
+            .put("connected", snapshot.connected)
+            .put("leftHealthy", snapshot.leftHealthy)
+            .put("teardown", snapshot.teardown.name.lowercase())
+            .put("reconnectedSinceLeft", snapshot.reconnectedSinceLeft)
+            .put("terminalMigration", snapshot.terminalMigration)
             .put("lastResolution", snapshot.lastResolution?.name?.lowercase() ?: JSONObject.NULL)
     }
 
@@ -1558,8 +1569,15 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
         val epoch = accountAccessOwner.currentProjection().accountEpoch
         when (event.optString("type")) {
             "forever-box" -> {
-                val (boxId, phase) = projectForeverBoxRebuildEvent(event) ?: return
-                runCatching { computerRebuildOwner.observeBox(epoch, boxId, phase) }
+                val box = projectForeverBoxRebuildEvent(event) ?: return
+                runCatching {
+                    computerRebuildOwner.observeBox(
+                        epoch,
+                        box.boxId,
+                        box.phase,
+                        box.pullPercent,
+                    )
+                }
             }
             "dev-box-rebuild" -> {
                 if (!isDevBoxRebuildStartEvent(event)) return
