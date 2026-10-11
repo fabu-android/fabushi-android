@@ -57,6 +57,8 @@ import java.io.File
 
 private const val ANDROID_MEDIA_MIN_ZOOM = 1f
 private const val ANDROID_MEDIA_MAX_ZOOM = 5f
+private const val ANDROID_PDF_MIN_ZOOM = 0.5f
+private const val ANDROID_PDF_MAX_ZOOM = 4f
 
 internal fun isAndroidMediaPreviewable(message: ChatMessage): Boolean =
     message.contentType == "photo" || message.contentType == "video"
@@ -74,6 +76,9 @@ internal fun stepAndroidPdfPageIndex(current: Int, delta: Int, count: Int): Int 
     if (count <= 0) return -1
     return (current.coerceIn(0, count - 1) + delta).coerceIn(0, count - 1)
 }
+
+internal fun clampAndroidPdfZoom(value: Float): Float =
+    value.coerceIn(ANDROID_PDF_MIN_ZOOM, ANDROID_PDF_MAX_ZOOM)
 
 private data class AndroidRenderedPdfPage(
     val bitmap: Bitmap,
@@ -155,6 +160,8 @@ internal fun AndroidMediaViewer(
     var pdfBitmap by remember(message.id) { mutableStateOf<Bitmap?>(null) }
     var pdfLoading by remember(message.id) { mutableStateOf(false) }
     var pdfError by remember(message.id) { mutableStateOf<String?>(null) }
+    var pdfScale by remember(message.id) { mutableStateOf(1f) }
+    var pdfOffset by remember(message.id) { mutableStateOf(Offset.Zero) }
     var pdfGeneration by remember { mutableStateOf(0L) }
 
     DisposableEffect(Unit) {
@@ -178,6 +185,8 @@ internal fun AndroidMediaViewer(
         pdfBitmap = null
         pdfLoading = false
         pdfError = null
+        pdfScale = 1f
+        pdfOffset = Offset.Zero
         pdfGeneration += 1
 
         val blobId = message.mediaBlobId
@@ -347,6 +356,8 @@ internal fun AndroidMediaViewer(
                                         -1,
                                         pdfPageCount,
                                     )
+                                    pdfScale = 1f
+                                    pdfOffset = Offset.Zero
                                 },
                                 enabled = pdfPageCount > 0 && pdfPageIndex > 0 && !pdfLoading,
                                 modifier = Modifier.testTag("android-pdf-previous"),
@@ -367,12 +378,48 @@ internal fun AndroidMediaViewer(
                                         1,
                                         pdfPageCount,
                                     )
+                                    pdfScale = 1f
+                                    pdfOffset = Offset.Zero
                                 },
                                 enabled = pdfPageCount > 0 &&
                                     pdfPageIndex < pdfPageCount - 1 &&
                                     !pdfLoading,
                                 modifier = Modifier.testTag("android-pdf-next"),
                             ) { Text("下一页", color = Color.White) }
+                            TextButton(
+                                onClick = {
+                                    pdfScale = clampAndroidPdfZoom(pdfScale - 0.25f)
+                                    if (pdfScale <= 1f) pdfOffset = Offset.Zero
+                                },
+                                enabled = pdfScale > ANDROID_PDF_MIN_ZOOM,
+                                modifier = Modifier.testTag("android-pdf-zoom-out"),
+                            ) { Text("−", color = Color.White) }
+                            Text(
+                                "${(pdfScale * 100).toInt()}%",
+                                color = Color.White,
+                                modifier = Modifier.testTag("android-pdf-zoom-indicator"),
+                            )
+                            TextButton(
+                                onClick = {
+                                    pdfScale = clampAndroidPdfZoom(pdfScale + 0.25f)
+                                },
+                                enabled = pdfScale < ANDROID_PDF_MAX_ZOOM,
+                                modifier = Modifier.testTag("android-pdf-zoom-in"),
+                            ) { Text("+", color = Color.White) }
+                            TextButton(
+                                onClick = {
+                                    pdfScale = 1f
+                                    pdfOffset = Offset.Zero
+                                },
+                                enabled = pdfScale != 1f || pdfOffset != Offset.Zero,
+                                modifier = Modifier.testTag("android-pdf-fit"),
+                            ) { Text("适应", color = Color.White) }
+                            Button(
+                                onClick = {
+                                    openMediaFile(context, file!!, message.mediaMimeType)
+                                },
+                                modifier = Modifier.testTag("android-pdf-open-external"),
+                            ) { Text("外部打开") }
                         }
                         Box(
                             Modifier.weight(1f).fillMaxWidth(),
@@ -395,6 +442,23 @@ internal fun AndroidMediaViewer(
                                     contentScale = ContentScale.Fit,
                                     modifier = Modifier
                                         .fillMaxSize()
+                                        .pointerInput(message.id, pdfPageIndex) {
+                                            detectTransformGestures { _, pan, zoom, _ ->
+                                                val nextScale = clampAndroidPdfZoom(pdfScale * zoom)
+                                                pdfScale = nextScale
+                                                pdfOffset = if (nextScale <= 1f) {
+                                                    Offset.Zero
+                                                } else {
+                                                    pdfOffset + pan
+                                                }
+                                            }
+                                        }
+                                        .graphicsLayer(
+                                            scaleX = pdfScale,
+                                            scaleY = pdfScale,
+                                            translationX = pdfOffset.x,
+                                            translationY = pdfOffset.y,
+                                        )
                                         .testTag("android-pdf-page"),
                                 )
                             }
