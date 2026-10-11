@@ -456,6 +456,19 @@ class AndroidUpdateViewModel(application: Application) : AndroidViewModel(applic
                     ),
                 )
             } catch (error: Exception) {
+                updaterTelemetry.record(
+                    AndroidUpdaterTelemetryEvent(
+                        category = "stage",
+                        action = "verified",
+                        result = "error",
+                        trigger = "manual",
+                        track = _trackPolicy.value.effectiveTrack,
+                        currentVersion = currentVersion,
+                        targetVersion = release.version,
+                        durationMs = SystemClock.elapsedRealtime() - stageStarted,
+                        errorClass = error.javaClass.simpleName,
+                    ),
+                )
                 _state.value = AndroidUpdateUiState(
                     phase = AndroidUpdatePhase.ERROR,
                     currentVersion = currentVersion,
@@ -494,6 +507,17 @@ class AndroidUpdateViewModel(application: Application) : AndroidViewModel(applic
         if (!force && now - lastCheckAtMs < UPDATE_CHECK_MIN_INTERVAL_MS) return
         lastCheckAtMs = now
         checkJob = viewModelScope.launch {
+            val checkStarted = SystemClock.elapsedRealtime()
+            updaterTelemetry.record(
+                AndroidUpdaterTelemetryEvent(
+                    category = "check",
+                    action = "started",
+                    result = "pending",
+                    trigger = if (force) "manual" else "foreground",
+                    track = _trackPolicy.value.effectiveTrack,
+                    currentVersion = currentVersion,
+                ),
+            )
             _state.value = AndroidUpdateUiState(
                 phase = AndroidUpdatePhase.CHECKING,
                 currentVersion = currentVersion,
@@ -503,6 +527,18 @@ class AndroidUpdateViewModel(application: Application) : AndroidViewModel(applic
             try {
                 val found = withContext(Dispatchers.IO) { findLatestUpdate() }
                 candidate = found
+                updaterTelemetry.record(
+                    AndroidUpdaterTelemetryEvent(
+                        category = "check",
+                        action = "result",
+                        result = if (found == null) "up_to_date" else "available",
+                        trigger = if (force) "manual" else "foreground",
+                        track = _trackPolicy.value.effectiveTrack,
+                        currentVersion = currentVersion,
+                        targetVersion = found?.version,
+                        durationMs = SystemClock.elapsedRealtime() - checkStarted,
+                    ),
+                )
                 _state.value = if (found == null) {
                     AndroidUpdateUiState(
                         phase = AndroidUpdatePhase.UP_TO_DATE,
@@ -521,6 +557,18 @@ class AndroidUpdateViewModel(application: Application) : AndroidViewModel(applic
                     )
                 }
             } catch (error: Exception) {
+                updaterTelemetry.record(
+                    AndroidUpdaterTelemetryEvent(
+                        category = "check",
+                        action = "result",
+                        result = "error",
+                        trigger = if (force) "manual" else "foreground",
+                        track = _trackPolicy.value.effectiveTrack,
+                        currentVersion = currentVersion,
+                        durationMs = SystemClock.elapsedRealtime() - checkStarted,
+                        errorClass = error.javaClass.simpleName,
+                    ),
+                )
                 _state.value = AndroidUpdateUiState(
                     phase = AndroidUpdatePhase.ERROR,
                     currentVersion = currentVersion,
@@ -545,6 +593,7 @@ class AndroidUpdateViewModel(application: Application) : AndroidViewModel(applic
         }
 
         downloadJob = viewModelScope.launch {
+            val stageStarted = SystemClock.elapsedRealtime()
             try {
                 _state.value = AndroidUpdateUiState(
                     phase = AndroidUpdatePhase.DOWNLOADING,
@@ -558,6 +607,18 @@ class AndroidUpdateViewModel(application: Application) : AndroidViewModel(applic
                 val apk = withContext(Dispatchers.IO) { downloadAndVerify(release) }
                 pendingApk = apk
                 applyStore.write(markerFor(release, AndroidUpdateApplyPhase.STAGED))
+                updaterTelemetry.record(
+                    AndroidUpdaterTelemetryEvent(
+                        category = "stage",
+                        action = "verified",
+                        result = "success",
+                        trigger = "manual",
+                        track = _trackPolicy.value.effectiveTrack,
+                        currentVersion = currentVersion,
+                        targetVersion = release.version,
+                        durationMs = SystemClock.elapsedRealtime() - stageStarted,
+                    ),
+                )
                 requestPackageInstall(apk)
             } catch (error: Exception) {
                 _state.value = AndroidUpdateUiState(
@@ -797,6 +858,17 @@ class AndroidUpdateViewModel(application: Application) : AndroidViewModel(applic
         val release = candidate ?: return
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && !canInstallPackages()) {
             awaitingInstallPermission = true
+            updaterTelemetry.record(
+                AndroidUpdaterTelemetryEvent(
+                    category = "apply",
+                    action = "permission",
+                    result = "required",
+                    trigger = "manual",
+                    track = _trackPolicy.value.effectiveTrack,
+                    currentVersion = currentVersion,
+                    targetVersion = release.version,
+                ),
+            )
             _state.value = AndroidUpdateUiState(
                 phase = AndroidUpdatePhase.WAITING_FOR_PERMISSION,
                 currentVersion = currentVersion,
@@ -833,6 +905,17 @@ class AndroidUpdateViewModel(application: Application) : AndroidViewModel(applic
         }
         val requested = markerFor(release, AndroidUpdateApplyPhase.REQUESTED)
         applyStore.write(requested)
+        updaterTelemetry.record(
+            AndroidUpdaterTelemetryEvent(
+                category = "apply",
+                action = "installer_request",
+                result = "requested",
+                trigger = "manual",
+                track = _trackPolicy.value.effectiveTrack,
+                currentVersion = currentVersion,
+                targetVersion = release.version,
+            ),
+        )
         try {
             applicationContext.startActivity(intent)
             _state.value = AndroidUpdateUiState(
@@ -844,6 +927,18 @@ class AndroidUpdateViewModel(application: Application) : AndroidViewModel(applic
                 message = "安装包已验证，系统安装器已打开。确认安装后 Android 会完成升级。",
             )
         } catch (error: Exception) {
+            updaterTelemetry.record(
+                AndroidUpdaterTelemetryEvent(
+                    category = "apply",
+                    action = "installer_request",
+                    result = "spawn_failed",
+                    trigger = "manual",
+                    track = _trackPolicy.value.effectiveTrack,
+                    currentVersion = currentVersion,
+                    targetVersion = release.version,
+                    errorClass = error.javaClass.simpleName,
+                ),
+            )
             applyStore.write(
                 requested.copy(
                     phase = AndroidUpdateApplyPhase.SPAWN_FAILED,
@@ -901,14 +996,23 @@ class AndroidUpdateViewModel(application: Application) : AndroidViewModel(applic
 
     private fun restorePendingApply() {
         val marker = applyStore.read() ?: return
-        when (
-            AndroidUpdateRecoveryPolicy.decide(
-                marker = marker,
+        val decision = AndroidUpdateRecoveryPolicy.decide(
+            marker = marker,
+            currentVersion = currentVersion,
+            currentVersionCode = currentVersionCode,
+            nowMs = System.currentTimeMillis(),
+        )
+        updaterTelemetry.record(
+            AndroidUpdaterTelemetryEvent(
+                category = "recovery",
+                action = "apply_marker",
+                result = decision.name.lowercase(),
                 currentVersion = currentVersion,
-                currentVersionCode = currentVersionCode,
-                nowMs = System.currentTimeMillis(),
-            )
-        ) {
+                targetVersion = marker.targetVersion,
+                phase = marker.phase.name.lowercase(),
+            ),
+        )
+        when (decision) {
             AndroidUpdateRecoveryDecision.CONFIRMED -> {
                 applyStore.clear()
                 _state.value = AndroidUpdateUiState(
