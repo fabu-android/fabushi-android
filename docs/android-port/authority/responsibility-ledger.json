@@ -12216,21 +12216,25 @@
       "android_disposition": "direct-port",
       "android_target": [
         "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/recovered/features/roster/access-readiness.kt",
-        "mobile/android/app/src/test/java/com/ombhrum/fabushi/RosterAccessReadinessTest.kt"
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/production/ProductionRenderer_view.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/features/bots/GrokHomeSurface.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/features/bots/GrokBotComponents.kt",
+        "mobile/android/app/src/test/java/com/ombhrum/fabushi/RosterAccessReadinessTest.kt",
+        "tests/test_agent_roster_presentation_wiring.py"
       ],
-      "android_owner": "Pure Kotlin roster readiness projector",
+      "android_owner": "Pure Kotlin roster readiness projector over Coordinator-owned account/root-connection projections; no persisted or canonical state.",
       "platform_delta": "none beyond enum naming.",
-      "implementation_status": "mapped",
-      "production_wiring": "Exact projector and tests exist but root production consumer is not yet fully wired.",
-      "unit_test": "RosterAccessReadinessTest",
-      "contract_test": "recovered-runtime-models contract",
-      "integration_test": "root wiring pending",
+      "implementation_status": "implemented",
+      "production_wiring": "Shipping ProductionRenderer derives RosterAccessReadiness from immutable AccountAccessProjection + RootConnectionResilienceProjection + current canonical bot roster. GrokHomeSurface uses loaded+connected to gate canonical roster navigation/open actions and passes isSelectionReady to GrokBotChatAndroid for canonical roster-agent send gating. Synthetic Mahayana remains outside roster selection gating. No ViewModel/Compose account or transport owner was added.",
+      "unit_test": "RosterAccessReadinessTest covers exact selector prerequisites, blank failure rejection, canonical projection adapter, epoch-scoped non-secret account key, down transport, restored roster, privacy block, and failure metadata.",
+      "contract_test": "Desktop access-readiness.ts@76ee042975b6550864392084cc2a04548d48f6b3 audited at Desktop 371b72f1cd20de03dc4dff9a15ed761054968093; tests/test_agent_roster_presentation_wiring.py locks production derivation and action gating.",
+      "integration_test": "Same exact-head GitHub Actions required; protected device journey remains required.",
       "packaged_test": "required",
       "device_test": "required",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Model implemented; responsibility stays mapped until shipping root uses it.",
-      "android_head_at_update": "2e6f7598ab3a73fcec2ab5be857e55ae52bad2ac"
+      "notes": "Production consumer is now wired without a second account/transport/roster truth. Same-head Kotlin/JVM/Python/architecture/package evidence is pending.",
+      "android_head_at_update": "561c396e2337c6895de8ab10d85f62256fc84bb6"
     },
     {
       "responsibility_id": "ROSTER-SELECTION-PERSISTENCE-ANDROID-001",
