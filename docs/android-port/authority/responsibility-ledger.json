@@ -5,9 +5,9 @@
     "desktop_commit": "d575b4f77b6895eea4ecaced96e5c512964bf3ed",
     "android_repository": "fabu-android/fabushi-android",
     "android_pr": 3,
-    "android_head_at_update": "4a7f591fcad256e3fcea414fa0f4f51e9a389b15",
+    "android_head_at_update": "22bcaa9e35fd958063b6df47753f39b6c242a1dc",
     "status": "incomplete",
-    "note": "Incrementally rebased to Desktop main d575b4f7. Relative to 92fcc2b0, Desktop changed only three tracked specification documents (two added, one modified); no shipping source blob changed. Existing responsibility mappings are retained only where source blobs are identical. The modified canonical runtime spec was human-reviewed for its OMA-001/FPM-001 additions; those two newly added extension specs remain unreviewed source rows pending dedicated responsibility mapping. No verification is inherited. COMPUTER-UPDATE-CONFIRMATION-ANDROID-001 added as implemented/not-verified at c727506a; busy when-idle queue and same-head packaged/device evidence remain open. TEACH-RECORDING-ANDROID-001 mapped at 4a7f591f with durable Rust owner only; production Remote Runner/API/UI remains open."
+    "note": "Incrementally rebased to Desktop main d575b4f7. Relative to 92fcc2b0, Desktop changed only three tracked specification documents (two added, one modified); no shipping source blob changed. Existing responsibility mappings are retained only where source blobs are identical. The modified canonical runtime spec was human-reviewed for its OMA-001/FPM-001 additions; those two newly added extension specs remain unreviewed source rows pending dedicated responsibility mapping. No verification is inherited. COMPUTER-UPDATE-CONFIRMATION-ANDROID-001 added as implemented/not-verified at c727506a; busy when-idle queue and same-head packaged/device evidence remain open. TEACH-RECORDING-ANDROID-001 mapped at 4a7f591f with durable Rust owner only; production Remote Runner/API/UI remains open. Teach Recording advanced through 22bcaa9e with Host-owned status and Desktop-compatible queue authenticity/clientNonce protocol; start/stop Remote Runner and remote queue/UI remain open."
   },
   "responsibilities": [
     {
@@ -7098,20 +7098,21 @@
       "android_disposition": "android-adapted",
       "android_target": [
         "source/host/src/extensions/teach_recording.rs",
-        "source/host/src/extensions/mod.rs"
+        "source/host/src/extensions/mod.rs",
+        "source/host/src/android_json_runtime.rs"
       ],
-      "android_owner": "Rust Host durable TeachRecording owner; authenticated Remote Runner adapter and Compose Remote Computer surface remain pending",
+      "android_owner": "Rust Host DurableTeachRecordingOwner + AndroidJsonHost status projection; protected Remote Runner execution adapter remains pending",
       "platform_delta": "Desktop Forever Box/X11 ffmpeg execution cannot run in the Android app. Android keeps the state/identity/recovery contract in Rust and must execute the actual private-desktop recording only through an explicitly authorized Remote Runner. Current commit migrates only the durable canonical owner.",
       "implementation_status": "mapped",
-      "production_wiring": "Partial at 4a7f591fcad256e3fcea414fa0f4f51e9a389b15: Rust DurableTeachRecordingOwner is compiled into Host extensions and owns account/request/operation identity, 10-minute contract and process-reopen outcome-unknown recovery. get/start/stop Host API, Remote Runner recording adapter, signed learning queue delivery and native Remote Computer controls are not yet production-wired.",
-      "unit_test": "Rust module includes tests for start/stop identity fencing, duplicate episode rejection, account-switch fencing, ten-minute cap and process-reopen outcome-unknown recovery; same-head GitHub Actions pending.",
-      "contract_test": "Pending exact-head GitHub Actions. Desktop API/queue and authorized Remote Runner replacement still need end-to-end contract tests.",
-      "integration_test": "not yet; Remote Runner enrollment is an external prerequisite for real recording execution",
+      "production_wiring": "Partial through Android 22bcaa9e35fd958063b6df47753f39b6c242a1dc: DurableTeachRecordingOwner is opened by AndroidJsonHost as canonical Host state, feature.teachRecording.status projects durable phase/identity/reconciliation state, logout fences an active episode, and generic shell/computer Remote bindings are explicitly not promoted into Teach authority. Pure Desktop-compatible queue scope/HMAC-SHA256 signature/clientNonce verification is implemented in Rust. start/stop Host APIs, a bounded teach-recording Remote Runner executor, remote pending/claimed/rejected queue I/O, learning prompt delivery and native controls remain open.",
+      "unit_test": "Rust tests now cover owner start/stop identity fencing, duplicate episode/account-switch rejection, ten-minute cap, process-reopen outcome-unknown, Host status persistence, fail-closed generic Remote binding, queue scope, HMAC-SHA256 authenticity, stable client nonce and traversal/malformed-signature rejection. Exact-head GitHub Actions for 22bcaa9e are running at ledger update time.",
+      "contract_test": "Pure queue authenticity/clientNonce contract and Host status projection are implemented. Exact-head Actions are still required; bounded Remote Runner start/stop and remote queue lifecycle contracts remain open.",
+      "integration_test": "Host status is production-dispatch wired. Recording start/stop, remote queue ownership and learning workflow delivery remain unintegrated because protected Remote Runner teach capability is not enrolled.",
       "packaged_test": "not yet",
       "device_test": "not yet",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Do not promote beyond mapped until Host APIs, authorized Remote Runner adapter, signed queue recovery and native UI are wired. Actual Remote Runner protected enrollment remains externally blocked, but core owner work is independently implemented."
+      "notes": "Partial implementation advanced through 22bcaa9e: canonical status owner + queue crypto protocol exist. Keep mapped/not-verified until bounded Remote Runner start/stop, remote queue recovery, learning delivery and native UI are wired and same-head evidence passes."
     }
   ],
   "traceability": {

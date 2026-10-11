@@ -31,7 +31,7 @@
   "symlinks": [],
   "truncation_fallback_used": false,
   "initial_status": "unreviewed",
-  "ledger_sha256": "b716edfe89f2bb97fba4e6a7bf81a4bf5c193dc3ba38024d76268b16dfbb0f9d",
-  "closure_review": "incremental-rebaseline-to-d575-complete-new-specs-unreviewed-semantic-review-continuing-computer-update-mapped-teach-recording-mapped",
+  "ledger_sha256": "a86f8745cd0a072c333fe322bc5292be6afeb2fbb09c60a8c1b631cf45587dbe",
+  "closure_review": "incremental-rebaseline-to-d575-complete-new-specs-unreviewed-semantic-review-continuing-computer-update-mapped-teach-recording-status-and-authenticity-mapped",
   "product_acceptance": "not-claimed"
 }
