@@ -9445,6 +9445,133 @@
       "artifact": null,
       "verification_status": "not-verified",
       "notes": "Do not use this row to claim end-to-end Agent attachment parity. Durable composer draft currently stores prompt only; Host chat.send currently persists text-only user messages. The existing durable send acknowledgement owner supports user-attachment echoes, but the Agent send production chain still does not produce those entries."
+    },
+    {
+      "responsibility_id": "CONVERSATION-MATH-RENDERING-ANDROID-001",
+      "domain": "conversation-workspace-rich-content",
+      "desktop_sources": [
+        {
+          "path": "frontend/src/recovered/features/conversation/workspace/math.tsx",
+          "blob_sha": "118366a96c0ec839fb0d1ce7ac9673005ddc8665",
+          "symbols": [
+            "loadShippedKatexRuntime",
+            "renderKatexMarkup",
+            "splitAssistantInlineMath",
+            "AssistantMath"
+          ]
+        }
+      ],
+      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "responsibility": "Render shipped assistant inline/display math with the canonical KaTeX semantics, including disabled single-dollar inline math, strict first render, tolerant fallback, readable source fallback while runtime loading/unavailable, and stale async result fencing.",
+      "source_owner": "Desktop conversation rich-content presentation; transcript text remains canonical outside the renderer.",
+      "direct_callers": [
+        "assistant rich text/markdown transcript renderer"
+      ],
+      "downstream_dependencies": [
+        "shipped KaTeX runtime asset",
+        "assistant transcript text"
+      ],
+      "state_owner": "Presentation owns only ephemeral rendered markup/runtime load state.",
+      "persistent_state": [
+        "none; canonical transcript text is re-rendered after reopen"
+      ],
+      "protocol_wire_contract": [
+        "inline math uses \\\\( ... \\\\) with single-dollar text math disabled",
+        "displayMode and expression identity fence async render results"
+      ],
+      "visible_effect": "Assistant mathematical notation renders legibly instead of appearing only as raw delimiters, while parse/runtime failures retain readable source.",
+      "failure_behavior": [
+        "runtime load failure leaves source fallback",
+        "render error retries only inside pure renderer with throwOnError=false and otherwise emits visible error/source"
+      ],
+      "cancellation_behavior": "component disposal/expression change drops late runtime completion",
+      "retry_semantics": "pure rendering may retry tolerant parsing; no product side effect is retried",
+      "idempotency_semantics": "same expression/display mode produces presentation-only output",
+      "process_death_recovery": "reload transcript and render again; no durable renderer state",
+      "account_fencing": "renderer receives already-scoped transcript content and owns no account state",
+      "security_boundary": "rendered math is presentation-only; Android replacement must not expose arbitrary WebView/JS privileges",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/features/bots/GrokBotComponents.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/recovered/features/conversation/workspace"
+      ],
+      "android_owner": "Native rich-content presentation over immutable transcript projection.",
+      "platform_delta": "Android currently renders Agent transcript text with Compose Text and has no KaTeX-equivalent native/shipped renderer. A bounded native math renderer or isolated non-privileged rendering surface is required; raw WebView access is not an acceptable shortcut.",
+      "implementation_status": "mapped",
+      "production_wiring": "Current Agent transcript path proves a gap: assistant text is rendered by plain Compose Text with no math tokenization/runtime. No production-equivalent Android renderer exists at this HEAD.",
+      "unit_test": "missing split/token/fallback/stale-result tests matching math.tsx",
+      "contract_test": "missing renderer security/fallback contract",
+      "integration_test": "missing assistant inline/display math transcript journey",
+      "packaged_test": "required final minified package math rendering acceptance",
+      "device_test": "required font/scaling/accessibility/theme acceptance",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Source audited at Desktop main 371b72f1; mapped as a real production gap, not N/A."
+    },
+    {
+      "responsibility_id": "CONVERSATION-MERMAID-RENDERING-ANDROID-001",
+      "domain": "conversation-workspace-rich-content",
+      "desktop_sources": [
+        {
+          "path": "frontend/src/recovered/features/conversation/workspace/mermaid.tsx",
+          "blob_sha": "9eefd666c55624cceab01225b21ff3e39f925439",
+          "symbols": [
+            "loadShippedMermaidRuntime",
+            "renderMermaid",
+            "MermaidDiagram",
+            "MermaidViewer",
+            "MermaidDiagramFigure"
+          ]
+        }
+      ],
+      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "responsibility": "Render Mermaid code with strict-security initialization, parse-before-render fail-closed behavior, bounded cache/serialized rendering, theme-sensitive output, invalid-code fallback, full-screen preview, zoom/pan/fit controls, and stale/dispose fencing.",
+      "source_owner": "Desktop conversation rich-content presentation; transcript/code text remains canonical outside renderer.",
+      "direct_callers": [
+        "assistant markdown fenced-code Mermaid renderer"
+      ],
+      "downstream_dependencies": [
+        "shipped Mermaid runtime asset",
+        "theme projection",
+        "assistant transcript code blocks"
+      ],
+      "state_owner": "Presentation owns bounded render cache and ephemeral viewer transform only.",
+      "persistent_state": [
+        "none; diagram source remains canonical transcript text"
+      ],
+      "protocol_wire_contract": [
+        "Mermaid runtime starts with securityLevel=strict",
+        "parse false/render failure produces explicit fallback",
+        "cache capped at 64 and render queue serialized"
+      ],
+      "visible_effect": "Assistant Mermaid diagrams render safely and can be inspected full-screen with bounded zoom/pan; invalid diagrams remain readable as source.",
+      "failure_behavior": [
+        "invalid/render failure shows explicit error plus source fallback",
+        "runtime load failure does not fabricate diagram output"
+      ],
+      "cancellation_behavior": "code/theme/dispose fence late render completion; viewer close discards transform state",
+      "retry_semantics": "presentation render may be recomputed from source; no external side effect retry",
+      "idempotency_semantics": "cache key is theme + code and rendering is presentation-only",
+      "process_death_recovery": "reload transcript source and render again",
+      "account_fencing": "renderer consumes already-scoped canonical text and owns no account state",
+      "security_boundary": "strict Mermaid rendering must not become a privileged arbitrary WebView/JS bridge on Android",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/features/bots/GrokBotComponents.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/recovered/features/conversation/workspace"
+      ],
+      "android_owner": "Native/isolated rich-content renderer with no canonical transcript ownership.",
+      "platform_delta": "Android currently has no Mermaid renderer; replacement must preserve strict parsing/security, bounded render lifecycle and native full-screen gesture/accessibility behavior without exposing privileged Java/Kotlin objects.",
+      "implementation_status": "mapped",
+      "production_wiring": "Current Agent transcript path uses plain Compose Text and contains no Mermaid detection/rendering. Production parity is missing.",
+      "unit_test": "missing strict parse/cache/theme/invalid/stale render tests",
+      "contract_test": "missing isolated renderer/no-privilege contract",
+      "integration_test": "missing assistant Mermaid code block and full-screen viewer journey",
+      "packaged_test": "required final minified package diagram acceptance",
+      "device_test": "required touch zoom/pan/theme/accessibility acceptance",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Source audited at Desktop main 371b72f1; mapped as a real production gap, not N/A."
     }
   ],
   "traceability": {
@@ -9478,7 +9605,7 @@
     }
   },
   "metadata": {
-    "android_head_at_update": "615ea567464c0aabd9a74f4bcf06b8194c2bb2c6",
+    "android_head_at_update": "a3f8d9057768a2e4f7f216b2b1e0486b60b44bf1",
     "note": " Deterministic editor cursor now records the shipped suggestion boundary: Android has production-wired Agent/scheduled-automation projection with stale fencing, while Desktop PR/MCP providers are explicitly dormant in the current production adapter. Agent find-in-chat is now production-wired for message/widget semantic search and wrap navigation, while occurrence-span highlighting and richer searchable payloads remain mapped gaps. Native media viewer gallery is production-wired for Human conversations with navigation/zoom/stale-load fencing; in-app PDF rendering is now implemented at 499519f… and pending exact-head CI/device evidence, while Agent attachment/audio/focus semantics remain mapped."
   }
 }
