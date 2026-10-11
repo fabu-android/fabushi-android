@@ -1371,6 +1371,87 @@
             "FBCP-QA-02..18",
             "FBCP AC-01..50"
           ]
+        },
+        {
+          "path": "frontend/src/recovered/features/automations/routines/controller.ts",
+          "blob_sha": "1cbd18feb408b51589b271e5044f63ac9e9e879f",
+          "symbols": [
+            "createRoutinesController",
+            "RoutineSource",
+            "RoutineSnapshot"
+          ]
+        },
+        {
+          "path": "frontend/src/recovered/features/automations/routines/run-history-clock.ts",
+          "blob_sha": "2610a12d81968aa75da57e78e87d6039f9407f67",
+          "symbols": [
+            "createRoutineRunHistoryClockOwner",
+            "ROUTINE_RUN_HISTORY_CLOCK_INTERVAL_MS"
+          ]
+        },
+        {
+          "path": "frontend/src/recovered/features/automations/routines/run-history-provider.ts",
+          "blob_sha": "dd9a99fcceddd36400b1fbf02149601bf087c6df",
+          "symbols": [
+            "createRoutineRunHistoryProvider",
+            "RoutineRunHistorySnapshot"
+          ]
+        },
+        {
+          "path": "frontend/src/recovered/features/automations/routines/run-history.ts",
+          "blob_sha": "7ce0c54345516524f669b61845c72acb8d08ac7d",
+          "symbols": [
+            "presentRoutineRunHistory",
+            "formatRoutineRunTimestamp"
+          ]
+        },
+        {
+          "path": "frontend/src/recovered/features/automations/routines/schedule-editor.tsx",
+          "blob_sha": "a418a750ea143fcbfc200e85e7bd7f7adf58de01",
+          "symbols": [
+            "RoutineTriggerDraftEditor",
+            "RoutineSchedulePicker"
+          ]
+        },
+        {
+          "path": "frontend/src/recovered/features/automations/routines/schedule.ts",
+          "blob_sha": "217da00e31009564b9b51c6bbb2615f48920d701",
+          "symbols": [
+            "isValidSchedule",
+            "normalizeSchedule"
+          ]
+        },
+        {
+          "path": "frontend/src/recovered/features/automations/routines/trigger-draft-controller.ts",
+          "blob_sha": "4a85d3604cceb81b48d5ada26a1903cf02decfd0",
+          "symbols": [
+            "createRoutineTriggerDraftController"
+          ]
+        },
+        {
+          "path": "frontend/src/recovered/features/automations/routines/trigger-schema.ts",
+          "blob_sha": "a4a776cb4e7b74bcf53e8955c7aa6c4e58947b80",
+          "symbols": [
+            "RoutineListener",
+            "listenerToRoutineTriggerForm",
+            "describeRoutineTrigger"
+          ]
+        },
+        {
+          "path": "frontend/src/recovered/features/automations/routines/view.css",
+          "blob_sha": "62f2b907c7aea58bc206f983d96dca307c689340",
+          "symbols": [
+            "shipping Routines presentation styles"
+          ]
+        },
+        {
+          "path": "frontend/src/recovered/features/automations/routines/view.tsx",
+          "blob_sha": "2db869d92eb380488cf5687ea8260734bc56f1ee",
+          "symbols": [
+            "RoutinesInfoPane",
+            "RoutineEditor",
+            "RoutineRunHistory"
+          ]
         }
       ],
       "source_commit": "92fcc2b0f64b6b8f8f8829305b30874b558d6b35",
@@ -1410,7 +1491,7 @@
       "android_owner": "Rust AutomationRuntime under Android Host; typed Coordinator bridge only exposes commands/projections",
       "platform_delta": "Android uses native Compose/platform adapters + typed JNI while preserving canonical Rust owners where platform-independent.",
       "implementation_status": "mapped",
-      "production_wiring": "Partial: durable workflow spec/run owner and typed Host/Coordinator API are implemented. Stable request/run/generation/account/step-mutation identity, approval persistence, cancellation and process-death outcome-unknown fencing are wired. Cron/event trigger listener execution, WorkManager/OS scheduling adapter, actual workflow step executor and multi-Agent orchestration remain open.",
+      "production_wiring": "Partial: durable workflow spec/run owner and typed Host/Coordinator API are implemented, including stable request/run/generation/account/step-mutation identity, approval persistence, cancellation, process-death outcome-unknown fencing and command-palette routine projection. Fresh Desktop 92fcc2b0 Routines audit shows the shipping native-equivalent surface is still open: full Agent routines list/create/edit/delete/enable/test-run UI, timezone-aware run-history provider/clock, schedule normalization/editor, up-to-8 trigger drafts, Slack/GitHub/Teams/Linear/Sentry/PagerDuty listener schema, cron/event listener execution, WorkManager/OS scheduling adapter and actual workflow step/multi-Agent execution are not closed.",
       "unit_test": "required",
       "contract_test": "required on same exact HEAD",
       "integration_test": "required on same exact HEAD",
@@ -1418,7 +1499,7 @@
       "device_test": "required on emulator/physical device as applicable",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "AUTOMATION-DURABLE-RUN-001 closes the platform-independent durable run/approval/idempotency slice. It does not claim full automation parity: trigger listener adapters, schedule computation parity, workflow file import/export, actual tool/Agent step execution and packaged background execution remain open. FBCP Revision 7 is a cross-cutting source authority for this responsibility; this mapping does not upgrade implementation_status or verification_status."
+      "notes": "AUTOMATION-DURABLE-RUN-001 closes only the platform-independent durable run/approval/idempotency slice. Ten recovered Routines source rows are now semantically mapped to this umbrella without claiming implementation. Full native routines presentation, trigger/listener breadth, schedule semantics, actual executor/background scheduling and packaged/device evidence remain open; keep mapped/not-verified."
     },
     {
       "responsibility_id": "SETTINGS-SCOPE-001",
