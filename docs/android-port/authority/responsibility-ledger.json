@@ -12554,6 +12554,90 @@
       "artifact": "pending exact-head signed Android package evidence",
       "verification_status": "not-verified",
       "notes": "Mapped, not verified. Do not use Computer image-update evidence for this app-updater responsibility and do not treat stable-only GitHub Release handling as Desktop release-track parity."
+    },
+    {
+      "responsibility_id": "SETTINGS-MANDATORY-UPDATE-ANDROID-001",
+      "domain": "settings",
+      "desktop_sources": [
+        {
+          "path": "frontend/src/recovered/features/update/required/view.tsx",
+          "blob_sha": "7b3456c6661481ef3e491549e6472a73572aa87a",
+          "symbols": [
+            "UpdateRequired"
+          ]
+        },
+        {
+          "path": "source/electron-main/update/sand-update-service.ts",
+          "blob_sha": "7faf203c88d33f116abf7cef4ce8758007a730d2",
+          "symbols": [
+            "SandUpdateService",
+            "getStatus",
+            "noteBackendUpdateRequirement"
+          ]
+        },
+        {
+          "path": "source/electron-main/update/update-wiring.ts",
+          "blob_sha": "9165ea7349bbaf6c55424ba8c61b99a37275e037",
+          "symbols": [
+            "sand_min_client_version",
+            "min_version",
+            "createSandUpdateService"
+          ]
+        }
+      ],
+      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "responsibility": "Block normal product use when updater policy says the installed client is below the authoritative minimum or the backend explicitly requires an update, while keeping policy ownership outside Presentation.",
+      "source_owner": "Desktop SandUpdateService updater policy",
+      "direct_callers": [
+        "ProductionRenderer root composition",
+        "BrokeredHostConnector update-required hint",
+        "experiment dynamic config adapter"
+      ],
+      "downstream_dependencies": [
+        "signed Android updater",
+        "sand_min_client_version",
+        "backend SAND_UPDATE_REQUIRED hint"
+      ],
+      "state_owner": "AndroidUpdateViewModel; Compose is read-only",
+      "persistent_state": [
+        "authoritative inputs must be republished after process recreation; durable input adapter is still open"
+      ],
+      "protocol_wire_contract": [
+        "minimum-version string",
+        "backend requires-update boolean",
+        "strict semantic version comparison"
+      ],
+      "visible_effect": "A required update produces a non-dismissible native gate that can only proceed through the signed Android update path.",
+      "failure_behavior": [
+        "invalid/absent minimum does not invent a block",
+        "backend-required always blocks",
+        "installer/download failures remain visible"
+      ],
+      "cancellation_behavior": "Gate cannot be dismissed; updater owns download/install lifecycle.",
+      "retry_semantics": "Only explicit metadata/download retry; Presentation does not blindly retry unknown side effects.",
+      "idempotency_semantics": "Repeated identical policy signals converge.",
+      "process_death_recovery": "Experiment/Broker adapters must republish authoritative signals after process recreation; not yet wired.",
+      "account_fencing": "Future Broker/experiment adapters must reject stale account/runtime callbacks.",
+      "security_boundary": "Compose cannot clear/synthesize policy; APK verification remains checksum/package/version/signing-gated.",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/update/AndroidUpdateViewModel.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/features/update/UpdateBanner.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/production/ProductionRenderer_view.kt",
+        "mobile/android/app/src/test/java/com/ombhrum/fabushi/AndroidVersionTest.kt"
+      ],
+      "android_owner": "AndroidUpdateViewModel + MandatoryUpdateGate projection",
+      "platform_delta": "Electron restart/install is replaced by signed APK/system installer while retaining block semantics.",
+      "implementation_status": "mapped",
+      "production_wiring": "Policy seam and root blocker are wired. Authoritative Desktop-equivalent experiment and Broker producers remain missing, so the gate is dormant and this responsibility is not verified.",
+      "unit_test": "AndroidVersionTest covers minimum comparison, invalid inputs, backend override and clear; exact-head Actions pending.",
+      "contract_test": "Pending typed experiment/Broker producer, stale callback, reconnect and recreation contracts.",
+      "integration_test": "Pending live authoritative policy signal into shipping runtime.",
+      "packaged_test": "Pending final minified signed release package.",
+      "device_test": "Pending forced-update/install/post-upgrade unblock journey.",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Does not invent a release-manifest minimum. Desktop authority is backendRequiresUpdate OR currentVersion < sand_min_client_version.min_version."
     }
   ],
   "traceability": {

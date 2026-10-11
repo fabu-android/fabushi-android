@@ -48,6 +48,25 @@ data class AndroidUpdateUiState(
     val message: String? = null,
 )
 
+data class AndroidMandatoryUpdateState(
+    val currentVersion: String,
+    val minimumVersion: String? = null,
+    val backendRequiresUpdate: Boolean = false,
+    val required: Boolean = false,
+)
+
+object AndroidMandatoryUpdatePolicy {
+    fun isRequired(
+        currentVersion: String,
+        minimumVersion: String?,
+        backendRequiresUpdate: Boolean,
+    ): Boolean {
+        if (backendRequiresUpdate) return true
+        val minimum = minimumVersion?.trim()?.takeIf(String::isNotEmpty) ?: return false
+        return runCatching { AndroidVersion.compare(currentVersion, minimum) < 0 }.getOrDefault(false)
+    }
+}
+
 internal data class AndroidUpdateCandidate(
     val version: String,
     val versionCode: Long,
@@ -164,6 +183,41 @@ class AndroidUpdateViewModel(application: Application) : AndroidViewModel(applic
         ),
     )
     val state: StateFlow<AndroidUpdateUiState> = _state.asStateFlow()
+
+    private val _mandatoryUpdate = MutableStateFlow(
+        AndroidMandatoryUpdateState(currentVersion = currentVersion),
+    )
+    val mandatoryUpdate: StateFlow<AndroidMandatoryUpdateState> = _mandatoryUpdate.asStateFlow()
+
+    fun noteMinimumRequiredVersion(minimumVersion: String?) {
+        publishMandatoryUpdate(
+            minimumVersion = minimumVersion?.trim()?.takeIf(String::isNotEmpty),
+            backendRequiresUpdate = _mandatoryUpdate.value.backendRequiresUpdate,
+        )
+    }
+
+    fun noteBackendUpdateRequirement(required: Boolean) {
+        publishMandatoryUpdate(
+            minimumVersion = _mandatoryUpdate.value.minimumVersion,
+            backendRequiresUpdate = required,
+        )
+    }
+
+    private fun publishMandatoryUpdate(
+        minimumVersion: String?,
+        backendRequiresUpdate: Boolean,
+    ) {
+        _mandatoryUpdate.value = AndroidMandatoryUpdateState(
+            currentVersion = currentVersion,
+            minimumVersion = minimumVersion,
+            backendRequiresUpdate = backendRequiresUpdate,
+            required = AndroidMandatoryUpdatePolicy.isRequired(
+                currentVersion = currentVersion,
+                minimumVersion = minimumVersion,
+                backendRequiresUpdate = backendRequiresUpdate,
+            ),
+        )
+    }
 
     private var candidate: AndroidUpdateCandidate? = null
     private var pendingApk: File? = null

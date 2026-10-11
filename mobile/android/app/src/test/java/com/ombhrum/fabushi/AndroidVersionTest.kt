@@ -49,4 +49,21 @@ class AndroidVersionTest {
         assertTrue(AndroidVersion.isPrerelease("1.2.3-alpha.1"))
         assertFalse(AndroidVersion.isPrerelease("v1.2.3-alpha"))
     }
+    @Test
+    fun mandatoryUpdatePolicyMatchesDesktopMinimumVersionSemantics() {
+        assertTrue(AndroidMandatoryUpdatePolicy.isRequired("1.2.2", "1.2.3", false))
+        assertFalse(AndroidMandatoryUpdatePolicy.isRequired("1.2.3", "1.2.3", false))
+        assertFalse(AndroidMandatoryUpdatePolicy.isRequired("1.2.4", "1.2.3", false))
+        assertFalse(AndroidMandatoryUpdatePolicy.isRequired("1.2.2", "not-a-version", false))
+        assertFalse(AndroidMandatoryUpdatePolicy.isRequired("not-a-version", "1.2.3", false))
+        assertFalse(AndroidMandatoryUpdatePolicy.isRequired("1.2.2", "   ", false))
+    }
+
+    @Test
+    fun backendUpdateRequirementOverridesAndCanBeCleared() {
+        assertTrue(AndroidMandatoryUpdatePolicy.isRequired("9.9.9", null, true))
+        assertTrue(AndroidMandatoryUpdatePolicy.isRequired("9.9.9", "1.0.0", true))
+        assertFalse(AndroidMandatoryUpdatePolicy.isRequired("9.9.9", "1.0.0", false))
+    }
+
 }

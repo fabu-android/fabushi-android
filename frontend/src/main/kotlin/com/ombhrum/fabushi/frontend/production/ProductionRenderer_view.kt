@@ -54,6 +54,7 @@ internal fun ProductionRenderer(
                 val botState by botModel.state.collectAsState()
                 val signedInOnboardingState by signedInOnboardingModel.state.collectAsState()
                 val updateState by updateModel.state.collectAsState()
+                val mandatoryUpdateState by updateModel.mandatoryUpdate.collectAsState()
                 var openedMiniApp by remember { mutableStateOf<MarketplacePlugin?>(null) }
                 var rendererRoute by remember { mutableStateOf(RendererRoute.GROK_HOME) }
                 var commandPaletteOpen by remember { mutableStateOf(false) }
@@ -81,6 +82,12 @@ internal fun ProductionRenderer(
                 DeepLinkInfoDialog(
                     link = deepLinkInfo,
                     onClose = { deepLinkInfo = null },
+                )
+                MandatoryUpdateGate(
+                    policy = mandatoryUpdateState,
+                    updateState = updateState,
+                    onCheckUpdate = { updateModel.checkForUpdates(force = true) },
+                    onInstallUpdate = updateModel::downloadAndInstall,
                 )
                 if (showAbout) {
                     AndroidAboutDialog(

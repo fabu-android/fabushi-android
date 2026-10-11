@@ -135,3 +135,52 @@ internal fun UpdateBanner(
     }
 }
 
+@Composable
+internal fun MandatoryUpdateGate(
+    policy: AndroidMandatoryUpdateState,
+    updateState: AndroidUpdateUiState,
+    onCheckUpdate: () -> Unit,
+    onInstallUpdate: () -> Unit,
+) {
+    if (!policy.required) return
+    val installReady = updateState.phase == AndroidUpdatePhase.AVAILABLE ||
+        updateState.phase == AndroidUpdatePhase.WAITING_FOR_PERMISSION ||
+        updateState.phase == AndroidUpdatePhase.INSTALLING
+    val downloading = updateState.phase == AndroidUpdatePhase.DOWNLOADING
+    AlertDialog(
+        onDismissRequest = {},
+        title = { Text("需要更新 Fabushi") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(
+                    policy.minimumVersion?.let {
+                        "当前版本 " + policy.currentVersion + " 低于服务要求的最低版本 " + it + "。更新后才能继续使用。"
+                    } ?: "服务要求更新 Fabushi 后才能继续使用。",
+                )
+                if (downloading) {
+                    val progress = (updateState.progressPercent ?: 0).coerceIn(0, 100) / 100f
+                    LinearProgressIndicator(progress = { progress }, modifier = Modifier.fillMaxWidth())
+                }
+                updateState.message?.takeIf { it.isNotBlank() }?.let {
+                    Text(it, style = MaterialTheme.typography.bodySmall)
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = if (installReady) onInstallUpdate else onCheckUpdate,
+                enabled = !downloading,
+            ) {
+                Text(
+                    when {
+                        downloading -> "正在下载…"
+                        installReady -> if (updateState.phase == AndroidUpdatePhase.AVAILABLE) "下载并安装" else "继续安装"
+                        updateState.phase == AndroidUpdatePhase.ERROR -> "重新检查"
+                        else -> "检查更新"
+                    },
+                )
+            }
+        },
+    )
+}
+
