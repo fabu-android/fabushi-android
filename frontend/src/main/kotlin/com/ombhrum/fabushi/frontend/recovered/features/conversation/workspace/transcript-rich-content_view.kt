@@ -3,6 +3,7 @@ package com.ombhrum.fabushi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.text.ClickableText
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -20,6 +21,10 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.font.FontStyle
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -125,17 +130,41 @@ private fun MobileTranscriptRichBlock(block: TranscriptRichBlock) {
 @Composable
 private fun MobileTranscriptParagraph(text: String) {
     val uriHandler = LocalUriHandler.current
-    val normalized = normalizeTranscriptHttpUrl(text)
-    Text(
-        text,
-        color = if (normalized == null) GrokMobileInk else Color(0xFF2A72D4),
-        fontSize = 16.sp,
-        modifier = if (normalized == null) {
-            Modifier
-        } else {
-            Modifier.clickable {
-                runCatching { uriHandler.openUri(normalized) }
+    val inline = projectTranscriptInlineContent(text)
+    val annotated = buildAnnotatedString {
+        inline.forEach { span ->
+            val start = length
+            append(span.text)
+            val end = length
+            if (start == end) return@forEach
+            addStyle(
+                SpanStyle(
+                    fontWeight = if (span.bold) FontWeight.Bold else null,
+                    fontStyle = if (span.italic) FontStyle.Italic else null,
+                    textDecoration = if (span.strike) TextDecoration.LineThrough else null,
+                    fontFamily = if (span.code || span.math) FontFamily.Monospace else null,
+                    color = if (span.url != null) Color(0xFF2A72D4) else GrokMobileInk,
+                ),
+                start,
+                end,
+            )
+            span.url?.let { url ->
+                addStringAnnotation(tag = "url", annotation = url, start = start, end = end)
             }
+        }
+    }
+    ClickableText(
+        text = annotated,
+        style = androidx.compose.ui.text.TextStyle(
+            color = GrokMobileInk,
+            fontSize = 16.sp,
+        ),
+        onClick = { offset ->
+            annotated
+                .getStringAnnotations(tag = "url", start = offset, end = offset)
+                .firstOrNull()
+                ?.item
+                ?.let { url -> runCatching { uriHandler.openUri(url) } }
         },
     )
 }
