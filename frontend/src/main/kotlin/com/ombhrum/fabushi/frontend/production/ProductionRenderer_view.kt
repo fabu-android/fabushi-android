@@ -49,9 +49,11 @@ internal fun ProductionRenderer(
                 val model: MarketplaceViewModel = viewModel()
                 val messagingModel: MessagingViewModel = viewModel()
                 val botModel: MobileBotViewModel = viewModel()
+                val signedInOnboardingModel: SignedInOnboardingViewModel = viewModel()
                 val state by model.state.collectAsState()
                 val messagingState by messagingModel.state.collectAsState()
                 val botState by botModel.state.collectAsState()
+                val signedInOnboardingState by signedInOnboardingModel.state.collectAsState()
                 val updateState by updateModel.state.collectAsState()
                 var openedMiniApp by remember { mutableStateOf<MarketplacePlugin?>(null) }
                 var rendererRoute by remember { mutableStateOf(RendererRoute.GROK_HOME) }
@@ -143,10 +145,22 @@ internal fun ProductionRenderer(
                         messagingModel.refresh()
                         model.refresh()
                         botModel.refreshBots()
+                        if (state.onboardingStep >= 3) signedInOnboardingModel.refresh()
                     }
                     if (!state.loggedIn) {
                         botModel.resetAccountScope()
+                        signedInOnboardingModel.resetAccountScope()
                         rendererRoute = RendererRoute.GROK_HOME
+                    }
+                }
+                LaunchedEffect(state.authResolved, state.loggedIn, state.onboardingStep) {
+                    if (state.authResolved && state.loggedIn && state.onboardingStep >= 3) {
+                        signedInOnboardingModel.refresh()
+                    }
+                }
+                LaunchedEffect(signedInOnboardingState.active, signedInOnboardingState.createdAgentId) {
+                    if (!signedInOnboardingState.active && !signedInOnboardingState.createdAgentId.isNullOrBlank()) {
+                        botModel.refreshBots()
                     }
                 }
                 LaunchedEffect(rendererRoute, state.loggedIn) {
@@ -200,6 +214,24 @@ internal fun ProductionRenderer(
                             )
                         }
                     }
+                } else if (
+                    state.onboardingStep >= 3 &&
+                    state.authResolved &&
+                    state.loggedIn &&
+                    signedInOnboardingState.active
+                ) {
+                    SignedInOnboardingSurface(
+                        state = signedInOnboardingState,
+                        onNext = signedInOnboardingModel::next,
+                        onBack = signedInOnboardingModel::back,
+                        onNameChange = { signedInOnboardingModel.updateDraft(name = it) },
+                        onDescriptionChange = { signedInOnboardingModel.updateDraft(description = it) },
+                        onToggleTool = signedInOnboardingModel::toggleDailyTool,
+                        onChooseSuggestion = signedInOnboardingModel::chooseSuggestion,
+                        onChooseShape = { signedInOnboardingModel.choosePersona(shape = it) },
+                        onChooseColor = { signedInOnboardingModel.choosePersona(color = it) },
+                        onCreate = signedInOnboardingModel::createFirstAgent,
+                    )
                 } else if (state.onboardingStep >= 3 && state.authResolved && state.loggedIn && rendererRoute == RendererRoute.AGENT_NETWORK) {
                     AgentNetworkSurface(
                         bots = botState.bots,
