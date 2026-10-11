@@ -472,14 +472,63 @@ internal fun GrokBotChatAndroid(
             state.error?.let { error -> item { Text(error, color = Color(0xFFD14343), fontSize = 12.sp) } }
         }
         Row(Modifier.fillMaxWidth().padding(10.dp), verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutlinedTextField(
-                state.draft,
-                onDraftChange,
-                placeholder = { Text("Message") },
-                maxLines = 5,
-                modifier = Modifier.weight(1f).testTag("mobile-bot-draft"),
-                shape = RoundedCornerShape(19.dp),
-            )
+            Column(Modifier.weight(1f)) {
+                OutlinedTextField(
+                    state.draft,
+                    onDraftChange,
+                    placeholder = { Text("Message") },
+                    maxLines = 5,
+                    modifier = Modifier.fillMaxWidth().testTag("mobile-bot-draft"),
+                    shape = RoundedCornerShape(19.dp),
+                )
+                val editorSuggestions = state.editorSuggestions
+                if (editorSuggestions.rows.isNotEmpty() && editorSuggestions.status in setOf(MobileEditorSuggestionStatus.LOADING, MobileEditorSuggestionStatus.READY, MobileEditorSuggestionStatus.FAILED)) {
+                    Column(
+                        Modifier
+                            .fillMaxWidth()
+                            .padding(top = 4.dp)
+                            .background(Color(0xFFF6F6F7), RoundedCornerShape(12.dp))
+                            .padding(vertical = 4.dp)
+                            .testTag("mobile-bot-editor-suggestions"),
+                    ) {
+                        editorSuggestions.rows.take(8).forEach { suggestion ->
+                            Row(
+                                Modifier
+                                    .fillMaxWidth()
+                                    .clickable {
+                                        onDraftChange(
+                                            applyMobileEditorSuggestion(
+                                                state.draft,
+                                                editorSuggestions,
+                                                suggestion,
+                                            ),
+                                        )
+                                    }
+                                    .padding(horizontal = 12.dp, vertical = 8.dp)
+                                    .testTag("mobile-bot-editor-suggestion-" + suggestion.key.replace(Regex("[^A-Za-z0-9._-]"), "-")),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Text(
+                                    when (suggestion.category) {
+                                        MobileEditorSuggestionCategory.ASSISTANT -> if (suggestion.isGroup) "◎" else "@"
+                                        MobileEditorSuggestionCategory.AUTOMATION -> "◷"
+                                        MobileEditorSuggestionCategory.WORKFLOW -> "/"
+                                    },
+                                    color = GrokMobileMuted,
+                                    fontSize = 13.sp,
+                                    modifier = Modifier.padding(end = 8.dp),
+                                )
+                                Column(Modifier.weight(1f)) {
+                                    Text(suggestion.label, color = GrokMobileInk, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                                    suggestion.subtitle?.let { subtitle ->
+                                        Text(subtitle, color = GrokMobileMuted, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
             if (!state.busy) {
                 OfflineAsrDraftControl(
                     currentDraft = state.draft,

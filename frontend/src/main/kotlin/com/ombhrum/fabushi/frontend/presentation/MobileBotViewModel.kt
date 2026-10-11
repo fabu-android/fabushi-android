@@ -141,6 +141,7 @@ data class MobileBotUiState(
     val operationId: String? = null,
     val pendingApproval: PendingAgentApproval? = null,
     val widgetPendingEntryIds: Set<String> = emptySet(),
+    val editorSuggestions: MobileEditorSuggestionSnapshot = MobileEditorSuggestionSnapshot(),
     val messageTargetId: String? = null,
     val paletteMessageSearch: CommandPaletteMessageSnapshot = CommandPaletteMessageSnapshot(
         status = CommandPaletteMessageStatus.IDLE,
@@ -182,6 +183,8 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
     private var asyncTasksJob: Job? = null
     private var groupMembersGeneration = 0L
     private var computerRebuildGeneration = 0L
+    private val editorSuggestionFence = MobileEditorSuggestionRequestFence()
+    private var editorSuggestionJob: Job? = null
     val state: StateFlow<MobileBotUiState> = mutableState.asStateFlow()
     private var featureEventSubscription: AutoCloseable? = coordinator.addFeatureEventListener { event ->
         viewModelScope.launch { handleOperationEvent(event) }
@@ -358,8 +361,14 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
                     withContext(Dispatchers.IO) { rosterSelection.restore(nextSlot) }
                     rosterSelectionAccountSlot = nextSlot
                     sendPresentationGeneration += 1
+                    cancelEditorSuggestionRequest()
                     agentSettingsFence.accountChanged(nextSlot)
-                    commitState(mutableState.value.copy(widgetPendingEntryIds = emptySet()))
+                    commitState(
+                        mutableState.value.copy(
+                            widgetPendingEntryIds = emptySet(),
+                            editorSuggestions = MobileEditorSuggestionSnapshot(),
+                        ),
+                    )
                 }
             }
             val restoredSelection = rosterSelection.get().currentAgentId
@@ -842,10 +851,12 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
                 messages = cachedMessages,
                 pendingApproval = null,
                 widgetPendingEntryIds = emptySet(),
+                editorSuggestions = MobileEditorSuggestionSnapshot(),
                 messageTargetId = targetEntryId,
                 error = null,
             ),
         )
+        refreshEditorSuggestions(mutableState.value.draft)
         if (bot.miniAppId != null) {
             rosterSelection.settle(bot.id)
             return
@@ -896,6 +907,7 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
         rosterSelection.select(null)
         openBotGeneration += 1
         sendPresentationGeneration += 1
+        cancelEditorSuggestionRequest()
         commitState(
             mutableState.value.copy(
                 activeBot = null,
@@ -903,6 +915,7 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
                 messages = emptyList(),
                 pendingApproval = null,
                 widgetPendingEntryIds = emptySet(),
+                editorSuggestions = MobileEditorSuggestionSnapshot(),
                 messageTargetId = null,
                 error = null,
             ),
@@ -914,6 +927,7 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
         rosterSelectionAccountSlot = null
         openBotGeneration += 1
         sendPresentationGeneration += 1
+        cancelEditorSuggestionRequest()
         asyncTasksGeneration += 1
         asyncTasksJob?.cancel()
         asyncTasksJob = null
@@ -989,6 +1003,98 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
 
     fun setDraft(value: String) {
         commitState(mutableState.value.copy(draft = value))
+        refreshEditorSuggestions(value)
+    }
+
+    private fun cancelEditorSuggestionRequest() {
+        editorSuggestionJob?.cancel()
+        editorSuggestionJob = null
+        editorSuggestionFence.invalidate()
+    }
+
+    private fun refreshEditorSuggestions(draft: String) {
+        val query = findMobileEditorSuggestionQuery(draft)
+        if (query == null) {
+            cancelEditorSuggestionRequest()
+            if (mutableState.value.editorSuggestions.status != MobileEditorSuggestionStatus.IDLE) {
+                commitState(mutableState.value.copy(editorSuggestions = MobileEditorSuggestionSnapshot()))
+            }
+            return
+        }
+        val bot = mutableState.value.activeBot
+        val accountSlot = rosterSelectionAccountSlot
+        if (bot == null || bot.miniAppId != null || accountSlot.isNullOrBlank()) {
+            cancelEditorSuggestionRequest()
+            commitState(
+                mutableState.value.copy(
+                    editorSuggestions = MobileEditorSuggestionSnapshot(
+                        status = MobileEditorSuggestionStatus.UNAVAILABLE,
+                        trigger = query.trigger,
+                        query = query.query,
+                        replaceFrom = query.replaceFrom,
+                    ),
+                ),
+            )
+            return
+        }
+
+        editorSuggestionJob?.cancel()
+        val token = editorSuggestionFence.begin(accountSlot, bot.id) ?: return
+        val previous = mutableState.value.editorSuggestions.rows
+        commitState(
+            mutableState.value.copy(
+                editorSuggestions = MobileEditorSuggestionSnapshot(
+                    status = MobileEditorSuggestionStatus.LOADING,
+                    rows = previous,
+                    trigger = query.trigger,
+                    query = query.query,
+                    replaceFrom = query.replaceFrom,
+                ),
+            ),
+        )
+        editorSuggestionJob = viewModelScope.launch {
+            try {
+                val rows = withContext(Dispatchers.IO) {
+                    projectMobileEditorSuggestions(
+                        agents = coordinator.agentList(),
+                        automations = coordinator.automationList(),
+                        activeAgentId = bot.id,
+                        trigger = query.trigger,
+                        query = query.query,
+                    )
+                }
+                if (!editorSuggestionFence.accepts(token, rosterSelectionAccountSlot, mutableState.value.activeBot?.id)) {
+                    return@launch
+                }
+                commitState(
+                    mutableState.value.copy(
+                        editorSuggestions = MobileEditorSuggestionSnapshot(
+                            status = if (rows.isEmpty()) MobileEditorSuggestionStatus.EMPTY else MobileEditorSuggestionStatus.READY,
+                            rows = rows,
+                            trigger = query.trigger,
+                            query = query.query,
+                            replaceFrom = query.replaceFrom,
+                        ),
+                    ),
+                )
+            } catch (error: CancellationException) {
+                throw error
+            } catch (_: Throwable) {
+                if (editorSuggestionFence.accepts(token, rosterSelectionAccountSlot, mutableState.value.activeBot?.id)) {
+                    commitState(
+                        mutableState.value.copy(
+                            editorSuggestions = MobileEditorSuggestionSnapshot(
+                                status = MobileEditorSuggestionStatus.FAILED,
+                                rows = previous,
+                                trigger = query.trigger,
+                                query = query.query,
+                                replaceFrom = query.replaceFrom,
+                            ),
+                        ),
+                    )
+                }
+            }
+        }
     }
 
     fun resetPaletteRoutines() {
@@ -1708,6 +1814,9 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
         asyncTasksJob?.cancel()
         asyncTasksJob = null
         groupMembersGeneration += 1
+        editorSuggestionJob?.cancel()
+        editorSuggestionJob = null
+        editorSuggestionFence.dispose()
         agentSettingsFence.dispose()
         rosterSelection.dispose()
         featureEventSubscription?.close()
