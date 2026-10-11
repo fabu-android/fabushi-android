@@ -9373,6 +9373,78 @@
       "artifact": null,
       "verification_status": "not-verified",
       "notes": "Production gap discovered during deterministic source audit. Implement at the existing Host/Coordinator approval owner; do not patch by deleting presentation-only approval cards."
+    },
+    {
+      "responsibility_id": "CONVERSATION-AGENT-ATTACHMENT-PROJECTION-ANDROID-001",
+      "domain": "conversation-workspace",
+      "desktop_sources": [
+        {
+          "path": "frontend/src/recovered/features/conversation/workspace/model.ts",
+          "blob_sha": "e8bf075b7ed1fe6d8a8493c6fba585d73640303a",
+          "symbols": [
+            "DraftAttachment",
+            "TranscriptMessage.attachments",
+            "ComposerDraft.attachments"
+          ]
+        },
+        {
+          "path": "frontend/src/recovered/features/conversation/workspace/media-viewer.tsx",
+          "blob_sha": "740e2e4362faade0e27ca790bb801b7081c40308",
+          "symbols": [
+            "TranscriptAttachmentGallery",
+            "MediaViewer"
+          ]
+        }
+      ],
+      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "responsibility": "Project canonical Agent transcript message attachments into an immutable typed Android presentation model without inventing a second byte/transfer owner, preserve path/name/optional size/MIME metadata, fence rows by explicit Agent identity, fail closed on malformed attachment metadata, and render attachment-only canonical messages without synthetic text.",
+      "source_owner": "Desktop canonical conversation transcript model; attachment bytes and transfer ownership remain outside presentation.",
+      "direct_callers": [
+        "Agent transcript projection",
+        "Agent Bot transcript message renderer"
+      ],
+      "downstream_dependencies": [
+        "canonical Host transcript snapshot",
+        "future scoped attachment open/media-viewer route"
+      ],
+      "state_owner": "Host canonical transcript owns attachment truth; Compose owns read-only display only.",
+      "persistent_state": [
+        "No new Android presentation persistence; attachment metadata must reload from canonical transcript after process reopen."
+      ],
+      "protocol_wire_contract": [
+        "message.attachments[] requires path and name strings; optional size and mimeType are read-only metadata",
+        "explicit agentId scope is required before projection"
+      ],
+      "visible_effect": "Agent transcript messages can display canonical attachment names, MIME and size, including attachment-only messages, without leaking another Agent's attachment metadata.",
+      "failure_behavior": [
+        "Malformed attachment rows are skipped while the owning message remains visible",
+        "missing attachment array projects as an empty immutable list"
+      ],
+      "cancellation_behavior": "Projection is passive and has no side effect or retry lifecycle.",
+      "retry_semantics": "No presentation retry. Upload/send/open retries remain owned by their canonical runtime responsibilities.",
+      "idempotency_semantics": "Stable canonical message id and attachment metadata produce the same projection; presentation does not mutate canonical rows.",
+      "process_death_recovery": "Reload attachment metadata from Host transcript snapshot; do not restage or resend attachments.",
+      "account_fencing": "Agent id is explicitly filtered before projection; account/epoch fencing remains required at the Host/Coordinator snapshot boundary.",
+      "security_boundary": "Attachment path is display metadata only. This responsibility does not authorize direct filesystem access, blob reads, uploads, or media opening.",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/presentation/MarketplaceViewModel.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/production/canonical-agent-transcript.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/features/bots/GrokBotComponents.kt",
+        "mobile/android/app/src/test/java/com/ombhrum/fabushi/AgentTranscriptAttachmentProjectionTest.kt"
+      ],
+      "android_owner": "Typed immutable Agent transcript projection + Compose presentation; Host remains the only canonical transcript owner.",
+      "platform_delta": "Android renders native attachment metadata chips. Direct file/blob open is intentionally not inferred from a Desktop path; scoped blob/media routing must be wired separately.",
+      "implementation_status": "implemented",
+      "production_wiring": "56dd4a59a0087621cab6f54d4e84e91a2a09738e adds the typed MobileTranscriptAttachment model; d8148f13958c24cf6c1e57f3d4013431da5adb57 parses canonical attachments with explicit Agent fencing and malformed-row fail-closed behavior; 615ea567464c0aabd9a74f4bcf06b8194c2bb2c6 renders immutable attachment metadata and avoids empty text bubbles for attachment-only rows.",
+      "unit_test": "AgentTranscriptAttachmentProjectionTest at c0beadcaf6b41b786cec3645d72dea3c9f2b81dc covers Agent isolation, metadata preservation, malformed-row fail-closed behavior and absent attachment arrays; exact-head GitHub Actions pending.",
+      "contract_test": "Projection introduces no blob/file mutation API and consumes only Host-owned transcript JSON. Full Agent upload/send/echo/open contracts remain open.",
+      "integration_test": "Read-side production path is wired. Agent draft attachment staging, upload, send acknowledgement entries, canonical echo production and media-viewer opening remain required.",
+      "packaged_test": "required final minified githubRelease attachment acceptance",
+      "device_test": "required scoped picker/upload/open/process-reopen/account-switch attachment acceptance",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Do not use this row to claim end-to-end Agent attachment parity. Durable composer draft currently stores prompt only; Host chat.send currently persists text-only user messages. The existing durable send acknowledgement owner supports user-attachment echoes, but the Agent send production chain still does not produce those entries."
     }
   ],
   "traceability": {
@@ -9406,7 +9478,7 @@
     }
   },
   "metadata": {
-    "android_head_at_update": "8927278b8ec61145700abb906f226f97f6497195",
+    "android_head_at_update": "615ea567464c0aabd9a74f4bcf06b8194c2bb2c6",
     "note": " Deterministic editor cursor now records the shipped suggestion boundary: Android has production-wired Agent/scheduled-automation projection with stale fencing, while Desktop PR/MCP providers are explicitly dormant in the current production adapter. Agent find-in-chat is now production-wired for message/widget semantic search and wrap navigation, while occurrence-span highlighting and richer searchable payloads remain mapped gaps. Native media viewer gallery is production-wired for Human conversations with navigation/zoom/stale-load fencing; in-app PDF rendering is now implemented at 499519f… and pending exact-head CI/device evidence, while Agent attachment/audio/focus semantics remain mapped."
   }
 }
