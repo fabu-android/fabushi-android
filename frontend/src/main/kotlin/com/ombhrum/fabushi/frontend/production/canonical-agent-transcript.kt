@@ -202,6 +202,14 @@ internal fun projectDurableSendAcknowledgements(
             role = MobileChatRole.USER,
             text = acknowledgement.messageText,
             clientNonce = acknowledgement.nonce,
+            attachments = acknowledgement.attachments.map { attachment ->
+                MobileTranscriptAttachment(
+                    path = attachment.path,
+                    name = attachment.name,
+                    sizeBytes = attachment.sizeBytes,
+                    mimeType = attachment.mimeType,
+                )
+            },
             sendStatus = acknowledgement.phase.wireName,
             sendAcknowledgementGeneration = acknowledgement.generation,
             sendFailureReason = acknowledgement.reason,

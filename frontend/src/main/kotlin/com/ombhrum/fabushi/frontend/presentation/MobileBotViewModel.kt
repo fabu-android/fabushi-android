@@ -3,6 +3,7 @@ package com.ombhrum.fabushi
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.ombhrum.fabushi.androidpreload.runtime.AndroidAgentAttachment
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidCoordinatorPort
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidConversationOutlineItem
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidFindInChatEntry
@@ -191,6 +192,8 @@ data class MobileBotUiState(
     val sidebarSections: List<AndroidSidebarSection> = emptyList(),
     val activeBot: MobileBotSummaryAndroid? = null,
     val draft: String = "",
+    val draftAttachments: List<AndroidAgentAttachment> = emptyList(),
+    val attachmentBusy: Boolean = false,
     val messages: List<MobileChatMessage> = emptyList(),
     val findEntries: List<AndroidFindInChatEntry> = emptyList(),
     val historyBeforeSeq: Long? = null,
@@ -943,6 +946,8 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
             mutableState.value.copy(
                 activeBot = bot,
                 draft = "",
+                draftAttachments = emptyList(),
+                attachmentBusy = false,
                 messages = cachedMessages,
                 historyBeforeSeq = null,
                 historyHasMore = false,
@@ -971,7 +976,13 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
             restored.onSuccess { draft ->
                 activeDraftId = draft?.draftId
                 val prompt = draft?.prompt.orEmpty()
-                commitState(mutableState.value.copy(draft = prompt))
+                commitState(
+                    mutableState.value.copy(
+                        draft = prompt,
+                        draftAttachments = draft?.attachments.orEmpty(),
+                        attachmentBusy = false,
+                    ),
+                )
                 refreshEditorSuggestions(prompt)
             }.onFailure { error ->
                 commitState(
@@ -1536,12 +1547,91 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
+
+    fun addDraftAttachment(contentUri: String) {
+        val snapshot = mutableState.value
+        val bot = snapshot.activeBot ?: return
+        if (snapshot.busy || snapshot.attachmentBusy || bot.miniAppId != null || contentUri.isBlank()) return
+        val accountSlot = rosterSelectionAccountSlot
+        val scope = draftScopeGeneration
+        commitState(snapshot.copy(attachmentBusy = true, error = null))
+        viewModelScope.launch {
+            val result = withContext(Dispatchers.IO) {
+                runCatching { coordinator.composerDraftStageAttachment(accountSlot, bot.id, contentUri) }
+            }
+            if (
+                scope != draftScopeGeneration ||
+                mutableState.value.activeBot?.id != bot.id ||
+                accountSlot != rosterSelectionAccountSlot
+            ) {
+                return@launch
+            }
+            result.onSuccess { draft ->
+                activeDraftId = draft.draftId
+                commitState(
+                    mutableState.value.copy(
+                        draftAttachments = draft.attachments,
+                        attachmentBusy = false,
+                        error = null,
+                    ),
+                )
+            }.onFailure { error ->
+                commitState(
+                    mutableState.value.copy(
+                        attachmentBusy = false,
+                        error = error.message ?: "Attachment could not be staged",
+                    ),
+                )
+            }
+        }
+    }
+
+    fun removeDraftAttachment(attachmentId: String) {
+        val snapshot = mutableState.value
+        val bot = snapshot.activeBot ?: return
+        if (snapshot.busy || snapshot.attachmentBusy || bot.miniAppId != null || attachmentId.isBlank()) return
+        if (snapshot.draftAttachments.none { it.id == attachmentId }) return
+        val accountSlot = rosterSelectionAccountSlot
+        val scope = draftScopeGeneration
+        commitState(snapshot.copy(attachmentBusy = true, error = null))
+        viewModelScope.launch {
+            val result = withContext(Dispatchers.IO) {
+                runCatching { coordinator.composerDraftRemoveAttachment(accountSlot, bot.id, attachmentId) }
+            }
+            if (
+                scope != draftScopeGeneration ||
+                mutableState.value.activeBot?.id != bot.id ||
+                accountSlot != rosterSelectionAccountSlot
+            ) {
+                return@launch
+            }
+            result.onSuccess { draft ->
+                activeDraftId = draft?.draftId
+                commitState(
+                    mutableState.value.copy(
+                        draftAttachments = draft?.attachments.orEmpty(),
+                        attachmentBusy = false,
+                        error = null,
+                    ),
+                )
+            }.onFailure { error ->
+                commitState(
+                    mutableState.value.copy(
+                        attachmentBusy = false,
+                        error = error.message ?: "Attachment could not be removed",
+                    ),
+                )
+            }
+        }
+    }
+
     fun send() {
         val snapshot = mutableState.value
         val bot = snapshot.activeBot ?: return
         val text = snapshot.draft.trim()
-        if (text.isBlank() || snapshot.busy) return
+        if (snapshot.busy || snapshot.attachmentBusy) return
         val miniAppId = bot.miniAppId
+        if (text.isBlank() && (miniAppId != null || snapshot.draftAttachments.isEmpty())) return
         if (!miniAppId.isNullOrBlank()) {
             val requestId = "android-mobile-bot-chat-${UUID.randomUUID()}"
             val accountSlot = rosterSelectionAccountSlot
@@ -1578,7 +1668,13 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
                         draftWriteGeneration += 1
                         draftWriteJob?.cancel()
                         draftWriteJob = null
-                        commitState(mutableState.value.copy(draft = ""))
+                        commitState(
+                            mutableState.value.copy(
+                                draft = "",
+                                draftAttachments = emptyList(),
+                                attachmentBusy = false,
+                            ),
+                        )
                         refreshEditorSuggestions("")
                     }
                     sendMiniApp(miniAppId, text, requestId)
@@ -1621,11 +1717,12 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
                 }
                 if (!isCurrentSendScope(bot.id, accountSlot, scopeGeneration)) return@launch
                 val acknowledgement = withContext(Dispatchers.IO) {
-                    coordinator.sendAcknowledgementBegin(
+                    coordinator.sendAcknowledgementBeginWithAttachments(
                         accountSlot = accountSlot,
                         agentId = bot.id,
                         nonce = nonce,
                         text = text,
+                        attachments = sentDraft.attachments,
                         entries = listOf(messageAcknowledgementEntry(nonce)),
                     )
                 }
@@ -1643,7 +1740,13 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
                     draftWriteGeneration += 1
                     draftWriteJob?.cancel()
                     draftWriteJob = null
-                    commitState(mutableState.value.copy(draft = ""))
+                    commitState(
+                        mutableState.value.copy(
+                            draft = "",
+                            draftAttachments = emptyList(),
+                            attachmentBusy = false,
+                        ),
+                    )
                     refreshEditorSuggestions("")
                 }
                 refreshDurableSendProjection(bot.id, accountSlot, scopeGeneration)
