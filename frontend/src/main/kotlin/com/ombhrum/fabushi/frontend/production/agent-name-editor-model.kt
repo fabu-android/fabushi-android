@@ -57,3 +57,65 @@ internal fun normalizeAgentAvatarColor(value: String?): String? {
             it.drop(1).all { character -> character.isDigit() || character in 'A'..'F' }
     }
 }
+
+
+internal data class AgentSettingsMutationToken(
+    val agentId: String,
+    val accountSlot: String?,
+    val generation: Long,
+)
+
+internal class AgentSettingsMutationFence {
+    private var selectedAgentId: String? = null
+    private var selectedAccountSlot: String? = null
+    private var generation: Long = 0L
+    private var disposed: Boolean = false
+
+    fun select(agentId: String, accountSlot: String?) {
+        if (disposed) return
+        if (selectedAgentId == agentId && selectedAccountSlot == accountSlot) return
+        generation += 1
+        selectedAgentId = agentId
+        selectedAccountSlot = accountSlot
+    }
+
+    fun clear(agentId: String? = null) {
+        if (disposed) return
+        if (agentId != null && selectedAgentId != agentId) return
+        if (selectedAgentId == null) return
+        generation += 1
+        selectedAgentId = null
+    }
+
+    fun accountChanged(accountSlot: String?) {
+        if (disposed || selectedAccountSlot == accountSlot) return
+        generation += 1
+        selectedAgentId = null
+        selectedAccountSlot = accountSlot
+    }
+
+    fun beginMutation(agentId: String, accountSlot: String?): AgentSettingsMutationToken? {
+        if (
+            disposed ||
+            selectedAgentId != agentId ||
+            selectedAccountSlot != accountSlot
+        ) {
+            return null
+        }
+        generation += 1
+        return AgentSettingsMutationToken(agentId, accountSlot, generation)
+    }
+
+    fun isCurrent(token: AgentSettingsMutationToken): Boolean =
+        !disposed &&
+            token.agentId == selectedAgentId &&
+            token.accountSlot == selectedAccountSlot &&
+            token.generation == generation
+
+    fun dispose() {
+        if (disposed) return
+        disposed = true
+        generation += 1
+        selectedAgentId = null
+    }
+}
