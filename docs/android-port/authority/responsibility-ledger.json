@@ -6805,6 +6805,23 @@
             "SharedRoomDialog",
             "InviteLink"
           ]
+        },
+        {
+          "path": "source/host/src/extensions/cross_user_sharing/xuser_state_reconcile.rs",
+          "blob_sha": "496db868debd50060818085f7d03986af9db9664",
+          "symbols": [
+            "XuserRoom",
+            "reconcile_rooms"
+          ]
+        },
+        {
+          "path": "source/host/src/extensions/cross_user_sharing/xuser_wire_normalization.rs",
+          "blob_sha": "8a8a1c2526cc23cf0e22998f2fff7c0e0156346e",
+          "symbols": [
+            "normalize_inline_images",
+            "normalize_mirror_entry",
+            "normalize_turn_messages"
+          ]
         }
       ],
       "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
@@ -6851,20 +6868,23 @@
         "source/host/src/android_json_runtime.rs",
         "source/android-preload/src/main/kotlin/com/ombhrum/fabushi/androidpreload/runtime/AndroidCoordinatorPort.kt",
         "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/coordinator/AndroidCoordinatorRuntime.kt",
-        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/features/bots/GrokHomeSurface.kt"
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/features/bots/GrokHomeSurface.kt",
+        "source/host/src/extensions/cross_user_sharing/mod.rs",
+        "source/host/src/extensions/cross_user_sharing/xuser_state_reconcile.rs",
+        "source/host/src/extensions/cross_user_sharing/xuser_wire_normalization.rs"
       ],
-      "android_owner": "missing; requires canonical Host sharing owner + typed Coordinator transport + transient native Compose controller",
+      "android_owner": "Rust Host foundation now owns deterministic shared-room wire normalization and room reconciliation. Canonical sharing service/relay/durable room store and Coordinator/native presentation remain missing.",
       "platform_delta": "React provider/dialog should become typed Coordinator-backed native Compose UI while retaining service canonical ownership, lifecycle/account fencing and Android accessibility/focus semantics.",
       "implementation_status": "mapped",
-      "production_wiring": "Fresh audit found no getSharingState/createRoomInvite/respondToRoomJoinRequest/addOwnAgentToSharedRoom/removeOwnAgentFromSharedRoom/leaveSharedRoom production methods in Android Host/Coordinator and no native shared-room management surface.",
-      "unit_test": "missing: projection validation, host/member permissions, pending duplicate guard, reconnect/generation/dispose fencing",
+      "production_wiring": "Android Host now contains direct Rust ports of Desktop xuser wire normalization and deterministic room-state reconciliation, including bounded inline images/turn messages, strict mirror entry identities, stable room de-dup/order, self-membership filtering and added/revoked diffs. These modules are deliberately not exposed directly to Compose. The shipping getSharingState/createRoomInvite/respond/add/remove/leave service, relay, persistent room binding, Coordinator event transport and native management surface are still absent, so the responsibility remains mapped/not-verified.",
+      "unit_test": "Rust Host unit tests cover image count/MIME fallback, mirror entry identity/content validation, guest-name normalization, 24-message cap, duplicate room resolution, stable ordering, self-membership/host visibility and added/revoked diff semantics. Frontend projection/permission/pending/reconnect tests plus service integration remain required.",
       "contract_test": "missing typed Android sharing command/event contract",
       "integration_test": "missing canonical sharing service/Coordinator/native UI integration",
       "packaged_test": "required in final packaged Agent shared-room journey",
       "device_test": "required for invite/join approval/add-remove/leave/reconnect/account switch/process death/accessibility",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Mapped from five Desktop 92fcc2b0 shared-room files. Existing Android group, MCP, or Remote features are not treated as substitutes. Do not mark implemented until a canonical sharing owner and shipping native surface exist."
+      "notes": "Mapped, not verified. This is a real Rust-to-Rust foundation port, not a claim that Shared Room is shipping. Next owner slice must bind canonical Host sharing service to Android TranscriptStore/agent roster without creating a second room database."
     },
     {
       "responsibility_id": "COMPUTER-OVERLAY-ANDROID-001",
