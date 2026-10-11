@@ -52,20 +52,70 @@ internal fun canonicalAgentTranscriptMessages(
 internal fun canonicalMobileTranscriptForAgent(
     entries: JSONArray,
     agentId: String,
-): List<MobileChatMessage> =
-    canonicalAgentTranscriptMessages(entries)
-        .asSequence()
-        .filter { it.agentId == agentId }
-        .map { entry ->
-            MobileChatMessage(
-                id = entry.id,
-                role = entry.role,
-                text = entry.text,
-                operationId = entry.operationId,
-                clientNonce = entry.clientNonce,
-            )
+): List<MobileChatMessage> {
+    val projected = linkedMapOf<String, MobileChatMessage>()
+    for (index in 0 until entries.length()) {
+        val entry = entries.optJSONObject(index) ?: continue
+        if (entry.optString("agentId").trim() != agentId) continue
+        val id = entry.optString("id").trim()
+        if (id.isBlank()) continue
+        when (entry.optString("kind")) {
+            "message" -> {
+                val role = when (entry.optString("role")) {
+                    "user" -> MobileChatRole.USER
+                    "assistant" -> MobileChatRole.ASSISTANT
+                    else -> continue
+                }
+                projected[id] = MobileChatMessage(
+                    id = id,
+                    role = role,
+                    text = entry.optString("content"),
+                    operationId = entry.optString("operationId").takeIf(String::isNotBlank),
+                    clientNonce = entry.optString("clientNonce").takeIf(String::isNotBlank),
+                )
+            }
+            "send-message" -> {
+                val message = entry.optJSONObject("message") ?: continue
+                if (message.optString("type") != "widget") continue
+                val widget = message.optJSONObject("widget") ?: continue
+                val prompt = widget.optString("prompt").trim()
+                val optionRows = widget.optJSONArray("options") ?: continue
+                if (prompt.isBlank() || optionRows.length() !in 1..6) continue
+                val options = buildList {
+                    for (optionIndex in 0 until optionRows.length()) {
+                        val option = optionRows.optJSONObject(optionIndex) ?: return@buildList
+                        val label = option.optString("label").trim()
+                        if (label.isBlank()) return@buildList
+                        add(
+                            MobileWidgetOption(
+                                label = label,
+                                value = option.optString("value").trim().ifBlank { label },
+                                description = option.optString("description").trim().takeIf(String::isNotEmpty),
+                            ),
+                        )
+                    }
+                }
+                if (options.size != optionRows.length()) continue
+                projected[id] = MobileChatMessage(
+                    id = id,
+                    role = MobileChatRole.ASSISTANT,
+                    text = prompt,
+                    kind = MobileChatEntryKind.WIDGET,
+                    widget = MobileWidgetCard(
+                        prompt = prompt,
+                        helpText = widget.optString("helpText").trim().takeIf(String::isNotEmpty),
+                        options = options,
+                        allowCustom = widget.optBoolean("allowCustom", false),
+                        dismissOnMoveOn = widget.optBoolean("dismissOnMoveOn", false),
+                        respondedValue = entry.optString("respondedValue").takeIf(String::isNotBlank),
+                        dismissed = entry.optBoolean("widgetDismissed", false),
+                    ),
+                )
+            }
         }
-        .toList()
+    }
+    return projected.values.toList()
+}
 
 /**
  * A transcript snapshot is authoritative for everything that existed when loading began.

@@ -1108,6 +1108,8 @@ impl AndroidJsonHost {
             "feature.sendAcknowledgement.dispatch" => self.send_acknowledgement_dispatch(params),
             "feature.sendAcknowledgement.retry" => self.send_acknowledgement_retry(params),
             "feature.sendAcknowledgement.snapshot" => self.send_acknowledgement_snapshot(params),
+            "feature.widget.respond" => self.widget_respond(params),
+            "feature.widget.dismiss" => self.widget_dismiss(params),
             "feature.receive" => self.feature_receive(),
             "feature.interrupt" => self.feature_interrupt(params),
             "feature.approval.resolve" => self.feature_approval_resolve(params),
@@ -3203,6 +3205,106 @@ impl AndroidJsonHost {
             &transcript,
         )?;
         Ok(owner.projection(account_slot.as_deref(), &account_fence, &agent_id))
+    }
+
+    fn widget_respond(&mut self, params: &Value) -> Result<Value, String> {
+        let _account_fence = self.current_turn_account_fence()?;
+        let entry_id = required_string(params, "entryId")?;
+        let agent_id = required_string(params, "agentId")?;
+        let value = required_string(params, "value")?.trim();
+        if value.is_empty() || value.len() > 16 * 1024 {
+            return Err("widget response value is invalid".into());
+        }
+        self.mutate_widget_entry(entry_id, agent_id, Some(value))
+    }
+
+    fn widget_dismiss(&mut self, params: &Value) -> Result<Value, String> {
+        let _account_fence = self.current_turn_account_fence()?;
+        let entry_id = required_string(params, "entryId")?;
+        let agent_id = required_string(params, "agentId")?;
+        self.mutate_widget_entry(entry_id, agent_id, None)
+    }
+
+    fn mutate_widget_entry(
+        &mut self,
+        entry_id: &str,
+        agent_id: &str,
+        response: Option<&str>,
+    ) -> Result<Value, String> {
+        let current = self
+            .transcript
+            .lock()
+            .map_err(|_| "transcript lock poisoned".to_string())?
+            .entry(entry_id)
+            .ok_or("widget transcript entry was not found")?;
+        if current.get("agentId").and_then(Value::as_str) != Some(agent_id) {
+            return Err("widget transcript entry is fenced to another Agent".into());
+        }
+        if current.get("kind").and_then(Value::as_str) != Some("send-message")
+            || current
+                .get("message")
+                .and_then(Value::as_object)
+                .and_then(|message| message.get("type"))
+                .and_then(Value::as_str)
+                != Some("widget")
+        {
+            return Err("transcript entry is not a widget".into());
+        }
+        if current.get("respondedValue").and_then(Value::as_str).is_some()
+            || current
+                .get("widgetDismissed")
+                .and_then(Value::as_bool)
+                .unwrap_or(false)
+        {
+            return Ok(json!({"accepted":false,"reason":"settled"}));
+        }
+
+        if let Some(value) = response {
+            let widget = current
+                .get("message")
+                .and_then(Value::as_object)
+                .and_then(|message| message.get("widget"))
+                .and_then(Value::as_object)
+                .ok_or("widget payload is malformed")?;
+            let options = widget
+                .get("options")
+                .and_then(Value::as_array)
+                .ok_or("widget options are malformed")?;
+            let option_match = options.iter().any(|option| {
+                let Some(option) = option.as_object() else { return false; };
+                let Some(label) = option.get("label").and_then(Value::as_str) else { return false; };
+                option
+                    .get("value")
+                    .and_then(Value::as_str)
+                    .unwrap_or(label)
+                    == value
+            });
+            let allow_custom = widget
+                .get("allowCustom")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+            if !option_match && !allow_custom {
+                return Ok(json!({"accepted":false,"reason":"value-not-allowed"}));
+            }
+        }
+
+        let updated = self
+            .transcript
+            .lock()
+            .map_err(|_| "transcript lock poisoned".to_string())?
+            .update_entry(entry_id, |entry| {
+                let mut next = entry.clone();
+                if let Some(value) = response {
+                    next["respondedValue"] = Value::String(value.to_string());
+                    next["widgetDismissed"] = Value::Bool(false);
+                } else {
+                    next["widgetDismissed"] = Value::Bool(true);
+                }
+                next
+            })
+            .map_err(|error| format!("failed to persist widget transcript action: {error}"))?
+            .ok_or("widget transcript entry disappeared before mutation")?;
+        Ok(json!({"accepted":true,"entry":updated}))
     }
 
     fn feature_execute(&mut self, params: &Value) -> Result<Value, String> {
@@ -7788,4 +7890,92 @@ export function apply(ctx) {
     }
 
 
+}
+
+
+#[cfg(test)]
+mod widget_action_tests {
+    use super::*;
+
+    fn widget_entry(id: &str, agent_id: &str, allow_custom: bool) -> Value {
+        json!({
+            "id":id,
+            "kind":"send-message",
+            "agentId":agent_id,
+            "message":{
+                "type":"widget",
+                "widget":{
+                    "prompt":"Choose",
+                    "options":[
+                        {"label":"Alpha","value":"a"},
+                        {"label":"Beta"}
+                    ],
+                    "allowCustom":allow_custom
+                }
+            }
+        })
+    }
+
+    #[test]
+    fn widget_response_and_dismiss_persist_canonically_and_reject_stale_or_settled_actions() {
+        let root = tempfile::tempdir().unwrap();
+        let mut host = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+        host.transcript
+            .lock()
+            .unwrap()
+            .append_entry(widget_entry("widget-a", "agent-a", false))
+            .unwrap();
+        host.transcript
+            .lock()
+            .unwrap()
+            .append_entry(widget_entry("widget-b", "agent-a", true))
+            .unwrap();
+
+        assert!(host
+            .dispatch(
+                "feature.widget.respond",
+                &json!({"agentId":"agent-b","entryId":"widget-a","value":"a"})
+            )
+            .is_err());
+        let invalid = host
+            .dispatch(
+                "feature.widget.respond",
+                &json!({"agentId":"agent-a","entryId":"widget-a","value":"custom"})
+            )
+            .unwrap();
+        assert_eq!(invalid["accepted"], false);
+        let accepted = host
+            .dispatch(
+                "feature.widget.respond",
+                &json!({"agentId":"agent-a","entryId":"widget-a","value":"a"})
+            )
+            .unwrap();
+        assert_eq!(accepted["accepted"], true);
+        let duplicate = host
+            .dispatch(
+                "feature.widget.respond",
+                &json!({"agentId":"agent-a","entryId":"widget-a","value":"a"})
+            )
+            .unwrap();
+        assert_eq!(duplicate["accepted"], false);
+
+        let dismissed = host
+            .dispatch(
+                "feature.widget.dismiss",
+                &json!({"agentId":"agent-a","entryId":"widget-b"})
+            )
+            .unwrap();
+        assert_eq!(dismissed["accepted"], true);
+
+        drop(host);
+        let mut reopened = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+        let transcript = reopened
+            .dispatch("feature.transcript.snapshot", &json!({}))
+            .unwrap();
+        let rows = transcript.as_array().unwrap();
+        let answered = rows.iter().find(|row| row["id"] == "widget-a").unwrap();
+        let dismissed = rows.iter().find(|row| row["id"] == "widget-b").unwrap();
+        assert_eq!(answered["respondedValue"], "a");
+        assert_eq!(dismissed["widgetDismissed"], true);
+    }
 }

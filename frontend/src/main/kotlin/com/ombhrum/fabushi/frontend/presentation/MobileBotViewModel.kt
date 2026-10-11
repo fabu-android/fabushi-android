@@ -140,6 +140,7 @@ data class MobileBotUiState(
     val busy: Boolean = false,
     val operationId: String? = null,
     val pendingApproval: PendingAgentApproval? = null,
+    val widgetPendingEntryIds: Set<String> = emptySet(),
     val messageTargetId: String? = null,
     val paletteMessageSearch: CommandPaletteMessageSnapshot = CommandPaletteMessageSnapshot(
         status = CommandPaletteMessageStatus.IDLE,
@@ -356,7 +357,9 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
                 if (nextSlot != rosterSelectionAccountSlot) {
                     withContext(Dispatchers.IO) { rosterSelection.restore(nextSlot) }
                     rosterSelectionAccountSlot = nextSlot
+                    sendPresentationGeneration += 1
                     agentSettingsFence.accountChanged(nextSlot)
+                    commitState(mutableState.value.copy(widgetPendingEntryIds = emptySet()))
                 }
             }
             val restoredSelection = rosterSelection.get().currentAgentId
@@ -838,6 +841,7 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
                 draft = draftsByBot[bot.id].orEmpty(),
                 messages = cachedMessages,
                 pendingApproval = null,
+                widgetPendingEntryIds = emptySet(),
                 messageTargetId = targetEntryId,
                 error = null,
             ),
@@ -898,6 +902,7 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
                 draft = "",
                 messages = emptyList(),
                 pendingApproval = null,
+                widgetPendingEntryIds = emptySet(),
                 messageTargetId = null,
                 error = null,
             ),
@@ -1193,6 +1198,79 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
                             busy = false,
                             operationId = null,
                             error = error.message ?: "Bot run failed",
+                        ),
+                    )
+                }
+            }
+        }
+    }
+
+    fun respondToWidget(entryId: String, value: String) {
+        runWidgetAction(entryId, value.trim().takeIf(String::isNotEmpty))
+    }
+
+    fun dismissWidget(entryId: String) {
+        runWidgetAction(entryId, null)
+    }
+
+    private fun runWidgetAction(entryId: String, response: String?) {
+        val snapshot = mutableState.value
+        val bot = snapshot.activeBot ?: return
+        if (bot.miniAppId != null || entryId.isBlank()) return
+        val widget = snapshot.messages.firstOrNull {
+            it.id == entryId && it.kind == MobileChatEntryKind.WIDGET
+        }?.widget ?: return
+        if (widget.respondedValue != null || widget.dismissed) return
+        if (entryId in snapshot.widgetPendingEntryIds) return
+        if (response != null && response.isBlank()) return
+
+        val accountSlot = rosterSelectionAccountSlot
+        val scopeGeneration = sendPresentationGeneration
+        commitState(
+            snapshot.copy(
+                widgetPendingEntryIds = snapshot.widgetPendingEntryIds + entryId,
+                error = null,
+            ),
+        )
+        viewModelScope.launch {
+            val result = withContext(Dispatchers.IO) {
+                runCatching {
+                    if (response == null) {
+                        coordinator.dismissWidget(accountSlot, bot.id, entryId)
+                    } else {
+                        coordinator.respondToWidget(accountSlot, bot.id, entryId, response)
+                    }
+                }
+            }
+            if (!isCurrentSendScope(bot.id, accountSlot, scopeGeneration)) return@launch
+            val withoutPending = mutableState.value.widgetPendingEntryIds - entryId
+            if (result.isFailure || result.getOrNull() != true) {
+                commitState(
+                    mutableState.value.copy(
+                        widgetPendingEntryIds = withoutPending,
+                        error = result.exceptionOrNull()?.message
+                            ?: "Widget action was rejected",
+                    ),
+                )
+                return@launch
+            }
+            try {
+                refreshDurableSendProjection(bot.id, accountSlot, scopeGeneration)
+                if (isCurrentSendScope(bot.id, accountSlot, scopeGeneration)) {
+                    commitState(
+                        mutableState.value.copy(
+                            widgetPendingEntryIds = mutableState.value.widgetPendingEntryIds - entryId,
+                        ),
+                    )
+                }
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Throwable) {
+                if (isCurrentSendScope(bot.id, accountSlot, scopeGeneration)) {
+                    commitState(
+                        mutableState.value.copy(
+                            widgetPendingEntryIds = withoutPending,
+                            error = error.message ?: "Widget reconciliation failed",
                         ),
                     )
                 }

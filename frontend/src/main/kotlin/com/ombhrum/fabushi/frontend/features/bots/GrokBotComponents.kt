@@ -62,6 +62,89 @@ internal fun SectionLabelAndroid(text: String) {
 }
 
 @Composable
+private fun MobileWidgetTranscriptCard(
+    entry: MobileChatMessage,
+    pending: Boolean,
+    onRespond: (String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val widget = entry.widget ?: return
+    var custom by remember(entry.id) { mutableStateOf("") }
+    val settled = widget.respondedValue != null || widget.dismissed
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .background(Color(0xFFF6F6F7), RoundedCornerShape(14.dp))
+            .padding(12.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Row(verticalAlignment = Alignment.Top) {
+            Column(Modifier.weight(1f)) {
+                Text(widget.prompt, color = GrokMobileInk, fontWeight = FontWeight.SemiBold)
+                widget.helpText?.let { Text(it, color = GrokMobileMuted, fontSize = 12.sp) }
+            }
+            if (!settled) {
+                TextButton(onClick = onDismiss, enabled = !pending) { Text("关闭") }
+            }
+        }
+        when {
+            widget.dismissed -> Text("已忽略", color = GrokMobileMuted, fontSize = 12.sp)
+            widget.respondedValue != null -> {
+                val label = widget.options.firstOrNull { it.value == widget.respondedValue }?.label
+                    ?: widget.respondedValue
+                Text("✓ $label", color = GrokMobileInk, fontWeight = FontWeight.Medium)
+            }
+            else -> {
+                widget.options.forEachIndexed { index, option ->
+                    Button(
+                        onClick = { onRespond(option.value) },
+                        enabled = !pending,
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = Color.White,
+                            contentColor = GrokMobileInk,
+                        ),
+                    ) {
+                        Column(Modifier.fillMaxWidth()) {
+                            Text("${('A'.code + index).toChar()}. ${option.label}")
+                            option.description?.let {
+                                Text(it, color = GrokMobileMuted, fontSize = 11.sp)
+                            }
+                        }
+                    }
+                }
+                if (widget.allowCustom) {
+                    OutlinedTextField(
+                        value = custom,
+                        onValueChange = { custom = it },
+                        enabled = !pending,
+                        modifier = Modifier.fillMaxWidth(),
+                        placeholder = { Text("自定义回答") },
+                        maxLines = 3,
+                    )
+                    if (custom.trim().isNotEmpty()) {
+                        Button(
+                            onClick = { onRespond(custom.trim()) },
+                            enabled = !pending,
+                        ) { Text(if (pending) "提交中…" else "提交") }
+                    }
+                }
+                if (pending) {
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        CircularProgressIndicator(Modifier.size(12.dp), strokeWidth = 1.5.dp)
+                        Text("提交中…", color = GrokMobileMuted, fontSize = 11.sp)
+                    }
+                }
+            }
+        }
+    }
+}
+
+
+@Composable
 internal fun GrokBotRowAndroid(
     bot: MobileBotSummaryAndroid,
     badge: String,
@@ -132,6 +215,8 @@ internal fun GrokBotChatAndroid(
     onDraftChange: (String) -> Unit,
     onSend: () -> Unit,
     onRetrySend: (String) -> Unit,
+    onRespondToWidget: (String, String) -> Unit,
+    onDismissWidget: (String) -> Unit,
     onStop: () -> Unit,
     onResolveApproval: (Boolean) -> Unit,
     onMessageTargetConsumed: (String) -> Unit,
@@ -237,6 +322,13 @@ internal fun GrokBotChatAndroid(
                         Text(entry.actionTitle ?: "Working", color = GrokMobileInk, fontSize = 12.sp, fontWeight = FontWeight.Medium)
                         entry.actionDetail?.takeIf { it.isNotBlank() }?.let { Text(it, color = GrokMobileMuted, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis) }
                     }
+                    entry.kind == MobileChatEntryKind.WIDGET && entry.widget != null ->
+                        MobileWidgetTranscriptCard(
+                            entry = entry,
+                            pending = entry.id in state.widgetPendingEntryIds,
+                            onRespond = { value -> onRespondToWidget(entry.id, value) },
+                            onDismiss = { onDismissWidget(entry.id) },
+                        )
                     entry.role == MobileChatRole.USER -> Column(
                         Modifier.fillMaxWidth(),
                         horizontalAlignment = Alignment.End,

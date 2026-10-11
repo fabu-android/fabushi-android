@@ -523,6 +523,44 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
         }
     }
 
+    override fun respondToWidget(
+        accountSlot: String?,
+        agentId: String,
+        entryId: String,
+        value: String,
+    ): Boolean =
+        host.request(
+            "feature.widget.respond",
+            JSONObject()
+                .putNullable("accountSlot", accountSlot)
+                .put("agentId", agentId)
+                .put("entryId", entryId)
+                .put("value", value),
+        ).let { reply ->
+            check(reply.has("accepted") && reply.opt("accepted") is Boolean) {
+                "feature.widget.respond returned a malformed reply"
+            }
+            reply.getBoolean("accepted")
+        }
+
+    override fun dismissWidget(
+        accountSlot: String?,
+        agentId: String,
+        entryId: String,
+    ): Boolean =
+        host.request(
+            "feature.widget.dismiss",
+            JSONObject()
+                .putNullable("accountSlot", accountSlot)
+                .put("agentId", agentId)
+                .put("entryId", entryId),
+        ).let { reply ->
+            check(reply.has("accepted") && reply.opt("accepted") is Boolean) {
+                "feature.widget.dismiss returned a malformed reply"
+            }
+            reply.getBoolean("accepted")
+        }
+
     override fun featureInterrupt(params: JSONObject) = host.request("feature.interrupt", params)
     override fun featureApprovalResolve(params: JSONObject) = host.request("feature.approval.resolve", params)
     override fun transcriptSnapshot(): JSONArray =

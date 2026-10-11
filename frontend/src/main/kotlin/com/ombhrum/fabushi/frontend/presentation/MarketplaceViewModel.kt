@@ -58,7 +58,23 @@ data class PermissionRequest(
 )
 
 enum class MobileChatRole { USER, ASSISTANT }
-enum class MobileChatEntryKind { MESSAGE, ACTION, THINKING, MINI_APP }
+enum class MobileChatEntryKind { MESSAGE, ACTION, THINKING, MINI_APP, WIDGET }
+
+data class MobileWidgetOption(
+    val label: String,
+    val value: String,
+    val description: String? = null,
+)
+
+data class MobileWidgetCard(
+    val prompt: String,
+    val helpText: String? = null,
+    val options: List<MobileWidgetOption>,
+    val allowCustom: Boolean = false,
+    val dismissOnMoveOn: Boolean = false,
+    val respondedValue: String? = null,
+    val dismissed: Boolean = false,
+)
 
 data class MobileChatMessage(
     val id: String,
@@ -76,6 +92,7 @@ data class MobileChatMessage(
     val sendStatus: String? = null,
     val sendAcknowledgementGeneration: Long? = null,
     val sendFailureReason: String? = null,
+    val widget: MobileWidgetCard? = null,
 )
 
 data class MarketplaceUiState(

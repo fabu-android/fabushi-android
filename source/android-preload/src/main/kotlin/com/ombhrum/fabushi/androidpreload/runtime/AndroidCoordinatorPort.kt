@@ -125,6 +125,17 @@ interface AndroidCoordinatorPort {
         accountSlot: String?,
         agentId: String,
     ): List<AndroidSendAcknowledgement>
+    fun respondToWidget(
+        accountSlot: String?,
+        agentId: String,
+        entryId: String,
+        value: String,
+    ): Boolean
+    fun dismissWidget(
+        accountSlot: String?,
+        agentId: String,
+        entryId: String,
+    ): Boolean
     fun featureInterrupt(params: JSONObject): JSONObject
     fun featureApprovalResolve(params: JSONObject): JSONObject
     fun transcriptSnapshot(): JSONArray

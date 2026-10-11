@@ -420,6 +420,8 @@ internal fun ProductionRenderer(
                             onDraftChange = botModel::setDraft,
                             onSend = botModel::send,
                             onRetrySend = botModel::retrySend,
+                            onRespondToWidget = botModel::respondToWidget,
+                            onDismissWidget = botModel::dismissWidget,
                             onStop = botModel::stop,
                             onResolveApproval = botModel::resolveApproval,
                             onMessageTargetConsumed = botModel::consumeMessageTarget,
