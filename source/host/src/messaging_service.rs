@@ -2149,7 +2149,7 @@ impl AndroidMessagingService {
                     .and_then(Value::as_i64)
                     .is_none_or(|expires_at_ms| expires_at_ms > now_ms)
             })
-            .map(|entry| entry.envelope)
+            .map(|entry| self.project_journal_envelope_for_actor(actor_id, &entry.envelope))
             .collect::<Vec<_>>();
         responses.push(self.sync_checkpoint_envelope(
             checkpoint_cursor,
@@ -2157,6 +2157,54 @@ impl AndroidMessagingService {
             now_ms,
         ));
         Ok(responses)
+    }
+
+    fn project_journal_envelope_for_actor(
+        &self,
+        actor_id: &str,
+        envelope: &Value,
+    ) -> Value {
+        let mut projected = envelope.clone();
+        let Some(event) = projected.get_mut("event").and_then(Value::as_object_mut) else {
+            return projected;
+        };
+        match event.get("type").and_then(Value::as_str) {
+            Some("conversationChanged") | Some("conversationParticipantChanged") => {
+                let conversation_id = event
+                    .get("conversation")
+                    .and_then(|conversation| conversation.get("id"))
+                    .and_then(Value::as_str)
+                    .map(str::to_string);
+                if let Some(conversation_id) = conversation_id {
+                    if let Some(conversation) = self.state.conversations.get(&conversation_id) {
+                        event.insert(
+                            "conversation".into(),
+                            self.project_conversation(conversation, actor_id),
+                        );
+                    }
+                }
+            }
+            Some("messageAdded") | Some("messageChanged") => {
+                let identity = event.get("message").and_then(|message| {
+                    Some((
+                        message.get("conversationId")?.as_str()?.to_string(),
+                        message.get("id")?.as_str()?.to_string(),
+                    ))
+                });
+                if let Some((conversation_id, message_id)) = identity {
+                    if let Some(message) = self
+                        .state
+                        .messages
+                        .get(&conversation_id)
+                        .and_then(|messages| messages.get(&message_id))
+                    {
+                        event.insert("message".into(), self.project_message(message, actor_id));
+                    }
+                }
+            }
+            _ => {}
+        }
+        projected
     }
 
     fn sync_checkpoint_envelope(
@@ -2933,6 +2981,73 @@ mod tests {
             checkpoint_event["nextCursor"].as_str().unwrap(),
             service.state.cursor.to_string()
         );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn delta_replay_reprojects_actor_scoped_reaction_state() {
+        let root = temp_root("delta-actor-projection");
+        let owner = "human:owner";
+        let peer = "human:peer";
+        let mut service = AndroidMessagingService::open(&root).unwrap();
+        seed(&mut service, owner);
+        execute(
+            &mut service,
+            "peer-profile-projection",
+            peer,
+            json!({"type":"upsertProfile","actor":{"id":peer,"kind":"human","displayName":"Peer"}}),
+        )
+        .unwrap();
+        execute(
+            &mut service,
+            "participant-projection",
+            owner,
+            json!({"type":"setConversationParticipant","conversationId":"conversation:parent",
+                "participant":{"actorId":peer,"role":"member","joinedAtMs":2}}),
+        )
+        .unwrap();
+        let checkpoint = service.state.cursor;
+        execute(
+            &mut service,
+            "owner-reaction",
+            owner,
+            json!({"type":"setReaction","conversationId":"conversation:parent","messageId":"message:root",
+                "reaction":{"reaction":"👍","chosenByMe":true}}),
+        )
+        .unwrap();
+
+        let peer_delta = execute(
+            &mut service,
+            "peer-reaction-delta",
+            peer,
+            json!({"type":"sync","cursor":checkpoint.to_string(),"limit":10}),
+        )
+        .unwrap();
+        let message = peer_delta["envelopes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|envelope| envelope["event"]["type"] == "messageChanged")
+            .unwrap()["event"]["message"]
+            .clone();
+        assert_eq!(message["reactions"][0]["count"], 1);
+        assert_eq!(message["reactions"][0]["chosenByMe"], false);
+
+        let owner_delta = execute(
+            &mut service,
+            "owner-reaction-delta",
+            owner,
+            json!({"type":"sync","cursor":checkpoint.to_string(),"limit":10}),
+        )
+        .unwrap();
+        let owner_message = owner_delta["envelopes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|envelope| envelope["event"]["type"] == "messageChanged")
+            .unwrap()["event"]["message"]
+            .clone();
+        assert_eq!(owner_message["reactions"][0]["chosenByMe"], true);
         let _ = fs::remove_dir_all(root);
     }
 
