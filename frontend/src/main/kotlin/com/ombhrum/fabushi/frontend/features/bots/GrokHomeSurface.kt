@@ -121,23 +121,23 @@ fun GrokHomeSurface(
             }
         }
         GrokBotChatAndroid(
-            active,
-            botState,
-            appAgentSurface,
-            onCloseBot,
-            onOpenCommandPalette,
+            bot = active,
+            state = botState,
+            appAgentSurface = appAgentSurface,
+            onClose = onCloseBot,
+            onOpenCommandPalette = onOpenCommandPalette,
             onOpenSettings = {
                 onBeginAgentSettings(active.id)
                 profileTarget = active
             },
-            onDraftChange,
-            onSend,
-            onRetrySend,
-            onRespondToWidget,
-            onDismissWidget,
-            onStop,
-            onResolveApproval,
-            onMessageTargetConsumed,
+            onDraftChange = onDraftChange,
+            onSend = onSend,
+            onRetrySend = onRetrySend,
+            onRespondToWidget = onRespondToWidget,
+            onDismissWidget = onDismissWidget,
+            onStop = onStop,
+            onResolveApproval = onResolveApproval,
+            onMessageTargetConsumed = onMessageTargetConsumed,
         )
         AgentProfileEditor(
             agent = profileTarget,
