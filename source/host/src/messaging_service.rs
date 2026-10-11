@@ -1623,11 +1623,39 @@ impl AndroidMessagingService {
         if !self.state.actors.contains_key(target_actor_id) && target_actor_id != actor_id {
             return Err("participant actor does not exist in canonical messaging state".into());
         }
+        let caller_is_owner = conversation_owner(&conversation) == Some(actor_id);
+        let caller_role = conversation
+            .get("participants")
+            .and_then(Value::as_array)
+            .and_then(|participants| {
+                participants.iter().find(|participant| {
+                    participant.get("actorId").and_then(Value::as_str) == Some(actor_id)
+                })
+            })
+            .and_then(|participant| participant.get("role"))
+            .and_then(Value::as_str);
+        let existing_target_role = conversation
+            .get("participants")
+            .and_then(Value::as_array)
+            .and_then(|participants| {
+                participants.iter().find(|participant| {
+                    participant.get("actorId").and_then(Value::as_str) == Some(target_actor_id)
+                })
+            })
+            .and_then(|participant| participant.get("role"))
+            .and_then(Value::as_str);
         if conversation_owner(&conversation) == Some(target_actor_id) && role != "owner" {
             return Err("conversation owner cannot be downgraded".into());
         }
         if role == "owner" && conversation_owner(&conversation) != Some(target_actor_id) {
             return Err("ownership transfer requires a dedicated verified contract".into());
+        }
+        if !caller_is_owner
+            && caller_role == Some("admin")
+            && (matches!(role, "owner" | "admin")
+                || matches!(existing_target_role, Some("owner" | "admin")))
+        {
+            return Err("administrators cannot manage owner/admin participant roles".into());
         }
         let participants = conversation
             .as_object_mut()
@@ -1672,8 +1700,35 @@ impl AndroidMessagingService {
             return Err("participant removal is only valid for groups or channels".into());
         }
         let target_actor_id = required_non_empty(command.get("actorId"), "participant actorId")?;
+        let caller_is_owner = conversation_owner(&conversation) == Some(actor_id);
+        let caller_role = conversation
+            .get("participants")
+            .and_then(Value::as_array)
+            .and_then(|participants| {
+                participants.iter().find(|participant| {
+                    participant.get("actorId").and_then(Value::as_str) == Some(actor_id)
+                })
+            })
+            .and_then(|participant| participant.get("role"))
+            .and_then(Value::as_str);
+        let target_role = conversation
+            .get("participants")
+            .and_then(Value::as_array)
+            .and_then(|participants| {
+                participants.iter().find(|participant| {
+                    participant.get("actorId").and_then(Value::as_str) == Some(target_actor_id)
+                })
+            })
+            .and_then(|participant| participant.get("role"))
+            .and_then(Value::as_str);
         if conversation_owner(&conversation) == Some(target_actor_id) {
             return Err("conversation owner cannot be removed".into());
+        }
+        if !caller_is_owner
+            && caller_role == Some("admin")
+            && matches!(target_role, Some("owner" | "admin"))
+        {
+            return Err("administrators cannot remove owner/admin participants".into());
         }
         let participants = conversation
             .as_object_mut()
@@ -4260,6 +4315,187 @@ mod tests {
             other_sync["envelopes"][0]["event"]["messages"][0]["reactions"][0]["chosenByMe"],
             false
         );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn conversation_admin_cannot_promote_modify_or_remove_owner_admin_roles() {
+        let root = temp_root("admin-role-fence");
+        let owner = "human:owner";
+        let admin = "human:admin";
+        let other_admin = "human:other-admin";
+        let member = "human:member";
+        let mut service = AndroidMessagingService::open(&root).unwrap();
+
+        for (request_id, actor, name) in [
+            ("admin-profile-owner", owner, "Owner"),
+            ("admin-profile-admin", admin, "Admin"),
+            ("admin-profile-other", other_admin, "Other Admin"),
+            ("admin-profile-member", member, "Member"),
+        ] {
+            execute(
+                &mut service,
+                request_id,
+                actor,
+                json!({"type":"upsertProfile","actor":{"id":actor,"kind":"human","displayName":name}}),
+            )
+            .unwrap();
+        }
+        execute(
+            &mut service,
+            "admin-conversation",
+            owner,
+            json!({"type":"createConversation","conversation":{
+                "id":"conversation:admin-fence",
+                "kind":"group",
+                "title":"Admin fence",
+                "ownerId":owner,
+                "participants":[
+                    {"actorId":owner,"role":"owner","joinedAtMs":1},
+                    {"actorId":admin,"role":"admin","joinedAtMs":1},
+                    {"actorId":other_admin,"role":"admin","joinedAtMs":1},
+                    {"actorId":member,"role":"member","joinedAtMs":1}
+                ]
+            }}),
+        )
+        .unwrap();
+
+        assert!(execute(
+            &mut service,
+            "admin-promote-member",
+            admin,
+            json!({"type":"setConversationParticipant","conversationId":"conversation:admin-fence",
+                "participant":{"actorId":member,"role":"admin","joinedAtMs":1}}),
+        )
+        .is_err());
+        assert!(execute(
+            &mut service,
+            "admin-demote-admin",
+            admin,
+            json!({"type":"setConversationParticipant","conversationId":"conversation:admin-fence",
+                "participant":{"actorId":other_admin,"role":"member","joinedAtMs":1}}),
+        )
+        .is_err());
+        assert!(execute(
+            &mut service,
+            "admin-remove-admin",
+            admin,
+            json!({"type":"removeConversationParticipant","conversationId":"conversation:admin-fence","actorId":other_admin}),
+        )
+        .is_err());
+        assert!(execute(
+            &mut service,
+            "admin-remove-owner",
+            admin,
+            json!({"type":"removeConversationParticipant","conversationId":"conversation:admin-fence","actorId":owner}),
+        )
+        .is_err());
+
+        execute(
+            &mut service,
+            "owner-remove-admin",
+            owner,
+            json!({"type":"removeConversationParticipant","conversationId":"conversation:admin-fence","actorId":other_admin}),
+        )
+        .unwrap();
+        execute(
+            &mut service,
+            "admin-remove-member",
+            admin,
+            json!({"type":"removeConversationParticipant","conversationId":"conversation:admin-fence","actorId":member}),
+        )
+        .unwrap();
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn poll_vote_projection_keeps_actor_choices_private_and_counts_shared() {
+        let root = temp_root("poll-vote-projection");
+        let alice = "human:alice";
+        let bob = "human:bob";
+        let conversation_id = "conversation:poll";
+        let mut service = AndroidMessagingService::open(&root).unwrap();
+
+        for (request_id, actor, name) in [
+            ("poll-profile-alice", alice, "Alice"),
+            ("poll-profile-bob", bob, "Bob"),
+        ] {
+            execute(
+                &mut service,
+                request_id,
+                actor,
+                json!({"type":"upsertProfile","actor":{"id":actor,"kind":"human","displayName":name}}),
+            )
+            .unwrap();
+        }
+        execute(
+            &mut service,
+            "poll-conversation",
+            alice,
+            json!({"type":"createConversation","conversation":{
+                "id":conversation_id,
+                "kind":"group",
+                "title":"Poll",
+                "ownerId":alice,
+                "participants":[
+                    {"actorId":alice,"role":"owner","joinedAtMs":1},
+                    {"actorId":bob,"role":"member","joinedAtMs":1}
+                ],
+                "permissions":{"canSendMessages":true,"canSendPolls":true}
+            }}),
+        )
+        .unwrap();
+        execute(
+            &mut service,
+            "poll-send",
+            alice,
+            json!({"type":"sendMessage","conversationId":conversation_id,"clientMessageId":"poll:one",
+                "content":{"type":"poll","data":{
+                    "question":"Pick one",
+                    "multipleAnswers":false,
+                    "options":[
+                        {"id":"a","text":"A","voterCount":0,"chosen":false},
+                        {"id":"b","text":"B","voterCount":0,"chosen":false}
+                    ]
+                }}}),
+        )
+        .unwrap();
+        let poll_message_id = stable_message_id(alice, "poll:one");
+        execute(
+            &mut service,
+            "poll-vote-alice",
+            alice,
+            json!({"type":"votePoll","conversationId":conversation_id,"messageId":poll_message_id,"optionIds":["a"]}),
+        )
+        .unwrap();
+        execute(
+            &mut service,
+            "poll-vote-bob",
+            bob,
+            json!({"type":"votePoll","conversationId":conversation_id,"messageId":poll_message_id,"optionIds":["b"]}),
+        )
+        .unwrap();
+
+        for (actor, chosen_a, chosen_b) in [(alice, true, false), (bob, false, true)] {
+            let sync = execute(
+                &mut service,
+                &format!("poll-sync-{actor}"),
+                actor,
+                json!({"type":"sync","limit":100}),
+            )
+            .unwrap();
+            let message = sync["envelopes"][0]["event"]["messages"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|message| message["id"] == poll_message_id)
+                .unwrap();
+            let options = message["content"]["data"]["options"].as_array().unwrap();
+            assert_eq!(options[0]["voterCount"], 1);
+            assert_eq!(options[1]["voterCount"], 1);
+            assert_eq!(options[0]["chosen"], chosen_a);
+            assert_eq!(options[1]["chosen"], chosen_b);
+        }
         let _ = fs::remove_dir_all(root);
     }
 
