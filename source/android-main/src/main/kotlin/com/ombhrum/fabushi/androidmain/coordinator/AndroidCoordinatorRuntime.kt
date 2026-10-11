@@ -176,11 +176,6 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
     private val sendNetworkCallback = object : ConnectivityManager.NetworkCallback() {
         override fun onAvailable(network: Network) {
             scheduleSendSubmissionFlush()
-            observeRootConnectionTransport(RootConnectionTransportState.CONNECTED)
-        }
-
-        override fun onLost(network: Network) {
-            observeRootConnectionTransport(RootConnectionTransportState.DOWN)
         }
     }
 
@@ -2368,15 +2363,23 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
         eventPumpExecutor.execute {
             try {
                 runCatching { replayCoordinatorEvents() }
-                .onFailure { Thread.sleep(20) }
+                    .onSuccess { observeRootConnectionTransport(RootConnectionTransportState.CONNECTED) }
+                    .onFailure {
+                        observeRootConnectionTransport(RootConnectionTransportState.DOWN)
+                        Thread.sleep(20)
+                    }
                 while (featureEventListeners.isNotEmpty()) {
                     val event = try {
                         host.request(
                             "feature.receive",
                             JSONObject().put("timeoutMs", 250),
-                        )
+                        ).also {
+                            observeRootConnectionTransport(RootConnectionTransportState.CONNECTED)
+                        }
                     } catch (_: Throwable) {
+                        observeRootConnectionTransport(RootConnectionTransportState.DOWN)
                         runCatching { replayCoordinatorEvents() }
+                            .onSuccess { observeRootConnectionTransport(RootConnectionTransportState.CONNECTED) }
                         Thread.sleep(100)
                         continue
                     }
