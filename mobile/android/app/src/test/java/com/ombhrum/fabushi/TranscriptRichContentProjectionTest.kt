@@ -108,6 +108,68 @@ class TranscriptRichContentProjectionTest {
     }
 
     @Test
+    fun projectsPersistedTipTapMarksBlocksAndReferences() {
+        val blocks = projectTranscriptTipTapDocument(
+            """{
+              "type":"doc",
+              "content":[
+                {"type":"heading","attrs":{"level":2},"content":[{"type":"text","text":"Title","marks":[{"type":"bold"}]}]},
+                {"type":"paragraph","content":[
+                  {"type":"text","text":"safe","marks":[{"type":"italic"},{"type":"underline"},{"type":"link","attrs":{"href":"https://example.test/path"}}]},
+                  {"type":"hardBreak"},
+                  {"type":"mention","attrs":{"label":"Alice"}},
+                  {"type":"workflowReference","attrs":{"label":"Deploy"}},
+                  {"type":"prReference","attrs":{"prNumber":42}}
+                ]},
+                {"type":"blockquote","content":[{"type":"paragraph","content":[{"type":"text","text":"quoted","marks":[{"type":"strike"}]}]}]},
+                {"type":"orderedList","attrs":{"start":3},"content":[{"type":"listItem","content":[{"type":"paragraph","content":[{"type":"text","text":"item"}]}]}]},
+                {"type":"codeBlock","content":[{"type":"text","text":"echo ok"}]},
+                {"type":"horizontalRule"}
+              ]
+            }""",
+        )!!
+
+        val heading = blocks[0] as TranscriptTipTapBlock.Heading
+        assertEquals(2, heading.level)
+        assertTrue(heading.inline.single().bold)
+
+        val paragraph = blocks[1] as TranscriptTipTapBlock.Paragraph
+        assertTrue(paragraph.inline.first().italic)
+        assertTrue(paragraph.inline.first().underline)
+        assertEquals("https://example.test/path", paragraph.inline.first().url)
+        assertEquals("\n", paragraph.inline[1].text)
+        assertEquals("@Alice", paragraph.inline[2].text)
+        assertEquals("@Deploy", paragraph.inline[3].text)
+        assertEquals("#42", paragraph.inline[4].text)
+
+        val quote = blocks[2] as TranscriptTipTapBlock.Quote
+        assertTrue((quote.blocks.single() as TranscriptTipTapBlock.Paragraph).inline.single().strike)
+        val list = blocks[3] as TranscriptTipTapBlock.ListBlock
+        assertTrue(list.ordered)
+        assertEquals(3, list.start)
+        assertEquals("item", (list.items.single().single() as TranscriptTipTapBlock.Paragraph).inline.single().text)
+        assertEquals("echo ok", (blocks[4] as TranscriptTipTapBlock.Code).text)
+        assertTrue(blocks[5] is TranscriptTipTapBlock.HorizontalRule)
+    }
+
+    @Test
+    fun malformedTipTapFallsBackAndUnsafeLinkMarkRemainsInert() {
+        assertNull(projectTranscriptTipTapDocument("{not-json"))
+        assertNull(projectTranscriptTipTapDocument("""{"type":"paragraph","content":[]}"""))
+
+        val blocks = projectTranscriptTipTapDocument(
+            """{"type":"doc","content":[{"type":"paragraph","content":[
+              {"type":"text","text":"bad","marks":[{"type":"link","attrs":{"href":"javascript:alert(1)"}}]},
+              {"type":"mystery","content":[{"type":"text","text":"still visible"}]}
+            ]}]}""",
+        )!!
+        val paragraph = blocks.single() as TranscriptTipTapBlock.Paragraph
+        assertEquals("bad", paragraph.inline[0].text)
+        assertNull(paragraph.inline[0].url)
+        assertEquals("still visible", paragraph.inline[1].text)
+    }
+
+    @Test
     fun normalizesOnlyBoundedHttpAndHttpsLinks() {
         assertEquals("https://example.test/path", normalizeTranscriptHttpUrl(" https://example.test/path "))
         assertEquals("http://example.test", normalizeTranscriptHttpUrl("http://example.test"))
