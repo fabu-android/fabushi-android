@@ -4273,7 +4273,7 @@
         "account-scoped settings persistence",
         "cross-device synchronization"
       ],
-      "state_owner": "Desktop account sidebar layout store; Android canonical owner still to be implemented outside Compose.",
+      "state_owner": "Host AndroidSidebarSections owns account-fenced named sections, membership and collapsed flags; roster owns Agent identity/pin facts; Compose owns only ephemeral selection/search/focus. Cross-device CAS/merge remains pending.",
       "persistent_state": [
         "pinned order",
         "named Agent sections",
@@ -4300,21 +4300,26 @@
       "security_boundary": "only typed account/layout mutations may persist state; Compose selection state is not authority.",
       "android_disposition": "android-adapted",
       "android_target": [
+        "source/host/src/android_sidebar_sections.rs",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/production/agent-sidebar-sections-model.kt",
         "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/production/sidebar-model.kt",
-        "source/host/src/android_agent_roster.rs"
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/presentation/MobileBotViewModel.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/features/bots/GrokHomeSurface.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/production/ProductionRenderer_view.kt",
+        "mobile/android/app/src/test/java/com/ombhrum/fabushi/AgentSidebarSectionsModelTest.kt"
       ],
-      "android_owner": "pending canonical account-scoped Rust/Coordinator layout owner",
-      "platform_delta": "Android already projects pinned order natively, but named sections and cross-device CAS merge are not yet owned by a durable account-scoped runtime. Compose-only state is insufficient and will not be treated as parity.",
+      "android_owner": "Host AndroidSidebarSections for durable account-fenced section/collapse truth; canonical Agent roster for pin facts; Presentation only projects/mutates through typed Coordinator routes.",
+      "platform_delta": "Android replaces Desktop Electron client slices and hover/collapsed desktop rail with native Compose. Named sections/membership are durable in Host and section collapse now survives reopen. Desktop expandedWidth/infoPane sizing, modifier bulk selection, section rename/delete/reorder UI, and cross-device CAS merge remain open.",
       "implementation_status": "mapped",
-      "production_wiring": "Pinned ordering exists in the current native sidebar projection. Durable named sections, CAS revision/merge and account-fenced production bridge remain to be implemented.",
-      "unit_test": "Current sidebar ordering helpers cover local pin order only; CAS/section merge tests are still required.",
-      "contract_test": "Desktop grok-parity aggregate contract read at Desktop 3bc9240; Android contract pending.",
-      "integration_test": "pending",
+      "production_wiring": "Existing Host agent.sidebarSections.get/set and typed Coordinator routes own named sections/membership with replay-safe operationId semantics. 56d629e31889fe98ba06907bb4d1526b23ae6abf stops normalization from erasing isCollapsed, restores collapse after process reopen, and wires native section headers through ViewModel back to the same Host owner. Pin facts remain canonical roster fields. Full Desktop section lifecycle/CAS/adaptive layout is still incomplete.",
+      "unit_test": "source/host/src/android_sidebar_sections.rs covers normalization, synthetic Unassigned, account isolation, operation replay and now collapse process-reopen; AgentSidebarSectionsModelTest covers membership mutations and collapse preservation. Exact-head Kotlin job still pending.",
+      "contract_test": "Typed agent.sidebarSections get/set route is production-wired. Cross-device revision/CAS merge and Desktop full ui-layout slice are not yet implemented.",
+      "integration_test": "Native Compose renders canonical sections and collapse state; section rename/delete/reorder/bulk selection and adaptive width/info-pane parity remain pending.",
       "packaged_test": "required on final exact-head APK/AAB",
       "device_test": "required across account restart and simulated concurrent revision conflict",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "This narrow responsibility is intentionally mapped, not implemented, because current Android has no canonical durable section/CAS owner."
+      "notes": "Keep mapped, not implemented: current Android now has real durable section/collapse ownership, correcting the previous stale note, but full Desktop sidebar layout/CAS/bulk/section-action closure is still open."
     },
     {
       "responsibility_id": "VERIFICATION-PACKAGED-VISUAL-EVIDENCE-ANDROID-001",
@@ -9654,6 +9659,214 @@
       "artifact": null,
       "verification_status": "not-verified",
       "notes": "Desktop pagination.ts fully source-audited. Implementation is present but not verified until exact-head Android compile/unit/lint and final device/package acceptance succeed."
+    },
+    {
+      "responsibility_id": "AGENT-SIDEBAR-PREVIEW-ANDROID-001",
+      "domain": "agent",
+      "desktop_sources": [
+        {
+          "path": "frontend/src/recovered/features/conversation/workspace/sidebar-agent-preview-content.tsx",
+          "blob_sha": "010f8f1bb8f685ccaff63f86341a7359b6569d41",
+          "symbols": [
+            "previewTextFromLastEntry",
+            "AgentPreviewContent",
+            "AgentPreviewCompositor"
+          ]
+        },
+        {
+          "path": "frontend/src/recovered/features/conversation/workspace/sidebar-agent-preview-header.tsx",
+          "blob_sha": "e7302f9cdda581a3e998ca93c6db145cdb9b81cf",
+          "symbols": [
+            "projectAgentPreviewHeader",
+            "AgentPreviewHeader"
+          ]
+        },
+        {
+          "path": "frontend/src/recovered/features/conversation/workspace/sidebar-agent-status.ts",
+          "blob_sha": "103aa98e2121440f52df0886521fba579c6352f0",
+          "symbols": [
+            "projectSidebarAgentStatus",
+            "SidebarAgentStatusView"
+          ]
+        }
+      ],
+      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "responsibility": "Project Agent row/preview identity, waiting/draft/last-entry precedence, working/blocked/unread status, pinned marker and accessible mobile replacement without inventing a second roster truth.",
+      "source_owner": "Desktop sidebar preview content/header/status compositor",
+      "direct_callers": [
+        "ConversationSidebar",
+        "Agent sidebar rows"
+      ],
+      "downstream_dependencies": [
+        "canonical Agent roster",
+        "account-scoped sidebar projection"
+      ],
+      "state_owner": "canonical Agent roster projection; Compose owns only transient presentation",
+      "persistent_state": [],
+      "protocol_wire_contract": [],
+      "visible_effect": "Project Agent row/preview identity, waiting/draft/last-entry precedence, working/blocked/unread status, pinned marker and accessible mobile replacement without inventing a second roster truth.",
+      "failure_behavior": [
+        "stale or unavailable canonical roster state must not be replaced by presentation guesses"
+      ],
+      "cancellation_behavior": "presentation-only interaction cancellation must not mutate canonical Agent identity or durable section truth.",
+      "retry_semantics": "read-only projection has no side-effect retry; mutations route through typed owners.",
+      "idempotency_semantics": "re-projecting the same canonical roster/sidebar snapshot is stable.",
+      "process_death_recovery": "reopen recomputes presentation from canonical roster/sidebar state.",
+      "account_fencing": "all Agent/sidebar projection is scoped to the active account.",
+      "security_boundary": "Compose receives typed projections and cannot become a second canonical owner.",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/presentation/MobileBotViewModel.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/features/bots/GrokHomeSurface.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/features/bots/GrokBotComponents.kt"
+      ],
+      "android_owner": "canonical Agent roster projection; Compose owns only transient presentation",
+      "platform_delta": "Android has no hover pointer contract; equivalent information must be available through touch/native row or accessible details. Current row has canonical identity/profile fields but not full waiting→draft→last-entry precedence/status semantics.",
+      "implementation_status": "mapped",
+      "production_wiring": "MobileBotSummaryAndroid carries canonical avatar/title/activity/composing/unread/running/updatedAt fields and Grok native rows consume identity. Full Desktop preview content/status precedence and touch-accessible preview surface are not yet implemented.",
+      "unit_test": "Current Agent row tests cover identity/profile pieces; focused preview/status precedence tests remain required.",
+      "contract_test": "Canonical roster fields are typed; no dedicated complete preview contract yet.",
+      "integration_test": "pending full native integration acceptance",
+      "packaged_test": "required on final exact-head APK/AAB",
+      "device_test": "required on supported Android devices",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Do not mark the Desktop hover preview files implemented merely because Android has an Agent row. Mobile replacement still lacks full waiting/draft/last-entry and blocked/unread/running projection."
+    },
+    {
+      "responsibility_id": "AGENT-SIDEBAR-SECTION-LIFECYCLE-ANDROID-001",
+      "domain": "agent",
+      "desktop_sources": [
+        {
+          "path": "frontend/src/recovered/features/conversation/workspace/sidebar-section-projection.ts",
+          "blob_sha": "431d1ef5dd3da2125baa5865fc52bfa10eed69c8",
+          "symbols": [
+            "projectSidebarSections",
+            "projectSidebarSectionHeader"
+          ]
+        },
+        {
+          "path": "frontend/src/recovered/features/conversation/workspace/sidebar-sections-state.ts",
+          "blob_sha": "3429da6457a92b4952e674d039b2d1f25950bccd",
+          "symbols": [
+            "createSidebarSectionsStateStore",
+            "renameSidebarSection",
+            "removeSidebarSection",
+            "moveSidebarSection",
+            "assignSidebarAgents"
+          ]
+        },
+        {
+          "path": "frontend/src/recovered/features/conversation/workspace/sidebar-section-header.tsx",
+          "blob_sha": "7bf2931241d77a66d5a0e1c6c2731083a609b2e2",
+          "symbols": [
+            "SidebarSectionHeader"
+          ]
+        },
+        {
+          "path": "frontend/src/recovered/features/conversation/workspace/sidebar-section-delete-confirmation.tsx",
+          "blob_sha": "3d4ed34818b314c3848b113617e9bc888df00802",
+          "symbols": [
+            "SidebarSectionDeleteConfirmation"
+          ]
+        }
+      ],
+      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "responsibility": "Project, create, rename, delete, reorder, collapse and assign named Agent sidebar sections; lock synthetic Unassigned and preserve failure/recovery semantics through the canonical Host owner.",
+      "source_owner": "Desktop sidebar section projection/state/header/delete-confirmation",
+      "direct_callers": [
+        "ConversationSidebar",
+        "Agent sidebar rows"
+      ],
+      "downstream_dependencies": [
+        "canonical Agent roster",
+        "account-scoped sidebar projection"
+      ],
+      "state_owner": "Host AndroidSidebarSections",
+      "persistent_state": [],
+      "protocol_wire_contract": [],
+      "visible_effect": "Project, create, rename, delete, reorder, collapse and assign named Agent sidebar sections; lock synthetic Unassigned and preserve failure/recovery semantics through the canonical Host owner.",
+      "failure_behavior": [
+        "stale or unavailable canonical roster state must not be replaced by presentation guesses"
+      ],
+      "cancellation_behavior": "presentation-only interaction cancellation must not mutate canonical Agent identity or durable section truth.",
+      "retry_semantics": "read-only projection has no side-effect retry; mutations route through typed owners.",
+      "idempotency_semantics": "re-projecting the same canonical roster/sidebar snapshot is stable.",
+      "process_death_recovery": "reopen recomputes presentation from canonical roster/sidebar state.",
+      "account_fencing": "all Agent/sidebar projection is scoped to the active account.",
+      "security_boundary": "Compose receives typed projections and cannot become a second canonical owner.",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "source/host/src/android_sidebar_sections.rs",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/production/agent-sidebar-sections-model.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/presentation/MobileBotViewModel.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/features/bots/GrokHomeSurface.kt"
+      ],
+      "android_owner": "Host AndroidSidebarSections",
+      "platform_delta": "Android uses a typed Host owner instead of Desktop host-box/client-persistence fallback. Membership/create and collapse are wired; rename/delete/reorder section UI, destructive confirmation/focus restoration and host-settings conflict/retry semantics remain open.",
+      "implementation_status": "mapped",
+      "production_wiring": "Host get/set normalizes sections, prunes unknown ids, synthesizes Unassigned without persisting it, fences account state and operation replay. Compose currently moves Agents/create-new-section and 56d629e3 wires collapse. Full section rename/delete/reorder actions are not exposed in production UI.",
+      "unit_test": "Host and AgentSidebarSectionsModel tests cover normalization, account isolation, operation replay, move/new section and collapse preservation; rename/delete/reorder UI tests remain pending.",
+      "contract_test": "Typed get/set route exists; Desktop host-settings event/CAS retry semantics remain pending.",
+      "integration_test": "pending full native integration acceptance",
+      "packaged_test": "required on final exact-head APK/AAB",
+      "device_test": "required on supported Android devices",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Keep mapped until section rename/delete/reorder, destructive confirmation, optimistic failure recovery and conflict semantics are production-wired."
+    },
+    {
+      "responsibility_id": "AGENT-SIDEBAR-SEARCH-ANDROID-001",
+      "domain": "agent",
+      "desktop_sources": [
+        {
+          "path": "frontend/src/recovered/features/conversation/workspace/sidebar-search-trigger.ts",
+          "blob_sha": "f6178a7f75d6225b15cf5aec39dcdeea8ec7dd98",
+          "symbols": [
+            "createSidebarSearchTrigger"
+          ]
+        }
+      ],
+      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "responsibility": "Expose native Agent/sidebar search and filter Agent/conversation rows without moving roster or message truth into the search field.",
+      "source_owner": "Desktop sidebar search trigger",
+      "direct_callers": [
+        "ConversationSidebar",
+        "Agent sidebar rows"
+      ],
+      "downstream_dependencies": [
+        "canonical Agent roster",
+        "account-scoped sidebar projection"
+      ],
+      "state_owner": "Compose owns ephemeral query only; canonical rosters/conversations remain their existing owners.",
+      "persistent_state": [],
+      "protocol_wire_contract": [],
+      "visible_effect": "Expose native Agent/sidebar search and filter Agent/conversation rows without moving roster or message truth into the search field.",
+      "failure_behavior": [
+        "stale or unavailable canonical roster state must not be replaced by presentation guesses"
+      ],
+      "cancellation_behavior": "presentation-only interaction cancellation must not mutate canonical Agent identity or durable section truth.",
+      "retry_semantics": "read-only projection has no side-effect retry; mutations route through typed owners.",
+      "idempotency_semantics": "re-projecting the same canonical roster/sidebar snapshot is stable.",
+      "process_death_recovery": "reopen recomputes presentation from canonical roster/sidebar state.",
+      "account_fencing": "all Agent/sidebar projection is scoped to the active account.",
+      "security_boundary": "Compose receives typed projections and cannot become a second canonical owner.",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/features/bots/GrokHomeSurface.kt"
+      ],
+      "android_owner": "Compose owns ephemeral query only; canonical rosters/conversations remain their existing owners.",
+      "platform_delta": "Desktop collapsed-rail Delete/Backspace key behavior is desktop-specific. Android replaces it with a persistent touch search affordance, native text field and App Agent accessibility action.",
+      "implementation_status": "implemented",
+      "production_wiring": "GrokHomeSurface exposes a touch search glyph plus grok-mobile-search-toggle/search-field App Agent actions; query filters canonical bot name/description and conversation title/preview in-place without persisting a second domain store.",
+      "unit_test": "UI-focused coverage still required on exact head; implementation is production-wired.",
+      "contract_test": "No new wire protocol is introduced because search query is presentation-local and read-only.",
+      "integration_test": "pending full native integration acceptance",
+      "packaged_test": "required on final exact-head APK/AAB",
+      "device_test": "required on supported Android devices",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Implemented source responsibility, but final verification still requires exact-head Android/UI tests."
     }
   ],
   "traceability": {
