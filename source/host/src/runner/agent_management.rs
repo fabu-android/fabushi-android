@@ -675,6 +675,29 @@ mod tests {
 
         let roster = Arc::new(Mutex::new(AndroidAgentRoster::open(&roster_path).unwrap()));
         let messaging = Arc::new(Mutex::new(AndroidMessagingService::open(&root).unwrap()));
+        for (request_id, actor_id, display_name, kind) in [
+            ("group-profile-root", "agent-root", "Root", "assistant"),
+            ("group-profile-target", group.id.as_str(), group.name.as_str(), "bot"),
+        ] {
+            let request = json!({
+                "requestId":request_id,
+                "envelope":{
+                    "protocolVersion":2,
+                    "context":{
+                        "requestId":request_id,
+                        "deviceId":"android:test",
+                        "actorId":actor_id,
+                        "sessionId":"session:test",
+                        "sentAtMs":1
+                    },
+                    "command":{
+                        "type":"upsertProfile",
+                        "actor":{"id":actor_id,"kind":kind,"displayName":display_name}
+                    }
+                }
+            });
+            messaging.lock().unwrap().execute(&request, actor_id, 1).unwrap();
+        }
         let request = json!({
             "requestId":"group-seed",
             "envelope":{
@@ -691,6 +714,7 @@ mod tests {
                     "conversation":{
                         "id":group.id,
                         "kind":"group",
+                        "title":group.name,
                         "ownerId":"agent-root",
                         "participants":[
                             {"actorId":"agent-root","role":"owner","joinedAtMs":1},
