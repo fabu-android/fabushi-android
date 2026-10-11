@@ -46,6 +46,7 @@ data class AndroidSendAcknowledgement(
     val priorNonces: List<String>,
     val entries: List<AndroidSendAcknowledgementEntry>,
     val messageText: String,
+    val attachments: List<AndroidAgentAttachment>,
     val phase: AndroidSendAcknowledgementPhase,
     val generation: Long,
     val failedAtMs: Long?,
@@ -57,9 +58,18 @@ data class AndroidSendAcknowledgementDispatch(
     val operationId: String,
 )
 
+data class AndroidAgentAttachment(
+    val id: String,
+    val path: String,
+    val name: String,
+    val sizeBytes: Long,
+    val mimeType: String?,
+)
+
 data class AndroidComposerDraft(
     val draftId: String,
     val prompt: String,
+    val attachments: List<AndroidAgentAttachment>,
     val updatedAtMs: Long,
 )
 
@@ -295,6 +305,7 @@ interface AndroidCoordinatorPort {
         agentId: String,
         nonce: String,
         text: String,
+        attachments: List<AndroidAgentAttachment> = emptyList(),
         entries: List<AndroidSendAcknowledgementEntry>,
     ): AndroidSendAcknowledgement
     fun sendAcknowledgementDispatch(
@@ -331,6 +342,21 @@ interface AndroidCoordinatorPort {
         error("Durable composer draft mutation is unavailable on this Coordinator port")
     fun composerDraftClearIfCurrent(accountSlot: String?, agentId: String, draftId: String): Boolean =
         error("Durable composer draft conditional clear is unavailable on this Coordinator port")
+    fun composerDraftStageAttachment(
+        accountSlot: String?,
+        agentId: String,
+        contentUri: String,
+        name: String,
+        mimeType: String?,
+        sizeBytes: Long?,
+    ): AndroidComposerDraft =
+        error("Durable composer attachment staging is unavailable on this Coordinator port")
+    fun composerDraftRemoveAttachment(
+        accountSlot: String?,
+        agentId: String,
+        attachmentId: String,
+    ): AndroidComposerDraft? =
+        error("Durable composer attachment removal is unavailable on this Coordinator port")
     fun acceptClientSideToolV2(event: JSONObject): AndroidClientSideToolV2Event =
         error("Client-side tool v2 ingress is unavailable on this Coordinator port")
     fun replayClientSideToolV2(): List<AndroidClientSideToolV2Event> = emptyList()

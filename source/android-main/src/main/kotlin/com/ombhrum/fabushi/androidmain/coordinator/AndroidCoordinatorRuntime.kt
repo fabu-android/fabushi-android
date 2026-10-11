@@ -2,6 +2,8 @@ package com.ombhrum.fabushi.androidmain.coordinator
 
 import android.app.Application
 import android.content.Context
+import android.net.Uri
+import android.util.Base64
 import android.view.View
 import android.os.StatFs
 import com.ombhrum.fabushi.androidpreload.runtime.AccountAccessBlockReason
@@ -14,6 +16,7 @@ import com.ombhrum.fabushi.androidpreload.runtime.AccountRecoveryState
 import com.ombhrum.fabushi.androidpreload.runtime.AccountRosterLoadState
 import com.ombhrum.fabushi.androidpreload.runtime.AccountTruthState
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidCoordinatorPort
+import com.ombhrum.fabushi.androidpreload.runtime.AndroidAgentAttachment
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidApprovalCleanupResult
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidClientSideToolV2Event
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidComposerDraft
@@ -461,6 +464,7 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
         agentId: String,
         nonce: String,
         text: String,
+        attachments: List<AndroidAgentAttachment>,
         entries: List<AndroidSendAcknowledgementEntry>,
     ): AndroidSendAcknowledgement =
         parseSendAcknowledgement(
@@ -471,6 +475,7 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
                     .put("agentId", agentId)
                     .put("nonce", nonce)
                     .put("text", text)
+                    .put("attachments", agentAttachmentsJson(attachments))
                     .put("entries", sendAcknowledgementEntriesJson(entries)),
             ),
         )
@@ -597,10 +602,90 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
         AndroidComposerDraft(
             draftId = value.getString("draftId"),
             prompt = value.getString("prompt"),
+            attachments = parseAgentAttachments(value.optJSONArray("attachments") ?: JSONArray()),
             updatedAtMs = value.getLong("updatedAtMs"),
         ).also {
             check(it.draftId.isNotBlank()) { "composer draft returned an empty identity" }
         }
+
+    override fun composerDraftStageAttachment(
+        accountSlot: String?,
+        agentId: String,
+        contentUri: String,
+        name: String,
+        mimeType: String?,
+        sizeBytes: Long?,
+    ): AndroidComposerDraft {
+        require(contentUri.startsWith("content://")) { "Agent attachment URI must use ContentResolver content:// authority" }
+        require(name.isNotBlank()) { "Agent attachment name is required" }
+        val begin = host.request(
+            "feature.composerDraft.attachment.begin",
+            JSONObject()
+                .putNullable("accountSlot", accountSlot)
+                .put("agentId", agentId)
+                .put("name", name)
+                .putNullable("mimeType", mimeType)
+                .apply { if (sizeBytes != null && sizeBytes >= 0L) put("sizeBytes", sizeBytes) },
+        )
+        val attachmentId = begin.getString("attachmentId")
+        var offset = 0L
+        try {
+            applicationContext.contentResolver.openInputStream(Uri.parse(contentUri)).use { input ->
+                requireNotNull(input) { "Unable to open Agent attachment content stream" }
+                val buffer = ByteArray(1024 * 1024)
+                while (true) {
+                    val read = input.read(buffer)
+                    if (read < 0) break
+                    if (read == 0) continue
+                    val encoded = Base64.encodeToString(buffer, 0, read, Base64.NO_WRAP)
+                    val appended = host.request(
+                        "feature.composerDraft.attachment.append",
+                        JSONObject()
+                            .putNullable("accountSlot", accountSlot)
+                            .put("agentId", agentId)
+                            .put("attachmentId", attachmentId)
+                            .put("offset", offset)
+                            .put("dataBase64", encoded),
+                    )
+                    offset = appended.getLong("nextOffset")
+                }
+            }
+            val finished = host.request(
+                "feature.composerDraft.attachment.finish",
+                JSONObject()
+                    .putNullable("accountSlot", accountSlot)
+                    .put("agentId", agentId)
+                    .put("attachmentId", attachmentId),
+            )
+            return parseComposerDraft(finished.getJSONObject("draft"))
+        } catch (error: Throwable) {
+            runCatching {
+                host.request(
+                    "feature.composerDraft.attachment.abort",
+                    JSONObject()
+                        .putNullable("accountSlot", accountSlot)
+                        .put("agentId", agentId)
+                        .put("attachmentId", attachmentId),
+                )
+            }
+            throw error
+        }
+    }
+
+    override fun composerDraftRemoveAttachment(
+        accountSlot: String?,
+        agentId: String,
+        attachmentId: String,
+    ): AndroidComposerDraft? {
+        val response = host.request(
+            "feature.composerDraft.attachment.remove",
+            JSONObject()
+                .putNullable("accountSlot", accountSlot)
+                .put("agentId", agentId)
+                .put("attachmentId", attachmentId),
+        )
+        return response.optJSONObject("draft")?.let(::parseComposerDraft)
+    }
 
     override fun acceptClientSideToolV2(event: JSONObject): AndroidClientSideToolV2Event =
         parseClientSideToolV2Event(
@@ -752,6 +837,37 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
     private fun JSONObject.putNullable(key: String, value: String?): JSONObject =
         if (value == null) put(key, JSONObject.NULL) else put(key, value)
 
+    private fun agentAttachmentsJson(
+        attachments: List<AndroidAgentAttachment>,
+    ): JSONArray = JSONArray().apply {
+        attachments.forEach { attachment ->
+            put(
+                JSONObject()
+                    .put("id", attachment.id)
+                    .put("path", attachment.path)
+                    .put("name", attachment.name)
+                    .put("size", attachment.sizeBytes)
+                    .putNullable("mimeType", attachment.mimeType),
+            )
+        }
+    }
+
+    private fun parseAgentAttachments(rows: JSONArray): List<AndroidAgentAttachment> =
+        buildList(rows.length()) {
+            for (index in 0 until rows.length()) {
+                val value = rows.getJSONObject(index)
+                add(
+                    AndroidAgentAttachment(
+                        id = value.getString("id"),
+                        path = value.getString("path"),
+                        name = value.getString("name"),
+                        sizeBytes = value.getLong("size"),
+                        mimeType = value.optString("mimeType").takeIf(String::isNotBlank),
+                    ),
+                )
+            }
+        }
+
     private fun sendAcknowledgementEntriesJson(
         entries: List<AndroidSendAcknowledgementEntry>,
     ): JSONArray = JSONArray().apply {
@@ -790,6 +906,7 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
             priorNonces = prior,
             entries = entries,
             messageText = value.getString("messageText"),
+            attachments = parseAgentAttachments(value.optJSONArray("attachments") ?: JSONArray()),
             phase = AndroidSendAcknowledgementPhase.fromWire(value.getString("phase")),
             generation = value.getLong("generation"),
             failedAtMs = value.opt("failedAtMs").let { raw ->
