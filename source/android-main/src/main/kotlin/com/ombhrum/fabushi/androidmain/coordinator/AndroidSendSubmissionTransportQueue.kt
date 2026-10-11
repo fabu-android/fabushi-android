@@ -24,7 +24,7 @@ internal class AndroidSendSubmissionTransportQueue(
     private val isTransportDown: () -> Boolean,
     private val queue: (AndroidSendSubmissionScope) -> AndroidSendAcknowledgement,
     private val dispatch: (AndroidSendSubmissionScope) -> AndroidSendAcknowledgementDispatch,
-    private val cancelQueued: (AndroidSendSubmissionScope) -> Boolean,
+    private val cancelQueuedPersisted: (AndroidSendSubmissionScope) -> Boolean,
     private val onFlushed: (AndroidSendSubmissionScope, AndroidSendAcknowledgementDispatch) -> Unit,
 ) {
     private val lock = Any()
@@ -83,7 +83,7 @@ internal class AndroidSendSubmissionTransportQueue(
             check(!disposed) { "Send submission queue is disposed" }
             queued[scope.key]
         } ?: scope
-        val cancelled = cancelQueued(known)
+        val cancelled = cancelQueuedPersisted(known)
         if (cancelled) synchronized(lock) { queued.remove(known.key) }
         return cancelled
     }
