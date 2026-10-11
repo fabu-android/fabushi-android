@@ -3909,7 +3909,7 @@ mod tests {
         let owner = "human:owner";
         let other = "human:other";
         let mut service = AndroidMessagingService::open(&root).unwrap();
-        seed(&mut service, owner);
+        let root_message_id = seed(&mut service, owner);
         execute(
             &mut service,
             "other-profile",
