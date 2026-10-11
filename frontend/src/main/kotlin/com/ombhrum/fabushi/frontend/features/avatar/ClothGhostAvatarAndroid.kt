@@ -66,6 +66,16 @@ internal fun ghostColor(identity: String): Color {
 internal fun avatarAnimationDurationMillis(active: Boolean): Int? =
     if (active) 1200 else null
 
+internal enum class AgentAvatarVisualState { IDLE, WORKING }
+
+internal fun agentAvatarVisualState(
+    awaitingUserResponse: Boolean?,
+    isRunning: Boolean,
+): AgentAvatarVisualState =
+    if (awaitingUserResponse != null) AgentAvatarVisualState.IDLE
+    else if (isRunning) AgentAvatarVisualState.WORKING
+    else AgentAvatarVisualState.IDLE
+
 internal fun avatarPersonaColor(value: String?): Color? {
     val normalized = normalizeAgentAvatarColor(value) ?: return null
     return runCatching {
@@ -181,3 +191,73 @@ fun ClothGhostAvatarAndroid(
     }
 }
 
+@Composable
+internal fun AgentAvatarAndroid(
+    bot: MobileBotSummaryAndroid,
+    size: Dp = 46.dp,
+    badge: Color? = null,
+    activeOverride: Boolean? = null,
+    modifier: Modifier = Modifier,
+) {
+    val active = activeOverride ?: (
+        agentAvatarVisualState(
+            awaitingUserResponse = bot.awaitingUserResponse,
+            isRunning = bot.isRunning,
+        ) == AgentAvatarVisualState.WORKING
+    )
+    if (!bot.isGroup) {
+        ClothGhostAvatarAndroid(
+            botId = bot.id,
+            size = size,
+            active = active,
+            badge = badge,
+            avatarShape = bot.avatarShape,
+            avatarColor = bot.avatarColor,
+            modifier = modifier,
+        )
+        return
+    }
+
+    val participants = bot.memberIds.ifEmpty { listOf(bot.id) }
+    val visible = participants.take(if (participants.size > 4) 3 else 4)
+    Box(
+        modifier = modifier
+            .size(size)
+            .testTag("agent-group-avatar"),
+    ) {
+        val child = size * if (visible.size <= 1) 1f else 0.62f
+        val alignments = listOf(
+            Alignment.TopStart,
+            Alignment.TopEnd,
+            Alignment.BottomStart,
+            Alignment.BottomEnd,
+        )
+        visible.forEachIndexed { index, memberId ->
+            ClothGhostAvatarAndroid(
+                botId = memberId,
+                size = child,
+                active = false,
+                modifier = Modifier.align(alignments[index.coerceAtMost(alignments.lastIndex)]),
+            )
+        }
+        if (participants.size > 4) {
+            Text(
+                "+" + (participants.size - 3),
+                color = Color.White,
+                fontSize = 8.sp,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .background(Color.Black.copy(alpha = 0.72f), CircleShape)
+                    .padding(horizontal = 3.dp, vertical = 2.dp)
+                    .testTag("agent-group-avatar-overflow"),
+            )
+        }
+        if (badge != null) {
+            Box(
+                Modifier.align(Alignment.TopEnd).size(size * 0.23f)
+                    .background(Color.White, CircleShape).padding(2.dp).background(badge, CircleShape),
+            )
+        }
+    }
+}

@@ -216,12 +216,10 @@ internal fun GrokBotRowAndroid(
             .padding(horizontal = 18.dp, vertical = 9.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        ClothGhostAvatarAndroid(
-            botId = bot.id,
+        AgentAvatarAndroid(
+            bot = bot,
             size = 47.dp,
             badge = Color(0xFF20B967),
-            avatarShape = bot.avatarShape,
-            avatarColor = bot.avatarColor,
         )
         Column(Modifier.weight(1f).padding(start = 12.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -339,7 +337,7 @@ internal fun GrokBotChatAndroid(
             Text("‹", color = GrokMobileInk, fontSize = 34.sp, modifier = Modifier.clickable(onClick = onClose).padding(horizontal = 8.dp))
             Spacer(Modifier.weight(1f))
             Row(Modifier.background(Color.White, RoundedCornerShape(28.dp)).padding(horizontal = 13.dp, vertical = 7.dp), verticalAlignment = Alignment.CenterVertically) {
-                ClothGhostAvatarAndroid(bot.id, 28.dp, active = state.busy)
+                AgentAvatarAndroid(bot, 28.dp, activeOverride = state.busy)
                 Text(bot.name, color = GrokMobileInk, fontSize = 17.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(start = 8.dp))
             }
             Spacer(Modifier.weight(1f))
@@ -360,7 +358,7 @@ internal fun GrokBotChatAndroid(
         ) {
             if (state.messages.isEmpty()) item {
                 Column(Modifier.fillMaxWidth().padding(top = 96.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    ClothGhostAvatarAndroid(bot.id, 82.dp)
+                    AgentAvatarAndroid(bot, 82.dp)
                     Text(bot.name, color = GrokMobileInk, fontSize = 22.sp, fontWeight = FontWeight.Bold)
                     if (bot.description.isNotBlank()) Text(bot.description, color = GrokMobileMuted, fontSize = 14.sp)
                 }
@@ -368,7 +366,7 @@ internal fun GrokBotChatAndroid(
             items(state.messages, key = { it.id }) { entry ->
                 when {
                     entry.kind == MobileChatEntryKind.THINKING -> Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(7.dp)) {
-                        ClothGhostAvatarAndroid(bot.id, 22.dp, active = true)
+                        AgentAvatarAndroid(bot, 22.dp, activeOverride = true)
                         Text(entry.actionTitle ?: "Thinking…", color = GrokMobileMuted, fontSize = 12.sp)
                         CircularProgressIndicator(Modifier.size(12.dp), strokeWidth = 1.5.dp, color = GrokMobileMuted)
                     }
@@ -430,7 +428,7 @@ internal fun GrokBotChatAndroid(
                     else -> Column {
                         Text(bot.name, color = GrokMobileMuted, fontSize = 11.sp, modifier = Modifier.padding(start = 29.dp, bottom = 2.dp))
                         Row(verticalAlignment = Alignment.Bottom) {
-                            ClothGhostAvatarAndroid(bot.id, 20.dp)
+                            AgentAvatarAndroid(bot, 20.dp)
                             Text(entry.text + if (entry.streaming) "▌" else "", color = GrokMobileInk, fontSize = 16.sp, modifier = Modifier.padding(start = 7.dp).background(Color.Black.copy(alpha = 0.055f), RoundedCornerShape(18.dp)).padding(horizontal = 15.dp, vertical = 10.dp))
                         }
                     }

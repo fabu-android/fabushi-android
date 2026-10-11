@@ -14,4 +14,20 @@ class AvatarMotionParityTest {
     fun activeAvatarRetainsBoundedNativeComposeMotion() {
         assertEquals(1200, avatarAnimationDurationMillis(active = true))
     }
+
+    @Test
+    fun awaitingUserTakesPrecedenceOverRunningForAvatarState() {
+        assertEquals(
+            AgentAvatarVisualState.IDLE,
+            agentAvatarVisualState(awaitingUserResponse = true, isRunning = true),
+        )
+        assertEquals(
+            AgentAvatarVisualState.WORKING,
+            agentAvatarVisualState(awaitingUserResponse = null, isRunning = true),
+        )
+        assertEquals(
+            AgentAvatarVisualState.IDLE,
+            agentAvatarVisualState(awaitingUserResponse = null, isRunning = false),
+        )
+    }
 }
