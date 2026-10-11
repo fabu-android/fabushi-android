@@ -504,7 +504,11 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
         return when (outcome.optString("status")) {
             "completed" -> {
                 agentRosterMutationOwner.settle(operation.operationId)
-                outcome.opt("result")
+                val result = outcome.opt("result")
+                // The Host settlement is canonical. Projection publication is best-effort:
+                // a failed event transport must never replay an already committed side effect.
+                runCatching { publishAgentRosterMutationProjection(mutation, result) }
+                result
             }
             "rejected" -> {
                 agentRosterMutationOwner.settle(operation.operationId)
@@ -513,6 +517,25 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
                 )
             }
             else -> throw IllegalStateException("Agent roster mutation settlement is unknown")
+        }
+    }
+
+    private fun publishAgentRosterMutationProjection(mutation: JSONObject, result: Any?) {
+        val kind = mutation.optString("kind")
+        val resultObject = result as? JSONObject
+        val agent = when (kind) {
+            "update", "notifications", "hidden", "unread", "group-members" -> resultObject
+            "duplicate" -> resultObject?.optJSONObject("agent")
+            else -> null
+        }
+        if (agent != null) {
+            publishFeatureEvent(
+                JSONObject()
+                    .put("type", "agent-upserted")
+                    .put("agent", JSONObject(agent.toString())),
+            )
+        } else {
+            publishFeatureEvent(JSONObject().put("type", "agents"))
         }
     }
 
