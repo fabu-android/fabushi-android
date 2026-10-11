@@ -7765,6 +7765,90 @@ export function apply(ctx) {
     }
 
     #[test]
+    fn hidden_roster_mutation_replays_same_operation_after_host_reopen_and_rejects_stale_account() {
+        let root = std::env::temp_dir().join(format!(
+            "fabushi-hidden-roster-mutation-{}",
+            now_ms()
+        ));
+        let mut host = AndroidJsonHost::new(&root, AndroidHostMode::Test);
+        let created = host
+            .dispatch(
+                "createAgent",
+                &json!({"name":"Hidden lifecycle","description":"profile"}),
+            )
+            .unwrap();
+        let agent_id = created["agent"]["id"].as_str().unwrap().to_string();
+        let params = json!({
+            "operationId":"hidden-operation-1",
+            "accountFence":"session:test:android",
+            "mutation":{"kind":"hidden","id":agent_id,"value":true},
+        });
+
+        let first = host
+            .dispatch("feature.agent.rosterMutation", &params)
+            .unwrap();
+        assert_eq!(first["status"], "completed");
+        assert_eq!(first["result"]["isHiddenFromSidebar"], true);
+        assert_eq!(
+            host.dispatch("listAgents", &json!({})).unwrap()[0]["isHiddenFromSidebar"],
+            true,
+        );
+
+        let duplicate_settlement = host
+            .dispatch("feature.agent.rosterMutation", &params)
+            .unwrap();
+        assert_eq!(
+            duplicate_settlement, first,
+            "same operation id must return the durable Host settlement",
+        );
+
+        let stale = host.dispatch(
+            "feature.agent.rosterMutation",
+            &json!({
+                "operationId":"hidden-operation-old-account",
+                "accountFence":"session:old-account",
+                "mutation":{"kind":"hidden","id":agent_id,"value":false},
+            }),
+        );
+        assert!(stale.unwrap_err().contains("stale account"));
+        assert_eq!(
+            host.dispatch("listAgents", &json!({})).unwrap()[0]["isHiddenFromSidebar"],
+            true,
+            "old-account callback must not mutate canonical hidden truth",
+        );
+
+        drop(host);
+        let mut reopened = AndroidJsonHost::new(&root, AndroidHostMode::Test);
+        let replay_after_process_death = reopened
+            .dispatch("feature.agent.rosterMutation", &params)
+            .unwrap();
+        assert_eq!(replay_after_process_death, first);
+        assert_eq!(
+            reopened.dispatch("listAgents", &json!({})).unwrap()[0]["isHiddenFromSidebar"],
+            true,
+        );
+
+        let rejected_params = json!({
+            "operationId":"hidden-operation-rejected",
+            "accountFence":"session:test:android",
+            "mutation":{"kind":"hidden","id":"missing-agent","value":false},
+        });
+        let rejected = reopened
+            .dispatch("feature.agent.rosterMutation", &rejected_params)
+            .unwrap();
+        assert_eq!(rejected["status"], "rejected");
+        let rejected_replay = reopened
+            .dispatch("feature.agent.rosterMutation", &rejected_params)
+            .unwrap();
+        assert_eq!(
+            rejected_replay, rejected,
+            "deterministic rejection must itself be a durable settlement",
+        );
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn agent_roster_projects_canonical_transcript_run_and_durable_relationships() {
         let root = std::env::temp_dir().join(format!(
             "fabushi-agent-roster-projection-{}",
