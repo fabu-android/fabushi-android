@@ -10042,6 +10042,226 @@
       "verification_status": "not-verified",
       "notes": "Keep mapped/not-verified until exact-head packaged and device fallback evidence exists. This is an explicit Android replacement, not a claim that Fabushi contains a BIFF parser.",
       "android_head_at_update": "65ae55f9e6bb3218e3a2e9cdf1ae614ce50c6372"
+    },
+    {
+      "responsibility_id": "CONVERSATION-SUBMISSION-TRANSPORT-QUEUE-ANDROID-001",
+      "domain": "conversation-messaging",
+      "desktop_sources": [
+        {
+          "path": "frontend/src/recovered/features/conversation/workspace/submission.ts",
+          "blob_sha": "8814ab6c43c36b6c0224579587883347e53c107d",
+          "symbols": [
+            "createSendSubmissionStore",
+            "submit",
+            "flushQueued",
+            "cancelQueued",
+            "discardFailed",
+            "retryFailed",
+            "dispose"
+          ]
+        }
+      ],
+      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "responsibility": "Preserve Desktop send-submission transport semantics on Android without creating a second transcript/send owner: durable transport-down queueing, same-Agent serialized dispatch, queued-only cancellation, reconnect flush, generation/stale fencing, dispose fencing, explicit proven-failure retry, and unknown-outcome reconciliation.",
+      "source_owner": "Desktop renderer submission store; on Android durable acknowledgement truth is moved into Rust Host while the Coordinator owns platform transport admission.",
+      "direct_callers": [
+        "Agent composer send",
+        "failed-send retry",
+        "queued-send cancel",
+        "network reconnect",
+        "process restore"
+      ],
+      "downstream_dependencies": [
+        "durable send acknowledgement journal",
+        "Coordinator account epoch",
+        "Host chat.send",
+        "canonical transcript echo",
+        "Android ConnectivityManager"
+      ],
+      "state_owner": "Rust DurableSendAcknowledgementOwner is the only durable send-state owner; AndroidSendSubmissionTransportQueue is a process-owned admission scheduler only; Compose/ViewModel consume projections.",
+      "persistent_state": [
+        "send acknowledgement journal keyed by account fence / agent / nonce",
+        "generation and prior nonce retry lineage"
+      ],
+      "protocol_wire_contract": [
+        "pending",
+        "queued",
+        "dispatching",
+        "accepted-awaiting-echo",
+        "failed",
+        "outcome-unknown",
+        "fresh nonce required for retry",
+        "only queued may be cancelled"
+      ],
+      "visible_effect": "Transport-down sends remain visibly queued and cancellable; reconnect flushes them in Agent order; failed sends expose explicit retry; outcome-unknown is reconciled and never blindly retried.",
+      "failure_behavior": [
+        "synchronous pre-accept rejection can become proven failed",
+        "canonical echo wins reconciliation if dispatch reports an error after durable transcript mutation",
+        "dispatching work recovered after process loss becomes outcome-unknown until reconciled"
+      ],
+      "cancellation_behavior": "Only queued sends can be cancelled; dispatching/accepted/failed/outcome-unknown are not removable through cancelQueued.",
+      "retry_semantics": "Only proven failed sends may be explicitly retried, with a fresh nonce; outcome-unknown is never automatically replayed.",
+      "idempotency_semantics": "Same nonce/payload begin and queue are idempotent; nonce payload mismatch, duplicate/stale generation, and stale account scope fail closed.",
+      "process_death_recovery": "Queued rows are rediscovered from the durable Host snapshot; dispatching rows reopen as outcome-unknown; no UI cache is authoritative.",
+      "account_fencing": "Every mutation resolves the current account fence and Agent identity; presentation callbacks are additionally fenced by sendPresentationGeneration and active account/Agent.",
+      "security_boundary": "Compose cannot execute Host sends directly; admission goes through typed CoordinatorPort into Host, preserving Capability/Host ownership boundaries.",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "source/host/src/send_acknowledgement.rs",
+        "source/host/src/android_json_runtime.rs",
+        "source/android-preload/src/main/kotlin/com/ombhrum/fabushi/androidpreload/runtime/AndroidCoordinatorPort.kt",
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/coordinator/AndroidSendSubmissionTransportQueue.kt",
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/coordinator/AndroidCoordinatorRuntime.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/production/canonical-agent-transcript.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/presentation/MobileBotViewModel.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/features/bots/GrokBotComponents.kt",
+        "mobile/android/app/src/test/java/com/ombhrum/fabushi/androidmain/coordinator/SendSubmissionTransportQueueTest.kt",
+        "source/host/tests/send_acknowledgement_android_contract.rs",
+        "mobile/android/app/src/test/java/com/ombhrum/fabushi/AgentSendAcknowledgementProjectionTest.kt"
+      ],
+      "android_owner": "Rust Host durable acknowledgement owner + Android Coordinator transport admission scheduler",
+      "platform_delta": "Desktop's Electron renderer transport queue is not copied into Compose. Android moves durable truth into Rust Host and uses ConnectivityManager plus a typed Coordinator scheduler for platform transport availability/reconnect.",
+      "implementation_status": "implemented",
+      "production_wiring": "Production path is wired through AndroidCoordinatorPort/Runtime, Host acknowledgement routes, canonical Agent transcript projection, and GrokBotComponents as of Android code 0d596e4820242e259f7bc2d2d91f25fe0c6d5bfe.",
+      "unit_test": "SendSubmissionTransportQueueTest covers transport-down queue/reconnect FIFO, queued cancel, process rediscovery and dispose fencing; AgentSendAcknowledgementProjectionTest covers queued-only cancellation; Host contract tests cover durable queue/cancel/stale generation.",
+      "contract_test": "source/host/tests/send_acknowledgement_android_contract.rs validates durable journal phase/cancellation contracts.",
+      "integration_test": "Production ViewModel/Coordinator/Host path is wired; same-head GitHub Actions result is pending.",
+      "packaged_test": "required on final minified githubRelease APK/AAB with offline/reconnect/process-death journey",
+      "device_test": "required: transport-down queued visibility/cancel, reconnect flush, account switch, process death and outcome-unknown reconciliation",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Do not mark verified until this exact implementation head or a descendant passes required architecture/Rust/Android/package/device gates.",
+      "android_head_at_update": "0d596e4820242e259f7bc2d2d91f25fe0c6d5bfe"
+    },
+    {
+      "responsibility_id": "CONVERSATION-TRANSCRIPT-ADJACENCY-ANDROID-001",
+      "domain": "conversation-transcript",
+      "desktop_sources": [
+        {
+          "path": "frontend/src/recovered/features/conversation/workspace/transcript-adjacency.ts",
+          "blob_sha": "6fa8e4ccbe3e0b16806d168861ce9046d0132693",
+          "symbols": [
+            "projectTranscriptAdjacency",
+            "getEntryPresentation",
+            "isImageOnlyMarkdown"
+          ]
+        }
+      ],
+      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "responsibility": "Project Desktop six-field transcript adjacency semantics from immutable neighboring entries so Android renders equivalent group/run/bubble/thread continuity without allowing Compose to become the transcript owner.",
+      "source_owner": "Desktop transcript adjacency projector",
+      "direct_callers": [
+        "Desktop transcript row composition",
+        "Android native transcript presentation"
+      ],
+      "downstream_dependencies": [
+        "canonical immutable transcript rows",
+        "sender/author identity",
+        "reaction/thread metadata",
+        "attachment/presentation kind"
+      ],
+      "state_owner": "Pure immutable projector; no durable state.",
+      "persistent_state": [],
+      "protocol_wire_contract": [
+        "isContinuedFromPrev",
+        "isContinuedToNext",
+        "isGroupStart",
+        "isRunStart",
+        "isFollowedByThreadChip",
+        "isGroupEnd"
+      ],
+      "visible_effect": "Adjacent messages from the same semantic author/group render continuous bubbles while role/author/thread/reaction/emoji/url-card boundaries visibly split them.",
+      "failure_behavior": [
+        "unknown/non-message kinds project no adjacency",
+        "missing sender identity falls back to explicit presentation identity rather than creating canonical state"
+      ],
+      "cancellation_behavior": "not applicable; projection is pure",
+      "retry_semantics": "not applicable; projection is pure",
+      "idempotency_semantics": "same immutable entry list produces the same six-field projection",
+      "process_death_recovery": "recomputed from canonical transcript on render",
+      "account_fencing": "projector receives only the active account's canonical transcript projection and stores nothing across accounts",
+      "security_boundary": "presentation-only transformation; no side effect or Host access",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/recovered/features/conversation/workspace/transcript-adjacency.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/recovered/features/conversation/workspace/transcript_view.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/presentation/MessagingViewModel.kt",
+        "mobile/android/app/src/test/java/com/ombhrum/fabushi/TranscriptAdjacencyProjectionTest.kt"
+      ],
+      "android_owner": "Independent Kotlin immutable projector consumed by native transcript UI",
+      "platform_delta": "Desktop React row composition maps to a Kotlin pure projector and Compose shape/padding consumption. Canonical transcript ownership remains outside Compose.",
+      "implementation_status": "mapped",
+      "production_wiring": "Human transcript_view.kt consumes the projector and senderId is retained in immutable ChatMessage projection as of 0d596e4820242e259f7bc2d2d91f25fe0c6d5bfe; deterministic audit of Agent transcript.tsx composition is still open.",
+      "unit_test": "TranscriptAdjacencyProjectionTest covers role/author continuity, user-attachment, send-message fallback, emoji/image/url-card/attachment exclusions, reactions, thread-chip, group/run start/end.",
+      "contract_test": "Focused JVM semantics mirror Desktop blob 6fa8e4ccbe3e0b16806d168861ce9046d0132693.",
+      "integration_test": "Human native transcript consumes adjacency; Agent transcript integration remains under deterministic source audit.",
+      "packaged_test": "required on final packaged Human and Agent transcript surfaces",
+      "device_test": "required for mixed-author/thread/reaction/emoji/url-card transcript continuity",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Kept mapped rather than implemented/verified until transcript.tsx follow-on audit confirms all production transcript entry kinds consume equivalent adjacency semantics.",
+      "android_head_at_update": "0d596e4820242e259f7bc2d2d91f25fe0c6d5bfe"
+    },
+    {
+      "responsibility_id": "CONVERSATION-TRANSCRIPT-LOAD-ERROR-ANDROID-001",
+      "domain": "conversation-transcript",
+      "desktop_sources": [
+        {
+          "path": "frontend/src/recovered/features/conversation/workspace/transcript-load-error.tsx",
+          "blob_sha": "354ef8d00b5026cff2384f844d9dddbaeb5a2592",
+          "symbols": [
+            "TranscriptLoadError"
+          ]
+        }
+      ],
+      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "responsibility": "Show a dedicated accessible transcript initial-load failure with stable copy and a parent-owned retry action, without making the error view a transcript subscription or lifecycle owner.",
+      "source_owner": "Desktop TranscriptLoadError view",
+      "direct_callers": [
+        "conversation transcript initial load failure branch"
+      ],
+      "downstream_dependencies": [
+        "parent transcript loader",
+        "active Agent/account selection"
+      ],
+      "state_owner": "Parent MobileBotViewModel owns load/retry generation; error composable is stateless.",
+      "persistent_state": [],
+      "protocol_wire_contract": [
+        "Couldn't load conversation",
+        "Couldn't load this conversation. Check your connection and try again.",
+        "Retry",
+        "alert/live-region semantics"
+      ],
+      "visible_effect": "Initial transcript failure replaces the transcript body with a clear retryable error instead of a generic unrelated Bot error.",
+      "failure_behavior": "Retry failure remains on the dedicated surface; stale load completions are fenced by openBot generation and active Agent.",
+      "cancellation_behavior": "changing/closing Agent invalidates the parent load generation; error surface has no independent task",
+      "retry_semantics": "Retry re-enters the canonical durable transcript load through the parent ViewModel; it does not synthesize or replay messages.",
+      "idempotency_semantics": "Repeated retries only reload canonical state; no transcript side effect is created by the error surface.",
+      "process_death_recovery": "cold/open path attempts canonical transcript restore again; UI error state is presentation-only",
+      "account_fencing": "load completion is accepted only for current openBot generation and active Agent/account context",
+      "security_boundary": "presentation-only; no direct Host bypass",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/recovered/features/conversation/workspace/transcript-load-error_view.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/presentation/MobileBotViewModel.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/features/bots/GrokBotComponents.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/features/bots/GrokHomeSurface.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/production/ProductionRenderer_view.kt",
+        "mobile/android/app/src/test/java/com/ombhrum/fabushi/TranscriptLoadErrorProjectionTest.kt"
+      ],
+      "android_owner": "MobileBotViewModel parent loader + stateless AndroidTranscriptLoadError composable",
+      "platform_delta": "Desktop role=alert maps to a Compose assertive live region and test-tagged retry button; parent-owned lifecycle semantics are preserved.",
+      "implementation_status": "implemented",
+      "production_wiring": "Grok production Agent chat branches on transcriptLoadError and wires retryTranscriptLoad through GrokHomeSurface/ProductionRenderer as of 0d596e4820242e259f7bc2d2d91f25fe0c6d5bfe.",
+      "unit_test": "TranscriptLoadErrorProjectionTest asserts exact authority copy; existing ViewModel generation fences cover stale active-Agent loads.",
+      "contract_test": "Desktop copy and parent-owned retry semantics are recorded from blob 354ef8d00b5026cff2384f844d9dddbaeb5a2592.",
+      "integration_test": "Production Agent chat is wired; same-head compile/unit/lint is pending.",
+      "packaged_test": "required on final githubRelease Agent transcript load failure/retry surface",
+      "device_test": "required for offline initial-load failure, retry after reconnect, account switch and process reopen",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Do not mark verified until exact-head Actions and packaged/device failure/retry acceptance pass.",
+      "android_head_at_update": "0d596e4820242e259f7bc2d2d91f25fe0c6d5bfe"
     }
   ],
   "traceability": {
@@ -10077,6 +10297,6 @@
   "metadata": {
     "android_head_at_update": "1e66eb907c46043bcb429c15abeae253b44ef443",
     "note": " Deterministic editor cursor now records the shipped suggestion boundary: Android has production-wired Agent/scheduled-automation projection with stale fencing, while Desktop PR/MCP providers are explicitly dormant in the current production adapter. Agent find-in-chat is now production-wired for message/widget semantic search and wrap navigation, while occurrence-span highlighting and richer searchable payloads remain mapped gaps. Native media viewer gallery is production-wired for Human conversations with navigation/zoom/stale-load fencing; in-app PDF rendering is now implemented at 499519f… and pending exact-head CI/device evidence, while Agent attachment/audio/focus semantics remain mapped. Spreadsheet preview responsibility is explicit; legacy .xls remains a deterministic gap.",
-    "last_updated_android_head": "65ae55f9e6bb3218e3a2e9cdf1ae614ce50c6372"
+    "last_updated_android_head": "0d596e4820242e259f7bc2d2d91f25fe0c6d5bfe"
   }
 }
