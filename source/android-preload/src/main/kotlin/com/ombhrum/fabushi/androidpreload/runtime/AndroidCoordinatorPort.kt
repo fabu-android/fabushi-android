@@ -64,6 +64,27 @@ data class AndroidWidgetActionResult(
     val reason: String? = null,
 )
 
+data class AndroidToolResultCard(
+    val kind: String,
+    val toolCallId: String,
+    val status: String,
+    val path: String?,
+    val command: String?,
+    val workingDirectory: String?,
+    val summary: String,
+    val output: String,
+    val diff: String,
+    val isStreaming: Boolean,
+    val isBackground: Boolean,
+)
+
+data class AndroidClientSideToolV2Event(
+    val agentId: String,
+    val epoch: String,
+    val sequence: Long,
+    val projection: AndroidToolResultCard?,
+)
+
 /**
  * Typed method surface exposed to Android presentation code.
  *
@@ -132,6 +153,9 @@ interface AndroidCoordinatorPort {
         accountSlot: String?,
         agentId: String,
     ): List<AndroidSendAcknowledgement>
+    fun acceptClientSideToolV2(event: JSONObject): AndroidClientSideToolV2Event =
+        error("Client-side tool v2 ingress is unavailable on this Coordinator port")
+    fun replayClientSideToolV2(): List<AndroidClientSideToolV2Event> = emptyList()
     fun respondToWidget(
         accountSlot: String?,
         agentId: String,

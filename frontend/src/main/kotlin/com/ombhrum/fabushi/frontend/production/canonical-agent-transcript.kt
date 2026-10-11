@@ -1,7 +1,9 @@
 package com.ombhrum.fabushi
 
+import com.ombhrum.fabushi.androidpreload.runtime.AndroidClientSideToolV2Event
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidSendAcknowledgement
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidSendAcknowledgementPhase
+import com.ombhrum.fabushi.androidpreload.runtime.AndroidToolResultCard
 import org.json.JSONArray
 
 /**
@@ -159,3 +161,51 @@ internal fun isExplicitSendRetryAllowed(message: MobileChatMessage): Boolean =
     message.sendStatus == AndroidSendAcknowledgementPhase.FAILED.wireName &&
         !message.clientNonce.isNullOrBlank() &&
         (message.sendAcknowledgementGeneration ?: 0L) > 0L
+
+
+internal fun projectClientSideToolResultCards(
+    events: List<AndroidClientSideToolV2Event>,
+    agentId: String,
+): List<MobileChatMessage> {
+    val byToolCallId = linkedMapOf<String, MobileToolResultCard>()
+    events
+        .asSequence()
+        .filter { it.agentId == agentId }
+        .sortedBy { it.sequence }
+        .forEach { event ->
+            val projection = event.projection ?: return@forEach
+            byToolCallId[projection.toolCallId] = projection.toMobileToolResultCard()
+        }
+    return byToolCallId.values.map { card ->
+        MobileChatMessage(
+            id = "tool-result:${card.toolCallId}",
+            role = MobileChatRole.ASSISTANT,
+            text = "",
+            kind = MobileChatEntryKind.TOOL_RESULT,
+            actionTitle = when (card.kind) {
+                "file-edit" -> "Edited file"
+                "file-write" -> "Wrote file"
+                "shell" -> "Terminal"
+                else -> "Tool"
+            },
+            actionDetail = card.path ?: card.command ?: card.summary,
+            actionStatus = card.status,
+            toolResult = card,
+        )
+    }
+}
+
+private fun AndroidToolResultCard.toMobileToolResultCard(): MobileToolResultCard =
+    MobileToolResultCard(
+        kind = kind,
+        toolCallId = toolCallId,
+        status = status,
+        path = path,
+        command = command,
+        workingDirectory = workingDirectory,
+        summary = summary,
+        output = output.replace("\r\n", "\n").replace('\r', '\n'),
+        diff = diff.replace("\r\n", "\n").replace('\r', '\n'),
+        isStreaming = isStreaming,
+        isBackground = isBackground,
+    )

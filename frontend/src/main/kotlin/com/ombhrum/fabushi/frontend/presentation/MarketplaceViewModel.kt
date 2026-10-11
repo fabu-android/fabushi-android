@@ -58,7 +58,7 @@ data class PermissionRequest(
 )
 
 enum class MobileChatRole { USER, ASSISTANT }
-enum class MobileChatEntryKind { MESSAGE, ACTION, THINKING, MINI_APP, WIDGET }
+enum class MobileChatEntryKind { MESSAGE, ACTION, THINKING, MINI_APP, WIDGET, TOOL_RESULT }
 
 data class MobileWidgetOption(
     val label: String,
@@ -74,6 +74,20 @@ data class MobileWidgetCard(
     val dismissOnMoveOn: Boolean = false,
     val respondedValue: String? = null,
     val dismissed: Boolean = false,
+)
+
+data class MobileToolResultCard(
+    val kind: String,
+    val toolCallId: String,
+    val status: String,
+    val path: String? = null,
+    val command: String? = null,
+    val workingDirectory: String? = null,
+    val summary: String = "",
+    val output: String = "",
+    val diff: String = "",
+    val isStreaming: Boolean = false,
+    val isBackground: Boolean = false,
 )
 
 data class MobileChatMessage(
@@ -93,6 +107,7 @@ data class MobileChatMessage(
     val sendAcknowledgementGeneration: Long? = null,
     val sendFailureReason: String? = null,
     val widget: MobileWidgetCard? = null,
+    val toolResult: MobileToolResultCard? = null,
 )
 
 data class MarketplaceUiState(

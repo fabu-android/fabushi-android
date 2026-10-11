@@ -62,6 +62,61 @@ internal fun SectionLabelAndroid(text: String) {
 }
 
 @Composable
+private fun MobileToolResultTranscriptCard(card: MobileToolResultCard) {
+    val title = when (card.kind) {
+        "file-edit" -> "Edited file"
+        "file-write" -> "Wrote file"
+        "shell" -> if (card.isBackground) "Terminal · background" else "Terminal"
+        else -> "Tool result"
+    }
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .background(Color(0xFFF6F6F7), RoundedCornerShape(14.dp))
+            .padding(12.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        Row(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(title, color = GrokMobileInk, fontWeight = FontWeight.SemiBold)
+            Text(
+                card.status,
+                color = when (card.status) {
+                    "error", "denied", "rejected", "cancelled" -> Color.Red
+                    "running", "background" -> Color(0xFFE18900)
+                    else -> GrokMobileMuted
+                },
+                fontSize = 11.sp,
+            )
+        }
+        card.path?.let { Text(it, color = GrokMobileMuted, fontSize = 12.sp) }
+        card.command?.let { Text("$ $it", color = GrokMobileInk, fontSize = 12.sp) }
+        card.workingDirectory?.let { Text(it, color = GrokMobileMuted, fontSize = 11.sp) }
+        if (card.summary.isNotBlank()) {
+            Text(card.summary, color = GrokMobileInk, fontSize = 12.sp)
+        }
+        if (card.diff.isNotBlank()) {
+            Text(card.diff, color = GrokMobileInk, fontSize = 11.sp)
+        }
+        if (card.output.isNotBlank()) {
+            Text(card.output, color = GrokMobileInk, fontSize = 11.sp)
+        }
+        if (card.isStreaming) {
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                CircularProgressIndicator(Modifier.size(12.dp), strokeWidth = 1.5.dp)
+                Text("Streaming…", color = GrokMobileMuted, fontSize = 11.sp)
+            }
+        }
+    }
+}
+
+@Composable
 private fun MobileWidgetTranscriptCard(
     entry: MobileChatMessage,
     pending: Boolean,
@@ -322,6 +377,8 @@ internal fun GrokBotChatAndroid(
                         Text(entry.actionTitle ?: "Working", color = GrokMobileInk, fontSize = 12.sp, fontWeight = FontWeight.Medium)
                         entry.actionDetail?.takeIf { it.isNotBlank() }?.let { Text(it, color = GrokMobileMuted, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis) }
                     }
+                    entry.kind == MobileChatEntryKind.TOOL_RESULT && entry.toolResult != null ->
+                        MobileToolResultTranscriptCard(entry.toolResult)
                     entry.kind == MobileChatEntryKind.WIDGET && entry.widget != null ->
                         MobileWidgetTranscriptCard(
                             entry = entry,

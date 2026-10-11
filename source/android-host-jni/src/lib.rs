@@ -237,7 +237,9 @@ impl AndroidNativeRuntime {
         }
 
         if method == "feature.auth.logout" {
-            self.coordinator.retire_client_side_tool_v2_for_account_switch();
+            if let Err(failure) = self.coordinator.retire_client_side_tool_v2_for_account_switch() {
+                return failure_response(envelope.get("id").cloned(), failure);
+            }
         }
 
         success_response(envelope.get("id").cloned(), result)

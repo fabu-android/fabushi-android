@@ -14,7 +14,9 @@ import com.ombhrum.fabushi.androidpreload.runtime.AccountRecoveryState
 import com.ombhrum.fabushi.androidpreload.runtime.AccountRosterLoadState
 import com.ombhrum.fabushi.androidpreload.runtime.AccountTruthState
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidCoordinatorPort
+import com.ombhrum.fabushi.androidpreload.runtime.AndroidClientSideToolV2Event
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidMcpOAuthCompletion
+import com.ombhrum.fabushi.androidpreload.runtime.AndroidToolResultCard
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidSendAcknowledgement
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidSendAcknowledgementDispatch
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidSendAcknowledgementEntry
@@ -524,6 +526,25 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
         }
     }
 
+    override fun acceptClientSideToolV2(event: JSONObject): AndroidClientSideToolV2Event =
+        parseClientSideToolV2Event(
+            host.request(
+                "coordinator.clientSideToolV2.accept",
+                JSONObject().put("event", event),
+            ),
+        )
+
+    override fun replayClientSideToolV2(): List<AndroidClientSideToolV2Event> {
+        val rows = host.request("coordinator.clientSideToolV2.replay", JSONObject())
+            .optJSONArray("value")
+            ?: JSONArray()
+        return buildList(rows.length()) {
+            for (index in 0 until rows.length()) {
+                add(parseClientSideToolV2Event(rows.getJSONObject(index)))
+            }
+        }
+    }
+
     override fun respondToWidget(
         accountSlot: String?,
         agentId: String,
@@ -596,6 +617,29 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
     override fun featureApprovalResolve(params: JSONObject) = host.request("feature.approval.resolve", params)
     override fun transcriptSnapshot(): JSONArray =
         host.requestValue("feature.transcript.snapshot") as? JSONArray ?: JSONArray()
+
+    private fun parseClientSideToolV2Event(value: JSONObject): AndroidClientSideToolV2Event =
+        AndroidClientSideToolV2Event(
+            agentId = value.getString("agentId"),
+            epoch = value.getString("epoch"),
+            sequence = value.getLong("sequence"),
+            projection = value.optJSONObject("projection")?.let(::parseToolResultCard),
+        )
+
+    private fun parseToolResultCard(value: JSONObject): AndroidToolResultCard =
+        AndroidToolResultCard(
+            kind = value.getString("kind"),
+            toolCallId = value.getString("toolCallId"),
+            status = value.getString("status"),
+            path = value.optString("path").takeIf(String::isNotBlank),
+            command = value.optString("command").takeIf(String::isNotBlank),
+            workingDirectory = value.optString("workingDirectory").takeIf(String::isNotBlank),
+            summary = value.optString("summary"),
+            output = value.optString("output").replace("\r\n", "\n").replace('\r', '\n'),
+            diff = value.optString("diff").replace("\r\n", "\n").replace('\r', '\n'),
+            isStreaming = value.optBoolean("isStreaming", false),
+            isBackground = value.optBoolean("isBackground", false),
+        )
 
     private fun JSONObject.putNullable(key: String, value: String?): JSONObject =
         if (value == null) put(key, JSONObject.NULL) else put(key, value)

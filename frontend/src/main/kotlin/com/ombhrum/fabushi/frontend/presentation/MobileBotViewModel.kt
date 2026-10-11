@@ -1400,7 +1400,15 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
         val transcript = coordinator.transcriptSnapshot()
         val canonical = canonicalMobileTranscriptForAgent(transcript, agentId)
         val acknowledgements = coordinator.sendAcknowledgementSnapshot(accountSlot, agentId)
-        return projectDurableSendAcknowledgements(canonical, acknowledgements)
+        val durableMessages = projectDurableSendAcknowledgements(canonical, acknowledgements)
+        val toolCards = projectClientSideToolResultCards(
+            coordinator.replayClientSideToolV2(),
+            agentId,
+        )
+        val joined = linkedMapOf<String, MobileChatMessage>()
+        durableMessages.forEach { joined[it.id] = it }
+        toolCards.forEach { joined[it.id] = it }
+        return joined.values.toList()
     }
 
     private suspend fun refreshDurableSendProjection(
@@ -1542,7 +1550,7 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
-    private fun handleOperationEvent(event: JSONObject) {
+    private suspend fun handleOperationEvent(event: JSONObject) {
         val type = event.optString("type")
         if (type == "agents" || type == "agent-upserted" || type == "agent-deleted") {
             refreshBots()
@@ -1559,6 +1567,32 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
             if (mutableState.value.asyncTasksAgent != null) {
                 refreshAsyncTasks()
             }
+            return
+        }
+        if (type == "client-side-tool-v2") {
+            val active = mutableState.value.activeBot ?: return
+            val accountSlot = rosterSelectionAccountSlot
+            val scopeGeneration = sendPresentationGeneration
+            val wireEvent = event.optJSONObject("event")
+                ?: event.optJSONObject("clientSideToolV2")
+                ?: return
+            val accepted = withContext(Dispatchers.IO) {
+                runCatching { coordinator.acceptClientSideToolV2(wireEvent) }
+            }.getOrElse { error ->
+                if (isCurrentSendScope(active.id, accountSlot, scopeGeneration)) {
+                    commitState(
+                        mutableState.value.copy(
+                            error = error.message ?: "Tool result projection was rejected",
+                        ),
+                    )
+                }
+                return
+            }
+            if (!isCurrentSendScope(active.id, accountSlot, scopeGeneration)) return
+            if (accepted.agentId != active.id) return
+            val card = projectClientSideToolResultCards(listOf(accepted), active.id).singleOrNull()
+                ?: return
+            upsert(card)
             return
         }
 
