@@ -210,3 +210,153 @@ fn staged_attachment_flows_through_acknowledgement_and_canonical_echo() {
     assert!(projection["records"].as_array().unwrap().is_empty());
 }
 
+
+
+#[test]
+fn queued_send_is_durable_idempotent_and_only_queued_may_be_cancelled() {
+    let root = tempfile::tempdir().unwrap();
+    let mut host = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+    let nonce = "queued-contract-nonce";
+    let begun = host
+        .dispatch(
+            "feature.sendAcknowledgement.begin",
+            &json!({
+                "accountSlot":"slot-a",
+                "agentId":"agent-a",
+                "nonce":nonce,
+                "text":"queue me",
+                "entries":[{"id":nonce,"kind":"message","clientNonce":nonce}]
+            }),
+        )
+        .unwrap();
+    let generation = begun["generation"].as_u64().unwrap();
+
+    let queued = host
+        .dispatch(
+            "feature.sendAcknowledgement.queue",
+            &json!({
+                "accountSlot":"slot-a",
+                "agentId":"agent-a",
+                "nonce":nonce,
+                "generation":generation
+            }),
+        )
+        .unwrap();
+    assert_eq!(queued["phase"], "queued");
+
+    let duplicate = host
+        .dispatch(
+            "feature.sendAcknowledgement.queue",
+            &json!({
+                "accountSlot":"slot-a",
+                "agentId":"agent-a",
+                "nonce":nonce,
+                "generation":generation
+            }),
+        )
+        .unwrap();
+    assert_eq!(duplicate["phase"], "queued");
+
+    let snapshot = host
+        .dispatch(
+            "feature.sendAcknowledgement.snapshot",
+            &json!({"accountSlot":"slot-a","agentId":"agent-a"}),
+        )
+        .unwrap();
+    assert_eq!(snapshot["records"].as_array().unwrap().len(), 1);
+    assert_eq!(snapshot["records"][0]["phase"], "queued");
+
+    let cancelled = host
+        .dispatch(
+            "feature.sendAcknowledgement.cancelQueued",
+            &json!({
+                "accountSlot":"slot-a",
+                "agentId":"agent-a",
+                "nonce":nonce,
+                "generation":generation
+            }),
+        )
+        .unwrap();
+    assert_eq!(cancelled["cancelled"], true);
+    assert_eq!(cancelled["acknowledgement"]["phase"], "queued");
+
+    let after = host
+        .dispatch(
+            "feature.sendAcknowledgement.snapshot",
+            &json!({"accountSlot":"slot-a","agentId":"agent-a"}),
+        )
+        .unwrap();
+    assert!(after["records"].as_array().unwrap().is_empty());
+    assert!(host
+        .dispatch(
+            "feature.sendAcknowledgement.cancelQueued",
+            &json!({
+                "accountSlot":"slot-a",
+                "agentId":"agent-a",
+                "nonce":nonce,
+                "generation":generation
+            }),
+        )
+        .is_err());
+}
+
+#[test]
+fn cancel_queued_rejects_pending_and_stale_generation_without_mutation() {
+    let root = tempfile::tempdir().unwrap();
+    let mut host = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+    let nonce = "pending-contract-nonce";
+    let begun = host
+        .dispatch(
+            "feature.sendAcknowledgement.begin",
+            &json!({
+                "accountSlot":"slot-a",
+                "agentId":"agent-a",
+                "nonce":nonce,
+                "text":"pending",
+                "entries":[{"id":nonce,"kind":"message","clientNonce":nonce}]
+            }),
+        )
+        .unwrap();
+    let generation = begun["generation"].as_u64().unwrap();
+
+    assert!(host
+        .dispatch(
+            "feature.sendAcknowledgement.cancelQueued",
+            &json!({
+                "accountSlot":"slot-a",
+                "agentId":"agent-a",
+                "nonce":nonce,
+                "generation":generation
+            }),
+        )
+        .is_err());
+
+    host.dispatch(
+        "feature.sendAcknowledgement.queue",
+        &json!({
+            "accountSlot":"slot-a",
+            "agentId":"agent-a",
+            "nonce":nonce,
+            "generation":generation
+        }),
+    )
+    .unwrap();
+    assert!(host
+        .dispatch(
+            "feature.sendAcknowledgement.cancelQueued",
+            &json!({
+                "accountSlot":"slot-a",
+                "agentId":"agent-a",
+                "nonce":nonce,
+                "generation":generation + 1
+            }),
+        )
+        .is_err());
+    let projection = host
+        .dispatch(
+            "feature.sendAcknowledgement.snapshot",
+            &json!({"accountSlot":"slot-a","agentId":"agent-a"}),
+        )
+        .unwrap();
+    assert_eq!(projection["records"][0]["phase"], "queued");
+}

@@ -1123,6 +1123,8 @@ impl AndroidJsonHost {
             }
             "feature.execute" => self.feature_execute(params),
             "feature.sendAcknowledgement.begin" => self.send_acknowledgement_begin(params),
+            "feature.sendAcknowledgement.queue" => self.send_acknowledgement_queue(params),
+            "feature.sendAcknowledgement.cancelQueued" => self.send_acknowledgement_cancel_queued(params),
             "feature.sendAcknowledgement.dispatch" => self.send_acknowledgement_dispatch(params),
             "feature.sendAcknowledgement.retry" => self.send_acknowledgement_retry(params),
             "feature.sendAcknowledgement.clearApprovals" => self.send_acknowledgement_clear_approvals(params),
@@ -3328,6 +3330,51 @@ impl AndroidJsonHost {
             )?;
         serde_json::to_value(record)
             .map_err(|error| format!("failed to serialize send acknowledgement: {error}"))
+    }
+
+    fn send_acknowledgement_queue(&mut self, params: &Value) -> Result<Value, String> {
+        let (account_slot, account_fence, agent_id) = self.send_acknowledgement_scope(params)?;
+        let nonce = required_string(params, "nonce")?;
+        let generation = params
+            .get("generation")
+            .and_then(Value::as_u64)
+            .filter(|value| *value > 0)
+            .ok_or("send acknowledgement generation is required")?;
+        let record = self
+            .send_acknowledgements
+            .lock()
+            .map_err(|_| "send acknowledgement owner lock poisoned".to_string())?
+            .mark_queued(
+                account_slot.as_deref(),
+                &account_fence,
+                &agent_id,
+                nonce,
+                generation,
+            )?;
+        serde_json::to_value(record)
+            .map_err(|error| format!("failed to serialize queued send acknowledgement: {error}"))
+    }
+
+    fn send_acknowledgement_cancel_queued(&mut self, params: &Value) -> Result<Value, String> {
+        let (account_slot, account_fence, agent_id) = self.send_acknowledgement_scope(params)?;
+        let nonce = required_string(params, "nonce")?;
+        let generation = params
+            .get("generation")
+            .and_then(Value::as_u64)
+            .filter(|value| *value > 0)
+            .ok_or("send acknowledgement generation is required")?;
+        let cancelled = self
+            .send_acknowledgements
+            .lock()
+            .map_err(|_| "send acknowledgement owner lock poisoned".to_string())?
+            .cancel_queued(
+                account_slot.as_deref(),
+                &account_fence,
+                &agent_id,
+                nonce,
+                generation,
+            )?;
+        Ok(json!({"cancelled":true,"acknowledgement":cancelled}))
     }
 
     fn send_acknowledgement_dispatch(&mut self, params: &Value) -> Result<Value, String> {

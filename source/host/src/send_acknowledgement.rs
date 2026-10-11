@@ -221,6 +221,26 @@ impl DurableSendAcknowledgementOwner {
         )
     }
 
+    pub fn cancel_queued(
+        &mut self,
+        account_slot: Option<&str>,
+        account_fence: &str,
+        agent_id: &str,
+        nonce: &str,
+        generation: u64,
+    ) -> Result<SendAcknowledgementRecord, String> {
+        let key = self.require_key(account_slot, account_fence, agent_id, nonce)?;
+        let record = self.state.records.get(&key).expect("located record").clone();
+        assert_generation(&record, generation)?;
+        if record.phase != SendAcknowledgementPhase::Queued {
+            return Err("only a queued send may be cancelled".into());
+        }
+        self.state.records.remove(&key);
+        self.state.seen_echoes.remove(&key);
+        self.persist()?;
+        Ok(record)
+    }
+
     pub fn mark_dispatching(
         &mut self,
         account_slot: Option<&str>,
