@@ -54,6 +54,20 @@ internal fun canonicalAgentTranscriptMessages(
 }
 
 
+private fun canonicalTranscriptPresentationKind(entry: org.json.JSONObject): String? {
+    val direct = entry.optString("presentationKind").trim().takeIf(String::isNotEmpty)
+    if (direct != null) return direct
+    return entry
+        .optJSONObject("sendMessageText")
+        ?.optJSONObject("presentation")
+        ?.optString("kind")
+        ?.trim()
+        ?.takeIf(String::isNotEmpty)
+}
+
+private fun canonicalTranscriptHasReaction(entry: org.json.JSONObject): Boolean =
+    (entry.optJSONArray("reactions")?.length() ?: 0) > 0
+
 private fun canonicalTranscriptAttachments(entry: org.json.JSONObject): List<MobileTranscriptAttachment> {
     val rows = entry.optJSONArray("attachments") ?: return emptyList()
     return buildList {
@@ -103,6 +117,11 @@ internal fun canonicalMobileTranscriptForAgent(
                     operationId = entry.optString("operationId").takeIf(String::isNotBlank),
                     clientNonce = entry.optString("clientNonce").takeIf(String::isNotBlank),
                     attachments = canonicalTranscriptAttachments(entry),
+                    transcriptAuthor = entry.optString("author").trim().takeIf(String::isNotEmpty),
+                    transcriptSourceKind = entry.optString("sourceKind").trim().takeIf(String::isNotEmpty),
+                    transcriptPresentationKind = canonicalTranscriptPresentationKind(entry),
+                    hasTranscriptReaction = canonicalTranscriptHasReaction(entry),
+                    hasTranscriptThreadChip = entry.optBoolean("hasThreadChip", false),
                 )
             }
             "tool-call" -> {
@@ -158,6 +177,8 @@ internal fun canonicalMobileTranscriptForAgent(
                         respondedValue = entry.optString("respondedValue").takeIf(String::isNotBlank),
                         dismissed = entry.optBoolean("widgetDismissed", false),
                     ),
+                    hasTranscriptReaction = canonicalTranscriptHasReaction(entry),
+                    hasTranscriptThreadChip = entry.optBoolean("hasThreadChip", false),
                 )
             }
         }
@@ -213,6 +234,7 @@ internal fun projectDurableSendAcknowledgements(
             sendStatus = acknowledgement.phase.wireName,
             sendAcknowledgementGeneration = acknowledgement.generation,
             sendFailureReason = acknowledgement.reason,
+            transcriptAuthor = "user",
         )
     }
     return byId.values.toList()
