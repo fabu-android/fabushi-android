@@ -5837,6 +5837,35 @@
             "COORDINATOR_METHOD_TABLE",
             "validateCoordinatorReply"
           ]
+        },
+        {
+          "path": "frontend/src/recovered/runtime/coordinator-source-claimant.ts",
+          "blob_sha": "f5f7f3a870ab16badebf4f9e4d7dd728c7902f4b",
+          "symbols": [
+            "CoordinatorSourceClaimant",
+            "claim/replace transferred source",
+            "source disposal"
+          ]
+        },
+        {
+          "path": "frontend/src/recovered/runtime/coordinator-source.ts",
+          "blob_sha": "db7859728adba5129fab1d0572720390807dabad",
+          "symbols": [
+            "raw Coordinator MessagePort session",
+            "hello/ready",
+            "request correlation",
+            "transport state",
+            "close/cancel failure"
+          ]
+        },
+        {
+          "path": "frontend/src/recovered/runtime/source-boundary.ts",
+          "blob_sha": "e98f4259861db663b7bedd665cd8e8a5b2515627",
+          "symbols": [
+            "SourceFailure",
+            "SourceFailurePayload",
+            "isSourceRecord"
+          ]
         }
       ],
       "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
@@ -5900,7 +5929,8 @@
       "device_test": "Open: same-head instrumentation/device process-death/restart and user journeys remain required for final product verification.",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Source responsibility is implemented, not verified. The predecessor HEAD a82bba3cab2d234391f4f1f6ed5ec707a0402cb3 had focused Rust tests green, but exact-head policy requires rerunning the descendant commit created by this ledger update before any verified claim."
+      "notes": "Source responsibility is implemented, not verified. The predecessor HEAD a82bba3cab2d234391f4f1f6ed5ec707a0402cb3 had focused Rust tests green, but exact-head policy requires rerunning the descendant commit created by this ledger update before any verified claim. Audited recovered runtime coordinator-source-claimant.ts, coordinator-source.ts and source-boundary.ts are explicit not-applicable-with-replacement mechanism rows: Electron transferred MessagePort/TypeScript failure wrappers are replaced by the existing typed AndroidCoordinatorPort/JNI/Rust Coordinator lifecycle. This traceability update does not upgrade verification; same-descendant-head Actions plus packaged/device evidence remain required.",
+      "android_head_at_update": "6a179214236ad8f80a3755403534416178a39605"
     },
     {
       "responsibility_id": "AGENT-GROUP-MEMBERSHIP-ANDROID-001",
@@ -12289,7 +12319,7 @@
   },
   "metadata": {
     "android_head_at_update": "1e66eb907c46043bcb429c15abeae253b44ef443",
-    "note": "Deterministic editor cursor now records the shipped suggestion boundary: Android has production-wired Agent/scheduled-automation projection with stale fencing, while Desktop PR/MCP providers are explicitly dormant in the current production adapter. Agent find-in-chat is now production-wired for message/widget semantic search and wrap navigation, while occurrence-span highlighting and richer searchable payloads remain mapped gaps. Native media viewer gallery is production-wired for Human conversations with navigation/zoom/stale-load fencing; in-app PDF rendering is now implemented at 499519f… and pending exact-head CI/device evidence, while Agent attachment/audio/focus semantics remain mapped. Spreadsheet preview responsibility is explicit; legacy .xls remains a deterministic gap. Signed-in onboarding rows are now explicitly mapped to native route/persona/create presentation and a separate unresolved computer-readiness/kickstart responsibility; neither is verified. Desktop permissions/local-tool renderer/store rows are now mapped to a dedicated unresolved Host-owned always/ask/never + team ceiling policy responsibility. Desktop plugins/overlay rows are now split across native overlay presentation, server-tool lifecycle, Git private-source auth recovery, and existing Skills/MCP owners; all remain mapped until production wiring/evidence closes. Settings instruction/router source and recovered cross-owner contract tests are now mapped to concrete responsibilities; provider/instruction production wiring remains explicitly open. Runtime/shell/state contracts plus root-resilience/roster source are now split across selection persistence, readiness, privacy-block, root connection, terminal projection and keyboard-shortcut responsibilities. Only roster selection is implemented; others remain mapped. Audited Desktop frontend TypeScript/Vite/recovered-renderer bootstrap rows now have explicit native Android replacements; transcript rich-content/reduced-motion/URL-card and hidden-chat evidence was reconciled to the 2b7859ac code head without verification inflation.",
-    "last_updated_android_head": "2b7859ac0fdd1fea3c4fdc2971f755e7006c4d6e"
+    "note": "Deterministic editor cursor now records the shipped suggestion boundary: Android has production-wired Agent/scheduled-automation projection with stale fencing, while Desktop PR/MCP providers are explicitly dormant in the current production adapter. Agent find-in-chat is now production-wired for message/widget semantic search and wrap navigation, while occurrence-span highlighting and richer searchable payloads remain mapped gaps. Native media viewer gallery is production-wired for Human conversations with navigation/zoom/stale-load fencing; in-app PDF rendering is now implemented at 499519f… and pending exact-head CI/device evidence, while Agent attachment/audio/focus semantics remain mapped. Spreadsheet preview responsibility is explicit; legacy .xls remains a deterministic gap. Signed-in onboarding rows are now explicitly mapped to native route/persona/create presentation and a separate unresolved computer-readiness/kickstart responsibility; neither is verified. Desktop permissions/local-tool renderer/store rows are now mapped to a dedicated unresolved Host-owned always/ask/never + team ceiling policy responsibility. Desktop plugins/overlay rows are now split across native overlay presentation, server-tool lifecycle, Git private-source auth recovery, and existing Skills/MCP owners; all remain mapped until production wiring/evidence closes. Settings instruction/router source and recovered cross-owner contract tests are now mapped to concrete responsibilities; provider/instruction production wiring remains explicitly open. Runtime/shell/state contracts plus root-resilience/roster source are now split across selection persistence, readiness, privacy-block, root connection, terminal projection and keyboard-shortcut responsibilities. Only roster selection is implemented; others remain mapped. Audited Desktop frontend TypeScript/Vite/recovered-renderer bootstrap rows now have explicit native Android replacements; transcript rich-content/reduced-motion/URL-card and hidden-chat evidence was reconciled to the 2b7859ac code head without verification inflation. Three recovered runtime Coordinator mechanism rows were source-read and mapped to COORDINATOR-PRESENTATION-CLIENT-ANDROID-001 as explicit Android replacements; async-action/snapshot/entrypoint registry rows remain open pending separate caller/owner proof.",
+    "last_updated_android_head": "6a179214236ad8f80a3755403534416178a39605"
   }
 }
