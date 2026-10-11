@@ -103,6 +103,10 @@ internal fun ProductionRenderer(
                         },
                     )
                 }
+                RootConnectionResilienceHost(
+                    projection = state.rootConnectionProjection,
+                    onRetry = model::retryRootConnection,
+                )
                 if (showAbout) {
                     AndroidAboutDialog(
                         updateState = updateState,
