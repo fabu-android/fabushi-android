@@ -22,6 +22,9 @@ class RootConnectionResilienceWiringTest(unittest.TestCase):
         self.assertIn("override fun addRootConnectionResilienceListener", runtime)
         self.assertIn("rootConnectionOwner.observeAccount(", runtime)
         self.assertIn("rootConnectionOwner.observeReadiness(settled)", runtime)
+        self.assertIn('settled.rosterFailureTransportKind == "network"', runtime)
+        self.assertIn('settled.rosterFailureTransportKind == "dns"', runtime)
+        self.assertIn("replacementTransportDown", runtime)
         self.assertIn("host.request(\n                            \"feature.receive\"", runtime)
         send_callback = runtime.split("private val sendNetworkCallback", 1)[1].split("init {", 1)[0]
         self.assertNotIn("observeRootConnectionTransport", send_callback)
