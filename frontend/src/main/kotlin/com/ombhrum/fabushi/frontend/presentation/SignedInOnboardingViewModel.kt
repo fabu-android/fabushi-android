@@ -30,7 +30,7 @@ private class SignedInOnboardingSeenStore(application: Application) {
     }
 }
 
-class SignedInOnboardingViewModel(application: Application) : AndroidViewModel(application) {
+internal class SignedInOnboardingViewModel(application: Application) : AndroidViewModel(application) {
     private val coordinator: AndroidCoordinatorPort = CoordinatorClient.presentation()
     private val seenStore = SignedInOnboardingSeenStore(application)
     private val operationFence = SignedInOnboardingOperationFence()
