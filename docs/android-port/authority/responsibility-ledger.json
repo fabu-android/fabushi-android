@@ -9251,10 +9251,21 @@
             "replyQuoteLabel",
             "replyComposerPlaceholder"
           ]
+        },
+        {
+          "path": "frontend/src/recovered/features/conversation/workspace/reply-thread-controller.ts",
+          "blob_sha": "99ea6e8a4b88ac21b4d3eddcfbacb73dde835365",
+          "symbols": [
+            "createReplyThreadController",
+            "selectReply",
+            "applyReplyToDraft",
+            "projectSubmission",
+            "setScope"
+          ]
         }
       ],
       "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
-      "responsibility": "Project durable reply targets into compact semantic labels, expose a reply quote as a navigation trigger, distinguish missing/deleted references without inventing retry state, preserve attachment/link-specific labels and composer reply context, and provide an accessible referenced-message preview where the platform supports hover/focus.",
+      "responsibility": "Project durable reply targets into compact semantic labels, expose a reply quote as a navigation trigger, distinguish missing/deleted references without inventing retry state, preserve attachment/link-specific labels and composer reply context, persist reply selection in the conversation draft across recreation/reopen, fence reply state by conversation scope, and provide an accessible referenced-message preview where the platform supports hover/focus.",
       "source_owner": "Canonical transcript/replyTo identity remains runtime-owned; presentation owns only labels, navigation intent and ephemeral preview visibility.",
       "visible_effect": "Users see what a message replies to, can jump to the referenced message when it is already in scope, and get an explicit unavailable state when the target is not currently resolvable.",
       "android_disposition": "android-adapted",
@@ -9265,10 +9276,10 @@
       "android_owner": "Compose presentation owns only the ephemeral target jump request and reply label; immutable ChatMessage/replyToMessageId remains the canonical projection.",
       "platform_delta": "Mobile has no hover tooltip. Existing reply-preview_view.kt already projects composer reply context and attachment-aware labels. b0845a2c0c74bd49d5e1781d214d4390cdc641cc adds in-scope transcript reply navigation and explicit unavailable-target projection instead of a silent dead quote. Remaining gaps are Desktop-equivalent referenced author/time preview, markdown-normalized quote labels, cross-scope thread opening and accessibility/device acceptance.",
       "implementation_status": "mapped",
-      "production_wiring": "b0845a2c0c74bd49d5e1781d214d4390cdc641cc wires replyToMessageId in ConversationTranscript to canonical message-order lookup and LazyList navigation; missing targets stay non-clickable and explicit.",
+      "production_wiring": "b0845a2c0c74bd49d5e1781d214d4390cdc641cc wires replyToMessageId in ConversationTranscript to canonical message-order lookup and LazyList navigation; missing targets stay non-clickable and explicit. Existing ConversationSurfaces restores replyTarget from canonical MessagingDraft.replyToMessageId, persists text+reply target through onDraftChanged, and MessagingViewModel sends the durable replyToMessageId through the canonical messaging command after sync/reopen.",
       "unit_test": "mobile/android/app/src/test/java/com/ombhrum/fabushi/ReferencedMessageNavigationTest.kt at 771419f6f1560df7c3366aa0c429c62c0df1f20a covers canonical index lookup and missing/null fencing; exact-head GitHub Actions pending.",
-      "contract_test": "Navigation consumes immutable transcript identity only and performs no Host mutation or retry.",
-      "integration_test": "Production Human ConversationTranscript now exposes the reply quote jump; cross-scope/thread routing remains required.",
+      "contract_test": "Navigation consumes immutable transcript identity only and performs no Host mutation or retry; reply composition reuses the existing runtime-owned MessagingDraft rather than introducing a second reply-selection store.",
+      "integration_test": "Production Human ConversationTranscript exposes the reply quote jump and canonical MessagingDraft restores/persists reply composition across recreation/reopen; cross-scope/thread routing remains required.",
       "packaged_test": "required final minified githubRelease package",
       "device_test": "required touch/accessibility/focus and long-transcript acceptance",
       "artifact": null,
