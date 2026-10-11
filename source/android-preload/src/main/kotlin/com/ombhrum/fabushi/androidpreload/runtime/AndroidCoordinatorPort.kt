@@ -312,6 +312,10 @@ interface AndroidCoordinatorPort {
 
     fun authStatus(): JSONObject
     fun accountAccessProjection(): AccountAccessProjection
+    fun rootConnectionResilienceProjection(): RootConnectionResilienceProjection =
+        RootConnectionResilienceProjection.initial()
+    fun rootConnectionRetry(): RootConnectionResilienceProjection =
+        rootConnectionResilienceProjection()
     fun authDeviceAgentSession(): JSONObject
     fun authBrowserStart(): JSONObject
     fun authBrowserReopen(params: JSONObject): JSONObject
