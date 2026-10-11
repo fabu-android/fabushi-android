@@ -482,6 +482,7 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
                     withContext(Dispatchers.IO) { rosterSelection.restore(nextSlot) }
                     rosterSelectionAccountSlot = nextSlot
                     hiddenChatsMutationController.setScope(nextSlot, mutableState.value.activeBot?.id)
+                    resetPaletteLinks()
                     sendPresentationGeneration += 1
                     closeConversationOutline()
                     cancelEditorSuggestionRequest()
@@ -1022,6 +1023,7 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     fun openBot(bot: MobileBotSummaryAndroid, targetEntryId: String? = null) {
+        resetPaletteLinks()
         hiddenChatsMutationController.setScope(rosterSelectionAccountSlot, bot.id)
         rosterSelection.select(bot.id)
         openBotGeneration += 1
@@ -1618,6 +1620,18 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
         paletteLinkJob = null
         paletteLinkFence.cancel()
         paletteLinkMetadataProvider.reset()
+        val scope = CommandPaletteLinkRequestScope(
+            accountSlot = rosterSelectionAccountSlot,
+            conversationId = mutableState.value.activeBot?.id,
+        )
+        if (scope.conversationId == null) {
+            mutableState.value = mutableState.value.copy(
+                paletteLinks = CommandPaletteLinkSnapshot(
+                    status = CommandPaletteLinkStatus.EMPTY,
+                ),
+            )
+            return
+        }
         val links = commandPaletteLinksFromConversation(
             mutableState.value.messages.map(MobileChatMessage::text),
         )
@@ -1629,7 +1643,7 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
             )
             return
         }
-        val token = paletteLinkFence.begin()
+        val token = paletteLinkFence.begin(scope)
         mutableState.value = mutableState.value.copy(
             paletteLinks = CommandPaletteLinkSnapshot(
                 status = CommandPaletteLinkStatus.LOADING,
@@ -1643,13 +1657,16 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
                     val snapshot = withContext(Dispatchers.IO) {
                         paletteLinkMetadataProvider.load(link.url)
                     }
-                    if (!paletteLinkFence.accepts(token)) return@launch
-                    if (snapshot.status == TranscriptLinkCardStatus.READY && snapshot.metadata != null) {
-                        metadata[link.url] = CommandPaletteLinkMetadata(
-                            title = snapshot.metadata.title,
-                            description = snapshot.metadata.description,
-                            hostname = snapshot.metadata.hostname,
+                    if (!paletteLinkFence.accepts(
+                            token,
+                            CommandPaletteLinkRequestScope(
+                                accountSlot = rosterSelectionAccountSlot,
+                                conversationId = mutableState.value.activeBot?.id,
+                            ),
                         )
+                    ) return@launch
+                    commandPaletteLinkMetadataProjection(snapshot)?.let { projected ->
+                        metadata[link.url] = projected
                         mutableState.value = mutableState.value.copy(
                             paletteLinks = CommandPaletteLinkSnapshot(
                                 status = CommandPaletteLinkStatus.LOADING,
@@ -1659,7 +1676,14 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
                         )
                     }
                 }
-                if (!paletteLinkFence.accepts(token)) return@launch
+                if (!paletteLinkFence.accepts(
+                            token,
+                            CommandPaletteLinkRequestScope(
+                                accountSlot = rosterSelectionAccountSlot,
+                                conversationId = mutableState.value.activeBot?.id,
+                            ),
+                        )
+                    ) return@launch
                 mutableState.value = mutableState.value.copy(
                     paletteLinks = CommandPaletteLinkSnapshot(
                         status = CommandPaletteLinkStatus.READY,
@@ -1670,7 +1694,15 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
             } catch (error: CancellationException) {
                 throw error
             } catch (_: Throwable) {
-                if (paletteLinkFence.accepts(token)) {
+                if (
+                    paletteLinkFence.accepts(
+                        token,
+                        CommandPaletteLinkRequestScope(
+                            accountSlot = rosterSelectionAccountSlot,
+                            conversationId = mutableState.value.activeBot?.id,
+                        ),
+                    )
+                ) {
                     mutableState.value = mutableState.value.copy(
                         paletteLinks = CommandPaletteLinkSnapshot(
                             status = CommandPaletteLinkStatus.FAILED,
