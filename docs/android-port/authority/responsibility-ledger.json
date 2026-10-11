@@ -11036,20 +11036,24 @@
         "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/coordinator/AgentRosterMutationOwner.kt",
         "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/coordinator/AndroidCoordinatorRuntime.kt",
         "source/host/src/android_agent_roster.rs",
-        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/presentation/MobileBotViewModel.kt"
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/recovered/features/hidden-chats/overlay/HiddenChatsMutationController.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/presentation/MobileBotViewModel.kt",
+        "mobile/android/app/src/test/java/com/ombhrum/fabushi/AgentRosterMutationOwnerTest.kt",
+        "mobile/android/app/src/test/java/com/ombhrum/fabushi/HiddenChatsMutationControllerTest.kt"
       ],
       "android_owner": "AgentRosterMutationOwner + Rust AndroidAgentRoster; transient presentation fence remains incomplete",
-      "platform_delta": "Android already replaces renderer transport-held retry with a process-death-safe durable mutation journal and Host replay/reconciliation. However MobileBotViewModel currently lacks Desktop-equivalent optimistic value/rollback/pending UI and explicit reconnect-generation controller semantics.",
-      "implementation_status": "mapped",
-      "production_wiring": "Durable hidden mutation is production-wired and stronger across process death: Coordinator persists operation ID/accountFence before Host dispatch, Host journals settlement, and agentList reconciles pending operations. Presentation hide/unhide currently dispatches then refreshes and surfaces errors; it does not yet expose Desktop-equivalent optimistic/held/pending projection or deterministic-reject rollback fencing.",
-      "unit_test": "Existing AgentRosterMutationOwner/Rust roster tests cover durable replay/persistence; dedicated hidden optimistic/reject/transport-held/reconnect/account-switch/dispose presentation tests are still missing.",
-      "contract_test": "Partial durable contract exists; typed outcome classification for presentation rollback-vs-hold remains required.",
+      "platform_delta": "Desktop renderer owns held/reconnect retry in mutation-controller.ts. Android deliberately moves durable retry/replay below Presentation: AgentRosterMutationOwner synchronously journals a stable operationId + accountFence before Host dispatch, AndroidCoordinatorRuntime reconciles the same pending operations before agentList(), and the Rust Host owns durable roster settlement/idempotency. HiddenChatsMutationController is transient only: optimistic value, deterministic-reject rollback, transport-unknown held projection, generation/account-scope fencing and dispose fencing. UI must not create a second reconnect/side-effect retry runtime.",
+      "implementation_status": "implemented",
+      "production_wiring": "Implemented in production. MobileBotViewModel routes hide/unhide through HiddenChatsMutationController for transient optimistic/pending/held state, while agentSetHidden routes through durableAgentRosterMutation. Coordinator persists operationId/accountFence before Host dispatch; Host journals settlement; agentList() invokes reconcileAgentRosterMutations() so reconnect/process recreation replays the same identity rather than issuing a new side effect. Canonical hidden state remains Host/roster-owned.",
+      "unit_test": "AgentRosterMutationOwnerTest covers stable distinct operation identity, owner recreation/process-persistence semantics, account-fenced pending lookup, corrupt journal fail-closed and bounded overflow. HiddenChatsMutationControllerTest covers confirmed projection, deterministic rollback, transport-unknown held state, duplicate local intent suppression, scope/account switch stale-callback fencing, dispose fencing and failure classification. Same exact-head Actions are still required.",
+      "contract_test": "Production owner split is implemented: transient UI controller cannot replay side effects; durable operationId/accountFence replay lives in Coordinator/Host. Remaining proof required before verified: same operationId across reconnect/process death, duplicate Host replay settlement, and old-epoch/account-switch rejection on the exact current HEAD.",
       "integration_test": "Required: transport failure then reconnect reconciliation, deterministic rejection rollback, duplicate suppression, account switch and late callback.",
       "packaged_test": "required",
       "device_test": "required",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Keep mapped. Do not claim Desktop mutation-controller parity merely because durable Host mutation exists; the user-visible optimistic/held lifecycle still needs an Android transient controller and same-head evidence."
+      "notes": "Implemented source/owner slice, intentionally not verified. Android does not copy Desktop noteReconnect() into UI because durable replay is already a Coordinator/Host responsibility. Do not promote to verified until exact-head Kotlin/Rust contracts explicitly prove reconnect + process-death same-operation replay, duplicate settlement, old-account/epoch fencing, and package/device acceptance.",
+      "android_head_at_update": "eb4aed19daf7123d78758ad70f3e9bf77eb57132"
     },
     {
       "responsibility_id": "ONBOARDING-SIGNED-IN-PRESENTATION-ANDROID-001",
