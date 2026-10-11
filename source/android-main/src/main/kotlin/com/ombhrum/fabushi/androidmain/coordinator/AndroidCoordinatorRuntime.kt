@@ -17,6 +17,8 @@ import com.ombhrum.fabushi.androidpreload.runtime.AndroidCoordinatorPort
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidApprovalCleanupResult
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidClientSideToolV2Event
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidComposerDraft
+import com.ombhrum.fabushi.androidpreload.runtime.AndroidConversationOutlineItem
+import com.ombhrum.fabushi.androidpreload.runtime.parseAndroidConversationOutlineItems
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidMcpOAuthCompletion
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidToolResultCard
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidSendAcknowledgement
@@ -690,6 +692,9 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
     override fun featureApprovalResolve(params: JSONObject) = host.request("feature.approval.resolve", params)
     override fun transcriptSnapshot(): JSONArray =
         host.requestValue("feature.transcript.snapshot") as? JSONArray ?: JSONArray()
+
+    override fun conversationOutlineSnapshot(agentId: String): List<AndroidConversationOutlineItem> =
+        parseAndroidConversationOutlineItems(transcriptSnapshot(), agentId)
 
     private fun parseClientSideToolV2Event(value: JSONObject): AndroidClientSideToolV2Event =
         AndroidClientSideToolV2Event(

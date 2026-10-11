@@ -99,6 +99,91 @@ data class AndroidClientSideToolV2Event(
     val projection: AndroidToolResultCard?,
 )
 
+data class AndroidConversationOutlineItem(
+    val kind: String,
+    val id: String,
+    val text: String? = null,
+    val name: String? = null,
+    val status: String? = null,
+    val summary: String? = null,
+    val messageType: String? = null,
+    val messageValue: String? = null,
+)
+
+fun parseAndroidConversationOutlineItems(
+    entries: JSONArray,
+    agentId: String,
+): List<AndroidConversationOutlineItem> {
+    require(agentId.isNotBlank()) { "Conversation outline requires a non-empty Agent id" }
+    val byId = linkedMapOf<String, AndroidConversationOutlineItem>()
+    for (index in 0 until entries.length()) {
+        val entry = entries.optJSONObject(index) ?: continue
+        if (entry.optString("agentId").trim() != agentId) continue
+        val id = entry.optString("id").trim()
+        if (id.isEmpty()) continue
+        val item = when (entry.optString("kind")) {
+            "message" -> {
+                val role = entry.optString("role")
+                check(role == "user" || role == "assistant") {
+                    "Conversation outline message $id has an unsupported role"
+                }
+                AndroidConversationOutlineItem(
+                    kind = if (role == "user") "user" else "assistant-text",
+                    id = id,
+                    text = entry.optString("content"),
+                )
+            }
+            "thinking" -> AndroidConversationOutlineItem(
+                kind = "thinking",
+                id = id,
+                text = entry.optString("text").ifBlank { entry.optString("content") },
+            )
+            "tool-call" -> {
+                val name = entry.optString("name").trim()
+                check(name.isNotEmpty()) { "Conversation outline tool call $id has no name" }
+                val status = when (entry.optString("status").trim()) {
+                    "pending", "running" -> "pending"
+                    "done", "completed", "success" -> "done"
+                    "failed", "error", "aborted", "cancelled", "denied", "rejected" -> "failed"
+                    else -> error("Conversation outline tool call $id has an unsupported status")
+                }
+                AndroidConversationOutlineItem(
+                    kind = "tool-call",
+                    id = id,
+                    name = name,
+                    status = status,
+                    summary = entry.optString("summary").takeIf(String::isNotBlank),
+                )
+            }
+            "send-message" -> {
+                val message = entry.optJSONObject("message") ?: continue
+                when (message.optString("type")) {
+                    "text" -> AndroidConversationOutlineItem(
+                        kind = "send-message",
+                        id = id,
+                        messageType = "text",
+                        messageValue = message.optString("content"),
+                    )
+                    "attachment" -> {
+                        val value = message.optString("url").trim()
+                        if (value.isEmpty()) continue
+                        AndroidConversationOutlineItem(
+                            kind = "send-message",
+                            id = id,
+                            messageType = "attachment",
+                            messageValue = value,
+                        )
+                    }
+                    else -> continue
+                }
+            }
+            else -> continue
+        }
+        byId[id] = item
+    }
+    return byId.values.toList()
+}
+
 /**
  * Typed method surface exposed to Android presentation code.
  *
@@ -204,6 +289,8 @@ interface AndroidCoordinatorPort {
     fun featureInterrupt(params: JSONObject): JSONObject
     fun featureApprovalResolve(params: JSONObject): JSONObject
     fun transcriptSnapshot(): JSONArray
+    fun conversationOutlineSnapshot(agentId: String): List<AndroidConversationOutlineItem> =
+        parseAndroidConversationOutlineItems(transcriptSnapshot(), agentId)
     fun assistantProjection(): JSONObject = JSONObject().put("hasUnread", false)
     fun assistantMarkRead(): JSONObject = assistantProjection()
     fun agentSubagentTool(params: JSONObject): JSONObject
