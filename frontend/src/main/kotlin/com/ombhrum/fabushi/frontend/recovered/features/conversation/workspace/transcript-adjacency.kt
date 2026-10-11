@@ -218,9 +218,11 @@ internal fun projectAgentTranscriptAdjacency(
 ): List<TranscriptAdjacency> =
     projectTranscriptAdjacency(
         messages.map { message ->
-            val kind = when (message.kind) {
-                MobileChatEntryKind.MESSAGE -> TranscriptAdjacencyKind.MESSAGE
-                MobileChatEntryKind.WIDGET -> TranscriptAdjacencyKind.SEND_MESSAGE
+            val kind = when {
+                message.kind == MobileChatEntryKind.MESSAGE && message.transcriptSourceKind == "send-message" ->
+                    TranscriptAdjacencyKind.SEND_MESSAGE
+                message.kind == MobileChatEntryKind.MESSAGE -> TranscriptAdjacencyKind.MESSAGE
+                message.kind == MobileChatEntryKind.WIDGET -> TranscriptAdjacencyKind.SEND_MESSAGE
                 else -> TranscriptAdjacencyKind.OTHER
             }
             val role = when (message.role) {

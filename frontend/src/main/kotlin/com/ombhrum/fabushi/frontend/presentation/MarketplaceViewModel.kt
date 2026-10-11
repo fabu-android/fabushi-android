@@ -117,6 +117,11 @@ data class MobileChatMessage(
     val toolResult: MobileToolResultCard? = null,
     val toolCallId: String? = null,
     val attachments: List<MobileTranscriptAttachment> = emptyList(),
+    // Read-only assistant send-message/text media metadata projected from Host-owned transcript JSON.
+    val assistantImages: List<MobileTranscriptImage> = emptyList(),
+    val assistantChannel: String? = null,
+    val assistantSourceTrusted: Boolean = false,
+    val urlCardUrl: String? = null,
     // Immutable serialized TipTap/ProseMirror JSON projected from the Host-owned transcript.
     val richTextJson: String? = null,
     // Read-only Desktop transcript seam metadata. These fields never own canonical state.

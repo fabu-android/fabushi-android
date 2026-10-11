@@ -110,6 +110,11 @@ internal fun canonicalMobileTranscriptForAgent(
                     "assistant" -> MobileChatRole.ASSISTANT
                     else -> continue
                 }
+                val assistantPresentation = if (role == MobileChatRole.ASSISTANT) {
+                    projectCanonicalAssistantPresentation(entry)
+                } else {
+                    TranscriptAssistantPresentation()
+                }
                 projected[id] = MobileChatMessage(
                     id = id,
                     role = role,
@@ -117,6 +122,10 @@ internal fun canonicalMobileTranscriptForAgent(
                     operationId = entry.optString("operationId").takeIf(String::isNotBlank),
                     clientNonce = entry.optString("clientNonce").takeIf(String::isNotBlank),
                     attachments = canonicalTranscriptAttachments(entry),
+                    assistantImages = assistantPresentation.images,
+                    assistantChannel = assistantPresentation.channel,
+                    assistantSourceTrusted = assistantPresentation.sourceTrusted,
+                    urlCardUrl = assistantPresentation.urlCardUrl,
                     richTextJson = entry.optJSONObject("richText")?.toString(),
                     transcriptAuthor = entry.optString("author").trim().takeIf(String::isNotEmpty),
                     transcriptSourceKind = entry.optString("sourceKind").trim().takeIf(String::isNotEmpty),
@@ -144,6 +153,25 @@ internal fun canonicalMobileTranscriptForAgent(
             }
             "send-message" -> {
                 val message = entry.optJSONObject("message") ?: continue
+                if (message.optString("type") == "text") {
+                    val text = projectTranscriptSendMessageText(entry) ?: continue
+                    projected[id] = MobileChatMessage(
+                        id = id,
+                        role = MobileChatRole.ASSISTANT,
+                        text = text.content,
+                        streaming = text.streaming,
+                        assistantImages = text.images,
+                        assistantChannel = text.channel,
+                        assistantSourceTrusted = text.sourceTrusted,
+                        urlCardUrl = text.urlCardUrl,
+                        transcriptAuthor = entry.optString("author").trim().takeIf(String::isNotEmpty),
+                        transcriptSourceKind = "send-message",
+                        transcriptPresentationKind = if (text.urlCardUrl == null) "text" else "url-card",
+                        hasTranscriptReaction = canonicalTranscriptHasReaction(entry),
+                        hasTranscriptThreadChip = entry.optBoolean("hasThreadChip", false),
+                    )
+                    continue
+                }
                 if (message.optString("type") != "widget") continue
                 val widget = message.optJSONObject("widget") ?: continue
                 val prompt = widget.optString("prompt").trim()

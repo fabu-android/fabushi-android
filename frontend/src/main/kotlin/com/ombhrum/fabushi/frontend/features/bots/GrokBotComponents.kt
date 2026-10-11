@@ -50,6 +50,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
@@ -593,6 +596,15 @@ internal fun GrokBotChatAndroid(
                 Column(
                     Modifier
                         .fillMaxWidth()
+                        .semantics {
+                            contentDescription = when {
+                                entry.kind == MobileChatEntryKind.THINKING -> "Agent thinking"
+                                entry.kind == MobileChatEntryKind.ACTION -> "Agent action"
+                                entry.role == MobileChatRole.USER -> "User message"
+                                else -> "Agent message"
+                            }
+                            if (entry.streaming) stateDescription = "Streaming"
+                        }
                         .then(
                             if (findHighlight) {
                                 Modifier
@@ -704,15 +716,24 @@ internal fun GrokBotChatAndroid(
                                 Modifier.padding(start = 7.dp),
                                 verticalArrangement = Arrangement.spacedBy(5.dp),
                             ) {
-                                if (entry.text.isNotBlank() || entry.streaming) {
-                                    MobileAssistantRichTranscriptContent(
-                                        text = entry.text,
-                                        streaming = entry.streaming,
-                                        bubbleShape = mobileTranscriptBubbleShape(
-                                            role = MobileChatRole.ASSISTANT,
-                                            adjacency = adjacency,
-                                        ),
+                                if (entry.urlCardUrl != null) {
+                                    MobileTranscriptUrlCard(entry.urlCardUrl)
+                                } else {
+                                    if (entry.text.isNotBlank() || entry.streaming) {
+                                        MobileAssistantRichTranscriptContent(
+                                            text = entry.text,
+                                            streaming = entry.streaming,
+                                            bubbleShape = mobileTranscriptBubbleShape(
+                                                role = MobileChatRole.ASSISTANT,
+                                                adjacency = adjacency,
+                                            ),
+                                        )
+                                    }
+                                    MobileAssistantTranscriptImages(
+                                        images = entry.assistantImages,
+                                        sourceTrusted = entry.assistantSourceTrusted,
                                     )
+                                    MobileAssistantTranscriptChannel(entry.assistantChannel)
                                 }
                                 MobileTranscriptAttachments(entry.attachments, alignEnd = false)
                             }
