@@ -7,6 +7,7 @@ import com.ombhrum.fabushi.androidpreload.runtime.AndroidSendAcknowledgementPhas
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
+import org.json.JSONObject
 import org.junit.Test
 
 class AgentSendAcknowledgementProjectionTest {
@@ -17,6 +18,7 @@ class AgentSendAcknowledgementProjectionTest {
         reason: String? = null,
         attachments: List<AndroidAgentAttachment> = emptyList(),
         messageText: String = "hello",
+        messageRichText: JSONObject? = null,
     ) = AndroidSendAcknowledgement(
         accountSlot = "slot-a",
         agentId = "agent-a",
@@ -30,6 +32,7 @@ class AgentSendAcknowledgementProjectionTest {
             ),
         ),
         messageText = messageText,
+        messageRichText = messageRichText,
         phase = phase,
         generation = generation,
         failedAtMs = reason?.let { 123L },
@@ -106,6 +109,26 @@ class AgentSendAcknowledgementProjectionTest {
         assertEquals(listOf("notes.txt"), optimistic.attachments.map { it.name })
         assertEquals(5L, optimistic.attachments.single().sizeBytes)
         assertEquals("fabushi-attachment://agent-attachment-1", optimistic.attachments.single().path)
+    }
+
+
+    @Test
+    fun optimisticAcknowledgementCarriesDurableRichTextProjection() {
+        val richText = JSONObject(
+            """{"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"hello","marks":[{"type":"bold"}]}]}]}""",
+        )
+        val optimistic = projectDurableSendAcknowledgements(
+            canonical = emptyList(),
+            acknowledgements = listOf(
+                acknowledgement(
+                    phase = AndroidSendAcknowledgementPhase.ACCEPTED_AWAITING_ECHO,
+                    messageRichText = richText,
+                ),
+            ),
+        ).single()
+
+        assertEquals(richText.toString(), optimistic.richTextJson)
+        assertEquals("hello", optimistic.text)
     }
 
     @Test
