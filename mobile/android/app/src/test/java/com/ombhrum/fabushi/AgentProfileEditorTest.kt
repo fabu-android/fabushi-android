@@ -165,4 +165,16 @@ class AgentProfileEditorTest {
         assertTrue(fence.isCurrent(second))
     }
 
+    @Test
+    fun desktopOnboardingPersonaValuesRemainCanonicalAlongsideLegacyAndroidValues() {
+        assertEquals("teardrop", normalizeAgentAvatarShape(" Teardrop "))
+        assertEquals("blob", normalizeAgentAvatarShape("BLOB"))
+        assertEquals("circle", normalizeAgentAvatarShape("circle"))
+        assertNull(normalizeAgentAvatarShape("triangle"))
+        assertEquals("blue", normalizeAgentAvatarColor(" Blue "))
+        assertEquals("#1A2B3C", normalizeAgentAvatarColor("#1a2b3c"))
+        assertNull(normalizeAgentAvatarColor("purple-ish"))
+        assertEquals("#1084FE", DESKTOP_AGENT_AVATAR_COLORS[normalizeAgentAvatarColor("blue")])
+    }
+
 }

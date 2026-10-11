@@ -47,11 +47,34 @@ internal fun committedAgentProfile(
 internal fun normalizeAgentTitle(value: String?): String? =
     value?.trim()?.take(120)?.takeIf(String::isNotEmpty)
 
+internal val DESKTOP_AGENT_AVATAR_SHAPES = setOf(
+    "blob", "pebble", "squircle", "tablet", "wedge", "hex", "cloud", "teardrop",
+)
+internal val LEGACY_ANDROID_AGENT_AVATAR_SHAPES = setOf("circle", "square")
+
+internal val DESKTOP_AGENT_AVATAR_COLORS = linkedMapOf(
+    "brown" to "#936439",
+    "red" to "#FF263C",
+    "orange" to "#FF6700",
+    "yellow" to "#FF9800",
+    "green" to "#00C972",
+    "cyan" to "#00BCA6",
+    "blue" to "#1084FE",
+    "violet" to "#9159FE",
+    "magenta" to "#FF309B",
+    "gray" to "#777777",
+)
+
 internal fun normalizeAgentAvatarShape(value: String?): String? =
-    value?.trim()?.lowercase()?.takeIf { it in setOf("circle", "square", "squircle") }
+    value?.trim()?.lowercase()?.takeIf {
+        it in DESKTOP_AGENT_AVATAR_SHAPES || it in LEGACY_ANDROID_AGENT_AVATAR_SHAPES
+    }
 
 internal fun normalizeAgentAvatarColor(value: String?): String? {
-    val normalized = value?.trim()?.uppercase() ?: return null
+    val raw = value?.trim() ?: return null
+    val named = raw.lowercase()
+    if (named in DESKTOP_AGENT_AVATAR_COLORS) return named
+    val normalized = raw.uppercase()
     return normalized.takeIf {
         it.length == 7 && it.first() == '#' &&
             it.drop(1).all { character -> character.isDigit() || character in 'A'..'F' }

@@ -140,8 +140,9 @@ internal fun avatarAnimationDurationMillis(state: AgentAvatarVisualState): Int? 
 
 internal fun avatarPersonaColor(value: String?): Color? {
     val normalized = normalizeAgentAvatarColor(value) ?: return null
+    val encoded = DESKTOP_AGENT_AVATAR_COLORS[normalized] ?: normalized
     return runCatching {
-        val rgb = normalized.removePrefix("#").toLong(16)
+        val rgb = encoded.removePrefix("#").toLong(16)
         Color(0xFF000000L or rgb)
     }.getOrNull()
 }

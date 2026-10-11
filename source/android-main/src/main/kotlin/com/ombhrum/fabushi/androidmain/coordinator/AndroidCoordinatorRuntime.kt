@@ -1152,12 +1152,22 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
     }
 
     override fun agentCreate(name: String, description: String): JSONObject =
+        agentCreateWithPersona(name, description, avatarShape = null, avatarColor = null)
+
+    override fun agentCreateWithPersona(
+        name: String,
+        description: String,
+        avatarShape: String?,
+        avatarColor: String?,
+    ): JSONObject =
         host.request(
             "createAgent",
             JSONObject()
                 .put("name", name)
                 .put("description", description)
-                .put("origin", "user"),
+                .put("origin", "user")
+                .put("avatarShape", avatarShape ?: JSONObject.NULL)
+                .put("avatarColor", avatarColor ?: JSONObject.NULL),
         )
 
     override fun agentCreateGroup(name: String, description: String, memberIds: List<String>): JSONObject {

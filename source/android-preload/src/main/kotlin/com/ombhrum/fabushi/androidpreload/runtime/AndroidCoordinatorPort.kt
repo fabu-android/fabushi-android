@@ -412,6 +412,12 @@ interface AndroidCoordinatorPort {
 
     fun agentList(): JSONArray
     fun agentCreate(name: String, description: String): JSONObject
+    fun agentCreateWithPersona(
+        name: String,
+        description: String,
+        avatarShape: String?,
+        avatarColor: String?,
+    ): JSONObject = agentCreate(name, description)
     fun agentCreateGroup(name: String, description: String, memberIds: List<String>): JSONObject
     fun agentSetGroupMembers(id: String, memberIds: List<String>): JSONObject
     fun agentUpdate(id: String, name: String, description: String): JSONObject

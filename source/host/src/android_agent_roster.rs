@@ -137,8 +137,22 @@ impl AndroidAgentRoster {
     }
 
     pub fn create(&mut self, name: &str, description: &str) -> io::Result<AndroidAgentRecord> {
+        self.create_with_persona(name, description, None, None)
+    }
+
+    pub fn create_with_persona(
+        &mut self,
+        name: &str,
+        description: &str,
+        avatar_shape: Option<&Value>,
+        avatar_color: Option<&Value>,
+    ) -> io::Result<AndroidAgentRecord> {
         let name = normalize_name(name)?;
         let description = normalize_description(description);
+        let avatar_shape = parse_avatar_shape(avatar_shape)
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error))?;
+        let avatar_color = parse_avatar_color(avatar_color)
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error))?;
         let mut next = self.state.clone();
         next.next_id = next.next_id.saturating_add(1);
         let record = AndroidAgentRecord {
@@ -152,8 +166,8 @@ impl AndroidAgentRoster {
             is_hidden_from_sidebar: false,
             has_unread: false,
             is_pinned: false,
-            avatar_shape: None,
-            avatar_color: None,
+            avatar_shape,
+            avatar_color,
             updated_at: now_ms(),
         };
         next.agents.push(record.clone());
@@ -849,8 +863,9 @@ fn parse_avatar_shape(value: Option<&Value>) -> Result<Option<String>, String> {
         Some(Value::String(raw)) => {
             let shape = raw.trim().to_ascii_lowercase();
             match shape.as_str() {
-                "circle" | "square" | "squircle" => Ok(Some(shape)),
-                _ => Err("avatarShape must be circle, square, squircle, or null".into()),
+                "blob" | "pebble" | "squircle" | "tablet" | "wedge" | "hex" | "cloud"
+                | "teardrop" | "circle" | "square" => Ok(Some(shape)),
+                _ => Err("avatarShape must be a supported Desktop persona or legacy Android shape".into()),
             }
         }
         Some(_) => Err("avatarShape must be a string or null".into()),
@@ -862,9 +877,17 @@ fn parse_avatar_color(value: Option<&Value>) -> Result<Option<String>, String> {
         None | Some(Value::Null) => Ok(None),
         Some(Value::String(raw)) => {
             let color = raw.trim();
+            let named = color.to_ascii_lowercase();
+            if matches!(
+                named.as_str(),
+                "brown" | "red" | "orange" | "yellow" | "green" | "cyan" | "blue"
+                    | "violet" | "magenta" | "gray"
+            ) {
+                return Ok(Some(named));
+            }
             let bytes = color.as_bytes();
             if bytes.len() != 7 || bytes[0] != b'#' || !bytes[1..].iter().all(u8::is_ascii_hexdigit) {
-                return Err("avatarColor must be #RRGGBB or null".into());
+                return Err("avatarColor must be a supported Desktop persona color, #RRGGBB, or null".into());
             }
             Ok(Some(color.to_ascii_uppercase()))
         }
@@ -1258,4 +1281,34 @@ mod tests {
         assert!(quarantined);
         let _ = fs::remove_file(path);
     }
+    #[test]
+    fn desktop_onboarding_persona_is_validated_persisted_and_reopened() {
+        let path = temp_path("desktop-onboarding-persona");
+        let id = {
+            let mut roster = AndroidAgentRoster::open(&path).unwrap();
+            let created = roster
+                .create_with_persona(
+                    "First Agent",
+                    "daily work",
+                    Some(&json!("teardrop")),
+                    Some(&json!("blue")),
+                )
+                .unwrap();
+            assert_eq!(created.avatar_shape.as_deref(), Some("teardrop"));
+            assert_eq!(created.avatar_color.as_deref(), Some("blue"));
+            assert!(roster
+                .create_with_persona("Bad", "", Some(&json!("triangle")), Some(&json!("blue")))
+                .is_err());
+            assert!(roster
+                .create_with_persona("Bad", "", Some(&json!("blob")), Some(&json!("purple-ish")))
+                .is_err());
+            created.id
+        };
+        let reopened = AndroidAgentRoster::open(&path).unwrap();
+        let persisted = reopened.get(&id).unwrap();
+        assert_eq!(persisted.avatar_shape.as_deref(), Some("teardrop"));
+        assert_eq!(persisted.avatar_color.as_deref(), Some("blue"));
+        let _ = fs::remove_file(path);
+    }
+
 }

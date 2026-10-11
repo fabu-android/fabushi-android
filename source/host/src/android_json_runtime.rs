@@ -1021,7 +1021,12 @@ impl AndroidJsonHost {
                 let agent = self.agents
                     .lock()
                     .map_err(|_| "canonical Android Agent roster lock poisoned".to_string())?
-                    .create(name, description)
+                    .create_with_persona(
+                        name,
+                        description,
+                        params.get("avatarShape"),
+                        params.get("avatarColor"),
+                    )
                     .map_err(|error| error.to_string())?;
                 Ok(json!({"agent": agent.as_json()}))
             }
