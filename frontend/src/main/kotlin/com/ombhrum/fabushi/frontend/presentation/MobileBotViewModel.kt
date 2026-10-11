@@ -2090,8 +2090,16 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
                 messages = merged,
                 findEntries = (preservedOlderFind + durable.findEntries)
                     .distinctBy(AndroidFindInChatEntry::entryId),
-                historyBeforeSeq = durable.nextBeforeSeq,
-                historyHasMore = durable.nextBeforeSeq != null || historyOlderEntryIds.isNotEmpty(),
+                historyBeforeSeq = if (historyOlderEntryIds.isEmpty()) {
+                    durable.nextBeforeSeq
+                } else {
+                    current.historyBeforeSeq
+                },
+                historyHasMore = if (historyOlderEntryIds.isEmpty()) {
+                    durable.nextBeforeSeq != null
+                } else {
+                    current.historyHasMore
+                },
             ),
         )
     }
