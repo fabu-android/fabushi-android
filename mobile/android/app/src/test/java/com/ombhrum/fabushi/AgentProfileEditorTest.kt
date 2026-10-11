@@ -154,12 +154,14 @@ class AgentProfileEditorTest {
     }
 
     @Test
-    fun settingsMutationFenceOnlyAcceptsNewestMutationGeneration() {
+    fun settingsMutationFenceSerializesPendingMutationAndAllowsNextAfterFinish() {
         val fence = AgentSettingsMutationFence()
         fence.select("agent-a", "account-a")
         val first = requireNotNull(fence.beginMutation("agent-a", "account-a"))
+        assertNull(fence.beginMutation("agent-a", "account-a"))
+        assertTrue(fence.isCurrent(first))
+        fence.finish(first)
         val second = requireNotNull(fence.beginMutation("agent-a", "account-a"))
-        assertFalse(fence.isCurrent(first))
         assertTrue(fence.isCurrent(second))
     }
 
