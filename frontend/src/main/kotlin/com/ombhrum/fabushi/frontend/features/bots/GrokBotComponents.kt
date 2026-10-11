@@ -362,6 +362,7 @@ internal fun GrokBotChatAndroid(
 ) {
     val messageListState = rememberLazyListState()
     val reducedTranscriptMotion = rememberTranscriptReducedMotion()
+    val transcriptUrlCards = remember(bot.id) { TranscriptUrlCardMetadataProvider() }
     var findOpen by remember(bot.id) { mutableStateOf(false) }
     var findQuery by remember(bot.id) { mutableStateOf("") }
     var findIndex by remember(bot.id) { mutableStateOf(-1) }
@@ -460,8 +461,11 @@ internal fun GrokBotChatAndroid(
         }
         appAgentSurface.publish(screen = "bot-chat", elements = elements, actions = actions)
     }
-    DisposableEffect(appAgentSurface) {
-        onDispose { appAgentSurface.clear() }
+    DisposableEffect(appAgentSurface, transcriptUrlCards) {
+        onDispose {
+            appAgentSurface.clear()
+            transcriptUrlCards.dispose()
+        }
     }
 
     Column(Modifier.fillMaxSize().background(GrokMobileBackground).testTag("mobile-bot-chat")) {
@@ -722,7 +726,7 @@ internal fun GrokBotChatAndroid(
                                 verticalArrangement = Arrangement.spacedBy(5.dp),
                             ) {
                                 if (entry.urlCardUrl != null) {
-                                    MobileTranscriptUrlCard(entry.urlCardUrl)
+                                    MobileTranscriptUrlCard(entry.urlCardUrl, transcriptUrlCards)
                                 } else {
                                     if (entry.text.isNotBlank() || entry.streaming) {
                                         MobileAssistantRichTranscriptContent(

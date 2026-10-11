@@ -1,7 +1,10 @@
 package com.ombhrum.fabushi
 
+import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.net.ConnectivityManager
+import android.net.Network
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -13,16 +16,19 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -33,6 +39,7 @@ import java.io.ByteArrayOutputStream
 import java.io.IOException
 import java.net.URI
 import kotlin.coroutines.resume
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import okhttp3.Call
 import okhttp3.Callback
@@ -205,23 +212,72 @@ internal fun MobileAssistantTranscriptChannel(channel: String?) {
 }
 
 @Composable
-internal fun MobileTranscriptUrlCard(url: String) {
+internal fun MobileTranscriptUrlCard(
+    url: String,
+    provider: TranscriptUrlCardMetadataProvider,
+) {
     val normalized = remember(url) { normalizeTranscriptHttpUrl(url) } ?: return
     val handler = LocalUriHandler.current
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     val host = remember(normalized) {
         runCatching { URI(normalized).host }.getOrNull()?.takeIf(String::isNotBlank) ?: normalized
     }
+    var snapshot by remember(normalized, provider) {
+        mutableStateOf(
+            provider.cached(normalized)
+                ?: TranscriptLinkCardSnapshot(TranscriptLinkCardStatus.IDLE),
+        )
+    }
+
+    LaunchedEffect(normalized, provider) {
+        snapshot = provider.load(normalized)
+    }
+    DisposableEffect(context, normalized, provider) {
+        val connectivity = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
+        val callback = if (connectivity == null) null else object : ConnectivityManager.NetworkCallback() {
+            override fun onAvailable(network: Network) {
+                if (snapshot.status == TranscriptLinkCardStatus.FAILED) {
+                    scope.launch { snapshot = provider.load(normalized, healFailed = true) }
+                }
+            }
+        }
+        if (callback != null) runCatching { connectivity.registerDefaultNetworkCallback(callback) }
+        onDispose {
+            if (callback != null) runCatching { connectivity?.unregisterNetworkCallback(callback) }
+        }
+    }
+
+    val metadata = snapshot.metadata
+    val title = metadata?.title ?: metadata?.siteName ?: metadata?.hostname ?: host
+    val description = metadata?.description
+    val metaHost = metadata?.hostname ?: metadata?.siteName
     TextButton(
         onClick = { runCatching { handler.openUri(normalized) } },
         modifier = Modifier
             .fillMaxWidth()
             .heightIn(min = 48.dp)
-            .semantics { contentDescription = "Open link $host" },
+            .semantics {
+                contentDescription = buildString {
+                    append("Open link ")
+                    append(title)
+                    if (snapshot.status == TranscriptLinkCardStatus.LOADING) append(", preview loading")
+                }
+            },
     ) {
         Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            Text("Link", color = GrokMobileMuted, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
-            Text(host, color = GrokMobileInk, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
-            if (host != normalized) {
+            Text(
+                title,
+                color = GrokMobileInk,
+                fontSize = 14.sp,
+                fontWeight = FontWeight.SemiBold,
+            )
+            if (!description.isNullOrBlank()) {
+                Text(description, color = GrokMobileMuted, fontSize = 12.sp)
+            }
+            if (!metaHost.isNullOrBlank() && metaHost != title) {
+                Text(metaHost, color = GrokMobileMuted, fontSize = 11.sp)
+            } else if (metadata == null && host != normalized) {
                 Text(normalized, color = GrokMobileMuted, fontSize = 11.sp)
             }
         }
