@@ -1,7 +1,10 @@
 package com.ombhrum.fabushi
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class AgentProfileEditorTest {
@@ -116,4 +119,48 @@ class AgentProfileEditorTest {
         assertEquals("Agent", projected.name)
         assertEquals("new description", projected.description)
     }
+    @Test
+    fun settingsMutationFenceDropsReplyAfterAgentSelectionChanges() {
+        val fence = AgentSettingsMutationFence()
+        fence.select("agent-a", "account-a")
+        val token = fence.beginMutation("agent-a", "account-a")
+        assertNotNull(token)
+        fence.select("agent-b", "account-a")
+        assertFalse(fence.isCurrent(requireNotNull(token)))
+    }
+
+    @Test
+    fun settingsMutationFenceDropsReplyAfterAccountSwitch() {
+        val fence = AgentSettingsMutationFence()
+        fence.select("agent-a", "account-a")
+        val token = requireNotNull(fence.beginMutation("agent-a", "account-a"))
+        fence.accountChanged("account-b")
+        assertFalse(fence.isCurrent(token))
+        assertNull(fence.beginMutation("agent-a", "account-b"))
+    }
+
+    @Test
+    fun settingsMutationFenceDropsReplyAfterPanelDispose() {
+        val fence = AgentSettingsMutationFence()
+        fence.select("agent-a", "account-a")
+        val token = requireNotNull(fence.beginMutation("agent-a", "account-a"))
+        fence.clear("agent-a")
+        assertFalse(fence.isCurrent(token))
+
+        fence.select("agent-a", "account-a")
+        val disposeToken = requireNotNull(fence.beginMutation("agent-a", "account-a"))
+        fence.dispose()
+        assertFalse(fence.isCurrent(disposeToken))
+    }
+
+    @Test
+    fun settingsMutationFenceOnlyAcceptsNewestMutationGeneration() {
+        val fence = AgentSettingsMutationFence()
+        fence.select("agent-a", "account-a")
+        val first = requireNotNull(fence.beginMutation("agent-a", "account-a"))
+        val second = requireNotNull(fence.beginMutation("agent-a", "account-a"))
+        assertFalse(fence.isCurrent(first))
+        assertTrue(fence.isCurrent(second))
+    }
+
 }
