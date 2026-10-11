@@ -305,10 +305,12 @@ impl DurableSendAcknowledgementOwner {
         if old.phase != SendAcknowledgementPhase::Failed {
             return Err("only a proven failed send may be explicitly retried".into());
         }
-        if self
-            .find_key(account_slot, account_fence, agent_id, fresh_nonce)
-            .is_some()
-        {
+        if self.state.records.values().any(|record| {
+            record.account_fence == account_fence
+                && record.account_slot.as_deref() == account_slot
+                && record.agent_id == agent_id
+                && record.nonce == fresh_nonce
+        }) {
             return Err("fresh retry nonce is already in use".into());
         }
 
