@@ -5,9 +5,9 @@
     "desktop_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
     "android_repository": "fabu-android/fabushi-android",
     "android_pr": 3,
-    "android_head_at_update": "c572a35bf9b997982df68d33aeafd0bf38a4a6d5",
+    "android_head_at_update": "680be4eeeefc8870cd7885685588dd53b6d568df",
     "status": "incomplete",
-    "note": "Incrementally rebased to Desktop main 371b72f1cd20de03dc4dff9a15ed761054968093. Durable Android Agent send acknowledgement is Host-owned and production-wired. Transcript widget respond/dismiss now uses typed Kotlin/Coordinator/Host routes with canonical respondedValue/widgetDismissed settlement, hidden continuation dispatch, rollback and presentation-generation fencing. ClientSideToolV2 relay is durable across process reopen and projects supported 7/15/38 file-edit/file-write/shell cards; Android joins typed results only onto matching canonical tool-call rows and keeps unmatched updates out of the transcript. Exact-head GitHub Actions/package/device verification remains pending and full source closure remains incomplete."
+    "note": "Incrementally rebased to Desktop main 371b72f1cd20de03dc4dff9a15ed761054968093. Durable Android Agent send acknowledgement is Host-owned and production-wired. Transcript widget respond/dismiss now uses typed Kotlin/Coordinator/Host routes with canonical respondedValue/widgetDismissed settlement, hidden continuation dispatch, rollback and presentation-generation fencing. ClientSideToolV2 relay is durable across process reopen and projects supported 7/15/38 file-edit/file-write/shell cards; Android joins typed results only onto matching canonical tool-call rows and keeps unmatched updates out of the transcript. Exact-head GitHub Actions/package/device verification remains pending and full source closure remains incomplete. Deterministic workspace cursor now has explicit Agent avatar, Agent header and composer responsibilities with current Android gaps recorded separately from unrelated human-conversation surfaces."
   },
   "responsibilities": [
     {
@@ -8587,6 +8587,210 @@
       "artifact": null,
       "verification_status": "not-verified",
       "notes": "Implementation exists but cannot be marked verified until same exact HEAD Rust/Kotlin/contract jobs succeed and final packaged/device acceptance closes."
+    },
+    {
+      "responsibility_id": "AGENT-AVATAR-WORKSPACE-ANDROID-001",
+      "domain": "conversation-agent-identity",
+      "desktop_sources": [
+        {
+          "path": "frontend/src/recovered/features/conversation/workspace/agent-avatar.tsx",
+          "blob_sha": "612ad78346146f41c6de1b05407c211c8b6d33d5",
+          "symbols": [
+            "AgentAvatar",
+            "personaStateFromAgent",
+            "GroupAvatar",
+            "SharedRoomAvatar"
+          ]
+        }
+      ],
+      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "responsibility": "Render Agent identity with strict dispatcher precedence photo data URL → shared-room → group → persona mark, deterministic size/color/shape, group-member composition and activity-derived persona state.",
+      "source_owner": "Canonical Agent roster/profile supplies identity, avatar and activity fields; presentation derives only visual state.",
+      "direct_callers": [
+        "conversation workspace chat header",
+        "Agent transcript/avatar rows"
+      ],
+      "downstream_dependencies": [
+        "Agent roster/profile projection",
+        "persona color/shape mapping",
+        "current activity projection"
+      ],
+      "state_owner": "Agent/profile runtime owns identity/activity; avatar component owns no canonical state.",
+      "persistent_state": [
+        "none in avatar component; source identity/activity comes from canonical roster/profile"
+      ],
+      "protocol_wire_contract": [
+        "agentId",
+        "avatarDataUrl",
+        "avatarShape",
+        "avatarColor",
+        "isSharedRoom/isGroup/memberIds",
+        "currentActivity/isRunning/isComposingMessage/awaitingUserResponse"
+      ],
+      "visible_effect": "Conversation identity consistently shows uploaded avatar, shared-room/group identity, or persona mark with correct working/thinking/searching/sending/idle visual state.",
+      "failure_behavior": [
+        "missing/invalid photo falls through only according to canonical dispatcher inputs",
+        "unknown activity maps to working when a tool is active and otherwise canonical running/idle fallback",
+        "no initials/CSS-generated fallback"
+      ],
+      "cancellation_behavior": "none; activity animation follows current immutable projection.",
+      "retry_semantics": "none",
+      "idempotency_semantics": "pure projection from canonical identity/activity.",
+      "process_death_recovery": "reloaded from canonical roster/profile; no UI persistence.",
+      "account_fencing": "identity rows are scoped to active account/Agent projection.",
+      "security_boundary": "data URL/avatar metadata is display-only and grants no capability.",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/features/avatar/ClothGhostAvatarAndroid.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/features/bots/GrokBotComponents.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/presentation/MobileBotViewModel.kt"
+      ],
+      "android_owner": "Native Agent identity/avatar presentation.",
+      "platform_delta": "Compose Canvas/Image replaces DOM/SVG while preserving identity dispatcher and activity semantics.",
+      "implementation_status": "mapped",
+      "production_wiring": "Current production Bot surfaces use ClothGhostAvatarAndroid with agentId/shape/color and busy animation, but do not yet expose Desktop-equivalent avatarDataUrl/shared-room/group dispatcher or full activity-state mapping.",
+      "unit_test": "existing avatar normalization/animation tests cover only part of persona branch; focused dispatcher/activity/group tests required.",
+      "contract_test": "missing typed full Agent avatar projection contract.",
+      "integration_test": "missing exact-head roster→header/transcript avatar branch journey.",
+      "packaged_test": "required final minified package",
+      "device_test": "required Agent/group/shared-room visual/accessibility acceptance",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Do not treat generic conversation member avatar/header as equivalent to Agent workspace avatar."
+    },
+    {
+      "responsibility_id": "CHAT-HEADER-AGENT-ANDROID-001",
+      "domain": "conversation-agent-header",
+      "desktop_sources": [
+        {
+          "path": "frontend/src/recovered/features/conversation/workspace/chat-header.tsx",
+          "blob_sha": "118afd6ea204a0d4bacfce031f554e66f089067b",
+          "symbols": [
+            "ConversationAgentHeader"
+          ]
+        }
+      ],
+      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "responsibility": "Project Agent identity and working state in the conversation header, open Agent settings/details, expose shared-room trigger when applicable, and gate Computer control off for groups while preserving trailing controls.",
+      "source_owner": "Conversation presentation owns only header/menu visibility; Agent identity/runtime and Computer/shared-room states remain canonical owners.",
+      "direct_callers": [
+        "conversation workspace"
+      ],
+      "downstream_dependencies": [
+        "AgentAvatar",
+        "ComputerHeaderControl",
+        "SharedRoomHeaderTrigger",
+        "Agent settings/info surface"
+      ],
+      "state_owner": "presentation owns open/closed UI state only.",
+      "persistent_state": [
+        "none beyond underlying canonical Agent/Computer/shared-room state"
+      ],
+      "protocol_wire_contract": [
+        "Agent identity/activity fields",
+        "isComputerActive",
+        "isInfoOpen",
+        "isSharedRoom/isGroup"
+      ],
+      "visible_effect": "Header shows current Agent name/avatar/working state and correct settings, Computer and shared-room affordances.",
+      "failure_behavior": [
+        "missing optional settings callback leaves identity non-mutating",
+        "group hides Computer control",
+        "shared-room trigger appears only when supplied"
+      ],
+      "cancellation_behavior": "none beyond normal surface disposal.",
+      "retry_semantics": "none",
+      "idempotency_semantics": "pure projection and injected actions.",
+      "process_death_recovery": "header reconstructs from canonical Agent/navigation/Computer state.",
+      "account_fencing": "active Agent and control actions are account scoped.",
+      "security_boundary": "header only invokes typed settings/Computer/shared-room actions; it cannot execute privileged work itself.",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/features/bots/GrokBotComponents.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/features/avatar/ClothGhostAvatarAndroid.kt"
+      ],
+      "android_owner": "Native Bot chat header plus existing settings/Computer/shared-room typed surfaces.",
+      "platform_delta": "Compose top bar replaces DOM header; Android navigation/accessibility conventions apply.",
+      "implementation_status": "mapped",
+      "production_wiring": "Current GrokBotChatAndroid shows Bot avatar/name and command palette, but exact-head production header does not yet wire settings/details identity action, Computer control, shared-room trigger, group gating or Desktop working-state copy.",
+      "unit_test": "missing focused Agent header branch/gating tests.",
+      "contract_test": "existing settings/Computer/shared-room contracts are separate; missing composed header contract.",
+      "integration_test": "missing exact-head Bot header→settings/Computer/shared-room journey.",
+      "packaged_test": "required final minified package",
+      "device_test": "required phone/tablet accessibility/navigation acceptance",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Human/group ConversationChatHeader is a different product surface and is not replacement evidence for the Agent workspace header."
+    },
+    {
+      "responsibility_id": "COMPOSER-WORKSPACE-ANDROID-001",
+      "domain": "conversation-composer",
+      "desktop_sources": [
+        {
+          "path": "frontend/src/recovered/features/conversation/workspace/composer.tsx",
+          "blob_sha": "4445dcebdb2f9c8b862a5c397098491d823778c3",
+          "symbols": [
+            "ConversationComposer",
+            "extractClipboardFiles",
+            "hasFileDragData",
+            "selectComposerFiles"
+          ]
+        }
+      ],
+      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "responsibility": "Own ephemeral conversation draft editing UI with reply context, bounded attachment staging, voice dictation lifecycle, rich-editor insertion/focus, disabled/send gating and accepted-send clearing while delegating all canonical send/upload effects.",
+      "source_owner": "Presentation owns draft/focus/drag/voice-session UI only; attachment staging/send acceptance remain typed runtime owners.",
+      "direct_callers": [
+        "conversation workspace"
+      ],
+      "downstream_dependencies": [
+        "ComposerDraft",
+        "voice session/transcriber",
+        "reply preview",
+        "rich text editor",
+        "attachment staging"
+      ],
+      "state_owner": "UI owns draft/focus/drag depth; runtime owns staged attachment/send/voice transcription effects.",
+      "persistent_state": [
+        "draft persistence is external to this component; accepted send generation clears editor only after canonical acceptance"
+      ],
+      "protocol_wire_contract": [
+        "ComposerDraft prompt/richText/attachments",
+        "COMPOSER_ATTACHMENT_LIMIT",
+        "acceptedSendGeneration",
+        "VoiceTranscriber"
+      ],
+      "visible_effect": "User can compose text/rich text, reply, add bounded attachments by picker/drop/paste, dictate voice into editable draft, and send only when payload is valid.",
+      "failure_behavior": [
+        "disabled cancels active voice",
+        "extra attachments beyond limit are ignored",
+        "voice/transcription failure remains visible without auto-send",
+        "accepted send clears editor only after acceptance"
+      ],
+      "cancellation_behavior": "voice cancel/Escape and scope change dispose current voice session; no send side effect replay.",
+      "retry_semantics": "user edits/retries explicitly; no UI auto-retry of send/upload.",
+      "idempotency_semantics": "attachment cap + accepted-generation clearing avoid duplicate presentation submission; durable send owner handles delivery idempotency.",
+      "process_death_recovery": "draft/staged attachment state must reload from canonical Android draft/staging owner; voice in-flight result is fenced.",
+      "account_fencing": "scopeKey/account+Agent generation fences late voice/staging/send results.",
+      "security_boundary": "file picker/scoped storage and microphone permission remain Android platform adapters; composer cannot bypass capability owners.",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/features/bots/GrokBotComponents.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/recovered/features/conversation/workspace/composer_view.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/presentation/MobileBotViewModel.kt"
+      ],
+      "android_owner": "Native Compose composer plus Android picker/offline-ASR/send acknowledgement owners.",
+      "platform_delta": "Android uses system pickers/scoped storage and native text input instead of desktop drag/drop DOM; core draft/attachment/reply/voice/acceptance semantics remain.",
+      "implementation_status": "mapped",
+      "production_wiring": "Human conversation composer has reply/edit/attachment menu/voice controls and Bot composer has draft/offline ASR/send-stop, but Bot workspace still lacks a single production composer carrying Desktop-equivalent attachment staging, reply/rich-editor semantics and accepted-send clearing across the canonical Agent send chain.",
+      "unit_test": "existing human composer and offline-ASR tests cover partial mechanisms; focused Agent composer cap/reply/accepted-send/late-voice tests required.",
+      "contract_test": "durable send acknowledgement contract exists; missing composed Agent draft/attachment/voice contract.",
+      "integration_test": "missing exact-head Agent composer→staging→durable acknowledgement→canonical transcript journey.",
+      "packaged_test": "required final minified package",
+      "device_test": "required picker/microphone/offline/process-reopen Agent composer acceptance",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Desktop drag/drop/clipboard mechanics are adapted to Android system picker/share/paste APIs rather than mechanically copied; user capability must remain."
     }
   ],
   "traceability": {
