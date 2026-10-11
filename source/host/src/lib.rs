@@ -50,6 +50,7 @@ pub mod sand_quiet_work_origin;
 pub mod sand_user_identity;
 pub mod selected_image_inputs;
 pub mod send_trace_host;
+pub mod send_acknowledgement;
 pub mod sha256;
 pub mod transcript_mutation_events;
 pub mod watched_directory;

@@ -15,6 +15,10 @@ import com.ombhrum.fabushi.androidpreload.runtime.AccountRosterLoadState
 import com.ombhrum.fabushi.androidpreload.runtime.AccountTruthState
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidCoordinatorPort
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidMcpOAuthCompletion
+import com.ombhrum.fabushi.androidpreload.runtime.AndroidSendAcknowledgement
+import com.ombhrum.fabushi.androidpreload.runtime.AndroidSendAcknowledgementDispatch
+import com.ombhrum.fabushi.androidpreload.runtime.AndroidSendAcknowledgementEntry
+import com.ombhrum.fabushi.androidpreload.runtime.AndroidSendAcknowledgementPhase
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidSidebarSection
 import com.ombhrum.fabushi.androidmain.security.AndroidRemoteControlSessionStore
 import com.ombhrum.fabushi.androidmain.security.AndroidRemotePairingStore
@@ -444,10 +448,144 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
                 remoteBox = remoteBoxCapabilities(),
             ),
         )
+    override fun sendAcknowledgementBegin(
+        accountSlot: String?,
+        agentId: String,
+        nonce: String,
+        text: String,
+        entries: List<AndroidSendAcknowledgementEntry>,
+    ): AndroidSendAcknowledgement =
+        parseSendAcknowledgement(
+            host.request(
+                "feature.sendAcknowledgement.begin",
+                JSONObject()
+                    .putNullable("accountSlot", accountSlot)
+                    .put("agentId", agentId)
+                    .put("nonce", nonce)
+                    .put("text", text)
+                    .put("entries", sendAcknowledgementEntriesJson(entries)),
+            ),
+        )
+
+    override fun sendAcknowledgementDispatch(
+        accountSlot: String?,
+        agentId: String,
+        nonce: String,
+        generation: Long,
+    ): AndroidSendAcknowledgementDispatch =
+        parseSendAcknowledgementDispatch(
+            host.request(
+                "feature.sendAcknowledgement.dispatch",
+                JSONObject()
+                    .putNullable("accountSlot", accountSlot)
+                    .put("agentId", agentId)
+                    .put("nonce", nonce)
+                    .put("generation", generation),
+            ),
+        )
+
+    override fun sendAcknowledgementRetry(
+        accountSlot: String?,
+        agentId: String,
+        nonce: String,
+        generation: Long,
+        freshNonce: String,
+        entries: List<AndroidSendAcknowledgementEntry>,
+    ): AndroidSendAcknowledgementDispatch =
+        parseSendAcknowledgementDispatch(
+            host.request(
+                "feature.sendAcknowledgement.retry",
+                JSONObject()
+                    .putNullable("accountSlot", accountSlot)
+                    .put("agentId", agentId)
+                    .put("nonce", nonce)
+                    .put("generation", generation)
+                    .put("freshNonce", freshNonce)
+                    .put("entries", sendAcknowledgementEntriesJson(entries)),
+            ),
+        )
+
+    override fun sendAcknowledgementSnapshot(
+        accountSlot: String?,
+        agentId: String,
+    ): List<AndroidSendAcknowledgement> {
+        val projection = host.request(
+            "feature.sendAcknowledgement.snapshot",
+            JSONObject()
+                .putNullable("accountSlot", accountSlot)
+                .put("agentId", agentId),
+        )
+        val records = projection.optJSONArray("records") ?: JSONArray()
+        return buildList(records.length()) {
+            for (index in 0 until records.length()) {
+                add(parseSendAcknowledgement(records.getJSONObject(index)))
+            }
+        }
+    }
+
     override fun featureInterrupt(params: JSONObject) = host.request("feature.interrupt", params)
     override fun featureApprovalResolve(params: JSONObject) = host.request("feature.approval.resolve", params)
     override fun transcriptSnapshot(): JSONArray =
         host.requestValue("feature.transcript.snapshot") as? JSONArray ?: JSONArray()
+
+    private fun JSONObject.putNullable(key: String, value: String?): JSONObject =
+        if (value == null) put(key, JSONObject.NULL) else put(key, value)
+
+    private fun sendAcknowledgementEntriesJson(
+        entries: List<AndroidSendAcknowledgementEntry>,
+    ): JSONArray = JSONArray().apply {
+        entries.forEach { entry ->
+            put(
+                JSONObject()
+                    .put("id", entry.id)
+                    .put("kind", entry.kind)
+                    .put("clientNonce", entry.clientNonce),
+            )
+        }
+    }
+
+    private fun parseSendAcknowledgement(value: JSONObject): AndroidSendAcknowledgement {
+        val entriesJson = value.optJSONArray("entries") ?: JSONArray()
+        val entries = buildList(entriesJson.length()) {
+            for (index in 0 until entriesJson.length()) {
+                val entry = entriesJson.getJSONObject(index)
+                add(
+                    AndroidSendAcknowledgementEntry(
+                        id = entry.getString("id"),
+                        kind = entry.getString("kind"),
+                        clientNonce = entry.getString("clientNonce"),
+                    ),
+                )
+            }
+        }
+        val priorJson = value.optJSONArray("priorNonces") ?: JSONArray()
+        val prior = buildList(priorJson.length()) {
+            for (index in 0 until priorJson.length()) add(priorJson.getString(index))
+        }
+        return AndroidSendAcknowledgement(
+            accountSlot = value.optString("accountSlot").takeIf(String::isNotBlank),
+            agentId = value.getString("agentId"),
+            nonce = value.getString("nonce"),
+            priorNonces = prior,
+            entries = entries,
+            messageText = value.getString("messageText"),
+            phase = AndroidSendAcknowledgementPhase.fromWire(value.getString("phase")),
+            generation = value.getLong("generation"),
+            failedAtMs = value.opt("failedAtMs").let { raw ->
+                if (raw is Number) raw.toLong() else null
+            },
+            reason = value.optString("reason").takeIf(String::isNotBlank),
+        )
+    }
+
+    private fun parseSendAcknowledgementDispatch(value: JSONObject): AndroidSendAcknowledgementDispatch {
+        val accepted = value.optJSONObject("accepted") ?: JSONObject()
+        return AndroidSendAcknowledgementDispatch(
+            acknowledgement = parseSendAcknowledgement(value.getJSONObject("acknowledgement")),
+            operationId = accepted.optString("operationId")
+                .ifBlank { value.getJSONObject("acknowledgement").getString("nonce") },
+        )
+    }
 
     override fun assistantProjection(): JSONObject =
         host.request("feature.assistant.projection")

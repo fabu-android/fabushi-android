@@ -18,6 +18,45 @@ data class AndroidMcpOAuthCompletion(
     val outcome: String,
 )
 
+enum class AndroidSendAcknowledgementPhase(val wireName: String) {
+    PENDING("pending"),
+    QUEUED("queued"),
+    DISPATCHING("dispatching"),
+    ACCEPTED_AWAITING_ECHO("accepted-awaiting-echo"),
+    FAILED("failed"),
+    OUTCOME_UNKNOWN("outcome-unknown");
+
+    companion object {
+        fun fromWire(value: String): AndroidSendAcknowledgementPhase =
+            entries.firstOrNull { it.wireName == value }
+                ?: error("Unsupported send acknowledgement phase: $value")
+    }
+}
+
+data class AndroidSendAcknowledgementEntry(
+    val id: String,
+    val kind: String,
+    val clientNonce: String,
+)
+
+data class AndroidSendAcknowledgement(
+    val accountSlot: String?,
+    val agentId: String,
+    val nonce: String,
+    val priorNonces: List<String>,
+    val entries: List<AndroidSendAcknowledgementEntry>,
+    val messageText: String,
+    val phase: AndroidSendAcknowledgementPhase,
+    val generation: Long,
+    val failedAtMs: Long?,
+    val reason: String?,
+)
+
+data class AndroidSendAcknowledgementDispatch(
+    val acknowledgement: AndroidSendAcknowledgement,
+    val operationId: String,
+)
+
 /**
  * Typed method surface exposed to Android presentation code.
  *
@@ -61,6 +100,31 @@ interface AndroidCoordinatorPort {
     fun automationSnapshot(params: JSONObject): JSONObject
 
     fun featureExecute(params: JSONObject): JSONObject
+    fun sendAcknowledgementBegin(
+        accountSlot: String?,
+        agentId: String,
+        nonce: String,
+        text: String,
+        entries: List<AndroidSendAcknowledgementEntry>,
+    ): AndroidSendAcknowledgement
+    fun sendAcknowledgementDispatch(
+        accountSlot: String?,
+        agentId: String,
+        nonce: String,
+        generation: Long,
+    ): AndroidSendAcknowledgementDispatch
+    fun sendAcknowledgementRetry(
+        accountSlot: String?,
+        agentId: String,
+        nonce: String,
+        generation: Long,
+        freshNonce: String,
+        entries: List<AndroidSendAcknowledgementEntry>,
+    ): AndroidSendAcknowledgementDispatch
+    fun sendAcknowledgementSnapshot(
+        accountSlot: String?,
+        agentId: String,
+    ): List<AndroidSendAcknowledgement>
     fun featureInterrupt(params: JSONObject): JSONObject
     fun featureApprovalResolve(params: JSONObject): JSONObject
     fun transcriptSnapshot(): JSONArray

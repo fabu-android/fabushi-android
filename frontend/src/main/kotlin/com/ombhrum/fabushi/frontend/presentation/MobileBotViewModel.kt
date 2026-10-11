@@ -4,6 +4,7 @@ import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidCoordinatorPort
+import com.ombhrum.fabushi.androidpreload.runtime.AndroidSendAcknowledgementEntry
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidSidebarSection
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -175,6 +176,7 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
     private val paletteRoutineFence = CommandPaletteRoutineRequestFence()
     private var paletteRoutineJob: Job? = null
     private var openBotGeneration = 0L
+    private var sendPresentationGeneration = 0L
     private var asyncTasksGeneration = 0L
     private var asyncTasksJob: Job? = null
     private var groupMembersGeneration = 0L
@@ -826,6 +828,7 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
     fun openBot(bot: MobileBotSummaryAndroid, targetEntryId: String? = null) {
         rosterSelection.select(bot.id)
         openBotGeneration += 1
+        sendPresentationGeneration += 1
         val generation = openBotGeneration
         val cachedMessages = messagesByBot[bot.id].orEmpty()
         val baselineEntryIds = cachedMessages.mapTo(linkedSetOf(), MobileChatMessage::id)
@@ -846,13 +849,14 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
 
         viewModelScope.launch {
             try {
-                val transcript = withContext(Dispatchers.IO) { coordinator.transcriptSnapshot() }
-                val canonical = canonicalMobileTranscriptForAgent(transcript, bot.id)
+                val durable = withContext(Dispatchers.IO) {
+                    loadDurableAgentTranscript(bot.id, rosterSelectionAccountSlot)
+                }
                 if (generation != openBotGeneration || mutableState.value.activeBot?.id != bot.id) return@launch
                 val merged = mergeCanonicalMobileTranscript(
                     baselineEntryIds = baselineEntryIds,
                     current = mutableState.value.messages,
-                    canonical = canonical,
+                    canonical = durable,
                 )
                 commitState(
                     mutableState.value.copy(
@@ -887,6 +891,7 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
         if (mutableState.value.busy) return
         rosterSelection.select(null)
         openBotGeneration += 1
+        sendPresentationGeneration += 1
         commitState(
             mutableState.value.copy(
                 activeBot = null,
@@ -903,6 +908,7 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
         rosterSelection.reset()
         rosterSelectionAccountSlot = null
         openBotGeneration += 1
+        sendPresentationGeneration += 1
         asyncTasksGeneration += 1
         asyncTasksJob?.cancel()
         asyncTasksJob = null
@@ -1099,22 +1105,206 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
         val bot = snapshot.activeBot ?: return
         val text = snapshot.draft.trim()
         if (text.isBlank() || snapshot.busy) return
-        val requestId = "android-mobile-bot-chat-${UUID.randomUUID()}"
-        commitState(snapshot.copy(
-            draft = "",
-            busy = true,
-            error = null,
-            operationId = requestId,
-            pendingApproval = null,
-            messageTargetId = null,
-            messages = snapshot.messages + MobileChatMessage(requestId, MobileChatRole.USER, text),
-        ))
         val miniAppId = bot.miniAppId
         if (!miniAppId.isNullOrBlank()) {
+            val requestId = "android-mobile-bot-chat-${UUID.randomUUID()}"
+            commitState(
+                snapshot.copy(
+                    draft = "",
+                    busy = true,
+                    error = null,
+                    operationId = requestId,
+                    pendingApproval = null,
+                    messageTargetId = null,
+                    messages = snapshot.messages + MobileChatMessage(
+                        requestId,
+                        MobileChatRole.USER,
+                        text,
+                    ),
+                ),
+            )
             sendMiniApp(miniAppId, text, requestId)
             return
         }
-        sendAgent(bot, text, requestId)
+
+        val accountSlot = rosterSelectionAccountSlot
+        val scopeGeneration = sendPresentationGeneration
+        val nonce = "android-mobile-bot-chat-${UUID.randomUUID()}"
+        commitState(
+            snapshot.copy(
+                busy = true,
+                error = null,
+                pendingApproval = null,
+                messageTargetId = null,
+            ),
+        )
+        viewModelScope.launch {
+            try {
+                val acknowledgement = withContext(Dispatchers.IO) {
+                    coordinator.sendAcknowledgementBegin(
+                        accountSlot = accountSlot,
+                        agentId = bot.id,
+                        nonce = nonce,
+                        text = text,
+                        entries = listOf(messageAcknowledgementEntry(nonce)),
+                    )
+                }
+                if (!isCurrentSendScope(bot.id, accountSlot, scopeGeneration)) return@launch
+                commitState(mutableState.value.copy(draft = ""))
+                refreshDurableSendProjection(bot.id, accountSlot, scopeGeneration)
+
+                val dispatched = withContext(Dispatchers.IO) {
+                    coordinator.sendAcknowledgementDispatch(
+                        accountSlot = accountSlot,
+                        agentId = bot.id,
+                        nonce = acknowledgement.nonce,
+                        generation = acknowledgement.generation,
+                    )
+                }
+                if (!isCurrentSendScope(bot.id, accountSlot, scopeGeneration)) return@launch
+                val operationId = dispatched.operationId
+                commitState(
+                    mutableState.value.copy(
+                        operationId = operationId,
+                        messages = mutableState.value.messages.filterNot {
+                            it.kind == MobileChatEntryKind.THINKING &&
+                                it.operationId == operationId
+                        } + MobileChatMessage(
+                            id = "thinking:$operationId",
+                            role = MobileChatRole.ASSISTANT,
+                            text = "",
+                            kind = MobileChatEntryKind.THINKING,
+                            operationId = operationId,
+                            actionTitle = "Thinking",
+                            actionStatus = "running",
+                        ),
+                    ),
+                )
+                refreshDurableSendProjection(bot.id, accountSlot, scopeGeneration)
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Throwable) {
+                if (isCurrentSendScope(bot.id, accountSlot, scopeGeneration)) {
+                    runCatching {
+                        refreshDurableSendProjection(bot.id, accountSlot, scopeGeneration)
+                    }
+                    commitState(
+                        mutableState.value.copy(
+                            busy = false,
+                            operationId = null,
+                            error = error.message ?: "Bot run failed",
+                        ),
+                    )
+                }
+            }
+        }
+    }
+
+    fun retrySend(nonce: String) {
+        val snapshot = mutableState.value
+        val bot = snapshot.activeBot ?: return
+        if (bot.miniAppId != null || snapshot.busy || nonce.isBlank()) return
+        val failed = snapshot.messages.firstOrNull {
+            it.clientNonce == nonce && isExplicitSendRetryAllowed(it)
+        } ?: return
+        val generation = failed.sendAcknowledgementGeneration ?: return
+        val accountSlot = rosterSelectionAccountSlot
+        val scopeGeneration = sendPresentationGeneration
+        val freshNonce = "sand-resend-v1:${nonce.length}:$nonce:${UUID.randomUUID()}"
+        commitState(snapshot.copy(busy = true, error = null))
+        viewModelScope.launch {
+            try {
+                val dispatched = withContext(Dispatchers.IO) {
+                    coordinator.sendAcknowledgementRetry(
+                        accountSlot = accountSlot,
+                        agentId = bot.id,
+                        nonce = nonce,
+                        generation = generation,
+                        freshNonce = freshNonce,
+                        entries = listOf(messageAcknowledgementEntry(freshNonce)),
+                    )
+                }
+                if (!isCurrentSendScope(bot.id, accountSlot, scopeGeneration)) return@launch
+                val operationId = dispatched.operationId
+                refreshDurableSendProjection(bot.id, accountSlot, scopeGeneration)
+                commitState(
+                    mutableState.value.copy(
+                        operationId = operationId,
+                        messages = mutableState.value.messages.filterNot {
+                            it.kind == MobileChatEntryKind.THINKING &&
+                                it.operationId == operationId
+                        } + MobileChatMessage(
+                            id = "thinking:$operationId",
+                            role = MobileChatRole.ASSISTANT,
+                            text = "",
+                            kind = MobileChatEntryKind.THINKING,
+                            operationId = operationId,
+                            actionTitle = "Thinking",
+                            actionStatus = "running",
+                        ),
+                    ),
+                )
+                refreshDurableSendProjection(bot.id, accountSlot, scopeGeneration)
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Throwable) {
+                if (isCurrentSendScope(bot.id, accountSlot, scopeGeneration)) {
+                    runCatching {
+                        refreshDurableSendProjection(bot.id, accountSlot, scopeGeneration)
+                    }
+                    commitState(
+                        mutableState.value.copy(
+                            busy = false,
+                            operationId = null,
+                            error = error.message ?: "Retry failed",
+                        ),
+                    )
+                }
+            }
+        }
+    }
+
+    private fun messageAcknowledgementEntry(nonce: String): AndroidSendAcknowledgementEntry =
+        AndroidSendAcknowledgementEntry(
+            id = nonce,
+            kind = "message",
+            clientNonce = nonce,
+        )
+
+    private fun isCurrentSendScope(
+        agentId: String,
+        accountSlot: String?,
+        scopeGeneration: Long,
+    ): Boolean =
+        scopeGeneration == sendPresentationGeneration &&
+            mutableState.value.activeBot?.id == agentId &&
+            rosterSelectionAccountSlot == accountSlot
+
+    private fun loadDurableAgentTranscript(
+        agentId: String,
+        accountSlot: String?,
+    ): List<MobileChatMessage> {
+        val transcript = coordinator.transcriptSnapshot()
+        val canonical = canonicalMobileTranscriptForAgent(transcript, agentId)
+        val acknowledgements = coordinator.sendAcknowledgementSnapshot(accountSlot, agentId)
+        return projectDurableSendAcknowledgements(canonical, acknowledgements)
+    }
+
+    private suspend fun refreshDurableSendProjection(
+        agentId: String,
+        accountSlot: String?,
+        scopeGeneration: Long,
+    ) {
+        val durable = withContext(Dispatchers.IO) {
+            loadDurableAgentTranscript(agentId, accountSlot)
+        }
+        if (!isCurrentSendScope(agentId, accountSlot, scopeGeneration)) return
+        val merged = mergeCanonicalMobileTranscript(
+            baselineEntryIds = emptySet(),
+            current = mutableState.value.messages,
+            canonical = durable,
+        )
+        commitState(mutableState.value.copy(messages = merged))
     }
 
     private fun sendMiniApp(pluginId: String, text: String, operationId: String) {
@@ -1198,43 +1388,6 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
         }
         val structured = result.optJSONObject("structuredContent")
         return structured?.toString(2) ?: result.toString(2)
-    }
-
-    private fun sendAgent(bot: MobileBotSummaryAndroid, text: String, requestId: String) {
-        viewModelScope.launch {
-            runCatching {
-                val operationId = withContext(Dispatchers.IO) {
-                    val accepted = coordinator.featureExecute(
-                        JSONObject().put(
-                            "command",
-                            JSONObject()
-                                .put("type", "chat.send")
-                                .put("requestId", requestId)
-                                .put("text", text)
-                                .put("agentId", bot.id)
-                                .put("mode", "agent"),
-                        ),
-                    )
-                    accepted.optString("operationId").ifBlank { requestId }
-                }
-                commitState(mutableState.value.copy(
-                    operationId = operationId,
-                    messages = mutableState.value.messages + MobileChatMessage(
-                        id = "thinking:$operationId",
-                        role = MobileChatRole.ASSISTANT,
-                        text = "",
-                        kind = MobileChatEntryKind.THINKING,
-                        operationId = operationId,
-                        actionTitle = "Thinking",
-                        actionStatus = "running",
-                    ),
-                ))
-            }.onFailure { error ->
-                removeThinking(requestId)
-                finishAssistant(requestId)
-                commitState(mutableState.value.copy(busy = false, operationId = null, error = error.message ?: "Bot run failed"))
-            }
-        }
     }
 
     fun resolveApproval(approved: Boolean) {

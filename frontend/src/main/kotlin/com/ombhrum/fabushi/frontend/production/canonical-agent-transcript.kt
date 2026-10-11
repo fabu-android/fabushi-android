@@ -1,5 +1,7 @@
 package com.ombhrum.fabushi
 
+import com.ombhrum.fabushi.androidpreload.runtime.AndroidSendAcknowledgement
+import com.ombhrum.fabushi.androidpreload.runtime.AndroidSendAcknowledgementPhase
 import org.json.JSONArray
 
 /**
@@ -14,6 +16,7 @@ internal data class CanonicalAgentTranscriptMessage(
     val role: MobileChatRole,
     val text: String,
     val operationId: String?,
+    val clientNonce: String?,
     val timestampMs: Long,
 )
 
@@ -38,6 +41,7 @@ internal fun canonicalAgentTranscriptMessages(
             role = role,
             text = entry.optString("content"),
             operationId = entry.optString("operationId").takeIf(String::isNotBlank),
+            clientNonce = entry.optString("clientNonce").takeIf(String::isNotBlank),
             timestampMs = entry.optLong("timestampMs", 0L),
         )
         byIdentity["$agentId\u0000$id"] = message
@@ -58,6 +62,7 @@ internal fun canonicalMobileTranscriptForAgent(
                 role = entry.role,
                 text = entry.text,
                 operationId = entry.operationId,
+                clientNonce = entry.clientNonce,
             )
         }
         .toList()
@@ -76,3 +81,31 @@ internal fun mergeCanonicalMobileTranscript(
     val arrivedDuringLoad = current.filter { it.id !in baselineEntryIds && it.id !in canonicalIds }
     return (canonical + arrivedDuringLoad).distinctBy(MobileChatMessage::id)
 }
+
+
+internal fun projectDurableSendAcknowledgements(
+    canonical: List<MobileChatMessage>,
+    acknowledgements: List<AndroidSendAcknowledgement>,
+): List<MobileChatMessage> {
+    val byId = linkedMapOf<String, MobileChatMessage>()
+    canonical.forEach { byId[it.id] = it }
+    acknowledgements.forEach { acknowledgement ->
+        val messageEntry = acknowledgement.entries.firstOrNull { it.kind == "message" } ?: return@forEach
+        if (byId.containsKey(messageEntry.id)) return@forEach
+        byId[messageEntry.id] = MobileChatMessage(
+            id = messageEntry.id,
+            role = MobileChatRole.USER,
+            text = acknowledgement.messageText,
+            clientNonce = acknowledgement.nonce,
+            sendStatus = acknowledgement.phase.wireName,
+            sendAcknowledgementGeneration = acknowledgement.generation,
+            sendFailureReason = acknowledgement.reason,
+        )
+    }
+    return byId.values.toList()
+}
+
+internal fun isExplicitSendRetryAllowed(message: MobileChatMessage): Boolean =
+    message.sendStatus == AndroidSendAcknowledgementPhase.FAILED.wireName &&
+        !message.clientNonce.isNullOrBlank() &&
+        (message.sendAcknowledgementGeneration ?: 0L) > 0L

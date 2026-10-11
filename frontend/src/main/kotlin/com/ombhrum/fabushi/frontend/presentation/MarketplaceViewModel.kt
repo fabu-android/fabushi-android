@@ -72,6 +72,10 @@ data class MobileChatMessage(
     val miniAppName: String? = null,
     val miniAppDescription: String? = null,
     val streaming: Boolean = false,
+    val clientNonce: String? = null,
+    val sendStatus: String? = null,
+    val sendAcknowledgementGeneration: Long? = null,
+    val sendFailureReason: String? = null,
 )
 
 data class MarketplaceUiState(

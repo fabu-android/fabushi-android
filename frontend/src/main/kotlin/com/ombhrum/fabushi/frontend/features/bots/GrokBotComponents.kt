@@ -131,6 +131,7 @@ internal fun GrokBotChatAndroid(
     onOpenCommandPalette: () -> Unit,
     onDraftChange: (String) -> Unit,
     onSend: () -> Unit,
+    onRetrySend: (String) -> Unit,
     onStop: () -> Unit,
     onResolveApproval: (Boolean) -> Unit,
     onMessageTargetConsumed: (String) -> Unit,
@@ -236,8 +237,46 @@ internal fun GrokBotChatAndroid(
                         Text(entry.actionTitle ?: "Working", color = GrokMobileInk, fontSize = 12.sp, fontWeight = FontWeight.Medium)
                         entry.actionDetail?.takeIf { it.isNotBlank() }?.let { Text(it, color = GrokMobileMuted, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis) }
                     }
-                    entry.role == MobileChatRole.USER -> Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                        Text(entry.text, color = Color.White, fontSize = 16.sp, modifier = Modifier.background(Color.Black, RoundedCornerShape(18.dp)).padding(horizontal = 15.dp, vertical = 10.dp))
+                    entry.role == MobileChatRole.USER -> Column(
+                        Modifier.fillMaxWidth(),
+                        horizontalAlignment = Alignment.End,
+                    ) {
+                        Text(
+                            entry.text,
+                            color = Color.White,
+                            fontSize = 16.sp,
+                            modifier = Modifier
+                                .background(Color.Black, RoundedCornerShape(18.dp))
+                                .padding(horizontal = 15.dp, vertical = 10.dp),
+                        )
+                        when (entry.sendStatus) {
+                            "pending" -> Text("等待入队…", color = GrokMobileMuted, fontSize = 11.sp)
+                            "queued" -> Text("已入队…", color = GrokMobileMuted, fontSize = 11.sp)
+                            "dispatching" -> Text("发送中…", color = GrokMobileMuted, fontSize = 11.sp)
+                            "accepted-awaiting-echo" -> Text("已接受，等待同步…", color = GrokMobileMuted, fontSize = 11.sp)
+                            "outcome-unknown" -> Text(
+                                "发送结果待确认；不会自动重试",
+                                color = Color(0xFFE18900),
+                                fontSize = 11.sp,
+                            )
+                            "failed" -> Row(
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Text("发送失败", color = Color.Red, fontSize = 11.sp)
+                                entry.clientNonce?.takeIf(String::isNotBlank)?.let { nonce ->
+                                    Text(
+                                        "重试",
+                                        color = Color(0xFF2A92FE),
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        modifier = Modifier
+                                            .clickable { onRetrySend(nonce) }
+                                            .padding(vertical = 4.dp),
+                                    )
+                                }
+                            }
+                        }
                     }
                     else -> Column {
                         Text(bot.name, color = GrokMobileMuted, fontSize = 11.sp, modifier = Modifier.padding(start = 29.dp, bottom = 2.dp))

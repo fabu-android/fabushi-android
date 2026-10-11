@@ -6,6 +6,9 @@ use crate::android_sidebar_sections::{AndroidSidebarSection, AndroidSidebarSecti
 use crate::host_secret_store::get_or_create_host_machine_id;
 use crate::host_runner_composition::AuthenticatedRemoteHostRunner;
 use crate::messaging_service::AndroidMessagingService;
+use crate::send_acknowledgement::{
+    DurableSendAcknowledgementOwner, SendAcknowledgementEntry, SendAcknowledgementPhase,
+};
 use crate::plugin_variable_store::{variable_fields_json, PluginVariableStore, PreparedPluginVariableWrite};
 use crate::mcp_auth::{
     cleanup_legacy_mcp_auth_credentials, AndroidMcpAuthWatchManager,
@@ -594,6 +597,7 @@ pub struct AndroidJsonHost {
     agents: Arc<Mutex<AndroidAgentRoster>>,
     sidebar_sections: Arc<Mutex<AndroidSidebarSections>>,
     transcript: Arc<Mutex<TranscriptStore>>,
+    send_acknowledgements: Arc<Mutex<DurableSendAcknowledgementOwner>>,
     messaging: Arc<Mutex<AndroidMessagingService>>,
     mcp_auth_watches: Arc<Mutex<AndroidMcpAuthWatchManager>>,
     mcp_auth_owner: Option<AndroidMcpAuthWatchOwner>,
@@ -684,6 +688,15 @@ impl AndroidJsonHost {
             TranscriptStore::open(app_data_dir.join("transcript.json"))
                 .unwrap_or_else(|error| panic!("failed to open canonical Android transcript: {error}")),
         ));
+        let send_acknowledgements = Arc::new(Mutex::new(
+            DurableSendAcknowledgementOwner::open(
+                app_data_dir.join("send-acknowledgements.json"),
+                now_ms(),
+            )
+            .unwrap_or_else(|error| {
+                panic!("failed to open durable Android send acknowledgement owner: {error}")
+            }),
+        ));
         let messaging = Arc::new(Mutex::new(
             AndroidMessagingService::open(&app_data_dir)
                 .unwrap_or_else(|error| panic!("failed to open canonical Android messaging repository: {error}")),
@@ -754,6 +767,7 @@ impl AndroidJsonHost {
             agents,
             sidebar_sections,
             transcript,
+            send_acknowledgements,
             messaging,
             mcp_auth_watches,
             mcp_auth_owner,
@@ -1090,6 +1104,10 @@ impl AndroidJsonHost {
                 Ok(json!(ids))
             }
             "feature.execute" => self.feature_execute(params),
+            "feature.sendAcknowledgement.begin" => self.send_acknowledgement_begin(params),
+            "feature.sendAcknowledgement.dispatch" => self.send_acknowledgement_dispatch(params),
+            "feature.sendAcknowledgement.retry" => self.send_acknowledgement_retry(params),
+            "feature.sendAcknowledgement.snapshot" => self.send_acknowledgement_snapshot(params),
             "feature.receive" => self.feature_receive(),
             "feature.interrupt" => self.feature_interrupt(params),
             "feature.approval.resolve" => self.feature_approval_resolve(params),
@@ -3009,6 +3027,184 @@ impl AndroidJsonHost {
         self.account.browser_cancel(attempt_id)
     }
 
+    fn send_acknowledgement_scope(
+        &self,
+        params: &Value,
+    ) -> Result<(Option<String>, String, String), String> {
+        let account_slot = params
+            .get("accountSlot")
+            .and_then(Value::as_str)
+            .filter(|value| !value.trim().is_empty())
+            .map(str::to_string);
+        let account_fence = self.current_turn_account_fence()?;
+        let agent_id = required_string(params, "agentId")?.to_string();
+        Ok((account_slot, account_fence, agent_id))
+    }
+
+    fn send_acknowledgement_begin(&mut self, params: &Value) -> Result<Value, String> {
+        let (account_slot, account_fence, agent_id) = self.send_acknowledgement_scope(params)?;
+        let nonce = required_string(params, "nonce")?;
+        let text = required_string(params, "text")?;
+        let entries = SendAcknowledgementEntry::list_from_json(
+            params
+                .get("entries")
+                .ok_or("send acknowledgement entries are required")?,
+        )?;
+        let record = self
+            .send_acknowledgements
+            .lock()
+            .map_err(|_| "send acknowledgement owner lock poisoned".to_string())?
+            .begin(account_slot.as_deref(), &account_fence, &agent_id, nonce, text, entries)?;
+        serde_json::to_value(record)
+            .map_err(|error| format!("failed to serialize send acknowledgement: {error}"))
+    }
+
+    fn send_acknowledgement_dispatch(&mut self, params: &Value) -> Result<Value, String> {
+        let (account_slot, account_fence, agent_id) = self.send_acknowledgement_scope(params)?;
+        let nonce = required_string(params, "nonce")?;
+        let generation = params
+            .get("generation")
+            .and_then(Value::as_u64)
+            .filter(|value| *value > 0)
+            .ok_or("send acknowledgement generation is required")?;
+
+        let dispatching = {
+            let mut owner = self
+                .send_acknowledgements
+                .lock()
+                .map_err(|_| "send acknowledgement owner lock poisoned".to_string())?;
+            owner.mark_queued(
+                account_slot.as_deref(),
+                &account_fence,
+                &agent_id,
+                nonce,
+                generation,
+            )?;
+            owner.mark_dispatching(
+                account_slot.as_deref(),
+                &account_fence,
+                &agent_id,
+                nonce,
+                generation,
+            )?
+        };
+
+        let command = json!({
+            "type":"chat.send",
+            "requestId":dispatching.nonce,
+            "clientNonce":dispatching.nonce,
+            "text":dispatching.message_text,
+            "agentId":dispatching.agent_id,
+            "mode":"agent",
+        });
+        match self.feature_execute(&json!({"command":command})) {
+            Ok(accepted) => {
+                let record = self
+                    .send_acknowledgements
+                    .lock()
+                    .map_err(|_| "send acknowledgement owner lock poisoned".to_string())?
+                    .mark_accepted(
+                        account_slot.as_deref(),
+                        &account_fence,
+                        &agent_id,
+                        nonce,
+                        generation,
+                    )?;
+                Ok(json!({
+                    "acknowledgement":record,
+                    "accepted":accepted,
+                }))
+            }
+            Err(error) => {
+                let transcript = self
+                    .transcript
+                    .lock()
+                    .map_err(|_| "transcript lock poisoned".to_string())?
+                    .get_transcript();
+                let mut owner = self
+                    .send_acknowledgements
+                    .lock()
+                    .map_err(|_| "send acknowledgement owner lock poisoned".to_string())?;
+                let settled = owner.reconcile_transcript(
+                    account_slot.as_deref(),
+                    &account_fence,
+                    &agent_id,
+                    &transcript,
+                )?;
+                if settled > 0 {
+                    return Err(format!(
+                        "send dispatch returned an error after canonical echo; acknowledgement reconciled without retry: {error}"
+                    ));
+                }
+                owner.mark_failed(
+                    account_slot.as_deref(),
+                    &account_fence,
+                    &agent_id,
+                    nonce,
+                    generation,
+                    now_ms(),
+                    error.clone(),
+                )?;
+                Err(error)
+            }
+        }
+    }
+
+    fn send_acknowledgement_retry(&mut self, params: &Value) -> Result<Value, String> {
+        let (account_slot, account_fence, agent_id) = self.send_acknowledgement_scope(params)?;
+        let nonce = required_string(params, "nonce")?;
+        let fresh_nonce = required_string(params, "freshNonce")?;
+        let generation = params
+            .get("generation")
+            .and_then(Value::as_u64)
+            .filter(|value| *value > 0)
+            .ok_or("send acknowledgement generation is required")?;
+        let entries = SendAcknowledgementEntry::list_from_json(
+            params
+                .get("entries")
+                .ok_or("send acknowledgement entries are required")?,
+        )?;
+        let retried = self
+            .send_acknowledgements
+            .lock()
+            .map_err(|_| "send acknowledgement owner lock poisoned".to_string())?
+            .retry_failed(
+                account_slot.as_deref(),
+                &account_fence,
+                &agent_id,
+                nonce,
+                generation,
+                fresh_nonce,
+                entries,
+            )?;
+        self.send_acknowledgement_dispatch(&json!({
+            "accountSlot":account_slot,
+            "agentId":agent_id,
+            "nonce":retried.nonce,
+            "generation":retried.generation,
+        }))
+    }
+
+    fn send_acknowledgement_snapshot(&mut self, params: &Value) -> Result<Value, String> {
+        let (account_slot, account_fence, agent_id) = self.send_acknowledgement_scope(params)?;
+        let transcript = self
+            .transcript
+            .lock()
+            .map_err(|_| "transcript lock poisoned".to_string())?
+            .get_transcript();
+        let mut owner = self
+            .send_acknowledgements
+            .lock()
+            .map_err(|_| "send acknowledgement owner lock poisoned".to_string())?;
+        owner.reconcile_transcript(
+            account_slot.as_deref(),
+            &account_fence,
+            &agent_id,
+            &transcript,
+        )?;
+        Ok(owner.projection(account_slot.as_deref(), &account_fence, &agent_id))
+    }
+
     fn feature_execute(&mut self, params: &Value) -> Result<Value, String> {
         let command = params.get("command").and_then(Value::as_object).ok_or("feature.execute requires command")?;
         let command = Value::Object(command.clone());
@@ -3211,6 +3407,10 @@ impl AndroidJsonHost {
                     "content":prompt.clone(),
                     "operationId":operation_id,
                     "agentId":agent_id.clone(),
+                    "clientNonce":command
+                        .get("clientNonce")
+                        .and_then(Value::as_str)
+                        .unwrap_or(request_id),
                     "timestampMs":now_ms(),
                 }))
                 .map_err(|error| format!("failed to persist user transcript entry: {error}"))?;
