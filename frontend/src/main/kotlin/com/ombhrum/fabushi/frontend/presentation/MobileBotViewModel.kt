@@ -1638,14 +1638,18 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
         )
         paletteLinkJob = viewModelScope.launch {
             try {
-                val metadata = linkedMapOf<String, TranscriptLinkCardMetadata>()
+                val metadata = linkedMapOf<String, CommandPaletteLinkMetadata>()
                 for (link in links) {
                     val snapshot = withContext(Dispatchers.IO) {
                         paletteLinkMetadataProvider.load(link.url)
                     }
                     if (!paletteLinkFence.accepts(token)) return@launch
                     if (snapshot.status == TranscriptLinkCardStatus.READY && snapshot.metadata != null) {
-                        metadata[link.url] = snapshot.metadata
+                        metadata[link.url] = CommandPaletteLinkMetadata(
+                            title = snapshot.metadata.title,
+                            description = snapshot.metadata.description,
+                            hostname = snapshot.metadata.hostname,
+                        )
                         mutableState.value = mutableState.value.copy(
                             paletteLinks = CommandPaletteLinkSnapshot(
                                 status = CommandPaletteLinkStatus.LOADING,

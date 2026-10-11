@@ -15,10 +15,16 @@ data class CommandPaletteLink(
     val url: String,
 )
 
+data class CommandPaletteLinkMetadata(
+    val title: String? = null,
+    val description: String? = null,
+    val hostname: String? = null,
+)
+
 data class CommandPaletteLinkSnapshot(
     val status: CommandPaletteLinkStatus = CommandPaletteLinkStatus.IDLE,
     val value: List<CommandPaletteLink> = emptyList(),
-    val metadata: Map<String, TranscriptLinkCardMetadata> = emptyMap(),
+    val metadata: Map<String, CommandPaletteLinkMetadata> = emptyMap(),
 )
 
 internal class CommandPaletteLinkRequestFence {
@@ -79,7 +85,7 @@ internal fun commandPaletteLinksFromConversation(
 
 internal fun commandPaletteLinkEntries(
     links: List<CommandPaletteLink>,
-    metadata: Map<String, TranscriptLinkCardMetadata>,
+    metadata: Map<String, CommandPaletteLinkMetadata>,
     onOpen: (CommandPaletteLink) -> Unit,
 ): List<CommandPaletteEntry> =
     links.map { link ->

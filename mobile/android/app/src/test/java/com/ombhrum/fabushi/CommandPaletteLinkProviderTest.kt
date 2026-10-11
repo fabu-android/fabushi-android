@@ -31,7 +31,7 @@ class CommandPaletteLinkProviderTest {
         val entries = commandPaletteLinkEntries(
             links = links,
             metadata = mapOf(
-                "https://example.com/docs" to TranscriptLinkCardMetadata(
+                "https://example.com/docs" to CommandPaletteLinkMetadata(
                     title = "Example Docs",
                     description = "Reference",
                     hostname = "example.com",
