@@ -5,9 +5,9 @@
     "desktop_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
     "android_repository": "fabu-android/fabushi-android",
     "android_pr": 3,
-    "android_head_at_update": "824e8dd07c3d0b82fa82070038bf7efe6c1127ac",
+    "android_head_at_update": "c572a35bf9b997982df68d33aeafd0bf38a4a6d5",
     "status": "incomplete",
-    "note": "Incrementally rebased to Desktop main 371b72f1cd20de03dc4dff9a15ed761054968093, root tree 3116c54a1e36da95189c740bdc789ad543ce2d20. Compare from 62d0c99f changes only Marketplace owner inventory; shipping source blobs and 8177-row set are unchanged. Skills Host owner audit was re-read and mapped without inherited verification. Deterministic transcript audit advanced through registry/resolver/root, secret-request, send-message:text, thread affordance/loader/summary, transcript feed fanout and URL-card; confirmed Android secret/thread/link-metadata gaps remain mapped. Deterministic audit advanced through transcript card leaf CSS/barrel/shared plus attachment/approval/cloud-agent/connector/draft/link/listener/local-tool/secret/text views; draft leaves preserve source no-op send/discard semantics rather than inventing execution. Deterministic audit advanced through widget leaf/actions; Android lacks typed respond/dismiss wiring, so widget remains mapped/not-verified. Deterministic audit advanced through message-card seam and tool-results model/proto/boundary/view; Android relay exists but tool-result transcript presentation remains mapped/not-verified. Durable Android Agent send acknowledgement owner is now implemented at 824e8dd0 with Host-owned pending/queued/dispatching/accepted-awaiting-echo/failed/outcome-unknown state, explicit failed-only retry, canonical echo reconciliation and ViewModel stale-scope fencing; exact-head verification is pending."
+    "note": "Incrementally rebased to Desktop main 371b72f1cd20de03dc4dff9a15ed761054968093. Durable Android Agent send acknowledgement is Host-owned and production-wired. Transcript widget respond/dismiss now uses typed Kotlin/Coordinator/Host routes with canonical respondedValue/widgetDismissed settlement, hidden continuation dispatch, rollback and presentation-generation fencing. ClientSideToolV2 relay is durable across process reopen and projects supported 7/15/38 file-edit/file-write/shell cards; Android joins typed results only onto matching canonical tool-call rows and keeps unmatched updates out of the transcript. Exact-head GitHub Actions/package/device verification remains pending and full source closure remains incomplete."
   },
   "responsibilities": [
     {
@@ -8401,16 +8401,16 @@
       ],
       "android_owner": "Host canonical Agent transcript plus native widget presentation/action adapter.",
       "platform_delta": "Compose input/accessibility replaces DOM keyboard mechanics while retaining scoped action semantics.",
-      "implementation_status": "mapped",
-      "production_wiring": "Current exact-head Android production search found no respondToWidget/dismissWidget methods or widget transcript union.",
-      "unit_test": "missing focused option/custom/dismiss/pending/rollback/stale/account-switch tests",
-      "contract_test": "missing typed widget action/reply contract",
-      "integration_test": "missing exact-head widget answer/dismiss/process-reopen journey",
+      "implementation_status": "implemented",
+      "production_wiring": "Host android_json_runtime owns canonical widget settlement and hidden continuation dispatch; AndroidCoordinatorPort/Runtime expose generation-echoed typed respond/dismiss; MobileBotViewModel owns only single-flight pending presentation and reconciles from canonical transcript; Compose AgentChatSurfaces renders option/custom/dismiss states.",
+      "unit_test": "AgentTranscriptWidgetProjectionTest plus Host widget/runtime focused tests cover projection, zero-option custom input, settlement and stale-safe reconciliation; exact-head CI pending.",
+      "contract_test": "typed AndroidWidgetActionResult accepted/generation/operationId contract and Host generation echo are wired; exact-head CI pending.",
+      "integration_test": "production Host→Coordinator→ViewModel→canonical transcript route is wired; exact-head GitHub Actions terminal result and packaged/device journey remain pending.",
       "packaged_test": "required final package",
       "device_test": "required protected/device Agent journey",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Android input shortcuts should follow Android accessibility/input conventions rather than mechanically copy desktop A/B keyboard behavior."
+      "notes": "Implementation present at current code HEAD; do not mark verified until same-head Actions and packaged/device acceptance pass. Compose accessibility/input conventions replace desktop keyboard specifics."
     },
     {
       "responsibility_id": "TRANSCRIPT-TOOL-RESULT-CARDS-ANDROID-001",
@@ -8485,22 +8485,25 @@
       "android_disposition": "android-adapted",
       "android_target": [
         "source/mahayana-agent-coordinator/src/client_side_tool_v2_relay.rs",
+        "source/android-host-jni/src/lib.rs",
+        "source/android-preload/src/main/kotlin/com/ombhrum/fabushi/androidpreload/runtime/AndroidCoordinatorPort.kt",
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/coordinator/AndroidCoordinatorRuntime.kt",
         "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/production/canonical-agent-transcript.kt",
-        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/features/chat/AgentChatSurfaces.kt",
-        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/presentation/MobileBotViewModel.kt"
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/presentation/MobileBotViewModel.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/features/bots/GrokBotComponents.kt"
       ],
-      "android_owner": "Existing Rust ClientSideToolV2 relay plus native Agent transcript projection.",
+      "android_owner": "Rust ClientSideToolV2 relay owns fenced durable wire lifecycle; canonical transcript owns row existence/order; native presentation owns read-only derived card rendering.",
       "platform_delta": "React details/pre becomes native Compose expandable/log presentation; protobuf identity/state rules remain unchanged.",
-      "implementation_status": "mapped",
-      "production_wiring": "Android Rust relay is implemented and focused-tested, but exact-head production UI search found no protobuf-to-card adapter/transcript boundary/result card composition.",
-      "unit_test": "relay unit tests exist; missing Android result projection/merge/transcript-boundary/card tests",
-      "contract_test": "relay wire contract exists; missing typed card projection parity contract",
-      "integration_test": "missing exact-head relay→canonical transcript→Compose result-card journey",
+      "implementation_status": "implemented",
+      "production_wiring": "JNI exposes accept/replay into the Rust Coordinator; relay persists and replays call/result state across process reopen, projects tools 7/15/38, normalizes output/diff/status, and Kotlin keeps accountSlot/agent scope. MobileBotViewModel reloads canonical transcript plus replay and joins by toolCallId only onto existing generic tool-call rows; unmatched updates do not create a synthetic row. Compose renders read-only cards.",
+      "unit_test": "Rust relay tests cover wire/order/streaming/7-15-38 projection and process reopen; AgentToolResultCardProjectionTest covers latest sequence, Agent fence, normalization, canonical row identity and no synthetic unmatched row. Exact-head CI pending.",
+      "contract_test": "JNI accept/replay contract plus strict Rust protobuf parser and typed AndroidClientSideToolV2Event/AndroidToolResultCard are wired; exact-head CI pending.",
+      "integration_test": "relay→JNI→typed Kotlin→canonical transcript row join→Compose production chain is wired; exact-head terminal Actions and real upstream producer/device journey remain pending.",
       "packaged_test": "required final minified package",
       "device_test": "required protected/device Agent tool journey",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Do not upgrade this responsibility from the existing relay status alone; relay transport and transcript presentation are separate responsibilities."
+      "notes": "Implementation no longer stops at relay. Verification remains intentionally open because current-head Actions, packaged APK/AAB and real provider/client-side-tool producer acceptance are not yet complete."
     },
     {
       "responsibility_id": "CONVERSATION-SEND-ACKNOWLEDGEMENT-ANDROID-001",
