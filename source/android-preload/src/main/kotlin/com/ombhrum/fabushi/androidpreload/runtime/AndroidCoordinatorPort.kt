@@ -295,6 +295,7 @@ interface AndroidCoordinatorPort {
         error("Update-track policy is unavailable on this Coordinator port")
     fun refreshMandatoryUpdatePolicy(): AndroidMandatoryUpdatePolicy =
         error("Mandatory update policy is unavailable on this Coordinator port")
+    fun isUpdateHostIdle(): Boolean = false
     fun mcpOAuthRegister(state: String, provider: String): Boolean
     fun mcpOAuthRegisterBound(
         state: String,

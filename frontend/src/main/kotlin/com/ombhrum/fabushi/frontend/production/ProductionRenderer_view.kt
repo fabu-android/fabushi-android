@@ -56,6 +56,8 @@ internal fun ProductionRenderer(
                 val updateState by updateModel.state.collectAsState()
                 val mandatoryUpdateState by updateModel.mandatoryUpdate.collectAsState()
                 val updateTrackPolicy by updateModel.trackPolicy.collectAsState()
+                val autoUpdateWhenIdleOptIn by updateModel.autoUpdateWhenIdleOptIn.collectAsState()
+                val autoUpdateWhenIdleGateEnabled by updateModel.autoUpdateWhenIdleGateEnabled.collectAsState()
                 var openedMiniApp by remember { mutableStateOf<MarketplacePlugin?>(null) }
                 var rendererRoute by remember { mutableStateOf(RendererRoute.GROK_HOME) }
                 var commandPaletteOpen by remember { mutableStateOf(false) }
@@ -100,6 +102,9 @@ internal fun ProductionRenderer(
                     FabushiSettingsSurface(
                         updateState = updateState,
                         updateTrackPolicy = updateTrackPolicy,
+                        autoUpdateWhenIdleOptIn = autoUpdateWhenIdleOptIn,
+                        autoUpdateWhenIdleGateEnabled = autoUpdateWhenIdleGateEnabled,
+                        onSetAutoUpdateWhenIdleOptIn = updateModel::setAutoUpdateWhenIdleOptIn,
                         onCheckUpdate = { updateModel.checkForUpdates(force = true) },
                         onInstallUpdate = updateModel::downloadAndInstall,
                         onClose = { showSettings = false },

@@ -1184,6 +1184,14 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
         return host.requestValue("listAgents") as? JSONArray ?: JSONArray()
     }
 
+    override fun isUpdateHostIdle(): Boolean =
+        runCatching {
+            val agents = agentList()
+            (0 until agents.length()).none { index ->
+                agents.optJSONObject(index)?.optBoolean("isRunning", false) == true
+            }
+        }.getOrDefault(false)
+
     private fun currentAgentRosterAccountFence(): String =
         host.request("feature.account.fence").getString("accountFence")
 

@@ -28,6 +28,9 @@ private enum class FabushiSettingsSection {
 internal fun FabushiSettingsSurface(
     updateState: AndroidUpdateUiState,
     updateTrackPolicy: AndroidUpdateTrackPolicy,
+    autoUpdateWhenIdleOptIn: Boolean,
+    autoUpdateWhenIdleGateEnabled: Boolean,
+    onSetAutoUpdateWhenIdleOptIn: (Boolean) -> Unit,
     onCheckUpdate: () -> Unit,
     onInstallUpdate: () -> Unit,
     onClose: () -> Unit,
@@ -90,6 +93,20 @@ internal fun FabushiSettingsSurface(
                         if (updateState.phase == AndroidUpdatePhase.DOWNLOADING) {
                             val progress = (updateState.progressPercent ?: 0).coerceIn(0, 100) / 100f
                             LinearProgressIndicator(progress = { progress })
+                        }
+                        Text(
+                            "Auto-stage when idle: " +
+                                if (autoUpdateWhenIdleOptIn) "On" else "Off",
+                        )
+                        Text(
+                            "Remote safety gate: " +
+                                if (autoUpdateWhenIdleGateEnabled) "Enabled" else "Unavailable or disabled",
+                        )
+                        TextButton(
+                            onClick = { onSetAutoUpdateWhenIdleOptIn(!autoUpdateWhenIdleOptIn) },
+                            modifier = Modifier.testTag("settings-update-auto-idle"),
+                        ) {
+                            Text(if (autoUpdateWhenIdleOptIn) "Turn off idle auto-stage" else "Turn on idle auto-stage")
                         }
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             TextButton(

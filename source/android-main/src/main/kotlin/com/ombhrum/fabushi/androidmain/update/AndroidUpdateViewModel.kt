@@ -1,11 +1,15 @@
 package com.ombhrum.fabushi
 
 import android.app.Application
+import android.app.KeyguardManager
+import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageInfo
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
+import android.os.PowerManager
+import android.os.SystemClock
 import android.provider.Settings
 import androidx.core.content.FileProvider
 import androidx.lifecycle.AndroidViewModel
@@ -166,6 +170,10 @@ class AndroidUpdateViewModel(application: Application) : AndroidViewModel(applic
         private const val UPDATE_CHECK_MIN_INTERVAL_MS = 60_000L
         private const val UPDATE_FOREGROUND_INTERVAL_MS = 5 * 60_000L
         private const val STARTUP_DELAY_MS = 4_000L
+        private const val AUTO_STAGE_IDLE_THRESHOLD_MS = 10 * 60_000L
+        private const val AUTO_STAGE_POLL_MS = 60_000L
+        private const val UPDATE_PREFS = "fabushi.android.update"
+        private const val AUTO_STAGE_OPT_IN_KEY = "auto-update-when-idle-opt-in"
         private const val MAX_METADATA_BYTES = 2 * 1024 * 1024
         private const val MAX_MANIFEST_BYTES = 128 * 1024
         private const val MAX_APK_BYTES = 768L * 1024L * 1024L
@@ -178,6 +186,8 @@ class AndroidUpdateViewModel(application: Application) : AndroidViewModel(applic
     private val updatesEnabled = BuildConfig.GITHUB_UPDATES_ENABLED && !BuildConfig.DEBUG
     private val coordinator by lazy { AndroidCoordinatorBridge.presentation() }
     private val applyStore = AndroidUpdateApplyStore(applicationContext)
+    private val updatePreferences = applicationContext.getSharedPreferences(UPDATE_PREFS, Context.MODE_PRIVATE)
+    private val updaterTelemetry = AndroidUpdaterTelemetry()
     private val currentVersion = BuildConfig.VERSION_NAME
     private val currentVersionCode = BuildConfig.VERSION_CODE.toLong()
     private val _state = MutableStateFlow(
@@ -197,6 +207,29 @@ class AndroidUpdateViewModel(application: Application) : AndroidViewModel(applic
 
     private val _trackPolicy = MutableStateFlow(resolveUpdateTrackPolicy())
     val trackPolicy: StateFlow<AndroidUpdateTrackPolicy> = _trackPolicy.asStateFlow()
+
+    private val _autoUpdateWhenIdleOptIn = MutableStateFlow(
+        updatePreferences.getBoolean(AUTO_STAGE_OPT_IN_KEY, false),
+    )
+    val autoUpdateWhenIdleOptIn: StateFlow<Boolean> = _autoUpdateWhenIdleOptIn.asStateFlow()
+
+    private val _autoUpdateWhenIdleGateEnabled = MutableStateFlow(false)
+    val autoUpdateWhenIdleGateEnabled: StateFlow<Boolean> = _autoUpdateWhenIdleGateEnabled.asStateFlow()
+
+    fun setAutoUpdateWhenIdleOptIn(enabled: Boolean) {
+        updatePreferences.edit().putBoolean(AUTO_STAGE_OPT_IN_KEY, enabled).apply()
+        _autoUpdateWhenIdleOptIn.value = enabled
+        updaterTelemetry.record(
+            AndroidUpdaterTelemetryEvent(
+                category = "idle",
+                action = "opt_in",
+                result = if (enabled) "enabled" else "disabled",
+                currentVersion = currentVersion,
+            ),
+        )
+    }
+
+    internal fun updaterTelemetrySnapshot(): List<AndroidUpdaterTelemetryEvent> = updaterTelemetry.snapshot()
 
     fun noteMinimumRequiredVersion(minimumVersion: String?) {
         publishMandatoryUpdate(
@@ -234,6 +267,9 @@ class AndroidUpdateViewModel(application: Application) : AndroidViewModel(applic
     private var checkJob: Job? = null
     private var downloadJob: Job? = null
     private var foregroundJob: Job? = null
+    private var idleStageJob: Job? = null
+    private var backgroundSinceElapsedMs: Long? = null
+    private var autoUpdateGateObserved = false
     private var lastCheckAtMs = 0L
 
     init {
@@ -264,6 +300,9 @@ class AndroidUpdateViewModel(application: Application) : AndroidViewModel(applic
             minimumVersion = projection.minimumVersion,
             backendRequiresUpdate = projection.backendRequiresUpdate,
         )
+        autoUpdateGateObserved = projection.autoUpdateWhenIdleGateObserved
+        _autoUpdateWhenIdleGateEnabled.value =
+            projection.autoUpdateWhenIdleGateObserved && projection.autoUpdateWhenIdleGateEnabled
     }
 
     fun setForeground(foreground: Boolean) {
@@ -271,8 +310,13 @@ class AndroidUpdateViewModel(application: Application) : AndroidViewModel(applic
         if (!foreground) {
             foregroundJob?.cancel()
             foregroundJob = null
+            backgroundSinceElapsedMs = SystemClock.elapsedRealtime()
+            startIdleAutoStageMonitor()
             return
         }
+        idleStageJob?.cancel()
+        idleStageJob = null
+        backgroundSinceElapsedMs = null
         if (_state.value.phase == AndroidUpdatePhase.INSTALLING) {
             applyStore.read()
                 ?.takeIf { it.phase == AndroidUpdateApplyPhase.REQUESTED }
@@ -303,6 +347,144 @@ class AndroidUpdateViewModel(application: Application) : AndroidViewModel(applic
                 delay(UPDATE_FOREGROUND_INTERVAL_MS)
             }
         }
+    }
+
+    private fun startIdleAutoStageMonitor() {
+        if (idleStageJob?.isActive == true) return
+        idleStageJob = viewModelScope.launch {
+            while (isActive) {
+                delay(AUTO_STAGE_POLL_MS)
+                refreshMandatoryUpdatePolicy()
+                maybeAutoStageWhenIdle()
+            }
+        }
+    }
+
+    private suspend fun maybeAutoStageWhenIdle() {
+        val backgroundSince = backgroundSinceElapsedMs ?: return
+        val track = runCatching { refreshUpdateTrackPolicy() }.getOrNull() ?: return
+        val userAway = SystemClock.elapsedRealtime() - backgroundSince >= AUTO_STAGE_IDLE_THRESHOLD_MS &&
+            isDeviceAway()
+        val hostIdle = runCatching {
+            withContext(Dispatchers.IO) { coordinator.isUpdateHostIdle() }
+        }.getOrDefault(false)
+        val busy = pendingApk != null ||
+            awaitingInstallPermission ||
+            downloadJob?.isActive == true ||
+            checkJob?.isActive == true ||
+            _state.value.phase in setOf(
+                AndroidUpdatePhase.DOWNLOADING,
+                AndroidUpdatePhase.INSTALLING,
+                AndroidUpdatePhase.OUTCOME_UNKNOWN,
+            )
+        val eligible = AndroidUpdateIdlePolicy.canAutoStage(
+            AndroidUpdateIdleInputs(
+                optInEnabled = _autoUpdateWhenIdleOptIn.value,
+                gateObserved = autoUpdateGateObserved,
+                gateEnabled = _autoUpdateWhenIdleGateEnabled.value,
+                signedTransportAvailable = track.effectiveTrack == "stable",
+                userAwayForThreshold = userAway,
+                hostConfirmedIdle = hostIdle,
+                updateOperationBusy = busy,
+            ),
+        )
+        updaterTelemetry.record(
+            AndroidUpdaterTelemetryEvent(
+                category = "idle",
+                action = "gate",
+                result = if (eligible) "eligible" else "skipped",
+                track = track.effectiveTrack,
+                currentVersion = currentVersion,
+                phase = _state.value.phase.name.lowercase(),
+            ),
+        )
+        if (!eligible) return
+        val found = runCatching { withContext(Dispatchers.IO) { findLatestUpdate() } }
+            .getOrElse { error ->
+                updaterTelemetry.record(
+                    AndroidUpdaterTelemetryEvent(
+                        category = "check",
+                        action = "result",
+                        result = "error",
+                        trigger = "idle",
+                        track = track.effectiveTrack,
+                        currentVersion = currentVersion,
+                        errorClass = error.javaClass.simpleName,
+                    ),
+                )
+                return
+            } ?: return
+        candidate = found
+        autoStageCandidate(found)
+    }
+
+    private fun autoStageCandidate(release: AndroidUpdateCandidate) {
+        if (downloadJob?.isActive == true || pendingApk != null) return
+        downloadJob = viewModelScope.launch {
+            val started = SystemClock.elapsedRealtime()
+            _state.value = AndroidUpdateUiState(
+                phase = AndroidUpdatePhase.DOWNLOADING,
+                currentVersion = currentVersion,
+                currentVersionCode = currentVersionCode,
+                availableVersion = release.version,
+                availableVersionCode = release.versionCode,
+                progressPercent = 0,
+                message = "Fabushi 已在安全空闲条件下准备签名更新；不会在后台打开系统安装器。",
+            )
+            try {
+                val apk = withContext(Dispatchers.IO) { downloadAndVerify(release) }
+                pendingApk = apk
+                applyStore.write(markerFor(release, AndroidUpdateApplyPhase.STAGED))
+                _state.value = AndroidUpdateUiState(
+                    phase = AndroidUpdatePhase.AVAILABLE,
+                    currentVersion = currentVersion,
+                    currentVersionCode = currentVersionCode,
+                    availableVersion = release.version,
+                    availableVersionCode = release.versionCode,
+                    message = "已在空闲时下载并验证更新。返回 Fabushi 后请显式继续系统安装。",
+                )
+                updaterTelemetry.record(
+                    AndroidUpdaterTelemetryEvent(
+                        category = "stage",
+                        action = "verified",
+                        result = "success",
+                        trigger = "idle",
+                        track = "stable",
+                        currentVersion = currentVersion,
+                        targetVersion = release.version,
+                        durationMs = SystemClock.elapsedRealtime() - started,
+                    ),
+                )
+            } catch (error: Exception) {
+                _state.value = AndroidUpdateUiState(
+                    phase = AndroidUpdatePhase.ERROR,
+                    currentVersion = currentVersion,
+                    currentVersionCode = currentVersionCode,
+                    availableVersion = release.version,
+                    availableVersionCode = release.versionCode,
+                    message = "空闲更新准备失败：${error.message ?: error.javaClass.simpleName}",
+                )
+                updaterTelemetry.record(
+                    AndroidUpdaterTelemetryEvent(
+                        category = "stage",
+                        action = "verified",
+                        result = "error",
+                        trigger = "idle",
+                        track = "stable",
+                        currentVersion = currentVersion,
+                        targetVersion = release.version,
+                        durationMs = SystemClock.elapsedRealtime() - started,
+                        errorClass = error.javaClass.simpleName,
+                    ),
+                )
+            }
+        }
+    }
+
+    private fun isDeviceAway(): Boolean {
+        val power = applicationContext.getSystemService(PowerManager::class.java)
+        val keyguard = applicationContext.getSystemService(KeyguardManager::class.java)
+        return power?.isInteractive == false || keyguard?.isDeviceLocked == true
     }
 
     fun checkForUpdates(force: Boolean = false) {
