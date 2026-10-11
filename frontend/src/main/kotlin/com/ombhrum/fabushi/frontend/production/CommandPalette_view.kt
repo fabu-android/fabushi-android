@@ -29,6 +29,7 @@ internal fun CommandPalette(
     open: Boolean,
     entries: List<CommandPaletteEntry>,
     messageSearchStatus: CommandPaletteMessageStatus = CommandPaletteMessageStatus.IDLE,
+    fileSearchStatus: CommandPaletteFileStatus = CommandPaletteFileStatus.IDLE,
     routineStatus: CommandPaletteRoutineStatus = CommandPaletteRoutineStatus.IDLE,
     initialTab: CommandPaletteTab = CommandPaletteTab.ALL,
     onQueryChange: (String) -> Unit = {},
@@ -70,6 +71,7 @@ internal fun CommandPalette(
                         CommandPaletteTab.MESSAGES to "Messages",
                         CommandPaletteTab.AGENTS to "Agents",
                         CommandPaletteTab.GROUPS to "Groups",
+                        CommandPaletteTab.FILES to "Files",
                         CommandPaletteTab.ROUTINES to "Routines",
                         CommandPaletteTab.ACTIONS to "Actions",
                     ).forEach { (candidate, label) ->
@@ -84,6 +86,12 @@ internal fun CommandPalette(
                 if (visible.isEmpty()) {
                     val emptyMessage = when {
                         tab == CommandPaletteTab.MESSAGES && query.isBlank() -> "Search messages"
+                        tab == CommandPaletteTab.FILES &&
+                            fileSearchStatus == CommandPaletteFileStatus.LOADING -> "Searching files…"
+                        tab == CommandPaletteTab.FILES &&
+                            fileSearchStatus == CommandPaletteFileStatus.FAILED -> "File search unavailable"
+                        tab == CommandPaletteTab.FILES &&
+                            fileSearchStatus == CommandPaletteFileStatus.EMPTY -> "No files"
                         tab == CommandPaletteTab.ROUTINES &&
                             routineStatus == CommandPaletteRoutineStatus.LOADING -> "Loading routines…"
                         tab == CommandPaletteTab.ROUTINES &&

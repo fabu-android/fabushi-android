@@ -213,6 +213,9 @@ data class MobileBotUiState(
     val paletteMessageSearch: CommandPaletteMessageSnapshot = CommandPaletteMessageSnapshot(
         status = CommandPaletteMessageStatus.IDLE,
     ),
+    val paletteFileSearch: CommandPaletteFileSnapshot = CommandPaletteFileSnapshot(
+        status = CommandPaletteFileStatus.IDLE,
+    ),
     val paletteRoutines: CommandPaletteRoutineSnapshot = CommandPaletteRoutineSnapshot(
         status = CommandPaletteRoutineStatus.IDLE,
     ),
@@ -279,6 +282,8 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
     private var draftWriteJob: Job? = null
     private val paletteMessageFence = CommandPaletteMessageRequestFence()
     private var paletteMessageSearchJob: Job? = null
+    private val paletteFileFence = CommandPaletteFileRequestFence()
+    private var paletteFileSearchJob: Job? = null
     private val paletteRoutineFence = CommandPaletteRoutineRequestFence()
     private var paletteRoutineJob: Job? = null
     private var openBotGeneration = 0L
@@ -1575,6 +1580,59 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
                     mutableState.value = mutableState.value.copy(
                         paletteRoutines = CommandPaletteRoutineSnapshot(
                             status = CommandPaletteRoutineStatus.FAILED,
+                            value = previous,
+                        ),
+                    )
+                }
+            }
+        }
+    }
+
+    fun resetPaletteFileSearch() {
+        paletteFileSearchJob?.cancel()
+        paletteFileSearchJob = null
+        paletteFileFence.cancel()
+        mutableState.value = mutableState.value.copy(
+            paletteFileSearch = CommandPaletteFileSnapshot(
+                status = CommandPaletteFileStatus.IDLE,
+            ),
+        )
+    }
+
+    fun setPaletteFileQuery(query: String) {
+        paletteFileSearchJob?.cancel()
+        paletteFileSearchJob = null
+        paletteFileFence.cancel()
+        val token = paletteFileFence.begin()
+        val previous = mutableState.value.paletteFileSearch.value
+        mutableState.value = mutableState.value.copy(
+            paletteFileSearch = CommandPaletteFileSnapshot(
+                status = CommandPaletteFileStatus.LOADING,
+                value = previous,
+            ),
+        )
+        paletteFileSearchJob = viewModelScope.launch {
+            try {
+                val transcript = withContext(Dispatchers.IO) { coordinator.transcriptSnapshot() }
+                val results = commandPaletteFilesFromTranscript(transcript, query)
+                if (!paletteFileFence.accepts(token)) return@launch
+                mutableState.value = mutableState.value.copy(
+                    paletteFileSearch = CommandPaletteFileSnapshot(
+                        status = if (results.isEmpty()) {
+                            CommandPaletteFileStatus.EMPTY
+                        } else {
+                            CommandPaletteFileStatus.READY
+                        },
+                        value = results,
+                    ),
+                )
+            } catch (error: CancellationException) {
+                throw error
+            } catch (_: Throwable) {
+                if (paletteFileFence.accepts(token)) {
+                    mutableState.value = mutableState.value.copy(
+                        paletteFileSearch = CommandPaletteFileSnapshot(
+                            status = CommandPaletteFileStatus.FAILED,
                             value = previous,
                         ),
                     )

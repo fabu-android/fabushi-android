@@ -325,6 +325,26 @@ internal fun ProductionRenderer(
                             botModel.openBot(targetBot, targetEntryId = message.entryId)
                         }
                     }
+                    val paletteFileEntries = commandPaletteFileEntries(
+                        files = botState.paletteFileSearch.value.filter { file ->
+                            commandPaletteAgentFilter == null || file.agentId == commandPaletteAgentFilter
+                        },
+                        agentNames = paletteAgentNames,
+                    ) { file ->
+                        val targetBot = if (file.agentId == "mahayana-assistant") {
+                            MobileBotSummaryAndroid(
+                                id = "mahayana-assistant",
+                                name = "Mahayana",
+                                description = "Mahayana multi-step agent",
+                            )
+                        } else {
+                            botState.bots.firstOrNull { it.id == file.agentId }
+                        }
+                        if (targetBot != null) {
+                            rendererRoute = RendererRoute.GROK_HOME
+                            botModel.openBot(targetBot, targetEntryId = file.entryId)
+                        }
+                    }
                     val paletteRoutineEntries = commandPaletteRoutineEntries(
                         routines = botState.paletteRoutines.value.filter { routine ->
                             commandPaletteAgentFilter == null || routine.agentId == commandPaletteAgentFilter
@@ -361,6 +381,7 @@ internal fun ProductionRenderer(
                     )
                     val paletteEntries = buildList {
                         addAll(paletteMessageEntries)
+                        addAll(paletteFileEntries)
                         addAll(paletteRoutineEntries)
                         botState.bots.forEach { bot ->
                             add(
@@ -464,6 +485,8 @@ internal fun ProductionRenderer(
                             onOpenCommandPalette = {
                                 commandPaletteAgentFilter = null
                                 botModel.resetPaletteMessageSearch()
+                                botModel.resetPaletteFileSearch()
+                                botModel.setPaletteFileQuery("")
                                 botModel.resetPaletteRoutines()
                                 botModel.refreshPaletteRoutines()
                                 botModel.refreshComputerRebuildStatus()
@@ -520,15 +543,20 @@ internal fun ProductionRenderer(
                             open = commandPaletteOpen,
                             entries = paletteEntries,
                             messageSearchStatus = botState.paletteMessageSearch.status,
+                            fileSearchStatus = botState.paletteFileSearch.status,
                             routineStatus = botState.paletteRoutines.status,
                             initialTab = if (commandPaletteAgentFilter == null) {
                                 CommandPaletteTab.ALL
                             } else {
                                 CommandPaletteTab.ROUTINES
                             },
-                            onQueryChange = botModel::setPaletteMessageQuery,
+                            onQueryChange = { query ->
+                                botModel.setPaletteMessageQuery(query)
+                                botModel.setPaletteFileQuery(query)
+                            },
                             onDismiss = {
                                 botModel.resetPaletteMessageSearch()
+                                botModel.resetPaletteFileSearch()
                                 botModel.resetPaletteRoutines()
                                 commandPaletteAgentFilter = null
                                 commandPaletteOpen = false
