@@ -3,6 +3,7 @@ package com.ombhrum.fabushi.androidmain.coordinator
 import android.app.Application
 import android.content.Context
 import android.net.Uri
+import android.provider.OpenableColumns
 import android.util.Base64
 import android.view.View
 import android.os.StatFs
@@ -464,6 +465,22 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
         agentId: String,
         nonce: String,
         text: String,
+        entries: List<AndroidSendAcknowledgementEntry>,
+    ): AndroidSendAcknowledgement =
+        sendAcknowledgementBeginWithAttachments(
+            accountSlot = accountSlot,
+            agentId = agentId,
+            nonce = nonce,
+            text = text,
+            attachments = emptyList(),
+            entries = entries,
+        )
+
+    override fun sendAcknowledgementBeginWithAttachments(
+        accountSlot: String?,
+        agentId: String,
+        nonce: String,
+        text: String,
         attachments: List<AndroidAgentAttachment>,
         entries: List<AndroidSendAcknowledgementEntry>,
     ): AndroidSendAcknowledgement =
@@ -612,25 +629,36 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
         accountSlot: String?,
         agentId: String,
         contentUri: String,
-        name: String,
-        mimeType: String?,
-        sizeBytes: Long?,
     ): AndroidComposerDraft {
         require(contentUri.startsWith("content://")) { "Agent attachment URI must use ContentResolver content:// authority" }
-        require(name.isNotBlank()) { "Agent attachment name is required" }
+        val uri = Uri.parse(contentUri)
+        val resolver = applicationContext.contentResolver
+        var name: String? = null
+        var sizeBytes: Long? = null
+        resolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME, OpenableColumns.SIZE), null, null, null)?.use { cursor ->
+            if (cursor.moveToFirst()) {
+                val nameIndex = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                if (nameIndex >= 0) name = cursor.getString(nameIndex)?.trim()?.takeIf(String::isNotEmpty)
+                val sizeIndex = cursor.getColumnIndex(OpenableColumns.SIZE)
+                if (sizeIndex >= 0 && !cursor.isNull(sizeIndex)) sizeBytes = cursor.getLong(sizeIndex).takeIf { it >= 0L }
+            }
+        }
+        val safeName = name ?: uri.lastPathSegment?.substringAfterLast('/')?.takeIf(String::isNotBlank)
+            ?: "attachment"
+        val mimeType = resolver.getType(uri)?.trim()?.takeIf(String::isNotEmpty)
         val begin = host.request(
             "feature.composerDraft.attachment.begin",
             JSONObject()
                 .putNullable("accountSlot", accountSlot)
                 .put("agentId", agentId)
-                .put("name", name)
+                .put("name", safeName)
                 .putNullable("mimeType", mimeType)
                 .apply { if (sizeBytes != null && sizeBytes >= 0L) put("sizeBytes", sizeBytes) },
         )
         val attachmentId = begin.getString("attachmentId")
         var offset = 0L
         try {
-            applicationContext.contentResolver.openInputStream(Uri.parse(contentUri)).use { input ->
+            resolver.openInputStream(uri).use { input ->
                 requireNotNull(input) { "Unable to open Agent attachment content stream" }
                 val buffer = ByteArray(1024 * 1024)
                 while (true) {

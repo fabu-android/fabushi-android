@@ -46,11 +46,11 @@ data class AndroidSendAcknowledgement(
     val priorNonces: List<String>,
     val entries: List<AndroidSendAcknowledgementEntry>,
     val messageText: String,
-    val attachments: List<AndroidAgentAttachment>,
     val phase: AndroidSendAcknowledgementPhase,
     val generation: Long,
     val failedAtMs: Long?,
     val reason: String?,
+    val attachments: List<AndroidAgentAttachment> = emptyList(),
 )
 
 data class AndroidSendAcknowledgementDispatch(
@@ -69,8 +69,8 @@ data class AndroidAgentAttachment(
 data class AndroidComposerDraft(
     val draftId: String,
     val prompt: String,
-    val attachments: List<AndroidAgentAttachment>,
     val updatedAtMs: Long,
+    val attachments: List<AndroidAgentAttachment> = emptyList(),
 )
 
 
@@ -305,9 +305,21 @@ interface AndroidCoordinatorPort {
         agentId: String,
         nonce: String,
         text: String,
-        attachments: List<AndroidAgentAttachment> = emptyList(),
         entries: List<AndroidSendAcknowledgementEntry>,
     ): AndroidSendAcknowledgement
+    fun sendAcknowledgementBeginWithAttachments(
+        accountSlot: String?,
+        agentId: String,
+        nonce: String,
+        text: String,
+        attachments: List<AndroidAgentAttachment>,
+        entries: List<AndroidSendAcknowledgementEntry>,
+    ): AndroidSendAcknowledgement {
+        if (attachments.isNotEmpty()) {
+            error("Agent attachment acknowledgement is unavailable on this Coordinator port")
+        }
+        return sendAcknowledgementBegin(accountSlot, agentId, nonce, text, entries)
+    }
     fun sendAcknowledgementDispatch(
         accountSlot: String?,
         agentId: String,
@@ -346,9 +358,6 @@ interface AndroidCoordinatorPort {
         accountSlot: String?,
         agentId: String,
         contentUri: String,
-        name: String,
-        mimeType: String?,
-        sizeBytes: Long?,
     ): AndroidComposerDraft =
         error("Durable composer attachment staging is unavailable on this Coordinator port")
     fun composerDraftRemoveAttachment(
