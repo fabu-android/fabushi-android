@@ -41,6 +41,8 @@ struct PersistedCoordinatorState {
     latest_sequence: u64,
     pending: BTreeMap<String, PendingRequest>,
     events: Vec<PersistedCoordinatorEvent>,
+    #[serde(default)]
+    client_side_tool_v2: ClientSideToolV2Relay,
 }
 
 pub struct MahayanaCoordinator<H: HostPort> {
@@ -112,7 +114,10 @@ impl<H: HostPort> MahayanaCoordinator<H> {
             pending: BTreeMap::new(),
             events: VecDeque::new(),
             replay_limit: replay_limit.max(1),
-            client_side_tool_v2: ClientSideToolV2Relay::default(),
+            client_side_tool_v2: persisted
+                .as_ref()
+                .map(|state| state.client_side_tool_v2.clone())
+                .unwrap_or_default(),
             state_path: Some(state_path),
         };
         if let Some(state) = persisted {
@@ -159,6 +164,7 @@ impl<H: HostPort> MahayanaCoordinator<H> {
                 family: event.family.clone(),
                 payload_json: event.payload_json.clone(),
             }).collect(),
+            client_side_tool_v2: self.client_side_tool_v2.clone(),
         };
         let encoded = serde_json::to_vec_pretty(&state).map_err(|error| CoordinatorFailure::new(
             CoordinatorFailureCode::Internal,
@@ -178,15 +184,27 @@ impl<H: HostPort> MahayanaCoordinator<H> {
     pub fn generation(&self) -> u64 { self.generation }
 
     pub fn accept_client_side_tool_v2_wire(&mut self, raw: Value) -> Option<RendererToolEvent> {
-        self.client_side_tool_v2.accept_value(raw)
+        let previous = self.client_side_tool_v2.clone();
+        let accepted = self.client_side_tool_v2.accept_value(raw)?;
+        if self.persist_state().is_err() {
+            self.client_side_tool_v2 = previous;
+            return None;
+        }
+        Some(accepted)
     }
 
     pub fn replay_client_side_tool_v2(&self) -> Vec<RendererToolEvent> {
         self.client_side_tool_v2.replay()
     }
 
-    pub fn retire_client_side_tool_v2_for_account_switch(&mut self) {
+    pub fn retire_client_side_tool_v2_for_account_switch(&mut self) -> Result<(), CoordinatorFailure> {
+        let previous = self.client_side_tool_v2.clone();
         self.client_side_tool_v2.retire_for_account_switch();
+        if let Err(error) = self.persist_state() {
+            self.client_side_tool_v2 = previous;
+            return Err(error);
+        }
+        Ok(())
     }
 
     pub fn begin_request(&mut self, request: &CoordinatorRequest) -> Result<(), CoordinatorFailure> {
@@ -696,6 +714,47 @@ mod tests {
     }
 
     #[test]
+    fn client_side_tool_v2_replay_survives_process_reopen_and_account_retirement_is_durable() {
+        let root = std::env::temp_dir().join(format!(
+            "fabushi-coordinator-tool-replay-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
+        ));
+        let state = root.join("coordinator-state.json");
+        {
+            let mut coordinator = MahayanaCoordinator::with_generation_persistent(
+                FakeHost::default(), 4, 8, &state
+            ).unwrap();
+            assert!(coordinator.accept_client_side_tool_v2_wire(serde_json::json!({
+                "version": 1,
+                "kind": "call",
+                "accountSlot": "host",
+                "agentId": "agent-a",
+                "epoch": "epoch-a",
+                "sequence": 1,
+                "message": {
+                    "encoding": "protobuf-base64",
+                    "messageType": "aiserver.v1.ClientSideToolV2Call",
+                    "bytes": "GgZjYWxsLTE="
+                }
+            })).is_some());
+            assert_eq!(coordinator.replay_client_side_tool_v2().len(), 1);
+        }
+        {
+            let mut reopened = MahayanaCoordinator::with_generation_persistent(
+                FakeHost::default(), 4, 8, &state
+            ).unwrap();
+            assert_eq!(reopened.replay_client_side_tool_v2().len(), 1);
+            reopened.retire_client_side_tool_v2_for_account_switch().unwrap();
+        }
+        let reopened = MahayanaCoordinator::with_generation_persistent(
+            FakeHost::default(), 4, 8, &state
+        ).unwrap();
+        assert!(reopened.replay_client_side_tool_v2().is_empty());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn coordinator_owns_client_side_tool_v2_wire_ingress() {
         let mut coordinator = MahayanaCoordinator::new(FakeHost::default());
         let accepted = coordinator.accept_client_side_tool_v2_wire(serde_json::json!({
@@ -714,7 +773,7 @@ mod tests {
         assert!(accepted.is_some());
         assert_eq!(coordinator.replay_client_side_tool_v2().len(), 1);
 
-        coordinator.retire_client_side_tool_v2_for_account_switch();
+        coordinator.retire_client_side_tool_v2_for_account_switch().unwrap();
         assert!(coordinator.replay_client_side_tool_v2().is_empty());
         assert!(coordinator.accept_client_side_tool_v2_wire(serde_json::json!({
             "version": 1,

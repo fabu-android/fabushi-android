@@ -49,7 +49,7 @@ pub struct RendererToolEvent {
     pub bytes: Option<Vec<u8>>,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 struct AgentFence {
     epoch: String,
     sequence: u64,
@@ -57,7 +57,7 @@ struct AgentFence {
     updates_by_tool_call_id: BTreeMap<String, Vec<ToolTransportEvent>>,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ClientSideToolV2Relay {
     agents: BTreeMap<String, AgentFence>,
 }
