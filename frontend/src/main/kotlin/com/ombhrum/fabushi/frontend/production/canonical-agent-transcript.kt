@@ -20,6 +20,7 @@ internal data class CanonicalAgentTranscriptMessage(
     val operationId: String?,
     val clientNonce: String?,
     val timestampMs: Long,
+    val attachments: List<MobileTranscriptAttachment>,
 )
 
 internal fun canonicalAgentTranscriptMessages(
@@ -45,10 +46,37 @@ internal fun canonicalAgentTranscriptMessages(
             operationId = entry.optString("operationId").takeIf(String::isNotBlank),
             clientNonce = entry.optString("clientNonce").takeIf(String::isNotBlank),
             timestampMs = entry.optLong("timestampMs", 0L),
+            attachments = canonicalTranscriptAttachments(entry),
         )
         byIdentity["$agentId\u0000$id"] = message
     }
     return byIdentity.values.toList()
+}
+
+
+private fun canonicalTranscriptAttachments(entry: org.json.JSONObject): List<MobileTranscriptAttachment> {
+    val rows = entry.optJSONArray("attachments") ?: return emptyList()
+    return buildList {
+        for (index in 0 until rows.length()) {
+            val attachment = rows.optJSONObject(index) ?: continue
+            val path = attachment.optString("path").trim()
+            val name = attachment.optString("name").trim()
+            if (path.isBlank() || name.isBlank()) continue
+            val sizeBytes = if (attachment.has("size") && !attachment.isNull("size")) {
+                attachment.optLong("size", -1L).takeIf { it >= 0L }
+            } else {
+                null
+            }
+            add(
+                MobileTranscriptAttachment(
+                    path = path,
+                    name = name,
+                    sizeBytes = sizeBytes,
+                    mimeType = attachment.optString("mimeType").trim().takeIf(String::isNotEmpty),
+                ),
+            )
+        }
+    }
 }
 
 internal fun canonicalMobileTranscriptForAgent(
@@ -74,6 +102,7 @@ internal fun canonicalMobileTranscriptForAgent(
                     text = entry.optString("content"),
                     operationId = entry.optString("operationId").takeIf(String::isNotBlank),
                     clientNonce = entry.optString("clientNonce").takeIf(String::isNotBlank),
+                    attachments = canonicalTranscriptAttachments(entry),
                 )
             }
             "tool-call" -> {
