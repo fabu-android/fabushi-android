@@ -5,7 +5,7 @@
     "desktop_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
     "android_repository": "fabu-android/fabushi-android",
     "android_pr": 3,
-    "android_head_at_update": "61586588025f3ef15d3678258012fc0e531a89ce",
+    "android_head_at_update": "d614f02a5f126aceb83c28baea62c30b29795b24",
     "status": "incomplete",
     "note": "Incrementally rebased to Desktop main 371b72f1cd20de03dc4dff9a15ed761054968093. Durable send acknowledgement, transcript widget actions and client-side tool-result projection remain Host/Coordinator-owned. At Android code head 8927278b8ec61145700abb906f226f97f6497195, Agent avatar presentation has Desktop-order photo/shared-room/group/persona dispatch and activity-state mapping; Agent composer prompt drafts are durably Host-owned with account/Agent fencing, process-reopen restore, corrupt-store quarantine and clear-if-current; conversation outline is a retained read-only projection over canonical transcript with Agent/subagent tabs and running-subagent polling; Agent find-in-chat searches canonical transcript semantic payloads and has native Enter/Shift+Enter/Escape focus navigation. Rows stay mapped/not-verified where upstream roster fields, full ComposerDraft attachments/recovery, exact occurrence-span highlighting, composed header controls or same-head packaged/device evidence are still missing. Full source closure remains incomplete. Spreadsheet preview audit now records CSV/TSV and bounded OOXML multi-sheet production wiring at 1e66eb907c46043bcb429c15abeae253b44ef443; Desktop legacy BIFF .xls remains mapped/not-verified."
   },
@@ -11245,6 +11245,120 @@
       "verification_status": "not-verified",
       "notes": "Intentional blocking responsibility. Do not use the base onboarding route/persona implementation as evidence that computer/kickstart handoff parity is complete.",
       "android_head_at_update": "61586588025f3ef15d3678258012fc0e531a89ce"
+    },
+    {
+      "responsibility_id": "TOOLS-LOCAL-PERMISSION-POLICY-ANDROID-001",
+      "domain": "tools",
+      "desktop_sources": [
+        {
+          "path": "frontend/src/recovered/features/permissions/local-tool/store.ts",
+          "blob_sha": "a1a59201b843c433d619c08d9c18a08664c735a1",
+          "symbols": [
+            "createLocalToolPermissionStore",
+            "setPermission",
+            "recordApproval",
+            "clearApprovals",
+            "noteReconnect"
+          ]
+        },
+        {
+          "path": "frontend/src/recovered/features/permissions/local-tool/view.css",
+          "blob_sha": "e2f1e0e7922f8027ee035e16818f48c2080663c9",
+          "symbols": [
+            "local tool permission dock/outcome presentation"
+          ]
+        },
+        {
+          "path": "frontend/src/recovered/features/permissions/local-tool/view.tsx",
+          "blob_sha": "aaff6101b5ab2a3cb85390471083c4359b6fad31",
+          "symbols": [
+            "LocalToolPermissionPrompt",
+            "resolveLocalToolPermissionAction",
+            "LocalToolPermissionDock"
+          ]
+        },
+        {
+          "path": "source/shared/local-tool-permission.ts",
+          "blob_sha": "c0f2f92be1747d28472a7212e7a16e301f0a9cc2",
+          "symbols": [
+            "always/ask/never",
+            "permission rank",
+            "resolveSandLocalToolPermission"
+          ]
+        },
+        {
+          "path": "source/shared/local-tool-permission-machinery.ts",
+          "blob_sha": "b8b0c1636eef216040c9e8024682f21781af196f",
+          "symbols": [
+            "SAND_LOCAL_TOOL_ASK_TTL_MS",
+            "authorizeLocalToolAction",
+            "localToolApprovalCovers"
+          ]
+        }
+      ],
+      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "responsibility": "Preserve Desktop local-computer tool permission policy on Android: always/ask/never, admin/team ceiling, one-time exact-action approval, reconnect refresh, failure downgrade, approval cleanup and explicit user-visible outcomes before any outbound computer execution.",
+      "source_owner": "Desktop localToolPermission bridge/store + shared local-tool permission machinery",
+      "direct_callers": [
+        "Agent local/external computer tool prompts",
+        "Settings execution-on-local-computer policy"
+      ],
+      "downstream_dependencies": [
+        "Rust CapabilityBroker",
+        "Authorized Remote Runner / bounded Local Runner",
+        "team policy projection",
+        "account-fenced approval journal"
+      ],
+      "state_owner": "Rust Host security policy and CapabilityBroker must own durable permission and approval truth; Compose only renders snapshots/actions.",
+      "persistent_state": [
+        "effective user permission by account",
+        "one-time exact action/target approvals",
+        "audit/reconciliation state"
+      ],
+      "protocol_wire_contract": [
+        "permission values always|ask|never, default ask",
+        "rank never < ask < always and admin ceiling clamps user choice",
+        "Always allow must be disabled while ceiling is unknown or below always",
+        "allow-once records exact approval before resolving request",
+        "failed persistent always/never mutation downgrades to allow-once/deny for the current prompt",
+        "10 minute Desktop ask TTL and exact action/target coverage semantics require Android replacement evidence"
+      ],
+      "visible_effect": "Users can choose Always allow, Allow once, Never, or Deny once for computer commands, see settled outcome copy, and have team policy prevent overly broad authorization.",
+      "failure_behavior": [
+        "security policy read/write fails closed",
+        "persistent allow failure cannot silently become always",
+        "stale/expired/unavailable approval does not execute a command"
+      ],
+      "cancellation_behavior": "scope/account switch/dispose invalidates presentation callbacks; one-time approvals are consumed/cancelled by the Host security owner.",
+      "retry_semantics": "permission reads may refresh on reconnect; unknown side effects are never retried because permission changed.",
+      "idempotency_semantics": "approval IDs/action/target identity must be stable and duplicate/consumed approvals rejected.",
+      "process_death_recovery": "durable permission reloads; unresolved one-time approval does not auto-authorize after restart and must reconcile/cancel.",
+      "account_fencing": "all policy/grant records bind to current account fence/epoch.",
+      "security_boundary": "Presentation cannot grant itself execution. Effective policy must be enforced in Host/CapabilityBroker immediately before bounded Local or Authorized Remote Runner dispatch.",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "source/host/src/capability_broker.rs",
+        "source/host/src/runner/remote_routed_tools.rs",
+        "source/host/src/remote_execution.rs",
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/coordinator/AndroidCoordinatorRuntime.kt",
+        "source/android-preload/src/main/kotlin/com/ombhrum/fabushi/androidpreload/runtime/AndroidCoordinatorPort.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/features/bots/GrokBotComponents.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/presentation/MobileBotViewModel.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/production/local-tool-permission-scope.kt"
+      ],
+      "android_owner": "Rust CapabilityBroker + outbound Runner execution boundary, with native Compose prompt as a projection",
+      "platform_delta": "Android cannot expose arbitrary desktop-local process execution. The user-facing local-computer policy must govern the explicit Android bounded Local Runner or Authorized Remote Runner replacement. Current Android has safe one-time approval but no complete durable always/ask/never + team ceiling policy.",
+      "implementation_status": "mapped",
+      "production_wiring": "Partial only. Existing MobileBotViewModel/GrokBotComponents projects account-fenced one-time capability approvals and Rust CapabilityBroker durably consumes them. There is no production-equivalent Android owner for persistent always/ask/never, team ceiling, recordApproval/clearApprovals or four-way prompt resolution yet.",
+      "unit_test": "Existing broker tests cover one-time approval duplicate/account/process-restart safety and LocalToolPermissionScopeGate covers stale revision fencing. Missing focused policy rank/ceiling/persistent-write-downgrade/reconnect/four-way resolution tests.",
+      "contract_test": "Desktop renderer/store and shared local-tool policy source facts recorded above; Android replacement contract remains incomplete.",
+      "integration_test": "required: ask -> allow once/deny once, always/never persistence, ceiling clamp, reconnect, account switch, process death, exact outbound Runner enforcement",
+      "packaged_test": "required on final githubRelease APK/AAB",
+      "device_test": "required with real Authorized Remote Runner/bounded Local Runner",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Keep mapped. Do not equate the existing binary approval card or generic plugin grants with Desktop local-tool permission policy.",
+      "android_head_at_update": "d614f02a5f126aceb83c28baea62c30b29795b24"
     }
   ],
   "traceability": {
@@ -11279,7 +11393,7 @@
   },
   "metadata": {
     "android_head_at_update": "1e66eb907c46043bcb429c15abeae253b44ef443",
-    "note": " Deterministic editor cursor now records the shipped suggestion boundary: Android has production-wired Agent/scheduled-automation projection with stale fencing, while Desktop PR/MCP providers are explicitly dormant in the current production adapter. Agent find-in-chat is now production-wired for message/widget semantic search and wrap navigation, while occurrence-span highlighting and richer searchable payloads remain mapped gaps. Native media viewer gallery is production-wired for Human conversations with navigation/zoom/stale-load fencing; in-app PDF rendering is now implemented at 499519f… and pending exact-head CI/device evidence, while Agent attachment/audio/focus semantics remain mapped. Spreadsheet preview responsibility is explicit; legacy .xls remains a deterministic gap. Signed-in onboarding rows are now explicitly mapped to native route/persona/create presentation and a separate unresolved computer-readiness/kickstart responsibility; neither is verified.",
-    "last_updated_android_head": "61586588025f3ef15d3678258012fc0e531a89ce"
+    "note": " Deterministic editor cursor now records the shipped suggestion boundary: Android has production-wired Agent/scheduled-automation projection with stale fencing, while Desktop PR/MCP providers are explicitly dormant in the current production adapter. Agent find-in-chat is now production-wired for message/widget semantic search and wrap navigation, while occurrence-span highlighting and richer searchable payloads remain mapped gaps. Native media viewer gallery is production-wired for Human conversations with navigation/zoom/stale-load fencing; in-app PDF rendering is now implemented at 499519f… and pending exact-head CI/device evidence, while Agent attachment/audio/focus semantics remain mapped. Spreadsheet preview responsibility is explicit; legacy .xls remains a deterministic gap. Signed-in onboarding rows are now explicitly mapped to native route/persona/create presentation and a separate unresolved computer-readiness/kickstart responsibility; neither is verified. Desktop permissions/local-tool renderer/store rows are now mapped to a dedicated unresolved Host-owned always/ask/never + team ceiling policy responsibility.",
+    "last_updated_android_head": "d614f02a5f126aceb83c28baea62c30b29795b24"
   }
 }
