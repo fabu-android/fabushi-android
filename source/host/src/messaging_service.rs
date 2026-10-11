@@ -2246,9 +2246,10 @@ impl AndroidMessagingService {
                 .ok_or("messaging event is missing a server cursor")?
                 .parse::<u64>()
                 .map_err(|_| "messaging event cursor is invalid".to_string())?;
+            let audience = self.journal_event_audience(initiator, event);
             self.state.event_journal.push(MessagingJournalEntry {
                 cursor,
-                audience: self.journal_event_audience(initiator, event),
+                audience,
                 envelope: envelope.clone(),
             });
             recorded += 1;
@@ -2258,10 +2259,11 @@ impl AndroidMessagingService {
             // Some durable child/state mutations intentionally have no public delta event.
             // Make every older cursor reconcile through a full canonical snapshot instead
             // of pretending the invisible cursor step can be replayed.
-            self.state.journal_floor_cursor = self.state.cursor;
+            let floor = self.state.cursor;
+            self.state.journal_floor_cursor = floor;
             self.state
                 .event_journal
-                .retain(|entry| entry.cursor > self.state.journal_floor_cursor);
+                .retain(|entry| entry.cursor > floor);
         }
         self.prune_event_journal();
         Ok(())
@@ -2931,6 +2933,50 @@ mod tests {
             checkpoint_event["nextCursor"].as_str().unwrap(),
             service.state.cursor.to_string()
         );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn journal_pruning_drops_complete_cursor_groups() {
+        let root = temp_root("journal-prune");
+        let mut service = AndroidMessagingService::open(&root).unwrap();
+        service.state.cursor = (MESSAGING_EVENT_JOURNAL_LIMIT as u64) + 2;
+        service.state.event_journal = (1..=(MESSAGING_EVENT_JOURNAL_LIMIT as u64))
+            .map(|cursor| MessagingJournalEntry {
+                cursor,
+                audience: vec!["human:owner".into()],
+                envelope: json!({"cursor":cursor.to_string(),"event":{"type":"typingChanged"}}),
+            })
+            .collect();
+        service.state.event_journal.push(MessagingJournalEntry {
+            cursor: MESSAGING_EVENT_JOURNAL_LIMIT as u64,
+            audience: vec!["human:peer".into()],
+            envelope: json!({
+                "cursor":MESSAGING_EVENT_JOURNAL_LIMIT.to_string(),
+                "event":{"type":"typingChanged"}
+            }),
+        });
+        service.state.event_journal.push(MessagingJournalEntry {
+            cursor: (MESSAGING_EVENT_JOURNAL_LIMIT as u64) + 1,
+            audience: vec!["human:owner".into()],
+            envelope: json!({
+                "cursor":((MESSAGING_EVENT_JOURNAL_LIMIT as u64) + 1).to_string(),
+                "event":{"type":"typingChanged"}
+            }),
+        });
+
+        service.prune_event_journal();
+
+        assert!(service
+            .state
+            .event_journal
+            .iter()
+            .all(|entry| entry.cursor > service.state.journal_floor_cursor));
+        assert!(!service
+            .state
+            .event_journal
+            .iter()
+            .any(|entry| entry.cursor == MESSAGING_EVENT_JOURNAL_LIMIT as u64));
         let _ = fs::remove_dir_all(root);
     }
 

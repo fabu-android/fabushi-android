@@ -195,7 +195,7 @@ internal class MessagingViewModel(application: Application) : AndroidViewModel(a
                     execute(
                         JSONObject()
                             .put("type", "sync")
-                            .put("cursor", if (hasCanonicalSnapshot) syncCursor ?: JSONObject.NULL else JSONObject.NULL)
+                            .put("cursor", if (hasCanonicalSnapshot && syncCursor != null) syncCursor else JSONObject.NULL)
                             .put("limit", 1000),
                     )
                 }
