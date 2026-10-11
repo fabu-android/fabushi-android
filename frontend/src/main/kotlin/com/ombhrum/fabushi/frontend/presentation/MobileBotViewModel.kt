@@ -230,7 +230,7 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
      * Coordinator re-reads canonical Host roster truth and owns request identity/outcome-unknown
      * recovery; this ViewModel never retries a possibly-started update.
      */
-    fun requestComputerUpdate(
+    internal fun requestComputerUpdate(
         action: CommandPaletteComputerUpdateAction = CommandPaletteComputerUpdateAction.READY,
         forceNow: Boolean = false,
     ) {
