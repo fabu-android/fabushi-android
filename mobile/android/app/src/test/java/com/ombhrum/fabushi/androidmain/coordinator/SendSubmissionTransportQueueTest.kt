@@ -105,6 +105,61 @@ class SendSubmissionTransportQueueTest {
     }
 
     @Test
+    fun accountChangeFenceDropsOnlyInMemoryQueueWithoutDispatchingOldScope() {
+        var down = true
+        val dispatched = mutableListOf<String>()
+        val owner = AndroidSendSubmissionTransportQueue(
+            isTransportDown = { down },
+            queue = { acknowledgement(it, AndroidSendAcknowledgementPhase.QUEUED) },
+            dispatch = {
+                dispatched += it.nonce
+                AndroidSendAcknowledgementDispatch(
+                    acknowledgement(it, AndroidSendAcknowledgementPhase.ACCEPTED_AWAITING_ECHO),
+                    "op-" + it.nonce,
+                )
+            },
+            cancelQueuedPersisted = { true },
+            onFlushed = { _, _ -> },
+        )
+        val oldAccount = AndroidSendSubmissionScope("slot-old", "agent-a", "old", 3)
+        owner.submit(oldAccount)
+
+        owner.fenceForAccountChange()
+        down = false
+        owner.flush()
+
+        assertTrue(
+            dispatched.isEmpty(),
+        )
+    }
+
+    @Test
+    fun accountChangeFenceSuppressesLateFlushProjection() {
+        var down = true
+        var flushed = false
+        lateinit var owner: AndroidSendSubmissionTransportQueue
+        owner = AndroidSendSubmissionTransportQueue(
+            isTransportDown = { down },
+            queue = { acknowledgement(it, AndroidSendAcknowledgementPhase.QUEUED) },
+            dispatch = {
+                owner.fenceForAccountChange()
+                AndroidSendAcknowledgementDispatch(
+                    acknowledgement(it, AndroidSendAcknowledgementPhase.ACCEPTED_AWAITING_ECHO),
+                    "op-" + it.nonce,
+                )
+            },
+            cancelQueuedPersisted = { true },
+            onFlushed = { _, _ -> flushed = true },
+        )
+        owner.submit(AndroidSendSubmissionScope("slot-old", "agent-a", "late", 4))
+        down = false
+
+        owner.flush()
+
+        assertFalse(flushed)
+    }
+
+    @Test
     fun disposeFencesLateFlushCallback() {
         var callback = false
         lateinit var owner: AndroidSendSubmissionTransportQueue
