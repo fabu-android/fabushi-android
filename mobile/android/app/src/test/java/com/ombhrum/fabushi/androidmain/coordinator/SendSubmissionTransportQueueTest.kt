@@ -40,7 +40,7 @@ class SendSubmissionTransportQueueTest {
                     "op-" + it.nonce,
                 )
             },
-            cancelQueued = { true },
+            cancelQueuedPersisted = { true },
             onFlushed = { scope, _ -> flushed += scope.nonce },
         )
         val first = AndroidSendSubmissionScope("slot-a", "agent-a", "n1", 7)
@@ -70,7 +70,7 @@ class SendSubmissionTransportQueueTest {
                     "op-" + it.nonce,
                 )
             },
-            cancelQueued = { cancelled += it.nonce; true },
+            cancelQueuedPersisted = { cancelled += it.nonce; true },
             onFlushed = { _, _ -> },
         )
         val scope = AndroidSendSubmissionScope("slot-a", "agent-a", "n1", 7)
@@ -95,7 +95,7 @@ class SendSubmissionTransportQueueTest {
                     "op-" + it.nonce,
                 )
             },
-            cancelQueued = { true },
+            cancelQueuedPersisted = { true },
             onFlushed = { _, _ -> },
         )
         val scope = AndroidSendSubmissionScope("slot-a", "agent-a", "restored", 9)
@@ -118,7 +118,7 @@ class SendSubmissionTransportQueueTest {
                     "op-" + it.nonce,
                 )
             },
-            cancelQueued = { true },
+            cancelQueuedPersisted = { true },
             onFlushed = { _, _ -> callback = true },
         )
         val restored = AndroidSendSubmissionScope("slot-a", "agent-a", "late", 5)
