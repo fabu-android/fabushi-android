@@ -117,6 +117,12 @@ data class MobileChatMessage(
     val toolResult: MobileToolResultCard? = null,
     val toolCallId: String? = null,
     val attachments: List<MobileTranscriptAttachment> = emptyList(),
+    // Read-only Desktop transcript seam metadata. These fields never own canonical state.
+    val transcriptAuthor: String? = null,
+    val transcriptSourceKind: String? = null,
+    val transcriptPresentationKind: String? = null,
+    val hasTranscriptReaction: Boolean = false,
+    val hasTranscriptThreadChip: Boolean = false,
 )
 
 data class MarketplaceUiState(
