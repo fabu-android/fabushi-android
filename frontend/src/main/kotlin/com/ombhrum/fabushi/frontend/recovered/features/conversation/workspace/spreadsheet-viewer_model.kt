@@ -38,6 +38,18 @@ internal fun isAndroidOpenXmlSpreadsheet(fileName: String?, mimeType: String?): 
         mime == "application/vnd.ms-excel.template.macroenabled.12"
 }
 
+internal fun isAndroidLegacyBinarySpreadsheet(fileName: String?, mimeType: String?): Boolean {
+    val extension = fileName?.substringAfterLast('.', missingDelimiterValue = "")?.lowercase()
+    val mime = mimeType?.substringBefore(';')?.trim()?.lowercase()
+    return extension == "xls" || mime == "application/vnd.ms-excel"
+}
+
+internal fun androidLegacySpreadsheetOpenMimeType(mimeType: String?): String {
+    val mime = mimeType?.substringBefore(';')?.trim()?.lowercase()
+    return mime?.takeIf { it.isNotBlank() && it != "application/octet-stream" }
+        ?: "application/vnd.ms-excel"
+}
+
 internal fun isAndroidSpreadsheet(fileName: String?, mimeType: String?): Boolean =
     isAndroidDelimitedSpreadsheet(fileName, mimeType) ||
         isAndroidOpenXmlSpreadsheet(fileName, mimeType)

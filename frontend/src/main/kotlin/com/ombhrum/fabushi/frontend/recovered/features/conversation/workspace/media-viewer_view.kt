@@ -471,6 +471,54 @@ internal fun AndroidMediaViewer(
                         }
                     }
                 }
+                isAndroidLegacyBinarySpreadsheet(message.mediaFileName, message.mediaMimeType) && file != null -> {
+                    Column(
+                        Modifier
+                            .fillMaxWidth()
+                            .verticalScroll(rememberScrollState())
+                            .padding(28.dp)
+                            .testTag("android-legacy-xls-replacement"),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(14.dp),
+                    ) {
+                        Text("📊", fontSize = 58.sp)
+                        Text(
+                            message.mediaFileName ?: "旧版 Excel 工作簿",
+                            color = Color.White,
+                            style = MaterialTheme.typography.titleMedium,
+                        )
+                        Text(
+                            "旧版 Excel (.xls) 在 Android 上使用已安装的表格应用查看。Fabushi 不在应用内解析 BIFF，也不会执行工作簿宏。",
+                            color = Color.LightGray,
+                        )
+                        Text(
+                            "文件只从应用私有缓存通过 FileProvider 授予临时只读访问；若设备没有兼容查看器，将改为系统分享选择器。",
+                            color = Color.Gray,
+                            fontSize = 12.sp,
+                            modifier = Modifier.testTag("android-legacy-xls-security-boundary"),
+                        )
+                        Button(
+                            onClick = {
+                                openMediaFile(
+                                    context,
+                                    file!!,
+                                    androidLegacySpreadsheetOpenMimeType(message.mediaMimeType),
+                                )
+                            },
+                            modifier = Modifier.testTag("android-legacy-xls-open-external"),
+                        ) { Text("用表格 App 打开") }
+                        Button(
+                            onClick = {
+                                shareMediaFile(
+                                    context,
+                                    file!!,
+                                    androidLegacySpreadsheetOpenMimeType(message.mediaMimeType),
+                                )
+                            },
+                            modifier = Modifier.testTag("android-legacy-xls-share"),
+                        ) { Text("分享文件") }
+                    }
+                }
                 isAndroidSpreadsheet(message.mediaFileName, message.mediaMimeType) && bytes != null -> {
                     val parsed = remember(message.id, bytes) {
                         runCatching {

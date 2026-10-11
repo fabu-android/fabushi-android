@@ -9911,7 +9911,7 @@
         }
       ],
       "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
-      "responsibility": "Preview canonical transcript spreadsheet attachments with bounded byte/row parsing, CSV/TSV and workbook formats, multi-sheet selection, cell detail, explicit missing/too-large/error states, and lifecycle fencing without making Compose a second attachment owner.",
+      "responsibility": "Preview canonical transcript CSV/TSV and OOXML spreadsheet attachments with bounded byte/row parsing, multi-sheet selection, cell detail, explicit missing/too-large/error states, and lifecycle fencing without making Compose a second attachment owner.",
       "source_owner": "Desktop conversation workspace spreadsheet preview controller and shipped spreadsheet runtime",
       "direct_callers": [
         "conversation attachment/file-card table projection",
@@ -9928,13 +9928,12 @@
         "25 MiB preview byte cap",
         "2,000 parsed-row cap",
         "200 rendered-row/column projection",
-        "Desktop table classification includes csv/tsv/xlsx/xls"
+        "Desktop table classification includes csv/tsv/xlsx/xls; legacy BIFF .xls is split into CONVERSATION-SPREADSHEET-LEGACY-XLS-ANDROID-001 as an Android replacement."
       ],
       "visible_effect": "Users can inspect spreadsheet attachments in-app, switch workbook sheets, inspect individual cells, and fall back visibly when a format cannot be previewed.",
       "failure_behavior": [
         "missing/oversized/malformed data must fail visibly without mutating the attachment",
-        "archive/XML parsing fails closed on unsafe paths, entity expansion, or external relationships",
-        "unsupported legacy BIFF .xls remains an explicit preview gap rather than being misparsed"
+        "archive/XML parsing fails closed on unsafe paths, entity expansion, or external relationships"
       ],
       "cancellation_behavior": "Changing/closing/resetting/disposing the media item invalidates the presentation generation; late byte-read or native open/share completion cannot become canonical attachment state or overwrite another attachment.",
       "retry_semantics": "Preview reads are side-effect free and may be explicitly reopened; no upload/send side effect is retried by the viewer.",
@@ -9949,18 +9948,100 @@
         "mobile/android/app/src/test/java/com/ombhrum/fabushi/AndroidMediaViewerProjectionTest.kt"
       ],
       "android_owner": "Native Android media viewer consumes bounded spreadsheet projections; canonical attachment ownership remains outside Compose.",
-      "platform_delta": "Android replaces Desktop's dynamically loaded JavaScript XLSX vendor runtime with bounded Java/Kotlin ZIP/XML OOXML parsing for xlsx/xlsm/xltx/xltm and native Compose sheet/cell UI. CSV/TSV use the Desktop-equivalent parser. Desktop provider generation fencing maps to AndroidMediaViewer loadGeneration/dispose fencing; Desktop download action maps to Android FileProvider external-open/share. Legacy binary BIFF .xls remains an in-app preview gap.",
+      "platform_delta": "Android replaces Desktop's dynamically loaded JavaScript XLSX vendor runtime with bounded Java/Kotlin ZIP/XML OOXML parsing for xlsx/xlsm/xltx/xltm and native Compose sheet/cell UI. CSV/TSV use the Desktop-equivalent parser. Desktop provider generation fencing maps to AndroidMediaViewer loadGeneration/dispose fencing. Legacy binary BIFF .xls is intentionally split into a separate not-applicable-with-replacement responsibility using Android FileProvider external viewing.",
       "implementation_status": "mapped",
-      "production_wiring": "At Android code head 1e66eb907c46043bcb429c15abeae253b44ef443, CSV/TSV plus bounded OOXML workbook parsing and multi-sheet native rendering are wired into AndroidMediaViewer. ZIP entry count/expanded-size/path fences, DTD/external-entity denial, relationship confinement, shared/inline string and typed cell projection are implemented. AndroidMediaViewer loadGeneration/dispose fencing makes replaced/closed attachment completions inert; FileProvider external-open/share is the platform replacement for Desktop download. Legacy .xls remains open, so this responsibility stays mapped.",
+      "production_wiring": "CSV/TSV plus bounded OOXML workbook parsing and multi-sheet native rendering are wired into AndroidMediaViewer. ZIP entry count/expanded-size/path fences, DTD/external-entity denial, relationship confinement, shared/inline string and typed cell projection are implemented. Legacy .xls is handled by the separate platform replacement responsibility; this preview responsibility remains mapped/not-verified until exact-head packaged/device evidence closes the combined user journey.",
       "unit_test": "AndroidMediaViewerProjectionTest covers CSV quoting/truncation plus OOXML detection, two-sheet/shared-string/typed-cell projection and malicious DOCTYPE/relationship traversal rejection; exact-head GitHub Actions are currently running.",
-      "contract_test": "Desktop source audit confirms tableExtensions csv/tsv/xlsx/xls and 25 MiB/2,000-row/200-render-row contracts. Android keeps the same main caps for supported formats; legacy .xls is explicitly unresolved.",
+      "contract_test": "Desktop source audit confirms tableExtensions csv/tsv/xlsx/xls and 25 MiB/2,000-row/200-render-row contracts. Android keeps the same main caps for native-supported formats; legacy .xls is explicitly delegated to CONVERSATION-SPREADSHEET-LEGACY-XLS-ANDROID-001.",
       "integration_test": "Native AndroidMediaViewer production branch is wired for supported spreadsheet formats; exact-head compile/unit/lint and packaged/device interaction remain pending.",
       "packaged_test": "required on final minified githubRelease APK/AAB, including CSV/XLSX and unsupported/legacy .xls behavior",
       "device_test": "required for sheet switching, large/malformed workbook failure, process reopen and external-open fallback",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Do not mark implemented/verified until legacy BIFF .xls has an accepted native/replacement implementation and the same exact Android HEAD passes required CI/package/device evidence.",
-      "android_head_at_update": "1e66eb907c46043bcb429c15abeae253b44ef443"
+      "notes": "Native CSV/TSV/OOXML implementation is present, but do not mark verified until exact-head CI/package/device evidence closes supported-format preview plus the linked legacy .xls replacement journey.",
+      "android_head_at_update": "65ae55f9e6bb3218e3a2e9cdf1ae614ce50c6372"
+    },
+    {
+      "responsibility_id": "CONVERSATION-SPREADSHEET-LEGACY-XLS-ANDROID-001",
+      "domain": "conversation-media",
+      "desktop_sources": [
+        {
+          "path": "frontend/src/recovered/features/conversation/workspace/model.ts",
+          "blob_sha": "e8bf075b7ed1fe6d8a8493c6fba585d73640303a",
+          "symbols": [
+            "tableExtensions",
+            "kindFromMimeType",
+            "inferAttachmentKind"
+          ]
+        },
+        {
+          "path": "frontend/src/recovered/features/conversation/workspace/spreadsheet-viewer-model.ts",
+          "blob_sha": "9171bc159805bc5fc6b6ba3103b67d8766ac0ace",
+          "symbols": [
+            "parseSpreadsheetBytes"
+          ]
+        },
+        {
+          "path": "frontend/src/recovered/features/conversation/workspace/spreadsheet-viewer.tsx",
+          "blob_sha": "cc56d7171ed52ac92bfcb218b5b7e45f4b72bef6",
+          "symbols": [
+            "loadShippedSpreadsheetRuntime",
+            "SpreadsheetViewer"
+          ]
+        }
+      ],
+      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "responsibility": "Preserve user access to legacy binary BIFF .xls transcript attachments on Android when the Desktop-shipped spreadsheet runtime can parse them in-app.",
+      "source_owner": "Desktop conversation workspace spreadsheet viewer and shipped spreadsheet runtime",
+      "direct_callers": [
+        "conversation attachment/file-card table projection",
+        "spreadsheet viewer mount"
+      ],
+      "downstream_dependencies": [
+        "canonical attachment bytes",
+        "Android private cache",
+        "Android FileProvider",
+        "installed document viewer or system share chooser"
+      ],
+      "state_owner": "Canonical attachment bytes remain owned by the conversation runtime; Android external-view intent state is ephemeral presentation state.",
+      "persistent_state": [],
+      "protocol_wire_contract": [
+        "Desktop classifies .xls as a table attachment",
+        "Android replacement must preserve access to the exact attachment bytes without executing workbook content inside Fabushi"
+      ],
+      "visible_effect": "A legacy .xls attachment shows an explicit Android replacement surface explaining that it opens in an installed spreadsheet app, with a share fallback when no compatible viewer exists.",
+      "failure_behavior": [
+        "No compatible ACTION_VIEW handler falls back to the system share chooser",
+        "Fabushi does not claim BIFF parse success",
+        "missing canonical bytes remain a visible media-load failure"
+      ],
+      "cancellation_behavior": "Closing/replacing the media viewer invalidates its load generation; the external viewer receives only a temporary read grant and does not become canonical state.",
+      "retry_semantics": "Opening or sharing the immutable cached attachment is user-initiated and side-effect free with respect to canonical transcript state.",
+      "idempotency_semantics": "Repeated external opens reference the same immutable cached bytes and do not mutate or duplicate the canonical attachment.",
+      "process_death_recovery": "On reopen, bytes are reloaded from canonical attachment storage and a fresh private-cache/FileProvider URI is produced.",
+      "account_fencing": "Only bytes already projected from the current canonical conversation/account can be cached and granted.",
+      "security_boundary": "Android does not parse or execute legacy BIFF/macros in-process. The file stays in app-private cache and is exposed using FileProvider with FLAG_GRANT_READ_URI_PERMISSION only; no writable file URI or broad storage permission is granted.",
+      "android_disposition": "not-applicable-with-replacement",
+      "android_target": [
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/recovered/features/conversation/workspace/spreadsheet-viewer_model.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/recovered/features/conversation/workspace/media-viewer_view.kt",
+        "mobile/android/app/src/main/AndroidManifest.xml",
+        "mobile/android/app/src/main/res/xml/file_paths.xml",
+        "mobile/android/app/src/test/java/com/ombhrum/fabushi/AndroidMediaViewerProjectionTest.kt"
+      ],
+      "android_owner": "Android native media viewer owns only the external-view presentation action; canonical attachment ownership remains unchanged.",
+      "platform_delta": "Desktop's bundled JavaScript spreadsheet runtime can parse legacy BIFF .xls in-process. Android does not ship that desktop vendor runtime or execute a second JS transcript stack; the replacement delegates viewing of the exact immutable .xls bytes to a user-installed Android spreadsheet viewer through a read-only FileProvider URI, falling back to the system share chooser. Visible difference: .xls is not rendered in Fabushi and sheet/cell inspection happens in the external app.",
+      "implementation_status": "mapped",
+      "production_wiring": "The production AndroidMediaViewer explicitly recognizes .xls/application/vnd.ms-excel, shows the platform-delta/security explanation, caches the canonical bytes privately, and routes user actions through FileProvider ACTION_VIEW or share fallback. Exact-head packaged and physical/emulator viewer acceptance are still required before implementation/verification can advance.",
+      "unit_test": "AndroidMediaViewerProjectionTest covers legacy .xls detection, MIME normalization, and confirms .xls is not misclassified as the native CSV/OOXML parser path.",
+      "contract_test": "Android manifest declares a non-exported FileProvider with grantUriPermissions; file_paths includes private cache and openMediaFile grants read access only.",
+      "integration_test": "Production media viewer branch is wired; packaged intent/FileProvider acceptance is required on the exact final artifact.",
+      "packaged_test": "required: inspect final githubRelease manifest/provider configuration and launch the .xls replacement from the packaged APK/AAB without CI-only storage/session shortcuts",
+      "device_test": "required: open a real .xls with a compatible viewer; verify fallback chooser when viewer is absent, process reopen, account switch fencing, and no writable URI grant",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Keep mapped/not-verified until exact-head packaged and device fallback evidence exists. This is an explicit Android replacement, not a claim that Fabushi contains a BIFF parser.",
+      "android_head_at_update": "65ae55f9e6bb3218e3a2e9cdf1ae614ce50c6372"
     }
   ],
   "traceability": {
@@ -9995,6 +10076,7 @@
   },
   "metadata": {
     "android_head_at_update": "1e66eb907c46043bcb429c15abeae253b44ef443",
-    "note": " Deterministic editor cursor now records the shipped suggestion boundary: Android has production-wired Agent/scheduled-automation projection with stale fencing, while Desktop PR/MCP providers are explicitly dormant in the current production adapter. Agent find-in-chat is now production-wired for message/widget semantic search and wrap navigation, while occurrence-span highlighting and richer searchable payloads remain mapped gaps. Native media viewer gallery is production-wired for Human conversations with navigation/zoom/stale-load fencing; in-app PDF rendering is now implemented at 499519f… and pending exact-head CI/device evidence, while Agent attachment/audio/focus semantics remain mapped. Spreadsheet preview responsibility is explicit; legacy .xls remains a deterministic gap."
+    "note": " Deterministic editor cursor now records the shipped suggestion boundary: Android has production-wired Agent/scheduled-automation projection with stale fencing, while Desktop PR/MCP providers are explicitly dormant in the current production adapter. Agent find-in-chat is now production-wired for message/widget semantic search and wrap navigation, while occurrence-span highlighting and richer searchable payloads remain mapped gaps. Native media viewer gallery is production-wired for Human conversations with navigation/zoom/stale-load fencing; in-app PDF rendering is now implemented at 499519f… and pending exact-head CI/device evidence, while Agent attachment/audio/focus semantics remain mapped. Spreadsheet preview responsibility is explicit; legacy .xls remains a deterministic gap.",
+    "last_updated_android_head": "65ae55f9e6bb3218e3a2e9cdf1ae614ce50c6372"
   }
 }

@@ -194,6 +194,30 @@ class AndroidMediaViewerProjectionTest {
     }
 
     @Test
+    fun legacyXlsUsesExplicitReadOnlyExternalViewerReplacement() {
+        assertTrue(isAndroidLegacyBinarySpreadsheet("legacy.XLS", null))
+        assertTrue(
+            isAndroidLegacyBinarySpreadsheet(
+                "legacy.bin",
+                "application/vnd.ms-excel; charset=binary",
+            ),
+        )
+        assertEquals(
+            "application/vnd.ms-excel",
+            androidLegacySpreadsheetOpenMimeType("application/octet-stream"),
+        )
+        assertEquals(
+            "application/vnd.ms-excel",
+            androidLegacySpreadsheetOpenMimeType(null),
+        )
+        assertEquals(
+            "application/vnd.ms-excel",
+            androidLegacySpreadsheetOpenMimeType("application/vnd.ms-excel"),
+        )
+        assertEquals(false, isAndroidSpreadsheet("legacy.xls", "application/vnd.ms-excel"))
+    }
+
+    @Test
     fun xlsxParserProjectsMultipleSheetsSharedStringsAndTypedCells() {
         val sheets = parseAndroidSpreadsheet(
             bytes = twoSheetWorkbook(),
