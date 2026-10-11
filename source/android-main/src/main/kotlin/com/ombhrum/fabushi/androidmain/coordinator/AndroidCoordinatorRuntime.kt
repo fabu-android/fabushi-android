@@ -21,6 +21,7 @@ import com.ombhrum.fabushi.androidpreload.runtime.AndroidConversationOutlineItem
 import com.ombhrum.fabushi.androidpreload.runtime.parseAndroidConversationOutlineItems
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidMcpOAuthCompletion
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidToolResultCard
+import com.ombhrum.fabushi.androidpreload.runtime.AndroidTranscriptHistoryPage
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidSendAcknowledgement
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidSendAcknowledgementDispatch
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidSendAcknowledgementEntry
@@ -692,6 +693,30 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
     override fun featureApprovalResolve(params: JSONObject) = host.request("feature.approval.resolve", params)
     override fun transcriptSnapshot(): JSONArray =
         host.requestValue("feature.transcript.snapshot") as? JSONArray ?: JSONArray()
+
+    override fun transcriptPage(
+        agentId: String,
+        beforeSeq: Long?,
+        limit: Int,
+    ): AndroidTranscriptHistoryPage {
+        require(agentId.isNotBlank()) { "Transcript page requires a non-empty Agent id" }
+        require(limit in 1..500) { "Transcript page limit must be between 1 and 500" }
+        val params = JSONObject()
+            .put("agentId", agentId)
+            .put("limit", limit)
+        if (beforeSeq != null) {
+            require(beforeSeq >= 0L) { "Transcript page cursor must be non-negative" }
+            params.put("beforeSeq", beforeSeq)
+        }
+        val value = host.request("feature.transcript.page", params)
+        val entries = value.optJSONArray("entries") ?: error("Transcript page is missing entries")
+        val nextBeforeSeq = if (value.has("nextBeforeSeq") && !value.isNull("nextBeforeSeq")) {
+            value.getLong("nextBeforeSeq")
+        } else {
+            null
+        }
+        return AndroidTranscriptHistoryPage(entries = entries, nextBeforeSeq = nextBeforeSeq)
+    }
 
     override fun conversationOutlineSnapshot(agentId: String): List<AndroidConversationOutlineItem> =
         parseAndroidConversationOutlineItems(transcriptSnapshot(), agentId)

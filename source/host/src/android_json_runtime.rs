@@ -1149,6 +1149,7 @@ impl AndroidJsonHost {
                     .map_err(|_| "transcript lock poisoned".to_string())?
                     .get_transcript(),
             )),
+            "feature.transcript.page" => self.transcript_page(params),
             "feature.assistant.projection" => self.assistant_projection(),
             "feature.assistant.markRead" => self.assistant_mark_read(),
             "feature.webauthn.registerProvider" => self.webauthn_register_provider(),
@@ -1161,6 +1162,33 @@ impl AndroidJsonHost {
         }
     }
 
+
+    fn transcript_page(&self, params: &Value) -> Result<Value, String> {
+        let agent_id = required_string(params, "agentId")?;
+        let limit = params
+            .get("limit")
+            .and_then(Value::as_u64)
+            .unwrap_or(200);
+        let limit = usize::try_from(limit)
+            .map_err(|_| "transcript page limit is out of range".to_string())?;
+        let before_seq = params
+            .get("beforeSeq")
+            .filter(|value| !value.is_null())
+            .and_then(Value::as_u64)
+            .map(usize::try_from)
+            .transpose()
+            .map_err(|_| "transcript page cursor is out of range".to_string())?;
+        let (entries, next_before_seq) = self
+            .transcript
+            .lock()
+            .map_err(|_| "transcript lock poisoned".to_string())?
+            .page_for_agent(agent_id, before_seq, limit)
+            .map_err(|error| error.to_string())?;
+        Ok(json!({
+            "entries": entries,
+            "nextBeforeSeq": next_before_seq,
+        }))
+    }
 
     fn agent_async_tasks(&self, params: &Value) -> Result<Value, String> {
         let parent_agent_id = required_string(params, "id")?;
@@ -8440,3 +8468,64 @@ mod widget_action_tests {
     }
 
 }
+
+#[cfg(test)]
+mod transcript_page_contract_tests {
+    use super::*;
+
+    #[test]
+    fn host_transcript_page_is_agent_scoped_exclusive_and_reopens() {
+        let root = tempfile::tempdir().unwrap();
+        let mut host = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+        {
+            let mut transcript = host.transcript.lock().unwrap();
+            for (id, agent_id) in [
+                ("a-1", "agent-a"),
+                ("b-1", "agent-b"),
+                ("a-2", "agent-a"),
+                ("a-3", "agent-a"),
+            ] {
+                transcript
+                    .append_entry(json!({
+                        "id":id,
+                        "kind":"message",
+                        "role":"user",
+                        "agentId":agent_id,
+                        "content":id,
+                    }))
+                    .unwrap();
+            }
+        }
+
+        let latest = host
+            .dispatch(
+                "feature.transcript.page",
+                &json!({"agentId":"agent-a","limit":2}),
+            )
+            .unwrap();
+        let latest_entries = latest["entries"].as_array().unwrap();
+        assert_eq!(latest_entries[0]["id"], "a-2");
+        assert_eq!(latest_entries[1]["id"], "a-3");
+        assert_eq!(latest["nextBeforeSeq"], 1);
+
+        drop(host);
+        let mut reopened = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+        let older = reopened
+            .dispatch(
+                "feature.transcript.page",
+                &json!({"agentId":"agent-a","limit":2,"beforeSeq":1}),
+            )
+            .unwrap();
+        assert_eq!(older["entries"].as_array().unwrap().len(), 1);
+        assert_eq!(older["entries"][0]["id"], "a-1");
+        assert!(older["nextBeforeSeq"].is_null());
+
+        assert!(reopened
+            .dispatch(
+                "feature.transcript.page",
+                &json!({"agentId":"agent-a","limit":0}),
+            )
+            .is_err());
+    }
+}
+

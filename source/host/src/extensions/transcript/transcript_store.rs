@@ -35,6 +35,41 @@ impl TranscriptStore {
         self.entries.clone()
     }
 
+    pub fn page_for_agent(
+        &self,
+        agent_id: &str,
+        before_seq: Option<usize>,
+        limit: usize,
+    ) -> io::Result<(Vec<Value>, Option<usize>)> {
+        let agent_id = agent_id.trim();
+        if agent_id.is_empty() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "transcript page agent id is required",
+            ));
+        }
+        if limit == 0 || limit > 500 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "transcript page limit must be between 1 and 500",
+            ));
+        }
+
+        let scoped = self
+            .entries
+            .iter()
+            .filter(|entry| entry.get("agentId").and_then(Value::as_str) == Some(agent_id))
+            .collect::<Vec<_>>();
+        let end = before_seq.unwrap_or(scoped.len()).min(scoped.len());
+        let start = end.saturating_sub(limit);
+        let page = scoped[start..end]
+            .iter()
+            .map(|entry| (*entry).clone())
+            .collect::<Vec<_>>();
+        let next_before_seq = (start > 0).then_some(start);
+        Ok((page, next_before_seq))
+    }
+
     pub fn contains_id(&self, id: &str) -> bool {
         self.entries
             .iter()
@@ -172,6 +207,56 @@ mod tests {
         std::env::temp_dir()
             .join(format!("fabushi-transcript-{}-{stamp}", std::process::id()))
             .join("transcript.json")
+    }
+
+    #[test]
+    fn agent_scoped_pages_use_exclusive_cursor_and_survive_reopen() {
+        let path = temp_path();
+        let mut store = TranscriptStore::open(&path).unwrap();
+        for (id, agent_id) in [
+            ("a-1", "agent-a"),
+            ("b-1", "agent-b"),
+            ("a-2", "agent-a"),
+            ("a-3", "agent-a"),
+            ("b-2", "agent-b"),
+            ("a-4", "agent-a"),
+            ("a-5", "agent-a"),
+        ] {
+            store
+                .append_entry(json!({"id":id,"agentId":agent_id,"kind":"message","content":id}))
+                .unwrap();
+        }
+
+        let (latest, cursor) = store.page_for_agent("agent-a", None, 2).unwrap();
+        assert_eq!(
+            latest.iter().map(|entry| entry["id"].as_str().unwrap()).collect::<Vec<_>>(),
+            vec!["a-4", "a-5"],
+        );
+        assert_eq!(cursor, Some(3));
+
+        store
+            .append_entry(json!({"id":"a-6","agentId":"agent-a","kind":"message","content":"a-6"}))
+            .unwrap();
+        let (older, next) = store.page_for_agent("agent-a", cursor, 2).unwrap();
+        assert_eq!(
+            older.iter().map(|entry| entry["id"].as_str().unwrap()).collect::<Vec<_>>(),
+            vec!["a-2", "a-3"],
+            "exclusive cursor must not be shifted by newer appends",
+        );
+        assert_eq!(next, Some(1));
+
+        drop(store);
+        let reopened = TranscriptStore::open(&path).unwrap();
+        let (oldest, exhausted) = reopened.page_for_agent("agent-a", next, 2).unwrap();
+        assert_eq!(
+            oldest.iter().map(|entry| entry["id"].as_str().unwrap()).collect::<Vec<_>>(),
+            vec!["a-1"],
+        );
+        assert_eq!(exhausted, None);
+        assert!(reopened.page_for_agent("agent-b", None, 0).is_err());
+        assert!(reopened.page_for_agent("", None, 2).is_err());
+
+        let _ = fs::remove_dir_all(path.parent().unwrap());
     }
 
     #[test]

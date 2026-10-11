@@ -100,6 +100,11 @@ data class AndroidClientSideToolV2Event(
 )
 
 
+data class AndroidTranscriptHistoryPage(
+    val entries: JSONArray,
+    val nextBeforeSeq: Long?,
+)
+
 data class AndroidFindInChatEntry(
     val entryId: String,
     val searchText: String,
@@ -347,6 +352,12 @@ interface AndroidCoordinatorPort {
     fun featureInterrupt(params: JSONObject): JSONObject
     fun featureApprovalResolve(params: JSONObject): JSONObject
     fun transcriptSnapshot(): JSONArray
+    fun transcriptPage(
+        agentId: String,
+        beforeSeq: Long? = null,
+        limit: Int = 200,
+    ): AndroidTranscriptHistoryPage =
+        error("Transcript history pagination is unavailable on this Coordinator port")
     fun conversationOutlineSnapshot(agentId: String): List<AndroidConversationOutlineItem> =
         parseAndroidConversationOutlineItems(transcriptSnapshot(), agentId)
     fun assistantProjection(): JSONObject = JSONObject().put("hasUnread", false)
