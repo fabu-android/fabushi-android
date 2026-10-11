@@ -39,7 +39,7 @@ private val orderedLine = Regex("""^\s*(\d+)\.\s+(.+)$""")
 private val unorderedLine = Regex("""^\s*[-+*]\s+(.+)$""")
 private val taskItem = Regex("""^\[([ xX])]\s+(.+)$""")
 private val horizontalRule = Regex("""^\s{0,3}(?:-{3,}|\*{3,}|_{3,})\s*$""")
-private val mathFence = Regex("""^\\s{0,3}\\${'$'}\\${'$'}\\s*$""")
+private val mathFence = Regex("""^\s{0,3}\${'$'}\${'$'}\s*$""")
 private val tableSeparatorCell = Regex("""^:?-{3,}:?$""")
 
 internal fun projectTranscriptRichContent(text: String): List<TranscriptRichBlock> {
