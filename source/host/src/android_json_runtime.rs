@@ -2,6 +2,10 @@ use crate::account_service::{AccountSessionMutation, AndroidAccountService};
 use crate::capability_broker::{CapabilityDecision, PendingCapabilityCall, SharedCapabilityBroker};
 use crate::automation_runtime::{run_json as automation_run_json, AutomationRuntime, AutomationSpec};
 use crate::android_agent_roster::AndroidAgentRoster;
+use crate::agent_attachment::{
+    prompt_with_agent_attachments, with_agent_attachment_tools, AgentAttachment,
+    DurableAgentAttachmentOwner, COMPOSER_ATTACHMENT_LIMIT,
+};
 use crate::android_sidebar_sections::{AndroidSidebarSection, AndroidSidebarSections};
 use crate::host_secret_store::get_or_create_host_machine_id;
 use crate::host_runner_composition::AuthenticatedRemoteHostRunner;
@@ -54,6 +58,7 @@ use fabushi_android_box_exec_daemon::{AuthenticatedRemoteHttpTransport, RemoteTr
 use mahayana_plugin_runtime::{
     ExternalReleaseManifest, PermissionManager, PluginInstaller,
 };
+use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::path::PathBuf;
@@ -600,6 +605,7 @@ pub struct AndroidJsonHost {
     transcript: Arc<Mutex<TranscriptStore>>,
     send_acknowledgements: Arc<Mutex<DurableSendAcknowledgementOwner>>,
     composer_drafts: Arc<Mutex<DurableComposerDraftOwner>>,
+    agent_attachments: Arc<Mutex<DurableAgentAttachmentOwner>>,
     messaging: Arc<Mutex<AndroidMessagingService>>,
     mcp_auth_watches: Arc<Mutex<AndroidMcpAuthWatchManager>>,
     mcp_auth_owner: Option<AndroidMcpAuthWatchOwner>,
@@ -703,6 +709,10 @@ impl AndroidJsonHost {
             DurableComposerDraftOwner::open(app_data_dir.join("composer-drafts.json"), now_ms())
                 .unwrap_or_else(|error| panic!("failed to open durable Android composer draft owner: {error}")),
         ));
+        let agent_attachments = Arc::new(Mutex::new(
+            DurableAgentAttachmentOwner::open(app_data_dir.join("agent-attachments"))
+                .unwrap_or_else(|error| panic!("failed to open durable Android Agent attachment owner: {error}")),
+        ));
         let messaging = Arc::new(Mutex::new(
             AndroidMessagingService::open(&app_data_dir)
                 .unwrap_or_else(|error| panic!("failed to open canonical Android messaging repository: {error}")),
@@ -775,6 +785,7 @@ impl AndroidJsonHost {
             transcript,
             send_acknowledgements,
             composer_drafts,
+            agent_attachments,
             messaging,
             mcp_auth_watches,
             mcp_auth_owner,
@@ -1119,6 +1130,11 @@ impl AndroidJsonHost {
             "feature.composerDraft.read" => self.composer_draft_read(params),
             "feature.composerDraft.write" => self.composer_draft_write(params),
             "feature.composerDraft.clearIfCurrent" => self.composer_draft_clear_if_current(params),
+            "feature.composerDraft.attachment.begin" => self.composer_draft_attachment_begin(params),
+            "feature.composerDraft.attachment.append" => self.composer_draft_attachment_append(params),
+            "feature.composerDraft.attachment.finish" => self.composer_draft_attachment_finish(params),
+            "feature.composerDraft.attachment.abort" => self.composer_draft_attachment_abort(params),
+            "feature.composerDraft.attachment.remove" => self.composer_draft_attachment_remove(params),
             "feature.widget.respond" => self.widget_respond(params),
             "feature.widget.dismiss" => self.widget_dismiss(params),
             "feature.receive" => self.feature_receive(),
@@ -3118,10 +3134,180 @@ impl AndroidJsonHost {
         Ok(json!({"cleared": cleared}))
     }
 
+
+    fn composer_draft_attachment_begin(&mut self, params: &Value) -> Result<Value, String> {
+        let (account_slot, account_fence, agent_id) = self.send_acknowledgement_scope(params)?;
+        let name = required_string(params, "name")?;
+        let mime_type = params
+            .get("mimeType")
+            .and_then(Value::as_str)
+            .filter(|value| !value.trim().is_empty());
+        let declared_size_bytes = params
+            .get("sizeBytes")
+            .and_then(Value::as_u64);
+        let current_count = self
+            .composer_drafts
+            .lock()
+            .map_err(|_| "composer draft owner lock poisoned".to_string())?
+            .read(account_slot.as_deref(), &account_fence, &agent_id)?
+            .map(|draft| draft.attachments.len())
+            .unwrap_or(0);
+        if current_count >= COMPOSER_ATTACHMENT_LIMIT {
+            return Err("composer attachment limit reached".into());
+        }
+        let attachment_id = self
+            .agent_attachments
+            .lock()
+            .map_err(|_| "Agent attachment owner lock poisoned".to_string())?
+            .begin(
+                account_slot.as_deref(),
+                &account_fence,
+                &agent_id,
+                name,
+                mime_type,
+                declared_size_bytes,
+            )?;
+        Ok(json!({"attachmentId":attachment_id}))
+    }
+
+    fn composer_draft_attachment_append(&mut self, params: &Value) -> Result<Value, String> {
+        let (account_slot, account_fence, agent_id) = self.send_acknowledgement_scope(params)?;
+        let attachment_id = required_string(params, "attachmentId")?;
+        let offset = params
+            .get("offset")
+            .and_then(Value::as_u64)
+            .ok_or("Agent attachment offset is required")?;
+        let encoded = required_string(params, "dataBase64")?;
+        let bytes = BASE64_STANDARD
+            .decode(encoded)
+            .map_err(|_| "Agent attachment chunk is not valid base64".to_string())?;
+        if bytes.len() > 1024 * 1024 {
+            return Err("Agent attachment chunk exceeds the one MiB bridge limit".into());
+        }
+        let next_offset = self
+            .agent_attachments
+            .lock()
+            .map_err(|_| "Agent attachment owner lock poisoned".to_string())?
+            .append(
+                account_slot.as_deref(),
+                &account_fence,
+                &agent_id,
+                attachment_id,
+                offset,
+                &bytes,
+            )?;
+        Ok(json!({"nextOffset":next_offset}))
+    }
+
+    fn composer_draft_attachment_finish(&mut self, params: &Value) -> Result<Value, String> {
+        let (account_slot, account_fence, agent_id) = self.send_acknowledgement_scope(params)?;
+        let attachment_id = required_string(params, "attachmentId")?;
+        let attachment = self
+            .agent_attachments
+            .lock()
+            .map_err(|_| "Agent attachment owner lock poisoned".to_string())?
+            .finish(
+                account_slot.as_deref(),
+                &account_fence,
+                &agent_id,
+                attachment_id,
+            )?;
+        let draft = self
+            .composer_drafts
+            .lock()
+            .map_err(|_| "composer draft owner lock poisoned".to_string())?
+            .add_attachment(
+                account_slot.as_deref(),
+                &account_fence,
+                &agent_id,
+                attachment.clone(),
+                now_ms(),
+            );
+        match draft {
+            Ok(draft) => Ok(json!({"attachment":attachment,"draft":draft})),
+            Err(error) => {
+                let _ = self
+                    .agent_attachments
+                    .lock()
+                    .map_err(|_| "Agent attachment owner lock poisoned".to_string())?
+                    .remove_completed(
+                        account_slot.as_deref(),
+                        &account_fence,
+                        &agent_id,
+                        attachment_id,
+                    );
+                Err(error)
+            }
+        }
+    }
+
+    fn composer_draft_attachment_abort(&mut self, params: &Value) -> Result<Value, String> {
+        let (account_slot, account_fence, agent_id) = self.send_acknowledgement_scope(params)?;
+        let attachment_id = required_string(params, "attachmentId")?;
+        let aborted = self
+            .agent_attachments
+            .lock()
+            .map_err(|_| "Agent attachment owner lock poisoned".to_string())?
+            .abort(
+                account_slot.as_deref(),
+                &account_fence,
+                &agent_id,
+                attachment_id,
+            )?;
+        Ok(json!({"aborted":aborted}))
+    }
+
+    fn composer_draft_attachment_remove(&mut self, params: &Value) -> Result<Value, String> {
+        let (account_slot, account_fence, agent_id) = self.send_acknowledgement_scope(params)?;
+        let attachment_id = required_string(params, "attachmentId")?;
+        let current = self
+            .composer_drafts
+            .lock()
+            .map_err(|_| "composer draft owner lock poisoned".to_string())?
+            .read(account_slot.as_deref(), &account_fence, &agent_id)?;
+        let is_current = current
+            .as_ref()
+            .is_some_and(|draft| draft.attachments.iter().any(|row| row.id == attachment_id));
+        if !is_current {
+            return Err("Agent attachment is not present in the current composer draft".into());
+        }
+        let draft = self
+            .composer_drafts
+            .lock()
+            .map_err(|_| "composer draft owner lock poisoned".to_string())?
+            .remove_attachment(
+                account_slot.as_deref(),
+                &account_fence,
+                &agent_id,
+                attachment_id,
+                now_ms(),
+            )?;
+        self.agent_attachments
+            .lock()
+            .map_err(|_| "Agent attachment owner lock poisoned".to_string())?
+            .remove_completed(
+                account_slot.as_deref(),
+                &account_fence,
+                &agent_id,
+                attachment_id,
+            )?;
+        Ok(json!({"removed":true,"draft":draft}))
+    }
+
     fn send_acknowledgement_begin(&mut self, params: &Value) -> Result<Value, String> {
         let (account_slot, account_fence, agent_id) = self.send_acknowledgement_scope(params)?;
         let nonce = required_string(params, "nonce")?;
-        let text = required_string(params, "text")?;
+        let text = params.get("text").and_then(Value::as_str).unwrap_or_default();
+        let attachments = AgentAttachment::list_from_json(params.get("attachments"))?;
+        self.agent_attachments
+            .lock()
+            .map_err(|_| "Agent attachment owner lock poisoned".to_string())?
+            .validate_completed(
+                account_slot.as_deref(),
+                &account_fence,
+                &agent_id,
+                &attachments,
+            )?;
         let entries = SendAcknowledgementEntry::list_from_json(
             params
                 .get("entries")
@@ -3131,7 +3317,15 @@ impl AndroidJsonHost {
             .send_acknowledgements
             .lock()
             .map_err(|_| "send acknowledgement owner lock poisoned".to_string())?
-            .begin(account_slot.as_deref(), &account_fence, &agent_id, nonce, text, entries)?;
+            .begin_with_attachments(
+                account_slot.as_deref(),
+                &account_fence,
+                &agent_id,
+                nonce,
+                text,
+                attachments,
+                entries,
+            )?;
         serde_json::to_value(record)
             .map_err(|error| format!("failed to serialize send acknowledgement: {error}"))
     }
@@ -3171,6 +3365,8 @@ impl AndroidJsonHost {
             "requestId":dispatching.nonce,
             "clientNonce":dispatching.nonce,
             "text":dispatching.message_text,
+            "attachments":dispatching.attachments,
+            "accountSlot":dispatching.account_slot,
             "agentId":dispatching.agent_id,
             "mode":"agent",
         });
@@ -3778,13 +3974,16 @@ impl AndroidJsonHost {
         command: &Value,
         bearer_token: Option<String>,
     ) -> Result<(), String> {
-        let prompt = command
+        let message_text = command
             .get("text")
             .and_then(Value::as_str)
-            .filter(|value| !value.trim().is_empty())
-            .ok_or("chat.send text is required")?
+            .unwrap_or_default()
             .to_string();
-        if !text_size_allowed(&prompt) {
+        let attachments = AgentAttachment::list_from_json(command.get("attachments"))?;
+        if message_text.trim().is_empty() && attachments.is_empty() {
+            return Err("chat.send requires text or an attachment".into());
+        }
+        if !text_size_allowed(&message_text) {
             return Err("chat.send text exceeds maximum composer size".into());
         }
         let hidden = command
@@ -3808,6 +4007,21 @@ impl AndroidJsonHost {
             .unwrap_or("mahayana-assistant")
             .to_string();
         let assistant_entry_id = format!("assistant:{operation_id}");
+        let account_slot = command
+            .get("accountSlot")
+            .and_then(Value::as_str)
+            .filter(|value| !value.trim().is_empty());
+        let account_fence_for_attachment = self.current_turn_account_fence()?;
+        self.agent_attachments
+            .lock()
+            .map_err(|_| "Agent attachment owner lock poisoned".to_string())?
+            .validate_completed(
+                account_slot,
+                &account_fence_for_attachment,
+                &agent_id,
+                &attachments,
+            )?;
+        let prompt = prompt_with_agent_attachments(&message_text, &attachments);
         if !hidden {
             let mut transcript = self
                 .transcript
@@ -3818,7 +4032,8 @@ impl AndroidJsonHost {
                     "id":request_id,
                     "kind":"message",
                     "role":"user",
-                    "content":prompt.clone(),
+                    "content":message_text.clone(),
+                    "attachments":attachments.clone(),
                     "operationId":operation_id,
                     "agentId":agent_id.clone(),
                     "clientNonce":command
@@ -3919,6 +4134,12 @@ impl AndroidJsonHost {
         let mode = self.mode;
         let turn_events = self.turn_events.clone();
         let transcript = self.transcript.clone();
+        let turn_attachments = attachments.clone();
+        let agent_attachment_root = self
+            .agent_attachments
+            .lock()
+            .map_err(|_| "Agent attachment owner lock poisoned".to_string())?
+            .completed_root();
         let turn_journal = self.turn_journal.clone();
         let turn_lifecycle = self.turn_lifecycle.clone();
         let turn_upgrade_quiescing = Arc::clone(&self.turn_upgrade_quiescing);
@@ -4253,6 +4474,15 @@ impl AndroidJsonHost {
                     )
                 } else {
                     routed_subagent_tools
+                };
+                let routed_subagent_tools = if turn_attachments.is_empty() {
+                    routed_subagent_tools
+                } else {
+                    with_agent_attachment_tools(
+                        routed_subagent_tools,
+                        agent_attachment_root.clone(),
+                        turn_attachments.clone(),
+                    )
                 };
 
                 let provider = match mode {
