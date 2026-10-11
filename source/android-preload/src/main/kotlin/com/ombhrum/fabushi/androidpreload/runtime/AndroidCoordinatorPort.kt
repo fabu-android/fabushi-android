@@ -47,6 +47,7 @@ data class AndroidSendAcknowledgement(
     val priorNonces: List<String>,
     val entries: List<AndroidSendAcknowledgementEntry>,
     val messageText: String,
+    val messageRichText: JSONObject? = null,
     val phase: AndroidSendAcknowledgementPhase,
     val generation: Long,
     val failedAtMs: Long?,
@@ -313,11 +314,12 @@ interface AndroidCoordinatorPort {
         agentId: String,
         nonce: String,
         text: String,
+        richText: JSONObject? = null,
         attachments: List<AndroidAgentAttachment>,
         entries: List<AndroidSendAcknowledgementEntry>,
     ): AndroidSendAcknowledgement {
-        if (attachments.isNotEmpty()) {
-            error("Agent attachment acknowledgement is unavailable on this Coordinator port")
+        if (attachments.isNotEmpty() || richText != null) {
+            error("Agent attachment/rich-text acknowledgement is unavailable on this Coordinator port")
         }
         return sendAcknowledgementBegin(accountSlot, agentId, nonce, text, entries)
     }
