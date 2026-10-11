@@ -9168,17 +9168,17 @@
         "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/features/conversations/ConversationSurfaces.kt"
       ],
       "android_owner": "Native Compose viewer owns ephemeral gallery index and transform only; Messaging Host/blob loader owns bytes and canonical messages.",
-      "platform_delta": "Compose/AndroidView replace DOM portal/video elements. a3ceee97 adds native image/video gallery navigation, filmstrip, 1x-5x pinch zoom/pan/fit and load-generation fencing. Android still lacks Desktop-equivalent Agent attachment gallery wiring, focus restoration/keyboard navigation, audio-in-strip semantics and dedicated in-app PDF handoff.",
+      "platform_delta": "Compose/AndroidView replace DOM portal/video elements. a3ceee97 adds native image/video gallery navigation, filmstrip, 1x-5x pinch zoom/pan/fit and load-generation fencing. f2459b2a adds native in-app PDF rendering through Android PdfRenderer with bounded page rasterization, previous/next controls and stale-render fencing. Android still lacks Desktop-equivalent Agent attachment gallery wiring, focus restoration/keyboard navigation and audio-in-strip semantics.",
       "implementation_status": "mapped",
-      "production_wiring": "a3ceee97f7d134d037b3da5526f312a8c54b7416 replaces the Human conversation single-message viewer with transcript-derived photo/video gallery projection, wrap navigation, filmstrip selection, image transform controls and late-load fencing. Non-previewable files remain single-file open/share. PDF remains a separate unreviewed responsibility.",
-      "unit_test": "mobile/android/app/src/test/java/com/ombhrum/fabushi/AndroidMediaViewerProjectionTest.kt covers gallery projection, single-file fallback, initial index and bidirectional wrap; exact-head GitHub Actions pending.",
+      "production_wiring": "a3ceee97f7d134d037b3da5526f312a8c54b7416 replaces the Human conversation single-message viewer with transcript-derived photo/video gallery projection, wrap navigation, filmstrip selection, image transform controls and late-load fencing. f2459b2a06568e88a1f2bdde86bec0612e16c438 extends the same production viewer with MIME/file-name PDF detection and bounded in-app PdfRenderer page rendering while preserving explicit share fallback. Non-previewable non-PDF files remain single-file open/share.",
+      "unit_test": "mobile/android/app/src/test/java/com/ombhrum/fabushi/AndroidMediaViewerProjectionTest.kt covers gallery projection, single-file fallback, initial index, bidirectional wrap, PDF MIME/file-name detection and PDF page-boundary navigation; 499519f84427b935cd41fff49c0f49e84f31d6a8 exact-head GitHub Actions pending.",
       "contract_test": "Uses existing immutable ChatMessage projection and onLoadBlob bridge; no new byte owner or retry path.",
       "integration_test": "Production ConversationSurfaces opens AndroidMediaViewer by message id against current immutable messages; device gesture/focus tests remain required.",
       "packaged_test": "required final minified package",
       "device_test": "required image/video gesture, rotation/process recreation and accessibility acceptance",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Do not mark verified until Agent attachment wiring, PDF handoff and keyboard/focus/accessibility behavior have exact-head evidence."
+      "notes": "Do not mark verified until Agent attachment wiring, audio gallery semantics and keyboard/focus/accessibility behavior have exact-head evidence; PDF handoff is now implemented but still requires exact-head CI/device evidence."
     }
   ],
   "traceability": {
@@ -9212,7 +9212,7 @@
     }
   },
   "metadata": {
-    "android_head_at_update": "a3ceee97f7d134d037b3da5526f312a8c54b7416",
-    "note": " Deterministic editor cursor now records the shipped suggestion boundary: Android has production-wired Agent/scheduled-automation projection with stale fencing, while Desktop PR/MCP providers are explicitly dormant in the current production adapter. Agent find-in-chat is now production-wired for message/widget semantic search and wrap navigation, while occurrence-span highlighting and richer searchable payloads remain mapped gaps. Native media viewer gallery is now production-wired for Human conversations with navigation/zoom/stale-load fencing; Agent attachment/PDF/focus semantics remain mapped."
+    "android_head_at_update": "499519f84427b935cd41fff49c0f49e84f31d6a8",
+    "note": " Deterministic editor cursor now records the shipped suggestion boundary: Android has production-wired Agent/scheduled-automation projection with stale fencing, while Desktop PR/MCP providers are explicitly dormant in the current production adapter. Agent find-in-chat is now production-wired for message/widget semantic search and wrap navigation, while occurrence-span highlighting and richer searchable payloads remain mapped gaps. Native media viewer gallery is production-wired for Human conversations with navigation/zoom/stale-load fencing; in-app PDF rendering is now implemented at 499519f… and pending exact-head CI/device evidence, while Agent attachment/audio/focus semantics remain mapped."
   }
 }
