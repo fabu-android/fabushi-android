@@ -9179,6 +9179,53 @@
       "artifact": null,
       "verification_status": "not-verified",
       "notes": "Do not mark verified until Agent attachment wiring, audio gallery semantics and keyboard/focus/accessibility behavior have exact-head evidence; PDF handoff is now implemented but still requires exact-head CI/device evidence."
+    },
+    {
+      "responsibility_id": "CONVERSATION-PDF-VIEWER-ANDROID-001",
+      "domain": "conversation-workspace",
+      "desktop_sources": [
+        {
+          "path": "frontend/src/recovered/features/conversation/workspace/pdf-viewer.tsx",
+          "blob_sha": "f170959d6d99e2081e79d033cc12ce053eaee50d",
+          "symbols": [
+            "PdfAttachmentViewer",
+            "createPdfBytesStore",
+            "createPdfDocumentStore",
+            "PdfDocumentPages",
+            "PdfPage"
+          ]
+        },
+        {
+          "path": "frontend/src/recovered/features/conversation/workspace/pdf-viewer.css",
+          "blob_sha": "253b55f37131364e27a70a28878f6a9216ee0717",
+          "symbols": [
+            "sand-file-viewer",
+            "sand-pdf-page",
+            "sand-pdf-page__text"
+          ]
+        }
+      ],
+      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "responsibility": "Resolve bounded PDF attachment bytes, create and dispose a dedicated document renderer, render pages lazily with cancellation/stale-result fencing, expose loading/missing/too-large/render-error states, navigate pages, zoom safely, preserve text-selection/accessibility semantics, provide explicit download fallback and restore focus on close.",
+      "source_owner": "PDF attachment viewer owns only ephemeral document/page/zoom/render state; attachment bytes remain bridge/runtime-owned and durable transcript remains canonical.",
+      "visible_effect": "A PDF attachment opens inside Fabushi with bounded preview behavior, page navigation and zoom; failures or oversized files remain explicit and recoverable instead of silently opening an unrelated surface.",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/recovered/features/conversation/workspace/media-viewer_view.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/features/conversations/ConversationSurfaces.kt"
+      ],
+      "android_owner": "Native Compose/PdfRenderer viewer owns ephemeral page/render state; Messaging Host/blob loader owns attachment bytes and canonical messages.",
+      "platform_delta": "Android PdfRenderer replaces shipped PDF.js/worker and does not expose Desktop's selectable PDF.js text layer. f2459b2a06568e88a1f2bdde86bec0612e16c438 implements in-app PDF detection, bounded raster dimensions, page navigation, loading/error projection and generation fencing. Remaining gaps are the explicit 25 MiB preview cap/download fallback, 0.5-4x PDF zoom, selectable text/accessibility parity, keyboard/focus restoration and Agent attachment wiring.",
+      "implementation_status": "mapped",
+      "production_wiring": "f2459b2a06568e88a1f2bdde86bec0612e16c438 routes PDF attachments entering the Human conversation native media viewer to Android PdfRenderer instead of external ACTION_VIEW; the same immutable message/blob boundary is retained.",
+      "unit_test": "mobile/android/app/src/test/java/com/ombhrum/fabushi/AndroidMediaViewerProjectionTest.kt covers PDF MIME/file-name detection and page-boundary navigation at 499519f84427b935cd41fff49c0f49e84f31d6a8; latest-head GitHub Actions pending.",
+      "contract_test": "No new canonical byte owner is introduced; viewer consumes the existing bounded message/blob projection.",
+      "integration_test": "Human ConversationSurfaces production route opens the native viewer; Agent attachment and full accessibility/device integration remain required.",
+      "packaged_test": "required final minified githubRelease package",
+      "device_test": "required PDF page/zoom/rotation/process-recreation/accessibility acceptance",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Do not mark verified until byte-cap/download behavior, zoom/text/accessibility/focus semantics, Agent wiring and same-exact-head CI/device evidence are complete."
     }
   ],
   "traceability": {
