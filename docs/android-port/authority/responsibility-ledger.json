@@ -9893,6 +9893,14 @@
           ]
         },
         {
+          "path": "frontend/src/recovered/features/conversation/workspace/spreadsheet-viewer-provider.ts",
+          "blob_sha": "a649f1fa4007add7d574768c9fe0bb15ac52284b",
+          "symbols": [
+            "projectSpreadsheetViewerEntry",
+            "createSpreadsheetViewerProvider"
+          ]
+        },
+        {
           "path": "frontend/src/recovered/features/conversation/workspace/spreadsheet-viewer.tsx",
           "blob_sha": "cc56d7171ed52ac92bfcb218b5b7e45f4b72bef6",
           "symbols": [
@@ -9906,7 +9914,8 @@
       "responsibility": "Preview canonical transcript spreadsheet attachments with bounded byte/row parsing, CSV/TSV and workbook formats, multi-sheet selection, cell detail, explicit missing/too-large/error states, and lifecycle fencing without making Compose a second attachment owner.",
       "source_owner": "Desktop conversation workspace spreadsheet preview controller and shipped spreadsheet runtime",
       "direct_callers": [
-        "conversation attachment/file preview surface"
+        "conversation attachment/file-card table projection",
+        "spreadsheet viewer mount"
       ],
       "downstream_dependencies": [
         "attachment byte reader",
@@ -9927,7 +9936,7 @@
         "archive/XML parsing fails closed on unsafe paths, entity expansion, or external relationships",
         "unsupported legacy BIFF .xls remains an explicit preview gap rather than being misparsed"
       ],
-      "cancellation_behavior": "Changing/closing the media item invalidates the presentation load generation; late results may not overwrite another attachment.",
+      "cancellation_behavior": "Changing/closing/resetting/disposing the media item invalidates the presentation generation; late byte-read or native open/share completion cannot become canonical attachment state or overwrite another attachment.",
       "retry_semantics": "Preview reads are side-effect free and may be explicitly reopened; no upload/send side effect is retried by the viewer.",
       "idempotency_semantics": "Re-parsing the same attachment bytes produces the same sheet/cell projection; sheet selection is ephemeral.",
       "process_death_recovery": "Preview state is reconstructed from canonical attachment bytes on reopen; no preview state is a durable business owner.",
@@ -9940,9 +9949,9 @@
         "mobile/android/app/src/test/java/com/ombhrum/fabushi/AndroidMediaViewerProjectionTest.kt"
       ],
       "android_owner": "Native Android media viewer consumes bounded spreadsheet projections; canonical attachment ownership remains outside Compose.",
-      "platform_delta": "Android replaces Desktop's dynamically loaded JavaScript XLSX vendor runtime with bounded Java/Kotlin ZIP/XML OOXML parsing for xlsx/xlsm/xltx/xltm and native Compose sheet/cell UI. CSV/TSV use the Desktop-equivalent parser. Legacy binary BIFF .xls, which Desktop classifies as table and its vendor runtime can parse, is still not previewed natively and falls through to the external-file path.",
+      "platform_delta": "Android replaces Desktop's dynamically loaded JavaScript XLSX vendor runtime with bounded Java/Kotlin ZIP/XML OOXML parsing for xlsx/xlsm/xltx/xltm and native Compose sheet/cell UI. CSV/TSV use the Desktop-equivalent parser. Desktop provider generation fencing maps to AndroidMediaViewer loadGeneration/dispose fencing; Desktop download action maps to Android FileProvider external-open/share. Legacy binary BIFF .xls remains an in-app preview gap.",
       "implementation_status": "mapped",
-      "production_wiring": "At Android code head 1e66eb907c46043bcb429c15abeae253b44ef443, CSV/TSV plus bounded OOXML workbook parsing and multi-sheet native rendering are wired into AndroidMediaViewer. ZIP entry count/expanded-size/path fences, DTD/external-entity denial, relationship confinement, shared/inline string and typed cell projection are implemented. Legacy .xls remains open, so this responsibility is intentionally not promoted to implemented.",
+      "production_wiring": "At Android code head 1e66eb907c46043bcb429c15abeae253b44ef443, CSV/TSV plus bounded OOXML workbook parsing and multi-sheet native rendering are wired into AndroidMediaViewer. ZIP entry count/expanded-size/path fences, DTD/external-entity denial, relationship confinement, shared/inline string and typed cell projection are implemented. AndroidMediaViewer loadGeneration/dispose fencing makes replaced/closed attachment completions inert; FileProvider external-open/share is the platform replacement for Desktop download. Legacy .xls remains open, so this responsibility stays mapped.",
       "unit_test": "AndroidMediaViewerProjectionTest covers CSV quoting/truncation plus OOXML detection, two-sheet/shared-string/typed-cell projection and malicious DOCTYPE/relationship traversal rejection; exact-head GitHub Actions are currently running.",
       "contract_test": "Desktop source audit confirms tableExtensions csv/tsv/xlsx/xls and 25 MiB/2,000-row/200-render-row contracts. Android keeps the same main caps for supported formats; legacy .xls is explicitly unresolved.",
       "integration_test": "Native AndroidMediaViewer production branch is wired for supported spreadsheet formats; exact-head compile/unit/lint and packaged/device interaction remain pending.",
