@@ -194,6 +194,7 @@ fun GrokHomeSurface(
     HiddenBotsDialog(
         open = showHiddenBots,
         hiddenBots = botState.bots.filter { it.isHidden },
+        pendingMutationIds = botState.hiddenMutationPendingIds,
         onClose = { showHiddenBots = false },
         onOpenBot = { bot ->
             showHiddenBots = false

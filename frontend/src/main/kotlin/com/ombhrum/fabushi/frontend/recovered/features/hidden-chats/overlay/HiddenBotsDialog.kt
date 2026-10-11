@@ -45,6 +45,7 @@ internal fun hiddenChatsEmptyLabel(rows: List<HiddenBotRowProjection>): String? 
 internal fun HiddenBotsDialog(
     open: Boolean,
     hiddenBots: List<MobileBotSummaryAndroid>,
+    pendingMutationIds: Set<String>,
     onClose: () -> Unit,
     onOpenBot: (MobileBotSummaryAndroid) -> Unit,
     onUnhide: (String) -> Unit,
@@ -93,6 +94,7 @@ internal fun HiddenBotsDialog(
                             }
                             TextButton(
                                 onClick = { onUnhide(row.id) },
+                                enabled = row.id !in pendingMutationIds,
                                 modifier = Modifier.testTag("hidden-bot-unhide-" + row.id),
                             ) {
                                 Text("Unhide")

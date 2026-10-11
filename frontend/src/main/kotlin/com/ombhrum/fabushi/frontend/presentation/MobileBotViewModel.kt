@@ -223,6 +223,7 @@ data class MobileBotUiState(
     val asyncTasksLoading: Boolean = false,
     val asyncTasksError: String? = null,
     val groupMembersUpdatingId: String? = null,
+    val hiddenMutationPendingIds: Set<String> = emptySet(),
     val computerRebuild: MobileComputerRebuildUiState = MobileComputerRebuildUiState(),
     val conversationOutline: MobileConversationOutlineState = MobileConversationOutlineState(),
 )
@@ -238,6 +239,37 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
     private var rosterSelectionAccountSlot: String? = null
     private val agentSettingsFence = AgentSettingsMutationFence()
     private val mutableState = MutableStateFlow(MobileBotUiState())
+    private val hiddenChatsMutationController = HiddenChatsMutationController(
+        readAgent = { id ->
+            mutableState.value.bots.firstOrNull { it.id == id }?.let {
+                HiddenChatsMutationAgent(it.id, it.isHidden)
+            }
+        },
+        onOptimisticChange = { id, isHidden ->
+            commitState(
+                mutableState.value.copy(
+                    bots = mutableState.value.bots.map { bot ->
+                        if (bot.id == id) bot.copy(isHidden = isHidden) else bot
+                    },
+                ),
+            )
+        },
+        onRollback = { id, _, previousValue ->
+            commitState(
+                mutableState.value.copy(
+                    bots = mutableState.value.bots.map { bot ->
+                        if (bot.id == id) bot.copy(isHidden = previousValue) else bot
+                    },
+                ),
+            )
+        },
+        onPendingChange = { id, pending ->
+            val next = mutableState.value.hiddenMutationPendingIds.toMutableSet().apply {
+                if (pending) add(id) else remove(id)
+            }
+            commitState(mutableState.value.copy(hiddenMutationPendingIds = next))
+        },
+    )
     private val messagesByBot = mutableMapOf<String, List<MobileChatMessage>>()
     private val draftWriteMutex = Mutex()
     private var draftScopeGeneration = 0L
@@ -437,6 +469,7 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
                 if (nextSlot != rosterSelectionAccountSlot) {
                     withContext(Dispatchers.IO) { rosterSelection.restore(nextSlot) }
                     rosterSelectionAccountSlot = nextSlot
+                    hiddenChatsMutationController.setScope(nextSlot, mutableState.value.activeBot?.id)
                     sendPresentationGeneration += 1
                     closeConversationOutline()
                     cancelEditorSuggestionRequest()
@@ -465,12 +498,20 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
                 cachedInstalledBots ?: previous.filter { it.miniAppId != null }
             }
             val surfaceBots = surfaceResult.getOrElse { previous.filter { it.miniAppId == null } }
-            val bots = (installedBots + surfaceBots)
+            val canonicalBots = (installedBots + surfaceBots)
                 .distinctBy { it.id }
                 .sortedWith(
                     compareByDescending<MobileBotSummaryAndroid> { it.miniAppId != null }
                         .thenBy { it.name.lowercase() },
                 )
+            hiddenChatsMutationController.ingestAgents(
+                canonicalBots.map { HiddenChatsMutationAgent(it.id, it.isHidden) },
+            )
+            val bots = canonicalBots.map { bot ->
+                bot.copy(
+                    isHidden = hiddenChatsMutationController.projectHidden(bot.id, bot.isHidden),
+                )
+            }
             val diagnostics = buildList {
                 installedResult.exceptionOrNull()?.let { error ->
                     add("canonical installed projection: ${(error.message ?: error::class.java.simpleName).take(240)}")
@@ -810,11 +851,41 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     fun hideBot(botId: String) {
-        mutateAgent(botId, "Hide agent failed") { coordinator.agentSetHidden(botId, true) }
+        setBotHidden(botId, true, "Hide agent failed")
     }
 
     fun unhideBot(botId: String) {
-        mutateAgent(botId, "Unhide agent failed") { coordinator.agentSetHidden(botId, false) }
+        setBotHidden(botId, false, "Unhide agent failed")
+    }
+
+    private fun setBotHidden(botId: String, isHidden: Boolean, fallbackMessage: String) {
+        hiddenChatsMutationController.setScope(
+            rosterSelectionAccountSlot,
+            mutableState.value.activeBot?.id,
+        )
+        val token = hiddenChatsMutationController.begin(botId, isHidden) ?: return
+        viewModelScope.launch {
+            runCatching {
+                withContext(Dispatchers.IO) { coordinator.agentSetHidden(botId, isHidden) }
+            }.onSuccess {
+                hiddenChatsMutationController.settle(
+                    token,
+                    HiddenChatsMutationOutcome.CONFIRMED,
+                )
+                refreshBots()
+            }.onFailure { error ->
+                val outcome = hiddenChatsMutationFailureOutcome(error)
+                hiddenChatsMutationController.settle(token, outcome)
+                commitState(
+                    mutableState.value.copy(
+                        error = error.message ?: fallbackMessage,
+                    ),
+                )
+                if (outcome == HiddenChatsMutationOutcome.DETERMINISTIC_REJECTION) {
+                    refreshBots()
+                }
+            }
+        }
     }
 
     fun setBotUnread(botId: String, isUnread: Boolean) {
@@ -939,6 +1010,7 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     fun openBot(bot: MobileBotSummaryAndroid, targetEntryId: String? = null) {
+        hiddenChatsMutationController.setScope(rosterSelectionAccountSlot, bot.id)
         rosterSelection.select(bot.id)
         openBotGeneration += 1
         sendPresentationGeneration += 1
@@ -1068,6 +1140,7 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
 
     fun closeBot() {
         if (mutableState.value.busy) return
+        hiddenChatsMutationController.setScope(rosterSelectionAccountSlot, null)
         closeConversationOutline()
         rosterSelection.select(null)
         openBotGeneration += 1
@@ -1104,6 +1177,7 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     fun resetAccountScope() {
+        hiddenChatsMutationController.reset()
         closeConversationOutline()
         rosterSelection.reset()
         rosterSelectionAccountSlot = null
@@ -2680,6 +2754,7 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
         activeDraftId = null
         editorSuggestionFence.dispose()
         agentSettingsFence.dispose()
+        hiddenChatsMutationController.dispose()
         rosterSelection.dispose()
         featureEventSubscription?.close()
         featureEventSubscription = null
