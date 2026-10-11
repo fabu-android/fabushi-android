@@ -2081,11 +2081,11 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
             return
         }
         if (type == "agent.async-tasks.changed") {
-            val parentId = event.optString("parentAgentId")
             val visibleAgentId = mutableState.value.asyncTasksAgent?.id
-            if (visibleAgentId != null && parentId == visibleAgentId) {
+            if (visibleAgentId != null && event.optString("parentAgentId") == visibleAgentId) {
                 refreshAsyncTasks()
             }
+            val parentId = event.optString("parentAgentId")
             if (mutableState.value.conversationOutline.parentAgentId == parentId) {
                 refreshConversationOutline()
             }
