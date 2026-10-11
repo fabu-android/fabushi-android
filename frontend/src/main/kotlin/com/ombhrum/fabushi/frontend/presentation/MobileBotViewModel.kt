@@ -21,6 +21,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import org.json.JSONArray
 import org.json.JSONObject
 import java.util.UUID
 
@@ -1856,6 +1857,7 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
                         agentId = bot.id,
                         nonce = nonce,
                         text = text,
+                        richText = plainTipTapRichText(text),
                         attachments = sentDraft.attachments,
                         entries = listOf(messageAcknowledgementEntry(nonce)),
                     )
@@ -2171,6 +2173,29 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
             }
         }
     }
+
+    internal fun plainTipTapRichText(text: String): JSONObject =
+        JSONObject()
+            .put("type", "doc")
+            .put(
+                "content",
+                JSONArray().apply {
+                    text.split('\n').forEach { line ->
+                        put(
+                            JSONObject()
+                                .put("type", "paragraph")
+                                .put(
+                                    "content",
+                                    JSONArray().apply {
+                                        if (line.isNotEmpty()) {
+                                            put(JSONObject().put("type", "text").put("text", line))
+                                        }
+                                    },
+                                ),
+                        )
+                    }
+                },
+            )
 
     private fun messageAcknowledgementEntry(nonce: String): AndroidSendAcknowledgementEntry =
         AndroidSendAcknowledgementEntry(
