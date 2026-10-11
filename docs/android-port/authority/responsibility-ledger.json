@@ -10693,6 +10693,81 @@
       "artifact": null,
       "verification_status": "not-verified",
       "notes": "Fresh deterministic audit of Desktop view.css blob 9e45e4ffdbd1669817bbdd1def33c25c8312b644. This is a platform-delta mapping only, not a claim that every Desktop visual rule is implemented. Desktop-only hover/window/DOM mechanics require explicit replacement decisions; user-visible workspace semantics still require focused same-head/package/device evidence."
+    },
+    {
+      "responsibility_id": "NAVIGATION-DEEP-LINK-INFO-ANDROID-001",
+      "domain": "navigation",
+      "desktop_sources": [
+        {
+          "path": "frontend/src/recovered/features/deep-links/overlay/model.ts",
+          "blob_sha": "467090c6e1a65058391e3460f1e625338dd5d5ce",
+          "symbols": [
+            "DeepLinkInfo",
+            "deepLinkRoute",
+            "deepLinkSourceLabel"
+          ]
+        },
+        {
+          "path": "frontend/src/recovered/features/deep-links/overlay/view.tsx",
+          "blob_sha": "20919f3c0e81d954604f2306f9f5e9d8aa8415c7",
+          "symbols": [
+            "DeepLinkInfoDialog"
+          ]
+        }
+      ],
+      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "responsibility": "Present a native Deep Links information surface for an allowlisted deep-link activation, showing the canonical route and whether activation originated from the custom protocol or HTTPS, with explicit close/done lifecycle.",
+      "source_owner": "Desktop deep-link overlay model/view consuming typed parsed deep-link information",
+      "direct_callers": [
+        "shipping deep-link dispatch -> DeepLinkInfoDialog"
+      ],
+      "downstream_dependencies": [
+        "shared deep-link parser/controller",
+        "renderer activation queue",
+        "native dialog lifecycle"
+      ],
+      "state_owner": "Deep-link parser/controller owns accepted activation identity; overlay owns only transient visible dialog state.",
+      "persistent_state": [],
+      "protocol_wire_contract": [
+        "version=1",
+        "route=info",
+        "topic=deep-links",
+        "source=protocol|https"
+      ],
+      "visible_effect": "Opening the deep-link info route shows a modal confirming deep links work, the canonical route and activation source.",
+      "failure_behavior": [
+        "invalid/unallowlisted link never opens the dialog",
+        "null link renders no surface"
+      ],
+      "cancellation_behavior": "Close/Done only dismiss presentation state; no domain side effect is retried.",
+      "retry_semantics": "Repeated identical activations are deduped by the controller window; presentation itself has no retry owner.",
+      "idempotency_semantics": "Rendering the same typed DeepLinkInfo is side-effect free.",
+      "process_death_recovery": "A cold-start Intent is parsed/queued by the Activity/controller; the overlay does not persist a second activation owner.",
+      "account_fencing": "Info route is non-account-mutating; account-sensitive deep links remain separately fenced by their domain owners.",
+      "security_boundary": "Only strict allowlisted parser output may reach presentation; arbitrary URL payloads are not rendered as privileged actions.",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/recovered/features/deep-links/overlay/model.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/recovered/features/deep-links/overlay/view_view.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/production/ProductionRenderer_view.kt",
+        "source/android-preload/src/main/kotlin/com/ombhrum/fabushi/androidpreload/deeplink/AndroidDeepLink.kt",
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/deep-link/deep-link-controller.kt",
+        "mobile/android/app/src/main/java/com/ombhrum/fabushi/MainActivity.kt",
+        "mobile/android/app/src/main/AndroidManifest.xml",
+        "mobile/android/app/src/test/java/com/ombhrum/fabushi/AndroidDeepLinkRouterTest.kt"
+      ],
+      "android_owner": "Strict AndroidDeepLinkRouter/Controller + transient ProductionRenderer Compose dialog",
+      "platform_delta": "Android uses the app-owned fabushi:// custom scheme and native AlertDialog instead of Desktop sand:// + Electron overlay primitives. Desktop also accepts the exact HTTPS cursor.com/sand/link route; current Android manifest/router does not yet expose an HTTPS app-link activation, although the typed model/source label can represent HTTPS.",
+      "implementation_status": "mapped",
+      "production_wiring": "Protocol path is production-wired: MainActivity Intent -> AndroidDeepLinkController -> typed AndroidDeepLink.Info -> ProductionRenderer -> DeepLinkInfoDialog. Router bounds input to 2048 printable ASCII bytes, rejects malformed percent/path/credentials/fragments, dedupes and caps pre-render pending activation. HTTPS source activation is still absent from Android Manifest/router, so full source responsibility is not implemented.",
+      "unit_test": "AndroidDeepLinkRouterTest covers typed info activation, extra/topic rejection, bounded controller queue and dedupe. Focused overlay route/source-label tests plus HTTPS activation tests remain required.",
+      "contract_test": "Required: protocol and HTTPS source mapping must preserve strict allowlist and canonical route semantics without accepting arbitrary hosts/paths.",
+      "integration_test": "Required: cold start + onNewIntent activation through MainActivity for both supported sources.",
+      "packaged_test": "Required on final package with manifest intent filters and no overbroad URL capture.",
+      "device_test": "Required for cold/warm activation, duplicate activation, back/dismiss, process recreation and HTTPS chooser/app-link behavior.",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Fresh deterministic audit. Existing native protocol implementation is real but insufficient to close Desktop overlay source because Desktop current shared parser/controller also carries source=https. Keep mapped/not-verified until that platform delta is resolved and same-head/package/device evidence exists."
     }
   ],
   "traceability": {
