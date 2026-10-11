@@ -4,6 +4,7 @@ import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidCoordinatorPort
+import com.ombhrum.fabushi.androidpreload.runtime.AndroidConversationOutlineItem
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidSendAcknowledgementEntry
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidSidebarSection
 import kotlinx.coroutines.CancellationException
@@ -118,6 +119,38 @@ internal fun projectMobileAsyncTasks(rows: org.json.JSONArray): List<MobileAsync
         }
     }
 
+data class MobileConversationOutlineSubagent(
+    val id: String,
+    val type: String,
+    val title: String,
+    val status: String = "running",
+)
+
+data class MobileConversationOutlineState(
+    val parentAgentId: String? = null,
+    val parentAgentName: String = "",
+    val selectedAgentId: String? = null,
+    val items: List<AndroidConversationOutlineItem> = emptyList(),
+    val subagents: List<MobileConversationOutlineSubagent> = emptyList(),
+    val loading: Boolean = false,
+    val error: String? = null,
+) {
+    val isOpen: Boolean get() = parentAgentId != null
+}
+
+internal fun projectConversationOutlineSubagents(tasks: List<MobileAsyncTask>): List<MobileConversationOutlineSubagent> =
+    tasks.asSequence()
+        .filter { it.kind == "subagent" }
+        .map {
+            MobileConversationOutlineSubagent(
+                id = it.id,
+                type = it.subagentType?.takeIf(String::isNotBlank) ?: "subagent",
+                title = it.label,
+            )
+        }
+        .distinctBy(MobileConversationOutlineSubagent::id)
+        .toList()
+
 data class MobileComputerRebuildUiState(
     val imageUpdateAvailable: Boolean? = null,
     val pending: Boolean = false,
@@ -179,6 +212,7 @@ data class MobileBotUiState(
     val asyncTasksError: String? = null,
     val groupMembersUpdatingId: String? = null,
     val computerRebuild: MobileComputerRebuildUiState = MobileComputerRebuildUiState(),
+    val conversationOutline: MobileConversationOutlineState = MobileConversationOutlineState(),
 )
 
 class MobileBotViewModel(application: Application) : AndroidViewModel(application) {
@@ -206,6 +240,10 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
     private var sendPresentationGeneration = 0L
     private var asyncTasksGeneration = 0L
     private var asyncTasksJob: Job? = null
+    private var outlineGeneration = 0L
+    private var outlineRefreshJob: Job? = null
+    private var outlinePollJob: Job? = null
+    private var outlineRefreshPending = false
     private var groupMembersGeneration = 0L
     private var computerRebuildGeneration = 0L
     private val editorSuggestionFence = MobileEditorSuggestionRequestFence()
@@ -385,6 +423,7 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
                     withContext(Dispatchers.IO) { rosterSelection.restore(nextSlot) }
                     rosterSelectionAccountSlot = nextSlot
                     sendPresentationGeneration += 1
+                    closeConversationOutline()
                     cancelEditorSuggestionRequest()
                     agentSettingsFence.accountChanged(nextSlot)
                     commitState(
@@ -970,6 +1009,7 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
 
     fun closeBot() {
         if (mutableState.value.busy) return
+        closeConversationOutline()
         rosterSelection.select(null)
         openBotGeneration += 1
         sendPresentationGeneration += 1
@@ -995,6 +1035,7 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     fun resetAccountScope() {
+        closeConversationOutline()
         rosterSelection.reset()
         rosterSelectionAccountSlot = null
         openBotGeneration += 1
@@ -1013,6 +1054,138 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
         draftWriteJob = null
         activeDraftId = null
         commitState(MobileBotUiState())
+    }
+
+    fun openConversationOutline(bot: MobileBotSummaryAndroid) {
+        if (bot.miniAppId != null) return
+        outlineGeneration += 1
+        outlineRefreshJob?.cancel()
+        outlinePollJob?.cancel()
+        outlineRefreshJob = null
+        outlinePollJob = null
+        outlineRefreshPending = false
+        commitState(
+            mutableState.value.copy(
+                conversationOutline = MobileConversationOutlineState(
+                    parentAgentId = bot.id,
+                    parentAgentName = bot.name,
+                    selectedAgentId = bot.id,
+                    loading = true,
+                ),
+            ),
+        )
+        refreshConversationOutline()
+        startConversationOutlinePolling()
+    }
+
+    fun selectConversationOutlineAgent(agentId: String) {
+        val current = mutableState.value.conversationOutline
+        val parentId = current.parentAgentId ?: return
+        val allowed = agentId == parentId || current.subagents.any { it.id == agentId }
+        if (!allowed || current.selectedAgentId == agentId) return
+        outlineGeneration += 1
+        outlineRefreshJob?.cancel()
+        outlineRefreshJob = null
+        outlineRefreshPending = false
+        commitState(
+            mutableState.value.copy(
+                conversationOutline = current.copy(
+                    selectedAgentId = agentId,
+                    items = emptyList(),
+                    loading = true,
+                    error = null,
+                ),
+            ),
+        )
+        refreshConversationOutline()
+        startConversationOutlinePolling()
+    }
+
+    fun closeConversationOutline() {
+        outlineGeneration += 1
+        outlineRefreshPending = false
+        outlineRefreshJob?.cancel()
+        outlinePollJob?.cancel()
+        outlineRefreshJob = null
+        outlinePollJob = null
+        if (mutableState.value.conversationOutline.isOpen) {
+            commitState(mutableState.value.copy(conversationOutline = MobileConversationOutlineState()))
+        }
+    }
+
+    fun refreshConversationOutline() {
+        val snapshot = mutableState.value.conversationOutline
+        val parentId = snapshot.parentAgentId ?: return
+        val selectedId = snapshot.selectedAgentId ?: parentId
+        if (outlineRefreshJob?.isActive == true) {
+            outlineRefreshPending = true
+            return
+        }
+        val generation = outlineGeneration
+        val accountSlot = rosterSelectionAccountSlot
+        outlineRefreshJob = viewModelScope.launch {
+            val result = withContext(Dispatchers.IO) {
+                runCatching {
+                    val items = coordinator.conversationOutlineSnapshot(selectedId)
+                    val subagents = projectConversationOutlineSubagents(
+                        projectMobileAsyncTasks(coordinator.agentAsyncTasks(parentId)),
+                    )
+                    items to subagents
+                }
+            }
+            if (
+                generation != outlineGeneration ||
+                accountSlot != rosterSelectionAccountSlot ||
+                mutableState.value.conversationOutline.parentAgentId != parentId ||
+                mutableState.value.conversationOutline.selectedAgentId != selectedId
+            ) {
+                return@launch
+            }
+            result.onSuccess { (items, subagents) ->
+                val selectedStillAllowed = selectedId == parentId || subagents.any { it.id == selectedId }
+                commitState(
+                    mutableState.value.copy(
+                        conversationOutline = mutableState.value.conversationOutline.copy(
+                            selectedAgentId = if (selectedStillAllowed) selectedId else parentId,
+                            items = if (selectedStillAllowed) items else emptyList(),
+                            subagents = subagents,
+                            loading = false,
+                            error = null,
+                        ),
+                    ),
+                )
+                if (!selectedStillAllowed) outlineRefreshPending = true
+            }.onFailure { error ->
+                commitState(
+                    mutableState.value.copy(
+                        conversationOutline = mutableState.value.conversationOutline.copy(
+                            loading = false,
+                            error = error.message ?: "Conversation outline refresh failed",
+                        ),
+                    ),
+                )
+            }
+            outlineRefreshJob = null
+            if (outlineRefreshPending && generation == outlineGeneration) {
+                outlineRefreshPending = false
+                refreshConversationOutline()
+            }
+        }
+    }
+
+    private fun startConversationOutlinePolling() {
+        outlinePollJob?.cancel()
+        val generation = outlineGeneration
+        outlinePollJob = viewModelScope.launch {
+            while (generation == outlineGeneration && mutableState.value.conversationOutline.isOpen) {
+                delay(2_000)
+                val current = mutableState.value.conversationOutline
+                val selectedId = current.selectedAgentId
+                if (current.subagents.any { it.id == selectedId && it.status == "running" }) {
+                    refreshConversationOutline()
+                }
+            }
+        }
     }
 
     fun openAsyncTasks(bot: MobileBotSummaryAndroid) {
@@ -1908,9 +2081,13 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
             return
         }
         if (type == "agent.async-tasks.changed") {
-            val visibleAgentId = mutableState.value.asyncTasksAgent?.id ?: return
-            if (event.optString("parentAgentId") == visibleAgentId) {
+            val parentId = event.optString("parentAgentId")
+            val visibleAgentId = mutableState.value.asyncTasksAgent?.id
+            if (visibleAgentId != null && parentId == visibleAgentId) {
                 refreshAsyncTasks()
+            }
+            if (mutableState.value.conversationOutline.parentAgentId == parentId) {
+                refreshConversationOutline()
             }
             return
         }
@@ -1954,6 +2131,21 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
                 }
             }
             return
+        }
+
+        if (
+            mutableState.value.conversationOutline.isOpen &&
+            type in setOf(
+                "chat.message",
+                "chat.delta",
+                "agent.step",
+                "operation.started",
+                "operation.completed",
+                "operation.interrupted",
+                "operation.failed",
+            )
+        ) {
+            refreshConversationOutline()
         }
 
         val operationId = mutableState.value.operationId ?: return
@@ -2061,6 +2253,12 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
         asyncTasksGeneration += 1
         asyncTasksJob?.cancel()
         asyncTasksJob = null
+        outlineGeneration += 1
+        outlineRefreshPending = false
+        outlineRefreshJob?.cancel()
+        outlinePollJob?.cancel()
+        outlineRefreshJob = null
+        outlinePollJob = null
         groupMembersGeneration += 1
         editorSuggestionJob?.cancel()
         editorSuggestionJob = null
