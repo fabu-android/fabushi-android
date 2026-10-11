@@ -152,7 +152,7 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
         isTransportDown = ::isSendTransportDown,
         queue = ::queueSendAcknowledgementDirect,
         dispatch = ::dispatchSendAcknowledgementDirect,
-        cancelQueued = ::cancelQueuedSendAcknowledgementDirect,
+        cancelQueuedPersisted = ::cancelQueuedSendAcknowledgementDirect,
         onFlushed = ::publishFlushedSendAcknowledgement,
     )
     private val sendNetworkCallback = object : ConnectivityManager.NetworkCallback() {
