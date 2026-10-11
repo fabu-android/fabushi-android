@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
@@ -68,6 +69,9 @@ internal fun ConversationTranscript(
     val haptics = LocalHapticFeedback.current
     val listState = rememberLazyListState()
     val visibleMessages = messages
+    val transcriptAdjacency = remember(messages) {
+        projectChatMessageTranscriptAdjacency(messages)
+    }
     var referencedTargetId by remember { mutableStateOf<String?>(null) }
 
     LaunchedEffect(currentFindMessageId, messages) {
@@ -101,9 +105,21 @@ internal fun ConversationTranscript(
                 )
             }
         }
-        items(visibleMessages, key = { it.id }) { message ->
+        itemsIndexed(visibleMessages, key = { _, message -> message.id }) { index, message ->
+            val adjacency = transcriptAdjacency.getOrElse(index) { emptyTranscriptAdjacency() }
+            val bubbleShape = RoundedCornerShape(
+                topStart = if (adjacency.isContinuedFromPrev) 6.dp else 16.dp,
+                topEnd = if (adjacency.isContinuedFromPrev) 6.dp else 16.dp,
+                bottomStart = if (adjacency.isContinuedToNext) 6.dp else 16.dp,
+                bottomEnd = if (adjacency.isContinuedToNext) 6.dp else 16.dp,
+            )
             Row(
-                Modifier.fillMaxWidth(),
+                Modifier
+                    .fillMaxWidth()
+                    .padding(
+                        top = if (index > 0 && adjacency.isGroupStart) 4.dp else 0.dp,
+                        bottom = if (adjacency.isGroupEnd) 2.dp else 0.dp,
+                    ),
                 horizontalArrangement = if (message.outgoing) Arrangement.End else Arrangement.Start,
             ) {
                 Column(
@@ -111,11 +127,11 @@ internal fun ConversationTranscript(
                         .fillMaxWidth(0.78f)
                         .background(
                             if (message.outgoing) homeAccent.copy(alpha = 0.18f) else homeSurface,
-                            RoundedCornerShape(16.dp),
+                            bubbleShape,
                         )
                         .then(
                             if (currentFindMessageId == message.id && searchQuery.isNotBlank()) {
-                                Modifier.border(1.dp, homeAccent, RoundedCornerShape(16.dp))
+                                Modifier.border(1.dp, homeAccent, bubbleShape)
                             } else {
                                 Modifier
                             },

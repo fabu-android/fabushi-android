@@ -157,6 +157,8 @@ data class ChatMessage(
     val deliveryState: String = "sent",
     val edited: Boolean = false,
     val pinned: Boolean = false,
+    /** Canonical immutable sender identity used only for transcript presentation grouping. */
+    val senderId: String = "",
 )
 
 data class MessagingUiState(
@@ -605,7 +607,7 @@ internal class MessagingViewModel(application: Application) : AndroidViewModel(a
             latitude = latitude, longitude = longitude, pollQuestion = pollQuestion, pollOptions = pollOptions, pollMultipleAnswers = pollMultipleAnswers, outgoing = senderId == actorId,
             time = timeLabel(raw.optLong("createdAtMs")), replyToMessageId = raw.optString("replyToMessageId").takeIf { it.isNotBlank() },
             forwardOrigin = raw.optString("forwardOrigin").takeIf { it.isNotBlank() }, reactions = reactions, deliveryState = deliveryState,
-            edited = !raw.isNull("editedAtMs"), pinned = raw.optBoolean("pinned")
+            edited = !raw.isNull("editedAtMs"), pinned = raw.optBoolean("pinned"), senderId = senderId
         )
     }
 
