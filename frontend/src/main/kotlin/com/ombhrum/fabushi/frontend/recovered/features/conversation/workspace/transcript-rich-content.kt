@@ -231,7 +231,7 @@ private val boldInlinePattern = Regex("""(\*\*|__)(?=\S)([^\n]*?\S)\1""")
 private val italicInlinePattern = Regex("""(\*|_)(?=\S)([^\n]*?\S)\1""")
 private val strikeInlinePattern = Regex("""~~(?=\S)([^\n]*?\S)~~""")
 private val codeInlinePattern = Regex("""`([^`\n]+)`""")
-private val bareUrlTrailingPunctuation = Regex("""[),.!?;:\\]}]+$""")
+private val bareUrlTrailingPunctuation = Regex("""[),.!?;:\]}]+$""")
 
 private val transcriptInlinePatterns = listOf(
     TranscriptInlineMatchKind.MATH to inlineMathPattern,
