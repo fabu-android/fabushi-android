@@ -7,6 +7,8 @@ ROW = ROOT / "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/features/bot
 VM = ROOT / "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/presentation/MobileBotViewModel.kt"
 ACTIONS = ROOT / "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/production/AgentRowActions_view.kt"
 DELETE = ROOT / "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/production/AgentDeleteConfirmation_view.kt"
+READINESS = ROOT / "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/recovered/features/roster/access-readiness.kt"
+RENDERER = ROOT / "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/production/ProductionRenderer_view.kt"
 
 
 class AgentRosterPresentationWiringTest(unittest.TestCase):
@@ -54,6 +56,27 @@ class AgentRosterPresentationWiringTest(unittest.TestCase):
         self.assertNotIn("SharedPreferences", source)
         self.assertNotIn("AndroidCoordinatorRuntime(", source)
         self.assertNotIn("MahayanaHost(", source)
+
+    def test_shipping_roster_readiness_is_derived_from_coordinator_truth(self):
+        readiness = READINESS.read_text(encoding="utf-8")
+        renderer = RENDERER.read_text(encoding="utf-8")
+        home = HOME.read_text(encoding="utf-8")
+        row = ROW.read_text(encoding="utf-8")
+
+        self.assertIn("access: AccountAccessProjection", readiness)
+        self.assertIn("connection: RootConnectionResilienceProjection", readiness)
+        self.assertIn('?.let { "epoch:$it" }', readiness)
+        self.assertNotIn("SharedPreferences", readiness)
+
+        self.assertIn("val rosterAccessReadiness = selectRosterAccessReadiness(", renderer)
+        self.assertIn("access = state.accountAccessProjection", renderer)
+        self.assertIn("connection = state.rootConnectionProjection", renderer)
+        self.assertIn("rosterAccessReadiness = rosterAccessReadiness", renderer)
+
+        self.assertIn("rosterAccessReadiness.isLoaded && rosterAccessReadiness.isConnected", home)
+        self.assertIn("interactionReady = !canonicalRosterAgent || rosterAccessReadiness.isSelectionReady", home)
+        self.assertIn("interactionReady: Boolean", row)
+        self.assertIn("interactionReady &&", row)
 
 
 if __name__ == "__main__":
