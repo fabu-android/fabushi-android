@@ -5578,21 +5578,23 @@
       "android_disposition": "android-adapted",
       "android_target": [
         "source/host/src/messaging_service.rs",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/features/conversations/ForwardMessagePresentation.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/features/conversations/ConversationSurfaces.kt",
         "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/presentation/MessagingViewModel.kt",
-        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/production/ProductionRenderer_view.kt"
+        "mobile/android/app/src/test/java/com/ombhrum/fabushi/ForwardMessagePresentationTest.kt"
       ],
       "android_owner": "Rust AndroidMessagingService canonical command owner + native MessagingViewModel/Compose interaction",
       "platform_delta": "Desktop modal/multi-select keyboard interaction becomes native Compose selection/search. Host access, protected-content, stable mutation and durable forward semantics remain mandatory.",
-      "implementation_status": "mapped",
-      "production_wiring": "Host forwardMessage is durable and validates source/destination access, protected content and bounded clientMessageId; MessagingViewModel exposes a production forward command. Native UI currently forwards to one destination at a time and does not yet prove Desktop-equivalent multi-recipient search, drop-captions/drop-sender options, stable cross-destination request identity or per-destination settlement.",
-      "unit_test": "Rust messaging tests cover forward persistence/reopen; focused native recipient/selection/settlement tests remain required.",
-      "contract_test": "required for duplicate/stable client identity, protected content, destination access and partial multi-destination settlement",
-      "integration_test": "required through native conversation message action -> recipient UI -> Host forward -> canonical projection",
+      "implementation_status": "implemented",
+      "production_wiring": "Native Compose forward dialog now preserves Desktop multi-recipient search/selection with a 50-row bound, stable per-open batch identity, selection-order dispatch, drop-sender/drop-caption privacy options, hardware-keyboard navigation/toggle/submit shortcuts, single-flight dismissal fencing and partial-settlement retry. MessagingViewModel sends every destination through the existing canonical Rust Host forwardMessage command with a destination-scoped stable clientMessageId, reports per-destination sent/failed settlement, removes only successful recipients from the retry set, and reuses the same batch identity for failed destinations. The Host remains the sole canonical message/permission/idempotency owner.",
+      "unit_test": "ForwardMessagePresentationTest covers recipient normalization/order, destination-scoped stable mutation identity, privacy coupling, and Desktop-equivalent keyboard navigation/toggle/submit helpers. Rust messaging tests cover forward persistence, duplicate replay/payload-conflict fencing, source/destination access and privacy semantics. Exact-head GitHub Actions pending.",
+      "contract_test": "Production request carries stable batch-derived clientMessageId plus privacy to canonical Host; Host revalidates permissions and idempotent payload on every destination. Partial failures remain explicit and retry only failed destinations with the same request identity. Exact-head CI pending.",
+      "integration_test": "Production ConversationDetail -> MessagingViewModel -> typed Coordinator/Host forward route is wired for multi-destination settlement; same-head compile/unit/lint and packaged/device keyboard/touch journeys remain required.",
       "packaged_test": "required on final release for multi-recipient forward success/failure and restart",
       "device_test": "required for keyboard/back/accessibility and process recreation where applicable",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Mapped only. Existing single-destination Android command is not sufficient to claim Desktop ForwardMessageDialog parity."
+      "notes": "Implemented without moving canonical forward truth into Compose. Do not mark verified until the same exact Android HEAD passes Kotlin/Compose/Rust/architecture, package/device acceptance, and partial-failure retry evidence."
     },
     {
       "responsibility_id": "UI-PRODUCTION-COMPOSITION-ANDROID-001",

@@ -10,6 +10,7 @@ import android.os.CancellationSignal
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.focusable
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -24,12 +25,15 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
@@ -37,6 +41,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -64,6 +69,13 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.isCtrlPressed
+import androidx.compose.ui.input.key.isMetaPressed
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.testTag
@@ -76,6 +88,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import kotlinx.coroutines.delay
+import java.util.UUID
 
 
 internal data class LogoutConfirmationPolicy(
@@ -123,7 +136,7 @@ internal fun ConversationHome(
     onDeleteMessage: (String, String) -> Unit,
     onSetMessagePinned: (String, String, Boolean) -> Unit,
     onSetReaction: (String, String, String, Boolean) -> Unit,
-    onForwardMessage: (String, String, List<String>) -> Unit,
+    onForwardMessage: (ForwardMessageBatchRequest, (List<ForwardSettlement>) -> Unit) -> Unit,
     onStartTyping: (String) -> Unit,
     onStopTyping: (String) -> Unit,
     onSetPinned: (ConversationSummary, Boolean) -> Unit,
@@ -258,7 +271,7 @@ internal fun ConversationHome(
                     desiredReactionEnabled(message, reaction),
                 )
             },
-            onForward = { messageId, destinationIds -> onForwardMessage(conversation.id, messageId, destinationIds) },
+            onForward = onForwardMessage,
             forwardDestinations = conversations.filter { it.id != conversation.id && !it.isArchived },
             typingActorName = messagingState.typingActorByConversation[conversation.id],
             onTypingChanged = { typing -> if (typing) onStartTyping(conversation.id) else onStopTyping(conversation.id) },
@@ -453,7 +466,7 @@ internal fun ConversationDetail(
     onDelete: (String) -> Unit,
     onSetMessagePinned: (String, Boolean) -> Unit,
     onReact: (ChatMessage, String) -> Unit,
-    onForward: (String, List<String>) -> Unit,
+    onForward: (ForwardMessageBatchRequest, (List<ForwardSettlement>) -> Unit) -> Unit,
     forwardDestinations: List<ConversationSummary>,
     typingActorName: String?,
     onTypingChanged: (Boolean) -> Unit,
@@ -478,7 +491,14 @@ internal fun ConversationDetail(
     var editingMessage by remember { mutableStateOf<ChatMessage?>(null) }
     var forwardingMessage by remember { mutableStateOf<ChatMessage?>(null) }
     var forwardQuery by remember { mutableStateOf("") }
-    var forwardSelection by remember { mutableStateOf(setOf<String>()) }
+    var forwardSelection by remember { mutableStateOf(listOf<String>()) }
+    var forwardBatchId by remember { mutableStateOf<String?>(null) }
+    var forwardDropSenderNames by remember { mutableStateOf(false) }
+    var forwardDropCaptions by remember { mutableStateOf(false) }
+    var forwardSubmitting by remember { mutableStateOf(false) }
+    var forwardFailure by remember { mutableStateOf<String?>(null) }
+    var forwardActiveRecipientIndex by remember { mutableStateOf(0) }
+    val forwardRecipientListState = rememberLazyListState()
     var mediaViewerMessageId by remember(conversation.id) { mutableStateOf<String?>(null) }
     var showConversationInfo by remember { mutableStateOf(false) }
     var showChatSearch by remember { mutableStateOf(false) }
@@ -653,7 +673,13 @@ internal fun ConversationDetail(
                     TextButton(onClick = { replyTarget = message; editingMessage = null; selectedMessage = null }) { Text("回复") }
                     TextButton(onClick = {
                         forwardQuery = ""
-                        forwardSelection = emptySet()
+                        forwardSelection = emptyList()
+                        forwardBatchId = UUID.randomUUID().toString()
+                        forwardDropSenderNames = false
+                        forwardDropCaptions = false
+                        forwardSubmitting = false
+                        forwardFailure = null
+                        forwardActiveRecipientIndex = 0
                         forwardingMessage = message
                         selectedMessage = null
                     }) { Text("转发") }
@@ -672,73 +698,208 @@ internal fun ConversationDetail(
     forwardingMessage?.let { message ->
         val normalizedQuery = forwardQuery.trim()
         val filteredDestinations = remember(forwardDestinations, normalizedQuery) {
-            if (normalizedQuery.isEmpty()) forwardDestinations
-            else forwardDestinations.filter { destination ->
-                destination.title.contains(normalizedQuery, ignoreCase = true) ||
-                    destination.preview.contains(normalizedQuery, ignoreCase = true)
+            val filtered = if (normalizedQuery.isEmpty()) {
+                forwardDestinations
+            } else {
+                forwardDestinations.filter { destination ->
+                    destination.title.contains(normalizedQuery, ignoreCase = true) ||
+                        destination.preview.contains(normalizedQuery, ignoreCase = true)
+                }
+            }
+            filtered.take(50)
+        }
+        LaunchedEffect(filteredDestinations.size, forwardActiveRecipientIndex, message.id) {
+            if (filteredDestinations.isNotEmpty()) {
+                val bounded = forwardActiveRecipientIndex.coerceIn(0, filteredDestinations.lastIndex)
+                if (bounded != forwardActiveRecipientIndex) forwardActiveRecipientIndex = bounded
+                forwardRecipientListState.scrollToItem(bounded)
+            } else if (forwardActiveRecipientIndex != 0) {
+                forwardActiveRecipientIndex = 0
             }
         }
+
+        fun resetForwardDialog() {
+            forwardingMessage = null
+            forwardQuery = ""
+            forwardSelection = emptyList()
+            forwardBatchId = null
+            forwardDropSenderNames = false
+            forwardDropCaptions = false
+            forwardSubmitting = false
+            forwardFailure = null
+            forwardActiveRecipientIndex = 0
+        }
+
+        val submitForward: () -> Unit = submitForward@{
+            if (forwardSubmitting) return@submitForward
+            val batchId = forwardBatchId ?: return@submitForward
+            val destinations = normalizeForwardDestinations(forwardSelection)
+            if (destinations.isEmpty()) return@submitForward
+            val request = ForwardMessageBatchRequest(
+                sourceConversationId = conversation.id,
+                messageId = message.id,
+                destinationConversationIds = destinations,
+                batchId = batchId,
+                dropSenderNames = forwardDropSenderNames,
+                dropCaptions = forwardDropCaptions,
+            )
+            forwardSubmitting = true
+            forwardFailure = null
+            onForward(request) settlement@{ settlements ->
+                if (forwardingMessage?.id != message.id || forwardBatchId != batchId) return@settlement
+                forwardSubmitting = false
+                val succeeded = settlements
+                    .filter { it.status == ForwardSettlementStatus.SENT }
+                    .mapTo(mutableSetOf()) { it.conversationId }
+                forwardSelection = forwardSelection.filterNot { it in succeeded }
+                val failed = settlements.filter { it.status == ForwardSettlementStatus.FAILED }
+                if (failed.isEmpty()) {
+                    resetForwardDialog()
+                } else {
+                    forwardFailure = if (failed.size == 1) {
+                        failed.first().error ?: "一个会话转发失败"
+                    } else {
+                        "${failed.size} 个会话转发失败；重试会复用同一请求身份。"
+                    }
+                }
+            }
+        }
+
         AlertDialog(
-            onDismissRequest = {
-                forwardingMessage = null
-                forwardQuery = ""
-                forwardSelection = emptySet()
-            },
-            title = { Text("转发到") },
+            onDismissRequest = { if (!forwardSubmitting) resetForwardDialog() },
+            title = { Text("转发消息") },
             text = {
-                Column {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        "选择一个或多个会话。发送时会由 Host 再次校验权限。",
+                        color = homeSecondaryText,
+                        style = MaterialTheme.typography.bodySmall,
+                    )
                     OutlinedTextField(
                         value = forwardQuery,
-                        onValueChange = { forwardQuery = it },
+                        onValueChange = { forwardQuery = it; forwardActiveRecipientIndex = 0 },
                         modifier = Modifier.fillMaxWidth().testTag("forward-recipient-search"),
+                        enabled = !forwardSubmitting,
                         singleLine = true,
                         label = { Text("搜索会话") },
                     )
                     if (filteredDestinations.isEmpty()) {
                         Text(
-                            if (forwardDestinations.isEmpty()) "暂无其他会话" else "没有匹配的会话",
+                            if (forwardDestinations.isEmpty()) "暂无可转发会话" else "没有匹配的可转发会话",
                             color = homeSecondaryText,
-                            modifier = Modifier.padding(top = 8.dp),
                         )
-                    }
-                    filteredDestinations.take(50).forEach { destination ->
-                        val selected = destination.id in forwardSelection
-                        TextButton(
-                            onClick = {
-                                forwardSelection = if (selected) {
-                                    forwardSelection - destination.id
-                                } else {
-                                    forwardSelection + destination.id
-                                }
-                            },
-                            modifier = Modifier.fillMaxWidth().testTag("forward-recipient-${destination.id}"),
+                    } else {
+                        LazyColumn(
+                            state = forwardRecipientListState,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(max = 280.dp)
+                                .focusable()
+                                .onPreviewKeyEvent { event ->
+                                    if (event.type != KeyEventType.KeyDown || forwardSubmitting) return@onPreviewKeyEvent false
+                                    val navigationKey = when (event.key) {
+                                        Key.DirectionDown -> ForwardRecipientNavigationKey.ARROW_DOWN
+                                        Key.DirectionUp -> ForwardRecipientNavigationKey.ARROW_UP
+                                        Key.PageDown -> ForwardRecipientNavigationKey.PAGE_DOWN
+                                        Key.PageUp -> ForwardRecipientNavigationKey.PAGE_UP
+                                        Key.MoveHome -> ForwardRecipientNavigationKey.HOME
+                                        Key.MoveEnd -> ForwardRecipientNavigationKey.END
+                                        else -> null
+                                    }
+                                    if (navigationKey != null) {
+                                        nextForwardRecipientIndex(
+                                            forwardActiveRecipientIndex,
+                                            filteredDestinations.size,
+                                            navigationKey,
+                                        )?.let { forwardActiveRecipientIndex = it }
+                                        return@onPreviewKeyEvent true
+                                    }
+                                    val keyName = when (event.key) {
+                                        Key.Enter -> "Enter"
+                                        Key.Spacebar -> " "
+                                        else -> ""
+                                    }
+                                    if (isForwardSubmitShortcut(keyName, event.isCtrlPressed, event.isMetaPressed)) {
+                                        submitForward()
+                                        return@onPreviewKeyEvent true
+                                    }
+                                    if (isForwardToggleShortcut(keyName, event.isCtrlPressed, event.isMetaPressed)) {
+                                        filteredDestinations.getOrNull(forwardActiveRecipientIndex)?.let { destination ->
+                                            forwardSelection = if (destination.id in forwardSelection) {
+                                                forwardSelection.filterNot { it == destination.id }
+                                            } else {
+                                                forwardSelection + destination.id
+                                            }
+                                        }
+                                        return@onPreviewKeyEvent true
+                                    }
+                                    false
+                                },
                         ) {
-                            Text(if (selected) "✓ ${destination.title}" else destination.title)
+                            itemsIndexed(filteredDestinations, key = { _, destination -> destination.id }) { index, destination ->
+                                val selected = destination.id in forwardSelection
+                                val active = index == forwardActiveRecipientIndex
+                                TextButton(
+                                    enabled = !forwardSubmitting,
+                                    onClick = {
+                                        forwardActiveRecipientIndex = index
+                                        forwardSelection = if (selected) {
+                                            forwardSelection.filterNot { it == destination.id }
+                                        } else {
+                                            forwardSelection + destination.id
+                                        }
+                                    },
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .then(if (active) Modifier.border(1.dp, homeAccent, RoundedCornerShape(8.dp)) else Modifier)
+                                        .testTag("forward-recipient-${destination.id}"),
+                                ) {
+                                    Text(buildString {
+                                        if (active) append("› ")
+                                        if (selected) append("✓ ")
+                                        append(destination.title)
+                                    })
+                                }
+                            }
                         }
                     }
+                    Text("转发选项", fontWeight = FontWeight.SemiBold)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Checkbox(
+                            checked = forwardDropSenderNames,
+                            enabled = !forwardSubmitting && !forwardDropCaptions,
+                            onCheckedChange = { forwardDropSenderNames = it },
+                        )
+                        Text("隐藏发送者名称")
+                    }
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Checkbox(
+                            checked = forwardDropCaptions,
+                            enabled = !forwardSubmitting,
+                            onCheckedChange = { checked ->
+                                forwardDropCaptions = checked
+                                if (checked) forwardDropSenderNames = true
+                            },
+                        )
+                        Text("隐藏媒体说明")
+                    }
+                    forwardFailure?.let { Text(it, color = Color(0xFFFF6B6B)) }
+                    Text(
+                        if (forwardSelection.isEmpty()) "尚未选择会话" else "${forwardSelection.size} 个会话已选择",
+                        color = homeSecondaryText,
+                        style = MaterialTheme.typography.bodySmall,
+                    )
                 }
             },
             confirmButton = {
                 Button(
-                    onClick = {
-                        val destinations = forwardDestinations
-                            .map { it.id }
-                            .filter { it in forwardSelection }
-                        if (destinations.isNotEmpty()) onForward(message.id, destinations)
-                        forwardingMessage = null
-                        forwardQuery = ""
-                        forwardSelection = emptySet()
-                    },
-                    enabled = forwardSelection.isNotEmpty(),
+                    onClick = submitForward,
+                    enabled = forwardSelection.isNotEmpty() && !forwardSubmitting,
                     modifier = Modifier.testTag("forward-submit"),
-                ) { Text("转发") }
+                ) { Text(if (forwardSubmitting) "正在转发…" else "转发") }
             },
             dismissButton = {
-                OutlinedButton(onClick = {
-                    forwardingMessage = null
-                    forwardQuery = ""
-                    forwardSelection = emptySet()
-                }) { Text("取消") }
+                OutlinedButton(enabled = !forwardSubmitting, onClick = { resetForwardDialog() }) { Text("取消") }
             },
         )
     }

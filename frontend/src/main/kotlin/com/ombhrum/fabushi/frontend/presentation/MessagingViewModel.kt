@@ -15,17 +15,6 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.util.UUID
 
-internal fun normalizeForwardDestinations(destinationConversationIds: List<String>): List<String> =
-    destinationConversationIds.map(String::trim).filter(String::isNotEmpty).distinct()
-
-internal fun forwardClientMessageId(batchId: String, destinationConversationId: String): String {
-    val batch = batchId.trim()
-    val destination = destinationConversationId.trim()
-    require(batch.isNotEmpty()) { "forward batch id must not be empty" }
-    require(destination.isNotEmpty()) { "forward destination must not be empty" }
-    return "android:forward:$batch:$destination"
-}
-
 enum class ConversationKind(val wire: String, val label: String) {
     DIRECT("direct", "私聊"), GROUP("group", "群组"), CHANNEL("channel", "频道"),
     SAVED_MESSAGES("savedMessages", "收藏"), SECRET("secret", "加密聊天"),
@@ -420,19 +409,53 @@ internal class MessagingViewModel(application: Application) : AndroidViewModel(a
             }
         }
     }
-    fun forwardMessage(sourceConversationId: String, messageId: String, destinationConversationIds: List<String>) {
-        val destinations = normalizeForwardDestinations(destinationConversationIds)
-        if (destinations.isEmpty()) return
-        val batchId = UUID.randomUUID().toString()
-        destinations.forEach { destinationConversationId ->
-            executeAsync(
-                JSONObject()
-                    .put("type", "forwardMessage")
-                    .put("sourceConversationId", sourceConversationId)
-                    .put("messageId", messageId)
-                    .put("destinationConversationId", destinationConversationId)
-                    .put("clientMessageId", forwardClientMessageId(batchId, destinationConversationId)),
-            )
+    fun forwardMessage(
+        request: ForwardMessageBatchRequest,
+        onSettled: (List<ForwardSettlement>) -> Unit,
+    ) {
+        val destinations = normalizeForwardDestinations(request.destinationConversationIds)
+        if (destinations.isEmpty()) {
+            onSettled(emptyList())
+            return
+        }
+        viewModelScope.launch {
+            val result = runCatching {
+                withContext(Dispatchers.IO) {
+                    ensureIdentity()
+                    destinations.map { destinationConversationId ->
+                        runCatching {
+                            execute(buildForwardCommand(request, destinationConversationId))
+                        }.fold(
+                            onSuccess = {
+                                ForwardSettlement(
+                                    conversationId = destinationConversationId,
+                                    status = ForwardSettlementStatus.SENT,
+                                )
+                            },
+                            onFailure = { error ->
+                                ForwardSettlement(
+                                    conversationId = destinationConversationId,
+                                    status = ForwardSettlementStatus.FAILED,
+                                    error = error.message ?: "Forward failed",
+                                )
+                            },
+                        )
+                    }
+                }
+            }
+            result.onSuccess(onSettled).onFailure { error ->
+                val message = error.message ?: "Forward failed"
+                mutableState.value = mutableState.value.copy(error = message)
+                onSettled(
+                    destinations.map { destinationConversationId ->
+                        ForwardSettlement(
+                            conversationId = destinationConversationId,
+                            status = ForwardSettlementStatus.FAILED,
+                            error = message,
+                        )
+                    },
+                )
+            }
         }
     }
     fun startTyping(conversationId: String) = executeAsync(JSONObject().put("type", "startTyping").put("conversationId", conversationId).put("action", "typing"))
