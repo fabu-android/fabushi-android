@@ -9629,17 +9629,17 @@
         "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/features/bots/GrokBotComponents.kt"
       ],
       "android_owner": "Rust TranscriptStore/Host canonical history provider plus typed Coordinator bridge; Compose remains read-only.",
-      "platform_delta": "Android uses a native typed Host page boundary and later LazyList anchor preservation rather than DOM scrollTop/scrollHeight. The backend/typed bridge exists, but presentation loadOlder/single-flight/stale fencing/anchor preservation is not yet wired.",
-      "implementation_status": "mapped",
-      "production_wiring": "2279dec4c5a311a10e271746cbca7620bc6ff433 adds agent-scoped exclusive-cursor pages in durable TranscriptStore, feature.transcript.page in Host, and typed AndroidTranscriptHistoryPage/transcriptPage through AndroidCoordinatorPort/Runtime. Presentation still consumes full transcriptSnapshot and has no loadOlder path.",
-      "unit_test": "2279dec4c5a311a10e271746cbca7620bc6ff433 adds Rust TranscriptStore and Host contract tests for chronological latest/older pages, explicit Agent isolation, exclusive cursor stability across newer appends, invalid limits, exhaustion, and process reopen. GitHub Actions exact-head result pending.",
-      "contract_test": "typed Kotlin bridge rejects blank Agent id, negative cursor, and limits outside 1..500; exact-head CI pending.",
-      "integration_test": "missing ViewModel/Compose latest-page + loadOlder + stale completion + duplicate merge + viewport anchor integration tests",
+      "platform_delta": "Android uses the typed Rust Host page boundary and native Compose stable-key/offset anchor restoration rather than DOM scrollTop/scrollHeight. The page route is statically part of the canonical Android Coordinator contract, so there is no optional runtime capability probe; transport/method failure remains an explicit retryable older-history error.",
+      "implementation_status": "implemented",
+      "production_wiring": "2279dec4c5a311a10e271746cbca7620bc6ff433 adds agent-scoped exclusive-cursor pages in durable TranscriptStore, feature.transcript.page in Host, and typed AndroidTranscriptHistoryPage/transcriptPage through AndroidCoordinatorPort/Runtime. 60cc84e02d94f186aea6efd85718a904da53d176 wires latest-page restore, single-flight loadOlder, account/Agent/history-generation fencing, canonical duplicate-safe prepend, find-entry prepend, native stable-key/offset viewport anchoring, and ProductionRenderer -> ViewModel actions. 563b7efb399f76db2d9f5793a689f2c67f8f0aa8 preserves an exhausted/advanced older cursor across later latest-page send reconciliation.",
+      "unit_test": "2279dec4c5a311a10e271746cbca7620bc6ff433 adds Rust TranscriptStore and Host contract tests for chronological latest/older pages, explicit Agent isolation, exclusive cursor stability across newer appends, invalid limits, exhaustion, and process reopen. 2539d764502834697d2022f1cfbabfabb7781652 adds JVM projection tests for chronological prepend and duplicate cursor-boundary handling. Exact-head GitHub Actions pending.",
+      "contract_test": "Typed Kotlin bridge rejects blank Agent id, negative cursor, and limits outside 1..500; ViewModel loadOlder is single-flight and fences by account slot + active Agent + history generation before any completion commit. Exact-head CI pending.",
+      "integration_test": "ProductionRenderer -> GrokHomeSurface -> GrokBotChat -> MobileBotViewModel -> typed Coordinator -> Host page route is wired. Same-head CI/device scroll acceptance remains pending.",
       "packaged_test": "required final minified githubRelease long-conversation pagination acceptance",
       "device_test": "required scroll-to-top/load-older/process-reopen/account-switch viewport acceptance",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Desktop pagination.ts was fully source-audited. Do not mark verified until presentation uses the page API and same exact HEAD CI/device evidence passes."
+      "notes": "Desktop pagination.ts fully source-audited. Implementation is present but not verified until exact-head Android compile/unit/lint and final device/package acceptance succeed."
     }
   ],
   "traceability": {
@@ -9673,7 +9673,7 @@
     }
   },
   "metadata": {
-    "android_head_at_update": "2279dec4c5a311a10e271746cbca7620bc6ff433",
+    "android_head_at_update": "2539d764502834697d2022f1cfbabfabb7781652",
     "note": " Deterministic editor cursor now records the shipped suggestion boundary: Android has production-wired Agent/scheduled-automation projection with stale fencing, while Desktop PR/MCP providers are explicitly dormant in the current production adapter. Agent find-in-chat is now production-wired for message/widget semantic search and wrap navigation, while occurrence-span highlighting and richer searchable payloads remain mapped gaps. Native media viewer gallery is production-wired for Human conversations with navigation/zoom/stale-load fencing; in-app PDF rendering is now implemented at 499519f… and pending exact-head CI/device evidence, while Agent attachment/audio/focus semantics remain mapped."
   }
 }
