@@ -74,6 +74,8 @@ class AgentRosterPresentationWiringTest(unittest.TestCase):
         self.assertIn("rosterAccessReadiness = rosterAccessReadiness", renderer)
 
         self.assertIn("rosterAccessReadiness.isLoaded && rosterAccessReadiness.isConnected", home)
+        self.assertIn("internal fun GrokHomeSurface(", home)
+        self.assertNotIn("\nfun GrokHomeSurface(", home)
         self.assertIn("interactionReady = !canonicalRosterAgent || rosterAccessReadiness.isSelectionReady", home)
         self.assertIn("interactionReady: Boolean", row)
         self.assertIn("interactionReady &&", row)

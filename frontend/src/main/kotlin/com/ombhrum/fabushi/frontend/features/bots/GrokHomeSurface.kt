@@ -62,7 +62,7 @@ internal val GrokMobileInk = Color(0xFF111111)
 internal val GrokMobileMuted = Color(0xFF8B8B8B)
 
 @Composable
-fun GrokHomeSurface(
+internal fun GrokHomeSurface(
     accountName: String,
     accessProjection: AccountAccessProjection,
     rosterAccessReadiness: RosterAccessReadiness,
