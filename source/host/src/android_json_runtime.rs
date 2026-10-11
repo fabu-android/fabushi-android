@@ -653,6 +653,12 @@ impl AndroidJsonHost {
         initial_account_session_json: Option<&str>,
     ) -> Self {
         let app_data_dir = app_data_dir.into();
+        // Every durable Host store shares this root. Create it explicitly before opening any
+        // store instead of depending on whichever store happens to create the parent first.
+        // This is required for deterministic process-reopen recovery and removes a parallel-test
+        // race where a later durable owner could observe ENOENT.
+        std::fs::create_dir_all(&app_data_dir)
+            .unwrap_or_else(|error| panic!("failed to create Android Host data directory: {error}"));
         let _legacy_mcp_auth_cleanup = cleanup_legacy_mcp_auth_credentials(&app_data_dir);
         let device_id = get_or_create_host_machine_id(&app_data_dir.join("machine-id"))
             .unwrap_or_else(|error| panic!("failed to open canonical Android machine id: {error}"));
