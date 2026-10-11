@@ -120,23 +120,23 @@ class ComputerRebuildStateOwnerTest {
     @Test
     fun foreverBoxAdapterMatchesDesktopPhaseRulesAndFailsClosed() {
         assertEquals(
-            "box-a" to "pulling",
+            ComputerRebuildBoxIngress("box-a", "pulling", 10.0),
             projectForeverBoxRebuildEvent(
                 JSONObject("""{"agentId":"box-a","state":"running","pull":{"percent":10},"vncUrl":"wss://viewer"}"""),
             ),
         )
         assertEquals(
-            "box-a" to "running",
+            ComputerRebuildBoxIngress("box-a", "running", null),
             projectForeverBoxRebuildEvent(
                 JSONObject("""{"agentId":"box-a","state":"running","vncUrl":"wss://viewer"}"""),
             ),
         )
         assertEquals(
-            "box-a" to "local",
+            ComputerRebuildBoxIngress("box-a", "local", null),
             projectForeverBoxRebuildEvent(JSONObject("""{"agentId":"box-a","state":"running"}""")),
         )
         assertEquals(
-            "box-a" to "sleeping",
+            ComputerRebuildBoxIngress("box-a", "sleeping", null),
             projectForeverBoxRebuildEvent(
                 JSONObject("""{"payload":{"agentId":"box-a","state":"hibernated"}}"""),
             ),
@@ -387,4 +387,52 @@ class ComputerRebuildStateOwnerTest {
         assertEquals(ComputerRebuildResolution.FAILED, failed.lastResolution)
         assertFalse(failed.outcomeUnknown)
     }
+
+    @Test
+    fun rebuildProgressFactsPersistAcrossProcessDeathWithoutReplayingSideEffect() {
+        val store = MemoryStore()
+        val owner = ComputerRebuildStateOwner(store, processGeneration = 120)
+        owner.observeAccount(120)
+        owner.observeBox(120, "box-a", "running")
+        owner.observeBox(120, "box-a", "pulling", 37.5)
+        owner.observeMigration(120, null, ComputerRebuildMigrationPhase.BACKING_UP)
+        owner.observeMigration(120, null, ComputerRebuildMigrationPhase.CREATING)
+
+        val beforeRestart = owner.snapshot(120)
+        assertEquals(37.5, beforeRestart.pullPercent)
+        assertEquals(
+            listOf(
+                ComputerRebuildMigrationPhase.BACKING_UP,
+                ComputerRebuildMigrationPhase.CREATING,
+            ),
+            beforeRestart.migrationPhases,
+        )
+
+        val reopened = ComputerRebuildStateOwner(store, processGeneration = 121)
+        val recovered = reopened.snapshot(120)
+        assertEquals(121L, recovered.processGeneration)
+        assertEquals(37.5, recovered.pullPercent)
+        assertEquals(beforeRestart.migrationPhases, recovered.migrationPhases)
+        assertTrue(recovered.outcomeUnknown)
+    }
+
+    @Test
+    fun rebuildProgressRejectsInvalidPullPercentAndBoundsMigrationHistory() {
+        val owner = ComputerRebuildStateOwner(MemoryStore())
+        owner.observeAccount(130)
+        assertThrows(IllegalArgumentException::class.java) {
+            owner.observeBox(130, "box-a", "pulling", 101.0)
+        }
+        owner.observeBox(130, "box-a", "running")
+        repeat(20) { index ->
+            val phase = if (index % 2 == 0) {
+                ComputerRebuildMigrationPhase.BACKING_UP
+            } else {
+                ComputerRebuildMigrationPhase.CREATING
+            }
+            owner.observeMigration(130, null, phase)
+        }
+        assertEquals(16, owner.snapshot(130).migrationPhases.size)
+    }
+
 }
