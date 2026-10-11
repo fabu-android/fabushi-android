@@ -5,9 +5,9 @@
     "desktop_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
     "android_repository": "fabu-android/fabushi-android",
     "android_pr": 3,
-    "android_head_at_update": "ba9286c83b068cfb49cdad83e7297d126ad1d40f",
+    "android_head_at_update": "824e8dd07c3d0b82fa82070038bf7efe6c1127ac",
     "status": "incomplete",
-    "note": "Incrementally rebased to Desktop main 371b72f1cd20de03dc4dff9a15ed761054968093, root tree 3116c54a1e36da95189c740bdc789ad543ce2d20. Compare from 62d0c99f changes only Marketplace owner inventory; shipping source blobs and 8177-row set are unchanged. Skills Host owner audit was re-read and mapped without inherited verification. Deterministic transcript audit advanced through registry/resolver/root, secret-request, send-message:text, thread affordance/loader/summary, transcript feed fanout and URL-card; confirmed Android secret/thread/link-metadata gaps remain mapped. Deterministic audit advanced through transcript card leaf CSS/barrel/shared plus attachment/approval/cloud-agent/connector/draft/link/listener/local-tool/secret/text views; draft leaves preserve source no-op send/discard semantics rather than inventing execution. Deterministic audit advanced through widget leaf/actions; Android lacks typed respond/dismiss wiring, so widget remains mapped/not-verified. Deterministic audit advanced through message-card seam and tool-results model/proto/boundary/view; Android relay exists but tool-result transcript presentation remains mapped/not-verified."
+    "note": "Incrementally rebased to Desktop main 371b72f1cd20de03dc4dff9a15ed761054968093, root tree 3116c54a1e36da95189c740bdc789ad543ce2d20. Compare from 62d0c99f changes only Marketplace owner inventory; shipping source blobs and 8177-row set are unchanged. Skills Host owner audit was re-read and mapped without inherited verification. Deterministic transcript audit advanced through registry/resolver/root, secret-request, send-message:text, thread affordance/loader/summary, transcript feed fanout and URL-card; confirmed Android secret/thread/link-metadata gaps remain mapped. Deterministic audit advanced through transcript card leaf CSS/barrel/shared plus attachment/approval/cloud-agent/connector/draft/link/listener/local-tool/secret/text views; draft leaves preserve source no-op send/discard semantics rather than inventing execution. Deterministic audit advanced through widget leaf/actions; Android lacks typed respond/dismiss wiring, so widget remains mapped/not-verified. Deterministic audit advanced through message-card seam and tool-results model/proto/boundary/view; Android relay exists but tool-result transcript presentation remains mapped/not-verified. Durable Android Agent send acknowledgement owner is now implemented at 824e8dd0 with Host-owned pending/queued/dispatching/accepted-awaiting-echo/failed/outcome-unknown state, explicit failed-only retry, canonical echo reconciliation and ViewModel stale-scope fencing; exact-head verification is pending."
   },
   "responsibilities": [
     {
@@ -8501,6 +8501,89 @@
       "artifact": null,
       "verification_status": "not-verified",
       "notes": "Do not upgrade this responsibility from the existing relay status alone; relay transport and transcript presentation are separate responsibilities."
+    },
+    {
+      "responsibility_id": "CONVERSATION-SEND-ACKNOWLEDGEMENT-ANDROID-001",
+      "domain": "conversation-send-acknowledgement",
+      "desktop_sources": [
+        {
+          "path": "frontend/src/recovered/features/conversation/workspace/acknowledgement.ts",
+          "blob_sha": "b771c5593e80dd7ae47b123e32bf892a19bf76ee",
+          "symbols": [
+            "SendAcknowledgementRegistry",
+            "begin",
+            "markQueued",
+            "markDispatching",
+            "markAccepted",
+            "markFailed",
+            "ingestEcho",
+            "retry",
+            "setScope",
+            "dispose"
+          ]
+        }
+      ],
+      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "responsibility": "Own optimistic Agent send acknowledgement as one durable canonical state machine, reconcile canonical message/attachment echoes, preserve logical/prior nonce identity, permit explicit retry only after proven failure, and fence stale account/Agent/generation/disposed completions without blind replay after process death.",
+      "source_owner": "Desktop conversation workspace acknowledgement registry over canonical transcript/Coordinator send transport.",
+      "direct_callers": [
+        "conversation composer send path",
+        "canonical transcript echo feed",
+        "explicit failed-send retry UI"
+      ],
+      "downstream_dependencies": [
+        "Host canonical transcript",
+        "Coordinator/Host Agent turn dispatch",
+        "attachment echo identity"
+      ],
+      "state_owner": "Android Host DurableSendAcknowledgementOwner is canonical; ViewModel consumes immutable projection and owns only current presentation scope generation.",
+      "persistent_state": [
+        "send-acknowledgements.json",
+        "canonical transcript.json",
+        "agent-turn-journal.json"
+      ],
+      "protocol_wire_contract": [
+        "pending -> queued -> dispatching -> accepted-awaiting-echo",
+        "failed is retryable only by explicit user action",
+        "dispatching at Host reopen -> outcome-unknown",
+        "logical nonce + prior nonce reconciliation",
+        "message/user-attachment clientNonce echo"
+      ],
+      "visible_effect": "Pending Agent sends remain visible across transient UI scope changes/reopen; failed sends expose explicit Retry; outcome-unknown never auto-retries; canonical echo replaces optimistic projection.",
+      "failure_behavior": [
+        "pre-dispatch/proven failure -> failed",
+        "uncertain process-death dispatch -> outcome-unknown",
+        "accepted-awaiting-echo remains until canonical echo",
+        "malformed/stale scope or generation fails closed"
+      ],
+      "cancellation_behavior": "Presentation scope generation invalidates late completion; Host process reopen advances durable owner generation; no late callback mutates a new account/Agent scope.",
+      "retry_semantics": "Only failed may retry; retry mints a fresh transport nonce while retaining prior logical nonce. accepted-awaiting-echo/outcome-unknown are never blindly replayed.",
+      "idempotency_semantics": "Same nonce+payload begin is idempotent; conflicting reuse fails; canonical echo settles once; duplicate echo is ignored.",
+      "process_death_recovery": "Durable owner reopens from disk; dispatching becomes outcome-unknown, accepted-awaiting-echo stays pending reconciliation, and transcript echo can settle without resending.",
+      "account_fencing": "Host canonical accountFence + accountSlot + agentId + durable owner generation; ViewModel additionally fences active Agent/accountSlot/presentation generation.",
+      "security_boundary": "Compose/ViewModel cannot write canonical transcript or bypass Host dispatch; all send/retry state transitions cross the typed Coordinator/Host chain.",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "source/host/src/send_acknowledgement.rs",
+        "source/host/src/android_json_runtime.rs",
+        "source/android-preload/src/main/kotlin/com/ombhrum/fabushi/androidpreload/runtime/AndroidCoordinatorPort.kt",
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/coordinator/AndroidCoordinatorRuntime.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/presentation/MobileBotViewModel.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/production/canonical-agent-transcript.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/features/bots/GrokBotComponents.kt"
+      ],
+      "android_owner": "Host durable acknowledgement owner + typed Coordinator projection; Compose is read-only projection/action surface.",
+      "platform_delta": "Android process death is explicit: in-flight dispatch reopens as outcome-unknown and must reconcile durable transcript rather than retrying.",
+      "implementation_status": "implemented",
+      "production_wiring": "824e8dd0 routes Agent send/retry through DurableSendAcknowledgementOwner -> AndroidJsonHost -> Coordinator typed port/runtime -> immutable Bot projection; MobileBotViewModel no longer inserts an Agent user message as canonical truth.",
+      "unit_test": "send_acknowledgement.rs focused success/duplicate/failure/retry/attachment/account/generation/process-reopen tests; exact-head Action result pending",
+      "contract_test": "source/host/tests/send_acknowledgement_android_contract.rs; exact-head Action result pending",
+      "integration_test": "AgentSendAcknowledgementProjectionTest.kt plus Host dispatch/reconcile integration; exact-head Action result pending",
+      "packaged_test": "required final minified githubRelease",
+      "device_test": "required protected/device Agent send/retry/process-reopen acceptance",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Implementation exists but cannot be marked verified until same exact HEAD Rust/Kotlin/contract jobs succeed and final packaged/device acceptance closes."
     }
   ],
   "traceability": {
