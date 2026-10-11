@@ -166,4 +166,87 @@ class RemoteComputerPresentationPolicyTest {
         assertNull(RemoteComputerPresentationPolicy.normalizePairingLabel(" "))
         assertFalse(RemoteComputerPresentationPolicy.normalizePairingLabel("bad\nlabel") != null)
     }
+
+    @Test
+    fun rebuildProgressMatchesDesktopUpdateMigrationAndPullSemantics() {
+        val projection = requireNotNull(
+            ComputerRebuildProgressPolicy.project(
+                JSONObject()
+                    .put("kind", "update")
+                    .put("boxPhase", "pulling")
+                    .put("pullPercent", 50.0)
+                    .put("migrationPhases", JSONArray().put("backing-up").put("creating"))
+                    .put("connected", true)
+                    .put("leftHealthy", true)
+                    .put("terminalMigration", false),
+            ),
+        )
+
+        assertEquals("update", projection.kind)
+        assertEquals(2, projection.activeIndex)
+        assertEquals(6, projection.steps.size)
+        assertEquals((2.5 / 6.0), projection.progress, 0.0001)
+        assertNull(projection.reconnectVariant)
+    }
+
+    @Test
+    fun rebuildProgressProjectsResetRecoverAndReconnectVariants() {
+        val reset = requireNotNull(
+            ComputerRebuildProgressPolicy.project(
+                JSONObject()
+                    .put("kind", "reset")
+                    .put("boxPhase", "off")
+                    .put("migrationPhases", JSONArray().put("wiping").put("creating")),
+            ),
+        )
+        assertEquals(2, reset.activeIndex)
+        assertEquals(6, reset.steps.size)
+
+        val recover = requireNotNull(
+            ComputerRebuildProgressPolicy.project(
+                JSONObject()
+                    .put("kind", "recover")
+                    .put("boxPhase", "running")
+                    .put("leftHealthy", true)
+                    .put("migrationPhases", JSONArray().put("creating").put("moving")),
+            ),
+        )
+        assertEquals(recover.steps.lastIndex, recover.activeIndex)
+
+        val network = requireNotNull(
+            ComputerRebuildProgressPolicy.project(
+                JSONObject()
+                    .put("kind", "reconnecting")
+                    .put("connected", false),
+            ),
+        )
+        assertEquals("network", network.reconnectVariant)
+
+        val restarting = requireNotNull(
+            ComputerRebuildProgressPolicy.project(
+                JSONObject()
+                    .put("kind", "reconnecting")
+                    .put("connected", true)
+                    .put("boxPhase", "off"),
+            ),
+        )
+        assertEquals("restarting", restarting.reconnectVariant)
+    }
+
+    @Test
+    fun rebuildProgressFailsClosedForIdleAndInvalidPullPercent() {
+        assertNull(ComputerRebuildProgressPolicy.project(JSONObject()))
+
+        val projection = requireNotNull(
+            ComputerRebuildProgressPolicy.project(
+                JSONObject()
+                    .put("kind", "update")
+                    .put("boxPhase", "pulling")
+                    .put("pullPercent", 999.0)
+                    .put("migrationPhases", JSONArray()),
+            ),
+        )
+        assertEquals(2.0 / 6.0, projection.progress, 0.0001)
+    }
+
 }
