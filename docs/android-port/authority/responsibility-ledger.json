@@ -1551,6 +1551,15 @@
           "symbols": [
             "createSettingsNoticeController"
           ]
+        },
+        {
+          "path": "frontend/src/recovered/features/runtime-theme-token-installer.ts",
+          "blob_sha": "c6b47e51f430ca3b21a29b63af284221b0460443",
+          "symbols": [
+            "buildRuntimeThemeCss",
+            "Bzn",
+            "createRuntimeThemeInstaller"
+          ]
         }
       ],
       "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
@@ -1581,20 +1590,23 @@
       "security_boundary": "Coordinator/Host/Capability Broker owns authorization; Presentation cannot grant itself capability.",
       "android_disposition": "android-adapted",
       "android_target": [
-        "source/shared/src/host_settings.rs"
+        "source/shared/src/host_settings.rs",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/production/FabushiNativeTheme.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/production/ProductionRenderer_view.kt",
+        "mobile/android/app/src/test/java/com/ombhrum/fabushi/FabushiNativeThemeTest.kt"
       ],
       "android_owner": "source/shared/src/host_settings.rs",
       "platform_delta": "Android uses native Compose/platform adapters + typed JNI while preserving canonical Rust owners where platform-independent.",
       "implementation_status": "mapped",
-      "production_wiring": "mapped target(s); production parity not yet established",
-      "unit_test": "required",
+      "production_wiring": "Mapped with a concrete native appearance slice: ProductionRenderer now enters FabushiNativeTheme, which replaces Desktop DOM/CSS theme installation with immutable Compose light/dark tokens derived from the Desktop base/text/accent palette and Android system dark mode. No WebView/CSS runtime or second product-state owner is introduced. Durable account/device appearance preference, settings migration/DataStore owner, export semantics and package/device theme acceptance remain open.",
+      "unit_test": "FabushiNativeThemeTest covers Desktop-equivalent light/dark base, foreground and accent token projection. Existing host_settings.rs notification defaults remain separate. Exact-head GitHub Actions plus persistent settings coverage are still required.",
       "contract_test": "required on same exact HEAD",
       "integration_test": "required on same exact HEAD",
       "packaged_test": "required on final minified release artifact",
       "device_test": "required on emulator/physical device as applicable",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Android DataStore/platform setting adapters and migration evidence remain open. FBCP Revision 7 is a cross-cutting source authority for this responsibility; this mapping does not upgrade implementation_status or verification_status."
+      "notes": "Keep mapped/not-verified. The DOM style-element lifecycle is not-applicable as a mechanism, but its user-visible light/dark appearance responsibility is replaced natively rather than deleted."
     },
     {
       "responsibility_id": "NOTIFICATION-OS-001",
@@ -6148,6 +6160,16 @@
           "symbols": [
             "rebuild reducer/transport/composition contract tests"
           ]
+        },
+        {
+          "path": "frontend/src/recovered/features/settings/overlay/computer.ts",
+          "blob_sha": "8fba47b6c5d65f52dce9295f04e7d518b8edb4e5",
+          "symbols": [
+            "settingsComputerPhase",
+            "useSettingsComputerController",
+            "requestUpdate",
+            "requestReset"
+          ]
         }
       ],
       "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
@@ -6847,6 +6869,21 @@
             "ComputerRebuildProgressBanner",
             "ComputerReconnectBanner"
           ]
+        },
+        {
+          "path": "frontend/src/recovered/features/settings/overlay/computer-view-internals.tsx",
+          "blob_sha": "5650bc77c9b6f702758622580ce0f7ce4df21373",
+          "symbols": [
+            "SettingsGroup"
+          ]
+        },
+        {
+          "path": "frontend/src/recovered/features/settings/overlay/computer-view.tsx",
+          "blob_sha": "60335e93cdb628e13d985fda2c8f970779345e64",
+          "symbols": [
+            "SettingsComputerPanel",
+            "SettingsComputerRow"
+          ]
         }
       ],
       "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
@@ -7057,6 +7094,31 @@
           "symbols": [
             "ComputerRebuildState",
             "reduceComputerRebuildState"
+          ]
+        },
+        {
+          "path": "frontend/src/recovered/features/settings/overlay/computer-view-internals.tsx",
+          "blob_sha": "5650bc77c9b6f702758622580ce0f7ce4df21373",
+          "symbols": [
+            "SettingsGroup"
+          ]
+        },
+        {
+          "path": "frontend/src/recovered/features/settings/overlay/computer-view.tsx",
+          "blob_sha": "60335e93cdb628e13d985fda2c8f970779345e64",
+          "symbols": [
+            "SettingsComputerPanel",
+            "SettingsComputerRow"
+          ]
+        },
+        {
+          "path": "frontend/src/recovered/features/settings/overlay/computer.ts",
+          "blob_sha": "8fba47b6c5d65f52dce9295f04e7d518b8edb4e5",
+          "symbols": [
+            "settingsComputerPhase",
+            "useSettingsComputerController",
+            "requestUpdate",
+            "requestReset"
           ]
         }
       ],
@@ -11761,6 +11823,16 @@
           "symbols": [
             "settings instruction model contract"
           ]
+        },
+        {
+          "path": "frontend/src/recovered/features/settings/overlay/auto-review.tsx",
+          "blob_sha": "72525e61e61f4360b272e7031c2bde8e3aa376a1",
+          "symbols": [
+            "AutoReviewRulesPanel",
+            "savePending",
+            "addRule",
+            "saveEdit"
+          ]
         }
       ],
       "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
@@ -11804,7 +11876,7 @@
       "android_owner": "Android settings presentation over canonical durable settings owner",
       "platform_delta": "Pure TypeScript model becomes pure Kotlin. Durable settings transport remains to be wired; no second local settings database is introduced.",
       "implementation_status": "mapped",
-      "production_wiring": "86ca96cf ports model semantics only. No dedicated production Auto Review instruction editor/persistence path is yet proven on Android.",
+      "production_wiring": "Model semantics are ported in SettingsConfigurationModels.kt: allow/ask list identity, duplicate rejection, in-list edit, cross-list move, stale-row reconciliation and 20-rule cap. Desktop auto-review.tsx additionally proves enabled-state, save-pending gating, draft/edit/delete UI and async commit behavior; Android still lacks the dedicated production editor and durable account-scoped persistence path.",
       "unit_test": "SettingsConfigurationModelsTest covers parsing, row projection, duplicate rejection, same/cross-list edit, reconciliation and cap. Same-head CI pending.",
       "contract_test": "Recovered configuration-model contract source audited.",
       "integration_test": "missing durable save/reload/account-switch flow",
@@ -11812,7 +11884,7 @@
       "device_test": "required",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Keep mapped until durable settings owner and UI are wired.",
+      "notes": "Keep mapped/not-verified. Do not treat the model-only port as production Auto Review parity; editor, durable owner, rejection preservation and account switching remain open.",
       "android_head_at_update": "86ca96cfdce363b777e3bcf1f84e49e5f493b8bc"
     },
     {
