@@ -74,4 +74,11 @@ class AndroidMediaViewerProjectionTest {
         assertEquals(-1, stepAndroidPdfPageIndex(0, 1, 0))
     }
 
+    @Test
+    fun pdfZoomMatchesDesktopBounds() {
+        assertEquals(0.5f, clampAndroidPdfZoom(0.1f))
+        assertEquals(1f, clampAndroidPdfZoom(1f))
+        assertEquals(4f, clampAndroidPdfZoom(9f))
+    }
+
 }
