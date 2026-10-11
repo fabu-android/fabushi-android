@@ -21,6 +21,14 @@ const LEGACY_MESSAGING_REPOSITORY_SCHEMA_VERSION: u32 = 1;
 const MAX_REPLAY_RESULTS: usize = 512;
 const MESSAGING_EVENT_JOURNAL_LIMIT: usize = 10_000;
 
+fn stable_message_id(actor_id: &str, client_message_id: &str) -> String {
+    let mut identity = Vec::with_capacity(actor_id.len() + client_message_id.len() + 1);
+    identity.extend_from_slice(actor_id.as_bytes());
+    identity.push(0);
+    identity.extend_from_slice(client_message_id.as_bytes());
+    format!("msg:{}", crate::sha256::sha256_hex(&identity))
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct MessagingJournalEntry {
@@ -589,11 +597,16 @@ impl AndroidMessagingService {
         if !bounded_id(client_message_id) {
             return Err("clientMessageId is invalid".into());
         }
+        let stable_id = stable_message_id(actor_id, client_message_id);
         if let Some(existing) = self
             .state
             .messages
             .get(conversation_id)
-            .and_then(|messages| messages.get(client_message_id))
+            .and_then(|messages| {
+                messages
+                    .get(&stable_id)
+                    .or_else(|| messages.get(client_message_id))
+            })
             .cloned()
         {
             let same_payload = existing.get("senderId").and_then(Value::as_str) == Some(actor_id)
@@ -638,7 +651,7 @@ impl AndroidMessagingService {
             self.require_message(conversation_id, &thread_root)?;
         }
         let message = json!({
-            "id":client_message_id,
+            "id":stable_id,
             "clientMessageId":client_message_id,
             "conversationId":conversation_id,
             "senderId":actor_id,
@@ -659,10 +672,10 @@ impl AndroidMessagingService {
             .messages
             .entry(conversation_id.to_string())
             .or_default()
-            .insert(client_message_id.to_string(), message.clone());
+            .insert(stable_id.clone(), message.clone());
         let mut updated_conversation = conversation;
         if let Some(object) = updated_conversation.as_object_mut() {
-            object.insert("lastMessageId".into(), Value::String(client_message_id.to_string()));
+            object.insert("lastMessageId".into(), Value::String(stable_id));
             object.insert("updatedAtMs".into(), json!(now_ms));
         }
         self.state
@@ -1629,11 +1642,16 @@ impl AndroidMessagingService {
         if !bounded_id(client_message_id) {
             return Err("clientMessageId is invalid".into());
         }
+        let stable_id = stable_message_id(actor_id, client_message_id);
         if let Some(existing) = self
             .state
             .messages
             .get(destination_id)
-            .and_then(|messages| messages.get(client_message_id))
+            .and_then(|messages| {
+                messages
+                    .get(&stable_id)
+                    .or_else(|| messages.get(client_message_id))
+            })
             .cloned()
         {
             return Ok(vec![self.server_envelope(
@@ -1646,7 +1664,7 @@ impl AndroidMessagingService {
             return Err("destination conversation does not permit this message".into());
         }
         let forwarded = json!({
-            "id":client_message_id,
+            "id":stable_id,
             "clientMessageId":client_message_id,
             "conversationId":destination_id,
             "senderId":actor_id,
@@ -1668,10 +1686,10 @@ impl AndroidMessagingService {
             .messages
             .entry(destination_id.to_string())
             .or_default()
-            .insert(client_message_id.to_string(), forwarded.clone());
+            .insert(stable_id.clone(), forwarded.clone());
         let mut updated = destination;
         if let Some(object) = updated.as_object_mut() {
-            object.insert("lastMessageId".into(), Value::String(client_message_id.to_string()));
+            object.insert("lastMessageId".into(), Value::String(stable_id));
             object.insert("updatedAtMs".into(), json!(now_ms));
         }
         self.state
@@ -2952,7 +2970,7 @@ mod tests {
         service.execute(&envelope(request_id, actor_id, command), actor_id, 100)
     }
 
-    fn seed(service: &mut AndroidMessagingService, actor: &str) {
+    fn seed(service: &mut AndroidMessagingService, actor: &str) -> String {
         execute(
             service,
             "profile",
@@ -2981,6 +2999,7 @@ mod tests {
                 "content":{"type":"text","data":{"text":{"text":"root","entities":[]}}}}),
         )
         .unwrap();
+        stable_message_id(actor, "message:root")
     }
 
     #[test]
@@ -3030,9 +3049,10 @@ mod tests {
     fn child_mutation_requires_canonical_parent_membership_and_survives_reopen() {
         let root = temp_root("child");
         let actor = "human:owner";
+        let root_message_id = stable_message_id(actor, "message:root");
         let destination = json!({
             "conversationId":"conversation:parent",
-            "child":{"kind":"topic","rootMessageId":"message:root"}
+            "child":{"kind":"topic","rootMessageId":root_message_id}
         });
         {
             let mut service = AndroidMessagingService::open(&root).unwrap();
@@ -3070,13 +3090,13 @@ mod tests {
         let root = temp_root("dedupe");
         let actor = "human:owner";
         let mut service = AndroidMessagingService::open(&root).unwrap();
-        seed(&mut service, actor);
+        let root_message_id = seed(&mut service, actor);
         let request = envelope(
             "same",
             actor,
             json!({"type":"setConversationChildPinned","destination":{
                 "conversationId":"conversation:parent",
-                "child":{"kind":"topic","rootMessageId":"message:root"}
+                "child":{"kind":"topic","rootMessageId":root_message_id}
             },"pinned":true}),
         );
         let first = service.execute(&request, actor, 100).unwrap();
@@ -3092,13 +3112,13 @@ mod tests {
         let root = temp_root("account-fence");
         let actor = "human:owner";
         let mut service = AndroidMessagingService::open(&root).unwrap();
-        seed(&mut service, actor);
+        let root_message_id = seed(&mut service, actor);
         let request = envelope(
             "stale",
             actor,
             json!({"type":"setConversationChildPinned","destination":{
                 "conversationId":"conversation:parent",
-                "child":{"kind":"topic","rootMessageId":"message:root"}
+                "child":{"kind":"topic","rootMessageId":root_message_id}
             },"pinned":true}),
         );
         assert!(service
@@ -3226,7 +3246,12 @@ mod tests {
         seed(&mut service, owner);
         let command = json!({"type":"sendMessage","conversationId":"conversation:parent","clientMessageId":"message:idem",
             "content":{"type":"text","data":{"text":{"text":"same","entities":[]}}}});
-        execute(&mut service, "send-idem-first", owner, command.clone()).unwrap();
+        let first = execute(&mut service, "send-idem-first", owner, command.clone()).unwrap();
+        let canonical_id = first["envelopes"].as_array().unwrap().iter()
+            .find(|envelope| envelope["event"]["type"] == "messageAdded")
+            .unwrap()["event"]["message"]["id"].as_str().unwrap().to_string();
+        assert!(canonical_id.starts_with("msg:"));
+        assert_eq!(canonical_id, stable_message_id(owner, "message:idem"));
         let cursor = service.state.cursor;
         let journal_len = service.state.event_journal.len();
 
@@ -3253,6 +3278,35 @@ mod tests {
         .unwrap_err();
         assert!(conflict.contains("conflicts with the canonical message payload"));
         assert_eq!(service.state.cursor, cursor);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn different_actors_can_reuse_the_same_client_message_id_without_collision() {
+        let root = temp_root("client-message-id-actor-scope");
+        let owner = "human:owner";
+        let peer = "human:peer";
+        let mut service = AndroidMessagingService::open(&root).unwrap();
+        for (request_id, actor, name) in [("actor-owner", owner, "Owner"), ("actor-peer", peer, "Peer")] {
+            execute(&mut service, request_id, actor,
+                json!({"type":"upsertProfile","actor":{"id":actor,"kind":"human","displayName":name}})).unwrap();
+        }
+        execute(&mut service, "actor-scope-conversation", owner, json!({"type":"createConversation","conversation":{
+            "id":"conversation:actor-scope","kind":"direct","title":"Actor scoped client ids","ownerId":owner,
+            "participants":[{"actorId":owner,"role":"owner","joinedAtMs":1},{"actorId":peer,"role":"member","joinedAtMs":1}],
+            "permissions":{"canSendMessages":true,"canSendMedia":true}
+        }})).unwrap();
+        for (request_id, actor, text) in [("same-client-owner", owner, "from owner"), ("same-client-peer", peer, "from peer")] {
+            execute(&mut service, request_id, actor, json!({"type":"sendMessage","conversationId":"conversation:actor-scope",
+                "clientMessageId":"client:same","content":{"type":"text","data":{"text":{"text":text,"entities":[]}}}})).unwrap();
+        }
+        let messages = &service.state.messages["conversation:actor-scope"];
+        assert_eq!(messages.len(), 2);
+        let owner_id = stable_message_id(owner, "client:same");
+        let peer_id = stable_message_id(peer, "client:same");
+        assert_ne!(owner_id, peer_id);
+        assert_eq!(messages[&owner_id]["clientMessageId"], "client:same");
+        assert_eq!(messages[&peer_id]["clientMessageId"], "client:same");
         let _ = fs::remove_dir_all(root);
     }
 
@@ -3300,8 +3354,9 @@ mod tests {
                 "content":{"type":"text","data":{"text":{"text":"hello","entities":[]}}}}),
         )
         .unwrap();
+        let delivery_message_id = stable_message_id(owner, "message:delivery");
         assert_eq!(
-            service.state.messages["conversation:delivery"]["message:delivery"]["deliveryState"],
+            service.state.messages["conversation:delivery"][&delivery_message_id]["deliveryState"],
             "sent"
         );
 
@@ -3313,7 +3368,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(
-            service.state.messages["conversation:delivery"]["message:delivery"]["deliveryState"],
+            service.state.messages["conversation:delivery"][&delivery_message_id]["deliveryState"],
             "delivered"
         );
 
@@ -3321,18 +3376,18 @@ mod tests {
             &mut service,
             "delivery-read-peer",
             peer,
-            json!({"type":"markRead","conversationId":"conversation:delivery","messageId":"message:delivery"}),
+            json!({"type":"markRead","conversationId":"conversation:delivery","messageId":delivery_message_id}),
         )
         .unwrap();
         assert_eq!(
-            service.state.messages["conversation:delivery"]["message:delivery"]["deliveryState"],
+            service.state.messages["conversation:delivery"][&delivery_message_id]["deliveryState"],
             "read"
         );
         drop(service);
 
         let reopened = AndroidMessagingService::open(&root).unwrap();
         assert_eq!(
-            reopened.state.messages["conversation:delivery"]["message:delivery"]["deliveryState"],
+            reopened.state.messages["conversation:delivery"][&delivery_message_id]["deliveryState"],
             "read",
             "delivery/read transition must survive Host process recreation"
         );
@@ -3390,6 +3445,7 @@ mod tests {
                 "content":{"type":"text","data":{"text":{"text":"first unread","entities":[]}}}}),
         )
         .unwrap();
+        let unread_message_id = stable_message_id(peer, "message:unread");
 
         let mine = execute(&mut service, "unread-sync-me", me, json!({"type":"sync","limit":100}))
             .unwrap();
@@ -3417,7 +3473,7 @@ mod tests {
             &mut service,
             "unread-mark-read",
             me,
-            json!({"type":"markRead","conversationId":conversation_id,"messageId":"message:unread"}),
+            json!({"type":"markRead","conversationId":conversation_id,"messageId":unread_message_id}),
         )
         .unwrap();
         drop(service);
@@ -3433,7 +3489,7 @@ mod tests {
             .find(|conversation| conversation["id"] == conversation_id)
             .unwrap();
         assert_eq!(restored_conversation["unreadCount"], 0);
-        assert_eq!(restored_conversation["lastReadMessageId"], "message:unread");
+        assert_eq!(restored_conversation["lastReadMessageId"], stable_message_id(peer, "message:unread"));
         let _ = fs::remove_dir_all(root);
     }
 
@@ -3529,7 +3585,7 @@ mod tests {
                 matches!(
                     envelope["event"]["type"].as_str(),
                     Some("messageAdded") | Some("messageChanged")
-                ) && envelope["event"]["message"]["id"] == "message:delta-restart"
+                ) && envelope["event"]["message"]["id"] == stable_message_id(owner, "message:delta-restart")
             }));
 
         let outsider_delta = execute(
@@ -3547,7 +3603,7 @@ mod tests {
                 matches!(
                     envelope["event"]["type"].as_str(),
                     Some("messageAdded") | Some("messageChanged")
-                ) && envelope["event"]["message"]["id"] == "message:delta-restart"
+                ) && envelope["event"]["message"]["id"] == stable_message_id(owner, "message:delta-restart")
             }));
         let _ = fs::remove_dir_all(root);
     }
@@ -3594,7 +3650,7 @@ mod tests {
         let envelopes = response["envelopes"].as_array().unwrap();
         assert!(envelopes.iter().any(|envelope| {
             envelope["event"]["type"] == "messageAdded"
-                && envelope["event"]["message"]["id"] == "message:delta"
+                && envelope["event"]["message"]["id"] == stable_message_id(owner, "message:delta")
         }));
         let checkpoint_event = &envelopes.last().unwrap()["event"];
         assert_eq!(checkpoint_event["type"], "syncBatch");
@@ -3612,7 +3668,7 @@ mod tests {
         let owner = "human:owner";
         let peer = "human:peer";
         let mut service = AndroidMessagingService::open(&root).unwrap();
-        seed(&mut service, owner);
+        let root_message_id = seed(&mut service, owner);
         execute(
             &mut service,
             "peer-profile-projection",
@@ -3633,7 +3689,7 @@ mod tests {
             &mut service,
             "owner-reaction",
             owner,
-            json!({"type":"setReaction","conversationId":"conversation:parent","messageId":"message:root",
+            json!({"type":"setReaction","conversationId":"conversation:parent","messageId":root_message_id,
                 "reaction":{"reaction":"👍","chosenByMe":true}}),
         )
         .unwrap();
@@ -3730,7 +3786,7 @@ mod tests {
         let root = temp_root("delta-gap");
         let actor = "human:owner";
         let mut service = AndroidMessagingService::open(&root).unwrap();
-        seed(&mut service, actor);
+        let root_message_id = seed(&mut service, actor);
         let before = service.state.cursor;
         execute(
             &mut service,
@@ -3738,7 +3794,7 @@ mod tests {
             actor,
             json!({"type":"setConversationChildPinned","destination":{
                 "conversationId":"conversation:parent",
-                "child":{"kind":"topic","rootMessageId":"message:root"}
+                "child":{"kind":"topic","rootMessageId":root_message_id}
             },"pinned":true}),
         )
         .unwrap();
@@ -3881,7 +3937,7 @@ mod tests {
             &mut service,
             "react-owner",
             owner,
-            json!({"type":"setReaction","conversationId":"conversation:parent","messageId":"message:root",
+            json!({"type":"setReaction","conversationId":"conversation:parent","messageId":root_message_id,
                 "reaction":{"reaction":"👍","chosenByMe":true}}),
         )
         .unwrap();
@@ -3920,12 +3976,12 @@ mod tests {
         let actor = "human:owner";
         {
             let mut service = AndroidMessagingService::open(&root).unwrap();
-            seed(&mut service, actor);
+            let root_message_id = seed(&mut service, actor);
             execute(
                 &mut service,
                 "edit",
                 actor,
-                json!({"type":"editMessage","conversationId":"conversation:parent","messageId":"message:root",
+                json!({"type":"editMessage","conversationId":"conversation:parent","messageId":root_message_id.clone(),
                     "content":{"type":"text","data":{"text":{"text":"edited","entities":[]}}}}),
             )
             .unwrap();
@@ -3933,14 +3989,14 @@ mod tests {
                 &mut service,
                 "pin-message",
                 actor,
-                json!({"type":"pinMessage","conversationId":"conversation:parent","messageId":"message:root","pinned":true}),
+                json!({"type":"pinMessage","conversationId":"conversation:parent","messageId":root_message_id.clone(),"pinned":true}),
             )
             .unwrap();
             execute(
                 &mut service,
                 "mark-read",
                 actor,
-                json!({"type":"markRead","conversationId":"conversation:parent","messageId":"message:root"}),
+                json!({"type":"markRead","conversationId":"conversation:parent","messageId":root_message_id.clone()}),
             )
             .unwrap();
             execute(
@@ -3970,14 +4026,14 @@ mod tests {
                 "forward",
                 actor,
                 json!({"type":"forwardMessage","sourceConversationId":"conversation:parent",
-                    "messageId":"message:root","destinationConversationId":"conversation:parent","clientMessageId":"message:forward"}),
+                    "messageId":root_message_id.clone(),"destinationConversationId":"conversation:parent","clientMessageId":"message:forward"}),
             )
             .unwrap();
             execute(
                 &mut service,
                 "delete",
                 actor,
-                json!({"type":"deleteMessages","conversationId":"conversation:parent","messageIds":["message:forward"],"forEveryone":true}),
+                json!({"type":"deleteMessages","conversationId":"conversation:parent","messageIds":[stable_message_id(actor, "message:forward")],"forEveryone":true}),
             )
             .unwrap();
         }
@@ -3987,7 +4043,7 @@ mod tests {
         assert_eq!(event["messages"][0]["content"]["data"]["text"]["text"], "edited");
         assert_eq!(event["messages"][0]["pinned"], true);
         assert_eq!(event["conversations"][0]["archived"], true);
-        assert_eq!(event["conversations"][0]["lastReadMessageId"], "message:root");
+        assert_eq!(event["conversations"][0]["lastReadMessageId"], stable_message_id(actor, "message:root"));
         assert_eq!(event["folders"][0]["id"], "folder:one");
         assert_eq!(event["messages"].as_array().unwrap().len(), 1);
         let _ = fs::remove_dir_all(root);
