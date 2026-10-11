@@ -5,7 +5,12 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class AndroidMediaViewerProjectionTest {
-    private fun message(id: String, type: String): ChatMessage =
+    private fun message(
+        id: String,
+        type: String,
+        mimeType: String? = null,
+        fileName: String? = null,
+    ): ChatMessage =
         ChatMessage(
             id = id,
             conversationId = "conversation",
@@ -13,6 +18,8 @@ class AndroidMediaViewerProjectionTest {
             contentType = type,
             outgoing = false,
             time = "",
+            mediaMimeType = mimeType,
+            mediaFileName = fileName,
         )
 
     @Test
@@ -47,4 +54,24 @@ class AndroidMediaViewerProjectionTest {
     fun missingStartDoesNotInventGallery() {
         assertTrue(projectAndroidMediaGallery(listOf(message("photo", "photo")), "missing").isEmpty())
     }
+    @Test
+    fun pdfDetectionUsesMimeOrFileNameWithoutJoiningPhotoVideoGallery() {
+        val byMime = message("pdf-mime", "document", mimeType = "application/pdf; charset=binary")
+        val byName = message("pdf-name", "document", fileName = "report.PDF")
+        assertTrue(isAndroidPdfMessage(byMime))
+        assertTrue(isAndroidPdfMessage(byName))
+        assertEquals(
+            listOf("pdf-mime"),
+            projectAndroidMediaGallery(listOf(byMime), "pdf-mime").map { it.id },
+        )
+    }
+
+    @Test
+    fun pdfPageNavigationClampsAtDocumentEdges() {
+        assertEquals(0, stepAndroidPdfPageIndex(0, -1, 4))
+        assertEquals(1, stepAndroidPdfPageIndex(0, 1, 4))
+        assertEquals(3, stepAndroidPdfPageIndex(3, 1, 4))
+        assertEquals(-1, stepAndroidPdfPageIndex(0, 1, 0))
+    }
+
 }
