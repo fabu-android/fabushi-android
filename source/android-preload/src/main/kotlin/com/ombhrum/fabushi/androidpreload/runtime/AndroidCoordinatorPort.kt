@@ -316,6 +316,9 @@ interface AndroidCoordinatorPort {
         RootConnectionResilienceProjection.initial()
     fun rootConnectionRetry(): RootConnectionResilienceProjection =
         rootConnectionResilienceProjection()
+    fun addRootConnectionResilienceListener(
+        listener: (RootConnectionResilienceProjection) -> Unit,
+    ): AutoCloseable = AutoCloseable {}
     fun authDeviceAgentSession(): JSONObject
     fun authBrowserStart(): JSONObject
     fun authBrowserReopen(params: JSONObject): JSONObject
