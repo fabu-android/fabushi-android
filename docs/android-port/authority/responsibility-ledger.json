@@ -12528,6 +12528,30 @@
           "symbols": [
             "UpdatesSettingsPanel"
           ]
+        },
+        {
+          "path": "source/electron-main/update/idle-relaunch-apply.ts",
+          "blob_sha": "b3f7101667968eb8c90f8b3e66544cb5c9793308",
+          "symbols": [
+            "tryApplyStagedWhenIdle"
+          ]
+        },
+        {
+          "path": "source/electron-main/update/safe-relaunch-gate.ts",
+          "blob_sha": "f31f358eb3630f0ebd6d74948e50fa5a3391cbca",
+          "symbols": [
+            "isSafeToRelaunchForUpdate",
+            "DEFAULT_AUTO_UPDATE_IDLE_SECONDS"
+          ]
+        },
+        {
+          "path": "source/electron-main/update/update-telemetry.ts",
+          "blob_sha": "34a954be9b78d0df31dd72b8907480b9cfb96d1c",
+          "symbols": [
+            "reportSandUpdateCheck",
+            "reportSandUpdateOutcome",
+            "reportSandUpdateApply"
+          ]
         }
       ],
       "responsibility": "Project and control the shipped app-update lifecycle from a single native owner: current status, explicit check, available/download/install/error states, verified package handoff, release-channel policy and auto-update preference without conflating app updates with shared Computer image updates.",
@@ -12546,20 +12570,25 @@
         "source/android-host-jni/src/lib.rs",
         "source/android-main/src/main/kotlin/com/ombhrum/fabushi/core/MahayanaHost.kt",
         "source/android-preload/src/main/kotlin/com/ombhrum/fabushi/androidpreload/runtime/AndroidCoordinatorPort.kt",
-        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/coordinator/AndroidCoordinatorRuntime.kt"
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/coordinator/AndroidCoordinatorRuntime.kt",
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/update/AndroidUpdateIdlePolicy.kt",
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/update/AndroidUpdaterTelemetry.kt",
+        "mobile/android/app/src/test/java/com/ombhrum/fabushi/AndroidUpdateIdlePolicyTest.kt",
+        "mobile/android/app/src/test/java/com/ombhrum/fabushi/AndroidUpdaterTelemetryTest.kt"
       ],
       "android_owner": "AndroidUpdateViewModel for update lifecycle; Settings surface is immutable presentation only",
       "platform_delta": "Android downloads a bounded GitHub Release APK, verifies SHA-256/size/package/signing identity, then delegates install to the system package installer. Desktop quit-and-install and Electron updater mechanics do not exist. Public Android currently follows the stable signed release channel only; nightly/dogfood selection and auto-update-when-idle are not yet implemented.",
-      "implementation_status": "mapped",
-      "production_wiring": "AndroidUpdateViewModel remains the single native app-updater owner. It already owns stable GitHub release discovery, bounded metadata/download, SHA-256/declared-size verification, package/version/signing identity checks, unknown-source permission and system installer handoff. This change adds a typed Rust/JNI update-track consumer instead of Kotlin policy duplication, plus a durable Android apply marker written synchronously before external installer handoff. On process restart, staged APKs are re-verified before explicit continuation; requested installs with no provable result become outcome-unknown and are never blindly replayed; spawn failures can be explicitly retried only if the cached package still re-verifies; stale/foreign/old markers fail closed. Settings/UpdateBanner project the same owner. Multi-track signed package transport, auto-update-when-idle, mandatory-update producers and updater telemetry remain open.",
-      "unit_test": "AndroidVersionTest covers strict Desktop version grammar/prerelease ordering. AndroidUpdateRecoveryTest covers staged recovery, requested->outcome-unknown, confirmed target, installer-spawn retry, stale/current-binary fencing and expiry. Rust/JNI focused update-track tests cover canonical policy projection. Exact-head GitHub Actions for this commit are required.",
+      "implementation_status": "implemented",
+      "production_wiring": "AndroidUpdateViewModel is the single native app-updater owner. Stable GitHub release discovery, bounded metadata/download, SHA-256/declared-size verification, package/version/signing identity checks, unknown-source permission, system-installer handoff and durable STAGED/REQUESTED/SPAWN_FAILED recovery remain on the same owner. Canonical Rust update-track policy is consumed through JNI. Device-scoped idle-auto-stage opt-in is durable; the Statsig sand_auto_update_when_idle gate must be observed and enabled; the app must be non-interactive/locked for at least 10 minutes; AndroidCoordinatorRuntime must confirm no canonical Host Agent isRunning; and the effective track must have the real signed transport. Only then may Android download, verify and persist STAGED. It never launches Package Installer from the background and REQUESTED unknown outcomes are never replayed. Bounded structured updater telemetry records check/stage/idle/apply class metadata without URLs, tokens, message content or absolute paths. Non-stable signed package transport remains fail-closed.",
+      "unit_test": "AndroidVersionTest covers strict Desktop version grammar/prerelease ordering. AndroidUpdateRecoveryTest covers staged recovery, requested->outcome-unknown, confirmed target, installer-spawn retry, stale/current-binary fencing and expiry. AndroidUpdateIdlePolicyTest requires opt-in, observed+enabled remote gate, signed transport, user-away threshold, Host idle and no active update operation. AndroidUpdaterTelemetryTest covers bounded typed schema. Rust/JNI tests cover update-track and Statsig minimum/idle-gate projection. Exact-head GitHub Actions are required before verification.",
       "contract_test": "Typed Rust->JNI->MahayanaHost->AndroidCoordinatorPort/Runtime update-track policy path plus durable apply marker/recovery contract; same-head Actions required.",
       "integration_test": "ProductionRenderer collects updater/mandatory/track state; native Settings and update banner use the same owner. Exact-head compile/unit/lint/package evidence pending; live signed upgrade and protected-account journeys remain blocked/open.",
       "packaged_test": "required",
       "device_test": "required",
       "artifact": "pending exact-head signed Android package evidence",
       "verification_status": "not-verified",
-      "notes": "Mapped, not verified. This closes canonical track-policy consumption and Android process-death/outcome-unknown apply recovery without claiming non-stable package transport, auto-update-when-idle, telemetry, authoritative mandatory-update producers, release signing, or device acceptance."
+      "notes": "Implemented, not verified. Auto-update-when-idle is an Android-adapted safe auto-stage: signed APK bytes may be downloaded and verified under Desktop-equivalent safety gates, but Android system installation still requires explicit foreground user continuation. Non-stable signed delivery, final release signing, packaged/device upgrade and protected-account acceptance remain open.",
+      "android_head_at_update": "1b8c053b7ae28be9b2594717a50952707f982d4f"
     },
     {
       "responsibility_id": "SETTINGS-MANDATORY-UPDATE-ANDROID-001",
@@ -12630,20 +12659,28 @@
         "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/update/AndroidUpdateViewModel.kt",
         "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/features/update/UpdateBanner.kt",
         "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/production/ProductionRenderer_view.kt",
-        "mobile/android/app/src/test/java/com/ombhrum/fabushi/AndroidVersionTest.kt"
+        "mobile/android/app/src/test/java/com/ombhrum/fabushi/AndroidVersionTest.kt",
+        "source/host/src/box_rebuild_backend.rs",
+        "source/android-host-jni/src/lib.rs",
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/core/MahayanaHost.kt",
+        "source/android-preload/src/main/kotlin/com/ombhrum/fabushi/androidpreload/runtime/AndroidCoordinatorPort.kt",
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/coordinator/AndroidMandatoryUpdateOwner.kt",
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/coordinator/AndroidCoordinatorRuntime.kt",
+        "mobile/android/app/src/test/java/com/ombhrum/fabushi/AndroidMandatoryUpdateOwnerTest.kt"
       ],
       "android_owner": "AndroidUpdateViewModel + MandatoryUpdateGate projection",
       "platform_delta": "Electron restart/install is replaced by signed APK/system installer while retaining block semantics.",
-      "implementation_status": "mapped",
-      "production_wiring": "Policy seam and root blocker are wired. Authoritative Desktop-equivalent experiment and Broker producers remain missing, so the gate is dormant and this responsibility is not verified.",
-      "unit_test": "AndroidVersionTest covers minimum comparison, invalid inputs, backend override and clear; exact-head Actions pending.",
+      "implementation_status": "implemented",
+      "production_wiring": "Authoritative producers are now wired through the canonical Host/JNI/Coordinator path. AndroidBoxRebuildBackend queries the same authenticated AnalyticsService/BootstrapStatsig source as Desktop and reads dynamic_configs.sand_min_client_version.value.min_version; it also probes GrokBotService/EnsureSandBox and interprets x-automation-failure-hint=SAND_CLIENT_UPDATE_REQUIRED as required, successful EnsureSandBox as clear, and unrelated/transport failures as unchanged. AndroidMandatoryUpdateOwner persists the account-fenced state, rejects stale process-generation/sequence/account callbacks, clears on logout/account switch, and allows a later authoritative producer to reassert. AndroidUpdateViewModel projects the single mandatory-update truth into native UI.",
+      "unit_test": "AndroidMandatoryUpdateOwnerTest covers process-death/reconnect clear-reassert, account switch and stale callbacks. Rust box_rebuild_backend tests cover Statsig minimum-version parsing and malformed/unobserved input; JNI/Coordinator exact-head compilation and AndroidVersion mandatory comparison remain required. Same exact-head Actions and packaged/device mandatory-update journeys are still required before verified.",
       "contract_test": "Pending typed experiment/Broker producer, stale callback, reconnect and recreation contracts.",
       "integration_test": "Pending live authoritative policy signal into shipping runtime.",
       "packaged_test": "Pending final minified signed release package.",
       "device_test": "Pending forced-update/install/post-upgrade unblock journey.",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Does not invent a release-manifest minimum. Desktop authority is backendRequiresUpdate OR currentVersion < sand_min_client_version.min_version."
+      "notes": "Implemented, not verified. This no longer relies on an invented release-manifest minimum: Desktop-equivalent sand_min_client_version and SAND_CLIENT_UPDATE_REQUIRED producers are real production code. Verification remains blocked on exact-head CI plus protected/signed package journeys.",
+      "android_head_at_update": "1b8c053b7ae28be9b2594717a50952707f982d4f"
     },
     {
       "responsibility_id": "SETTINGS-UPDATE-TRACK-ANDROID-001",
