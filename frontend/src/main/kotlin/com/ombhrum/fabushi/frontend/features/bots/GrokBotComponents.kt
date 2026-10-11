@@ -266,6 +266,7 @@ internal fun GrokBotChatAndroid(
     onClose: () -> Unit,
     onOpenCommandPalette: () -> Unit,
     onOpenSettings: () -> Unit,
+    onOpenConversationOutline: () -> Unit,
     onDraftChange: (String) -> Unit,
     onSend: () -> Unit,
     onRetrySend: (String) -> Unit,
@@ -304,6 +305,7 @@ internal fun GrokBotChatAndroid(
             FabushiAppAgentSurface.Element("mobile-bot-chat", "application", "Bot ${bot.name}"),
             FabushiAppAgentSurface.Element("mobile-bot-close", "button", "关闭 Bot 对话"),
             FabushiAppAgentSurface.Element("mobile-bot-settings", "button", "查看 ${bot.name} 设置"),
+            FabushiAppAgentSurface.Element("mobile-bot-outline", "button", "查看完整对话"),
             FabushiAppAgentSurface.Element("mobile-bot-draft", "textbox", "Bot 消息"),
         )
         val sendId = if (state.busy) "mobile-bot-stop" else "mobile-bot-send"
@@ -338,6 +340,7 @@ internal fun GrokBotChatAndroid(
         val actions = linkedMapOf(
             "mobile-bot-close" to FabushiAppAgentSurface.Action(setOf("invoke")) { onClose() },
             "mobile-bot-settings" to FabushiAppAgentSurface.Action(setOf("invoke")) { onOpenSettings() },
+            "mobile-bot-outline" to FabushiAppAgentSurface.Action(setOf("invoke")) { onOpenConversationOutline() },
             "mobile-bot-draft" to FabushiAppAgentSurface.Action(setOf("setValue")) { onDraftChange(it.orEmpty()) },
             sendId to FabushiAppAgentSurface.Action(setOf("invoke")) { if (state.busy) onStop() else onSend() },
         )
@@ -372,6 +375,15 @@ internal fun GrokBotChatAndroid(
                 }
             }
             Spacer(Modifier.weight(1f))
+            Text(
+                "☷",
+                color = GrokMobileInk,
+                fontSize = 19.sp,
+                modifier = Modifier
+                    .padding(horizontal = 8.dp)
+                    .clickable(onClick = onOpenConversationOutline)
+                    .testTag("mobile-bot-outline-open"),
+            )
             Text(
                 "⌕",
                 color = GrokMobileInk,

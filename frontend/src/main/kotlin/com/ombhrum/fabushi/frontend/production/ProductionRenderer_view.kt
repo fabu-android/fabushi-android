@@ -390,6 +390,10 @@ internal fun ProductionRenderer(
                                 runtimePort.launchExternalUrl(ACCESS_ONBOARDING_URL)
                             },
                             onOpenAgentNetwork = { rendererRoute = RendererRoute.AGENT_NETWORK },
+                            onOpenConversationOutline = botModel::openConversationOutline,
+                            onCloseConversationOutline = botModel::closeConversationOutline,
+                            onSelectConversationOutlineAgent = botModel::selectConversationOutlineAgent,
+                            onRefreshConversationOutline = botModel::refreshConversationOutline,
                             onOpenCommandPalette = {
                                 commandPaletteAgentFilter = null
                                 botModel.resetPaletteMessageSearch()

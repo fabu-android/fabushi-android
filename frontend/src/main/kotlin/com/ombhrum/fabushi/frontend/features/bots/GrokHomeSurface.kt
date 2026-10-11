@@ -73,6 +73,10 @@ fun GrokHomeSurface(
     onOpenAccessOnboarding: () -> Unit,
     onOpenAgentNetwork: () -> Unit,
     onOpenCommandPalette: () -> Unit,
+    onOpenConversationOutline: (MobileBotSummaryAndroid) -> Unit,
+    onCloseConversationOutline: () -> Unit,
+    onSelectConversationOutlineAgent: (String) -> Unit,
+    onRefreshConversationOutline: () -> Unit,
     onShowBotAsyncTasks: (MobileBotSummaryAndroid) -> Unit,
     onRefreshBots: () -> Unit,
     onCreateBot: (String, String, (() -> Unit)?) -> Unit,
@@ -126,6 +130,7 @@ fun GrokHomeSurface(
             appAgentSurface = appAgentSurface,
             onClose = onCloseBot,
             onOpenCommandPalette = onOpenCommandPalette,
+            onOpenConversationOutline = { onOpenConversationOutline(active) },
             onOpenSettings = {
                 onBeginAgentSettings(active.id)
                 profileTarget = active
@@ -139,6 +144,14 @@ fun GrokHomeSurface(
             onResolveApproval = onResolveApproval,
             onMessageTargetConsumed = onMessageTargetConsumed,
         )
+        if (botState.conversationOutline.isOpen) {
+            ConversationOutlinePanelAndroid(
+                state = botState.conversationOutline,
+                onSelectAgent = onSelectConversationOutlineAgent,
+                onRefresh = onRefreshConversationOutline,
+                onClose = onCloseConversationOutline,
+            )
+        }
         AgentProfileEditor(
             agent = profileTarget,
             onClose = { profileTarget = null },
