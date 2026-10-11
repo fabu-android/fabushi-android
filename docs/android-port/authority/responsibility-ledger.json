@@ -5,7 +5,7 @@
     "desktop_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
     "android_repository": "fabu-android/fabushi-android",
     "android_pr": 3,
-    "android_head_at_update": "86ca96cfdce363b777e3bcf1f84e49e5f493b8bc",
+    "android_head_at_update": "2e6f7598ab3a73fcec2ab5be857e55ae52bad2ac",
     "status": "incomplete",
     "note": "Incrementally rebased to Desktop main 371b72f1cd20de03dc4dff9a15ed761054968093. Durable send acknowledgement, transcript widget actions and client-side tool-result projection remain Host/Coordinator-owned. At Android code head 8927278b8ec61145700abb906f226f97f6497195, Agent avatar presentation has Desktop-order photo/shared-room/group/persona dispatch and activity-state mapping; Agent composer prompt drafts are durably Host-owned with account/Agent fencing, process-reopen restore, corrupt-store quarantine and clear-if-current; conversation outline is a retained read-only projection over canonical transcript with Agent/subagent tabs and running-subagent polling; Agent find-in-chat searches canonical transcript semantic payloads and has native Enter/Shift+Enter/Escape focus navigation. Rows stay mapped/not-verified where upstream roster fields, full ComposerDraft attachments/recovery, exact occurrence-span highlighting, composed header controls or same-head packaged/device evidence are still missing. Full source closure remains incomplete. Spreadsheet preview audit now records CSV/TSV and bounded OOXML multi-sheet production wiring at 1e66eb907c46043bcb429c15abeae253b44ef443; Desktop legacy BIFF .xls remains mapped/not-verified."
   },
@@ -11784,6 +11784,413 @@
       "verification_status": "not-verified",
       "notes": "Do not claim provider parity from preference model existence alone.",
       "android_head_at_update": "86ca96cfdce363b777e3bcf1f84e49e5f493b8bc"
+    },
+    {
+      "responsibility_id": "ROOT-CONNECTION-RESILIENCE-ANDROID-001",
+      "domain": "account-runtime",
+      "desktop_sources": [
+        {
+          "path": "frontend/src/recovered/features/root-resilience/connection-state.ts",
+          "blob_sha": "c8de518fbc65f1ae03b0d58f8be64f501e054bb9",
+          "symbols": [
+            "createCoordinatorConnectionController",
+            "phaseFor",
+            "retry queue"
+          ]
+        },
+        {
+          "path": "frontend/src/recovered/features/root-resilience/connection-state.tsx",
+          "blob_sha": "ed2ef6c69609ec7c45be7288bedbc8ea8435bf62",
+          "symbols": [
+            "CoordinatorConnectionHost"
+          ]
+        },
+        {
+          "path": "frontend/src/recovered/features/roster/reconnect-notice.tsx",
+          "blob_sha": "ce30806d3bf77e4dc20f7885ae2df549e78429be",
+          "symbols": [
+            "RosterReconnectNotice"
+          ]
+        },
+        {
+          "path": "frontend/src/recovered/features/roster/status.tsx",
+          "blob_sha": "fa389ebc756e49d0d0a84906d7224ae84c77ed9e",
+          "symbols": [
+            "RosterStatus"
+          ]
+        }
+      ],
+      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "responsibility": "Own the signed-in root connection resilience projection across account identity, Coordinator transport, roster readiness, reconnect/unreachable phases, queued retry, account-generation fencing and reuse of native roster status surfaces.",
+      "source_owner": "Desktop root CoordinatorConnectionController/Host",
+      "direct_callers": [
+        "shipping signed-in root shell"
+      ],
+      "downstream_dependencies": [
+        "auth status",
+        "Coordinator transport",
+        "roster readiness",
+        "retry/reconnect"
+      ],
+      "state_owner": "Coordinator/account session owns connection truth; root controller owns only derived phase/retry presentation.",
+      "persistent_state": [
+        "none; rebuild from account/transport/roster state"
+      ],
+      "protocol_wire_contract": [
+        "hidden when logged-out/privacy-blocked",
+        "connecting -> loading",
+        "connected+no failure -> connected",
+        "hasReachedBox failure -> reconnecting else unreachable",
+        "one retry in flight; disconnected retry queues until connected",
+        "account identity change invalidates retry waiter/callbacks"
+      ],
+      "visible_effect": "Android shows truthful Connecting/Reconnecting/Can’t reach states and safe retry rather than silently displaying stale roster state.",
+      "failure_behavior": [
+        "retry failure while replacement transport is down remains queued; connected deterministic failure projects an error code"
+      ],
+      "cancellation_behavior": "logout/account change/dispose cancels queued retry generation and subscriptions.",
+      "retry_semantics": "retry dedupes in-flight calls and resumes a queued user retry on reconnect.",
+      "idempotency_semantics": "one retry flight/waiter per generation.",
+      "process_death_recovery": "reconstruct from auth/Coordinator/roster projections; no retry intent is blindly replayed after cold start.",
+      "account_fencing": "connection generation changes on account identity/logout.",
+      "security_boundary": "root UI cannot fabricate connected/readiness state.",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/recovered/features/roster/access-readiness.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/recovered/features/roster/reconnect-notice_view.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/recovered/features/roster/status_view.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/production/ProductionRenderer_view.kt"
+      ],
+      "android_owner": "Android account/Coordinator projection + native root roster status host",
+      "platform_delta": "Electron Coordinator subscription becomes typed Android Coordinator/auth lifecycle; UI remains native Compose.",
+      "implementation_status": "mapped",
+      "production_wiring": "Roster readiness/status/reconnect components exist, but one production root controller with Desktop queued-retry/account-generation semantics is not yet wired.",
+      "unit_test": "RosterAccessReadinessTest covers readiness projection; dedicated root retry/account-switch/dispose tests still missing.",
+      "contract_test": "Desktop root-resilience exact sources audited.",
+      "integration_test": "missing transport down/reconnect/account-switch root journey",
+      "packaged_test": "required",
+      "device_test": "required",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Do not treat isolated roster status composables as complete root resilience.",
+      "android_head_at_update": "2e6f7598ab3a73fcec2ab5be857e55ae52bad2ac"
+    },
+    {
+      "responsibility_id": "ROSTER-ACCESS-READINESS-ANDROID-001",
+      "domain": "agent-roster",
+      "desktop_sources": [
+        {
+          "path": "frontend/src/recovered/features/roster/access-readiness.ts",
+          "blob_sha": "76ee042975b6550864392084cc2a04548d48f6b3",
+          "symbols": [
+            "projectRosterFailure",
+            "selectRosterAccessReadiness"
+          ]
+        }
+      ],
+      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "responsibility": "Derive account-bound roster readiness from transport, load completion, selected canonical Agent, restored-roster state, privacy block and normalized failure metadata.",
+      "source_owner": "Desktop roster access-readiness selector",
+      "direct_callers": [
+        "root connection host",
+        "roster shell"
+      ],
+      "downstream_dependencies": [
+        "canonical roster",
+        "account identity",
+        "transport state",
+        "selection state"
+      ],
+      "state_owner": "Pure projection; canonical inputs stay in auth/Coordinator/roster owners.",
+      "persistent_state": [
+        "none"
+      ],
+      "protocol_wire_contract": [
+        "selection ready requires account+connected+loaded+selected id present in roster",
+        "hasReachedBox requires account+hasLoadedAgents",
+        "blank failure code is rejected"
+      ],
+      "visible_effect": "Roster actions are enabled only when the selected Agent is actually ready.",
+      "failure_behavior": [
+        "invalid failure rows project null; readiness fails closed"
+      ],
+      "cancellation_behavior": "pure projection",
+      "retry_semantics": "none",
+      "idempotency_semantics": "deterministic projection",
+      "process_death_recovery": "recomputed from restored inputs",
+      "account_fencing": "accountKey required for any ready state",
+      "security_boundary": "readiness cannot grant capabilities; only gates presentation.",
+      "android_disposition": "direct-port",
+      "android_target": [
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/recovered/features/roster/access-readiness.kt",
+        "mobile/android/app/src/test/java/com/ombhrum/fabushi/RosterAccessReadinessTest.kt"
+      ],
+      "android_owner": "Pure Kotlin roster readiness projector",
+      "platform_delta": "none beyond enum naming.",
+      "implementation_status": "mapped",
+      "production_wiring": "Exact projector and tests exist but root production consumer is not yet fully wired.",
+      "unit_test": "RosterAccessReadinessTest",
+      "contract_test": "recovered-runtime-models contract",
+      "integration_test": "root wiring pending",
+      "packaged_test": "required",
+      "device_test": "required",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Model implemented; responsibility stays mapped until shipping root uses it.",
+      "android_head_at_update": "2e6f7598ab3a73fcec2ab5be857e55ae52bad2ac"
+    },
+    {
+      "responsibility_id": "ROSTER-SELECTION-PERSISTENCE-ANDROID-001",
+      "domain": "agent-roster",
+      "desktop_sources": [
+        {
+          "path": "frontend/src/recovered/features/roster/selection-state.ts",
+          "blob_sha": "23db0f0b38085e3723525cc02c389456738330ad",
+          "symbols": [
+            "RosterSelectionStore",
+            "rosterSelectionPersistenceKey",
+            "schemaVersion=1"
+          ]
+        }
+      ],
+      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "responsibility": "Persist the last selected Agent per account with versioned fail-closed restore, pending selection settlement, complete-roster reconciliation, account/generation fencing and process-death recovery.",
+      "source_owner": "Desktop RosterSelectionStore",
+      "direct_callers": [
+        "Agent roster/sidebar",
+        "conversation open/close"
+      ],
+      "downstream_dependencies": [
+        "account-scoped client persistence",
+        "canonical roster completeness",
+        "Agent transcript open settlement"
+      ],
+      "state_owner": "Selection store owns only current presentation selection; Agent roster remains Host-owned.",
+      "persistent_state": [
+        "sand.client.slice.account.<encoded-slot>.selection.last-agent schemaVersion=1"
+      ],
+      "protocol_wire_contract": [
+        "account slot is required and percent-encoded",
+        "corrupt/wrong schema is cleared",
+        "pending missing selection waits for settle",
+        "incomplete roster never reconciles",
+        "complete roster falls back deterministically"
+      ],
+      "visible_effect": "Android restores the same selected Agent after process death without leaking selection across accounts.",
+      "failure_behavior": [
+        "corrupt/wrong-version state is cleared",
+        "failed selection load does not invent an Agent"
+      ],
+      "cancellation_behavior": "reset/dispose/account change invalidate generation.",
+      "retry_semantics": "restore rereads current account state; no canonical side effect retry.",
+      "idempotency_semantics": "selecting settled current Agent is idempotent.",
+      "process_death_recovery": "versioned account-scoped selection restores after cold start.",
+      "account_fencing": "persistence key and generation are account-scoped.",
+      "security_boundary": "selection never changes canonical account/Agent ownership.",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/recovered/features/roster/selection-state.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/presentation/MobileBotViewModel.kt",
+        "mobile/android/app/src/test/java/com/ombhrum/fabushi/RosterSelectionStateTest.kt"
+      ],
+      "android_owner": "RosterSelectionStore integrated by MobileBotViewModel",
+      "platform_delta": "Desktop client persistence becomes Android SharedPreferences envelope while preserving account-scoped key/schema semantics.",
+      "implementation_status": "implemented",
+      "production_wiring": "MobileBotViewModel restores on account change, reconciles only complete roster, selects/settles on open, clears on close/logout and disposes on ViewModel clear.",
+      "unit_test": "RosterSelectionStateTest covers key encoding, process death, pending fallback, incomplete roster, corruption/wrong schema.",
+      "contract_test": "Desktop selection-state exact source audited.",
+      "integration_test": "same-head Android regression pending",
+      "packaged_test": "required",
+      "device_test": "required process-death/account-switch",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Implemented source/wiring; exact-head package/device evidence still required.",
+      "android_head_at_update": "2e6f7598ab3a73fcec2ab5be857e55ae52bad2ac"
+    },
+    {
+      "responsibility_id": "ROSTER-PRIVACY-BLOCK-ANDROID-001",
+      "domain": "account-privacy",
+      "desktop_sources": [
+        {
+          "path": "frontend/src/recovered/features/roster/privacy-blocked.tsx",
+          "blob_sha": "e566c979053099caabd6df1cd6cfbb241d210407",
+          "symbols": [
+            "isRosterPrivacyBlockFailure",
+            "PrivacyBlockedDialog",
+            "PRIVACY_SETTINGS_URL"
+          ]
+        }
+      ],
+      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "responsibility": "Detect Desktop roster privacy-block failures and present a blocking, focus-safe native dialog that can sign out or open the canonical privacy settings URL without allowing normal Agent use while storage/privacy policy is incompatible.",
+      "source_owner": "Desktop roster privacy-block modal",
+      "direct_callers": [
+        "roster/root failure projection"
+      ],
+      "downstream_dependencies": [
+        "account logout",
+        "external URL opener",
+        "roster failure metadata"
+      ],
+      "state_owner": "Account/roster failure truth stays canonical; modal owns only busy/focus presentation.",
+      "persistent_state": [
+        "none"
+      ],
+      "protocol_wire_contract": [
+        "block codes CLOUD_AGENT_STORAGE_DISABLED or transportKind=no_storage",
+        "Escape/outside click cannot dismiss",
+        "Open Privacy Settings URL is canonical",
+        "sign out reports returned auth status"
+      ],
+      "visible_effect": "Privacy-incompatible accounts receive an actionable blocking explanation rather than generic roster failure.",
+      "failure_behavior": [
+        "logout/open-url failure stays visible; normal roster is not silently enabled"
+      ],
+      "cancellation_behavior": "only explicit account/settings action; modal itself is non-dismissible.",
+      "retry_semantics": "user may retry logout/open settings explicitly.",
+      "idempotency_semantics": "opening settings is harmless; logout uses canonical account owner.",
+      "process_death_recovery": "re-evaluate roster failure and remount modal.",
+      "account_fencing": "modal derives from current account failure only.",
+      "security_boundary": "does not weaken privacy mode or bypass storage policy.",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/production/ProductionRenderer_view.kt"
+      ],
+      "android_owner": "Android root/account presentation over canonical auth/roster failure",
+      "platform_delta": "Desktop focus-trapped alertdialog becomes non-dismissible native Compose dialog and system browser intent.",
+      "implementation_status": "mapped",
+      "production_wiring": "No Android production handling of CLOUD_AGENT_STORAGE_DISABLED/no_storage privacy block was found in current branch.",
+      "unit_test": "missing",
+      "contract_test": "Desktop exact source audited.",
+      "integration_test": "missing privacy-block/sign-out/open-settings journey",
+      "packaged_test": "required",
+      "device_test": "required",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Explicit gap; generic error surface is not equivalent.",
+      "android_head_at_update": "2e6f7598ab3a73fcec2ab5be857e55ae52bad2ac"
+    },
+    {
+      "responsibility_id": "TERMINAL-OUTPUT-PROJECTION-ANDROID-001",
+      "domain": "tools-terminal",
+      "desktop_sources": [
+        {
+          "path": "frontend/src/recovered/features/terminal/output/model.ts",
+          "blob_sha": "f0fb275659af4b57259f88f3829a0d417dc75537",
+          "symbols": [
+            "normalizeTerminalOutput",
+            "projectTerminalOutput"
+          ]
+        }
+      ],
+      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "responsibility": "Normalize legacy/current terminal result shapes into one read-only terminal output projection with stable session/command/cwd/output/status/exit-code semantics.",
+      "source_owner": "Desktop terminal output model",
+      "direct_callers": [
+        "terminal output view",
+        "tool result shell surfaces"
+      ],
+      "downstream_dependencies": [
+        "canonical terminal/tool result data"
+      ],
+      "state_owner": "Pure projection; terminal execution remains Runner/Host-owned.",
+      "persistent_state": [
+        "none"
+      ],
+      "protocol_wire_contract": [
+        "CRLF/CR normalize to LF",
+        "command and session identity required",
+        "legacy snake_case and current fields accepted",
+        "running status outranks error/exit",
+        "nonzero exit/rejected => error"
+      ],
+      "visible_effect": "Android can display terminal output from old/new payload variants consistently.",
+      "failure_behavior": [
+        "malformed rows return null rather than invent terminal identity"
+      ],
+      "cancellation_behavior": "pure projection",
+      "retry_semantics": "none",
+      "idempotency_semantics": "deterministic projection",
+      "process_death_recovery": "recomputed from canonical terminal result",
+      "account_fencing": "inherited from containing transcript/run owner",
+      "security_boundary": "read-only projection cannot execute commands.",
+      "android_disposition": "direct-port",
+      "android_target": [
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/recovered/features/terminal/output/TerminalOutputModel.kt",
+        "mobile/android/app/src/test/java/com/ombhrum/fabushi/TerminalOutputProjectionTest.kt"
+      ],
+      "android_owner": "Pure Kotlin terminal output projector",
+      "platform_delta": "none",
+      "implementation_status": "mapped",
+      "production_wiring": "2e6f7598 adds model/tests only; terminal output view production consumption is not yet wired.",
+      "unit_test": "TerminalOutputProjectionTest",
+      "contract_test": "recovered-runtime-models contract",
+      "integration_test": "missing",
+      "packaged_test": "required",
+      "device_test": "required",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Keep mapped until native terminal view consumes this projector.",
+      "android_head_at_update": "2e6f7598ab3a73fcec2ab5be857e55ae52bad2ac"
+    },
+    {
+      "responsibility_id": "GLOBAL-KEYBOARD-SHORTCUTS-ANDROID-001",
+      "domain": "navigation",
+      "desktop_sources": [
+        {
+          "path": "frontend/src/recovered/features/recovered-shell-models.contract.test.ts",
+          "blob_sha": "02c34ddaee843b976303640bbc52a308ecf53042",
+          "symbols": [
+            "global shortcut registry/controller contract"
+          ]
+        }
+      ],
+      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "responsibility": "Adapt Desktop global keyboard shortcut ownership to Android hardware-keyboard/back handling while preserving ordered action resolution, editable-field policy, alternate prompt shortcut, indexed Agent activation, listener lifecycle and unstacked Escape ownership.",
+      "source_owner": "Desktop window-chrome global keyboard shortcut controller",
+      "direct_callers": [
+        "root window shell"
+      ],
+      "downstream_dependencies": [
+        "native navigation/search/prompt/Agent selection"
+      ],
+      "state_owner": "Android root input/navigation layer owns shortcut dispatch; domain actions remain in their canonical owners.",
+      "persistent_state": [
+        "none"
+      ],
+      "protocol_wire_contract": [
+        "ordered shortcuts",
+        "editable fields suppress unsafe shortcuts",
+        "Escape respects modal/stack ownership",
+        "Agent index actions are bounded"
+      ],
+      "visible_effect": "Hardware keyboard users retain Desktop-equivalent navigation/productivity shortcuts without stealing text input.",
+      "failure_behavior": [
+        "unknown/ambiguous key chord fails closed"
+      ],
+      "cancellation_behavior": "listener/lifecycle detach removes shortcut ownership.",
+      "retry_semantics": "none",
+      "idempotency_semantics": "one resolved action per key event.",
+      "process_death_recovery": "re-register root handler with recreated Activity.",
+      "account_fencing": "Agent-index shortcut uses current roster/account only.",
+      "security_boundary": "shortcut dispatch cannot bypass approval/capability gates.",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/production/ProductionRenderer_view.kt"
+      ],
+      "android_owner": "Android root key/back dispatcher",
+      "platform_delta": "Desktop window keydown listener must become Compose/Activity hardware keyboard and back ownership.",
+      "implementation_status": "mapped",
+      "production_wiring": "No complete Android global shortcut registry/controller equivalent was established in this audit.",
+      "unit_test": "missing Android shortcut parity tests",
+      "contract_test": "recovered-shell-models contract audited",
+      "integration_test": "missing",
+      "packaged_test": "required",
+      "device_test": "required hardware keyboard",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Underlying Desktop source row will receive the reverse link when deterministic cursor reaches it; this responsibility currently cites the contract authority only to avoid false source closure.",
+      "android_head_at_update": "2e6f7598ab3a73fcec2ab5be857e55ae52bad2ac"
     }
   ],
   "traceability": {
@@ -11818,7 +12225,7 @@
   },
   "metadata": {
     "android_head_at_update": "1e66eb907c46043bcb429c15abeae253b44ef443",
-    "note": " Deterministic editor cursor now records the shipped suggestion boundary: Android has production-wired Agent/scheduled-automation projection with stale fencing, while Desktop PR/MCP providers are explicitly dormant in the current production adapter. Agent find-in-chat is now production-wired for message/widget semantic search and wrap navigation, while occurrence-span highlighting and richer searchable payloads remain mapped gaps. Native media viewer gallery is production-wired for Human conversations with navigation/zoom/stale-load fencing; in-app PDF rendering is now implemented at 499519f… and pending exact-head CI/device evidence, while Agent attachment/audio/focus semantics remain mapped. Spreadsheet preview responsibility is explicit; legacy .xls remains a deterministic gap. Signed-in onboarding rows are now explicitly mapped to native route/persona/create presentation and a separate unresolved computer-readiness/kickstart responsibility; neither is verified. Desktop permissions/local-tool renderer/store rows are now mapped to a dedicated unresolved Host-owned always/ask/never + team ceiling policy responsibility. Desktop plugins/overlay rows are now split across native overlay presentation, server-tool lifecycle, Git private-source auth recovery, and existing Skills/MCP owners; all remain mapped until production wiring/evidence closes. Settings instruction/router source and recovered cross-owner contract tests are now mapped to concrete responsibilities; provider/instruction production wiring remains explicitly open.",
-    "last_updated_android_head": "86ca96cfdce363b777e3bcf1f84e49e5f493b8bc"
+    "note": " Deterministic editor cursor now records the shipped suggestion boundary: Android has production-wired Agent/scheduled-automation projection with stale fencing, while Desktop PR/MCP providers are explicitly dormant in the current production adapter. Agent find-in-chat is now production-wired for message/widget semantic search and wrap navigation, while occurrence-span highlighting and richer searchable payloads remain mapped gaps. Native media viewer gallery is production-wired for Human conversations with navigation/zoom/stale-load fencing; in-app PDF rendering is now implemented at 499519f… and pending exact-head CI/device evidence, while Agent attachment/audio/focus semantics remain mapped. Spreadsheet preview responsibility is explicit; legacy .xls remains a deterministic gap. Signed-in onboarding rows are now explicitly mapped to native route/persona/create presentation and a separate unresolved computer-readiness/kickstart responsibility; neither is verified. Desktop permissions/local-tool renderer/store rows are now mapped to a dedicated unresolved Host-owned always/ask/never + team ceiling policy responsibility. Desktop plugins/overlay rows are now split across native overlay presentation, server-tool lifecycle, Git private-source auth recovery, and existing Skills/MCP owners; all remain mapped until production wiring/evidence closes. Settings instruction/router source and recovered cross-owner contract tests are now mapped to concrete responsibilities; provider/instruction production wiring remains explicitly open. Runtime/shell/state contracts plus root-resilience/roster source are now split across selection persistence, readiness, privacy-block, root connection, terminal projection and keyboard-shortcut responsibilities. Only roster selection is implemented; others remain mapped.",
+    "last_updated_android_head": "2e6f7598ab3a73fcec2ab5be857e55ae52bad2ac"
   }
 }
