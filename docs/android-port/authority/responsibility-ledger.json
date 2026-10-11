@@ -5,9 +5,9 @@
     "desktop_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
     "android_repository": "fabu-android/fabushi-android",
     "android_pr": 3,
-    "android_head_at_update": "8927278b8ec61145700abb906f226f97f6497195",
+    "android_head_at_update": "1e66eb907c46043bcb429c15abeae253b44ef443",
     "status": "incomplete",
-    "note": "Incrementally rebased to Desktop main 371b72f1cd20de03dc4dff9a15ed761054968093. Durable send acknowledgement, transcript widget actions and client-side tool-result projection remain Host/Coordinator-owned. At Android code head 8927278b8ec61145700abb906f226f97f6497195, Agent avatar presentation has Desktop-order photo/shared-room/group/persona dispatch and activity-state mapping; Agent composer prompt drafts are durably Host-owned with account/Agent fencing, process-reopen restore, corrupt-store quarantine and clear-if-current; conversation outline is a retained read-only projection over canonical transcript with Agent/subagent tabs and running-subagent polling; Agent find-in-chat searches canonical transcript semantic payloads and has native Enter/Shift+Enter/Escape focus navigation. Rows stay mapped/not-verified where upstream roster fields, full ComposerDraft attachments/recovery, exact occurrence-span highlighting, composed header controls or same-head packaged/device evidence are still missing. Full source closure remains incomplete."
+    "note": "Incrementally rebased to Desktop main 371b72f1cd20de03dc4dff9a15ed761054968093. Durable send acknowledgement, transcript widget actions and client-side tool-result projection remain Host/Coordinator-owned. At Android code head 8927278b8ec61145700abb906f226f97f6497195, Agent avatar presentation has Desktop-order photo/shared-room/group/persona dispatch and activity-state mapping; Agent composer prompt drafts are durably Host-owned with account/Agent fencing, process-reopen restore, corrupt-store quarantine and clear-if-current; conversation outline is a retained read-only projection over canonical transcript with Agent/subagent tabs and running-subagent polling; Agent find-in-chat searches canonical transcript semantic payloads and has native Enter/Shift+Enter/Escape focus navigation. Rows stay mapped/not-verified where upstream roster fields, full ComposerDraft attachments/recovery, exact occurrence-span highlighting, composed header controls or same-head packaged/device evidence are still missing. Full source closure remains incomplete. Spreadsheet preview audit now records CSV/TSV and bounded OOXML multi-sheet production wiring at 1e66eb907c46043bcb429c15abeae253b44ef443; Desktop legacy BIFF .xls remains mapped/not-verified."
   },
   "responsibilities": [
     {
@@ -9867,6 +9867,91 @@
       "artifact": null,
       "verification_status": "not-verified",
       "notes": "Implemented source responsibility, but final verification still requires exact-head Android/UI tests."
+    },
+    {
+      "responsibility_id": "CONVERSATION-SPREADSHEET-PREVIEW-ANDROID-001",
+      "domain": "conversation-media",
+      "desktop_sources": [
+        {
+          "path": "frontend/src/recovered/features/conversation/workspace/model.ts",
+          "blob_sha": "e8bf075b7ed1fe6d8a8493c6fba585d73640303a",
+          "symbols": [
+            "tableExtensions",
+            "kindFromMimeType",
+            "inferAttachmentKind"
+          ]
+        },
+        {
+          "path": "frontend/src/recovered/features/conversation/workspace/spreadsheet-viewer-model.ts",
+          "blob_sha": "9171bc159805bc5fc6b6ba3103b67d8766ac0ace",
+          "symbols": [
+            "SPREADSHEET_MAX_ROWS",
+            "SPREADSHEET_PREVIEW_BYTE_CAP",
+            "parseDelimitedSpreadsheet",
+            "parseSpreadsheetBytes",
+            "createSpreadsheetPreviewController"
+          ]
+        },
+        {
+          "path": "frontend/src/recovered/features/conversation/workspace/spreadsheet-viewer.tsx",
+          "blob_sha": "cc56d7171ed52ac92bfcb218b5b7e45f4b72bef6",
+          "symbols": [
+            "loadShippedSpreadsheetRuntime",
+            "SpreadsheetTable",
+            "SpreadsheetViewer"
+          ]
+        }
+      ],
+      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "responsibility": "Preview canonical transcript spreadsheet attachments with bounded byte/row parsing, CSV/TSV and workbook formats, multi-sheet selection, cell detail, explicit missing/too-large/error states, and lifecycle fencing without making Compose a second attachment owner.",
+      "source_owner": "Desktop conversation workspace spreadsheet preview controller and shipped spreadsheet runtime",
+      "direct_callers": [
+        "conversation attachment/file preview surface"
+      ],
+      "downstream_dependencies": [
+        "attachment byte reader",
+        "shipped xlsx parser asset",
+        "canonical attachment metadata"
+      ],
+      "state_owner": "Attachment bytes/metadata remain canonical runtime state; preview parse result and selected sheet/cell are presentation-local immutable projections.",
+      "persistent_state": [],
+      "protocol_wire_contract": [
+        "25 MiB preview byte cap",
+        "2,000 parsed-row cap",
+        "200 rendered-row/column projection",
+        "Desktop table classification includes csv/tsv/xlsx/xls"
+      ],
+      "visible_effect": "Users can inspect spreadsheet attachments in-app, switch workbook sheets, inspect individual cells, and fall back visibly when a format cannot be previewed.",
+      "failure_behavior": [
+        "missing/oversized/malformed data must fail visibly without mutating the attachment",
+        "archive/XML parsing fails closed on unsafe paths, entity expansion, or external relationships",
+        "unsupported legacy BIFF .xls remains an explicit preview gap rather than being misparsed"
+      ],
+      "cancellation_behavior": "Changing/closing the media item invalidates the presentation load generation; late results may not overwrite another attachment.",
+      "retry_semantics": "Preview reads are side-effect free and may be explicitly reopened; no upload/send side effect is retried by the viewer.",
+      "idempotency_semantics": "Re-parsing the same attachment bytes produces the same sheet/cell projection; sheet selection is ephemeral.",
+      "process_death_recovery": "Preview state is reconstructed from canonical attachment bytes on reopen; no preview state is a durable business owner.",
+      "account_fencing": "Attachment bytes originate from the current canonical conversation/account projection; preview code cannot fetch arbitrary account data.",
+      "security_boundary": "OOXML is treated as bounded data only. Android does not execute workbook macros, external relationships, DTDs, or XML external entities.",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/recovered/features/conversation/workspace/spreadsheet-viewer_model.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/recovered/features/conversation/workspace/media-viewer_view.kt",
+        "mobile/android/app/src/test/java/com/ombhrum/fabushi/AndroidMediaViewerProjectionTest.kt"
+      ],
+      "android_owner": "Native Android media viewer consumes bounded spreadsheet projections; canonical attachment ownership remains outside Compose.",
+      "platform_delta": "Android replaces Desktop's dynamically loaded JavaScript XLSX vendor runtime with bounded Java/Kotlin ZIP/XML OOXML parsing for xlsx/xlsm/xltx/xltm and native Compose sheet/cell UI. CSV/TSV use the Desktop-equivalent parser. Legacy binary BIFF .xls, which Desktop classifies as table and its vendor runtime can parse, is still not previewed natively and falls through to the external-file path.",
+      "implementation_status": "mapped",
+      "production_wiring": "At Android code head 1e66eb907c46043bcb429c15abeae253b44ef443, CSV/TSV plus bounded OOXML workbook parsing and multi-sheet native rendering are wired into AndroidMediaViewer. ZIP entry count/expanded-size/path fences, DTD/external-entity denial, relationship confinement, shared/inline string and typed cell projection are implemented. Legacy .xls remains open, so this responsibility is intentionally not promoted to implemented.",
+      "unit_test": "AndroidMediaViewerProjectionTest covers CSV quoting/truncation plus OOXML detection, two-sheet/shared-string/typed-cell projection and malicious DOCTYPE/relationship traversal rejection; exact-head GitHub Actions are currently running.",
+      "contract_test": "Desktop source audit confirms tableExtensions csv/tsv/xlsx/xls and 25 MiB/2,000-row/200-render-row contracts. Android keeps the same main caps for supported formats; legacy .xls is explicitly unresolved.",
+      "integration_test": "Native AndroidMediaViewer production branch is wired for supported spreadsheet formats; exact-head compile/unit/lint and packaged/device interaction remain pending.",
+      "packaged_test": "required on final minified githubRelease APK/AAB, including CSV/XLSX and unsupported/legacy .xls behavior",
+      "device_test": "required for sheet switching, large/malformed workbook failure, process reopen and external-open fallback",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Do not mark implemented/verified until legacy BIFF .xls has an accepted native/replacement implementation and the same exact Android HEAD passes required CI/package/device evidence.",
+      "android_head_at_update": "1e66eb907c46043bcb429c15abeae253b44ef443"
     }
   ],
   "traceability": {
@@ -9900,7 +9985,7 @@
     }
   },
   "metadata": {
-    "android_head_at_update": "2539d764502834697d2022f1cfbabfabb7781652",
-    "note": " Deterministic editor cursor now records the shipped suggestion boundary: Android has production-wired Agent/scheduled-automation projection with stale fencing, while Desktop PR/MCP providers are explicitly dormant in the current production adapter. Agent find-in-chat is now production-wired for message/widget semantic search and wrap navigation, while occurrence-span highlighting and richer searchable payloads remain mapped gaps. Native media viewer gallery is production-wired for Human conversations with navigation/zoom/stale-load fencing; in-app PDF rendering is now implemented at 499519f… and pending exact-head CI/device evidence, while Agent attachment/audio/focus semantics remain mapped."
+    "android_head_at_update": "1e66eb907c46043bcb429c15abeae253b44ef443",
+    "note": " Deterministic editor cursor now records the shipped suggestion boundary: Android has production-wired Agent/scheduled-automation projection with stale fencing, while Desktop PR/MCP providers are explicitly dormant in the current production adapter. Agent find-in-chat is now production-wired for message/widget semantic search and wrap navigation, while occurrence-span highlighting and richer searchable payloads remain mapped gaps. Native media viewer gallery is production-wired for Human conversations with navigation/zoom/stale-load fencing; in-app PDF rendering is now implemented at 499519f… and pending exact-head CI/device evidence, while Agent attachment/audio/focus semantics remain mapped. Spreadsheet preview responsibility is explicit; legacy .xls remains a deterministic gap."
   }
 }
