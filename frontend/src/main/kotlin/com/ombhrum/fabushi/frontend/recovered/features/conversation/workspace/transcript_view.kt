@@ -22,16 +22,26 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+
+internal fun referencedMessageTargetIndex(
+    messages: List<ChatMessage>,
+    targetId: String?,
+): Int = targetId?.let { id -> messages.indexOfFirst { it.id == id } } ?: -1
 
 /**
  * Android/Compose transcript boundary corresponding to Grok workspace/transcript.tsx.
@@ -58,12 +68,19 @@ internal fun ConversationTranscript(
     val haptics = LocalHapticFeedback.current
     val listState = rememberLazyListState()
     val visibleMessages = messages
+    var referencedTargetId by remember { mutableStateOf<String?>(null) }
 
     LaunchedEffect(currentFindMessageId, messages) {
         val index = currentFindMessageId?.let { id ->
             messages.indexOfFirst { it.id == id }
         } ?: -1
         if (index >= 0) listState.animateScrollToItem(index)
+    }
+
+    LaunchedEffect(referencedTargetId, messages) {
+        val index = referencedMessageTargetIndex(messages, referencedTargetId)
+        if (index >= 0) listState.animateScrollToItem(index)
+        referencedTargetId = null
     }
 
     LazyColumn(
@@ -136,23 +153,28 @@ internal fun ConversationTranscript(
                         )
                     }
 
-                    val replied = message.replyToMessageId?.let { replyId ->
+                    val replyTargetId = message.replyToMessageId
+                    val replied = replyTargetId?.let { replyId ->
                         messages.firstOrNull { it.id == replyId }
                     }
-                    if (replied != null) {
+                    if (replyTargetId != null) {
                         Column(
                             Modifier
                                 .fillMaxWidth()
-                                .padding(vertical = 4.dp),
+                                .clickable(enabled = replied != null) {
+                                    referencedTargetId = replyTargetId
+                                }
+                                .padding(vertical = 4.dp)
+                                .testTag("android-reply-reference-" + message.id),
                         ) {
                             Text(
-                                "回复",
+                                if (replied == null) "回复 · 消息暂不可用" else "回复 · 点击跳转",
                                 color = homeAccent,
                                 style = MaterialTheme.typography.bodySmall,
                                 fontWeight = FontWeight.Bold,
                             )
                             Text(
-                                replied.text,
+                                replied?.let(::replyPreviewLabel) ?: "(消息暂不可用)",
                                 color = homeSecondaryText,
                                 style = MaterialTheme.typography.bodySmall,
                                 maxLines = 2,
