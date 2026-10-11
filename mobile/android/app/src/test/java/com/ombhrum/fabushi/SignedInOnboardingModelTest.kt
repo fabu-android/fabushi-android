@@ -78,4 +78,16 @@ class SignedInOnboardingModelTest {
         fence.finish(second)
         assertTrue(fence.begin() != null)
     }
+    @Test
+    fun createFailureMapsTransportToDesktopConnectionCopyWithoutMaskingOtherErrors() {
+        assertEquals(
+            "Can't reach your computer right now. Check your connection and try again.",
+            signedInOnboardingCreateError(IllegalStateException("transport unavailable")),
+        )
+        assertEquals(
+            "invalid Agent name",
+            signedInOnboardingCreateError(IllegalArgumentException("invalid Agent name")),
+        )
+    }
+
 }
