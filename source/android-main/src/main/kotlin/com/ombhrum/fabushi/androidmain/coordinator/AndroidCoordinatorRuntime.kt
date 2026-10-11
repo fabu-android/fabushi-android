@@ -20,6 +20,7 @@ import com.ombhrum.fabushi.androidpreload.runtime.AndroidSendAcknowledgementDisp
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidSendAcknowledgementEntry
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidSendAcknowledgementPhase
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidSidebarSection
+import com.ombhrum.fabushi.androidpreload.runtime.AndroidWidgetActionResult
 import com.ombhrum.fabushi.androidmain.security.AndroidRemoteControlSessionStore
 import com.ombhrum.fabushi.androidmain.security.AndroidRemotePairingStore
 import com.ombhrum.fabushi.androidmain.security.RemoteControlSessionCredential
@@ -528,38 +529,68 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
         agentId: String,
         entryId: String,
         value: String,
-    ): Boolean =
-        host.request(
-            "feature.widget.respond",
-            JSONObject()
-                .putNullable("accountSlot", accountSlot)
-                .put("agentId", agentId)
-                .put("entryId", entryId)
-                .put("value", value),
-        ).let { reply ->
-            check(reply.has("accepted") && reply.opt("accepted") is Boolean) {
-                "feature.widget.respond returned a malformed reply"
-            }
-            reply.getBoolean("accepted")
-        }
+        generation: Long,
+    ): AndroidWidgetActionResult =
+        parseWidgetActionResult(
+            method = "feature.widget.respond",
+            expectedGeneration = generation,
+            requireOperationId = true,
+            reply = host.request(
+                "feature.widget.respond",
+                JSONObject()
+                    .putNullable("accountSlot", accountSlot)
+                    .put("agentId", agentId)
+                    .put("entryId", entryId)
+                    .put("value", value)
+                    .put("generation", generation),
+            ),
+        )
 
     override fun dismissWidget(
         accountSlot: String?,
         agentId: String,
         entryId: String,
-    ): Boolean =
-        host.request(
-            "feature.widget.dismiss",
-            JSONObject()
-                .putNullable("accountSlot", accountSlot)
-                .put("agentId", agentId)
-                .put("entryId", entryId),
-        ).let { reply ->
-            check(reply.has("accepted") && reply.opt("accepted") is Boolean) {
-                "feature.widget.dismiss returned a malformed reply"
-            }
-            reply.getBoolean("accepted")
+        generation: Long,
+    ): AndroidWidgetActionResult =
+        parseWidgetActionResult(
+            method = "feature.widget.dismiss",
+            expectedGeneration = generation,
+            requireOperationId = false,
+            reply = host.request(
+                "feature.widget.dismiss",
+                JSONObject()
+                    .putNullable("accountSlot", accountSlot)
+                    .put("agentId", agentId)
+                    .put("entryId", entryId)
+                    .put("generation", generation),
+            ),
+        )
+
+    private fun parseWidgetActionResult(
+        method: String,
+        expectedGeneration: Long,
+        requireOperationId: Boolean,
+        reply: JSONObject,
+    ): AndroidWidgetActionResult {
+        check(expectedGeneration > 0L) { "$method requires a positive presentation generation" }
+        check(reply.has("accepted") && reply.opt("accepted") is Boolean) {
+            "$method returned a malformed accepted flag"
         }
+        val generation = reply.optLong("generation", -1L)
+        check(generation == expectedGeneration) {
+            "$method returned a stale generation"
+        }
+        val operationId = reply.optString("operationId").trim().takeIf(String::isNotEmpty)
+        if (reply.getBoolean("accepted") && requireOperationId) {
+            check(operationId != null) { "$method accepted without a continuation operation" }
+        }
+        return AndroidWidgetActionResult(
+            accepted = reply.getBoolean("accepted"),
+            generation = generation,
+            operationId = operationId,
+            reason = reply.optString("reason").trim().takeIf(String::isNotEmpty),
+        )
+    }
 
     override fun featureInterrupt(params: JSONObject) = host.request("feature.interrupt", params)
     override fun featureApprovalResolve(params: JSONObject) = host.request("feature.approval.resolve", params)

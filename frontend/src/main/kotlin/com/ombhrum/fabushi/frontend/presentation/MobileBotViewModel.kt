@@ -1221,7 +1221,7 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
             it.id == entryId && it.kind == MobileChatEntryKind.WIDGET
         }?.widget ?: return
         if (widget.respondedValue != null || widget.dismissed) return
-        if (entryId in snapshot.widgetPendingEntryIds) return
+        if (snapshot.widgetPendingEntryIds.isNotEmpty()) return
         if (response != null && response.isBlank()) return
 
         val accountSlot = rosterSelectionAccountSlot
@@ -1236,25 +1236,60 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
             val result = withContext(Dispatchers.IO) {
                 runCatching {
                     if (response == null) {
-                        coordinator.dismissWidget(accountSlot, bot.id, entryId)
+                        coordinator.dismissWidget(
+                            accountSlot = accountSlot,
+                            agentId = bot.id,
+                            entryId = entryId,
+                            generation = scopeGeneration,
+                        )
                     } else {
-                        coordinator.respondToWidget(accountSlot, bot.id, entryId, response)
+                        coordinator.respondToWidget(
+                            accountSlot = accountSlot,
+                            agentId = bot.id,
+                            entryId = entryId,
+                            value = response,
+                            generation = scopeGeneration,
+                        )
                     }
                 }
             }
             if (!isCurrentSendScope(bot.id, accountSlot, scopeGeneration)) return@launch
             val withoutPending = mutableState.value.widgetPendingEntryIds - entryId
-            if (result.isFailure || result.getOrNull() != true) {
+            val action = result.getOrNull()
+            if (result.isFailure || action?.accepted != true) {
                 commitState(
                     mutableState.value.copy(
                         widgetPendingEntryIds = withoutPending,
                         error = result.exceptionOrNull()?.message
+                            ?: action?.reason
                             ?: "Widget action was rejected",
                     ),
                 )
                 return@launch
             }
             try {
+                val continuationOperationId = action.operationId
+                if (response != null && continuationOperationId != null) {
+                    commitState(
+                        mutableState.value.copy(
+                            busy = true,
+                            operationId = continuationOperationId,
+                            widgetPendingEntryIds = withoutPending,
+                            messages = mutableState.value.messages.filterNot {
+                                it.kind == MobileChatEntryKind.THINKING &&
+                                    it.operationId == continuationOperationId
+                            } + MobileChatMessage(
+                                id = "thinking:$continuationOperationId",
+                                role = MobileChatRole.ASSISTANT,
+                                text = "",
+                                kind = MobileChatEntryKind.THINKING,
+                                operationId = continuationOperationId,
+                                actionTitle = "Thinking",
+                                actionStatus = "running",
+                            ),
+                        ),
+                    )
+                }
                 refreshDurableSendProjection(bot.id, accountSlot, scopeGeneration)
                 if (isCurrentSendScope(bot.id, accountSlot, scopeGeneration)) {
                     commitState(
@@ -1628,6 +1663,7 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
         paletteRoutineJob = null
         paletteRoutineFence.cancel()
         openBotGeneration += 1
+        sendPresentationGeneration += 1
         asyncTasksGeneration += 1
         asyncTasksJob?.cancel()
         asyncTasksJob = null

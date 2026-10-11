@@ -3208,37 +3208,129 @@ impl AndroidJsonHost {
     }
 
     fn widget_respond(&mut self, params: &Value) -> Result<Value, String> {
-        let _account_fence = self.current_turn_account_fence()?;
+        let account_fence = self.current_turn_account_fence()?;
+        let account_slot = params
+            .get("accountSlot")
+            .and_then(Value::as_str)
+            .filter(|value| !value.trim().is_empty());
         let entry_id = required_string(params, "entryId")?;
         let agent_id = required_string(params, "agentId")?;
+        let generation = params.get("generation").and_then(Value::as_u64).unwrap_or(0);
         let value = required_string(params, "value")?.trim();
         if value.is_empty() || value.len() > 16 * 1024 {
             return Err("widget response value is invalid".into());
         }
-        self.mutate_widget_entry(entry_id, agent_id, Some(value))
+
+        let mutation = self.mutate_widget_entry(
+            entry_id,
+            agent_id,
+            account_slot,
+            &account_fence,
+            Some(value),
+        )?;
+        if mutation.get("accepted").and_then(Value::as_bool) != Some(true) {
+            let mut rejected = mutation;
+            rejected["generation"] = Value::from(generation);
+            return Ok(rejected);
+        }
+
+        let current = mutation
+            .get("entry")
+            .cloned()
+            .ok_or("accepted widget response is missing canonical entry")?;
+        let request_id = format!("widget-response:{agent_id}:{entry_id}:{generation}");
+        let mut command = json!({
+            "type":"chat.send",
+            "requestId":request_id,
+            "agentId":agent_id,
+            "text":value,
+            "hidden":true,
+            "appendUserMessage":false,
+            "awaitTurn":false,
+            "requestSource":"widget-response",
+        });
+        if let Some(reply_to) = current
+            .get("replyTo")
+            .or_else(|| current.get("replyToId"))
+            .and_then(Value::as_str)
+            .filter(|value| !value.trim().is_empty())
+        {
+            command["replyToId"] = Value::String(reply_to.to_string());
+        }
+
+        let continuation = match self.feature_execute(&json!({"command":command})) {
+            Ok(accepted) => accepted,
+            Err(error) => {
+                self.rollback_widget_response(entry_id, agent_id)?;
+                return Err(error);
+            }
+        };
+        let operation_id = continuation
+            .get("operationId")
+            .and_then(Value::as_str)
+            .filter(|value| !value.trim().is_empty())
+            .ok_or_else(|| {
+                let _ = self.rollback_widget_response(entry_id, agent_id);
+                "widget response continuation did not return an operation id".to_string()
+            })?;
+        Ok(json!({
+            "accepted":true,
+            "entry":current,
+            "generation":generation,
+            "operationId":operation_id,
+        }))
     }
 
     fn widget_dismiss(&mut self, params: &Value) -> Result<Value, String> {
-        let _account_fence = self.current_turn_account_fence()?;
+        let account_fence = self.current_turn_account_fence()?;
+        let account_slot = params
+            .get("accountSlot")
+            .and_then(Value::as_str)
+            .filter(|value| !value.trim().is_empty());
         let entry_id = required_string(params, "entryId")?;
         let agent_id = required_string(params, "agentId")?;
-        self.mutate_widget_entry(entry_id, agent_id, None)
+        let generation = params.get("generation").and_then(Value::as_u64).unwrap_or(0);
+        let mut result = self.mutate_widget_entry(
+            entry_id,
+            agent_id,
+            account_slot,
+            &account_fence,
+            None,
+        )?;
+        result["generation"] = Value::from(generation);
+        Ok(result)
     }
 
     fn mutate_widget_entry(
         &mut self,
         entry_id: &str,
         agent_id: &str,
+        account_slot: Option<&str>,
+        account_fence: &str,
         response: Option<&str>,
     ) -> Result<Value, String> {
-        let current = self
+        let transcript = self
             .transcript
             .lock()
             .map_err(|_| "transcript lock poisoned".to_string())?
-            .entry(entry_id)
+            .get_transcript();
+        let entry_index = transcript
+            .iter()
+            .position(|entry| entry.get("id").and_then(Value::as_str) == Some(entry_id))
             .ok_or("widget transcript entry was not found")?;
+        let current = transcript[entry_index].clone();
         if current.get("agentId").and_then(Value::as_str) != Some(agent_id) {
             return Err("widget transcript entry is fenced to another Agent".into());
+        }
+        if let Some(entry_slot) = current.get("accountSlot").and_then(Value::as_str) {
+            if Some(entry_slot) != account_slot {
+                return Err("widget transcript entry is fenced to another account slot".into());
+            }
+        }
+        if let Some(entry_fence) = current.get("accountFence").and_then(Value::as_str) {
+            if entry_fence != account_fence {
+                return Err("widget transcript entry is fenced to another account generation".into());
+            }
         }
         if current.get("kind").and_then(Value::as_str) != Some("send-message")
             || current
@@ -3286,6 +3378,18 @@ impl AndroidJsonHost {
             if !option_match && !allow_custom {
                 return Ok(json!({"accepted":false,"reason":"value-not-allowed"}));
             }
+            if widget
+                .get("dismissOnMoveOn")
+                .and_then(Value::as_bool)
+                .unwrap_or(false)
+                && transcript.iter().skip(entry_index + 1).any(|entry| {
+                    entry.get("agentId").and_then(Value::as_str) == Some(agent_id)
+                        && entry.get("kind").and_then(Value::as_str) == Some("message")
+                        && entry.get("role").and_then(Value::as_str) == Some("user")
+                })
+            {
+                return Ok(json!({"accepted":false,"reason":"stale-move-on"}));
+            }
         }
 
         let updated = self
@@ -3296,15 +3400,43 @@ impl AndroidJsonHost {
                 let mut next = entry.clone();
                 if let Some(value) = response {
                     next["respondedValue"] = Value::String(value.to_string());
-                    next["widgetDismissed"] = Value::Bool(false);
-                } else {
-                    next["widgetDismissed"] = Value::Bool(true);
+                    if let Some(object) = next.as_object_mut() {
+                        object.remove("widgetDismissed");
+                    }
+                } else if let Some(object) = next.as_object_mut() {
+                    object.remove("widgetSkipped");
+                    object.insert("widgetDismissed".into(), Value::Bool(true));
                 }
                 next
             })
             .map_err(|error| format!("failed to persist widget transcript action: {error}"))?
             .ok_or("widget transcript entry disappeared before mutation")?;
         Ok(json!({"accepted":true,"entry":updated}))
+    }
+
+    fn rollback_widget_response(&mut self, entry_id: &str, agent_id: &str) -> Result<(), String> {
+        let current = self
+            .transcript
+            .lock()
+            .map_err(|_| "transcript lock poisoned".to_string())?
+            .entry(entry_id)
+            .ok_or("widget transcript entry disappeared before rollback")?;
+        if current.get("agentId").and_then(Value::as_str) != Some(agent_id) {
+            return Err("widget rollback is fenced to another Agent".into());
+        }
+        self.transcript
+            .lock()
+            .map_err(|_| "transcript lock poisoned".to_string())?
+            .update_entry(entry_id, |entry| {
+                let mut next = entry.clone();
+                if let Some(object) = next.as_object_mut() {
+                    object.remove("respondedValue");
+                }
+                next
+            })
+            .map_err(|error| format!("failed to rollback widget response: {error}"))?
+            .ok_or("widget transcript entry disappeared during rollback")?;
+        Ok(())
     }
 
     fn feature_execute(&mut self, params: &Value) -> Result<Value, String> {

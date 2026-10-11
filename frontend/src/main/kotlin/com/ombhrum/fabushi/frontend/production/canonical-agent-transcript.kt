@@ -80,7 +80,7 @@ internal fun canonicalMobileTranscriptForAgent(
                 val widget = message.optJSONObject("widget") ?: continue
                 val prompt = widget.optString("prompt").trim()
                 val optionRows = widget.optJSONArray("options") ?: continue
-                if (prompt.isBlank() || optionRows.length() !in 1..6) continue
+                if (prompt.isBlank()) continue
                 val options = buildList {
                     for (optionIndex in 0 until optionRows.length()) {
                         val option = optionRows.optJSONObject(optionIndex) ?: return@buildList

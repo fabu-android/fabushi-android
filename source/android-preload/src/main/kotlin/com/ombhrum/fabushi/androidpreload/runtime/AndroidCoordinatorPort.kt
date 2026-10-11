@@ -57,6 +57,13 @@ data class AndroidSendAcknowledgementDispatch(
     val operationId: String,
 )
 
+data class AndroidWidgetActionResult(
+    val accepted: Boolean,
+    val generation: Long,
+    val operationId: String? = null,
+    val reason: String? = null,
+)
+
 /**
  * Typed method surface exposed to Android presentation code.
  *
@@ -130,12 +137,16 @@ interface AndroidCoordinatorPort {
         agentId: String,
         entryId: String,
         value: String,
-    ): Boolean
+        generation: Long,
+    ): AndroidWidgetActionResult =
+        error("Transcript widget response is unavailable on this Coordinator port")
     fun dismissWidget(
         accountSlot: String?,
         agentId: String,
         entryId: String,
-    ): Boolean
+        generation: Long,
+    ): AndroidWidgetActionResult =
+        error("Transcript widget dismissal is unavailable on this Coordinator port")
     fun featureInterrupt(params: JSONObject): JSONObject
     fun featureApprovalResolve(params: JSONObject): JSONObject
     fun transcriptSnapshot(): JSONArray

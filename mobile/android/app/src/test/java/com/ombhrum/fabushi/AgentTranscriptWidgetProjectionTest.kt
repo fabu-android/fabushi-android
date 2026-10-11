@@ -61,13 +61,27 @@ class AgentTranscriptWidgetProjectionTest {
     }
 
     @Test
-    fun malformedWidgetFailsClosedInsteadOfCreatingActionSurface() {
-        val malformed = widget("w-a", "agent-a")
-        malformed.getJSONObject("message")
+    fun zeroOptionWidgetRemainsValidAndBlankPromptFailsClosed() {
+        val customOnly = widget("w-a", "agent-a")
+        customOnly.getJSONObject("message")
             .getJSONObject("widget")
             .put("options", JSONArray())
-        val projected = canonicalMobileTranscriptForAgent(JSONArray().put(malformed), "agent-a")
-        assertTrue(projected.isEmpty())
+        val projectedCustomOnly = canonicalMobileTranscriptForAgent(
+            JSONArray().put(customOnly),
+            "agent-a",
+        )
+        assertEquals(1, projectedCustomOnly.size)
+        assertTrue(projectedCustomOnly.single().widget!!.options.isEmpty())
+
+        val malformed = widget("w-b", "agent-a")
+        malformed.getJSONObject("message")
+            .getJSONObject("widget")
+            .put("prompt", "   ")
+        val projectedMalformed = canonicalMobileTranscriptForAgent(
+            JSONArray().put(malformed),
+            "agent-a",
+        )
+        assertTrue(projectedMalformed.isEmpty())
     }
 
     @Test
