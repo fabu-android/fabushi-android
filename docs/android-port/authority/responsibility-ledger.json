@@ -7,7 +7,7 @@
     "android_pr": 3,
     "android_head_at_update": "e6fc1e328f7d2f6960d5e1c8f3182ca115e6c513",
     "status": "incomplete",
-    "note": "Incrementally rebased to Desktop main 371b72f1cd20de03dc4dff9a15ed761054968093, root tree 3116c54a1e36da95189c740bdc789ad543ce2d20. Compare from 62d0c99f changes only Marketplace owner inventory; shipping source blobs and 8177-row set are unchanged. Skills Host owner audit was re-read and mapped without inherited verification."
+    "note": "Incrementally rebased to Desktop main 371b72f1cd20de03dc4dff9a15ed761054968093, root tree 3116c54a1e36da95189c740bdc789ad543ce2d20. Compare from 62d0c99f changes only Marketplace owner inventory; shipping source blobs and 8177-row set are unchanged. Skills Host owner audit was re-read and mapped without inherited verification. Deterministic transcript audit advanced through registry/resolver/root, secret-request, send-message:text, thread affordance/loader/summary, transcript feed fanout and URL-card; confirmed Android secret/thread/link-metadata gaps remain mapped."
   },
   "responsibilities": [
     {
@@ -8051,6 +8051,226 @@
       "artifact": null,
       "verification_status": "not-verified",
       "notes": "Current owner audit is source fact. Generic plugin runtime existence is not Skills parity."
+    },
+    {
+      "responsibility_id": "TRANSCRIPT-SECRET-REQUEST-ANDROID-001",
+      "domain": "conversation-transcript-secrets",
+      "desktop_sources": [
+        {
+          "path": "frontend/src/recovered/features/conversation/cards/transcript-card/secret-request-actions.ts",
+          "blob_sha": "b6891f5c0fdde4137f1e54308c4d116477f9d6d7",
+          "symbols": [
+            "createSecretRequestActionAdapter",
+            "createSecretRequestTransport"
+          ]
+        }
+      ],
+      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "responsibility": "Handle Agent transcript secret requests as one account/Agent-scoped single-flight action: validate non-empty input, submit exactly {entryId,value,agentId}, project pending/settled/provided, reconcile secretProvided from canonical entries, and fence stale completion on scope change/dispose.",
+      "source_owner": "Canonical Agent transcript owns request/provided truth; scoped action adapter owns only pending presentation and one in-flight submission.",
+      "direct_callers": [
+        "secret-request transcript card leaf/action provider"
+      ],
+      "downstream_dependencies": [
+        "submitSecret Host transport",
+        "canonical transcript entries"
+      ],
+      "state_owner": "Host/transcript owns secretProvided; UI/action adapter owns ephemeral pending state only.",
+      "persistent_state": [
+        "Secret value is never a presentation-owned durable field; only canonical secretProvided/request entry state may persist."
+      ],
+      "protocol_wire_contract": [
+        "submitSecret {entryId,value,agentId}",
+        "secretProvided boolean canonical projection"
+      ],
+      "visible_effect": "User can enter a requested secret once; duplicate/pending/provided submission is blocked and late old-account completion cannot affect the new conversation.",
+      "failure_behavior": [
+        "blank/unavailable/not-secret/pending/provided ignored",
+        "transport failure returns to idle only if still current",
+        "stale completion ignored"
+      ],
+      "cancellation_behavior": "scope change/dispose increments generation and invalidates in-flight completion",
+      "retry_semantics": "Failure may be explicitly retried by the user only after current-state reconciliation; no hidden automatic replay.",
+      "idempotency_semantics": "One pending submit per entry; canonical secretProvided prevents re-submit.",
+      "process_death_recovery": "Reload canonical request/provided state; never persist/replay secret value from UI memory.",
+      "account_fencing": "accountSlot + agentId + generation fence",
+      "security_boundary": "Secret value crosses only typed Host transport and must not be logged, retained in Compose state after submission, or exposed to unrelated plugin/tool scopes.",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/features/chat/AgentChatSurfaces.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/presentation/MobileBotViewModel.kt",
+        "source/android-preload/src/main/kotlin/com/ombhrum/fabushi/androidpreload/runtime/AndroidCoordinatorPort.kt",
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/coordinator/AndroidCoordinatorRuntime.kt",
+        "source/host/src/android_json_runtime.rs"
+      ],
+      "android_owner": "Host-owned Agent transcript plus native secret-request presentation.",
+      "platform_delta": "React input becomes native Compose secure input; Host remains canonical owner.",
+      "implementation_status": "mapped",
+      "production_wiring": "Current Android repository search found no submitSecret or secretProvided production path, so this responsibility is a confirmed gap.",
+      "unit_test": "missing focused input/pending/provided/stale/account-switch tests",
+      "contract_test": "missing typed submitSecret and no-secret-retention contract",
+      "integration_test": "missing exact-head Agent secret request submit/reopen/account-switch journey",
+      "packaged_test": "required final package",
+      "device_test": "required protected/device Agent journey",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Do not substitute generic approval or plugin-variable UI; secret-request has its own canonical transcript contract."
+    },
+    {
+      "responsibility_id": "TRANSCRIPT-THREAD-LIFECYCLE-ANDROID-001",
+      "domain": "conversation-transcript-thread",
+      "desktop_sources": [
+        {
+          "path": "frontend/src/recovered/features/conversation/cards/transcript-card/thread-affordance.tsx",
+          "blob_sha": "da200308c1f62ead81c51b6c78577553a5e3138b",
+          "symbols": [
+            "ThreadAffordance",
+            "threadReplyLabel"
+          ]
+        },
+        {
+          "path": "frontend/src/recovered/features/conversation/cards/transcript-card/thread-loader.ts",
+          "blob_sha": "458f57d1df313f0dd478ba162ef8646e4c293c89",
+          "symbols": [
+            "createThreadLoader"
+          ]
+        },
+        {
+          "path": "frontend/src/recovered/features/conversation/cards/transcript-card/thread-summary-controller.ts",
+          "blob_sha": "233fe27c5b9f9765a96975da902d0a860c05171d",
+          "symbols": [
+            "createThreadSummaryController"
+          ]
+        }
+      ],
+      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "responsibility": "Project transcript thread reply counts and navigate/load a root thread with account/Agent scope, coalesced same-root load, ready/empty/failed/unavailable states, generation fencing, summary/entry pagination merging, in-scope scroll vs out-of-scope thread open, focus restoration and dispose/reset lifecycle.",
+      "source_owner": "Canonical transcript/thread transport owns thread entries and summaries; presentation controller owns scoped loading/navigation only.",
+      "direct_callers": [
+        "message/card action anchor",
+        "thread affordance"
+      ],
+      "downstream_dependencies": [
+        "getAgentThread {id,rootId}",
+        "canonical thread summaries/entry ids"
+      ],
+      "state_owner": "Host thread/transcript owner; controller holds only scoped projection/loading state.",
+      "persistent_state": [
+        "No second durable thread store in UI; process reopen reloads canonical transcript/thread data."
+      ],
+      "protocol_wire_contract": [
+        "getAgentThread {id:agentId,rootId} -> {entries}",
+        "summary {rootId,count}"
+      ],
+      "visible_effect": "Messages show valid reply counts; View thread loads/open-scrolls the correct thread and preserves focus.",
+      "failure_behavior": [
+        "invalid count/root hidden",
+        "missing scope unavailable",
+        "load error failed",
+        "stale old-generation result discarded"
+      ],
+      "cancellation_behavior": "scope/reset/dispose invalidates pending request by generation",
+      "retry_semantics": "Explicit reload after failure; same pending root coalesces rather than duplicating request.",
+      "idempotency_semantics": "Summary/entry merging is stable by id; navigation does not mutate canonical transcript.",
+      "process_death_recovery": "Reopen reloads summaries/thread from canonical owner; no pending load replay is required.",
+      "account_fencing": "accountSlot + agentId generation scope",
+      "security_boundary": "Thread payload is scoped transcript data; navigation cannot bypass account/Agent ownership.",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/recovered/features/conversation/workspace/transcript_view.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/presentation/MobileBotViewModel.kt",
+        "source/android-preload/src/main/kotlin/com/ombhrum/fabushi/androidpreload/runtime/AndroidCoordinatorPort.kt",
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/coordinator/AndroidCoordinatorRuntime.kt",
+        "source/host/src/android_json_runtime.rs"
+      ],
+      "android_owner": "Native transcript presentation over Host canonical Agent thread owner.",
+      "platform_delta": "Native navigation/scroll replaces DOM focus/route mechanics but retains scoped loader and summary semantics.",
+      "implementation_status": "mapped",
+      "production_wiring": "Current Android search found no threadSummary/openThread/getAgentThread equivalent for Agent transcript; generic reply action is not thread transport parity.",
+      "unit_test": "missing focused summary/loader generation and navigation tests",
+      "contract_test": "missing typed Agent thread load contract",
+      "integration_test": "missing exact-head thread pagination/reopen/account-switch journey",
+      "packaged_test": "required final package",
+      "device_test": "required protected/device transcript thread acceptance",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "TRANSCRIPT-MESSAGE-ACTIONS-ANDROID-001 remains the action eligibility responsibility; this row owns thread data/load/navigation lifecycle."
+    },
+    {
+      "responsibility_id": "TRANSCRIPT-URL-CARD-ANDROID-001",
+      "domain": "conversation-transcript-link-metadata",
+      "desktop_sources": [
+        {
+          "path": "frontend/src/recovered/features/conversation/cards/transcript-card/send-message-text.ts",
+          "blob_sha": "4093777fd3d2be9ea5d897533ff755a33061aee0",
+          "symbols": [
+            "projectSendMessageText",
+            "classifySendMessageTextUrl"
+          ]
+        },
+        {
+          "path": "frontend/src/recovered/features/conversation/cards/transcript-card/url-card.ts",
+          "blob_sha": "b2ee8fb4c21bf17c2a2239cfb467efa2619b45a8",
+          "symbols": [
+            "normalizeLinkUrl",
+            "extractBareLink",
+            "projectLinkMetadata",
+            "createUrlCardProvider"
+          ]
+        }
+      ],
+      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "responsibility": "Detect the exact non-streaming image-free bare HTTP(S) link form in send-message:text/legacy attachment content, fetch/cache bounded link metadata by normalized URL, expose idle/loading/ready/empty/failed state, heal watched failures on reconnect/focus, fence stale requests, and open only normalized HTTP(S) URLs externally.",
+      "source_owner": "Transcript presentation URL-card provider over trusted link-metadata/open-external bridge.",
+      "direct_callers": [
+        "send-message:text card",
+        "legacy-link attachment card"
+      ],
+      "downstream_dependencies": [
+        "getLinkMetadata",
+        "openExternal"
+      ],
+      "state_owner": "Canonical transcript owns message content; URL provider owns ephemeral metadata cache/resource lifecycle.",
+      "persistent_state": [
+        "No canonical message mutation; metadata cache is presentation/runtime cache only unless Host bridge separately persists it."
+      ],
+      "protocol_wire_contract": [
+        "only http/https with hostname",
+        "exact bare-link/rich-text single-link guard",
+        "metadata url/canonicalUrl/title/description/siteName/hostname/image/favicon/fetchedAt"
+      ],
+      "visible_effect": "Eligible lone links render a preview and safely open externally; ordinary/streaming/image messages remain normal text.",
+      "failure_behavior": [
+        "invalid URL or empty metadata yields no card",
+        "fetch error is failed and may heal when watched",
+        "unknown schemes never open externally"
+      ],
+      "cancellation_behavior": "reset/dispose increments request generation and discards stale results",
+      "retry_semantics": "failed watched resources heal on reconnect/focus; no message side effect is retried.",
+      "idempotency_semantics": "One normalized URL resource/cache entry; concurrent loads share request.",
+      "process_death_recovery": "Recreate provider and refetch metadata from canonical message content; no side effect replay.",
+      "account_fencing": "Message itself remains account/Agent scoped; provider carries no independent account truth.",
+      "security_boundary": "Only normalized HTTP(S) is passed to external/open metadata bridge; arbitrary schemes and malformed rich text are rejected.",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/features/chat/AgentChatSurfaces.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/recovered/features/conversation/workspace/transcript_view.kt",
+        "source/android-preload/src/main/kotlin/com/ombhrum/fabushi/androidpreload/runtime/AndroidCoordinatorPort.kt",
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/coordinator/AndroidCoordinatorRuntime.kt",
+        "source/host/src/android_json_runtime.rs"
+      ],
+      "android_owner": "Native transcript presentation plus typed Android/Host link metadata and external-browser adapter.",
+      "platform_delta": "Android uses system browser/Custom Tabs and native link preview UI rather than Electron openExternal.",
+      "implementation_status": "mapped",
+      "production_wiring": "Current Android repository search found no getLinkMetadata path; send-message Agent canonical projection also drops the Desktop card union, so URL-card parity is not wired.",
+      "unit_test": "missing bare-link/normalization/metadata resource lifecycle tests",
+      "contract_test": "missing typed link metadata/open external contract",
+      "integration_test": "missing exact-head reconnect/heal/external-open journey",
+      "packaged_test": "required final package",
+      "device_test": "required device external-browser acceptance",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Only exact Desktop bare-link classification is in scope; do not turn arbitrary mixed text into a preview."
     }
   ],
   "traceability": {
