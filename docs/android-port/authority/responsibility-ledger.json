@@ -9097,6 +9097,51 @@
       "artifact": null,
       "verification_status": "not-verified",
       "notes": "Source code existence is not shipping composition. Re-review immediately if Desktop production adapter begins passing prReference or mention.getMcpReferences."
+    },
+    {
+      "responsibility_id": "CONVERSATION-FIND-IN-CHAT-ANDROID-001",
+      "domain": "conversation-workspace",
+      "desktop_sources": [
+        {
+          "path": "frontend/src/recovered/features/conversation/workspace/find-in-chat-controller.ts",
+          "blob_sha": "13bdb3f5c88e1a2b058057c996aad70557c99ac1",
+          "symbols": [
+            "findInChatSearchText",
+            "createFindInChatController"
+          ]
+        },
+        {
+          "path": "frontend/src/recovered/features/conversation/workspace/find-in-chat.tsx",
+          "blob_sha": "5f7ff92a899ccfdee728f34704406e94c9ecb600",
+          "symbols": [
+            "FindInChatBar",
+            "applyFindHighlights"
+          ]
+        }
+      ],
+      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "responsibility": "Search semantic transcript payloads, enumerate every occurrence, navigate matches with wrap semantics, clear and generation-fence state on account/Agent scope changes and dispose, focus/select the search field, support keyboard close/next/previous, scroll the selected entry into view, and visually distinguish current/all occurrences without indexing excluded transcript chrome.",
+      "source_owner": "Ephemeral find controller owns only search query/match/current projection; canonical transcript remains the transcript owner.",
+      "visible_effect": "Find in chat searches the current conversation, reports match position, moves through matches, scrolls to the selected entry and never leaks results across conversation scope changes.",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/recovered/features/conversation/workspace/find-in-chat-controller.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/recovered/features/conversation/workspace/find-in-chat_view.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/features/bots/GrokBotComponents.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/features/conversations/ConversationSurfaces.kt"
+      ],
+      "android_owner": "Compose presentation owns only ephemeral find projection. Human and Agent surfaces both derive matches from their current immutable transcript; neither writes canonical transcript state.",
+      "platform_delta": "Compose list scrolling and row-level selection replace DOM Range/CSS Highlights. Android must use native focus/IME/accessibility semantics. Exact per-occurrence text-span highlighting and Desktop message author/attachment-name indexing require richer Android transcript projection than currently available.",
+      "implementation_status": "mapped",
+      "production_wiring": "765ed696ded43de194efbdef23522324f1d4be21 wires find-in-chat into Agent Bot production UI using Desktop-compatible message/widget semantic payload projection, every-occurrence matching, null-selection/next wrap behavior, current-row scroll/highlight and the shared FindInChatBar. Human messaging already had a separate find surface. Remaining gaps are typed Agent author/attachment indexing, exact occurrence-span highlighting, focus/select and Enter/Shift+Enter/Escape parity, and one unified scoped lifecycle owner.",
+      "unit_test": "mobile/android/app/src/test/java/com/ombhrum/fabushi/AgentFindInChatProjectionTest.kt covers message occurrence enumeration, widget prompt indexing, action exclusion, blank/literal query behavior and Desktop-compatible stepping; exact-head GitHub Actions pending.",
+      "contract_test": "No network/Host mutation contract is introduced; search consumes immutable transcript projections only.",
+      "integration_test": "Agent production Compose wiring exists at 765ed696ded43de194efbdef23522324f1d4be21; focused instrumentation for keyboard/focus/accessibility and account/Agent reopen remains required.",
+      "packaged_test": "required final minified package",
+      "device_test": "required keyboard/IME/accessibility and account-switch acceptance",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Keep mapped until exact per-occurrence highlighting, full searchable payload projection and lifecycle/keyboard semantics are demonstrated on the same exact HEAD."
     }
   ],
   "traceability": {
@@ -9130,7 +9175,7 @@
     }
   },
   "metadata": {
-    "android_head_at_update": "313a0d78cd876e9ba24a0a4bfd357ff4d2d3e9e8",
-    "note": " Deterministic editor cursor now records the shipped suggestion boundary: Android has production-wired Agent/scheduled-automation projection with stale fencing, while Desktop PR/MCP providers are explicitly dormant in the current production adapter."
+    "android_head_at_update": "765ed696ded43de194efbdef23522324f1d4be21",
+    "note": " Deterministic editor cursor now records the shipped suggestion boundary: Android has production-wired Agent/scheduled-automation projection with stale fencing, while Desktop PR/MCP providers are explicitly dormant in the current production adapter. Agent find-in-chat is now production-wired for message/widget semantic search and wrap navigation, while occurrence-span highlighting and richer searchable payloads remain mapped gaps."
   }
 }
