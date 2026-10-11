@@ -117,6 +117,7 @@ internal fun canonicalMobileTranscriptForAgent(
                     operationId = entry.optString("operationId").takeIf(String::isNotBlank),
                     clientNonce = entry.optString("clientNonce").takeIf(String::isNotBlank),
                     attachments = canonicalTranscriptAttachments(entry),
+                    richTextJson = entry.optJSONObject("richText")?.toString(),
                     transcriptAuthor = entry.optString("author").trim().takeIf(String::isNotEmpty),
                     transcriptSourceKind = entry.optString("sourceKind").trim().takeIf(String::isNotEmpty),
                     transcriptPresentationKind = canonicalTranscriptPresentationKind(entry),
@@ -223,6 +224,7 @@ internal fun projectDurableSendAcknowledgements(
             role = MobileChatRole.USER,
             text = acknowledgement.messageText,
             clientNonce = acknowledgement.nonce,
+            richTextJson = acknowledgement.messageRichText?.toString(),
             attachments = acknowledgement.attachments.map { attachment ->
                 MobileTranscriptAttachment(
                     path = attachment.path,
