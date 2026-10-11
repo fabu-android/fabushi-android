@@ -10768,6 +10768,122 @@
       "artifact": null,
       "verification_status": "not-verified",
       "notes": "Fresh deterministic audit. Existing native protocol implementation is real but insufficient to close Desktop overlay source because Desktop current shared parser/controller also carries source=https. Keep mapped/not-verified until that platform delta is resolved and same-head/package/device evidence exists."
+    },
+    {
+      "responsibility_id": "APP-ERROR-BOUNDARY-ANDROID-001",
+      "domain": "navigation",
+      "desktop_sources": [
+        {
+          "path": "frontend/src/recovered/features/error-boundary/view.tsx",
+          "blob_sha": "b86ed73f0c4b2e932cbcd7f923ea8cd09a08181c",
+          "symbols": [
+            "ErrorBoundarySurface",
+            "formatError"
+          ]
+        }
+      ],
+      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "responsibility": "Provide an application-root failure surface that remains visible after a renderer/presentation failure, exposes accessible title/detail, supports an explicit restart/reload attempt, and lets the user copy bounded diagnostics without crashing the failure surface.",
+      "source_owner": "Desktop root error-boundary presentation around renderer composition",
+      "direct_callers": [
+        "shipping Desktop presentation composition"
+      ],
+      "downstream_dependencies": [
+        "typed production state/transport implied by cited Desktop source"
+      ],
+      "state_owner": "Canonical domain/runtime state remains below Presentation; native surface owns only transient UI state.",
+      "persistent_state": [],
+      "protocol_wire_contract": [
+        "Preserve the typed source contract; no arbitrary presentation-to-Host dispatch."
+      ],
+      "visible_effect": "Provide an application-root failure surface that remains visible after a renderer/presentation failure, exposes accessible title/detail, supports an explicit restart/reload attempt, and lets the user copy bounded diagnostics without crashing the failure surface.",
+      "failure_behavior": [
+        "fail visibly and keep recovery controls usable",
+        "do not infer success from timeout/exception"
+      ],
+      "cancellation_behavior": "Presentation dismissal/cancellation must follow source semantics and cannot rewrite canonical outcome.",
+      "retry_semantics": "Reads/recovery may retry; side-effect retries require explicit user intent and reconciliation.",
+      "idempotency_semantics": "Stable request identity/reconciliation required for side-effecting operations where applicable.",
+      "process_death_recovery": "Android must reconstruct from durable/runtime truth rather than replay side effects.",
+      "account_fencing": "Account-scoped callbacks must be fenced to the current account epoch.",
+      "security_boundary": "Compose -> typed bridge/runtime only; no presentation privilege escalation.",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/production/bootstrap_view.kt",
+        "mobile/android/app/src/main/java/com/ombhrum/fabushi/MainActivity.kt"
+      ],
+      "android_owner": "Native Android presentation + existing typed Coordinator/Host ownership once completed",
+      "platform_delta": "Android cannot use window.location.reload or browser clipboard. Replacement should be a native root recovery state, Activity/runtime restart/recreate path, Android ClipboardManager, and Compose semantics/role=alert equivalent without moving canonical runtime state into UI.",
+      "implementation_status": "mapped",
+      "production_wiring": "Confirmed gap at this audit head: FabushiApplicationRoot directly invokes ProductionRenderer and MainActivity initializes runtime/setContent without a native app-root error state equivalent to Desktop ErrorBoundarySurface. transcript-load-error is scoped to history loading and is not an app-root replacement.",
+      "unit_test": "Missing focused title/detail/retry/copy-diagnostics/accessibility and failure-surface-survives-copy-failure tests.",
+      "contract_test": "required on same exact HEAD",
+      "integration_test": "required on same exact HEAD",
+      "packaged_test": "required on final minified package",
+      "device_test": "required on supported emulator/device",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Fresh deterministic source audit. This row records a confirmed Android gap/partial foundation and intentionally does not promote implementation or verification."
+    },
+    {
+      "responsibility_id": "FEEDBACK-OVERLAY-ANDROID-001",
+      "domain": "settings",
+      "desktop_sources": [
+        {
+          "path": "frontend/src/recovered/features/feedback/overlay/view.tsx",
+          "blob_sha": "01697164300f3db199fce8e72cc1187441b4ada0",
+          "symbols": [
+            "FeedbackDialog",
+            "feedbackCode",
+            "FeedbackState"
+          ]
+        }
+      ],
+      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "responsibility": "Provide account feedback submission with a 10,000-character bound, optional conversation id, sending lock that prevents dismissal, stable sent surface, typed failure codes and explicit retry after failure.",
+      "source_owner": "Desktop feedback overlay over typed submitFeedback bridge",
+      "direct_callers": [
+        "shipping Desktop presentation composition"
+      ],
+      "downstream_dependencies": [
+        "typed production state/transport implied by cited Desktop source"
+      ],
+      "state_owner": "Canonical domain/runtime state remains below Presentation; native surface owns only transient UI state.",
+      "persistent_state": [],
+      "protocol_wire_contract": [
+        "Preserve the typed source contract; no arbitrary presentation-to-Host dispatch."
+      ],
+      "visible_effect": "Provide account feedback submission with a 10,000-character bound, optional conversation id, sending lock that prevents dismissal, stable sent surface, typed failure codes and explicit retry after failure.",
+      "failure_behavior": [
+        "fail visibly and keep recovery controls usable",
+        "do not infer success from timeout/exception"
+      ],
+      "cancellation_behavior": "Presentation dismissal/cancellation must follow source semantics and cannot rewrite canonical outcome.",
+      "retry_semantics": "Reads/recovery may retry; side-effect retries require explicit user intent and reconciliation.",
+      "idempotency_semantics": "Stable request identity/reconciliation required for side-effecting operations where applicable.",
+      "process_death_recovery": "Android must reconstruct from durable/runtime truth rather than replay side effects.",
+      "account_fencing": "Account-scoped callbacks must be fenced to the current account epoch.",
+      "security_boundary": "Compose -> typed bridge/runtime only; no presentation privilege escalation.",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "source/shared/src/feedback.rs",
+        "source/host/src/android_json_runtime.rs",
+        "source/android-preload/src/main/kotlin/com/ombhrum/fabushi/androidpreload/runtime/AndroidCoordinatorPort.kt",
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/coordinator/AndroidCoordinatorRuntime.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/production/ProductionRenderer_view.kt"
+      ],
+      "android_owner": "Native Android presentation + existing typed Coordinator/Host ownership once completed",
+      "platform_delta": "Desktop OverlayDialog/textarea becomes native Compose dialog/text input with Android lifecycle fencing; canonical submission/result must stay behind typed Coordinator/Host and presentation must not retry an unknown side effect automatically.",
+      "implementation_status": "mapped",
+      "production_wiring": "Partial shared validation constants exist in source/shared/src/feedback.rs (10,000 message chars and bounded conversation/account metadata), but current Android tree has no native FeedbackDialog and no production submitFeedback typed Coordinator/Host route discovered in this audit. Shared constants alone do not implement the user journey.",
+      "unit_test": "Only shared sentry-id validation exists. Missing native idle/sending/sent/failed projection, cannot-dismiss-while-sending, conversation-id opt-in, typed code mapping, retry, account-switch/stale callback and process recreation tests.",
+      "contract_test": "required on same exact HEAD",
+      "integration_test": "required on same exact HEAD",
+      "packaged_test": "required on final minified package",
+      "device_test": "required on supported emulator/device",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Fresh deterministic source audit. This row records a confirmed Android gap/partial foundation and intentionally does not promote implementation or verification."
     }
   ],
   "traceability": {
