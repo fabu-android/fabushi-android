@@ -206,6 +206,28 @@ impl AndroidMessagingService {
 
         let previous = self.state.clone();
         let previous_cursor = previous.cursor;
+        let mut journal_cursor = previous_cursor;
+
+        if command_type == "sync" {
+            let delivery_envelopes =
+                match self.mark_direct_messages_delivered(authenticated_actor_id, now_ms) {
+                    Ok(envelopes) => envelopes,
+                    Err(error) => {
+                        self.state = previous;
+                        return Err(error);
+                    }
+                };
+            if let Err(error) = self.record_journal_result(
+                authenticated_actor_id,
+                journal_cursor,
+                &delivery_envelopes,
+            ) {
+                self.state = previous;
+                return Err(error);
+            }
+            journal_cursor = self.state.cursor;
+        }
+
         let envelopes = match self.execute_command(command_type, command, authenticated_actor_id, now_ms) {
             Ok(envelopes) => envelopes,
             Err(error) => {
@@ -215,7 +237,7 @@ impl AndroidMessagingService {
         };
         if let Err(error) = self.record_journal_result(
             authenticated_actor_id,
-            previous_cursor,
+            journal_cursor,
             &envelopes,
         ) {
             self.state = previous;
@@ -574,8 +596,32 @@ impl AndroidMessagingService {
             .and_then(|messages| messages.get(client_message_id))
             .cloned()
         {
+            let same_payload = existing.get("senderId").and_then(Value::as_str) == Some(actor_id)
+                && existing.get("content").cloned().unwrap_or(Value::Null)
+                    == command.get("content").cloned().unwrap_or(Value::Null)
+                && existing.get("replyToMessageId").cloned().unwrap_or(Value::Null)
+                    == command.get("replyToMessageId").cloned().unwrap_or(Value::Null)
+                && existing.get("threadRootMessageId").cloned().unwrap_or(Value::Null)
+                    == command.get("threadRootMessageId").cloned().unwrap_or(Value::Null)
+                && existing.get("scheduledAtMs").cloned().unwrap_or(Value::Null)
+                    == command.get("scheduledAtMs").cloned().unwrap_or(Value::Null)
+                && existing.get("silent").and_then(Value::as_bool).unwrap_or(false)
+                    == command.get("silent").and_then(Value::as_bool).unwrap_or(false)
+                && existing
+                    .get("protectedContent")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false)
+                    == command
+                        .get("protectedContent")
+                        .and_then(Value::as_bool)
+                        .unwrap_or(false);
+            if !same_payload {
+                return Err(format!(
+                    "clientMessageId {client_message_id} conflicts with the canonical message payload"
+                ));
+            }
             return Ok(vec![self.server_envelope(
-                json!({"type":"messageAdded","message":self.project_message(&existing, actor_id)}),
+                json!({"type":"messageChanged","message":self.project_message(&existing, actor_id)}),
                 now_ms,
             )]);
         }
@@ -1198,23 +1244,61 @@ impl AndroidMessagingService {
         now_ms: i64,
     ) -> Result<Vec<Value>, String> {
         let conversation_id = required_non_empty(command.get("conversationId"), "conversation id")?;
-        self.require_conversation_access(conversation_id, actor_id)?;
+        let conversation = self.require_conversation_access(conversation_id, actor_id)?.clone();
         let message_id = required_non_empty(command.get("messageId"), "message id")?;
-        self.require_message(conversation_id, message_id)?;
+        let should_mark_message_read = {
+            let message = self.require_message(conversation_id, message_id)?;
+            matches!(conversation_kind(&conversation), Some("direct") | Some("secret"))
+                && message.get("senderId").and_then(Value::as_str) != Some(actor_id)
+        };
+
         let preferences = self.conversation_preferences_mut(actor_id, conversation_id);
         preferences.insert("lastReadMessageId".into(), Value::String(message_id.to_string()));
         preferences.insert("unreadCount".into(), json!(0));
         preferences.insert("markedUnread".into(), json!(false));
-        self.bump_cursor();
+
+        if should_mark_message_read {
+            let message = self
+                .state
+                .messages
+                .get_mut(conversation_id)
+                .and_then(|messages| messages.get_mut(message_id))
+                .ok_or("message disappeared while marking it read")?;
+            let object = message
+                .as_object_mut()
+                .ok_or("message is not a canonical object")?;
+            object.insert("deliveryState".into(), Value::String("read".into()));
+        }
+
+        self.state.cursor = self
+            .state
+            .cursor
+            .saturating_add(if should_mark_message_read { 2 } else { 1 });
+
         let conversation = self
             .state
             .conversations
             .get(conversation_id)
-            .ok_or("conversation does not exist")?;
-        Ok(vec![self.server_envelope(
-            json!({"type":"conversationChanged","conversation":self.project_conversation(conversation, actor_id)}),
+            .ok_or("conversation does not exist")?
+            .clone();
+        let mut responses = vec![self.server_envelope(
+            json!({"type":"conversationChanged","conversation":self.project_conversation(&conversation, actor_id)}),
             now_ms,
-        )])
+        )];
+        if should_mark_message_read {
+            let message = self
+                .state
+                .messages
+                .get(conversation_id)
+                .and_then(|messages| messages.get(message_id))
+                .ok_or("message disappeared after marking it read")?
+                .clone();
+            responses.push(self.server_envelope(
+                json!({"type":"messageChanged","message":self.project_message(&message, actor_id)}),
+                now_ms,
+            ));
+        }
+        Ok(responses)
     }
 
     fn set_marked_unread(
@@ -2014,7 +2098,70 @@ impl AndroidMessagingService {
             .ok_or_else(|| format!("message {message_id} does not exist in {conversation_id}"))
     }
 
-    fn sync_envelope(&self, actor_id: &str, now_ms: i64) -> Value {
+    fn mark_direct_messages_delivered(
+        &mut self,
+        actor_id: &str,
+        now_ms: i64,
+    ) -> Result<Vec<Value>, String> {
+        let pending = self
+            .state
+            .conversations
+            .iter()
+            .filter(|(_, conversation)| {
+                matches!(conversation_kind(conversation), Some("direct") | Some("secret"))
+                    && conversation_has_access(conversation, actor_id)
+            })
+            .flat_map(|(conversation_id, _)| {
+                self.state
+                    .messages
+                    .get(conversation_id)
+                    .into_iter()
+                    .flat_map(|messages| messages.iter())
+                    .filter(|(_, message)| {
+                        message.get("senderId").and_then(Value::as_str) != Some(actor_id)
+                            && message.get("deliveryState").and_then(Value::as_str) == Some("sent")
+                    })
+                    .map(|(message_id, _)| (conversation_id.clone(), message_id.clone()))
+                    .collect::<Vec<_>>()
+            })
+            .collect::<Vec<_>>();
+        if pending.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        self.state.cursor = self.state.cursor.saturating_add(pending.len() as u64);
+        for (conversation_id, message_id) in &pending {
+            let message = self
+                .state
+                .messages
+                .get_mut(conversation_id)
+                .and_then(|messages| messages.get_mut(message_id))
+                .ok_or("message disappeared while marking delivery")?;
+            let object = message
+                .as_object_mut()
+                .ok_or("message is not a canonical object")?;
+            object.insert("deliveryState".into(), Value::String("delivered".into()));
+        }
+
+        let mut responses = Vec::with_capacity(pending.len());
+        for (conversation_id, message_id) in pending {
+            let message = self
+                .state
+                .messages
+                .get(&conversation_id)
+                .and_then(|messages| messages.get(&message_id))
+                .ok_or("message disappeared after marking delivery")?
+                .clone();
+            responses.push(self.server_envelope(
+                json!({"type":"messageChanged","message":self.project_message(&message, actor_id)}),
+                now_ms,
+            ));
+        }
+        Ok(responses)
+    }
+
+    fn sync_envelope(&self, actor_id: &str, limit: usize, now_ms: i64) -> Value {
+        let max_items = limit.max(1);
         let visible_ids = self
             .state
             .conversations
@@ -2031,6 +2178,7 @@ impl AndroidMessagingService {
             .iter()
             .filter_map(|id| self.state.messages.get(id))
             .flat_map(|messages| messages.values())
+            .take(max_items)
             .map(|message| self.project_message(message, actor_id))
             .collect::<Vec<_>>();
         let actors = self
@@ -2058,12 +2206,13 @@ impl AndroidMessagingService {
             .states_for_actor(actor_id)
             .into_iter()
             .filter(|child| visible_ids.contains(&child.destination.conversation_id.0))
+            .take(max_items)
             .collect::<Vec<_>>();
         let folders = self
             .state
             .folders
             .get(actor_id)
-            .map(|values| values.values().cloned().collect::<Vec<_>>())
+            .map(|values| values.values().take(max_items).cloned().collect::<Vec<_>>())
             .unwrap_or_default();
         let drafts = self
             .state
@@ -2118,12 +2267,12 @@ impl AndroidMessagingService {
             .and_then(Value::as_str)
             .and_then(|value| value.parse::<u64>().ok())
         else {
-            return Ok(vec![self.sync_envelope(actor_id, now_ms)]);
+            return Ok(vec![self.sync_envelope(actor_id, limit, now_ms)]);
         };
         if requested_cursor > self.state.cursor
             || requested_cursor < self.state.journal_floor_cursor
         {
-            return Ok(vec![self.sync_envelope(actor_id, now_ms)]);
+            return Ok(vec![self.sync_envelope(actor_id, limit, now_ms)]);
         }
 
         let (slice, checkpoint_cursor, has_more) =
@@ -2132,7 +2281,7 @@ impl AndroidMessagingService {
             // A cursor-advancing command without a replayable public event invalidates
             // older deltas by moving journal_floor_cursor. Reaching this branch means
             // persisted state/journal was inconsistent, so heal with the canonical snapshot.
-            return Ok(vec![self.sync_envelope(actor_id, now_ms)]);
+            return Ok(vec![self.sync_envelope(actor_id, limit, now_ms)]);
         }
 
         let mut responses = slice
@@ -2280,6 +2429,12 @@ impl AndroidMessagingService {
         previous_cursor: u64,
         envelopes: &[Value],
     ) -> Result<(), String> {
+        if self.state.cursor == previous_cursor {
+            // Idempotent/replayed responses and read-only service events must never create
+            // a second replayable journal entry at an already-consumed cursor.
+            return Ok(());
+        }
+
         let mut recorded = 0usize;
         for envelope in envelopes {
             let Some(event) = envelope.get("event").and_then(Value::as_object) else {
@@ -2927,6 +3082,304 @@ mod tests {
         )
         .unwrap();
         assert_eq!(persisted["schemaVersion"], MESSAGING_REPOSITORY_SCHEMA_VERSION);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn initial_snapshot_limit_keeps_complete_navigation_metadata() {
+        let root = temp_root("snapshot-limit");
+        let owner = "human:owner";
+        let peer = "human:peer";
+        let mut service = AndroidMessagingService::open(&root).unwrap();
+        seed(&mut service, owner);
+        execute(
+            &mut service,
+            "snapshot-peer",
+            peer,
+            json!({"type":"upsertProfile","actor":{"id":peer,"kind":"human","displayName":"Peer"}}),
+        )
+        .unwrap();
+        execute(
+            &mut service,
+            "snapshot-second-conversation",
+            owner,
+            json!({"type":"createConversation","conversation":{
+                "id":"conversation:second",
+                "kind":"direct",
+                "title":"Second",
+                "ownerId":owner,
+                "participants":[
+                    {"actorId":owner,"role":"owner","joinedAtMs":2},
+                    {"actorId":peer,"role":"member","joinedAtMs":2}
+                ]
+            }}),
+        )
+        .unwrap();
+        execute(
+            &mut service,
+            "snapshot-second-message",
+            owner,
+            json!({"type":"sendMessage","conversationId":"conversation:second","clientMessageId":"message:second",
+                "content":{"type":"text","data":{"text":{"text":"second","entities":[]}}}}),
+        )
+        .unwrap();
+
+        let response = execute(
+            &mut service,
+            "snapshot-small",
+            owner,
+            json!({"type":"sync","limit":1}),
+        )
+        .unwrap();
+        let batch = &response["envelopes"][0]["event"];
+        assert_eq!(batch["fullSnapshot"], true);
+        assert_eq!(
+            batch["conversations"].as_array().unwrap().len(),
+            2,
+            "lightweight navigation metadata must not be truncated by the heavy payload limit"
+        );
+        assert_eq!(batch["actors"].as_array().unwrap().len(), 2);
+        assert_eq!(
+            batch["messages"].as_array().unwrap().len(),
+            1,
+            "heavy message payload must honor the requested snapshot limit"
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn send_retry_replays_same_payload_without_cursor_or_journal_advance_and_rejects_conflict() {
+        let root = temp_root("send-idempotency");
+        let owner = "human:owner";
+        let mut service = AndroidMessagingService::open(&root).unwrap();
+        seed(&mut service, owner);
+        let command = json!({"type":"sendMessage","conversationId":"conversation:parent","clientMessageId":"message:idem",
+            "content":{"type":"text","data":{"text":{"text":"same","entities":[]}}}});
+        execute(&mut service, "send-idem-first", owner, command.clone()).unwrap();
+        let cursor = service.state.cursor;
+        let journal_len = service.state.event_journal.len();
+
+        let replay = execute(&mut service, "send-idem-retry", owner, command).unwrap();
+        assert_eq!(service.state.cursor, cursor);
+        assert_eq!(
+            service.state.event_journal.len(),
+            journal_len,
+            "idempotent replay must not create a second journal delta at the same cursor"
+        );
+        assert!(replay["envelopes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|envelope| envelope["event"]["type"] == "messageChanged"));
+
+        let conflict = execute(
+            &mut service,
+            "send-idem-conflict",
+            owner,
+            json!({"type":"sendMessage","conversationId":"conversation:parent","clientMessageId":"message:idem",
+                "content":{"type":"text","data":{"text":{"text":"different","entities":[]}}}}),
+        )
+        .unwrap_err();
+        assert!(conflict.contains("conflicts with the canonical message payload"));
+        assert_eq!(service.state.cursor, cursor);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn recipient_sync_marks_direct_message_delivered_and_mark_read_moves_it_to_read() {
+        let root = temp_root("direct-delivery-state");
+        let owner = "human:owner";
+        let peer = "human:peer";
+        let mut service = AndroidMessagingService::open(&root).unwrap();
+        execute(
+            &mut service,
+            "delivery-owner",
+            owner,
+            json!({"type":"upsertProfile","actor":{"id":owner,"kind":"human","displayName":"Owner"}}),
+        )
+        .unwrap();
+        execute(
+            &mut service,
+            "delivery-peer",
+            peer,
+            json!({"type":"upsertProfile","actor":{"id":peer,"kind":"human","displayName":"Peer"}}),
+        )
+        .unwrap();
+        execute(
+            &mut service,
+            "delivery-conversation",
+            owner,
+            json!({"type":"createConversation","conversation":{
+                "id":"conversation:delivery",
+                "kind":"direct",
+                "title":"Delivery",
+                "ownerId":owner,
+                "participants":[
+                    {"actorId":owner,"role":"owner","joinedAtMs":2},
+                    {"actorId":peer,"role":"member","joinedAtMs":2}
+                ]
+            }}),
+        )
+        .unwrap();
+        execute(
+            &mut service,
+            "delivery-send",
+            owner,
+            json!({"type":"sendMessage","conversationId":"conversation:delivery","clientMessageId":"message:delivery",
+                "content":{"type":"text","data":{"text":{"text":"hello","entities":[]}}}}),
+        )
+        .unwrap();
+        assert_eq!(
+            service.state.messages["conversation:delivery"]["message:delivery"]["deliveryState"],
+            "sent"
+        );
+
+        execute(
+            &mut service,
+            "delivery-sync-peer",
+            peer,
+            json!({"type":"sync","limit":100}),
+        )
+        .unwrap();
+        assert_eq!(
+            service.state.messages["conversation:delivery"]["message:delivery"]["deliveryState"],
+            "delivered"
+        );
+
+        execute(
+            &mut service,
+            "delivery-read-peer",
+            peer,
+            json!({"type":"markRead","conversationId":"conversation:delivery","messageId":"message:delivery"}),
+        )
+        .unwrap();
+        assert_eq!(
+            service.state.messages["conversation:delivery"]["message:delivery"]["deliveryState"],
+            "read"
+        );
+        drop(service);
+
+        let reopened = AndroidMessagingService::open(&root).unwrap();
+        assert_eq!(
+            reopened.state.messages["conversation:delivery"]["message:delivery"]["deliveryState"],
+            "read",
+            "delivery/read transition must survive Host process recreation"
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn durable_delta_sync_survives_restart_and_is_audience_scoped() {
+        let root = temp_root("delta-restart-audience");
+        let owner = "human:owner";
+        let peer = "human:peer";
+        let outsider = "human:outsider";
+        let mut service = AndroidMessagingService::open(&root).unwrap();
+        execute(
+            &mut service,
+            "delta-owner",
+            owner,
+            json!({"type":"upsertProfile","actor":{"id":owner,"kind":"human","displayName":"Owner"}}),
+        )
+        .unwrap();
+        execute(
+            &mut service,
+            "delta-peer",
+            peer,
+            json!({"type":"upsertProfile","actor":{"id":peer,"kind":"human","displayName":"Peer"}}),
+        )
+        .unwrap();
+        execute(
+            &mut service,
+            "delta-outsider",
+            outsider,
+            json!({"type":"upsertProfile","actor":{"id":outsider,"kind":"human","displayName":"Outsider"}}),
+        )
+        .unwrap();
+        execute(
+            &mut service,
+            "delta-conversation",
+            owner,
+            json!({"type":"createConversation","conversation":{
+                "id":"conversation:delta",
+                "kind":"direct",
+                "title":"Delta",
+                "ownerId":owner,
+                "participants":[
+                    {"actorId":owner,"role":"owner","joinedAtMs":2},
+                    {"actorId":peer,"role":"member","joinedAtMs":2}
+                ]
+            }}),
+        )
+        .unwrap();
+        let peer_baseline = execute(
+            &mut service,
+            "delta-peer-baseline",
+            peer,
+            json!({"type":"sync","limit":100}),
+        )
+        .unwrap();
+        let peer_cursor = peer_baseline["envelopes"][0]["event"]["nextCursor"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let outsider_baseline = execute(
+            &mut service,
+            "delta-outsider-baseline",
+            outsider,
+            json!({"type":"sync","limit":100}),
+        )
+        .unwrap();
+        let outsider_cursor = outsider_baseline["envelopes"][0]["event"]["nextCursor"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        execute(
+            &mut service,
+            "delta-after-baseline",
+            owner,
+            json!({"type":"sendMessage","conversationId":"conversation:delta","clientMessageId":"message:delta-restart",
+                "content":{"type":"text","data":{"text":{"text":"after baseline","entities":[]}}}}),
+        )
+        .unwrap();
+        drop(service);
+
+        let mut reopened = AndroidMessagingService::open(&root).unwrap();
+        let peer_delta = execute(
+            &mut reopened,
+            "delta-peer-after-restart",
+            peer,
+            json!({"type":"sync","cursor":peer_cursor,"limit":100}),
+        )
+        .unwrap();
+        assert!(peer_delta["envelopes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|envelope| {
+                matches!(
+                    envelope["event"]["type"].as_str(),
+                    Some("messageAdded") | Some("messageChanged")
+                ) && envelope["event"]["message"]["id"] == "message:delta-restart"
+            }));
+
+        let outsider_delta = execute(
+            &mut reopened,
+            "delta-outsider-after-restart",
+            outsider,
+            json!({"type":"sync","cursor":outsider_cursor,"limit":100}),
+        )
+        .unwrap();
+        assert!(!outsider_delta["envelopes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|envelope| {
+                matches!(
+                    envelope["event"]["type"].as_str(),
+                    Some("messageAdded") | Some("messageChanged")
+                ) && envelope["event"]["message"]["id"] == "message:delta-restart"
+            }));
         let _ = fs::remove_dir_all(root);
     }
 
