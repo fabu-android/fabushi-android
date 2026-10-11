@@ -70,7 +70,11 @@ internal fun extractTranscriptBareLink(content: String): String? {
 internal fun normalizeTranscriptRemoteImageUrl(value: String): String? {
     val normalized = normalizeTranscriptHttpUrl(value) ?: return null
     val parsed = runCatching { URI(normalized) }.getOrNull() ?: return null
-    return normalized.takeIf { parsed.scheme.equals("https", ignoreCase = true) }
+    return normalized.takeIf {
+        parsed.scheme.equals("https", ignoreCase = true) &&
+            parsed.userInfo == null &&
+            !parsed.host.isNullOrBlank()
+    }
 }
 
 /** Strict mirror of the Desktop send-message:text projector. Malformed cards fail closed. */

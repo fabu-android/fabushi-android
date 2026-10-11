@@ -37,12 +37,15 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import java.io.ByteArrayOutputStream
 import java.io.IOException
+import java.net.InetAddress
 import java.net.URI
+import java.net.UnknownHostException
 import kotlin.coroutines.resume
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import okhttp3.Call
 import okhttp3.Callback
+import okhttp3.Dns
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
@@ -51,15 +54,31 @@ private const val MAX_TRANSCRIPT_REMOTE_IMAGE_BYTES = 8 * 1024 * 1024
 private const val MAX_TRANSCRIPT_REMOTE_IMAGE_EDGE = 8_192
 private const val MAX_TRANSCRIPT_REMOTE_IMAGE_PIXELS = 32_000_000L
 
+private val transcriptRemoteImagePublicDns = object : Dns {
+    override fun lookup(hostname: String): List<InetAddress> {
+        val addresses = InetAddress.getAllByName(hostname).toList()
+        if (addresses.isEmpty() || addresses.any { !isPublicTranscriptLinkAddress(it) }) {
+            throw UnknownHostException("Transcript remote-image host is not public")
+        }
+        return addresses
+    }
+}
+
 private val transcriptRemoteImageClient: OkHttpClient by lazy {
     OkHttpClient.Builder()
+        .dns(transcriptRemoteImagePublicDns)
         .followRedirects(true)
-        .followSslRedirects(true)
+        .followSslRedirects(false)
         .build()
 }
 
 private fun readBoundedTranscriptImageBytes(response: Response): ByteArray? {
-    if (!response.isSuccessful) return null
+    if (
+        !response.isSuccessful ||
+        !response.request.url.isHttps ||
+        response.request.url.username.isNotEmpty() ||
+        response.request.url.password.isNotEmpty()
+    ) return null
     val body = response.body
     val mediaType = body.contentType()
     if (mediaType != null && !mediaType.type.equals("image", ignoreCase = true)) return null

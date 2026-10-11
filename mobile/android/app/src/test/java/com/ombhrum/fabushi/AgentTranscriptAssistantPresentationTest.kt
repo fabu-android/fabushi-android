@@ -1,5 +1,6 @@
 package com.ombhrum.fabushi
 
+import java.net.InetAddress
 import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
@@ -119,6 +120,18 @@ class AgentTranscriptAssistantPresentationTest {
         assertNull(normalizeTranscriptRemoteImageUrl("http://example.test/image.png"))
         assertNull(normalizeTranscriptRemoteImageUrl("file:///data/user/0/private.png"))
         assertNull(normalizeTranscriptRemoteImageUrl("javascript:alert(1)"))
+        assertNull(normalizeTranscriptRemoteImageUrl("https://user:pass@example.test/private.png"))
+    }
+
+    @Test
+    fun remoteImageDnsFenceRejectsLoopbackPrivateAndLinkLocalAddresses() {
+        assertFalse(isPublicTranscriptLinkAddress(InetAddress.getByName("127.0.0.1")))
+        assertFalse(isPublicTranscriptLinkAddress(InetAddress.getByName("10.0.0.1")))
+        assertFalse(isPublicTranscriptLinkAddress(InetAddress.getByName("169.254.1.2")))
+        assertFalse(isPublicTranscriptLinkAddress(InetAddress.getByName("192.168.1.2")))
+        assertFalse(isPublicTranscriptLinkAddress(InetAddress.getByName("::1")))
+        assertFalse(isPublicTranscriptLinkAddress(InetAddress.getByName("fc00::1")))
+        assertTrue(isPublicTranscriptLinkAddress(InetAddress.getByName("1.1.1.1")))
     }
 
     @Test
