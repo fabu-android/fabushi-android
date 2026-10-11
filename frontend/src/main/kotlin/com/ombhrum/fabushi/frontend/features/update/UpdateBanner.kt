@@ -83,6 +83,7 @@ internal fun shouldShowUpdateBanner(phase: AndroidUpdatePhase): Boolean = when (
     AndroidUpdatePhase.DOWNLOADING,
     AndroidUpdatePhase.WAITING_FOR_PERMISSION,
     AndroidUpdatePhase.INSTALLING,
+    AndroidUpdatePhase.OUTCOME_UNKNOWN,
     AndroidUpdatePhase.ERROR -> true
     else -> false
 }
@@ -104,6 +105,7 @@ internal fun UpdateBanner(
                 AndroidUpdatePhase.DOWNLOADING -> "正在下载更新 ${state.progressPercent ?: 0}%"
                 AndroidUpdatePhase.WAITING_FOR_PERMISSION -> "更新已下载，等待安装权限"
                 AndroidUpdatePhase.INSTALLING -> "系统安装器已打开"
+                AndroidUpdatePhase.OUTCOME_UNKNOWN -> "安装结果待确认"
                 AndroidUpdatePhase.ERROR -> "更新失败"
                 else -> "应用更新"
             }
@@ -118,12 +120,19 @@ internal fun UpdateBanner(
             when (state.phase) {
                 AndroidUpdatePhase.AVAILABLE,
                 AndroidUpdatePhase.WAITING_FOR_PERMISSION,
-                AndroidUpdatePhase.INSTALLING -> Button(
+                AndroidUpdatePhase.INSTALLING,
+                AndroidUpdatePhase.OUTCOME_UNKNOWN -> Button(
                     onClick = onInstallUpdate,
                     modifier = Modifier.fillMaxWidth().testTag(TestTags.UpdateAction),
                     colors = ButtonDefaults.buttonColors(containerColor = homeAccent, contentColor = Color.Black),
                 ) {
-                    Text(if (state.phase == AndroidUpdatePhase.AVAILABLE) "下载并安装" else "继续安装")
+                    Text(
+                        when (state.phase) {
+                            AndroidUpdatePhase.AVAILABLE -> "下载并安装"
+                            AndroidUpdatePhase.OUTCOME_UNKNOWN -> "重新验证并继续"
+                            else -> "继续安装"
+                        },
+                    )
                 }
                 AndroidUpdatePhase.ERROR -> OutlinedButton(
                     onClick = onCheckUpdate,
@@ -145,7 +154,8 @@ internal fun MandatoryUpdateGate(
     if (!policy.required) return
     val installReady = updateState.phase == AndroidUpdatePhase.AVAILABLE ||
         updateState.phase == AndroidUpdatePhase.WAITING_FOR_PERMISSION ||
-        updateState.phase == AndroidUpdatePhase.INSTALLING
+        updateState.phase == AndroidUpdatePhase.INSTALLING ||
+        updateState.phase == AndroidUpdatePhase.OUTCOME_UNKNOWN
     val downloading = updateState.phase == AndroidUpdatePhase.DOWNLOADING
     AlertDialog(
         onDismissRequest = {},
@@ -174,7 +184,11 @@ internal fun MandatoryUpdateGate(
                 Text(
                     when {
                         downloading -> "正在下载…"
-                        installReady -> if (updateState.phase == AndroidUpdatePhase.AVAILABLE) "下载并安装" else "继续安装"
+                        installReady -> when (updateState.phase) {
+                            AndroidUpdatePhase.AVAILABLE -> "下载并安装"
+                            AndroidUpdatePhase.OUTCOME_UNKNOWN -> "重新验证并继续"
+                            else -> "继续安装"
+                        }
                         updateState.phase == AndroidUpdatePhase.ERROR -> "重新检查"
                         else -> "检查更新"
                     },

@@ -2,6 +2,10 @@ use fabushi_android_shared::{
     CoordinatorFailure, CoordinatorFailureCode, CoordinatorRequest, ResyncRequest,
     COORDINATOR_PROTOCOL_VERSION,
 };
+use fabushi_android_shared::update::{
+    available_update_tracks, resolve_effective_track, resolve_release_track_gate,
+    selectable_update_tracks, SandUpdateTrack,
+};
 use fabushi_mahayana_agent_coordinator::{
     oauth::{
         mcp_oauth_callback_listener::OAuthCallback,
@@ -575,6 +579,33 @@ fn error_response(id: Option<Value>, error: String) -> String {
     .to_string()
 }
 
+fn parse_update_track(value: Option<&str>) -> Option<SandUpdateTrack> {
+    value.and_then(|raw| SandUpdateTrack::parse(raw.trim()))
+}
+
+fn update_track_policy_projection(
+    managed_track: Option<&str>,
+    unlock_internal_tracks: bool,
+    user_override: Option<&str>,
+    build_default: Option<&str>,
+) -> Value {
+    let gate = resolve_release_track_gate(managed_track, unlock_internal_tracks);
+    let effective = resolve_effective_track(
+        gate.managed_track,
+        parse_update_track(user_override),
+        parse_update_track(build_default),
+    );
+    json!({
+        "managedTrack": gate.managed_track.map(SandUpdateTrack::as_str),
+        "unlockInternalTracks": gate.unlock_internal_tracks,
+        "effectiveTrack": effective.as_str(),
+        "selectableTracks": selectable_update_tracks(gate.unlock_internal_tracks)
+            .into_iter().map(SandUpdateTrack::as_str).collect::<Vec<_>>(),
+        "availableTracks": available_update_tracks(gate.unlock_internal_tracks, effective)
+            .into_iter().map(SandUpdateTrack::as_str).collect::<Vec<_>>(),
+    })
+}
+
 #[cfg(target_os = "android")]
 mod android_jni {
     use super::*;
@@ -627,6 +658,13 @@ mod android_jni {
 
     fn rebuild_backend_for(handle: jlong) -> Option<Arc<AndroidBoxRebuildBackend>> {
         rebuild_backends().lock().ok()?.get(&handle).cloned()
+    }
+
+    fn optional_string(env: &mut JNIEnv, value: JString) -> Result<Option<String>, String> {
+        env.get_string(&value)
+            .map(|raw| raw.to_string_lossy().trim().to_owned())
+            .map(|raw| (!raw.is_empty()).then_some(raw))
+            .map_err(|error| format!("invalid update-track string: {error}"))
     }
 
     fn rebuild_json_result(
@@ -747,6 +785,29 @@ mod android_jni {
         env.new_string(runtime.dispatch_legacy_json(&input))
             .map(|value| value.into_raw())
             .unwrap_or(std::ptr::null_mut())
+    }
+
+    #[no_mangle]
+    pub extern "system" fn Java_com_ombhrum_fabushi_core_MahayanaHost_nativeResolveUpdateTrackPolicy(
+        mut env: JNIEnv,
+        _object: JObject,
+        managed_track: JString,
+        unlock_internal_tracks: jboolean,
+        user_override: JString,
+        build_default: JString,
+    ) -> jstring {
+        let result = (|| {
+            let managed = optional_string(&mut env, managed_track)?;
+            let user = optional_string(&mut env, user_override)?;
+            let build = optional_string(&mut env, build_default)?;
+            Ok(update_track_policy_projection(
+                managed.as_deref(),
+                unlock_internal_tracks != 0,
+                user.as_deref(),
+                build.as_deref(),
+            ))
+        })();
+        rebuild_json_result(&mut env, result)
     }
 
     #[no_mangle]
@@ -912,6 +973,29 @@ mod tests {
 
     fn call(runtime: &mut AndroidNativeRuntime, request: Value) -> Value {
         serde_json::from_str(&runtime.dispatch_legacy_json(&request.to_string())).unwrap()
+    }
+
+    #[test]
+    fn update_track_policy_projection_keeps_effective_policy_in_rust() {
+        let public = update_track_policy_projection(None, false, Some("nightly"), Some("dogfood"));
+        assert_eq!(public["effectiveTrack"], "stable");
+        assert_eq!(public["selectableTracks"], json!(["stable"]));
+        assert_eq!(public["availableTracks"], json!(["stable"]));
+        assert!(public["managedTrack"].is_null());
+
+        let managed = update_track_policy_projection(Some("dogfood"), false, Some("stable"), Some("stable"));
+        assert_eq!(managed["effectiveTrack"], "dogfood");
+        assert_eq!(managed["managedTrack"], "dogfood");
+        assert_eq!(managed["selectableTracks"], json!(["stable"]));
+        assert_eq!(managed["availableTracks"], json!(["stable", "dogfood"]));
+
+        let internal = update_track_policy_projection(None, true, Some("dogfood"), Some("stable"));
+        assert_eq!(internal["effectiveTrack"], "dogfood");
+        assert_eq!(internal["selectableTracks"], json!(["stable", "dogfood"]));
+
+        let invalid_managed = update_track_policy_projection(Some("nightly"), false, None, Some("stable"));
+        assert_eq!(invalid_managed["effectiveTrack"], "stable");
+        assert!(invalid_managed["managedTrack"].is_null());
     }
 
     fn test_root(label: &str) -> PathBuf {

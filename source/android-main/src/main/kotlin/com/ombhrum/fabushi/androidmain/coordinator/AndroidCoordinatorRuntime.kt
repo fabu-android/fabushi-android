@@ -20,6 +20,7 @@ import com.ombhrum.fabushi.androidpreload.runtime.AccountRecoveryState
 import com.ombhrum.fabushi.androidpreload.runtime.AccountRosterLoadState
 import com.ombhrum.fabushi.androidpreload.runtime.AccountTruthState
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidCoordinatorPort
+import com.ombhrum.fabushi.androidpreload.runtime.AndroidUpdateTrackPolicy
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidAgentAttachment
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidApprovalCleanupResult
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidClientSideToolV2Event
@@ -199,6 +200,35 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
                 .put("generation", generation)
                 .put("afterSequence", afterSequence),
         )
+
+    override fun resolveUpdateTrackPolicy(
+        managedTrack: String?,
+        unlockInternalTracks: Boolean,
+        userOverride: String?,
+        buildDefault: String?,
+    ): AndroidUpdateTrackPolicy {
+        val projection = host.resolveUpdateTrackPolicy(
+            managedTrack = managedTrack,
+            unlockInternalTracks = unlockInternalTracks,
+            userOverride = userOverride,
+            buildDefault = buildDefault,
+        )
+        fun tracks(name: String): List<String> {
+            val values = projection.optJSONArray(name) ?: error("Update-track policy omitted $name")
+            return List(values.length()) { index ->
+                values.getString(index).also { require(it.isNotBlank()) }
+            }
+        }
+        val effectiveTrack = projection.getString("effectiveTrack")
+        val managed = projection.optString("managedTrack").takeIf(String::isNotBlank)
+        return AndroidUpdateTrackPolicy(
+            managedTrack = managed,
+            unlockInternalTracks = projection.optBoolean("unlockInternalTracks", false),
+            effectiveTrack = effectiveTrack,
+            selectableTracks = tracks("selectableTracks"),
+            availableTracks = tracks("availableTracks"),
+        )
+    }
 
     override fun mcpOAuthRegister(state: String, provider: String): Boolean =
         host.request(

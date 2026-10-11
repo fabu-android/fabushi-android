@@ -10,6 +10,8 @@ import android.provider.Settings
 import androidx.core.content.FileProvider
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.ombhrum.fabushi.androidpreload.runtime.AndroidCoordinatorBridge
+import com.ombhrum.fabushi.androidpreload.runtime.AndroidUpdateTrackPolicy
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.net.HttpURLConnection
@@ -35,6 +37,7 @@ enum class AndroidUpdatePhase {
     DOWNLOADING,
     WAITING_FOR_PERMISSION,
     INSTALLING,
+    OUTCOME_UNKNOWN,
     ERROR,
 }
 
@@ -168,10 +171,13 @@ class AndroidUpdateViewModel(application: Application) : AndroidViewModel(applic
         private const val MAX_APK_BYTES = 768L * 1024L * 1024L
         private val APK_NAME = Regex("^[A-Za-z0-9._-]+[.]apk$")
         private val SHA256 = Regex("^[a-f0-9]{64}$")
+        private const val ANDROID_BUILD_DEFAULT_TRACK = "stable"
     }
 
     private val applicationContext = getApplication<Application>()
     private val updatesEnabled = BuildConfig.GITHUB_UPDATES_ENABLED && !BuildConfig.DEBUG
+    private val coordinator by lazy { AndroidCoordinatorBridge.presentation() }
+    private val applyStore = AndroidUpdateApplyStore(applicationContext)
     private val currentVersion = BuildConfig.VERSION_NAME
     private val currentVersionCode = BuildConfig.VERSION_CODE.toLong()
     private val _state = MutableStateFlow(
@@ -188,6 +194,9 @@ class AndroidUpdateViewModel(application: Application) : AndroidViewModel(applic
         AndroidMandatoryUpdateState(currentVersion = currentVersion),
     )
     val mandatoryUpdate: StateFlow<AndroidMandatoryUpdateState> = _mandatoryUpdate.asStateFlow()
+
+    private val _trackPolicy = MutableStateFlow(resolveUpdateTrackPolicy())
+    val trackPolicy: StateFlow<AndroidUpdateTrackPolicy> = _trackPolicy.asStateFlow()
 
     fun noteMinimumRequiredVersion(minimumVersion: String?) {
         publishMandatoryUpdate(
@@ -227,12 +236,46 @@ class AndroidUpdateViewModel(application: Application) : AndroidViewModel(applic
     private var foregroundJob: Job? = null
     private var lastCheckAtMs = 0L
 
+    init {
+        restorePendingApply()
+    }
+
+    private fun resolveUpdateTrackPolicy(): AndroidUpdateTrackPolicy =
+        coordinator.resolveUpdateTrackPolicy(
+            managedTrack = null,
+            unlockInternalTracks = false,
+            userOverride = null,
+            buildDefault = ANDROID_BUILD_DEFAULT_TRACK,
+        )
+
+    private fun refreshUpdateTrackPolicy(): AndroidUpdateTrackPolicy =
+        resolveUpdateTrackPolicy().also { projection ->
+            require(projection.effectiveTrack in projection.availableTracks) {
+                "Rust update-track policy returned an unavailable effective track"
+            }
+            _trackPolicy.value = projection
+        }
+
     fun setForeground(foreground: Boolean) {
         if (!updatesEnabled) return
         if (!foreground) {
             foregroundJob?.cancel()
             foregroundJob = null
             return
+        }
+        if (_state.value.phase == AndroidUpdatePhase.INSTALLING) {
+            applyStore.read()
+                ?.takeIf { it.phase == AndroidUpdateApplyPhase.REQUESTED }
+                ?.let { marker ->
+                    _state.value = AndroidUpdateUiState(
+                        phase = AndroidUpdatePhase.OUTCOME_UNKNOWN,
+                        currentVersion = currentVersion,
+                        currentVersionCode = currentVersionCode,
+                        availableVersion = marker.targetVersion,
+                        availableVersionCode = marker.targetVersionCode,
+                        message = "系统安装器已返回，但当前进程无法证明安装结果。不会自动重放安装；请显式重新验证并继续。",
+                    )
+                }
         }
         if (awaitingInstallPermission && canInstallPackages()) {
             pendingApk?.takeIf(File::exists)?.let(::requestPackageInstall)
@@ -317,6 +360,7 @@ class AndroidUpdateViewModel(application: Application) : AndroidViewModel(applic
                 )
                 val apk = withContext(Dispatchers.IO) { downloadAndVerify(release) }
                 pendingApk = apk
+                applyStore.write(markerFor(release, AndroidUpdateApplyPhase.STAGED))
                 requestPackageInstall(apk)
             } catch (error: Exception) {
                 _state.value = AndroidUpdateUiState(
@@ -332,6 +376,10 @@ class AndroidUpdateViewModel(application: Application) : AndroidViewModel(applic
     }
 
     private fun findLatestUpdate(): AndroidUpdateCandidate? {
+        val track = refreshUpdateTrackPolicy()
+        require(track.effectiveTrack == "stable") {
+            "Android signed package transport does not publish the ${track.effectiveTrack} track yet."
+        }
         val releases = JSONArray(httpGetText(RELEASES_API, MAX_METADATA_BYTES))
         var best: AndroidUpdateCandidate? = null
         for (index in 0 until releases.length()) {
@@ -586,6 +634,8 @@ class AndroidUpdateViewModel(application: Application) : AndroidViewModel(applic
             setDataAndType(uri, "application/vnd.android.package-archive")
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
         }
+        val requested = markerFor(release, AndroidUpdateApplyPhase.REQUESTED)
+        applyStore.write(requested)
         try {
             applicationContext.startActivity(intent)
             _state.value = AndroidUpdateUiState(
@@ -597,6 +647,12 @@ class AndroidUpdateViewModel(application: Application) : AndroidViewModel(applic
                 message = "安装包已验证，系统安装器已打开。确认安装后 Android 会完成升级。",
             )
         } catch (error: Exception) {
+            applyStore.write(
+                requested.copy(
+                    phase = AndroidUpdateApplyPhase.SPAWN_FAILED,
+                    recordedAtMs = System.currentTimeMillis(),
+                ),
+            )
             _state.value = AndroidUpdateUiState(
                 phase = AndroidUpdatePhase.ERROR,
                 currentVersion = currentVersion,
@@ -605,6 +661,122 @@ class AndroidUpdateViewModel(application: Application) : AndroidViewModel(applic
                 availableVersionCode = release.versionCode,
                 message = "无法打开系统安装器：${error.message ?: error.javaClass.simpleName}",
             )
+        }
+    }
+
+    private fun markerFor(
+        release: AndroidUpdateCandidate,
+        phase: AndroidUpdateApplyPhase,
+    ): AndroidUpdateApplyMarker =
+        AndroidUpdateApplyMarker(
+            phase = phase,
+            targetVersion = release.version,
+            targetVersionCode = release.versionCode,
+            fromVersion = currentVersion,
+            fromVersionCode = currentVersionCode,
+            apkName = release.apkName,
+            sha256 = release.sha256,
+            size = release.size,
+            recordedAtMs = System.currentTimeMillis(),
+        )
+
+    private fun candidateFrom(marker: AndroidUpdateApplyMarker): AndroidUpdateCandidate =
+        AndroidUpdateCandidate(
+            version = marker.targetVersion,
+            versionCode = marker.targetVersionCode,
+            tag = "recovered-apply",
+            apkName = marker.apkName,
+            apkUrl = "",
+            sha256 = marker.sha256,
+            size = marker.size,
+            notes = null,
+        )
+
+    private fun recoverVerifiedApk(marker: AndroidUpdateApplyMarker): Boolean {
+        val file = File(File(applicationContext.cacheDir, "updates"), marker.apkName)
+        if (!file.isFile || file.length() != marker.size || sha256File(file) != marker.sha256) return false
+        val recovered = candidateFrom(marker)
+        if (runCatching { verifyDownloadedPackage(file, recovered) }.isFailure) return false
+        candidate = recovered
+        pendingApk = file
+        return true
+    }
+
+    private fun restorePendingApply() {
+        val marker = applyStore.read() ?: return
+        when (
+            AndroidUpdateRecoveryPolicy.decide(
+                marker = marker,
+                currentVersion = currentVersion,
+                currentVersionCode = currentVersionCode,
+                nowMs = System.currentTimeMillis(),
+            )
+        ) {
+            AndroidUpdateRecoveryDecision.CONFIRMED -> {
+                applyStore.clear()
+                _state.value = AndroidUpdateUiState(
+                    phase = if (updatesEnabled) AndroidUpdatePhase.UP_TO_DATE else AndroidUpdatePhase.DISABLED,
+                    currentVersion = currentVersion,
+                    currentVersionCode = currentVersionCode,
+                    message = if (updatesEnabled) "上次更新已确认安装成功。" else null,
+                )
+            }
+            AndroidUpdateRecoveryDecision.RECOVER_STAGED -> {
+                if (recoverVerifiedApk(marker)) {
+                    _state.value = AndroidUpdateUiState(
+                        phase = AndroidUpdatePhase.AVAILABLE,
+                        currentVersion = currentVersion,
+                        currentVersionCode = currentVersionCode,
+                        availableVersion = marker.targetVersion,
+                        availableVersionCode = marker.targetVersionCode,
+                        message = "已恢复并重新验证上次下载的安装包；需要你显式继续安装。",
+                    )
+                } else {
+                    applyStore.clear()
+                    _state.value = AndroidUpdateUiState(
+                        phase = AndroidUpdatePhase.ERROR,
+                        currentVersion = currentVersion,
+                        currentVersionCode = currentVersionCode,
+                        message = "上次已暂存的安装包已丢失或验证失败；请重新检查更新。",
+                    )
+                }
+            }
+            AndroidUpdateRecoveryDecision.OUTCOME_UNKNOWN -> {
+                recoverVerifiedApk(marker)
+                _state.value = AndroidUpdateUiState(
+                    phase = AndroidUpdatePhase.OUTCOME_UNKNOWN,
+                    currentVersion = currentVersion,
+                    currentVersionCode = currentVersionCode,
+                    availableVersion = marker.targetVersion,
+                    availableVersionCode = marker.targetVersionCode,
+                    message = "上次安装请求的结果无法证明。Fabushi 不会自动重放；请显式重新验证并继续。",
+                )
+            }
+            AndroidUpdateRecoveryDecision.RETRYABLE_FAILURE -> {
+                val recovered = recoverVerifiedApk(marker)
+                if (!recovered) applyStore.clear()
+                _state.value = AndroidUpdateUiState(
+                    phase = if (recovered) AndroidUpdatePhase.AVAILABLE else AndroidUpdatePhase.ERROR,
+                    currentVersion = currentVersion,
+                    currentVersionCode = currentVersionCode,
+                    availableVersion = marker.targetVersion,
+                    availableVersionCode = marker.targetVersionCode,
+                    message = if (recovered) {
+                        "上次无法打开系统安装器；已重新验证安装包，可显式重试。"
+                    } else {
+                        "上次无法打开系统安装器，且暂存包已不可用；请重新检查更新。"
+                    },
+                )
+            }
+            AndroidUpdateRecoveryDecision.ORPHANED -> {
+                applyStore.clear()
+                _state.value = AndroidUpdateUiState(
+                    phase = AndroidUpdatePhase.ERROR,
+                    currentVersion = currentVersion,
+                    currentVersionCode = currentVersionCode,
+                    message = "检测到过期或不属于当前安装版本的更新记录，已安全丢弃；请重新检查更新。",
+                )
+            }
         }
     }
 

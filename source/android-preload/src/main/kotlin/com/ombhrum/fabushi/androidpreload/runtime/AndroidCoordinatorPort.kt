@@ -266,9 +266,24 @@ fun parseAndroidConversationOutlineItems(
  * string. JSON remains confined to compatibility payloads while each domain is migrated to fully
  * typed Kotlin models.
  */
+data class AndroidUpdateTrackPolicy(
+    val managedTrack: String?,
+    val unlockInternalTracks: Boolean,
+    val effectiveTrack: String,
+    val selectableTracks: List<String>,
+    val availableTracks: List<String>,
+)
+
 interface AndroidCoordinatorPort {
     fun coordinatorStatus(): JSONObject
     fun coordinatorResync(generation: Long, afterSequence: Long): JSONObject
+    fun resolveUpdateTrackPolicy(
+        managedTrack: String?,
+        unlockInternalTracks: Boolean,
+        userOverride: String?,
+        buildDefault: String?,
+    ): AndroidUpdateTrackPolicy =
+        error("Update-track policy is unavailable on this Coordinator port")
     fun mcpOAuthRegister(state: String, provider: String): Boolean
     fun mcpOAuthRegisterBound(
         state: String,

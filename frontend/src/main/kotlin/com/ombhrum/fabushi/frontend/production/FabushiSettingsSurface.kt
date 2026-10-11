@@ -17,6 +17,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
+import com.ombhrum.fabushi.androidpreload.runtime.AndroidUpdateTrackPolicy
 
 private enum class FabushiSettingsSection {
     GENERAL,
@@ -26,6 +27,7 @@ private enum class FabushiSettingsSection {
 @Composable
 internal fun FabushiSettingsSurface(
     updateState: AndroidUpdateUiState,
+    updateTrackPolicy: AndroidUpdateTrackPolicy,
     onCheckUpdate: () -> Unit,
     onInstallUpdate: () -> Unit,
     onClose: () -> Unit,
@@ -76,6 +78,11 @@ internal fun FabushiSettingsSurface(
                     FabushiSettingsSection.UPDATES -> {
                         Text("App updates")
                         Text("Current version: ${updateState.currentVersion} (${updateState.currentVersionCode})")
+                        Text("Release channel: ${updateTrackPolicy.effectiveTrack}")
+                        Text(
+                            "Selectable by current Rust policy: " +
+                                updateTrackPolicy.selectableTracks.joinToString().ifBlank { "none" },
+                        )
                         updateState.availableVersion?.let {
                             Text("Available version: $it (${updateState.availableVersionCode ?: "unknown"})")
                         }
@@ -96,25 +103,28 @@ internal fun FabushiSettingsSurface(
                             if (
                                 updateState.phase == AndroidUpdatePhase.AVAILABLE ||
                                 updateState.phase == AndroidUpdatePhase.WAITING_FOR_PERMISSION ||
-                                updateState.phase == AndroidUpdatePhase.INSTALLING
+                                updateState.phase == AndroidUpdatePhase.INSTALLING ||
+                                updateState.phase == AndroidUpdatePhase.OUTCOME_UNKNOWN
                             ) {
                                 TextButton(
                                     onClick = onInstallUpdate,
                                     modifier = Modifier.testTag("settings-update-install"),
                                 ) {
                                     Text(
-                                        if (updateState.phase == AndroidUpdatePhase.AVAILABLE) {
-                                            "Download and install"
-                                        } else {
-                                            "Continue install"
+                                        when (updateState.phase) {
+                                            AndroidUpdatePhase.AVAILABLE -> "Download and install"
+                                            AndroidUpdatePhase.OUTCOME_UNKNOWN -> "Verify and retry install"
+                                            else -> "Continue install"
                                         },
                                     )
                                 }
                             }
                         }
                         Text(
-                            "Android currently follows the signed stable GitHub Release channel. " +
-                                "Nightly/dogfood selection and auto-update-when-idle are not yet available.",
+                            "The effective channel is resolved by the canonical Rust update policy. " +
+                                "Android package distribution currently publishes signed stable artifacts only; " +
+                                "non-stable delivery and auto-update-when-idle remain unavailable until their " +
+                                "platform transport and safety gates are implemented.",
                         )
                     }
                 }

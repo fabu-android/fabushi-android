@@ -12540,20 +12540,26 @@
         "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/features/update/UpdateBanner.kt",
         "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/production/command-palette-update-command.kt",
         "source/shared/src/update.rs",
-        "mobile/android/app/src/test/java/com/ombhrum/fabushi/AndroidVersionTest.kt"
+        "mobile/android/app/src/test/java/com/ombhrum/fabushi/AndroidVersionTest.kt",
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/update/AndroidUpdateRecovery.kt",
+        "mobile/android/app/src/test/java/com/ombhrum/fabushi/AndroidUpdateRecoveryTest.kt",
+        "source/android-host-jni/src/lib.rs",
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/core/MahayanaHost.kt",
+        "source/android-preload/src/main/kotlin/com/ombhrum/fabushi/androidpreload/runtime/AndroidCoordinatorPort.kt",
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/coordinator/AndroidCoordinatorRuntime.kt"
       ],
       "android_owner": "AndroidUpdateViewModel for update lifecycle; Settings surface is immutable presentation only",
       "platform_delta": "Android downloads a bounded GitHub Release APK, verifies SHA-256/size/package/signing identity, then delegates install to the system package installer. Desktop quit-and-install and Electron updater mechanics do not exist. Public Android currently follows the stable signed release channel only; nightly/dogfood selection and auto-update-when-idle are not yet implemented.",
       "implementation_status": "mapped",
-      "production_wiring": "AndroidUpdateViewModel already owns startup/foreground check, bounded release metadata, semantic version selection, download progress, SHA-256/declared-size verification, package/version/signing-identity verification, unknown-app-source permission and system installer handoff. UpdateBanner and command-palette actions are shipping projections. Native Settings now exposes this same owner with Check/Download/Continue controls. Desktop setTrack(stable/nightly/dogfood), autoUpdateWhenIdleOptIn and equivalent generation/dispose controller semantics remain open.",
-      "unit_test": "AndroidVersionTest covers strict Desktop version grammar/prerelease ordering. Exact-head Kotlin compile/unit/lint must cover the Settings projection; focused updater state/reconnect/permission/package tests and final signed package/device upgrade remain required.",
-      "contract_test": "required",
-      "integration_test": "required",
+      "production_wiring": "AndroidUpdateViewModel remains the single native app-updater owner. It already owns stable GitHub release discovery, bounded metadata/download, SHA-256/declared-size verification, package/version/signing identity checks, unknown-source permission and system installer handoff. This change adds a typed Rust/JNI update-track consumer instead of Kotlin policy duplication, plus a durable Android apply marker written synchronously before external installer handoff. On process restart, staged APKs are re-verified before explicit continuation; requested installs with no provable result become outcome-unknown and are never blindly replayed; spawn failures can be explicitly retried only if the cached package still re-verifies; stale/foreign/old markers fail closed. Settings/UpdateBanner project the same owner. Multi-track signed package transport, auto-update-when-idle, mandatory-update producers and updater telemetry remain open.",
+      "unit_test": "AndroidVersionTest covers strict Desktop version grammar/prerelease ordering. AndroidUpdateRecoveryTest covers staged recovery, requested->outcome-unknown, confirmed target, installer-spawn retry, stale/current-binary fencing and expiry. Rust/JNI focused update-track tests cover canonical policy projection. Exact-head GitHub Actions for this commit are required.",
+      "contract_test": "Typed Rust->JNI->MahayanaHost->AndroidCoordinatorPort/Runtime update-track policy path plus durable apply marker/recovery contract; same-head Actions required.",
+      "integration_test": "ProductionRenderer collects updater/mandatory/track state; native Settings and update banner use the same owner. Exact-head compile/unit/lint/package evidence pending; live signed upgrade and protected-account journeys remain blocked/open.",
       "packaged_test": "required",
       "device_test": "required",
       "artifact": "pending exact-head signed Android package evidence",
       "verification_status": "not-verified",
-      "notes": "Mapped, not verified. Do not use Computer image-update evidence for this app-updater responsibility and do not treat stable-only GitHub Release handling as Desktop release-track parity."
+      "notes": "Mapped, not verified. This closes canonical track-policy consumption and Android process-death/outcome-unknown apply recovery without claiming non-stable package transport, auto-update-when-idle, telemetry, authoritative mandatory-update producers, release signing, or device acceptance."
     },
     {
       "responsibility_id": "SETTINGS-MANDATORY-UPDATE-ANDROID-001",
@@ -12695,20 +12701,26 @@
       "security_boundary": "managed track cannot unlock internal tracks; unlock is an explicit separate boolean input",
       "android_disposition": "direct-port",
       "android_target": [
-        "source/shared/src/update.rs"
+        "source/shared/src/update.rs",
+        "source/android-host-jni/src/lib.rs",
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/core/MahayanaHost.kt",
+        "source/android-preload/src/main/kotlin/com/ombhrum/fabushi/androidpreload/runtime/AndroidCoordinatorPort.kt",
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/coordinator/AndroidCoordinatorRuntime.kt",
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/update/AndroidUpdateViewModel.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/production/FabushiSettingsSurface.kt"
       ],
       "android_owner": "source/shared Rust update policy",
       "platform_delta": "none; platform-independent policy remains Rust-to-Rust",
       "implementation_status": "implemented",
-      "production_wiring": "Shared Rust policy now matches Desktop track acceptance, nightly disablement, dogfood unlock, managed-track validation and effective precedence. Shipping settings/update adapters still need to consume this policy where track selection becomes user-visible.",
-      "unit_test": "Rust tests cover known tracks, selectable/available tracks, managed validation, internal unlock and effective precedence/coercion; exact-head Actions pending.",
-      "contract_test": "Shared Rust crate tests are part of architecture/rust-runtime Actions.",
-      "integration_test": "Pending shipping updater/settings track consumer journey.",
+      "production_wiring": "Canonical Rust update-track policy is now consumed by shipping Android through the existing typed boundary: source/shared Rust policy -> android-host-jni nativeResolveUpdateTrackPolicy -> MahayanaHost -> AndroidCoordinatorPort/Runtime typed AndroidUpdateTrackPolicy -> AndroidUpdateViewModel -> native Settings. Kotlin does not independently decide managed/user/build precedence, nightly coercion, dogfood unlock, selectable or available tracks. Android signed package transport still publishes stable artifacts only, so the updater fails closed if Rust projects a non-stable effective track until a matching signed transport exists.",
+      "unit_test": "Existing source/shared Rust tests cover known/selectable/available/managed/effective-track semantics. android-host-jni adds a focused projection test covering public nightly coercion, managed dogfood, internal dogfood and disabled nightly managed input. Exact-head GitHub Actions for the new commit are required before verified.",
+      "contract_test": "Typed AndroidCoordinatorPort exposes AndroidUpdateTrackPolicy and production AndroidCoordinatorRuntime obtains it from the Rust/JNI policy owner. Exact-head Rust/JNI/Kotlin Actions required.",
+      "integration_test": "Shipping Settings and updater consume the same typed policy projection. Non-stable package transport/device journeys remain open.",
       "packaged_test": "Pending final package if track selector is exposed.",
       "device_test": "Pending only when track selector becomes user-visible on Android.",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Core policy is implemented; verification waits for exact-head CI and shipping consumer closure."
+      "notes": "Core policy plus shipping consumer wiring are implemented. Keep verification_status=not-verified until the new exact-head Actions pass; keep broader app-update responsibility mapped because non-stable delivery/auto-update-when-idle remain open."
     }
   ],
   "traceability": {
@@ -12744,6 +12756,7 @@
   "metadata": {
     "android_head_at_update": "1e66eb907c46043bcb429c15abeae253b44ef443",
     "note": "Deterministic editor cursor now records the shipped suggestion boundary: Android has production-wired Agent/scheduled-automation projection with stale fencing, while Desktop PR/MCP providers are explicitly dormant in the current production adapter. Agent find-in-chat is now production-wired for message/widget semantic search and wrap navigation, while occurrence-span highlighting and richer searchable payloads remain mapped gaps. Native media viewer gallery is production-wired for Human conversations with navigation/zoom/stale-load fencing; in-app PDF rendering is now implemented at 499519f… and pending exact-head CI/device evidence, while Agent attachment/audio/focus semantics remain mapped. Spreadsheet preview responsibility is explicit; legacy .xls remains a deterministic gap. Signed-in onboarding rows are now explicitly mapped to native route/persona/create presentation and a separate unresolved computer-readiness/kickstart responsibility; neither is verified. Desktop permissions/local-tool renderer/store rows are now mapped to a dedicated unresolved Host-owned always/ask/never + team ceiling policy responsibility. Desktop plugins/overlay rows are now split across native overlay presentation, server-tool lifecycle, Git private-source auth recovery, and existing Skills/MCP owners; all remain mapped until production wiring/evidence closes. Settings instruction/router source and recovered cross-owner contract tests are now mapped to concrete responsibilities; provider/instruction production wiring remains explicitly open. Runtime/shell/state contracts plus root-resilience/roster source are now split across selection persistence, readiness, privacy-block, root connection, terminal projection and keyboard-shortcut responsibilities. Only roster selection is implemented; others remain mapped. Audited Desktop frontend TypeScript/Vite/recovered-renderer bootstrap rows now have explicit native Android replacements; transcript rich-content/reduced-motion/URL-card and hidden-chat evidence was reconciled to the 2b7859ac code head without verification inflation. Three recovered runtime Coordinator mechanism rows were source-read and mapped to COORDINATOR-PRESENTATION-CLIENT-ANDROID-001 as explicit Android replacements; async-action/snapshot/entrypoint registry rows remain open pending separate caller/owner proof. Audited native/mahayana-messaging/blob_store.rs is now a direct-port row to Host messaging_blob with stronger Android ownership/idempotency fences; the rest of the messaging crate remains individually open.",
-    "last_updated_android_head": "a9ebc6b78f0626e22d349eca3f996c8dd18ad9f5"
+    "last_updated_android_head": "a9ebc6b78f0626e22d349eca3f996c8dd18ad9f5",
+    "last_update_note": "Update-domain incremental closure: typed Rust update-track consumer plus durable Android installer handoff recovery; exact-head verification pending."
   }
 }

@@ -55,6 +55,7 @@ internal fun ProductionRenderer(
                 val signedInOnboardingState by signedInOnboardingModel.state.collectAsState()
                 val updateState by updateModel.state.collectAsState()
                 val mandatoryUpdateState by updateModel.mandatoryUpdate.collectAsState()
+                val updateTrackPolicy by updateModel.trackPolicy.collectAsState()
                 var openedMiniApp by remember { mutableStateOf<MarketplacePlugin?>(null) }
                 var rendererRoute by remember { mutableStateOf(RendererRoute.GROK_HOME) }
                 var commandPaletteOpen by remember { mutableStateOf(false) }
@@ -98,6 +99,7 @@ internal fun ProductionRenderer(
                 if (showSettings) {
                     FabushiSettingsSurface(
                         updateState = updateState,
+                        updateTrackPolicy = updateTrackPolicy,
                         onCheckUpdate = { updateModel.checkForUpdates(force = true) },
                         onInstallUpdate = updateModel::downloadAndInstall,
                         onClose = { showSettings = false },

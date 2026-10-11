@@ -187,6 +187,28 @@ class MahayanaHost(
             ?: error("Computer rebuild migration watch returned no event")
     }
 
+    internal fun resolveUpdateTrackPolicy(
+        managedTrack: String?,
+        unlockInternalTracks: Boolean,
+        userOverride: String?,
+        buildDefault: String?,
+    ): JSONObject {
+        check(!closed) { "Mahayana host is closed" }
+        val response = JSONObject(
+            nativeResolveUpdateTrackPolicy(
+                managedTrack.orEmpty(),
+                unlockInternalTracks,
+                userOverride.orEmpty(),
+                buildDefault.orEmpty(),
+            ),
+        )
+        check(response.optBoolean("ok", false)) {
+            response.optString("error", "Native update-track policy projection failed")
+        }
+        return response.optJSONObject("result")
+            ?: error("Native update-track policy projection returned no result")
+    }
+
     fun coordinatorStatus(): JSONObject = request("coordinator.status")
 
     fun coordinatorResync(generation: Long, afterSequence: Long): JSONObject =
@@ -488,6 +510,12 @@ class MahayanaHost(
     private external fun nativeCreateTest(appDataDir: String): Long
     private external fun nativeDispatch(handle: Long, requestJson: String): String
     private external fun nativeSetRemoteBinding(handle: Long, bindingJson: String): Boolean
+    private external fun nativeResolveUpdateTrackPolicy(
+        managedTrack: String,
+        unlockInternalTracks: Boolean,
+        userOverride: String,
+        buildDefault: String,
+    ): String
     private external fun nativeComputerRebuildRequest(
         handle: Long,
         requestId: String,
