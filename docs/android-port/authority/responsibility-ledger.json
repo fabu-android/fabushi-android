@@ -12157,7 +12157,7 @@
       "android_owner": "Process-scoped Coordinator RootConnectionResilienceOwner; presentation consumes only typed immutable RootConnectionResilienceProjection.",
       "platform_delta": "Electron Coordinator subscription becomes typed Android Coordinator/auth lifecycle; UI remains native Compose.",
       "implementation_status": "implemented",
-      "production_wiring": "AndroidCoordinatorRuntime owns the single root connection resilience controller beside canonical account/roster truth. It consumes account epoch/identity, AccountAccessProjection readiness, and process/network transport; generation-fences account changes; dedupes one retry flight; queues user retry while transport is down; resumes it on CONNECTED; requeues replacement-transport failures; and publishes typed immutable RootConnectionResilienceProjection through AndroidCoordinatorPort. MarketplaceViewModel only subscribes/copies that projection and delegates retry intent. Shipping ProductionRenderer mounts RootConnectionResilienceHost, which reuses RosterStatus and RosterReconnectNotice.",
+      "production_wiring": "AndroidCoordinatorRuntime owns the single root connection resilience controller beside canonical account/roster truth. It consumes account epoch/identity, AccountAccessProjection readiness, and actual Host/Coordinator request + feature-stream transport health; Android network availability is not treated as connection truth. It generation-fences account changes, dedupes one retry flight, queues user retry while transport is down, resumes it on CONNECTED, requeues replacement-transport failures, and publishes typed immutable RootConnectionResilienceProjection through AndroidCoordinatorPort. MarketplaceViewModel only subscribes/copies that projection and delegates retry intent. Shipping ProductionRenderer mounts RootConnectionResilienceHost, which reuses RosterStatus and RosterReconnectNotice.",
       "unit_test": "RootConnectionResilienceOwnerTest covers logged-out/privacy hidden, connecting/loading, connected, reconnecting, first unreachable, one retry flight, duplicate retry, transport-down queue/resume, replacement-transport requeue, deterministic connected failure code, account generation fencing, logout, dispose, stale completion, and process recreation without retry replay. Exact-head Actions pending.",
       "contract_test": "Desktop connection-state.ts@c8de518fbc65f1ae03b0d58f8be64f501e054bb9, connection-state.tsx@ed2ef6c69609ec7c45be7288bedbc8ea8435bf62, reconnect-notice.tsx@ce30806d3bf77e4dc20f7885ae2df549e78429be, status.tsx@fa389ebc756e49d0d0a84906d7224ae84c77ed9e audited at Desktop 371b72f1cd20de03dc4dff9a15ed761054968093; tests/test_root_connection_resilience_wiring.py locks single-owner production wiring. Same-head CI pending.",
       "integration_test": "Same exact-head GitHub Actions and protected transport/device reconnect journey required.",
@@ -12165,8 +12165,8 @@
       "device_test": "required",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Source implementation and production wiring are complete for this responsibility, but it remains not-verified until descendant exact-head Kotlin/JVM/Python/architecture/package evidence succeeds. Protected device acceptance remains externally blocked.",
-      "android_head_at_update": "bf77dbbc5b94183f11425bfffa85ff25b641ef41"
+      "notes": "Source implementation and production wiring are complete for this responsibility through Host/Coordinator transport truth, but it remains not-verified until descendant exact-head Kotlin/JVM/Python/architecture/package evidence succeeds. Protected device acceptance remains externally blocked.",
+      "android_head_at_update": "dcd7143b4fa240679ac9b27fb9cf48aba8603fb1"
     },
     {
       "responsibility_id": "ROSTER-ACCESS-READINESS-ANDROID-001",
