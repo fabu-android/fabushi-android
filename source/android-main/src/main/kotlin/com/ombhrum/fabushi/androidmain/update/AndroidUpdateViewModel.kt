@@ -608,6 +608,19 @@ class AndroidUpdateViewModel(application: Application) : AndroidViewModel(applic
                 )
                 requestPackageInstall(apk)
             } catch (error: Exception) {
+                updaterTelemetry.record(
+                    AndroidUpdaterTelemetryEvent(
+                        category = "stage",
+                        action = "verified",
+                        result = "error",
+                        trigger = "manual",
+                        track = _trackPolicy.value.effectiveTrack,
+                        currentVersion = currentVersion,
+                        targetVersion = release.version,
+                        durationMs = SystemClock.elapsedRealtime() - stageStarted,
+                        errorClass = error.javaClass.simpleName,
+                    ),
+                )
                 _state.value = AndroidUpdateUiState(
                     phase = AndroidUpdatePhase.ERROR,
                     currentVersion = currentVersion,
