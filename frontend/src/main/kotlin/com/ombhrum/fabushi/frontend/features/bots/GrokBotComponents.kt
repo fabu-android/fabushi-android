@@ -226,7 +226,7 @@ private fun MobileTranscriptAttachments(
                     overflow = TextOverflow.Ellipsis,
                 )
                 val metadata = buildList {
-                    attachment.mimeType?.takeIf(String::isNotBlank)?.let(::add)
+                    attachment.mimeType?.takeIf(String::isNotBlank)?.let { add(it) }
                     attachment.sizeBytes?.let { add(formatTranscriptAttachmentBytes(it)) }
                 }.joinToString(" · ")
                 if (metadata.isNotBlank()) {
