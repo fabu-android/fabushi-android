@@ -628,20 +628,14 @@ internal fun GrokBotChatAndroid(
                         horizontalAlignment = Alignment.End,
                         verticalArrangement = Arrangement.spacedBy(5.dp),
                     ) {
-                        if (entry.text.isNotBlank()) {
-                            Text(
-                                entry.text,
-                                color = Color.White,
-                                fontSize = 16.sp,
-                                modifier = Modifier
-                                    .background(
-                                        Color.Black,
-                                        mobileTranscriptBubbleShape(
-                                            role = MobileChatRole.USER,
-                                            adjacency = adjacency,
-                                        ),
-                                    )
-                                    .padding(horizontal = 15.dp, vertical = 10.dp),
+                        if (entry.text.isNotBlank() || !entry.richTextJson.isNullOrBlank()) {
+                            MobileUserRichTranscriptContent(
+                                text = entry.text,
+                                richTextJson = entry.richTextJson,
+                                bubbleShape = mobileTranscriptBubbleShape(
+                                    role = MobileChatRole.USER,
+                                    adjacency = adjacency,
+                                ),
                             )
                         }
                         MobileTranscriptAttachments(entry.attachments, alignEnd = true)
