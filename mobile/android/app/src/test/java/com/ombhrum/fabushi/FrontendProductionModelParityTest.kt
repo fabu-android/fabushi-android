@@ -583,6 +583,37 @@ class FrontendProductionModelParityTest {
     }
 
     @Test
+    fun canonicalAgentTranscriptPreservesReadOnlyAdjacencyMetadata() {
+        val transcript = JSONArray()
+            .put(
+                JSONObject()
+                    .put("kind", "message")
+                    .put("id", "meta-message")
+                    .put("agentId", "agent-a")
+                    .put("role", "assistant")
+                    .put("author", "Research")
+                    .put("content", "https://example.test")
+                    .put("sourceKind", "ordinary")
+                    .put("reactions", JSONArray().put(JSONObject().put("emoji", "👍")))
+                    .put("hasThreadChip", true)
+                    .put(
+                        "sendMessageText",
+                        JSONObject().put(
+                            "presentation",
+                            JSONObject().put("kind", "url-card"),
+                        ),
+                    ),
+            )
+
+        val row = canonicalMobileTranscriptForAgent(transcript, "agent-a").single()
+        assertEquals("Research", row.transcriptAuthor)
+        assertEquals("ordinary", row.transcriptSourceKind)
+        assertEquals("url-card", row.transcriptPresentationKind)
+        assertTrue(row.hasTranscriptReaction)
+        assertTrue(row.hasTranscriptThreadChip)
+    }
+
+    @Test
     fun canonicalTranscriptLateSnapshotPreservesOnlyMessagesArrivingDuringLoad() {
         val baseline = listOf(
             MobileChatMessage("old-local", MobileChatRole.USER, "old"),
