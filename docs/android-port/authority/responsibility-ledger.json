@@ -936,6 +936,17 @@
             "FBCP-QA-02..18",
             "FBCP AC-01..50"
           ]
+        },
+        {
+          "path": "frontend/src/recovered/features/conversation/workspace/voice.tsx",
+          "blob_sha": "81249c1193e9a5638c2afa3ba97b4e4d2b59349f",
+          "symbols": [
+            "VoiceSessionController",
+            "VOICE_MAX_RECORDING_MS",
+            "VOICE_MIN_RECORDING_MS",
+            "useVoiceSession",
+            "VoiceWaveform"
+          ]
         }
       ],
       "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
@@ -10369,6 +10380,15 @@
             "UserMessageContent",
             "readOnlyRichTextContent"
           ]
+        },
+        {
+          "path": "frontend/src/recovered/features/conversation/workspace/transcript-utility-parity.css",
+          "blob_sha": "81fcd7e2fad9d018c8dd56461c199721f2068b2d",
+          "symbols": [
+            "first-party transcript utility classes",
+            "focus-visible",
+            "prefers-reduced-motion"
+          ]
         }
       ],
       "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
@@ -10422,6 +10442,195 @@
       "verification_status": "not-verified",
       "notes": "Do not infer rich-content parity from plain message visibility. This responsibility remains mapped until the native renderer and exact-head tests/package/device evidence exist.",
       "android_head_at_update": "549a2d2fbdc56c464ade607ec9d4f0b229aff9b2"
+    },
+    {
+      "responsibility_id": "TRANSCRIPT-UTILITY-PRESENTATION-ANDROID-001",
+      "domain": "conversation-transcript-presentation",
+      "desktop_sources": [
+        {
+          "path": "frontend/src/recovered/features/conversation/workspace/transcript-utility-parity.css",
+          "blob_sha": "81fcd7e2fad9d018c8dd56461c199721f2068b2d",
+          "symbols": [
+            "transcript utility rules",
+            "hover/focus utilities",
+            "reduced-motion utilities"
+          ]
+        }
+      ],
+      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "responsibility": "Replace Desktop transcript utility CSS with native Compose spacing, focus, interaction-state, reduced-motion, code/message/readability and accessibility semantics rather than shipping renderer utility classes on Android.",
+      "source_owner": "Desktop renderer stylesheet utility layer",
+      "direct_callers": [
+        "conversation/workspace/transcript.tsx rich/message rows"
+      ],
+      "downstream_dependencies": [
+        "Android Compose Material semantics",
+        "system accessibility/reduced-motion settings",
+        "native message/card components"
+      ],
+      "state_owner": "presentation-only; no canonical state",
+      "persistent_state": [],
+      "protocol_wire_contract": [
+        "focus-visible affordance",
+        "hover-only desktop affordance must have touch alternative",
+        "reduced-motion suppression",
+        "danger/secondary text hierarchy",
+        "code/message spacing and overflow"
+      ],
+      "visible_effect": "Transcript actions/content remain legible, focusable and usable on touch/keyboard/accessibility surfaces without relying on Desktop CSS classes.",
+      "failure_behavior": [
+        "unsupported Desktop hover-only treatment must degrade to always-reachable touch action",
+        "motion preference must not be ignored for essential accessibility behavior"
+      ],
+      "cancellation_behavior": "not applicable",
+      "retry_semantics": "not applicable",
+      "idempotency_semantics": "same UI state produces same native presentation",
+      "process_death_recovery": "recomputed from immutable UI projection",
+      "account_fencing": "no account state stored",
+      "security_boundary": "presentation only; no WebView/CSS injection into canonical transcript",
+      "android_disposition": "not-applicable-with-replacement",
+      "android_target": [
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/features/bots/GrokBotComponents.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/recovered/features/conversation/workspace/transcript_view.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/recovered/features/conversation/workspace/transcript-adjacency.kt"
+      ],
+      "android_owner": "Native Compose transcript presentation",
+      "platform_delta": "Desktop first-party CSS utility classes, hover media queries and browser focus selectors cannot exist directly in native Android. Compose semantics, touch-visible actions, Material focus and system animation-scale/reduced-motion behavior are the replacement. Pixel values may differ to respect Android density/font scaling.",
+      "implementation_status": "mapped",
+      "production_wiring": "Current native transcript already replaces core bubble/spacing/actions but the full utility/rich-content/reduced-motion audit is incomplete; this responsibility stays mapped.",
+      "unit_test": "required for semantics/state projection where behavior is not purely visual",
+      "contract_test": "Desktop CSS blob 81fcd7e2fad9d018c8dd56461c199721f2068b2d retained as visual/interaction source fact.",
+      "integration_test": "required keyboard/touch/a11y traversal and reduced-motion behavior in production transcript",
+      "packaged_test": "required on final githubRelease",
+      "device_test": "required across font scale/touch/keyboard/reduced-animation settings",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "This is a formal platform replacement, not a claim that Desktop CSS was copied or that visual parity is complete.",
+      "android_head_at_update": "9e8678ec8c7504c602cb4c7a7d55f11790084fd9"
+    },
+    {
+      "responsibility_id": "CONVERSATION-WORKSPACE-PREVIEW-STUB-ANDROID-001",
+      "domain": "conversation-workspace",
+      "desktop_sources": [
+        {
+          "path": "frontend/src/recovered/features/conversation/workspace/view.tsx",
+          "blob_sha": "1e0655f7a73f5a0e5fe210985c5f3153de1663d9",
+          "symbols": [
+            "ConversationWorkspacePreview"
+          ]
+        }
+      ],
+      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "responsibility": "Preserve the source fact that no standalone conversation preview dialog ships; route composition belongs to the real production renderer rather than a preview-only duplicate owner.",
+      "source_owner": "Desktop recovered workspace preview stub",
+      "direct_callers": [],
+      "downstream_dependencies": [
+        "production renderer root"
+      ],
+      "state_owner": "none",
+      "persistent_state": [],
+      "protocol_wire_contract": [
+        "ConversationWorkspacePreview returns null"
+      ],
+      "visible_effect": "No separate preview-only conversation UI is exposed to users.",
+      "failure_behavior": [
+        "Android must not introduce a second preview transcript/account owner"
+      ],
+      "cancellation_behavior": "not applicable",
+      "retry_semantics": "not applicable",
+      "idempotency_semantics": "stub has no state",
+      "process_death_recovery": "not applicable",
+      "account_fencing": "not applicable",
+      "security_boundary": "prevents a parallel preview surface from bypassing production ownership",
+      "android_disposition": "not-applicable-with-replacement",
+      "android_target": [
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/production/ProductionRenderer_view.kt"
+      ],
+      "android_owner": "Android production renderer route composition",
+      "platform_delta": "The Desktop source is explicitly a null preview stub. Android keeps only the production native route composition; there is no reason to create a second preview dialog.",
+      "implementation_status": "mapped",
+      "production_wiring": "ProductionRenderer_view.kt is the shipping Android route; no separate ConversationWorkspacePreview analog is introduced.",
+      "unit_test": "architecture gate must continue rejecting duplicate production owners",
+      "contract_test": "Desktop blob 1e0655f7a73f5a0e5fe210985c5f3153de1663d9 explicitly documents a null preview.",
+      "integration_test": "covered indirectly by production route acceptance",
+      "packaged_test": "required to prove only production route ships",
+      "device_test": "not independently required beyond production conversation journey",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Mapped until packaged architecture evidence closes the no-second-preview-owner claim.",
+      "android_head_at_update": "9e8678ec8c7504c602cb4c7a7d55f11790084fd9"
+    },
+    {
+      "responsibility_id": "CONVERSATION-VOICE-INPUT-ANDROID-001",
+      "domain": "conversation-composer-voice",
+      "desktop_sources": [
+        {
+          "path": "frontend/src/recovered/features/conversation/workspace/voice.tsx",
+          "blob_sha": "81249c1193e9a5638c2afa3ba97b4e4d2b59349f",
+          "symbols": [
+            "VoiceSessionController",
+            "VOICE_MAX_RECORDING_MS",
+            "VOICE_MIN_RECORDING_MS",
+            "useVoiceSession"
+          ]
+        }
+      ],
+      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "responsibility": "Provide composer voice input with permission/request/recording-or-listening/processing/error lifecycle, explicit stop that still transcribes, cancel/dispose late-result fencing, a five-minute ceiling, sub-500ms no-op behavior, and final transcription inserted into editable draft without auto-send.",
+      "source_owner": "Desktop VoiceSessionController",
+      "direct_callers": [
+        "conversation composer microphone control"
+      ],
+      "downstream_dependencies": [
+        "microphone permission",
+        "single microphone lease",
+        "on-device speech recognizer",
+        "editable draft owner"
+      ],
+      "state_owner": "Android OfflineAsrDraftControl owns ephemeral voice UI state; NativeOfflineSpeechTranscriber owns one recognizer session; draft remains owned by composer ViewModel.",
+      "persistent_state": [],
+      "protocol_wire_contract": [
+        "idle/requesting_permission/listening-or-recording/processing/error",
+        "max 300000 ms",
+        "minimum 500 ms",
+        "stop transcribes",
+        "cancel/dispose rejects late completion",
+        "final text updates draft only"
+      ],
+      "visible_effect": "User can dictate into the editable draft, stop to obtain transcription, cancel by leaving/disabling the surface, and sees a truthful unavailable/error state when offline recognition is unsupported.",
+      "failure_behavior": [
+        "unsupported device fails closed",
+        "permission denial is visible",
+        "no cloud/network fallback",
+        "recognizer errors are visible and recoverable where appropriate"
+      ],
+      "cancellation_behavior": "dispose/session-key change/disable invalidates generation, cancels recognizer and releases the unique microphone lease; late callbacks are ignored.",
+      "retry_semantics": "user explicitly starts a new recognition session; no automatic cloud or side-effect retry",
+      "idempotency_semantics": "each generation may deliver at most one result; stale generation cannot mutate draft",
+      "process_death_recovery": "voice capture is ephemeral and cancelled on process death; canonical draft text already committed to ViewModel remains the only recoverable content",
+      "account_fencing": "sessionKey change recreates transcriber and invalidates prior generation, preventing old Agent/account result insertion",
+      "security_boundary": "uses SpeechRecognizer.createOnDeviceSpeechRecognizer only and MicrophoneLease; never constructs ordinary cloud-capable SpeechRecognizer",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/features/chat/OfflineAsrDraftControl.kt",
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/media/NativeOfflineSpeechTranscriber.kt",
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/media/MicrophoneLease.kt",
+        "mobile/android/app/src/test/java/com/ombhrum/fabushi/OfflineAsrContractTest.kt",
+        "mobile/android/app/src/test/java/com/ombhrum/fabushi/OfflineAsrGenerationFenceTest.kt"
+      ],
+      "android_owner": "Native offline speech transcriber + composer draft control",
+      "platform_delta": "Desktop records MediaRecorder bytes then calls a transcriber. Android uses the platform on-device SpeechRecognizer directly, preserving user-facing stop/processing/draft semantics and timing fences while avoiding any cloud fallback or second audio-byte owner.",
+      "implementation_status": "implemented",
+      "production_wiring": "OfflineAsrDraftControl ships in both Grok Bot and Mahayana assistant composers; 9e8678ec8c7504c602cb4c7a7d55f11790084fd9 changes stop from cancel to stopListening, adds 300s automatic stop and 500ms too-short suppression.",
+      "unit_test": "OfflineAsrContractTest checks unique microphone ownership and exact timing constants; OfflineAsrGenerationFenceTest checks newer-session/dispose late-result rejection.",
+      "contract_test": "NativeOfflineSpeechTranscriber uses createOnDeviceSpeechRecognizer and EXTRA_PREFER_OFFLINE; no ordinary SpeechRecognizer constructor/network fallback exists.",
+      "integration_test": "Production composer controls are wired; exact-head CI/device recognition evidence is pending.",
+      "packaged_test": "required on final githubRelease with RECORD_AUDIO permission and no network fallback path",
+      "device_test": "required offline: permission, start, stop→draft, <500ms no-op, ceiling behavior, unavailable model, account/session switch and process death",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Implemented in source but intentionally not verified until exact-head Actions and offline device acceptance pass.",
+      "android_head_at_update": "9e8678ec8c7504c602cb4c7a7d55f11790084fd9"
     }
   ],
   "traceability": {
@@ -10457,6 +10666,6 @@
   "metadata": {
     "android_head_at_update": "1e66eb907c46043bcb429c15abeae253b44ef443",
     "note": " Deterministic editor cursor now records the shipped suggestion boundary: Android has production-wired Agent/scheduled-automation projection with stale fencing, while Desktop PR/MCP providers are explicitly dormant in the current production adapter. Agent find-in-chat is now production-wired for message/widget semantic search and wrap navigation, while occurrence-span highlighting and richer searchable payloads remain mapped gaps. Native media viewer gallery is production-wired for Human conversations with navigation/zoom/stale-load fencing; in-app PDF rendering is now implemented at 499519f… and pending exact-head CI/device evidence, while Agent attachment/audio/focus semantics remain mapped. Spreadsheet preview responsibility is explicit; legacy .xls remains a deterministic gap.",
-    "last_updated_android_head": "549a2d2fbdc56c464ade607ec9d4f0b229aff9b2"
+    "last_updated_android_head": "9e8678ec8c7504c602cb4c7a7d55f11790084fd9"
   }
 }
