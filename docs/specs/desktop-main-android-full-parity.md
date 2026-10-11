@@ -9,9 +9,10 @@
 权威顺序：用户最新明确要求 → 本规范及 `docs/android-port/` 的明确设计要求 → 本规范绑定的 Desktop main 源码与实际 shipping composition → Android 既有规范的非冲突要求 → 历史 Grok 参考资料。关于现状、文件位置和现有协议的事实，必须以固定 SHA 的实际代码与生产接线为准，不能让旧文字覆盖真实源码。旧规范 `docs/specs/grok-bot-0.18-android-architecture-parity.md` 的原生化、独立源码、边界隔离、逐源审计、进程恢复和删除 legacy 要求保留；其以 Grok 重建仓库作为最终产品权威的表述被本规范取代。Android 是 Fabushi Desktop 的原生 Android 版本，不是另一款 Grok 产品。
 
 本轮发现基线：
-- Desktop main：`3bc92400826cc4ca7ac665b467708e22261edc61`；root tree：`3d2a0ad250ca82d0cf3b7bd917d8eca7400e5c31`。
+- Desktop main：`d575b4f77b6895eea4ecaced96e5c512964bf3ed`；root tree：`d4c8fe5c91635064f11673ebeefc94c1f83b5ab8`。
 - Android main：`59f6fc8885ce1cb8d1ad4fc5d4ab36f690fb99a2`。
 - Android 既有迁移 PR：#3，分支 `spec/grok-bot-018-android-parity-20260922`；本轮修改前 HEAD：`5d049353e167d9b91b5c765e1686f1ac8670f2ff`。
+- 2026-10-11 incremental rebaseline：Desktop 从 `92fcc2b0f64b6b8f8f8829305b30874b558d6b35` 前进 7 个提交到当前 SHA，仅新增/修改 3 个 `docs/specs/**` 文件；完整树为 9,325 entries / 8,176 non-tree tracked entries，`source/**`、`frontend/**` 及其他 shipping code blob 未变化。新增 FPM-001 / OMA-001 属当前设计权威，但其存在不等于 Android 已实现，必须分别进入 source/responsibility ledger。
 
 每次实现与最终验收都重新读取 Desktop main 和 Android exact HEAD。未合并的 Desktop PR 只进入观察清单，不冒充 main 已有功能。Desktop main 改变后逐 changed path / responsibility rebaseline，不继承失效证据。
 

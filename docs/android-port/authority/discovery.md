@@ -1,5 +1,12 @@
 # 本轮实际发现与尚未证明的内容
 
+## 2026-10-11 当前权威 rebaseline
+
+本会话重新读取 GitHub 后，Desktop canonical main 为 `d575b4f77b6895eea4ecaced96e5c512964bf3ed`，root tree 为 `d4c8fe5c91635064f11673ebeefc94c1f83b5ab8`；Android main 仍为 `59f6fc8885ce1cb8d1ad4fc5d4ab36f690fb99a2`，迁移继续使用 PR #3，rebaseline 前 exact HEAD 为 `dc96c002cffdc8182b2a2e535dcaf23a771155c7`。Desktop 相对先前锁定的 `92fcc2b0f64b6b8f8f8829305b30874b558d6b35` ahead 7 commits，compare 仅涉及三份规范：新增 `docs/specs/fabushi-plugins-marketplace-open-ecosystem.md`、新增 `docs/specs/offline-first-installable-mini-app-platform.md`、修改 `docs/specs/grok-bot-018-runtime-product-parity-recovery.md`；没有 shipping source/code 路径变化。
+
+当前 Desktop recursive tree 未截断，共 9,325 tree entries、8,176 non-tree tracked entries；其中 `source` 7,607、`frontend` 344、`projects` 89、`native` 46、`desktop` 45、`docs` 13。source inventory 以 path+blob SHA 做增量 rebaseline：未变 blob 的既有人工 review 状态可保留但不产生新的 verified 结论；两个新增规范行从 unreviewed 开始。主 runtime Spec 的 changed diff 已人工核对，变化仅引入 OMA-001/FPM-001 的 separately-scoped extension boundaries，因此已有 runtime responsibility mapping 可保持 mapped；新增扩展必须另做责任映射和生产实现，不能把设计文档当 implemented fact。
+
+
 发现日期：2026-10-09。全部 SHA 见 `baseline.json`。
 
 ## 已读取的事实
