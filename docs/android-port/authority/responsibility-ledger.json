@@ -3045,6 +3045,23 @@
             "R12-R15 exact-source verification/merge/release gates",
             "AC-8..12"
           ]
+        },
+        {
+          "path": "frontend/tsconfig.json",
+          "blob_sha": "668d3ab8d2beb7dc82c64eea76e52ca7d1b7e8ba",
+          "symbols": [
+            "TypeScript ES2023/DOM/React JSX compile contract",
+            "noEmit frontend type-check boundary"
+          ]
+        },
+        {
+          "path": "frontend/vite.config.ts",
+          "blob_sha": "d43c7209b0d5cf2c8788dedd8446480d9eebb5e9",
+          "symbols": [
+            "React/Vite renderer build",
+            "relative packaged renderer assets",
+            "reconstructed renderer development endpoints"
+          ]
         }
       ],
       "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
@@ -5321,6 +5338,23 @@
             "mountProductionRenderer",
             "health report"
           ]
+        },
+        {
+          "path": "frontend/vite.config.ts",
+          "blob_sha": "d43c7209b0d5cf2c8788dedd8446480d9eebb5e9",
+          "symbols": [
+            "renderer development/bootstrap shell",
+            "reconstructed manifest and health endpoints"
+          ]
+        },
+        {
+          "path": "frontend/src/upstream.ts",
+          "blob_sha": "865e563fea6c4b4ac4456596109478d826621991",
+          "symbols": [
+            "bootRecoveredRenderer",
+            "loadRecoveredRenderer",
+            "window.__grokUpstreamBoot"
+          ]
         }
       ],
       "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
@@ -5362,7 +5396,7 @@
       "android_owner": "Android Activity/Compose + typed Kotlin/JNI runtime bridge",
       "platform_delta": "ReactDOM/window preload bootstrap becomes Android Activity/Compose lifecycle and typed JNI; reconstruction-only health endpoint/HMR are not release mechanisms.",
       "implementation_status": "implemented",
-      "production_wiring": "Native production renderer and AndroidCoordinatorRuntime/JNI path exist; exact-head packaged/device acceptance still pending.",
+      "production_wiring": "MainActivity.setContent launches the native FabushiApplicationRoot/ProductionRenderer. FabushiApplication owns the process-scoped runtime and installs the trusted typed Coordinator bridge; Android does not fetch a reconstructed renderer manifest or dynamically import the Desktop renderer. Exact-head packaged/device launch and process-reopen acceptance remains required before verification.",
       "unit_test": "existing Android production model/runtime bridge tests",
       "contract_test": "architecture gate forbids bypass/legacy production path",
       "integration_test": "Android unit/instrumentation runtime composition",
@@ -5370,7 +5404,8 @@
       "device_test": "required install/launch/login/restart",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Implemented source composition, not yet verified because current exact-head signed package/device gates are unavailable."
+      "notes": "Implemented native bootstrap/platform replacement. Desktop Vite/upstream web-loader mechanisms are explicitly non-applicable-with-replacement on Android; no legacy recovered-renderer production path is permitted. Keep not-verified until the same final exact HEAD passes package/device launch and process-death gates.",
+      "android_head_at_update": "2b7859ac0fdd1fea3c4fdc2971f755e7006c4d6e"
     },
     {
       "responsibility_id": "AGENT-MANAGEMENT-PRESENTATION-ANDROID-001",
@@ -8338,20 +8373,24 @@
         "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/recovered/features/conversation/workspace/transcript_view.kt",
         "source/android-preload/src/main/kotlin/com/ombhrum/fabushi/androidpreload/runtime/AndroidCoordinatorPort.kt",
         "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/coordinator/AndroidCoordinatorRuntime.kt",
-        "source/host/src/android_json_runtime.rs"
+        "source/host/src/android_json_runtime.rs",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/recovered/features/conversation/workspace/transcript-url-card-metadata.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/recovered/features/conversation/workspace/transcript-assistant-presentation_view.kt",
+        "mobile/android/app/src/test/java/com/ombhrum/fabushi/TranscriptUrlCardMetadataTest.kt"
       ],
       "android_owner": "Native transcript presentation plus typed Android/Host link metadata and external-browser adapter.",
       "platform_delta": "Android uses system browser/Custom Tabs and native link preview UI rather than Electron openExternal.",
       "implementation_status": "mapped",
-      "production_wiring": "Current Android repository search found no getLinkMetadata path; send-message Agent canonical projection also drops the Desktop card union, so URL-card parity is not wired.",
-      "unit_test": "missing bare-link/normalization/metadata resource lifecycle tests",
-      "contract_test": "missing typed link metadata/open external contract",
-      "integration_test": "missing exact-head reconnect/heal/external-open journey",
+      "production_wiring": "Android Agent transcript now owns a presentation-only URL metadata provider with one cache entry/request per normalized URL, idle/loading/ready/empty/failed states, generation/dispose stale-result fencing, reconnect healing of watched failures, bounded 512KiB HTML metadata parsing, HTTPS-only metadata fetch and DNS rejection of local/private addresses. Compose renders title/description/site/host and opens only normalized HTTP(S) through the platform URI handler. Remaining Desktop parity gaps include the complete send-message/legacy-attachment card union, image/favicon/fetchedAt projection and final package/device external-browser acceptance, so the responsibility remains mapped/not-verified.",
+      "unit_test": "TranscriptUrlCardMetadataTest covers metadata precedence/hostname projection, non-HTTP rejection and public-address fencing; provider lifecycle and reconnect integration still require broader same-head coverage.",
+      "contract_test": "Desktop send-message-text/url-card/transcript source anchors are retained; Android typed/network replacement preserves canonical transcript ownership and does not mutate messages.",
+      "integration_test": "Production GrokBotComponents shares a provider per active Agent transcript and heals failed previews on network availability. Same-exact-head Gradle/package/device evidence remains required.",
       "packaged_test": "required final package",
       "device_test": "required device external-browser acceptance",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Only exact Desktop bare-link classification is in scope; do not turn arbitrary mixed text into a preview."
+      "notes": "Only exact Desktop bare-link classification is in scope; do not turn arbitrary mixed text into a preview.",
+      "android_head_at_update": "2b7859ac0fdd1fea3c4fdc2971f755e7006c4d6e"
     },
     {
       "responsibility_id": "TRANSCRIPT-DRAFT-CARDS-ANDROID-001",
@@ -9595,20 +9634,25 @@
       "android_disposition": "android-adapted",
       "android_target": [
         "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/features/bots/GrokBotComponents.kt",
-        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/recovered/features/conversation/workspace"
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/recovered/features/conversation/workspace",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/recovered/features/conversation/workspace/transcript-safe-visuals.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/recovered/features/conversation/workspace/transcript-rich-content.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/recovered/features/conversation/workspace/transcript-rich-content_view.kt",
+        "mobile/android/app/src/test/java/com/ombhrum/fabushi/TranscriptRichContentProjectionTest.kt"
       ],
       "android_owner": "Native rich-content presentation over immutable transcript projection.",
-      "platform_delta": "Android currently renders Agent transcript text with Compose Text and has no KaTeX-equivalent native/shipped renderer. A bounded native math renderer or isolated non-privileged rendering surface is required; raw WebView access is not an acceptable shortcut.",
+      "platform_delta": "Android uses a bounded native inert math projection rather than executing KaTeX HTML/JavaScript. It allow-lists a TeX-like command subset, blocks active URL/HTML/macro/file extensions, preserves readable source for unsupported expressions, and reconstructs presentation from immutable transcript text. This intentionally safer mechanism does not yet reproduce full KaTeX typographic layout.",
       "implementation_status": "mapped",
-      "production_wiring": "Current Agent transcript path proves a gap: assistant text is rendered by plain Compose Text with no math tokenization/runtime. No production-equivalent Android renderer exists at this HEAD.",
-      "unit_test": "missing split/token/fallback/stale-result tests matching math.tsx",
+      "production_wiring": "Assistant inline \\(...\\) and display-math blocks are parsed in the shipping native transcript. Supported bounded expressions render an inert readable math presentation; unsupported/active extensions remain visible as source. No WebView/HTML execution or canonical state is introduced. Full KaTeX-equivalent layout and device font/theme/accessibility acceptance remain open, so status stays mapped/not-verified.",
+      "unit_test": "TranscriptRichContentProjectionTest covers inline/display extraction, supported math glyph projection, active-extension rejection and malformed/unclosed source fallback.",
       "contract_test": "missing renderer security/fallback contract",
       "integration_test": "missing assistant inline/display math transcript journey",
       "packaged_test": "required final minified package math rendering acceptance",
       "device_test": "required font/scaling/accessibility/theme acceptance",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Source audited at Desktop main 371b72f1; mapped as a real production gap, not N/A."
+      "notes": "Source audited at Desktop main 371b72f1; mapped as a real production gap, not N/A.",
+      "android_head_at_update": "2b7859ac0fdd1fea3c4fdc2971f755e7006c4d6e"
     },
     {
       "responsibility_id": "CONVERSATION-MERMAID-RENDERING-ANDROID-001",
@@ -9660,20 +9704,25 @@
       "android_disposition": "android-adapted",
       "android_target": [
         "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/features/bots/GrokBotComponents.kt",
-        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/recovered/features/conversation/workspace"
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/recovered/features/conversation/workspace",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/recovered/features/conversation/workspace/transcript-safe-visuals.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/recovered/features/conversation/workspace/transcript-rich-content.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/recovered/features/conversation/workspace/transcript-rich-content_view.kt",
+        "mobile/android/app/src/test/java/com/ombhrum/fabushi/TranscriptRichContentProjectionTest.kt"
       ],
       "android_owner": "Native/isolated rich-content renderer with no canonical transcript ownership.",
-      "platform_delta": "Android currently has no Mermaid renderer; replacement must preserve strict parsing/security, bounded render lifecycle and native full-screen gesture/accessibility behavior without exposing privileged Java/Kotlin objects.",
+      "platform_delta": "Android does not execute the Mermaid JavaScript runtime. The current native replacement accepts only bounded graph/flowchart inputs, rejects active style/click/subgraph/HTML/data/javascript directives, caps source/line/node/edge counts and projects an immutable node/edge model for Compose. This preserves a restricted safe diagram presentation but does not yet provide Desktop full-screen zoom/pan/fit fidelity.",
       "implementation_status": "mapped",
-      "production_wiring": "Current Agent transcript path uses plain Compose Text and contains no Mermaid detection/rendering. Production parity is missing.",
-      "unit_test": "missing strict parse/cache/theme/invalid/stale render tests",
+      "production_wiring": "Shipping assistant fenced ```mermaid blocks enter the bounded native parser; valid diagrams render inert node/edge presentation and invalid/unsupported input shows an explicit error plus readable source. No privileged WebView/JavaScript bridge exists. Full-screen preview, zoom/pan/fit, theme-sensitive graphical layout and device accessibility remain open, so status stays mapped/not-verified.",
+      "unit_test": "TranscriptRichContentProjectionTest covers bounded graph projection, labels/edges and fail-closed rejection of click/javascript/subgraph/HTML directives.",
       "contract_test": "missing isolated renderer/no-privilege contract",
       "integration_test": "missing assistant Mermaid code block and full-screen viewer journey",
       "packaged_test": "required final minified package diagram acceptance",
       "device_test": "required touch zoom/pan/theme/accessibility acceptance",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Source audited at Desktop main 371b72f1; mapped as a real production gap, not N/A."
+      "notes": "Source audited at Desktop main 371b72f1; mapped as a real production gap, not N/A.",
+      "android_head_at_update": "2b7859ac0fdd1fea3c4fdc2971f755e7006c4d6e"
     },
     {
       "responsibility_id": "CONVERSATION-TRANSCRIPT-PAGINATION-ANDROID-001",
@@ -10436,21 +10485,24 @@
         "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/production/canonical-agent-transcript.kt",
         "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/recovered/features/conversation/workspace/transcript-rich-content.kt",
         "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/recovered/features/conversation/workspace/transcript-rich-content_view.kt",
-        "mobile/android/app/src/test/java/com/ombhrum/fabushi/TranscriptRichContentProjectionTest.kt"
+        "mobile/android/app/src/test/java/com/ombhrum/fabushi/TranscriptRichContentProjectionTest.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/recovered/features/conversation/workspace/transcript-safe-visuals.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/recovered/features/conversation/workspace/transcript-user-rich-content.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/recovered/features/conversation/workspace/transcript-assistant-presentation_view.kt"
       ],
       "android_owner": "Native Agent transcript presentation projection",
       "platform_delta": "Desktop TipTap/React rich rendering must be replaced by native Compose projections; Android must not embed the Desktop renderer or a general WebView for transcript content.",
       "implementation_status": "mapped",
-      "production_wiring": "Android Agent assistant messages now consume a native presentation-only block projection in GrokBotComponents. The parser/render path covers fenced code with copy, H1-H3, ordered/unordered/task lists, blockquote, markdown tables, display-math source visibility, horizontal rules, safe plain paragraphs, standalone bounded HTTP(S) URLs via the system URI handler, and streaming-empty indication without WebView/HTML execution. Desktop inline emphasis/code/strike/math/link grammar, persisted user TipTap richText reconstruction, Mermaid rendering, true math layout, images/channel/source-trust details and full accessibility parity remain open, so this responsibility intentionally stays mapped.",
-      "unit_test": "TranscriptRichContentProjectionTest covers Desktop-derived block grammar, task/list starts, table rows, display math fences, fenced code language validation, malformed/unclosed math visibility and fail-closed HTTP(S) URL normalization. Additional inline/richText/Mermaid/a11y tests remain required.",
+      "production_wiring": "Native Agent transcript production now covers Desktop-derived block grammar, fenced code/copy, headings/lists/tasks/blockquote/tables, inline bold/italic/strike/code/math/link parsing, persisted user TipTap reconstruction with malformed fallback, bounded inert math presentation, bounded strict-subset Mermaid projection with source fallback, assistant image/channel/source-trust presentation, and safe HTTP(S) link activation. Canonical transcript/richText remains Rust Host-owned and Compose only renders immutable projections. Full Desktop-equivalent KaTeX layout, Mermaid full-screen zoom/pan/fit, remaining message/article accessibility and broader card/action/reaction/thread seams are still open, so this responsibility remains mapped/not-verified.",
+      "unit_test": "TranscriptRichContentProjectionTest covers block grammar, inline marks/math/links, malformed and unsafe links, persisted TipTap marks/blocks/references, bounded Mermaid parsing/unsafe directive rejection and bounded inert math active-extension rejection. Exact-head Gradle result is still required.",
       "contract_test": "Desktop blob 5cf2f33c394f885a37709a01361dc516b0fb4240 is the source fact for the supported content grammar and fallback behavior.",
-      "integration_test": "Production GrokBotComponents now consumes MobileAssistantRichTranscriptContent for assistant message rows; same-exact-head GitHub Actions compile/unit/lint evidence is pending and user-richText remains unwired.",
+      "integration_test": "GrokBotComponents consumes native assistant/user rich content plus assistant image/channel/source-trust projections in the shipping Compose transcript. Package/device accessibility and long-content journeys remain required.",
       "packaged_test": "required on final githubRelease transcript content surface",
       "device_test": "required for long code/table/math/link/richText rendering, copy, accessibility and process reopen",
       "artifact": null,
       "verification_status": "not-verified",
       "notes": "Meaningful native production progress is recorded without status inflation: this remains mapped/not-verified until the remaining transcript.tsx rich-content grammar, user richText fallback, inline links/marks, Mermaid/math/image/channel semantics and exact-head package/device evidence are complete.",
-      "android_head_at_update": "bae4c4a7392982bdf0f3678b31100fe012e6470e"
+      "android_head_at_update": "2b7859ac0fdd1fea3c4fdc2971f755e7006c4d6e"
     },
     {
       "responsibility_id": "TRANSCRIPT-UTILITY-PRESENTATION-ANDROID-001",
@@ -10501,13 +10553,14 @@
       "android_target": [
         "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/features/bots/GrokBotComponents.kt",
         "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/recovered/features/conversation/workspace/transcript_view.kt",
-        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/recovered/features/conversation/workspace/transcript-adjacency.kt"
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/recovered/features/conversation/workspace/transcript-adjacency.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/recovered/features/conversation/workspace/transcript-motion.kt"
       ],
       "android_owner": "Native Compose transcript presentation",
       "platform_delta": "Desktop first-party CSS utility classes, hover media queries and browser focus selectors cannot exist directly in native Android. Compose semantics, touch-visible actions, Material focus and system animation-scale/reduced-motion behavior are the replacement. Pixel values may differ to respect Android density/font scaling.",
       "implementation_status": "mapped",
-      "production_wiring": "Current native transcript already replaces core bubble/spacing/actions but the full utility/rich-content/reduced-motion audit is incomplete; this responsibility stays mapped.",
-      "unit_test": "required for semantics/state projection where behavior is not purely visual",
+      "production_wiring": "Native Compose replacement now includes keyboard focus visibility for transcript link content, always-touchable/focusable code Copy with a 48dp minimum target, and platform animator-scale reduced-motion handling that switches find/reply/target navigation from animated to immediate scrolling. Core bubble/spacing/actions are already native. Remaining hover-only message-action replacement, complete keyboard traversal/focus restoration, link semantics across every transcript surface, font-scale/article accessibility and device proof are still open; status remains mapped.",
+      "unit_test": "TranscriptMotionPreferenceTest covers zero/invalid versus positive animator scale; TranscriptRichContentProjectionTest covers link/code projection. UI/device focus, touch target and accessibility traversal remain required.",
       "contract_test": "Desktop CSS blob 81fcd7e2fad9d018c8dd56461c199721f2068b2d retained as visual/interaction source fact.",
       "integration_test": "required keyboard/touch/a11y traversal and reduced-motion behavior in production transcript",
       "packaged_test": "required on final githubRelease",
@@ -10515,7 +10568,7 @@
       "artifact": null,
       "verification_status": "not-verified",
       "notes": "This is a formal platform replacement, not a claim that Desktop CSS was copied or that visual parity is complete.",
-      "android_head_at_update": "9e8678ec8c7504c602cb4c7a7d55f11790084fd9"
+      "android_head_at_update": "2b7859ac0fdd1fea3c4fdc2971f755e7006c4d6e"
     },
     {
       "responsibility_id": "CONVERSATION-WORKSPACE-PREVIEW-STUB-ANDROID-001",
@@ -11046,14 +11099,14 @@
       "implementation_status": "implemented",
       "production_wiring": "Implemented in production. MobileBotViewModel routes hide/unhide through HiddenChatsMutationController for transient optimistic/pending/held state, while agentSetHidden routes through durableAgentRosterMutation. Coordinator persists operationId/accountFence before Host dispatch; Host journals settlement; agentList() invokes reconcileAgentRosterMutations() so reconnect/process recreation replays the same identity rather than issuing a new side effect. Canonical hidden state remains Host/roster-owned.",
       "unit_test": "AgentRosterMutationOwnerTest covers stable distinct operation identity, owner recreation/process-persistence semantics, account-fenced pending lookup, corrupt journal fail-closed and bounded overflow. HiddenChatsMutationControllerTest covers confirmed projection, deterministic rollback, transport-unknown held state, duplicate local intent suppression, scope/account switch stale-callback fencing, dispose fencing and failure classification. Same exact-head Actions are still required.",
-      "contract_test": "Production owner split is implemented: transient UI controller cannot replay side effects; durable operationId/accountFence replay lives in Coordinator/Host. Remaining proof required before verified: same operationId across reconnect/process death, duplicate Host replay settlement, and old-epoch/account-switch rejection on the exact current HEAD.",
-      "integration_test": "Required: transport failure then reconnect reconciliation, deterministic rejection rollback, duplicate suppression, account switch and late callback.",
+      "contract_test": "Rust Host test hidden_roster_mutation_replays_same_operation_after_host_reopen_and_rejects_stale_account now proves durable same-operation replay after Host reopen/process recreation, duplicate Host settlement equality, stale-account rejection without canonical mutation, and durable replay of deterministic rejection. Kotlin AgentRosterMutationOwner/HiddenChatsMutationController tests retain stable operationId/accountFence journal and transient generation/dispose/rollback/held semantics. Same-exact-head Actions and a Coordinator-level reconnect integration/package/device journey are still required before verified.",
+      "integration_test": "Still required as a focused end-to-end Coordinator/Host transport-failure -> reconnect reconciliation journey, including old-epoch callback fencing at the Coordinator boundary; Host reopen/duplicate/stale-account contracts are now covered in Rust.",
       "packaged_test": "required",
       "device_test": "required",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Implemented source/owner slice, intentionally not verified. Android does not copy Desktop noteReconnect() into UI because durable replay is already a Coordinator/Host responsibility. Do not promote to verified until exact-head Kotlin/Rust contracts explicitly prove reconnect + process-death same-operation replay, duplicate settlement, old-account/epoch fencing, and package/device acceptance.",
-      "android_head_at_update": "eb4aed19daf7123d78758ad70f3e9bf77eb57132"
+      "notes": "Implemented owner split remains unchanged: transient UI controller never owns durable retry; Coordinator journal + Host settlement own replay/idempotency. Commit 1f47b18ff29c20f8bb8f922913e024dc5a340a49 closes the previously missing Host replay/duplicate/stale-account contract slice, but the responsibility intentionally remains not-verified until current-head Actions and package/device integration pass.",
+      "android_head_at_update": "2b7859ac0fdd1fea3c4fdc2971f755e7006c4d6e"
     },
     {
       "responsibility_id": "ONBOARDING-SIGNED-IN-PRESENTATION-ANDROID-001",
@@ -12236,7 +12289,7 @@
   },
   "metadata": {
     "android_head_at_update": "1e66eb907c46043bcb429c15abeae253b44ef443",
-    "note": " Deterministic editor cursor now records the shipped suggestion boundary: Android has production-wired Agent/scheduled-automation projection with stale fencing, while Desktop PR/MCP providers are explicitly dormant in the current production adapter. Agent find-in-chat is now production-wired for message/widget semantic search and wrap navigation, while occurrence-span highlighting and richer searchable payloads remain mapped gaps. Native media viewer gallery is production-wired for Human conversations with navigation/zoom/stale-load fencing; in-app PDF rendering is now implemented at 499519f… and pending exact-head CI/device evidence, while Agent attachment/audio/focus semantics remain mapped. Spreadsheet preview responsibility is explicit; legacy .xls remains a deterministic gap. Signed-in onboarding rows are now explicitly mapped to native route/persona/create presentation and a separate unresolved computer-readiness/kickstart responsibility; neither is verified. Desktop permissions/local-tool renderer/store rows are now mapped to a dedicated unresolved Host-owned always/ask/never + team ceiling policy responsibility. Desktop plugins/overlay rows are now split across native overlay presentation, server-tool lifecycle, Git private-source auth recovery, and existing Skills/MCP owners; all remain mapped until production wiring/evidence closes. Settings instruction/router source and recovered cross-owner contract tests are now mapped to concrete responsibilities; provider/instruction production wiring remains explicitly open. Runtime/shell/state contracts plus root-resilience/roster source are now split across selection persistence, readiness, privacy-block, root connection, terminal projection and keyboard-shortcut responsibilities. Only roster selection is implemented; others remain mapped.",
-    "last_updated_android_head": "2e6f7598ab3a73fcec2ab5be857e55ae52bad2ac"
+    "note": "Deterministic editor cursor now records the shipped suggestion boundary: Android has production-wired Agent/scheduled-automation projection with stale fencing, while Desktop PR/MCP providers are explicitly dormant in the current production adapter. Agent find-in-chat is now production-wired for message/widget semantic search and wrap navigation, while occurrence-span highlighting and richer searchable payloads remain mapped gaps. Native media viewer gallery is production-wired for Human conversations with navigation/zoom/stale-load fencing; in-app PDF rendering is now implemented at 499519f… and pending exact-head CI/device evidence, while Agent attachment/audio/focus semantics remain mapped. Spreadsheet preview responsibility is explicit; legacy .xls remains a deterministic gap. Signed-in onboarding rows are now explicitly mapped to native route/persona/create presentation and a separate unresolved computer-readiness/kickstart responsibility; neither is verified. Desktop permissions/local-tool renderer/store rows are now mapped to a dedicated unresolved Host-owned always/ask/never + team ceiling policy responsibility. Desktop plugins/overlay rows are now split across native overlay presentation, server-tool lifecycle, Git private-source auth recovery, and existing Skills/MCP owners; all remain mapped until production wiring/evidence closes. Settings instruction/router source and recovered cross-owner contract tests are now mapped to concrete responsibilities; provider/instruction production wiring remains explicitly open. Runtime/shell/state contracts plus root-resilience/roster source are now split across selection persistence, readiness, privacy-block, root connection, terminal projection and keyboard-shortcut responsibilities. Only roster selection is implemented; others remain mapped. Audited Desktop frontend TypeScript/Vite/recovered-renderer bootstrap rows now have explicit native Android replacements; transcript rich-content/reduced-motion/URL-card and hidden-chat evidence was reconciled to the 2b7859ac code head without verification inflation.",
+    "last_updated_android_head": "2b7859ac0fdd1fea3c4fdc2971f755e7006c4d6e"
   }
 }
