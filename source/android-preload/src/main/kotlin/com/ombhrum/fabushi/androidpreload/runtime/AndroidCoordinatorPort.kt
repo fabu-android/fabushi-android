@@ -10,6 +10,7 @@ data class AndroidSidebarSection(
     val id: String,
     val name: String,
     val agentIds: List<String>,
+    val isCollapsed: Boolean = false,
 )
 
 data class AndroidMcpOAuthCompletion(

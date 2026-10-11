@@ -1178,7 +1178,7 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
                     .put("id", section.id)
                     .put("name", section.name)
                     .put("agentIds", agentIds)
-                    .put("isCollapsed", false),
+                    .put("isCollapsed", section.isCollapsed),
             )
         }
         val result = durableAgentRosterMutation(
@@ -1207,6 +1207,7 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
                         id = id,
                         name = section.optString("name"),
                         agentIds = agentIds,
+                        isCollapsed = section.optBoolean("isCollapsed", false),
                     ),
                 )
             }
