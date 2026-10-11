@@ -3,8 +3,8 @@
   "observed_date": "2026-10-11",
   "desktop_repository": "bhrumom/fabushi-desktop",
   "desktop_branch": "main",
-  "desktop_commit": "d575b4f77b6895eea4ecaced96e5c512964bf3ed",
-  "desktop_root_tree": "d4c8fe5c91635064f11673ebeefc94c1f83b5ab8",
+  "desktop_commit": "62d0c99f95d83f0c7c135a802a31c8b2fcf2cc8d",
+  "desktop_root_tree": "a7d8b9182bc9a586d5b9f40f5613237389f74737",
   "android_repository": "fabu-android/fabushi-android",
   "android_main_at_discovery": "59f6fc8885ce1cb8d1ad4fc5d4ab36f690fb99a2",
   "android_pr": 3,
@@ -30,6 +30,7 @@
     "desktop/e2e/openbot-packaged-acceptance.spec.ts",
     "docs/specs/fabushi-plugins-marketplace-open-ecosystem.md",
     "docs/specs/grok-bot-018-runtime-product-parity-recovery.md",
-    "docs/specs/offline-first-installable-mini-app-platform.md"
+    "docs/specs/offline-first-installable-mini-app-platform.md",
+    "docs/specs/fabushi-plugins-marketplace-owner-inventory.md"
   ]
 }

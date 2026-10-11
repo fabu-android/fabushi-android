@@ -2,10 +2,11 @@
 
 ## 2026-10-11 当前权威 rebaseline
 
-本会话重新读取 GitHub 后，Desktop canonical main 为 `d575b4f77b6895eea4ecaced96e5c512964bf3ed`，root tree 为 `d4c8fe5c91635064f11673ebeefc94c1f83b5ab8`；Android main 仍为 `59f6fc8885ce1cb8d1ad4fc5d4ab36f690fb99a2`，迁移继续使用 PR #3，rebaseline 前 exact HEAD 为 `dc96c002cffdc8182b2a2e535dcaf23a771155c7`。Desktop 相对先前锁定的 `92fcc2b0f64b6b8f8f8829305b30874b558d6b35` ahead 7 commits，compare 仅涉及三份规范：新增 `docs/specs/fabushi-plugins-marketplace-open-ecosystem.md`、新增 `docs/specs/offline-first-installable-mini-app-platform.md`、修改 `docs/specs/grok-bot-018-runtime-product-parity-recovery.md`；没有 shipping source/code 路径变化。
+本会话重新读取 GitHub 后，Desktop canonical main 已前进到 `62d0c99f95d83f0c7c135a802a31c8b2fcf2cc8d`，root tree 为 `a7d8b9182bc9a586d5b9f40f5613237389f74737`；Android main 仍为 `59f6fc8885ce1cb8d1ad4fc5d4ab36f690fb99a2`，迁移继续使用 PR #3。Desktop 相对上一锁定的 `d575b4f77b6895eea4ecaced96e5c512964bf3ed` 仅 ahead 1 commit；compare 只修改 `docs/specs/fabushi-plugins-marketplace-open-ecosystem.md`（4 line changes）并新增 `docs/specs/fabushi-plugins-marketplace-owner-inventory.md`，没有 shipping source/code 路径变化。
 
-当前 Desktop recursive tree 未截断，共 9,325 tree entries、8,176 non-tree tracked entries；其中 `source` 7,607、`frontend` 344、`projects` 89、`native` 46、`desktop` 45、`docs` 13。source inventory 以 path+blob SHA 做增量 rebaseline：未变 blob 的既有人工 review 状态可保留但不产生新的 verified 结论；两个新增规范行从 unreviewed 开始。主 runtime Spec 的 changed diff 已人工核对，变化仅引入 OMA-001/FPM-001 的 separately-scoped extension boundaries，因此已有 runtime responsibility mapping 可保持 mapped；新增扩展必须另做责任映射和生产实现，不能把设计文档当 implemented fact。
+当前 Desktop recursive tree 已通过 Git Data API 读取且 `truncated=false`，共 9,326 tree entries、8,177 non-tree tracked entries；其中 `source` 7,607、`frontend` 344、`projects` 89、`native` 46、`desktop` 45、`docs` 14。source inventory 按 path+blob SHA 增量 rebaseline：8175 个未变 path/blob 保留其人工 review 状态但 source_commit 更新到新 authority；FPM-001 使用新 blob 重新审计；新增 owner-inventory 从 mapped/not-verified 开始，不能继承发布或设备验收。
 
+本次变更进一步明确 Marketplace canonical Registry 采用“现有 Fabushi Backend Plugins/MiniApp Marketplace owner + typed Extension Registry”而非第二套 Open VSX server；Android 需要适配统一 identity/compatibility/install truth，但不能把该设计决定当成 Android runtime 已完成或 verified。
 
 发现日期：2026-10-09。全部 SHA 见 `baseline.json`。
 
@@ -35,7 +36,7 @@ Desktop `RUST_RUNTIME_SOURCE.md` 的根 `third_party/mahayana/*` 是历史路径
 
 Desktop `DESKTOP_SOURCE_CLOSURE.md` 列出的 `frontend/apps/web/src/lib/mahayana-host/contracts.ts` 在固定 commit 读取返回 404。这说明旧来源说明不能直接当当前文件清单；应从真实树追踪其移动/替代路径，禁止继续引用失效路径作为已读证据。
 
-Android `githubRelease` 当前将 `CI_ACCOUNT_SESSION_IMPORT_ENABLED` 设为 true。只凭开关不能确认完整攻击路径，但其在可分发包中存在必须成为安全审计项：证明 session import 的调用边界、授权与清理，最终公开生产产物应关闭/移除测试账户入口。`ciAcceptance` 的测试成功也不能代替经 R8/minify 的生产包验收。
+当前 `mobile/android/app/build.gradle` 已重新核实：defaultConfig=false、release 继承 false、githubRelease 明确 false，只有 ciAcceptance=true。历史 githubRelease 测试账号导入风险已在配置层关闭；仍需在最终 minified githubRelease APK/AAB 上做 R8 后二进制/运行行为验收，不能只凭 BuildConfig 声明安全完成。
 
 历史 run 的 documentation-contract job `113901245494` 当时确因缺少 05–12 八份手册而失败；错误报告 artifact `11627626106`。2026-10-10 已继续使用当前 PR #3 的正式 GitHub 写入接口补齐 05–12，且再次读取仓库文件列表确认 01–12 全部存在。历史失败保持历史失败；新提交尚须取得 exact-HEAD 文档校验成功后才可宣告文档 CI 通过。
 
