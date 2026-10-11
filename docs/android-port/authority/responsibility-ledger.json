@@ -7799,20 +7799,22 @@
       "android_disposition": "android-adapted",
       "android_target": [
         "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/recovered/features/conversation/workspace/transcript_view.kt",
-        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/presentation/MessagingViewModel.kt"
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/presentation/MessagingViewModel.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/recovered/features/conversation/workspace/transcript-message-actions.kt",
+        "mobile/android/app/src/test/java/com/ombhrum/fabushi/TranscriptMessageActionProjectionTest.kt"
       ],
       "android_owner": "Compose transcript gestures/action sheet + canonical messaging owner.",
       "platform_delta": "Desktop hover/context/focus lifecycle maps to Android long-press/action sheet/accessibility focus; touch has no hover but eligibility must remain equivalent.",
       "implementation_status": "mapped",
-      "production_wiring": "Android currently has long-click selection and swipe-to-reply plus basic reactions, but no audited parity for thread/copy/reaction action gating, user-attachment/card action union, focus/a11y restoration or reply-target navigation.",
-      "unit_test": "missing action eligibility/copy/reply/thread/read-only/delivery-gate tests",
+      "production_wiring": "Android now has a pure Desktop-derived ordinary-message action eligibility projector wired into ConversationTranscript: failed/pending/queued and empty messages cannot trigger ordinary selection/reply gestures, while sent text/attachment/rich payloads remain eligible. Existing long-click selection, swipe reply and basic reactions still do not prove Desktop-equivalent thread/copy/forward/reaction action union, focus/a11y restoration or reply-target navigation.",
+      "unit_test": "TranscriptMessageActionProjectionTest covers sent content, failed/pending/queued gating, empty content, attachment/rich payloads and normalized delivery-state comparison. Focused copy/forward/thread/read-only/reaction/focus tests remain required.",
       "contract_test": "missing action-to-canonical messaging/thread/reaction contract",
       "integration_test": "missing long-press/reply/thread/copy/reaction journey",
       "packaged_test": "required final packaged message-action acceptance",
       "device_test": "required touch/a11y/keyboard acceptance",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Mapped; existing swipe reply is partial evidence only."
+      "notes": "Mapped, not verified. 87dad6598cc3f04585e4b3bde9220286eaac7999 closes the ordinary delivery/content eligibility seam only; broader transcript action parity remains open and requires same-exact-head CI/package/device evidence."
     },
     {
       "responsibility_id": "TRANSCRIPT-CARD-COMPOSITION-ANDROID-001",
