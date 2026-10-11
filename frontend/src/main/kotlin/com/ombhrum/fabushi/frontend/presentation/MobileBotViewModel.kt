@@ -201,6 +201,7 @@ data class MobileBotUiState(
     val historyLoadingOlder: Boolean = false,
     val historyError: String? = null,
     val historyPrependRevision: Long = 0L,
+    val transcriptLoadError: Boolean = false,
     val busy: Boolean = false,
     val operationId: String? = null,
     val pendingApproval: PendingAgentApproval? = null,
@@ -1028,6 +1029,7 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
                         historyHasMore = merged.nextBeforeSeq != null,
                         historyLoadingOlder = false,
                         historyError = null,
+                        transcriptLoadError = false,
                         messageTargetId = targetEntryId,
                         error = null,
                     ),
@@ -1039,13 +1041,19 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
                 if (generation == openBotGeneration && mutableState.value.activeBot?.id == bot.id) {
                     commitState(
                         mutableState.value.copy(
-                            error = error.message ?: "Bot transcript restore failed",
+                            transcriptLoadError = true,
+                            error = null,
                         ),
                     )
                     rosterSelection.settle(bot.id)
                 }
             }
         }
+    }
+
+    fun retryTranscriptLoad() {
+        val bot = mutableState.value.activeBot ?: return
+        openBot(bot, mutableState.value.messageTargetId)
     }
 
     fun consumeMessageTarget(entryId: String) {
@@ -1080,6 +1088,7 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
                 historyHasMore = false,
                 historyLoadingOlder = false,
                 historyError = null,
+                transcriptLoadError = false,
                 pendingApproval = null,
                 approvalCleanup = MobileApprovalCleanupState(),
                 widgetPendingEntryIds = emptySet(),

@@ -428,6 +428,7 @@ internal fun ProductionRenderer(
                             onSend = botModel::send,
                             onRetrySend = botModel::retrySend,
                             onCancelQueuedSend = botModel::cancelQueuedSend,
+                            onRetryTranscriptLoad = botModel::retryTranscriptLoad,
                             onLoadOlderMessages = botModel::loadOlderMessages,
                             onRespondToWidget = botModel::respondToWidget,
                             onDismissWidget = botModel::dismissWidget,

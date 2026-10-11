@@ -326,6 +326,7 @@ internal fun GrokBotChatAndroid(
     onSend: () -> Unit,
     onRetrySend: (String) -> Unit,
     onCancelQueuedSend: (String) -> Unit,
+    onRetryTranscriptLoad: () -> Unit,
     onLoadOlderMessages: () -> Unit,
     onRespondToWidget: (String, String) -> Unit,
     onDismissWidget: (String) -> Unit,
@@ -508,7 +509,12 @@ internal fun GrokBotChatAndroid(
             modifier = Modifier.weight(1f).fillMaxWidth().padding(horizontal = 16.dp),
             verticalArrangement = Arrangement.spacedBy(7.dp),
         ) {
-            if (state.historyHasMore || state.historyLoadingOlder || state.historyError != null) {
+            if (state.transcriptLoadError) {
+                item(key = "transcript-load-error") {
+                    AndroidTranscriptLoadError(onRetry = onRetryTranscriptLoad)
+                }
+            }
+            if (!state.transcriptLoadError && (state.historyHasMore || state.historyLoadingOlder || state.historyError != null)) {
                 item(key = "history-loader") {
                     Column(
                         Modifier.fillMaxWidth().padding(vertical = 6.dp),
@@ -542,14 +548,14 @@ internal fun GrokBotChatAndroid(
                     }
                 }
             }
-            if (state.messages.isEmpty()) item {
+            if (!state.transcriptLoadError && state.messages.isEmpty()) item {
                 Column(Modifier.fillMaxWidth().padding(top = 96.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     AgentAvatarAndroid(bot, 82.dp)
                     Text(bot.name, color = GrokMobileInk, fontSize = 22.sp, fontWeight = FontWeight.Bold)
                     if (bot.description.isNotBlank()) Text(bot.description, color = GrokMobileMuted, fontSize = 14.sp)
                 }
             }
-            items(state.messages, key = { it.id }) { entry ->
+            items(if (state.transcriptLoadError) emptyList() else state.messages, key = { it.id }) { entry ->
                 val findHighlight = currentFindMessageId == entry.id
                 Column(
                     Modifier
@@ -671,7 +677,7 @@ internal fun GrokBotChatAndroid(
                 }
                 }
             }
-            state.pendingApproval?.let { approval ->
+            state.pendingApproval?.takeUnless { state.transcriptLoadError }?.let { approval ->
                 item(key = "approval:${approval.approvalId}") {
                     Column(
                         Modifier
@@ -691,7 +697,7 @@ internal fun GrokBotChatAndroid(
                     }
                 }
             }
-            state.error?.let { error -> item { Text(error, color = Color(0xFFD14343), fontSize = 12.sp) } }
+            state.error?.takeUnless { state.transcriptLoadError }?.let { error -> item { Text(error, color = Color(0xFFD14343), fontSize = 12.sp) } }
         }
         Row(Modifier.fillMaxWidth().padding(10.dp), verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Column(Modifier.weight(1f)) {
