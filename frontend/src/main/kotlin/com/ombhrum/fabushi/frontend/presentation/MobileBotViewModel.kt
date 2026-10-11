@@ -1967,6 +1967,45 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
+    fun cancelQueuedSend(nonce: String) {
+        val snapshot = mutableState.value
+        val bot = snapshot.activeBot ?: return
+        if (bot.miniAppId != null || nonce.isBlank()) return
+        val queued = snapshot.messages.firstOrNull {
+            it.clientNonce == nonce && isQueuedSendCancellationAllowed(it)
+        } ?: return
+        val generation = queued.sendAcknowledgementGeneration ?: return
+        val accountSlot = rosterSelectionAccountSlot
+        val scopeGeneration = sendPresentationGeneration
+        viewModelScope.launch {
+            runCatching {
+                withContext(Dispatchers.IO) {
+                    coordinator.sendAcknowledgementCancelQueued(
+                        accountSlot = accountSlot,
+                        agentId = bot.id,
+                        nonce = nonce,
+                        generation = generation,
+                    )
+                }
+            }.onSuccess { cancelled ->
+                if (!cancelled || !isCurrentSendScope(bot.id, accountSlot, scopeGeneration)) {
+                    return@onSuccess
+                }
+                runCatching {
+                    refreshDurableSendProjection(bot.id, accountSlot, scopeGeneration)
+                }
+            }.onFailure { error ->
+                if (isCurrentSendScope(bot.id, accountSlot, scopeGeneration)) {
+                    commitState(
+                        mutableState.value.copy(
+                            error = error.message ?: "Queued send cancellation failed",
+                        ),
+                    )
+                }
+            }
+        }
+    }
+
     fun retrySend(nonce: String) {
         val snapshot = mutableState.value
         val bot = snapshot.activeBot ?: return

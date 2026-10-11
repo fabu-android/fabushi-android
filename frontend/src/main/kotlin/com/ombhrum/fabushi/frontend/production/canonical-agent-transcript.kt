@@ -223,6 +223,11 @@ internal fun isExplicitSendRetryAllowed(message: MobileChatMessage): Boolean =
         !message.clientNonce.isNullOrBlank() &&
         (message.sendAcknowledgementGeneration ?: 0L) > 0L
 
+internal fun isQueuedSendCancellationAllowed(message: MobileChatMessage): Boolean =
+    message.sendStatus == AndroidSendAcknowledgementPhase.QUEUED.wireName &&
+        !message.clientNonce.isNullOrBlank() &&
+        (message.sendAcknowledgementGeneration ?: 0L) > 0L
+
 
 internal fun joinClientSideToolResultCards(
     canonical: List<MobileChatMessage>,

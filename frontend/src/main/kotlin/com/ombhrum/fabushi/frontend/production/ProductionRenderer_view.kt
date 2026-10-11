@@ -427,6 +427,7 @@ internal fun ProductionRenderer(
                             onRemoveDraftAttachment = botModel::removeDraftAttachment,
                             onSend = botModel::send,
                             onRetrySend = botModel::retrySend,
+                            onCancelQueuedSend = botModel::cancelQueuedSend,
                             onLoadOlderMessages = botModel::loadOlderMessages,
                             onRespondToWidget = botModel::respondToWidget,
                             onDismissWidget = botModel::dismissWidget,

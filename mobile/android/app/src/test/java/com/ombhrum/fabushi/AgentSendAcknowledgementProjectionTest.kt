@@ -125,4 +125,31 @@ class AgentSendAcknowledgementProjectionTest {
             assertFalse(isExplicitSendRetryAllowed(row))
         }
     }
+
+    @Test
+    fun onlyQueuedProjectionAllowsCancellation() {
+        val queued = projectDurableSendAcknowledgements(
+            canonical = emptyList(),
+            acknowledgements = listOf(
+                acknowledgement(AndroidSendAcknowledgementPhase.QUEUED),
+            ),
+        ).single()
+        assertTrue(isQueuedSendCancellationAllowed(queued))
+
+        val failed = projectDurableSendAcknowledgements(
+            canonical = emptyList(),
+            acknowledgements = listOf(
+                acknowledgement(AndroidSendAcknowledgementPhase.FAILED, reason = "proven failed"),
+            ),
+        ).single()
+        assertFalse(isQueuedSendCancellationAllowed(failed))
+
+        val unknown = projectDurableSendAcknowledgements(
+            canonical = emptyList(),
+            acknowledgements = listOf(
+                acknowledgement(AndroidSendAcknowledgementPhase.OUTCOME_UNKNOWN),
+            ),
+        ).single()
+        assertFalse(isQueuedSendCancellationAllowed(unknown))
+    }
 }

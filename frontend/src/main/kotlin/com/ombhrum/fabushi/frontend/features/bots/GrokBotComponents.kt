@@ -325,6 +325,7 @@ internal fun GrokBotChatAndroid(
     onRemoveDraftAttachment: (String) -> Unit,
     onSend: () -> Unit,
     onRetrySend: (String) -> Unit,
+    onCancelQueuedSend: (String) -> Unit,
     onLoadOlderMessages: () -> Unit,
     onRespondToWidget: (String, String) -> Unit,
     onDismissWidget: (String) -> Unit,
@@ -601,7 +602,24 @@ internal fun GrokBotChatAndroid(
                         MobileTranscriptAttachments(entry.attachments, alignEnd = true)
                         when (entry.sendStatus) {
                             "pending" -> Text("等待入队…", color = GrokMobileMuted, fontSize = 11.sp)
-                            "queued" -> Text("已入队…", color = GrokMobileMuted, fontSize = 11.sp)
+                            "queued" -> Row(
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Text("已入队…", color = GrokMobileMuted, fontSize = 11.sp)
+                                entry.clientNonce?.takeIf(String::isNotBlank)?.let { nonce ->
+                                    Text(
+                                        "取消",
+                                        color = Color(0xFF2A92FE),
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        modifier = Modifier
+                                            .clickable { onCancelQueuedSend(nonce) }
+                                            .padding(vertical = 4.dp)
+                                            .testTag("mobile-bot-cancel-queued-send"),
+                                    )
+                                }
+                            }
                             "dispatching" -> Text("发送中…", color = GrokMobileMuted, fontSize = 11.sp)
                             "accepted-awaiting-echo" -> Text("已接受，等待同步…", color = GrokMobileMuted, fontSize = 11.sp)
                             "outcome-unknown" -> Text(
