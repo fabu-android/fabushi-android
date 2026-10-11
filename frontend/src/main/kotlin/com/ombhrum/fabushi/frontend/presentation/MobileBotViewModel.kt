@@ -1807,6 +1807,12 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
                     )
                 }
                 if (!isCurrentSendScope(bot.id, accountSlot, scopeGeneration)) return@launch
+                val operationId = dispatched.operationId
+                if (operationId == null) {
+                    commitState(mutableState.value.copy(busy = false, operationId = null))
+                    refreshDurableSendProjection(bot.id, accountSlot, scopeGeneration)
+                    return@launch
+                }
                 clearApprovalsAfterJournal(
                     agentId = bot.id,
                     accountSlot = accountSlot,
@@ -1816,7 +1822,6 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
                     approval = approvalAtSend,
                 )
                 if (!isCurrentSendScope(bot.id, accountSlot, scopeGeneration)) return@launch
-                val operationId = dispatched.operationId
                 commitState(
                     mutableState.value.copy(
                         operationId = operationId,
@@ -1988,6 +1993,12 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
                     )
                 }
                 if (!isCurrentSendScope(bot.id, accountSlot, scopeGeneration)) return@launch
+                val operationId = dispatched.operationId
+                if (operationId == null) {
+                    commitState(mutableState.value.copy(busy = false, operationId = null))
+                    refreshDurableSendProjection(bot.id, accountSlot, scopeGeneration)
+                    return@launch
+                }
                 clearApprovalsAfterJournal(
                     agentId = bot.id,
                     accountSlot = accountSlot,
@@ -1997,7 +2008,6 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
                     approval = approvalAtRetry,
                 )
                 if (!isCurrentSendScope(bot.id, accountSlot, scopeGeneration)) return@launch
-                val operationId = dispatched.operationId
                 refreshDurableSendProjection(bot.id, accountSlot, scopeGeneration)
                 commitState(
                     mutableState.value.copy(
@@ -2399,6 +2409,53 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
             }
             return
         }
+        if (type == "send-acknowledgement-flushed") {
+            val active = mutableState.value.activeBot ?: return
+            val accountSlot = rosterSelectionAccountSlot
+            val eventAccountSlot = event.opt("accountSlot").let { raw ->
+                if (raw is String) raw.takeIf(String::isNotBlank) else null
+            }
+            if (event.optString("agentId") != active.id || eventAccountSlot != accountSlot) return
+            val operationId = event.optString("operationId").takeIf(String::isNotBlank) ?: return
+            val nonce = event.optString("nonce").takeIf(String::isNotBlank) ?: return
+            val generation = event.optLong("generation", 0L).takeIf { it > 0L } ?: return
+            val scopeGeneration = sendPresentationGeneration
+            val approval = mutableState.value.pendingApproval
+            viewModelScope.launch {
+                clearApprovalsAfterJournal(
+                    agentId = active.id,
+                    accountSlot = accountSlot,
+                    scopeGeneration = scopeGeneration,
+                    nonce = nonce,
+                    generation = generation,
+                    approval = approval,
+                )
+                if (!isCurrentSendScope(active.id, accountSlot, scopeGeneration)) return@launch
+                commitState(
+                    mutableState.value.copy(
+                        busy = true,
+                        operationId = operationId,
+                        messages = mutableState.value.messages.filterNot {
+                            it.kind == MobileChatEntryKind.THINKING &&
+                                it.operationId == operationId
+                        } + MobileChatMessage(
+                            id = "thinking:$operationId",
+                            role = MobileChatRole.ASSISTANT,
+                            text = "",
+                            kind = MobileChatEntryKind.THINKING,
+                            operationId = operationId,
+                            actionTitle = "Thinking",
+                            actionStatus = "running",
+                        ),
+                    ),
+                )
+                runCatching {
+                    refreshDurableSendProjection(active.id, accountSlot, scopeGeneration)
+                }
+            }
+            return
+        }
+
         if (type == "client-side-tool-v2") {
             val active = mutableState.value.activeBot ?: return
             val accountSlot = rosterSelectionAccountSlot

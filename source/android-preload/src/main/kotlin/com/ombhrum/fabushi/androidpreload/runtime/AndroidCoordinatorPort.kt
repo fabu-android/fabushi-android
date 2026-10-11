@@ -56,7 +56,7 @@ data class AndroidSendAcknowledgement(
 
 data class AndroidSendAcknowledgementDispatch(
     val acknowledgement: AndroidSendAcknowledgement,
-    val operationId: String,
+    val operationId: String?,
 )
 
 data class AndroidAgentAttachment(
@@ -335,6 +335,13 @@ interface AndroidCoordinatorPort {
         freshNonce: String,
         entries: List<AndroidSendAcknowledgementEntry>,
     ): AndroidSendAcknowledgementDispatch
+
+    fun sendAcknowledgementCancelQueued(
+        accountSlot: String?,
+        agentId: String,
+        nonce: String,
+        generation: Long,
+    ): Boolean = error("Queued send cancellation is unavailable on this Coordinator port")
 
     fun clearApprovalsAfterJournal(
         accountSlot: String?,

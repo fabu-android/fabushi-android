@@ -1126,6 +1126,7 @@ impl AndroidJsonHost {
             "feature.sendAcknowledgement.queue" => self.send_acknowledgement_queue(params),
             "feature.sendAcknowledgement.cancelQueued" => self.send_acknowledgement_cancel_queued(params),
             "feature.sendAcknowledgement.dispatch" => self.send_acknowledgement_dispatch(params),
+            "feature.sendAcknowledgement.retryPrepare" => self.send_acknowledgement_retry_prepare(params),
             "feature.sendAcknowledgement.retry" => self.send_acknowledgement_retry(params),
             "feature.sendAcknowledgement.clearApprovals" => self.send_acknowledgement_clear_approvals(params),
             "feature.sendAcknowledgement.snapshot" => self.send_acknowledgement_snapshot(params),
@@ -3470,7 +3471,7 @@ impl AndroidJsonHost {
         }
     }
 
-    fn send_acknowledgement_retry(&mut self, params: &Value) -> Result<Value, String> {
+    fn send_acknowledgement_retry_prepare(&mut self, params: &Value) -> Result<Value, String> {
         let (account_slot, account_fence, agent_id) = self.send_acknowledgement_scope(params)?;
         let nonce = required_string(params, "nonce")?;
         let fresh_nonce = required_string(params, "freshNonce")?;
@@ -3497,11 +3498,17 @@ impl AndroidJsonHost {
                 fresh_nonce,
                 entries,
             )?;
+        serde_json::to_value(retried)
+            .map_err(|error| format!("failed to serialize prepared send retry: {error}"))
+    }
+
+    fn send_acknowledgement_retry(&mut self, params: &Value) -> Result<Value, String> {
+        let retried = self.send_acknowledgement_retry_prepare(params)?;
         self.send_acknowledgement_dispatch(&json!({
-            "accountSlot":account_slot,
-            "agentId":agent_id,
-            "nonce":retried.nonce,
-            "generation":retried.generation,
+            "accountSlot":retried.get("accountSlot").cloned().unwrap_or(Value::Null),
+            "agentId":retried.get("agentId").cloned().unwrap_or(Value::Null),
+            "nonce":retried.get("nonce").cloned().unwrap_or(Value::Null),
+            "generation":retried.get("generation").cloned().unwrap_or(Value::Null),
         }))
     }
 

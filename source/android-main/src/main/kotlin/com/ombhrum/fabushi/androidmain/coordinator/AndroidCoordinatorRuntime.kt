@@ -3,6 +3,9 @@ package com.ombhrum.fabushi.androidmain.coordinator
 import android.app.Application
 import android.content.Context
 import android.net.Uri
+import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkCapabilities
 import android.provider.OpenableColumns
 import android.util.Base64
 import android.view.View
@@ -140,9 +143,27 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
     private val storagePressureExecutor = Executors.newSingleThreadScheduledExecutor { runnable ->
         Thread(runnable, "fabushi-storage-pressure").apply { isDaemon = true }
     }
+    private val sendSubmissionExecutor = Executors.newSingleThreadExecutor { runnable ->
+        Thread(runnable, "fabushi-send-submission-queue").apply { isDaemon = true }
+    }
+    private val connectivityManager =
+        applicationContext.getSystemService(ConnectivityManager::class.java)
+    private val sendSubmissionQueue = AndroidSendSubmissionTransportQueue(
+        isTransportDown = ::isSendTransportDown,
+        queue = ::queueSendAcknowledgementDirect,
+        dispatch = ::dispatchSendAcknowledgementDirect,
+        cancelQueued = ::cancelQueuedSendAcknowledgementDirect,
+        onFlushed = ::publishFlushedSendAcknowledgement,
+    )
+    private val sendNetworkCallback = object : ConnectivityManager.NetworkCallback() {
+        override fun onAvailable(network: Network) {
+            scheduleSendSubmissionFlush()
+        }
+    }
 
     init {
         computerRebuildOwner.observeAccount(accountAccessOwner.currentProjection().accountEpoch)
+        runCatching { connectivityManager.registerDefaultNetworkCallback(sendNetworkCallback) }
         startComputerRebuildEventPump()
         resumeComputerRebuildMigrationIfNeeded()
         resumeQueuedComputerUpdateIfNeeded()
@@ -503,14 +524,12 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
         nonce: String,
         generation: Long,
     ): AndroidSendAcknowledgementDispatch =
-        parseSendAcknowledgementDispatch(
-            host.request(
-                "feature.sendAcknowledgement.dispatch",
-                JSONObject()
-                    .putNullable("accountSlot", accountSlot)
-                    .put("agentId", agentId)
-                    .put("nonce", nonce)
-                    .put("generation", generation),
+        sendSubmissionQueue.submit(
+            AndroidSendSubmissionScope(
+                accountSlot = accountSlot,
+                agentId = agentId,
+                nonce = nonce,
+                generation = generation,
             ),
         )
 
@@ -521,10 +540,10 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
         generation: Long,
         freshNonce: String,
         entries: List<AndroidSendAcknowledgementEntry>,
-    ): AndroidSendAcknowledgementDispatch =
-        parseSendAcknowledgementDispatch(
+    ): AndroidSendAcknowledgementDispatch {
+        val prepared = parseSendAcknowledgement(
             host.request(
-                "feature.sendAcknowledgement.retry",
+                "feature.sendAcknowledgement.retryPrepare",
                 JSONObject()
                     .putNullable("accountSlot", accountSlot)
                     .put("agentId", agentId)
@@ -534,7 +553,25 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
                     .put("entries", sendAcknowledgementEntriesJson(entries)),
             ),
         )
+        return sendSubmissionQueue.submit(
+            AndroidSendSubmissionScope(
+                accountSlot = accountSlot,
+                agentId = agentId,
+                nonce = prepared.nonce,
+                generation = prepared.generation,
+            ),
+        )
+    }
 
+    override fun sendAcknowledgementCancelQueued(
+        accountSlot: String?,
+        agentId: String,
+        nonce: String,
+        generation: Long,
+    ): Boolean =
+        sendSubmissionQueue.cancelQueued(
+            AndroidSendSubmissionScope(accountSlot, agentId, nonce, generation),
+        )
 
     override fun clearApprovalsAfterJournal(
         accountSlot: String?,
@@ -572,11 +609,14 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
                 .put("agentId", agentId),
         )
         val records = projection.optJSONArray("records") ?: JSONArray()
-        return buildList(records.length()) {
+        val parsed = buildList(records.length()) {
             for (index in 0 until records.length()) {
                 add(parseSendAcknowledgement(records.getJSONObject(index)))
             }
         }
+        sendSubmissionQueue.discover(parsed)
+        if (!isSendTransportDown()) scheduleSendSubmissionFlush()
+        return parsed
     }
 
     override fun composerDraftRead(accountSlot: String?, agentId: String): AndroidComposerDraft? =
@@ -948,10 +988,66 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
         val accepted = value.optJSONObject("accepted") ?: JSONObject()
         return AndroidSendAcknowledgementDispatch(
             acknowledgement = parseSendAcknowledgement(value.getJSONObject("acknowledgement")),
-            operationId = accepted.optString("operationId")
-                .ifBlank { value.getJSONObject("acknowledgement").getString("nonce") },
+            operationId = accepted.optString("operationId").takeIf(String::isNotBlank),
         )
     }
+
+    private fun isSendTransportDown(): Boolean {
+        val network = connectivityManager.activeNetwork ?: return true
+        val capabilities = connectivityManager.getNetworkCapabilities(network) ?: return true
+        return !capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+    }
+
+    private fun queueSendAcknowledgementDirect(
+        scope: AndroidSendSubmissionScope,
+    ): AndroidSendAcknowledgement =
+        parseSendAcknowledgement(
+            host.request("feature.sendAcknowledgement.queue", scope.toJson()),
+        )
+
+    private fun dispatchSendAcknowledgementDirect(
+        scope: AndroidSendSubmissionScope,
+    ): AndroidSendAcknowledgementDispatch =
+        parseSendAcknowledgementDispatch(
+            host.request("feature.sendAcknowledgement.dispatch", scope.toJson()),
+        )
+
+    private fun cancelQueuedSendAcknowledgementDirect(
+        scope: AndroidSendSubmissionScope,
+    ): Boolean =
+        host.request(
+            "feature.sendAcknowledgement.cancelQueued",
+            scope.toJson(),
+        ).optBoolean("cancelled", false)
+
+    private fun publishFlushedSendAcknowledgement(
+        scope: AndroidSendSubmissionScope,
+        result: AndroidSendAcknowledgementDispatch,
+    ) {
+        val operationId = result.operationId ?: return
+        host.publishFeatureEvent(
+            JSONObject()
+                .put("type", "send-acknowledgement-flushed")
+                .putNullable("accountSlot", scope.accountSlot)
+                .put("agentId", scope.agentId)
+                .put("nonce", scope.nonce)
+                .put("generation", scope.generation)
+                .put("operationId", operationId),
+        )
+    }
+
+    private fun scheduleSendSubmissionFlush() {
+        sendSubmissionExecutor.execute {
+            runCatching { sendSubmissionQueue.flush() }
+        }
+    }
+
+    private fun AndroidSendSubmissionScope.toJson(): JSONObject =
+        JSONObject()
+            .putNullable("accountSlot", accountSlot)
+            .put("agentId", agentId)
+            .put("nonce", nonce)
+            .put("generation", generation)
 
     override fun assistantProjection(): JSONObject =
         host.request("feature.assistant.projection")
