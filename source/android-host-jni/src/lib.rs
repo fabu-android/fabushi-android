@@ -811,6 +811,42 @@ mod android_jni {
     }
 
     #[no_mangle]
+    pub extern "system" fn Java_com_ombhrum_fabushi_core_MahayanaHost_nativeProbeUpdatePolicy(
+        mut env: JNIEnv,
+        _object: JObject,
+        handle: jlong,
+        request_id: JString,
+    ) -> jstring {
+        if handle == 0 {
+            return rebuild_json_result(&mut env, Err("native runtime is not initialized".into()));
+        }
+        let request_id = match env.get_string(&request_id) {
+            Ok(value) => value.to_string_lossy().into_owned(),
+            Err(error) => {
+                return rebuild_json_result(
+                    &mut env,
+                    Err(format!("invalid update-policy request id: {error}")),
+                )
+            }
+        };
+        let Some(backend) = rebuild_backend_for(handle) else {
+            return rebuild_json_result(&mut env, Err("update-policy backend is unavailable".into()));
+        };
+        rebuild_json_result(
+            &mut env,
+            backend.probe_update_policy(&request_id).map(|probe| {
+                json!({
+                    "minimumVersionObserved": probe.minimum_version_observed,
+                    "minimumVersion": probe.minimum_version,
+                    "backendRequirement": probe.backend_requirement.wire_name(),
+                    "minimumVersionError": probe.minimum_version_error,
+                    "backendRequirementError": probe.backend_requirement_error,
+                })
+            }),
+        )
+    }
+
+    #[no_mangle]
     pub extern "system" fn Java_com_ombhrum_fabushi_core_MahayanaHost_nativeComputerRebuildRequest(
         mut env: JNIEnv,
         _object: JObject,

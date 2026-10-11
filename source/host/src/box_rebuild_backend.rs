@@ -3,6 +3,7 @@ use crate::mcp_auth::{
     SandPrivacyMode,
 };
 use crate::mcp_auth::dashboard_mcp_auth_backend::create_cursor_checksum;
+use serde_json::Value;
 use std::env;
 use std::io::Read;
 use std::time::Duration;
@@ -14,6 +15,12 @@ pub const GROK_BOT_FORCE_RECREATE_PATH: &str =
     "/aiserver.v1.GrokBotService/ForceRecreateSandBox";
 pub const GROK_BOT_WATCH_MIGRATION_PATH: &str =
     "/aiserver.v1.GrokBotService/WatchSandBoxMigration";
+pub const GROK_BOT_ENSURE_PATH: &str =
+    "/aiserver.v1.GrokBotService/EnsureSandBox";
+pub const STATSIG_BOOTSTRAP_PATH: &str =
+    "/aiserver.v1.AnalyticsService/BootstrapStatsig";
+pub const AUTOMATION_FAILURE_HINT_HEADER: &str = "x-automation-failure-hint";
+pub const SAND_UPDATE_REQUIRED_HINT: &str = "SAND_CLIENT_UPDATE_REQUIRED";
 pub const MIGRATION_WATCH_STALL_MS: u64 = 30_000;
 const CONTROL_RPC_TIMEOUT_MS: u64 = 30_000;
 const MAX_RPC_RESPONSE_BYTES: usize = 4 * 1024 * 1024;
@@ -72,6 +79,32 @@ pub struct ComputerMigrationEvent {
     pub detail: String,
     pub at_ms: u64,
     pub offset_key: String,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BackendUpdateRequirement {
+    Required,
+    Clear,
+    Unchanged,
+}
+
+impl BackendUpdateRequirement {
+    pub fn wire_name(self) -> &'static str {
+        match self {
+            Self::Required => "required",
+            Self::Clear => "clear",
+            Self::Unchanged => "unchanged",
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AndroidUpdatePolicyProbe {
+    pub minimum_version_observed: bool,
+    pub minimum_version: Option<String>,
+    pub backend_requirement: BackendUpdateRequirement,
+    pub minimum_version_error: Option<String>,
+    pub backend_requirement_error: Option<String>,
 }
 
 /// Host-owned client for the Desktop GrokBotService computer-rebuild backend.
@@ -156,6 +189,87 @@ impl AndroidBoxRebuildBackend {
         decode_migration_event(&payload)
     }
 
+    /// Read the same two mandatory-update producers used by Desktop:
+    /// authenticated Statsig dynamic config and EnsureSandBox failure metadata.
+    ///
+    /// The two legs settle independently. A failed EnsureSandBox attempt never clears a
+    /// previously asserted requirement; only a successful EnsureSandBox response does.
+    pub fn probe_update_policy(&self, request_id: &str) -> Result<AndroidUpdatePolicyProbe, String> {
+        validate_request_id(request_id)?;
+        let minimum = self.fetch_minimum_version(request_id);
+        let backend = self.probe_backend_update_requirement(request_id);
+        let (minimum_version_observed, minimum_version, minimum_version_error) = match minimum {
+            Ok(value) => (true, value, None),
+            Err(error) => (false, None, Some(error)),
+        };
+        let (backend_requirement, backend_requirement_error) = match backend {
+            Ok(value) => (value, None),
+            Err(error) => (BackendUpdateRequirement::Unchanged, Some(error)),
+        };
+        Ok(AndroidUpdatePolicyProbe {
+            minimum_version_observed,
+            minimum_version,
+            backend_requirement,
+            minimum_version_error,
+            backend_requirement_error,
+        })
+    }
+
+    fn fetch_minimum_version(&self, request_id: &str) -> Result<Option<String>, String> {
+        let credentials = self.credentials.credentials()?;
+        let response = self
+            .request(
+                &credentials,
+                STATSIG_BOOTSTRAP_PATH,
+                request_id,
+                "true",
+                CONTROL_RPC_TIMEOUT_MS,
+                "application/json",
+            )?
+            .send_string("{}")
+            .map_err(|error| format!("Statsig bootstrap failed: {error}"))?;
+        let mut text = String::new();
+        response
+            .into_reader()
+            .take(MAX_RPC_RESPONSE_BYTES as u64 + 1)
+            .read_to_string(&mut text)
+            .map_err(|error| format!("Statsig bootstrap response read failed: {error}"))?;
+        if text.len() > MAX_RPC_RESPONSE_BYTES {
+            return Err("Statsig bootstrap response exceeds bounded size".into());
+        }
+        parse_statsig_minimum_version(&text)
+    }
+
+    fn probe_backend_update_requirement(
+        &self,
+        request_id: &str,
+    ) -> Result<BackendUpdateRequirement, String> {
+        let credentials = self.credentials.credentials()?;
+        match self
+            .request(
+                &credentials,
+                GROK_BOT_ENSURE_PATH,
+                request_id,
+                self.ghost_mode(),
+                CONTROL_RPC_TIMEOUT_MS,
+                "application/proto",
+            )?
+            .send_bytes(&[])
+        {
+            Ok(_) => Ok(BackendUpdateRequirement::Clear),
+            Err(ureq::Error::Status(status, response)) => {
+                if response.header(AUTOMATION_FAILURE_HINT_HEADER)
+                    == Some(SAND_UPDATE_REQUIRED_HINT)
+                {
+                    Ok(BackendUpdateRequirement::Required)
+                } else {
+                    Err(format!("EnsureSandBox returned HTTP {status}"))
+                }
+            }
+            Err(error) => Err(format!("EnsureSandBox transport failed: {error}")),
+        }
+    }
+
     fn send_unary(
         &self,
         path: &str,
@@ -236,6 +350,45 @@ impl AndroidBoxRebuildBackend {
             _ => "true",
         }
     }
+}
+
+fn parse_statsig_minimum_version(body: &str) -> Result<Option<String>, String> {
+    let envelope: Value =
+        serde_json::from_str(body).map_err(|error| format!("Statsig bootstrap JSON invalid: {error}"))?;
+    let config = envelope
+        .get("config")
+        .and_then(Value::as_str)
+        .ok_or("Statsig bootstrap omitted config")?;
+    let parsed: Value =
+        serde_json::from_str(config).map_err(|error| format!("Statsig config JSON invalid: {error}"))?;
+    let configs = parsed
+        .get("dynamic_configs")
+        .or_else(|| parsed.get("dynamicConfigs"))
+        .and_then(Value::as_object)
+        .ok_or("Statsig config omitted dynamic configs")?;
+    let Some(entry) = configs.get("sand_min_client_version") else {
+        return Ok(None);
+    };
+    let value = entry.get("value").unwrap_or(entry);
+    let decoded;
+    let object = if let Some(object) = value.as_object() {
+        object
+    } else if let Some(raw) = value.as_str() {
+        decoded = serde_json::from_str::<Value>(raw)
+            .map_err(|error| format!("sand_min_client_version value JSON invalid: {error}"))?;
+        decoded
+            .as_object()
+            .ok_or("sand_min_client_version value is not an object")?
+    } else {
+        return Err("sand_min_client_version value is not an object".into());
+    };
+    let minimum = object
+        .get("min_version")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
+    Ok(minimum)
 }
 
 fn validate_request_id(value: &str) -> Result<(), String> {
@@ -521,6 +674,34 @@ mod tests {
         assert!(read_connect_message(&mut Cursor::new(compressed))
             .unwrap_err()
             .contains("compressed"));
+    }
+
+    #[test]
+    fn statsig_minimum_version_reads_desktop_dynamic_config_shape() {
+        let config = serde_json::json!({
+            "dynamic_configs": {
+                "sand_min_client_version": {
+                    "value": {"min_version":"1.9.4"}
+                }
+            }
+        });
+        let body = serde_json::json!({"config":config.to_string()}).to_string();
+        assert_eq!(
+            parse_statsig_minimum_version(&body).unwrap().as_deref(),
+            Some("1.9.4"),
+        );
+
+        let empty = serde_json::json!({
+            "config": serde_json::json!({"dynamic_configs":{}}).to_string()
+        }).to_string();
+        assert_eq!(parse_statsig_minimum_version(&empty).unwrap(), None);
+    }
+
+    #[test]
+    fn statsig_minimum_version_rejects_unobserved_or_malformed_config() {
+        assert!(parse_statsig_minimum_version("{}").is_err());
+        let malformed = serde_json::json!({"config":"{}"}).to_string();
+        assert!(parse_statsig_minimum_version(&malformed).is_err());
     }
 
     #[test]

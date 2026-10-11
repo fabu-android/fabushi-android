@@ -274,6 +274,13 @@ data class AndroidUpdateTrackPolicy(
     val availableTracks: List<String>,
 )
 
+data class AndroidMandatoryUpdatePolicy(
+    val accountEpoch: Long,
+    val processGeneration: Long,
+    val minimumVersion: String?,
+    val backendRequiresUpdate: Boolean,
+)
+
 interface AndroidCoordinatorPort {
     fun coordinatorStatus(): JSONObject
     fun coordinatorResync(generation: Long, afterSequence: Long): JSONObject
@@ -284,6 +291,8 @@ interface AndroidCoordinatorPort {
         buildDefault: String?,
     ): AndroidUpdateTrackPolicy =
         error("Update-track policy is unavailable on this Coordinator port")
+    fun refreshMandatoryUpdatePolicy(): AndroidMandatoryUpdatePolicy =
+        error("Mandatory update policy is unavailable on this Coordinator port")
     fun mcpOAuthRegister(state: String, provider: String): Boolean
     fun mcpOAuthRegisterBound(
         state: String,

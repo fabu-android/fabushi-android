@@ -20,7 +20,12 @@ import com.ombhrum.fabushi.androidpreload.runtime.AccountRecoveryState
 import com.ombhrum.fabushi.androidpreload.runtime.AccountRosterLoadState
 import com.ombhrum.fabushi.androidpreload.runtime.AccountTruthState
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidCoordinatorPort
+import com.ombhrum.fabushi.androidpreload.runtime.AndroidMandatoryUpdatePolicy
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidUpdateTrackPolicy
+import com.ombhrum.fabushi.AndroidBackendUpdateSignal
+import com.ombhrum.fabushi.AndroidMandatoryUpdateFacts
+import com.ombhrum.fabushi.AndroidMandatoryUpdateOwner
+import com.ombhrum.fabushi.SharedPreferencesMandatoryUpdateStateStore
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidAgentAttachment
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidApprovalCleanupResult
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidClientSideToolV2Event
@@ -113,6 +118,10 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
     private val computerRebuildEventHost = MahayanaHost(application, processGeneration = processGeneration)
     private val accountAccessOwner = AccountAccessProjectionOwner(
         SharedPreferencesAccountAccessEpochStore(application),
+    )
+    private val mandatoryUpdateOwner = AndroidMandatoryUpdateOwner(
+        SharedPreferencesMandatoryUpdateStateStore(application),
+        processGeneration = processGeneration,
     )
     private val computerRebuildOwner = ComputerRebuildStateOwner(
         SharedPreferencesComputerRebuildStateStore(application),
@@ -227,6 +236,58 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
             effectiveTrack = effectiveTrack,
             selectableTracks = tracks("selectableTracks"),
             availableTracks = tracks("availableTracks"),
+        )
+    }
+
+    override fun refreshMandatoryUpdatePolicy(): AndroidMandatoryUpdatePolicy {
+        val auth = authStatus()
+        val accountEpoch = accountAccessOwner.currentProjection().accountEpoch
+        if (!auth.optBoolean("loggedIn", false)) {
+            val cleared = mandatoryUpdateOwner.clearForLoggedOutAccount(accountEpoch)
+            return AndroidMandatoryUpdatePolicy(
+                accountEpoch = cleared.accountEpoch,
+                processGeneration = processGeneration,
+                minimumVersion = cleared.minimumVersion,
+                backendRequiresUpdate = cleared.backendRequiresUpdate,
+            )
+        }
+
+        val token = mandatoryUpdateOwner.begin(accountEpoch)
+        val raw = runCatching {
+            host.probeUpdatePolicy("android-update-policy-" + UUID.randomUUID())
+        }.getOrElse {
+            val currentEpoch = accountAccessOwner.currentProjection().accountEpoch
+            val current = mandatoryUpdateOwner.snapshot(currentEpoch)
+            return AndroidMandatoryUpdatePolicy(
+                accountEpoch = current.accountEpoch,
+                processGeneration = processGeneration,
+                minimumVersion = current.minimumVersion,
+                backendRequiresUpdate = current.backendRequiresUpdate,
+            )
+        }
+        val currentEpoch = accountAccessOwner.currentProjection().accountEpoch
+        val backendSignal = when (raw.optString("backendRequirement", "unchanged")) {
+            "required" -> AndroidBackendUpdateSignal.REQUIRED
+            "clear" -> AndroidBackendUpdateSignal.CLEAR
+            else -> AndroidBackendUpdateSignal.UNCHANGED
+        }
+        val minimumVersion = (raw.opt("minimumVersion") as? String)
+            ?.trim()
+            ?.takeIf(String::isNotEmpty)
+        val settled = mandatoryUpdateOwner.settle(
+            token = token,
+            facts = AndroidMandatoryUpdateFacts(
+                minimumVersionObserved = raw.optBoolean("minimumVersionObserved", false),
+                minimumVersion = minimumVersion,
+                backendSignal = backendSignal,
+            ),
+            currentAccountEpoch = currentEpoch,
+        )
+        return AndroidMandatoryUpdatePolicy(
+            accountEpoch = settled.accountEpoch,
+            processGeneration = processGeneration,
+            minimumVersion = settled.minimumVersion,
+            backendRequiresUpdate = settled.backendRequiresUpdate,
         )
     }
 

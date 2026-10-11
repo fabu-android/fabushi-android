@@ -256,6 +256,16 @@ class AndroidUpdateViewModel(application: Application) : AndroidViewModel(applic
             _trackPolicy.value = projection
         }
 
+    private suspend fun refreshMandatoryUpdatePolicy() {
+        val projection = runCatching {
+            withContext(Dispatchers.IO) { coordinator.refreshMandatoryUpdatePolicy() }
+        }.getOrNull() ?: return
+        publishMandatoryUpdate(
+            minimumVersion = projection.minimumVersion,
+            backendRequiresUpdate = projection.backendRequiresUpdate,
+        )
+    }
+
     fun setForeground(foreground: Boolean) {
         if (!updatesEnabled) return
         if (!foreground) {
@@ -282,8 +292,13 @@ class AndroidUpdateViewModel(application: Application) : AndroidViewModel(applic
         }
         if (foregroundJob?.isActive == true) return
         foregroundJob = viewModelScope.launch {
-            if (lastCheckAtMs == 0L) delay(STARTUP_DELAY_MS)
+            var startupDelayPending = lastCheckAtMs == 0L
             while (isActive) {
+                refreshMandatoryUpdatePolicy()
+                if (startupDelayPending) {
+                    startupDelayPending = false
+                    delay(STARTUP_DELAY_MS)
+                }
                 checkForUpdates()
                 delay(UPDATE_FOREGROUND_INTERVAL_MS)
             }

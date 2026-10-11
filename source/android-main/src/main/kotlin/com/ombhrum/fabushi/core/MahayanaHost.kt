@@ -187,6 +187,21 @@ class MahayanaHost(
             ?: error("Computer rebuild migration watch returned no event")
     }
 
+    internal fun probeUpdatePolicy(requestId: String): JSONObject {
+        check(!featureHostTest && !closed) { "Update policy probe requires production Host" }
+        val state = checkNotNull(shared)
+        val active = synchronized(state.lock) {
+            check(state.handle != 0L) { "Mahayana host is closed" }
+            state.handle
+        }
+        val response = JSONObject(nativeProbeUpdatePolicy(active, requestId))
+        check(response.optBoolean("ok", false)) {
+            response.optString("error", "Native update-policy probe failed")
+        }
+        return response.optJSONObject("result")
+            ?: error("Native update-policy probe returned no result")
+    }
+
     internal fun resolveUpdateTrackPolicy(
         managedTrack: String?,
         unlockInternalTracks: Boolean,
@@ -510,6 +525,7 @@ class MahayanaHost(
     private external fun nativeCreateTest(appDataDir: String): Long
     private external fun nativeDispatch(handle: Long, requestJson: String): String
     private external fun nativeSetRemoteBinding(handle: Long, bindingJson: String): Boolean
+    private external fun nativeProbeUpdatePolicy(handle: Long, requestId: String): String
     private external fun nativeResolveUpdateTrackPolicy(
         managedTrack: String,
         unlockInternalTracks: Boolean,
