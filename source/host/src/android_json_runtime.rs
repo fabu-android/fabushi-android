@@ -3306,6 +3306,10 @@ impl AndroidJsonHost {
         let (account_slot, account_fence, agent_id) = self.send_acknowledgement_scope(params)?;
         let nonce = required_string(params, "nonce")?;
         let text = params.get("text").and_then(Value::as_str).unwrap_or_default();
+        let rich_text = params
+            .get("richText")
+            .filter(|value| !value.is_null())
+            .cloned();
         let attachments = AgentAttachment::list_from_json(params.get("attachments"))?;
         self.agent_attachments
             .lock()
@@ -3325,12 +3329,13 @@ impl AndroidJsonHost {
             .send_acknowledgements
             .lock()
             .map_err(|_| "send acknowledgement owner lock poisoned".to_string())?
-            .begin_with_attachments(
+            .begin_with_attachments_and_rich_text(
                 account_slot.as_deref(),
                 &account_fence,
                 &agent_id,
                 nonce,
                 text,
+                rich_text,
                 attachments,
                 entries,
             )?;
@@ -3418,6 +3423,7 @@ impl AndroidJsonHost {
             "requestId":dispatching.nonce,
             "clientNonce":dispatching.nonce,
             "text":dispatching.message_text,
+            "richText":dispatching.message_rich_text,
             "attachments":dispatching.attachments,
             "accountSlot":dispatching.account_slot,
             "agentId":dispatching.agent_id,
@@ -4092,6 +4098,7 @@ impl AndroidJsonHost {
                     "kind":"message",
                     "role":"user",
                     "content":message_text.clone(),
+                    "richText":command.get("richText").cloned().unwrap_or(Value::Null),
                     "attachments":attachments.clone(),
                     "operationId":operation_id,
                     "agentId":agent_id.clone(),
