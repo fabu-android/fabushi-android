@@ -10433,21 +10433,24 @@
       "android_disposition": "android-adapted",
       "android_target": [
         "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/features/bots/GrokBotComponents.kt",
-        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/production/canonical-agent-transcript.kt"
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/production/canonical-agent-transcript.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/recovered/features/conversation/workspace/transcript-rich-content.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/recovered/features/conversation/workspace/transcript-rich-content_view.kt",
+        "mobile/android/app/src/test/java/com/ombhrum/fabushi/TranscriptRichContentProjectionTest.kt"
       ],
       "android_owner": "Native Agent transcript presentation projection",
       "platform_delta": "Desktop TipTap/React rich rendering must be replaced by native Compose projections; Android must not embed the Desktop renderer or a general WebView for transcript content.",
       "implementation_status": "mapped",
-      "production_wiring": "Current Android Agent transcript still renders most user/assistant text through plain Compose Text; structured rich-content parity is not yet implemented and is intentionally recorded as an open mapped gap.",
-      "unit_test": "required: native parser/projection tests for markdown blocks, code, tables, math, links, malformed richText and streaming fallback",
+      "production_wiring": "Android Agent assistant messages now consume a native presentation-only block projection in GrokBotComponents. The parser/render path covers fenced code with copy, H1-H3, ordered/unordered/task lists, blockquote, markdown tables, display-math source visibility, horizontal rules, safe plain paragraphs, standalone bounded HTTP(S) URLs via the system URI handler, and streaming-empty indication without WebView/HTML execution. Desktop inline emphasis/code/strike/math/link grammar, persisted user TipTap richText reconstruction, Mermaid rendering, true math layout, images/channel/source-trust details and full accessibility parity remain open, so this responsibility intentionally stays mapped.",
+      "unit_test": "TranscriptRichContentProjectionTest covers Desktop-derived block grammar, task/list starts, table rows, display math fences, fenced code language validation, malformed/unclosed math visibility and fail-closed HTTP(S) URL normalization. Additional inline/richText/Mermaid/a11y tests remain required.",
       "contract_test": "Desktop blob 5cf2f33c394f885a37709a01361dc516b0fb4240 is the source fact for the supported content grammar and fallback behavior.",
-      "integration_test": "required in production GrokBotComponents after native renderer wiring",
+      "integration_test": "Production GrokBotComponents now consumes MobileAssistantRichTranscriptContent for assistant message rows; same-exact-head GitHub Actions compile/unit/lint evidence is pending and user-richText remains unwired.",
       "packaged_test": "required on final githubRelease transcript content surface",
       "device_test": "required for long code/table/math/link/richText rendering, copy, accessibility and process reopen",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Do not infer rich-content parity from plain message visibility. This responsibility remains mapped until the native renderer and exact-head tests/package/device evidence exist.",
-      "android_head_at_update": "549a2d2fbdc56c464ade607ec9d4f0b229aff9b2"
+      "notes": "Meaningful native production progress is recorded without status inflation: this remains mapped/not-verified until the remaining transcript.tsx rich-content grammar, user richText fallback, inline links/marks, Mermaid/math/image/channel semantics and exact-head package/device evidence are complete.",
+      "android_head_at_update": "bae4c4a7392982bdf0f3678b31100fe012e6470e"
     },
     {
       "responsibility_id": "TRANSCRIPT-UTILITY-PRESENTATION-ANDROID-001",
