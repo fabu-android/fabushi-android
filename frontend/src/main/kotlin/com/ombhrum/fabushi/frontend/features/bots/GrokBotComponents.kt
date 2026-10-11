@@ -361,6 +361,7 @@ internal fun GrokBotChatAndroid(
     onMessageTargetConsumed: (String) -> Unit,
 ) {
     val messageListState = rememberLazyListState()
+    val reducedTranscriptMotion = rememberTranscriptReducedMotion()
     var findOpen by remember(bot.id) { mutableStateOf(false) }
     var findQuery by remember(bot.id) { mutableStateOf("") }
     var findIndex by remember(bot.id) { mutableStateOf(-1) }
@@ -387,7 +388,10 @@ internal fun GrokBotChatAndroid(
     LaunchedEffect(bot.id, currentFindMessageId, state.messages) {
         val targetId = currentFindMessageId ?: return@LaunchedEffect
         val targetIndex = state.messages.indexOfFirst { it.id == targetId }
-        if (targetIndex >= 0) messageListState.animateScrollToItem(targetIndex)
+        if (targetIndex >= 0) {
+            if (reducedTranscriptMotion) messageListState.scrollToItem(targetIndex)
+            else messageListState.animateScrollToItem(targetIndex)
+        }
     }
     LaunchedEffect(bot.id, state.historyPrependRevision) {
         val anchor = historyAnchor ?: return@LaunchedEffect
@@ -402,7 +406,8 @@ internal fun GrokBotChatAndroid(
         val targetId = state.messageTargetId ?: return@LaunchedEffect
         val targetIndex = state.messages.indexOfFirst { it.id == targetId }
         if (targetIndex < 0) return@LaunchedEffect
-        messageListState.animateScrollToItem(targetIndex)
+        if (reducedTranscriptMotion) messageListState.scrollToItem(targetIndex)
+        else messageListState.animateScrollToItem(targetIndex)
         onMessageTargetConsumed(targetId)
     }
     LaunchedEffect(bot.id, state.draft, state.busy, state.error, state.messages, state.pendingApproval, appAgentSurface) {

@@ -68,6 +68,7 @@ internal fun ConversationTranscript(
 ) {
     val haptics = LocalHapticFeedback.current
     val listState = rememberLazyListState()
+    val reducedTranscriptMotion = rememberTranscriptReducedMotion()
     val visibleMessages = messages
     val transcriptAdjacency = remember(messages) {
         projectChatMessageTranscriptAdjacency(messages)
@@ -78,12 +79,18 @@ internal fun ConversationTranscript(
         val index = currentFindMessageId?.let { id ->
             messages.indexOfFirst { it.id == id }
         } ?: -1
-        if (index >= 0) listState.animateScrollToItem(index)
+        if (index >= 0) {
+            if (reducedTranscriptMotion) listState.scrollToItem(index)
+            else listState.animateScrollToItem(index)
+        }
     }
 
     LaunchedEffect(referencedTargetId, messages) {
         val index = referencedMessageTargetIndex(messages, referencedTargetId)
-        if (index >= 0) listState.animateScrollToItem(index)
+        if (index >= 0) {
+            if (reducedTranscriptMotion) listState.scrollToItem(index)
+            else listState.animateScrollToItem(index)
+        }
         referencedTargetId = null
     }
 

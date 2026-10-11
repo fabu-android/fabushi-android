@@ -18,7 +18,12 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalUriHandler
@@ -257,6 +262,7 @@ private fun MobileTranscriptRichBlock(block: TranscriptRichBlock) {
 private fun MobileTranscriptParagraph(text: String) {
     val uriHandler = LocalUriHandler.current
     val inline = projectTranscriptInlineContent(text)
+    var keyboardFocused by remember(text) { mutableStateOf(false) }
     val annotated = buildAnnotatedString {
         inline.forEach { span ->
             val start = length
@@ -282,6 +288,11 @@ private fun MobileTranscriptParagraph(text: String) {
     ClickableText(
         text = annotated,
         modifier = Modifier
+            .background(
+                if (keyboardFocused) Color(0x142A72D4) else Color.Transparent,
+                RoundedCornerShape(4.dp),
+            )
+            .onFocusChanged { keyboardFocused = it.isFocused }
             .focusable()
             .semantics {
                 val links = inline.mapNotNull { it.url }.distinct()
