@@ -6671,6 +6671,133 @@
       "artifact": null,
       "verification_status": "not-verified",
       "notes": "Mapped from five Desktop 92fcc2b0 shared-room files. Existing Android group, MCP, or Remote features are not treated as substitutes. Do not mark implemented until a canonical sharing owner and shipping native surface exist."
+    },
+    {
+      "responsibility_id": "COMPUTER-OVERLAY-ANDROID-001",
+      "domain": "remote-computer",
+      "desktop_sources": [
+        {
+          "path": "frontend/src/recovered/features/computer/overlay/entrypoint.ts",
+          "blob_sha": "d8f739e4f7f22d85df6815bd86a5af86ad2b9321",
+          "symbols": [
+            "ComputerOverlayParams",
+            "defineEntrypoint"
+          ]
+        },
+        {
+          "path": "frontend/src/recovered/features/computer/overlay/view.tsx",
+          "blob_sha": "e83c5e37a282d06855a11c78e39c9327905a807f",
+          "symbols": [
+            "ComputerOverlayView"
+          ]
+        }
+      ],
+      "source_commit": "92fcc2b0f64b6b8f8f8829305b30874b558d6b35",
+      "responsibility": "Account for the Desktop Computer overlay entrypoint whose shipped view is intentionally empty, while preserving the actual Computer user capability through Android's native Remote Computer product surface.",
+      "source_owner": "Desktop Electron renderer entrypoint; shipped overlay view has no state or visible output.",
+      "direct_callers": [
+        "Desktop runtime entrypoint registry"
+      ],
+      "downstream_dependencies": [
+        "Desktop Electron dynamic view loader"
+      ],
+      "state_owner": "None in the Desktop no-op overlay; Android canonical Remote Computer state remains Coordinator/Host owned.",
+      "persistent_state": [],
+      "protocol_wire_contract": [],
+      "visible_effect": "No visible Desktop overlay output from these two files; Android users reach Computer through the native RemoteComputerSurface instead.",
+      "failure_behavior": [
+        "Missing Electron overlay must not remove the actual Remote Computer capability."
+      ],
+      "cancellation_behavior": "No-op Desktop view has no async lifecycle; Android native Remote Computer surface owns its own lifecycle fencing.",
+      "retry_semantics": "Not applicable to the no-op overlay.",
+      "idempotency_semantics": "Not applicable to the no-op overlay.",
+      "process_death_recovery": "Provided by Android Remote Computer durable session/reconcile owners, not by reproducing an Electron overlay.",
+      "account_fencing": "Provided by the typed Android Remote Computer Coordinator path.",
+      "security_boundary": "Desktop Electron dynamic entrypoint is not exposed on Android; native Compose -> typed Coordinator -> Host/remote gateway remains the boundary.",
+      "android_disposition": "not-applicable-with-replacement",
+      "android_target": [
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/features/remote/RemoteComputerSurface.kt",
+        "source/android-preload/src/main/kotlin/com/ombhrum/fabushi/androidpreload/runtime/AndroidCoordinatorPort.kt",
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/coordinator/AndroidCoordinatorRuntime.kt"
+      ],
+      "android_owner": "Native RemoteComputerSurface + typed Coordinator/Host Remote Computer owners.",
+      "platform_delta": "Electron renderer entrypoint and an intentionally-null React view do not exist on Android; the user capability is replaced by a native Compose Remote Computer surface.",
+      "implementation_status": "not-applicable",
+      "production_wiring": "Shipping Android routes Remote Computer through native Compose and typed Coordinator APIs; it does not embed or emulate the null Desktop overlay.",
+      "unit_test": "Covered indirectly by native Remote Computer presentation/policy tests; no no-op overlay-specific logic is required.",
+      "contract_test": "Remote Computer typed Coordinator contracts cover the replacement capability.",
+      "integration_test": "Required under REMOTE-COMPUTER-001 exact-head integration evidence.",
+      "packaged_test": "Required under REMOTE-COMPUTER-001 packaged/device journey.",
+      "device_test": "Required under REMOTE-COMPUTER-001 real-device journey.",
+      "artifact": null,
+      "verification_status": "not-applicable",
+      "notes": "Audited as a legitimate Android replacement rather than copied UI. The Desktop view is explicitly documented in source as rendering nothing; this does not waive REMOTE-COMPUTER-001 verification."
+    },
+    {
+      "responsibility_id": "COMPUTER-REBUILD-PRESENTATION-ANDROID-001",
+      "domain": "remote-computer",
+      "desktop_sources": [
+        {
+          "path": "frontend/src/recovered/features/computer/rebuild/banner.tsx",
+          "blob_sha": "eaf9324f9f8eef3a264ba80da124f4ab52752282",
+          "symbols": [
+            "projectComputerRebuildProgress",
+            "projectComputerReconnect",
+            "ComputerRebuildProgressBanner",
+            "ComputerReconnectBanner"
+          ]
+        }
+      ],
+      "source_commit": "92fcc2b0f64b6b8f8f8829305b30874b558d6b35",
+      "responsibility": "Project canonical Computer rebuild/reconnect state into user-visible update/reset/recover progress steps, migration phase progress, pull percentage and reconnect variants without creating a second rebuild owner.",
+      "source_owner": "Desktop rebuild state projection over canonical box migration/rebuild status.",
+      "direct_callers": [
+        "Computer rebuild UI composition"
+      ],
+      "downstream_dependencies": [
+        "canonical rebuild stage",
+        "box migration phase history",
+        "pull progress",
+        "transport state"
+      ],
+      "state_owner": "Canonical rebuild/migration state remains Coordinator/Host owned; presentation owns projection only.",
+      "persistent_state": [],
+      "protocol_wire_contract": [
+        "update/reset/recover/reconnecting stage projection",
+        "migration phase sequence",
+        "0-100 pullPercent",
+        "connected/down transport"
+      ],
+      "visible_effect": "User sees precise rebuild/recovery/reconnect stage and progress and can restore the Computer progress surface.",
+      "failure_behavior": [
+        "Unknown or out-of-range stages do not fabricate progress",
+        "network reconnect and restart reconnect have distinct user-visible states"
+      ],
+      "cancellation_behavior": "Presentation disappears when canonical rebuild state no longer requires it.",
+      "retry_semantics": "Presentation does not retry rebuild side effects.",
+      "idempotency_semantics": "Projection is pure over canonical state.",
+      "process_death_recovery": "After process recreation Android must re-read the durable rebuild owner and reconstruct the same progress presentation.",
+      "account_fencing": "Progress must remain bound to the current account/rebuild generation.",
+      "security_boundary": "Compose consumes typed Coordinator projection; it does not invoke Host strings or own rebuild truth.",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/features/remote/RemoteComputerSurface.kt",
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/coordinator/ComputerRebuildStateOwner.kt",
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/coordinator/AndroidCoordinatorRuntime.kt",
+        "source/host/src/box_rebuild_backend.rs"
+      ],
+      "android_owner": "ComputerRebuildStateOwner + RemoteComputerSurface presentation.",
+      "platform_delta": "Desktop portal banner becomes native Compose status/progress UI; canonical rebuild owner remains below Presentation.",
+      "implementation_status": "mapped",
+      "production_wiring": "Android has durable rebuild backend/Coordinator ownership and a coarse rebuild message/loading state, but does not yet reproduce Desktop's detailed step/migration/pull/reconnect progress projection.",
+      "unit_test": "missing focused projection tests for update/reset/recover/reconnecting stages and process-reopen restoration",
+      "contract_test": "backend rebuild contract exists under COMPUTER-REBUILD-ANDROID-001; detailed presentation projection contract remains open",
+      "integration_test": "missing exact-head native rebuild progress projection journey",
+      "packaged_test": "required final packaged rebuild/reconnect progress acceptance",
+      "device_test": "required rebuild/reconnect/process-death device acceptance",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Do not inherit COMPUTER-REBUILD-ANDROID-001 backend implementation status for this presentation responsibility. Backend parity does not prove the Desktop progress banner user effect."
     }
   ],
   "traceability": {
