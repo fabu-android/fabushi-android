@@ -112,7 +112,7 @@ private val transcriptMermaidNode = Regex(
     """^([A-Za-z_][A-Za-z0-9_-]*)(?:\[(.{1,120})]|\((.{1,120})\)|\{(.{1,120})})?$""",
 )
 private val transcriptMermaidUnsafe = Regex(
-    """(?i)(?:%%\{|^\s*(?:click|linkstyle|style|classdef|class|subgraph|end)\b|javascript:|data:|<|>)""",
+    """(?i)(?:%%\{|^\s*(?:click|linkstyle|style|classdef|class|subgraph|end)\b|javascript:|data:|<)""",
 )
 
 private fun parseTranscriptMermaidNode(token: String): TranscriptMermaidNode? {
