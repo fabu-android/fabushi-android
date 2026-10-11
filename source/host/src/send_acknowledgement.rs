@@ -74,6 +74,8 @@ pub struct SendAcknowledgementRecord {
     pub entries: Vec<SendAcknowledgementEntry>,
     pub message_text: String,
     #[serde(default)]
+    pub message_rich_text: Option<Value>,
+    #[serde(default)]
     pub attachments: Vec<AgentAttachment>,
     pub phase: SendAcknowledgementPhase,
     pub generation: u64,
@@ -155,6 +157,29 @@ impl DurableSendAcknowledgementOwner {
         attachments: Vec<AgentAttachment>,
         entries: Vec<SendAcknowledgementEntry>,
     ) -> Result<SendAcknowledgementRecord, String> {
+        self.begin_with_attachments_and_rich_text(
+            account_slot,
+            account_fence,
+            agent_id,
+            nonce,
+            message_text,
+            None,
+            attachments,
+            entries,
+        )
+    }
+
+    pub fn begin_with_attachments_and_rich_text(
+        &mut self,
+        account_slot: Option<&str>,
+        account_fence: &str,
+        agent_id: &str,
+        nonce: &str,
+        message_text: &str,
+        message_rich_text: Option<Value>,
+        attachments: Vec<AgentAttachment>,
+        entries: Vec<SendAcknowledgementEntry>,
+    ) -> Result<SendAcknowledgementRecord, String> {
         validate_identity(account_fence, "account fence")?;
         validate_optional_identity(account_slot, "account slot")?;
         validate_identity(agent_id, "agent id")?;
@@ -165,6 +190,16 @@ impl DurableSendAcknowledgementOwner {
         if message_text.len() > 2 * 1024 * 1024 {
             return Err("send acknowledgement message text is too large".into());
         }
+        if let Some(rich_text) = message_rich_text.as_ref() {
+            if !rich_text.is_object() {
+                return Err("send acknowledgement richText must be a JSON object".into());
+            }
+            let encoded = serde_json::to_vec(rich_text)
+                .map_err(|error| format!("failed to serialize send acknowledgement richText: {error}"))?;
+            if encoded.len() > 2 * 1024 * 1024 {
+                return Err("send acknowledgement richText is too large".into());
+            }
+        }
         for attachment in &attachments {
             attachment.validate_public()?;
         }
@@ -174,6 +209,7 @@ impl DurableSendAcknowledgementOwner {
             let existing = self.state.records.get(&key).expect("located record");
             if existing.nonce == nonce
                 && existing.message_text == message_text
+                && existing.message_rich_text == message_rich_text
                 && existing.attachments == attachments
                 && existing.entries == entries
             {
@@ -190,6 +226,7 @@ impl DurableSendAcknowledgementOwner {
             prior_nonces: Vec::new(),
             entries,
             message_text: message_text.to_string(),
+            message_rich_text,
             attachments,
             phase: SendAcknowledgementPhase::Pending,
             generation: self.state.owner_generation,
@@ -378,6 +415,7 @@ impl DurableSendAcknowledgementOwner {
             prior_nonces,
             entries,
             message_text: old.message_text,
+            message_rich_text: old.message_rich_text,
             attachments: old.attachments,
             phase: SendAcknowledgementPhase::Pending,
             generation: self.state.owner_generation,
