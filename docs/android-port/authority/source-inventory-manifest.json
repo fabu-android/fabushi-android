@@ -1,9 +1,9 @@
 {
   "schema_version": 1,
-  "desktop_commit": "62d0c99f95d83f0c7c135a802a31c8b2fcf2cc8d",
-  "desktop_root_tree": "a7d8b9182bc9a586d5b9f40f5613237389f74737",
-  "desktop_main_before": "d575b4f77b6895eea4ecaced96e5c512964bf3ed",
-  "desktop_main_after": "62d0c99f95d83f0c7c135a802a31c8b2fcf2cc8d",
+  "desktop_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+  "desktop_root_tree": "3116c54a1e36da95189c740bdc789ad543ce2d20",
+  "desktop_main_before": "62d0c99f95d83f0c7c135a802a31c8b2fcf2cc8d",
+  "desktop_main_after": "371b72f1cd20de03dc4dff9a15ed761054968093",
   "authority_current": true,
   "android_tested_checkout_sha": null,
   "workflow_run_id": null,
@@ -32,6 +32,6 @@
   "truncation_fallback_used": false,
   "initial_status": "unreviewed",
   "ledger_sha256": null,
-  "closure_review": "incremental-rebaseline-to-62d0c99f-complete-tree-8177-owner-inventory-mapped-semantic-review-continuing",
+  "closure_review": "incremental-rebaseline-to-371b72f1-owner-inventory-skills-audited-semantic-review-continuing",
   "product_acceptance": "not-claimed"
 }

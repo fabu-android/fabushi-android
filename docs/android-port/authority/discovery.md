@@ -2,11 +2,12 @@
 
 ## 2026-10-11 当前权威 rebaseline
 
-本会话重新读取 GitHub 后，Desktop canonical main 已前进到 `62d0c99f95d83f0c7c135a802a31c8b2fcf2cc8d`，root tree 为 `a7d8b9182bc9a586d5b9f40f5613237389f74737`；Android main 仍为 `59f6fc8885ce1cb8d1ad4fc5d4ab36f690fb99a2`，迁移继续使用 PR #3。Desktop 相对上一锁定的 `d575b4f77b6895eea4ecaced96e5c512964bf3ed` 仅 ahead 1 commit；compare 只修改 `docs/specs/fabushi-plugins-marketplace-open-ecosystem.md`（4 line changes）并新增 `docs/specs/fabushi-plugins-marketplace-owner-inventory.md`，没有 shipping source/code 路径变化。
+本会话最新一次重新读取 GitHub 后，Desktop canonical main 为 `371b72f1cd20de03dc4dff9a15ed761054968093`，root tree 为 `3116c54a1e36da95189c740bdc789ad543ce2d20`；Android main 仍为 `59f6fc8885ce1cb8d1ad4fc5d4ab36f690fb99a2`，迁移继续使用 PR #3。Desktop 相对上一锁定的 `62d0c99f95d83f0c7c135a802a31c8b2fcf2cc8d` 仅 ahead 1 commit；compare 只修改 `docs/specs/fabushi-plugins-marketplace-owner-inventory.md`（+32），没有 shipping source/code 路径变化。
 
-当前 Desktop recursive tree 已通过 Git Data API 读取且 `truncated=false`，共 9,326 tree entries、8,177 non-tree tracked entries；其中 `source` 7,607、`frontend` 344、`projects` 89、`native` 46、`desktop` 45、`docs` 14。source inventory 按 path+blob SHA 增量 rebaseline：8175 个未变 path/blob 保留其人工 review 状态但 source_commit 更新到新 authority；FPM-001 使用新 blob 重新审计；新增 owner-inventory 从 mapped/not-verified 开始，不能继承发布或设备验收。
+当前 Desktop recursive tree 仍为 9,326 tree entries、8,177 non-tree tracked entries；`source` 7,607、`frontend` 344、`projects` 89、`native` 46、`desktop` 45、`docs` 14。8177 个 source rows 按 path+blob 做增量 rebaseline：除 owner-inventory 新 blob 外其余路径/blob 不变，因此保留已有人工 review 状态但将 source_commit 更新为当前 authority；owner-inventory 重新语义审计，不继承 verified。
 
-本次变更进一步明确 Marketplace canonical Registry 采用“现有 Fabushi Backend Plugins/MiniApp Marketplace owner + typed Extension Registry”而非第二套 Open VSX server；Android 需要适配统一 identity/compatibility/install truth，但不能把该设计决定当成 Android runtime 已完成或 verified。
+本次 owner audit 进一步锁定 Skills：Host `plugin_skills.rs` 拥有 lifecycle/sync，`plugin_skills_cache.rs` 持久化当前 user/skill/auth-block 投影，`skill_publish.rs` 拥有 team publish/resync/unpublish ownership fencing；Electron loader 只是 marketplace SDK/materialization edge。Canonical Registry 迁移必须保留 legacyPluginId/version-or-commit/relativePath/workflow identity/publisher-team migration facts，并显式去重；legacy publisher facts 不得自动升级为 verified publisher。Android 当前通用 Marketplace/plugin runtime 不能据此被误报为 Skills lifecycle parity。
+
 
 发现日期：2026-10-09。全部 SHA 见 `baseline.json`。
 

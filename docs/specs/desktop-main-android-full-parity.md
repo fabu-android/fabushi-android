@@ -9,7 +9,7 @@
 权威顺序：用户最新明确要求 → 本规范及 `docs/android-port/` 的明确设计要求 → 本规范绑定的 Desktop main 源码与实际 shipping composition → Android 既有规范的非冲突要求 → 历史 Grok 参考资料。关于现状、文件位置和现有协议的事实，必须以固定 SHA 的实际代码与生产接线为准，不能让旧文字覆盖真实源码。旧规范 `docs/specs/grok-bot-0.18-android-architecture-parity.md` 的原生化、独立源码、边界隔离、逐源审计、进程恢复和删除 legacy 要求保留；其以 Grok 重建仓库作为最终产品权威的表述被本规范取代。Android 是 Fabushi Desktop 的原生 Android 版本，不是另一款 Grok 产品。
 
 本轮发现基线：
-- Desktop main：`62d0c99f95d83f0c7c135a802a31c8b2fcf2cc8d`；root tree：`a7d8b9182bc9a586d5b9f40f5613237389f74737`。
+- Desktop main：`371b72f1cd20de03dc4dff9a15ed761054968093`；root tree：`3116c54a1e36da95189c740bdc789ad543ce2d20`。
 - Android main：`59f6fc8885ce1cb8d1ad4fc5d4ab36f690fb99a2`。
 - Android 既有迁移 PR：#3，分支 `spec/grok-bot-018-android-parity-20260922`；本轮修改前 HEAD：`5d049353e167d9b91b5c765e1686f1ac8670f2ff`。
 - 2026-10-11 incremental rebaseline：Desktop 先从 `92fcc2b0f64b6b8f8f8829305b30874b558d6b35` 前进到 `d575b4f7...`，随后又前进 1 个提交到当前 `62d0c99f95d83f0c7c135a802a31c8b2fcf2cc8d`。最新 compare 仅修改 `docs/specs/fabushi-plugins-marketplace-open-ecosystem.md` 并新增 `docs/specs/fabushi-plugins-marketplace-owner-inventory.md`；完整树为 9,326 entries / 8,177 non-tree tracked entries，`source/**`、`frontend/**` 及其他 shipping code blob 相对 d575 基线未变化。FPM-001 / OMA-001 / owner-inventory 都是当前设计权威，但其存在不等于 Android 已实现，必须分别进入 source/responsibility ledger。
