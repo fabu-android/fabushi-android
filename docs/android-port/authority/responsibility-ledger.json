@@ -5475,6 +5475,13 @@
             "isForwardSubmitShortcut",
             "isForwardToggleShortcut"
           ]
+        },
+        {
+          "path": "frontend/src/recovered/features/conversation/workspace/transcript.tsx",
+          "blob_sha": "5cf2f33c394f885a37709a01361dc516b0fb4240",
+          "symbols": [
+            "ConversationTranscript"
+          ]
         }
       ],
       "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
@@ -7143,6 +7150,13 @@
             "projectPermissionRequestLeaf",
             "PermissionRequestLeaf"
           ]
+        },
+        {
+          "path": "frontend/src/recovered/features/conversation/workspace/transcript.tsx",
+          "blob_sha": "5cf2f33c394f885a37709a01361dc516b0fb4240",
+          "symbols": [
+            "ConversationTranscript"
+          ]
         }
       ],
       "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
@@ -7231,6 +7245,13 @@
             "describeTimelineEventCard",
             "TimelineEventCard"
           ]
+        },
+        {
+          "path": "frontend/src/recovered/features/conversation/workspace/transcript.tsx",
+          "blob_sha": "5cf2f33c394f885a37709a01361dc516b0fb4240",
+          "symbols": [
+            "ConversationTranscript"
+          ]
         }
       ],
       "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
@@ -7297,6 +7318,13 @@
             "projectAttachmentCardEntry",
             "projectUserAttachmentEvent",
             "createAttachmentCardDataAdapter"
+          ]
+        },
+        {
+          "path": "frontend/src/recovered/features/conversation/workspace/transcript.tsx",
+          "blob_sha": "5cf2f33c394f885a37709a01361dc516b0fb4240",
+          "symbols": [
+            "ConversationTranscript"
           ]
         }
       ],
@@ -7716,6 +7744,13 @@
             "isMessageContextTargetExcluded",
             "restoreTranscriptActionFocus"
           ]
+        },
+        {
+          "path": "frontend/src/recovered/features/conversation/workspace/transcript.tsx",
+          "blob_sha": "5cf2f33c394f885a37709a01361dc516b0fb4240",
+          "symbols": [
+            "ConversationTranscript"
+          ]
         }
       ],
       "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
@@ -7793,6 +7828,13 @@
           "symbols": [
             "TranscriptCardRootMountContract",
             "createTranscriptCardRootMountContract"
+          ]
+        },
+        {
+          "path": "frontend/src/recovered/features/conversation/workspace/transcript.tsx",
+          "blob_sha": "5cf2f33c394f885a37709a01361dc516b0fb4240",
+          "symbols": [
+            "ConversationTranscript"
           ]
         }
       ],
@@ -7889,6 +7931,13 @@
           "blob_sha": "593743d77c651de4739e9f06904b95d7e84e15e3",
           "symbols": [
             "createScopedReactionWorkspacePair"
+          ]
+        },
+        {
+          "path": "frontend/src/recovered/features/conversation/workspace/transcript.tsx",
+          "blob_sha": "5cf2f33c394f885a37709a01361dc516b0fb4240",
+          "symbols": [
+            "ConversationTranscript"
           ]
         }
       ],
@@ -8146,6 +8195,13 @@
           "symbols": [
             "createThreadSummaryController"
           ]
+        },
+        {
+          "path": "frontend/src/recovered/features/conversation/workspace/transcript.tsx",
+          "blob_sha": "5cf2f33c394f885a37709a01361dc516b0fb4240",
+          "symbols": [
+            "ConversationTranscript"
+          ]
         }
       ],
       "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
@@ -8221,6 +8277,13 @@
             "extractBareLink",
             "projectLinkMetadata",
             "createUrlCardProvider"
+          ]
+        },
+        {
+          "path": "frontend/src/recovered/features/conversation/workspace/transcript.tsx",
+          "blob_sha": "5cf2f33c394f885a37709a01361dc516b0fb4240",
+          "symbols": [
+            "ConversationTranscript"
           ]
         }
       ],
@@ -9281,6 +9344,13 @@
             "projectSubmission",
             "setScope"
           ]
+        },
+        {
+          "path": "frontend/src/recovered/features/conversation/workspace/transcript.tsx",
+          "blob_sha": "5cf2f33c394f885a37709a01361dc516b0fb4240",
+          "symbols": [
+            "ConversationTranscript"
+          ]
         }
       ],
       "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
@@ -9603,6 +9673,13 @@
             "TranscriptHistoryCursor",
             "mergeOlderTranscriptEntries",
             "createTranscriptPaginationController"
+          ]
+        },
+        {
+          "path": "frontend/src/recovered/features/conversation/workspace/transcript.tsx",
+          "blob_sha": "5cf2f33c394f885a37709a01361dc516b0fb4240",
+          "symbols": [
+            "ConversationTranscript"
           ]
         }
       ],
@@ -10059,6 +10136,13 @@
             "retryFailed",
             "dispose"
           ]
+        },
+        {
+          "path": "frontend/src/recovered/features/conversation/workspace/transcript.tsx",
+          "blob_sha": "5cf2f33c394f885a37709a01361dc516b0fb4240",
+          "symbols": [
+            "ConversationTranscript"
+          ]
         }
       ],
       "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
@@ -10144,6 +10228,13 @@
             "projectTranscriptAdjacency",
             "getEntryPresentation",
             "isImageOnlyMarkdown"
+          ]
+        },
+        {
+          "path": "frontend/src/recovered/features/conversation/workspace/transcript.tsx",
+          "blob_sha": "5cf2f33c394f885a37709a01361dc516b0fb4240",
+          "symbols": [
+            "ConversationTranscript"
           ]
         }
       ],
@@ -10262,6 +10353,75 @@
       "verification_status": "not-verified",
       "notes": "Do not mark verified until exact-head Actions and packaged/device failure/retry acceptance pass.",
       "android_head_at_update": "0d596e4820242e259f7bc2d2d91f25fe0c6d5bfe"
+    },
+    {
+      "responsibility_id": "TRANSCRIPT-RICH-CONTENT-ANDROID-001",
+      "domain": "conversation-transcript-content",
+      "desktop_sources": [
+        {
+          "path": "frontend/src/recovered/features/conversation/workspace/transcript.tsx",
+          "blob_sha": "5cf2f33c394f885a37709a01361dc516b0fb4240",
+          "symbols": [
+            "AssistantMessageContent",
+            "assistantContentBlocks",
+            "AssistantTextBlock",
+            "AssistantCodeBlock",
+            "UserMessageContent",
+            "readOnlyRichTextContent"
+          ]
+        }
+      ],
+      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "responsibility": "Render canonical transcript message content with Desktop-equivalent native Android semantics for assistant markdown/code/table/math/link/image blocks and persisted user rich-text, including safe malformed-rich-text fallback and copy affordances without moving canonical message ownership into Compose.",
+      "source_owner": "Desktop conversation transcript content renderer",
+      "direct_callers": [
+        "ConversationTranscript ordinary message branch"
+      ],
+      "downstream_dependencies": [
+        "canonical message text/richText/images/channel/source-trust projection",
+        "URL normalization",
+        "native clipboard/share affordances"
+      ],
+      "state_owner": "Canonical content stays in transcript runtime; renderer owns only ephemeral expansion/copy feedback.",
+      "persistent_state": [],
+      "protocol_wire_contract": [
+        "assistant fenced code blocks",
+        "headings/lists/blockquote/table/math",
+        "http/https links",
+        "inline emphasis/code/strike/math",
+        "user persisted richText fallback to plain text",
+        "streaming empty-message indicator"
+      ],
+      "visible_effect": "Agent and user messages preserve structured readable content rather than flattening all canonical text into one plain Text node.",
+      "failure_behavior": [
+        "malformed persisted richText falls back to plain canonical content",
+        "invalid/untrusted links are not promoted to privileged actions",
+        "unsupported rich block remains visible as safe text rather than disappearing"
+      ],
+      "cancellation_behavior": "presentation-only; no business side effect",
+      "retry_semantics": "presentation-only; no automatic retry",
+      "idempotency_semantics": "same canonical content produces the same immutable render projection",
+      "process_death_recovery": "render projection is reconstructed from canonical transcript after process restart",
+      "account_fencing": "only active-account canonical transcript content is rendered; no cross-account cache is introduced",
+      "security_boundary": "native renderer treats message markup as data, does not execute HTML/JS, and only exposes explicitly normalized links/copy actions",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/features/bots/GrokBotComponents.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/production/canonical-agent-transcript.kt"
+      ],
+      "android_owner": "Native Agent transcript presentation projection",
+      "platform_delta": "Desktop TipTap/React rich rendering must be replaced by native Compose projections; Android must not embed the Desktop renderer or a general WebView for transcript content.",
+      "implementation_status": "mapped",
+      "production_wiring": "Current Android Agent transcript still renders most user/assistant text through plain Compose Text; structured rich-content parity is not yet implemented and is intentionally recorded as an open mapped gap.",
+      "unit_test": "required: native parser/projection tests for markdown blocks, code, tables, math, links, malformed richText and streaming fallback",
+      "contract_test": "Desktop blob 5cf2f33c394f885a37709a01361dc516b0fb4240 is the source fact for the supported content grammar and fallback behavior.",
+      "integration_test": "required in production GrokBotComponents after native renderer wiring",
+      "packaged_test": "required on final githubRelease transcript content surface",
+      "device_test": "required for long code/table/math/link/richText rendering, copy, accessibility and process reopen",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Do not infer rich-content parity from plain message visibility. This responsibility remains mapped until the native renderer and exact-head tests/package/device evidence exist.",
+      "android_head_at_update": "549a2d2fbdc56c464ade607ec9d4f0b229aff9b2"
     }
   ],
   "traceability": {
@@ -10297,6 +10457,6 @@
   "metadata": {
     "android_head_at_update": "1e66eb907c46043bcb429c15abeae253b44ef443",
     "note": " Deterministic editor cursor now records the shipped suggestion boundary: Android has production-wired Agent/scheduled-automation projection with stale fencing, while Desktop PR/MCP providers are explicitly dormant in the current production adapter. Agent find-in-chat is now production-wired for message/widget semantic search and wrap navigation, while occurrence-span highlighting and richer searchable payloads remain mapped gaps. Native media viewer gallery is production-wired for Human conversations with navigation/zoom/stale-load fencing; in-app PDF rendering is now implemented at 499519f… and pending exact-head CI/device evidence, while Agent attachment/audio/focus semantics remain mapped. Spreadsheet preview responsibility is explicit; legacy .xls remains a deterministic gap.",
-    "last_updated_android_head": "0d596e4820242e259f7bc2d2d91f25fe0c6d5bfe"
+    "last_updated_android_head": "549a2d2fbdc56c464ade607ec9d4f0b229aff9b2"
   }
 }
