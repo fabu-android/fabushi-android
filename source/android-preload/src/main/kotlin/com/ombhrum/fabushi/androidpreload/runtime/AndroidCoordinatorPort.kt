@@ -279,6 +279,8 @@ data class AndroidMandatoryUpdatePolicy(
     val processGeneration: Long,
     val minimumVersion: String?,
     val backendRequiresUpdate: Boolean,
+    val autoUpdateWhenIdleGateObserved: Boolean = false,
+    val autoUpdateWhenIdleGateEnabled: Boolean = false,
 )
 
 interface AndroidCoordinatorPort {

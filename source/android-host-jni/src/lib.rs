@@ -838,8 +838,11 @@ mod android_jni {
                 json!({
                     "minimumVersionObserved": probe.minimum_version_observed,
                     "minimumVersion": probe.minimum_version,
+                    "autoUpdateWhenIdleGateObserved": probe.auto_update_when_idle_gate_observed,
+                    "autoUpdateWhenIdleGateEnabled": probe.auto_update_when_idle_gate_enabled,
                     "backendRequirement": probe.backend_requirement.wire_name(),
                     "minimumVersionError": probe.minimum_version_error,
+                    "autoUpdateWhenIdleGateError": probe.auto_update_when_idle_gate_error,
                     "backendRequirementError": probe.backend_requirement_error,
                 })
             }),

@@ -249,6 +249,8 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
                 processGeneration = processGeneration,
                 minimumVersion = cleared.minimumVersion,
                 backendRequiresUpdate = cleared.backendRequiresUpdate,
+                autoUpdateWhenIdleGateObserved = false,
+                autoUpdateWhenIdleGateEnabled = false,
             )
         }
 
@@ -263,6 +265,8 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
                 processGeneration = processGeneration,
                 minimumVersion = current.minimumVersion,
                 backendRequiresUpdate = current.backendRequiresUpdate,
+                autoUpdateWhenIdleGateObserved = false,
+                autoUpdateWhenIdleGateEnabled = false,
             )
         }
         val currentEpoch = accountAccessOwner.currentProjection().accountEpoch
@@ -288,6 +292,10 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
             processGeneration = processGeneration,
             minimumVersion = settled.minimumVersion,
             backendRequiresUpdate = settled.backendRequiresUpdate,
+            autoUpdateWhenIdleGateObserved = raw.optBoolean("autoUpdateWhenIdleGateObserved", false),
+            autoUpdateWhenIdleGateEnabled =
+                raw.optBoolean("autoUpdateWhenIdleGateObserved", false) &&
+                    raw.optBoolean("autoUpdateWhenIdleGateEnabled", false),
         )
     }
 

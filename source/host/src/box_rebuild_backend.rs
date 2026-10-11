@@ -102,8 +102,11 @@ impl BackendUpdateRequirement {
 pub struct AndroidUpdatePolicyProbe {
     pub minimum_version_observed: bool,
     pub minimum_version: Option<String>,
+    pub auto_update_when_idle_gate_observed: bool,
+    pub auto_update_when_idle_gate_enabled: bool,
     pub backend_requirement: BackendUpdateRequirement,
     pub minimum_version_error: Option<String>,
+    pub auto_update_when_idle_gate_error: Option<String>,
     pub backend_requirement_error: Option<String>,
 }
 
@@ -196,11 +199,32 @@ impl AndroidBoxRebuildBackend {
     /// previously asserted requirement; only a successful EnsureSandBox response does.
     pub fn probe_update_policy(&self, request_id: &str) -> Result<AndroidUpdatePolicyProbe, String> {
         validate_request_id(request_id)?;
-        let minimum = self.fetch_minimum_version(request_id);
+        let statsig = self.fetch_statsig_update_policy(request_id);
         let backend = self.probe_backend_update_requirement(request_id);
-        let (minimum_version_observed, minimum_version, minimum_version_error) = match minimum {
-            Ok(value) => (true, value, None),
-            Err(error) => (false, None, Some(error)),
+        let (
+            minimum_version_observed,
+            minimum_version,
+            auto_update_when_idle_gate_observed,
+            auto_update_when_idle_gate_enabled,
+            minimum_version_error,
+            auto_update_when_idle_gate_error,
+        ) = match statsig {
+            Ok((minimum_version, gate_enabled)) => (
+                true,
+                minimum_version,
+                true,
+                gate_enabled,
+                None,
+                None,
+            ),
+            Err(error) => (
+                false,
+                None,
+                false,
+                false,
+                Some(error.clone()),
+                Some(error),
+            ),
         };
         let (backend_requirement, backend_requirement_error) = match backend {
             Ok(value) => (value, None),
@@ -209,13 +233,16 @@ impl AndroidBoxRebuildBackend {
         Ok(AndroidUpdatePolicyProbe {
             minimum_version_observed,
             minimum_version,
+            auto_update_when_idle_gate_observed,
+            auto_update_when_idle_gate_enabled,
             backend_requirement,
             minimum_version_error,
+            auto_update_when_idle_gate_error,
             backend_requirement_error,
         })
     }
 
-    fn fetch_minimum_version(&self, request_id: &str) -> Result<Option<String>, String> {
+    fn fetch_statsig_update_policy(&self, request_id: &str) -> Result<(Option<String>, bool), String> {
         let credentials = self.credentials.credentials()?;
         let response = self
             .request(
@@ -237,7 +264,7 @@ impl AndroidBoxRebuildBackend {
         if text.len() > MAX_RPC_RESPONSE_BYTES {
             return Err("Statsig bootstrap response exceeds bounded size".into());
         }
-        parse_statsig_minimum_version(&text)
+        parse_statsig_update_policy(&text)
     }
 
     fn probe_backend_update_requirement(
@@ -352,43 +379,41 @@ impl AndroidBoxRebuildBackend {
     }
 }
 
-fn parse_statsig_minimum_version(body: &str) -> Result<Option<String>, String> {
+fn parse_statsig_update_policy(input: &str) -> Result<(Option<String>, bool), String> {
     let envelope: Value =
-        serde_json::from_str(body).map_err(|error| format!("Statsig bootstrap JSON invalid: {error}"))?;
+        serde_json::from_str(input).map_err(|error| format!("Statsig bootstrap JSON invalid: {error}"))?;
     let config = envelope
         .get("config")
         .and_then(Value::as_str)
         .ok_or("Statsig bootstrap omitted config")?;
-    let parsed: Value =
+    let document: Value =
         serde_json::from_str(config).map_err(|error| format!("Statsig config JSON invalid: {error}"))?;
-    let configs = parsed
+    let minimum_version = document
         .get("dynamic_configs")
-        .or_else(|| parsed.get("dynamicConfigs"))
         .and_then(Value::as_object)
-        .ok_or("Statsig config omitted dynamic configs")?;
-    let Some(entry) = configs.get("sand_min_client_version") else {
-        return Ok(None);
-    };
-    let value = entry.get("value").unwrap_or(entry);
-    let decoded;
-    let object = if let Some(object) = value.as_object() {
-        object
-    } else if let Some(raw) = value.as_str() {
-        decoded = serde_json::from_str::<Value>(raw)
-            .map_err(|error| format!("sand_min_client_version value JSON invalid: {error}"))?;
-        decoded
-            .as_object()
-            .ok_or("sand_min_client_version value is not an object")?
-    } else {
-        return Err("sand_min_client_version value is not an object".into());
-    };
-    let minimum = object
-        .get("min_version")
+        .and_then(|configs| configs.get("sand_min_client_version"))
+        .and_then(|entry| entry.get("value"))
+        .and_then(|value| value.get("min_version"))
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(str::to_string);
-    Ok(minimum)
+    let auto_update_when_idle = document
+        .get("feature_gates")
+        .and_then(Value::as_object)
+        .and_then(|gates| gates.get("sand_auto_update_when_idle"))
+        .and_then(|entry| {
+            entry
+                .get("value")
+                .and_then(Value::as_bool)
+                .or_else(|| entry.as_bool())
+        })
+        .unwrap_or(false);
+    Ok((minimum_version, auto_update_when_idle))
+}
+
+fn parse_statsig_minimum_version(input: &str) -> Result<Option<String>, String> {
+    parse_statsig_update_policy(input).map(|(minimum_version, _)| minimum_version)
 }
 
 fn validate_request_id(value: &str) -> Result<(), String> {
@@ -695,6 +720,24 @@ mod tests {
             "config": serde_json::json!({"dynamic_configs":{}}).to_string()
         }).to_string();
         assert_eq!(parse_statsig_minimum_version(&empty).unwrap(), None);
+    }
+
+    #[test]
+    fn statsig_auto_update_when_idle_gate_matches_desktop_bootstrap_shape_and_fails_closed() {
+        let enabled = serde_json::json!({
+            "config": serde_json::json!({
+                "feature_gates": {
+                    "sand_auto_update_when_idle": {"value": true}
+                },
+                "dynamic_configs": {}
+            }).to_string()
+        }).to_string();
+        assert_eq!(parse_statsig_update_policy(&enabled).unwrap(), (None, true));
+
+        let missing = serde_json::json!({
+            "config": serde_json::json!({"feature_gates": {}, "dynamic_configs": {}}).to_string()
+        }).to_string();
+        assert_eq!(parse_statsig_update_policy(&missing).unwrap(), (None, false));
     }
 
     #[test]
