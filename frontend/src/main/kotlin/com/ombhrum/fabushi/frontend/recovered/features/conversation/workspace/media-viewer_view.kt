@@ -13,6 +13,7 @@ import android.widget.VideoView
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTransformGestures
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -21,6 +22,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
@@ -163,6 +165,7 @@ internal fun AndroidMediaViewer(
     var pdfScale by remember(message.id) { mutableStateOf(1f) }
     var pdfOffset by remember(message.id) { mutableStateOf(Offset.Zero) }
     var pdfGeneration by remember { mutableStateOf(0L) }
+    var spreadsheetSelectedCell by remember(message.id) { mutableStateOf<Pair<String, String>?>(null) }
 
     DisposableEffect(Unit) {
         onDispose {
@@ -188,6 +191,7 @@ internal fun AndroidMediaViewer(
         pdfScale = 1f
         pdfOffset = Offset.Zero
         pdfGeneration += 1
+        spreadsheetSelectedCell = null
 
         val blobId = message.mediaBlobId
         if (blobId == null || message.mediaSizeBytes <= 0) {
@@ -461,6 +465,112 @@ internal fun AndroidMediaViewer(
                                         )
                                         .testTag("android-pdf-page"),
                                 )
+                            }
+                        }
+                    }
+                }
+                isAndroidDelimitedSpreadsheet(message.mediaFileName, message.mediaMimeType) && bytes != null -> {
+                    val parsed = remember(message.id, bytes) {
+                        runCatching { parseAndroidDelimitedSpreadsheet(bytes!!, message.mediaFileName) }
+                    }
+                    parsed.onSuccess { table ->
+                        val header = table.rows.firstOrNull().orEmpty()
+                        val dataRows = table.rows.drop(1).take(ANDROID_SPREADSHEET_RENDER_ROWS)
+                        val columnCount = table.rows.maxOfOrNull { it.size }
+                            ?.coerceAtMost(ANDROID_SPREADSHEET_RENDER_ROWS) ?: 0
+                        Column(
+                            Modifier.fillMaxSize().padding(8.dp).testTag("android-spreadsheet-viewer"),
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            Text(
+                                ((table.totalRows - 1).coerceAtLeast(0)).toString() + " rows" +
+                                    if (table.totalRows > ANDROID_SPREADSHEET_RENDER_ROWS + 1) {
+                                        " · showing first " + ANDROID_SPREADSHEET_RENDER_ROWS
+                                    } else "",
+                                color = Color.White,
+                                modifier = Modifier.testTag("android-spreadsheet-row-count"),
+                            )
+                            Column(
+                                Modifier.weight(1f).fillMaxWidth()
+                                    .horizontalScroll(rememberScrollState())
+                                    .verticalScroll(rememberScrollState())
+                                    .testTag("android-spreadsheet-table"),
+                            ) {
+                                @Composable
+                                fun tableCell(value: String, label: String, isHeader: Boolean) {
+                                    TextButton(
+                                        onClick = {
+                                            spreadsheetSelectedCell =
+                                                if (value.isBlank()) null else label to value
+                                        },
+                                        modifier = Modifier.width(160.dp).testTag("android-spreadsheet-cell"),
+                                    ) {
+                                        Text(
+                                            value,
+                                            color = if (isHeader) Color.White else Color.LightGray,
+                                            maxLines = 2,
+                                        )
+                                    }
+                                }
+                                if (columnCount > 0) {
+                                    Row {
+                                        Text("#", color = Color.Gray, modifier = Modifier.width(48.dp).padding(8.dp))
+                                        repeat(columnCount) { column ->
+                                            val label = header.getOrNull(column).takeUnless(String?::isNullOrBlank)
+                                                ?: ("Column " + (column + 1))
+                                            tableCell(header.getOrNull(column).orEmpty(), label, true)
+                                        }
+                                    }
+                                }
+                                dataRows.forEachIndexed { rowIndex, row ->
+                                    Row {
+                                        Text(
+                                            (rowIndex + 1).toString(),
+                                            color = Color.Gray,
+                                            modifier = Modifier.width(48.dp).padding(8.dp),
+                                        )
+                                        repeat(columnCount) { column ->
+                                            val label = (
+                                                header.getOrNull(column).takeUnless(String?::isNullOrBlank)
+                                                    ?: ("Column " + (column + 1))
+                                                ) + " · row " + (rowIndex + 1)
+                                            tableCell(row.getOrNull(column).orEmpty(), label, false)
+                                        }
+                                    }
+                                }
+                            }
+                            spreadsheetSelectedCell?.let { selected ->
+                                Column(
+                                    Modifier.fillMaxWidth()
+                                        .background(Color.White.copy(alpha = 0.08f))
+                                        .padding(10.dp)
+                                        .testTag("android-spreadsheet-cell-detail"),
+                                ) {
+                                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                        Text(selected.first, color = Color.Gray)
+                                        TextButton(onClick = { spreadsheetSelectedCell = null }) {
+                                            Text("×", color = Color.White)
+                                        }
+                                    }
+                                    Text(selected.second, color = Color.White)
+                                }
+                            }
+                        }
+                    }.onFailure { failure ->
+                        Column(
+                            Modifier.padding(28.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(12.dp),
+                        ) {
+                            Text(
+                                failure.message ?: "Couldn't read this spreadsheet",
+                                color = Color.White,
+                                modifier = Modifier.testTag("android-spreadsheet-error"),
+                            )
+                            if (file != null) {
+                                Button(onClick = { openMediaFile(context, file!!, message.mediaMimeType) }) {
+                                    Text("用其他 App 打开")
+                                }
                             }
                         }
                     }

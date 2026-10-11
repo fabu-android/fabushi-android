@@ -81,4 +81,41 @@ class AndroidMediaViewerProjectionTest {
         assertEquals(4f, clampAndroidPdfZoom(9f))
     }
 
+    @Test
+    fun delimitedSpreadsheetDetectionUsesExtensionOrMime() {
+        assertTrue(isAndroidDelimitedSpreadsheet("report.CSV", null))
+        assertTrue(isAndroidDelimitedSpreadsheet("report.tsv", "application/octet-stream"))
+        assertTrue(isAndroidDelimitedSpreadsheet("report.bin", "text/csv; charset=utf-8"))
+        assertEquals(
+            false,
+            isAndroidDelimitedSpreadsheet(
+                "report.xlsx",
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            ),
+        )
+    }
+
+    @Test
+    fun csvParserPreservesQuotedCommasEscapedQuotesAndTotalRows() {
+        val sheet = parseAndroidDelimitedSpreadsheet(
+            "name,note\nAlice,\"hello, world\"\nBob,\"said \"\"hi\"\"\"".toByteArray(),
+            "people.csv",
+        )
+        assertEquals(3, sheet.totalRows)
+        assertEquals(listOf("name", "note"), sheet.rows[0])
+        assertEquals(listOf("Alice", "hello, world"), sheet.rows[1])
+        assertEquals(listOf("Bob", "said \"hi\""), sheet.rows[2])
+    }
+
+    @Test
+    fun spreadsheetParserTruncatesProjectionButCountsFullRows() {
+        val input = buildString {
+            append("header\n")
+            repeat(10) { index -> append("row-").append(index).append('\n') }
+        }
+        val sheet = parseAndroidDelimitedSpreadsheet(input.toByteArray(), "rows.csv", maxRows = 3)
+        assertEquals(3, sheet.rows.size)
+        assertEquals(11, sheet.totalRows)
+    }
+
 }
