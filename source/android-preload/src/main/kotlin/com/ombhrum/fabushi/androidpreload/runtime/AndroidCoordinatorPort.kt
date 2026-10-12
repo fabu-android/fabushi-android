@@ -618,6 +618,11 @@ interface AndroidCoordinatorPort {
         instructions: AndroidAutoReviewInstructions,
     ): AndroidAutoReviewInstructionsSnapshot =
         error("Auto Review instruction mutation is unavailable on this Coordinator port")
+    fun submitFeedback(
+        message: String,
+        submissionId: String,
+        conversationId: String? = null,
+    ): JSONObject = error("Feedback submission is unavailable on this Coordinator port")
     fun accountUsageSummary(): AndroidAccountUsageSummary =
         error("Account usage summary is unavailable on this Coordinator port")
     fun accountCancelSandTrial(): Unit =
