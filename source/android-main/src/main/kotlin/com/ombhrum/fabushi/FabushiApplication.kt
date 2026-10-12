@@ -95,7 +95,7 @@ internal class FabushiProcessRuntime(
         coordinator = coordinator,
     )
     private val notificationEventSubscription =
-        coordinator.addFeatureEventListener(notificationRuntime.feed::handleFeatureEvent)
+        coordinator.addFeatureEventListener(::handleNotificationFeatureEvent)
     private val mcpOAuthEventSubscription =
         coordinator.addFeatureEventListener(::handleRuntimeFeatureEvent)
     private val rootNotificationListeners =
@@ -124,6 +124,25 @@ internal class FabushiProcessRuntime(
             }
             else -> false
         }
+
+    private fun handleNotificationFeatureEvent(event: org.json.JSONObject) {
+        val eventPayload = event.optJSONObject("event") ?: event
+        val kind = event.optString("kind").ifBlank {
+            eventPayload.optString("kind").ifBlank { eventPayload.optString("type") }
+        }
+        if (kind == "agents" && eventPayload.optJSONArray("agents") == null) {
+            runCatching { coordinator.agentList() }
+                .onSuccess { agents ->
+                    notificationRuntime.feed.handleFeatureEvent(
+                        org.json.JSONObject()
+                            .put("kind", "agents")
+                            .put("agents", org.json.JSONArray(agents.toString())),
+                    )
+                }
+            return
+        }
+        notificationRuntime.feed.handleFeatureEvent(event)
+    }
 
     private fun handleRuntimeFeatureEvent(event: org.json.JSONObject) {
         if (event.optString("type") != "mcp.authorization.required") return
