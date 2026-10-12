@@ -1033,8 +1033,8 @@ impl AndroidJsonHost {
                 )
                 .is_err()
             {
-                // Telemetry persistence must never make an otherwise recoverable cold start fail.
-                // The bounded edge-failure projection is the canonical fallback diagnostic.
+                // Telemetry persistence is best-effort during early Host construction: a spill
+                // failure must not turn an otherwise recoverable cold start into a product outage.
             }
             process_crash_recent.push_back(json!({
                 "kind":kind,
