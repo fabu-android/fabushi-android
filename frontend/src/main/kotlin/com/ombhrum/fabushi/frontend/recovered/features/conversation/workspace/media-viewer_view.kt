@@ -10,6 +10,8 @@ import android.os.ParcelFileDescriptor
 import android.net.Uri
 import android.widget.MediaController
 import android.widget.VideoView
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTransformGestures
@@ -38,6 +40,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -54,6 +57,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.FileProvider
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 
@@ -126,6 +130,54 @@ internal fun stepAndroidMediaGalleryIndex(current: Int, delta: Int, count: Int):
     return ((base + delta) % count + count) % count
 }
 
+internal fun androidAttachmentSuggestedSaveName(fileName: String?, messageId: String): String {
+    val fallback = "fabushi-" + messageId.take(64).ifBlank { "attachment" }
+    val candidate = fileName
+        ?.trim()
+        ?.replace('/', '-')
+        ?.replace('\\', '-')
+        ?.filterNot(Char::isISOControl)
+        ?.take(255)
+        ?.takeIf(String::isNotBlank)
+        ?: fallback
+    return candidate.takeIf { it != "." && it != ".." } ?: fallback
+}
+
+internal interface AndroidAttachmentSaveTarget {
+    fun writeFrom(source: File)
+    fun discard()
+}
+
+internal fun saveAndroidAttachment(
+    source: File,
+    target: AndroidAttachmentSaveTarget,
+): Result<Unit> = runCatching {
+    target.writeFrom(source)
+}.onFailure {
+    runCatching(target::discard)
+}
+
+private class ContentResolverAttachmentSaveTarget(
+    private val context: Context,
+    private val uri: Uri,
+) : AndroidAttachmentSaveTarget {
+    override fun writeFrom(source: File) {
+        val resolver = context.contentResolver
+        val output = resolver.openOutputStream(uri, "wt")
+            ?: error("Unable to open the selected destination")
+        source.inputStream().use { input ->
+            output.use { destination ->
+                input.copyTo(destination)
+                destination.flush()
+            }
+        }
+    }
+
+    override fun discard() {
+        runCatching { context.contentResolver.delete(uri, null, null) }
+    }
+}
+
 @Composable
 internal fun AndroidMediaViewer(
     messages: List<ChatMessage>,
@@ -167,6 +219,27 @@ internal fun AndroidMediaViewer(
     var pdfGeneration by remember { mutableStateOf(0L) }
     var spreadsheetSelectedCell by remember(message.id) { mutableStateOf<Pair<String, String>?>(null) }
     var spreadsheetSelectedSheet by remember(message.id) { mutableStateOf(0) }
+    var saveNotice by remember(message.id) { mutableStateOf<String?>(null) }
+    val saveScope = rememberCoroutineScope()
+    val saveDocument = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument(message.mediaMimeType ?: "application/octet-stream"),
+    ) { destination ->
+        val source = file
+        if (destination == null || source == null) return@rememberLauncherForActivityResult
+        val generation = loadGeneration
+        saveNotice = "正在保存…"
+        saveScope.launch {
+            val result = withContext(Dispatchers.IO) {
+                saveAndroidAttachment(
+                    source,
+                    ContentResolverAttachmentSaveTarget(context, destination),
+                )
+            }
+            if (generation == loadGeneration) {
+                saveNotice = if (result.isSuccess) "已保存" else "保存失败"
+            }
+        }
+    }
 
     DisposableEffect(Unit) {
         onDispose {
@@ -194,6 +267,7 @@ internal fun AndroidMediaViewer(
         pdfGeneration += 1
         spreadsheetSelectedCell = null
         spreadsheetSelectedSheet = 0
+        saveNotice = null
 
         val blobId = message.mediaBlobId
         if (blobId == null || message.mediaSizeBytes <= 0) {
@@ -255,6 +329,14 @@ internal fun AndroidMediaViewer(
                         fontSize = 11.sp,
                     )
                 }
+                saveNotice?.let { notice ->
+                    Text(
+                        notice,
+                        color = if (notice == "保存失败") MaterialTheme.colorScheme.error else Color.Gray,
+                        fontSize = 11.sp,
+                        modifier = Modifier.testTag("android-media-save-status"),
+                    )
+                }
             }
             if (gallery.size > 1) {
                 TextButton(
@@ -274,6 +356,18 @@ internal fun AndroidMediaViewer(
                 ) { Text("适应") }
             }
             if (file != null) {
+                Button(
+                    onClick = {
+                        saveNotice = null
+                        saveDocument.launch(
+                            androidAttachmentSuggestedSaveName(
+                                message.mediaFileName,
+                                message.id,
+                            ),
+                        )
+                    },
+                    modifier = Modifier.testTag("android-media-save"),
+                ) { Text("保存") }
                 Button(
                     onClick = { shareMediaFile(context, file!!, message.mediaMimeType) },
                     modifier = Modifier.testTag("android-media-share"),
