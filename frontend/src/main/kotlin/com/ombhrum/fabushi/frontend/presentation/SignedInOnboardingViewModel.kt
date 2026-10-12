@@ -12,6 +12,13 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
+private data class SignedInOnboardingRefreshSnapshot(
+    val accountSlot: String?,
+    val accountScope: String?,
+    val hasSeenOnboarding: Boolean,
+    val agentCount: Int?,
+)
+
 internal class SignedInOnboardingViewModel(application: Application) : AndroidViewModel(application) {
     private val coordinator: AndroidCoordinatorPort = CoordinatorClient.presentation()
     private val operationFence = SignedInOnboardingOperationFence()
@@ -27,7 +34,12 @@ internal class SignedInOnboardingViewModel(application: Application) : AndroidVi
                 runCatching {
                     val auth = coordinator.authStatus()
                     if (!auth.optBoolean("loggedIn", false)) {
-                        return@runCatching Triple<String?, Boolean, Int?>(null, false, 0)
+                        return@runCatching SignedInOnboardingRefreshSnapshot(
+                            accountSlot = null,
+                            accountScope = null,
+                            hasSeenOnboarding = false,
+                            agentCount = 0,
+                        )
                     }
                     val user = auth.optJSONObject("user")
                     val accountSlot = auth.optString("authId").trim()
@@ -35,10 +47,17 @@ internal class SignedInOnboardingViewModel(application: Application) : AndroidVi
                         .ifBlank { user?.optString("email").orEmpty().trim() }
                         .takeIf(String::isNotEmpty)
                         ?: error("Signed-in onboarding requires an account identity")
-                    val hasSeen = coordinator.onboardingSeen()
-                        .optBoolean("hasSeenOnboarding", false)
+                    val onboarding = coordinator.onboardingSeen()
+                    val accountScope = onboarding.optString("accountScope").trim()
+                        .takeIf(String::isNotEmpty)
+                        ?: error("Signed-in onboarding requires a canonical account scope")
                     val count = runCatching { coordinator.agentList().length() }.getOrNull()
-                    Triple(accountSlot, hasSeen, count)
+                    SignedInOnboardingRefreshSnapshot(
+                        accountSlot = accountSlot,
+                        accountScope = accountScope,
+                        hasSeenOnboarding = onboarding.optBoolean("hasSeenOnboarding", false),
+                        agentCount = count,
+                    )
                 }
             }
             if (generation != refreshGeneration) return@launch
@@ -162,10 +181,13 @@ internal class SignedInOnboardingViewModel(application: Application) : AndroidVi
                         avatarColor = draft.color,
                     )
                     val markerError = runCatching {
-                        coordinator.setOnboardingSeen(
+                        val saved = coordinator.setOnboardingSeen(
                             expectedAccountScope = expectedAccountScope,
                             hasSeenOnboarding = true,
                         )
+                        check(saved.optBoolean("hasSeenOnboarding", false)) {
+                            "Host did not persist onboarding completion"
+                        }
                     }.exceptionOrNull()
                     created to markerError
                 }
@@ -181,15 +203,11 @@ internal class SignedInOnboardingViewModel(application: Application) : AndroidVi
                     operationFence.finish(token)
                     return@onSuccess
                 }
-                val onboardingSeenPersisted = runCatching {
-                    coordinator.setOnboardingSeen(true)
-                        .optBoolean("hasSeenOnboarding", false)
-                }.getOrDefault(false)
                 mutableState.value = mutableState.value.copy(
                     creating = false,
                     step = SignedInOnboardingStep.HAND_OFF,
                     createdAgentId = id,
-                    error = if (onboardingSeenPersisted) {
+                    error = if (markerError == null) {
                         null
                     } else {
                         "Your Agent was created, but onboarding completion could not be saved."
