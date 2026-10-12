@@ -295,6 +295,14 @@ data class AndroidTranscriptHistoryPage(
     val nextBeforeSeq: Long?,
 )
 
+data class AndroidContentSearchMessage(
+    val agentId: String,
+    val entryId: String,
+    val role: String,
+    val timestampMs: Long,
+    val snippet: String,
+)
+
 data class AndroidFindInChatEntry(
     val entryId: String,
     val searchText: String,
@@ -922,6 +930,11 @@ interface AndroidCoordinatorPort {
         limit: Int = 200,
     ): AndroidTranscriptHistoryPage =
         error("Transcript history pagination is unavailable on this Coordinator port")
+    fun contentSearchMessages(
+        query: String,
+        limit: Int = 50,
+    ): List<AndroidContentSearchMessage> =
+        error("Canonical content search is unavailable on this Coordinator port")
     fun conversationOutlineSnapshot(agentId: String): List<AndroidConversationOutlineItem> =
         parseAndroidConversationOutlineItems(transcriptSnapshot(), agentId)
     fun assistantProjection(): JSONObject = JSONObject().put("hasUnread", false)
