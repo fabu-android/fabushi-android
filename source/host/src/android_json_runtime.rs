@@ -28,6 +28,7 @@ use crate::mcp_server_tool_settings::McpServerToolSettings;
 use crate::composer_draft::DurableComposerDraftOwner;
 use crate::send_acknowledgement::{
     DurableSendAcknowledgementOwner, SendAcknowledgementEntry, SendAcknowledgementPhase,
+    SendAcknowledgementRecord,
 };
 use crate::plugin_variable_store::{variable_fields_json, PluginVariableStore, PreparedPluginVariableWrite};
 use crate::mcp_auth::{
@@ -1640,6 +1641,68 @@ impl AndroidJsonHost {
             .record(level, message, event.metadata, now_ms())
             .map_err(|error| format!("failed to persist Android product telemetry: {error}"))?;
         Ok(json!({"recorded":true}))
+    }
+
+    fn record_send_settlement_telemetry(
+        &mut self,
+        record: &SendAcknowledgementRecord,
+        outcome: &str,
+        observed_at_ms: u64,
+    ) {
+        // Older durable journals predate Host-owned timing anchors. Never fabricate latency for
+        // those records; new attempts always persist enteredAtMs before dispatch.
+        if record.entered_at_ms == 0 {
+            return;
+        }
+        let ack_ms = observed_at_ms.saturating_sub(record.entered_at_ms) as f64;
+        let commit_ms = record
+            .dispatch_started_at_ms
+            .map(|started_at_ms| observed_at_ms.saturating_sub(started_at_ms) as f64);
+        let attachment_count = record.attachments.len() as f64;
+
+        let ack_event = send_ack_event(
+            ack_ms,
+            outcome,
+            record.entered_at_ms as f64,
+            false,
+            attachment_count,
+            None,
+            None,
+            Some(record.nonce.as_str()),
+            commit_ms,
+            None,
+            None,
+        );
+        match ack_event.and_then(|event| {
+            self.record_product_telemetry("sand.send_ack", event)
+                .map(|_| ())
+        }) {
+            Ok(()) => {}
+            Err(_) => self
+                .edge_failures
+                .report("structured-log-spill", "send-ack-telemetry", "StorageError"),
+        }
+
+        if outcome == "acked" {
+            let latency_event = send_latency_event(
+                ack_ms,
+                commit_ms,
+                attachment_count,
+                false,
+                None,
+                None,
+                None,
+            );
+            match latency_event.and_then(|event| {
+                self.record_product_telemetry("sand.send", event)
+                    .map(|_| ())
+            }) {
+                Ok(()) => {}
+                Err(_) => self
+                    .edge_failures
+                    .report("structured-log-spill", "send-latency-telemetry", "StorageError"),
+            }
+        }
     }
 
     fn access_blocked_telemetry(&mut self, params: &Value) -> Result<Value, String> {
@@ -5700,6 +5763,7 @@ impl AndroidJsonHost {
                         nonce,
                         generation,
                     )?;
+                self.record_send_settlement_telemetry(&record, "acked", now_ms());
                 Ok(json!({
                     "acknowledgement":record,
                     "accepted":accepted,
@@ -5711,30 +5775,49 @@ impl AndroidJsonHost {
                     .lock()
                     .map_err(|_| "transcript lock poisoned".to_string())?
                     .get_transcript();
-                let mut owner = self
-                    .send_acknowledgements
-                    .lock()
-                    .map_err(|_| "send acknowledgement owner lock poisoned".to_string())?;
-                let settled = owner.reconcile_transcript(
-                    account_slot.as_deref(),
-                    &account_fence,
-                    &agent_id,
-                    &transcript,
-                )?;
+                let (settled, before_reconcile, failed_record) = {
+                    let mut owner = self
+                        .send_acknowledgements
+                        .lock()
+                        .map_err(|_| "send acknowledgement owner lock poisoned".to_string())?;
+                    let before_reconcile = owner.record(
+                        account_slot.as_deref(),
+                        &account_fence,
+                        &agent_id,
+                        nonce,
+                    );
+                    let settled = owner.reconcile_transcript(
+                        account_slot.as_deref(),
+                        &account_fence,
+                        &agent_id,
+                        &transcript,
+                    )?;
+                    let failed_record = if settled == 0 {
+                        Some(owner.mark_failed(
+                            account_slot.as_deref(),
+                            &account_fence,
+                            &agent_id,
+                            nonce,
+                            generation,
+                            now_ms(),
+                            error.clone(),
+                        )?)
+                    } else {
+                        None
+                    };
+                    (settled, before_reconcile, failed_record)
+                };
                 if settled > 0 {
+                    if let Some(record) = before_reconcile.as_ref() {
+                        self.record_send_settlement_telemetry(record, "acked", now_ms());
+                    }
                     return Err(format!(
                         "send dispatch returned an error after canonical echo; acknowledgement reconciled without retry: {error}"
                     ));
                 }
-                owner.mark_failed(
-                    account_slot.as_deref(),
-                    &account_fence,
-                    &agent_id,
-                    nonce,
-                    generation,
-                    now_ms(),
-                    error.clone(),
-                )?;
+                if let Some(record) = failed_record.as_ref() {
+                    self.record_send_settlement_telemetry(record, "failed", now_ms());
+                }
                 Err(error)
             }
         }
@@ -11940,6 +12023,60 @@ mod process_crash_telemetry_dispatch_tests {
             current_marker.contains("\"crashSeen\":false"),
             "replayed previous-process crash must not taint current marker: {current_marker}"
         );
+    }
+
+    #[test]
+    fn send_settlement_telemetry_uses_durable_host_timing_without_persisting_message_body() {
+        let root = tempfile::tempdir().unwrap();
+        let mut host = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+        let record = {
+            let mut owner = host.send_acknowledgements.lock().unwrap();
+            let begun = owner
+                .begin(
+                    None,
+                    "session:test:android",
+                    "mahayana-assistant",
+                    "telemetry-send-a",
+                    "secret-send-body",
+                    vec![SendAcknowledgementEntry {
+                        id: "telemetry-send-a".into(),
+                        kind: crate::send_acknowledgement::SendAcknowledgementEntryKind::Message,
+                        client_nonce: "telemetry-send-a".into(),
+                    }],
+                )
+                .unwrap();
+            owner
+                .mark_queued(
+                    None,
+                    "session:test:android",
+                    "mahayana-assistant",
+                    &begun.nonce,
+                    begun.generation,
+                )
+                .unwrap();
+            owner
+                .mark_dispatching(
+                    None,
+                    "session:test:android",
+                    "mahayana-assistant",
+                    &begun.nonce,
+                    begun.generation,
+                )
+                .unwrap()
+        };
+        let observed_at_ms = record
+            .dispatch_started_at_ms
+            .expect("dispatch timing is durable")
+            .saturating_add(25);
+        host.record_send_settlement_telemetry(&record, "acked", observed_at_ms);
+
+        let durable =
+            std::fs::read_to_string(root.path().join("android-structured-log-spill.v1.json"))
+                .unwrap();
+        assert!(durable.contains("sand.send_ack"));
+        assert!(durable.contains("sand.send"));
+        assert!(durable.contains("telemetry-send-a"));
+        assert!(!durable.contains("secret-send-body"));
     }
 
     #[test]
