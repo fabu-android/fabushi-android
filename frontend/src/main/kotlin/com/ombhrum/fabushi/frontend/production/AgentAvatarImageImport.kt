@@ -30,3 +30,10 @@ internal fun encodeAgentAvatarCrop(
 ): Result<String> = runCatching {
     AndroidAvatarImageProcessor.encodeCrop(source, crop)
 }
+
+internal fun stageGeneratedAgentAvatarImage(
+    imageData: String,
+    mimeType: String,
+): Result<AndroidAvatarImageSource> = runCatching {
+    AndroidAvatarImageProcessor.stageGeneratedImage(imageData, mimeType)
+}
