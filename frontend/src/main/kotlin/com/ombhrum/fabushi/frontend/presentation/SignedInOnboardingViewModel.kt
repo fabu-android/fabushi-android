@@ -18,6 +18,7 @@ internal class SignedInOnboardingViewModel(application: Application) : AndroidVi
     private val mutableState = MutableStateFlow(SignedInOnboardingUiState())
     val state: StateFlow<SignedInOnboardingUiState> = mutableState.asStateFlow()
     private var refreshGeneration = 0L
+    private var onboardingAccountScope: String? = null
 
     fun refresh() {
         val generation = ++refreshGeneration
@@ -41,14 +42,21 @@ internal class SignedInOnboardingViewModel(application: Application) : AndroidVi
                 }
             }
             if (generation != refreshGeneration) return@launch
-            result.onSuccess { (accountSlot, hasSeen, agentCount) ->
+            result.onSuccess { refresh ->
+                val accountSlot = refresh.accountSlot
                 if (accountSlot == null) {
+                    onboardingAccountScope = null
                     operationFence.setAccount(null)
                     mutableState.value = SignedInOnboardingUiState()
                     return@onSuccess
                 }
+                onboardingAccountScope = refresh.accountScope
                 operationFence.setAccount(accountSlot)
-                val shouldOpen = signedInOnboardingShouldOpen(true, hasSeen, agentCount)
+                val shouldOpen = signedInOnboardingShouldOpen(
+                    signedIn = true,
+                    hasSeenOnboarding = refresh.hasSeenOnboarding,
+                    agentCount = refresh.agentCount,
+                )
                 val current = mutableState.value
                 mutableState.value = if (current.accountSlot == accountSlot) {
                     current.copy(active = shouldOpen)
@@ -66,6 +74,7 @@ internal class SignedInOnboardingViewModel(application: Application) : AndroidVi
 
     fun resetAccountScope() {
         refreshGeneration += 1
+        onboardingAccountScope = null
         operationFence.setAccount(null)
         mutableState.value = SignedInOnboardingUiState()
     }
@@ -135,6 +144,7 @@ internal class SignedInOnboardingViewModel(application: Application) : AndroidVi
     fun createFirstAgent() {
         val current = mutableState.value
         val accountSlot = current.accountSlot ?: return
+        val expectedAccountScope = onboardingAccountScope ?: return
         val draft = normalizeSignedInOnboardingDraft(current.draft)
         if (!current.active || current.creating || !canSubmitSignedInOnboardingDraft(draft)) return
         val token = operationFence.begin() ?: return
@@ -142,7 +152,7 @@ internal class SignedInOnboardingViewModel(application: Application) : AndroidVi
         viewModelScope.launch {
             val result = withContext(Dispatchers.IO) {
                 runCatching {
-                    coordinator.agentCreateWithPersona(
+                    val created = coordinator.agentCreateWithPersona(
                         name = draft.name.replace(Regex("\\s+"), " ").trim().take(72),
                         description = signedInOnboardingDescription(
                             draft.description.trim(),
@@ -151,10 +161,17 @@ internal class SignedInOnboardingViewModel(application: Application) : AndroidVi
                         avatarShape = draft.shape,
                         avatarColor = draft.color,
                     )
+                    val markerError = runCatching {
+                        coordinator.setOnboardingSeen(
+                            expectedAccountScope = expectedAccountScope,
+                            hasSeenOnboarding = true,
+                        )
+                    }.exceptionOrNull()
+                    created to markerError
                 }
             }
             if (!operationFence.accepts(token, mutableState.value.accountSlot)) return@launch
-            result.onSuccess { created ->
+            result.onSuccess { (created, markerError) ->
                 val id = created.optJSONObject("agent")?.optString("id").orEmpty().trim()
                 if (id.isEmpty()) {
                     mutableState.value = mutableState.value.copy(
@@ -195,6 +212,7 @@ internal class SignedInOnboardingViewModel(application: Application) : AndroidVi
 
     override fun onCleared() {
         refreshGeneration += 1
+        onboardingAccountScope = null
         operationFence.dispose()
         super.onCleared()
     }
