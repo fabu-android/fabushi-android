@@ -27,7 +27,7 @@ import org.json.JSONObject
 import java.util.UUID
 
 data class MobileBotSummaryAndroid(
-    val id: String,
+    override val id: String,
     val name: String,
     val title: String? = null,
     val description: String = "",
@@ -42,7 +42,7 @@ data class MobileBotSummaryAndroid(
     val isComposingMessage: Boolean = false,
     val miniAppId: String? = null,
     val menuButtonText: String? = null,
-    val isPinned: Boolean = false,
+    override val isPinned: Boolean = false,
     val hasUnread: Boolean = false,
     val isHidden: Boolean = false,
     val isGroup: Boolean = false,
@@ -52,7 +52,7 @@ data class MobileBotSummaryAndroid(
     val isRunning: Boolean = false,
     val lastMessage: String = "",
     val updatedAt: Long = 0L,
-)
+) : SidebarOrderAgent
 
 data class PendingAgentApproval(
     val approvalId: String,
