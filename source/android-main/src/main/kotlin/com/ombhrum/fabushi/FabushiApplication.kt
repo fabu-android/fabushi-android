@@ -12,6 +12,7 @@ import com.ombhrum.fabushi.androidmain.coordinator.AndroidCoordinatorPorts
 import com.ombhrum.fabushi.androidmain.coordinator.RootShellFocusRefreshOwner
 import com.ombhrum.fabushi.androidmain.coordinator.RootShellFocusRefreshToken
 import com.ombhrum.fabushi.androidmain.diagnostics.AndroidProcessCrashRecovery
+import com.ombhrum.fabushi.androidmain.telemetry.AndroidStartupTelemetryTracker
 import com.ombhrum.fabushi.androidmain.notifications.AndroidNotificationRuntime
 import com.ombhrum.fabushi.androidmain.webauthn.AndroidCredentialManagerWebAuthn
 import com.ombhrum.fabushi.androidpreload.deeplink.AndroidDeepLink
@@ -30,9 +31,19 @@ class FabushiApplication : Application() {
     private val processCrashRecovery by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
         AndroidProcessCrashRecovery(this)
     }
+    private lateinit var startupTelemetry: AndroidStartupTelemetryTracker
 
     override fun onCreate() {
         super.onCreate()
+        startupTelemetry = AndroidStartupTelemetryTracker(
+            monotonicNowMs = { android.os.SystemClock.elapsedRealtime() },
+            scheduleStuck = { delayMs, listener ->
+                android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(listener, delayMs)
+            },
+        ).also {
+            it.markPhase("services")
+            it.armStuckWatchdog()
+        }
         processCrashRecovery.install()
     }
 
@@ -40,11 +51,17 @@ class FabushiApplication : Application() {
         processRuntime ?: synchronized(this) {
             processRuntime ?: run {
                 val ciBootstrapActive = FabushiCiBootstrap.prepare(this)
-                FabushiProcessRuntime(
-                    application = this,
-                    intent = intent,
-                    ciBootstrapActive = ciBootstrapActive,
-                ).also { runtime ->
+                startupTelemetry.markPhase("coordinator")
+                runCatching {
+                    FabushiProcessRuntime(
+                        application = this,
+                        intent = intent,
+                        ciBootstrapActive = ciBootstrapActive,
+                        startupTelemetry = startupTelemetry,
+                    )
+                }.onFailure {
+                    startupTelemetry.noteFailed()
+                }.getOrThrow().also { runtime ->
                     processRuntime = runtime
                     runtime.recoverPreviousProcessCrash(processCrashRecovery)
                 }
@@ -57,6 +74,7 @@ class FabushiApplication : Application() {
     override fun onTerminate() {
         processRuntime?.close()
         processRuntime = null
+        if (::startupTelemetry.isInitialized) startupTelemetry.cancel()
         super.onTerminate()
     }
 }
@@ -65,6 +83,7 @@ internal class FabushiProcessRuntime(
     application: Application,
     intent: Intent?,
     ciBootstrapActive: Boolean,
+    startupTelemetry: AndroidStartupTelemetryTracker,
 ) : AndroidPresentationRuntimePort, AutoCloseable {
     @Volatile
     private var appForeground = false
@@ -72,6 +91,17 @@ internal class FabushiProcessRuntime(
     private var interactiveActivityRef: WeakReference<ComponentActivity>? = null
     private val coordinator = AndroidCoordinatorPorts.presentation(application).also {
         AndroidCoordinatorBridge.installTrustedRuntime(it)
+        startupTelemetry.attach { event ->
+            runCatching {
+                it.reportStartupLifecycle(
+                    outcome = event.outcome,
+                    phase = event.phase,
+                    elapsedMs = event.elapsedMs,
+                    phaseElapsedMs = event.phaseElapsedMs,
+                    windowMs = event.windowMs,
+                )
+            }
+        }
         if (ciBootstrapActive) {
             val onboarding = it.onboardingSeen()
             val accountScope = onboarding.getString("accountScope").trim()
@@ -141,6 +171,11 @@ internal class FabushiProcessRuntime(
         metadata = FabushiCiBootstrap.gatewayMetadata(intent, ciBootstrapActive),
         configuredDeviceName = FabushiCiBootstrap.configuredDeviceName(intent, ciBootstrapActive),
     )
+
+    init {
+        startupTelemetry.markPhase("window")
+        startupTelemetry.noteReady()
+    }
 
     fun recoverPreviousProcessCrash(recovery: AndroidProcessCrashRecovery) {
         val marker = recovery.pending() ?: return
