@@ -1,6 +1,7 @@
 //! Remote/Box Runner boundary for work that should not execute in the Android app process.
 
 pub mod box_store_sync_backend;
+pub mod browser_ua_backend;
 pub mod box_store_backend;
 pub mod cli;
 #[allow(special_module_name)]
@@ -10,6 +11,10 @@ pub mod server;
 pub mod transport;
 
 use fabushi_android_shared::{ExecutionError, ExecutionRequest};
+pub use browser_ua_backend::{
+    BrowserUaReconcileBackend, BrowserUaReconcileExecutor, BrowserUaReconcileRequest,
+    BROWSER_UA_OWNER_STAMP_LENGTH, BROWSER_UA_RECONCILE_CAPABILITY,
+};
 pub use box_store_sync_backend::{
     open_box_store_sync_service, BoxStoreSyncAction, BoxStoreSyncBackend, BoxStoreSyncExecutor,
     BoxStoreSyncRequest, BOX_STORE_SYNC_CAPABILITY,
