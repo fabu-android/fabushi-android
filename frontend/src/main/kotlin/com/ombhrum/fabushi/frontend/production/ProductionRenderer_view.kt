@@ -161,6 +161,11 @@ internal fun ProductionRenderer(
                 }
                 if (showSettings) {
                     FabushiSettingsSurface(
+                        accountLoggedIn = state.loggedIn,
+                        accountName = state.accountName,
+                        accountEmail = state.accountEmail,
+                        accountAuthId = state.accountAuthId,
+                        accountAvatarUrl = state.accountAvatarUrl,
                         updateState = updateState,
                         updateTrackPolicy = updateTrackPolicy,
                         autoUpdateWhenIdleOptIn = autoUpdateWhenIdleOptIn,
