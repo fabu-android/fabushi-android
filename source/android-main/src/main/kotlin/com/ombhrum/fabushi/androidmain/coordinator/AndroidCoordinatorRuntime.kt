@@ -1010,6 +1010,27 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
         )
     }
 
+    override fun submitFeedback(
+        message: String,
+        submissionId: String,
+        conversationId: String?,
+    ): JSONObject {
+        val accountFence = host.request("feature.account.fence").getString("accountFence")
+        return host.request(
+            "feature.feedback.submit",
+            JSONObject()
+                .put("accountFence", accountFence)
+                .put("message", message)
+                .put("submissionId", submissionId)
+                .apply {
+                    conversationId
+                        ?.trim()
+                        ?.takeIf { it.isNotEmpty() }
+                        ?.let { put("conversationId", it) }
+                },
+        )
+    }
+
     override fun accountUsageSummary(): AndroidAccountUsageSummary {
         val projection = host.request("feature.account.usageSummary")
         fun optionalLong(source: JSONObject, key: String): Long? =
