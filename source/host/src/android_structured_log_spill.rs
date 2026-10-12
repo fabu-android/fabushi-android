@@ -34,6 +34,7 @@ const ALLOWED_EVENTS: &[&str] = &[
     "sand.desktop.coordinator_handoff",
     "sand.desktop.local_exec_lifecycle",
     "sand.desktop.session",
+    "sand.desktop.signin",
     "sand.desktop.unclean_exit",
     "sand.image.edge_failed",
     "sand.mcp.desktop_edge_failed",
@@ -154,6 +155,16 @@ impl AndroidStructuredLogSpillState {
             .counters
             .values()
             .any(|counter| counter.observed > counter.acknowledged_through)
+    }
+
+    pub fn observe_drop(&mut self, reason: TelemetryDropReason, count: u64) {
+        self.increment(reason, count);
+    }
+
+    pub fn acknowledge_drop_counters(&mut self) {
+        for counter in self.checkpoint.counters.values_mut() {
+            counter.acknowledged_through = counter.observed;
+        }
     }
 
     fn increment(&mut self, reason: TelemetryDropReason, count: u64) {
@@ -337,6 +348,23 @@ mod tests {
             metadata: BTreeMap::from([("kind".into(), "bounded".into())]),
             timestamp,
         }
+    }
+
+    #[test]
+    fn spill_accepts_account_signin_and_tracks_rotation_drop() {
+        let mut state = AndroidStructuredLogSpillState::empty("account-a", "counter-a");
+        state.checkpoint.records.push(record(1_000, "sand.desktop.signin"));
+        state.observe_drop(TelemetryDropReason::AccountRotated, 1);
+        let normalized = state.normalize(1_001);
+        assert_eq!(normalized.checkpoint.records.len(), 1);
+        assert_eq!(
+            normalized.checkpoint.counters[&TelemetryDropReason::AccountRotated].observed,
+            1
+        );
+        assert!(normalized.has_pending_drops());
+        let mut acknowledged = normalized;
+        acknowledged.acknowledge_drop_counters();
+        assert!(!acknowledged.has_pending_drops());
     }
 
     #[test]
