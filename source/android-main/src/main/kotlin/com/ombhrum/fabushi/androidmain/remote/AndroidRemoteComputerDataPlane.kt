@@ -5,6 +5,7 @@ import android.os.SystemClock
 import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.View
+import com.ombhrum.fabushi.androidpreload.BoxVncClipboardPaste
 import com.ombhrum.fabushi.androidpreload.VncLivenessCounters
 import com.ombhrum.fabushi.androidpreload.VncLivenessDetector
 import org.json.JSONArray
@@ -417,9 +418,10 @@ internal class AndroidRemoteComputerDataPlane(
         val active = activeFence ?: return false
         val current = currentFence() ?: return false
         if (!RemoteComputerDataPlanePolicy.canSendInput(active, current)) return false
-        if (text.isEmpty()) return false
+        val normalized = BoxVncClipboardPaste.normalizeForRemote(text)
+        if (normalized.isEmpty()) return false
         return sendInput(
-            RemoteComputerDataPlanePolicy.clipboardEnvelope(current, text),
+            RemoteComputerDataPlanePolicy.clipboardEnvelope(current, normalized),
             impactful = true,
         )
     }
