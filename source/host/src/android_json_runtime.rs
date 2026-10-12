@@ -1615,6 +1615,8 @@ impl AndroidJsonHost {
             "feature.marketplace.browse" => self.marketplace_browse(params),
             "feature.marketplace.release" => self.marketplace_release(params),
             "feature.plugin.install" => self.plugin_install(params),
+            "feature.plugin.update" => self.plugin_update(params),
+            "feature.plugin.uninstall" => self.plugin_uninstall(params),
             "feature.plugin.variables.fields" => self.plugin_variable_fields(params),
             "feature.plugin.variables.prepare" => self.plugin_variable_prepare(params),
             "feature.plugin.variables.commit" => self.plugin_variable_commit(params),
@@ -6687,6 +6689,123 @@ impl AndroidJsonHost {
         }))
     }
 
+
+    fn quiesce_plugin_for_release_mutation(
+        &mut self,
+        plugin_id: &str,
+        reason: &str,
+    ) -> Result<bool, String> {
+        self.runtime_call_cancellations.signal_plugin(plugin_id);
+        self.capability_broker.cancel_plugin(plugin_id, reason, now_ms())?;
+        let generation = self.runtime_generations.entry(plugin_id.to_string()).or_insert(0);
+        *generation = generation.saturating_add(1);
+        let runtime_started = self
+            .js_runtime
+            .as_ref()
+            .and_then(|runtime| runtime.plugin_state(plugin_id))
+            .is_some();
+        if runtime_started {
+            self.js_runtime
+                .as_mut()
+                .expect("plugin runtime disappeared during release mutation")
+                .disable_plugin(plugin_id)
+                .map_err(|error| format!("failed to quiesce plugin runtime: {error}"))?;
+            self.sync_js_runtime_events()?;
+        }
+        self.runtime_tools.remove(plugin_id);
+        Ok(runtime_started)
+    }
+
+    fn plugin_update(&mut self, params: &Value) -> Result<Value, String> {
+        let release = params.get("release").ok_or("feature.plugin.update requires release")?;
+        let plugin_id = release
+            .get("pluginId")
+            .and_then(Value::as_str)
+            .filter(|value| !value.trim().is_empty())
+            .ok_or("plugin release is missing pluginId")?
+            .to_string();
+        if self.mode == AndroidHostMode::Test {
+            if !self.installed_plugins.contains(&plugin_id) {
+                return Err("plugin is not installed".into());
+            }
+            return Ok(json!({
+                "pluginId":plugin_id,
+                "updated":true,
+                "requiresRuntimeRestart":false,
+                "fixture":true
+            }));
+        }
+
+        self.plugin_installer
+            .active(&plugin_id)
+            .map_err(|error| format!("failed to inspect installed plugin: {error}"))?
+            .ok_or("plugin is not installed")?;
+        let manifest: ExternalReleaseManifest = serde_json::from_value(release.clone())
+            .map_err(|error| format!("plugin release manifest is invalid: {error}"))?;
+        let runtime_was_started = self.quiesce_plugin_for_release_mutation(
+            &plugin_id,
+            "plugin release update",
+        )?;
+        let pointer = self
+            .plugin_installer
+            .install(
+                &manifest,
+                "android",
+                &["deepseek-js", "javascript", "cordis-js", "mcp", "wasm"],
+            )
+            .map_err(|error| format!("verified plugin update failed: {error}"))?;
+        self.plugin_permissions
+            .retain_requested(&pointer.plugin_id, &pointer.requested_permissions)
+            .map_err(|error| format!("failed to reconcile plugin permissions after update: {error}"))?;
+        Ok(json!({
+            "pluginId":pointer.plugin_id,
+            "version":pointer.version,
+            "artifactId":pointer.artifact_id,
+            "artifactSha256":pointer.artifact_sha256,
+            "runtime":pointer.runtime,
+            "entry":pointer.entry,
+            "requestedPermissions":pointer.requested_permissions,
+            "installedPath":pointer.installed_path,
+            "updated":true,
+            "requiresRuntimeRestart":runtime_was_started,
+            "fixture":false
+        }))
+    }
+
+    fn plugin_uninstall(&mut self, params: &Value) -> Result<Value, String> {
+        let plugin_id = required_string(params, "pluginId")?.to_string();
+        if self.mode == AndroidHostMode::Test {
+            let removed = self.installed_plugins.remove(&plugin_id);
+            return Ok(json!({"pluginId":plugin_id,"removed":removed,"fixture":true}));
+        }
+        if self
+            .plugin_installer
+            .active(&plugin_id)
+            .map_err(|error| format!("failed to inspect installed plugin: {error}"))?
+            .is_none()
+        {
+            return Ok(json!({"pluginId":plugin_id,"removed":false,"fixture":false}));
+        }
+
+        let runtime_was_started = self.quiesce_plugin_for_release_mutation(
+            &plugin_id,
+            "plugin uninstalled",
+        )?;
+        let removed = self
+            .plugin_installer
+            .uninstall(&plugin_id)
+            .map_err(|error| format!("plugin uninstall failed: {error}"))?;
+        self.plugin_permissions
+            .remove_plugin(&plugin_id)
+            .map_err(|error| format!("failed to remove plugin grants: {error}"))?;
+        Ok(json!({
+            "pluginId":plugin_id,
+            "removed":removed,
+            "runtimeWasStarted":runtime_was_started,
+            "fixture":false
+        }))
+    }
+
     fn plugin_compatibility(&self, params: &Value) -> Result<Value, String> {
         let plugin_id = required_string(params, "pluginId")?;
         if self.mode == AndroidHostMode::Test && self.installed_plugins.contains(plugin_id) {
@@ -9765,6 +9884,50 @@ export function apply(ctx) {
 
 }
 
+
+#[cfg(test)]
+mod plugin_release_lifecycle_tests {
+    use super::*;
+
+    #[test]
+    fn update_requires_install_and_uninstall_is_idempotent() {
+        let root = std::env::temp_dir().join(format!("fabushi-plugin-lifecycle-{}", now_ms()));
+        let mut host = AndroidJsonHost::new(&root, AndroidHostMode::Test);
+        let release = json!({"pluginId":"lifecycle-plugin"});
+        assert!(host
+            .dispatch("feature.plugin.update", &json!({"release":release.clone()}))
+            .unwrap_err()
+            .contains("plugin is not installed"));
+        host.dispatch("feature.plugin.install", &json!({"release":release.clone()}))
+            .unwrap();
+        assert_eq!(
+            host.dispatch("feature.plugin.update", &json!({"release":release}))
+                .unwrap()["updated"],
+            true
+        );
+        assert_eq!(
+            host.dispatch(
+                "feature.plugin.uninstall",
+                &json!({"pluginId":"lifecycle-plugin"}),
+            )
+            .unwrap()["removed"],
+            true
+        );
+        assert!(host
+            .dispatch("plugin.compatibility", &json!({"pluginId":"lifecycle-plugin"}))
+            .unwrap_err()
+            .contains("plugin is not installed"));
+        assert_eq!(
+            host.dispatch(
+                "feature.plugin.uninstall",
+                &json!({"pluginId":"lifecycle-plugin"}),
+            )
+            .unwrap()["removed"],
+            false
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+}
 
 #[cfg(test)]
 mod widget_action_tests {
