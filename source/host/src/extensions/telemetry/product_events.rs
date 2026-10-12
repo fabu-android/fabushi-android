@@ -180,6 +180,79 @@ pub fn agents_unreachable_event(
     })
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AndroidErrorCode {
+    E0601,
+    E0602,
+    E0603,
+    E0604,
+    E0605,
+    E0606,
+    E0607,
+    E0610,
+}
+
+impl AndroidErrorCode {
+    fn wire(self) -> &'static str {
+        match self {
+            Self::E0601 => "SAND-E0601",
+            Self::E0602 => "SAND-E0602",
+            Self::E0603 => "SAND-E0603",
+            Self::E0604 => "SAND-E0604",
+            Self::E0605 => "SAND-E0605",
+            Self::E0606 => "SAND-E0606",
+            Self::E0607 => "SAND-E0607",
+            Self::E0610 => "SAND-E0610",
+        }
+    }
+
+    fn retryable(self) -> bool {
+        matches!(self, Self::E0602 | Self::E0605 | Self::E0606 | Self::E0607)
+    }
+
+    fn allowed_fields(self) -> &'static [&'static str] {
+        match self {
+            Self::E0601 | Self::E0602 => &["phase"],
+            Self::E0605 => &["process", "reason"],
+            Self::E0606 => &["leg"],
+            Self::E0607 => &["timeoutMs"],
+            Self::E0603 | Self::E0604 | Self::E0610 => &[],
+        }
+    }
+}
+
+pub fn android_error_tags(
+    code: AndroidErrorCode,
+    payload: &BTreeMap<String, String>,
+) -> BTreeMap<String, String> {
+    let mut tags = BTreeMap::from([
+        ("error_code".into(), code.wire().into()),
+        ("error_domain".into(), "android".into()),
+        ("error_retryable".into(), code.retryable().to_string()),
+    ]);
+    for field in code.allowed_fields() {
+        let Some(value) = payload.get(*field) else { continue };
+        if !bounded_tag_value(value) {
+            continue;
+        }
+        let tag = match *field {
+            "timeoutMs" => "timeout_ms",
+            value => value,
+        };
+        tags.insert(tag.into(), value.clone());
+    }
+    tags
+}
+
+fn bounded_tag_value(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 128
+        && value.bytes().all(|byte| {
+            byte.is_ascii_alphanumeric()
+                || matches!(byte, b'.' | b'_' | b'|' | b':' | b'/' | b' ' | b'-')
+        })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -241,4 +314,25 @@ mod tests {
         assert!(agents_unreachable_event("bad", false, None, None).is_err());
         assert!(agents_unreachable_event("retry", false, None, Some(-1.0)).is_err());
     }
+
+    #[test]
+    fn android_error_tags_preserve_retryability_and_redact_unbounded_payload() {
+        let payload = BTreeMap::from([
+            ("process".into(), "host".into()),
+            ("reason".into(), "timeout".into()),
+            ("ignored".into(), "secret".into()),
+        ]);
+        let tags = android_error_tags(AndroidErrorCode::E0605, &payload);
+        assert_eq!(tags.get("error_code").map(String::as_str), Some("SAND-E0605"));
+        assert_eq!(tags.get("error_domain").map(String::as_str), Some("android"));
+        assert_eq!(tags.get("error_retryable").map(String::as_str), Some("true"));
+        assert_eq!(tags.get("process").map(String::as_str), Some("host"));
+        assert!(!tags.contains_key("ignored"));
+
+        let unsafe_payload = BTreeMap::from([("phase".into(), "bad\\nvalue".into())]);
+        let tags = android_error_tags(AndroidErrorCode::E0601, &unsafe_payload);
+        assert!(!tags.contains_key("phase"));
+        assert_eq!(tags.get("error_retryable").map(String::as_str), Some("false"));
+    }
+
 }
