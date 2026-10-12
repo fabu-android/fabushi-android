@@ -1,6 +1,3 @@
-use crate::extensions::auth::credential_renewer::{
-    SAND_CLIENT_TYPE, sand_box_namespace, sand_client_version,
-};
 use crate::notify_drain_gate::NotifyDrainGate;
 use reqwest::blocking::Client;
 use reqwest::header::{AUTHORIZATION, CONTENT_TYPE};
@@ -38,15 +35,40 @@ pub trait XuserRelayTransport: Send + Sync {
 
 pub struct ReqwestXuserRelayTransport {
     client: Client,
+    client_type: String,
+    client_version: String,
+    box_namespace: String,
 }
 impl ReqwestXuserRelayTransport {
-    pub fn new() -> Result<Self, String> {
+    pub fn new(
+        client_type: impl Into<String>,
+        client_version: impl Into<String>,
+        box_namespace: impl Into<String>,
+    ) -> Result<Self, String> {
+        let client_type = client_type.into();
+        let client_version = client_version.into();
+        let box_namespace = box_namespace.into();
+        for (label, value) in [
+            ("client type", client_type.as_str()),
+            ("client version", client_version.as_str()),
+            ("box namespace", box_namespace.as_str()),
+        ] {
+            if value.trim().is_empty()
+                || value.len() > 256
+                || value.chars().any(char::is_control)
+            {
+                return Err(format!("xuser relay {label} is invalid"));
+            }
+        }
         Ok(Self {
             client: Client::builder()
                 .connect_timeout(Duration::from_secs(15))
                 .timeout(Duration::from_secs(30))
                 .build()
                 .map_err(|e| e.to_string())?,
+            client_type,
+            client_version,
+            box_namespace,
         })
     }
 }
@@ -66,9 +88,9 @@ impl XuserRelayTransport for ReqwestXuserRelayTransport {
         }
         .header(AUTHORIZATION, format!("Bearer {token}"))
         .header(CONTENT_TYPE, "application/json")
-        .header("x-cursor-client-type", SAND_CLIENT_TYPE)
-        .header("x-cursor-client-version", sand_client_version())
-        .header("x-sand-box-namespace", sand_box_namespace());
+        .header("x-cursor-client-type", &self.client_type)
+        .header("x-cursor-client-version", &self.client_version)
+        .header("x-sand-box-namespace", &self.box_namespace);
         if let Some(body) = body {
             req = req.json(body);
         }
