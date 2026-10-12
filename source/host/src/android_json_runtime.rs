@@ -2685,6 +2685,7 @@ impl AndroidJsonHost {
                     .get_transcript(),
             )),
             "feature.transcript.page" => self.transcript_page(params),
+            "feature.contentSearch.messages" => self.content_search_messages(params),
             "feature.assistant.projection" => self.assistant_projection(),
             "feature.assistant.markRead" => self.assistant_mark_read(),
             "feature.webauthn.registerProvider" => self.webauthn_register_provider(),
@@ -2726,6 +2727,24 @@ impl AndroidJsonHost {
             "entries": entries,
             "nextBeforeSeq": next_before_seq,
         }))
+    }
+
+    fn content_search_messages(&self, params: &Value) -> Result<Value, String> {
+        let query = required_string(params, "query")?;
+        let limit = params
+            .get("limit")
+            .and_then(Value::as_u64)
+            .unwrap_or(50);
+        let limit = usize::try_from(limit)
+            .map_err(|_| "content search limit is out of range".to_string())?;
+        let matches = self
+            .transcript
+            .lock()
+            .map_err(|_| "transcript lock poisoned".to_string())?
+            .search_content(query, limit)
+            .map_err(|error| error.to_string())?;
+        serde_json::to_value(matches)
+            .map_err(|error| format!("failed to serialize content search result: {error}"))
     }
 
     fn agent_async_tasks(&self, params: &Value) -> Result<Value, String> {
@@ -12141,6 +12160,60 @@ mod transcript_page_contract_tests {
         assert_eq!(entry["level"], "warn");
         assert_eq!(entry["metadata"]["error_code"], "SAND-E0219");
         assert_eq!(entry["metadata"]["error_retryable"], "false");
+    }
+
+    #[test]
+    fn host_content_search_reads_canonical_transcript_and_reopens() {
+        let root = tempfile::tempdir().unwrap();
+        let mut host = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+        {
+            let mut transcript = host.transcript.lock().unwrap();
+            transcript
+                .append_entry(json!({
+                    "id":"search-a",
+                    "agentId":"agent-a",
+                    "kind":"message",
+                    "role":"user",
+                    "content":"Find the launch checklist",
+                    "timestampMs":10,
+                }))
+                .unwrap();
+            transcript
+                .append_entry(json!({
+                    "id":"search-peer",
+                    "agentId":"agent-b",
+                    "kind":"message",
+                    "role":"assistant",
+                    "content":"launch checklist internal copy",
+                    "toAgent":{"kind":"agent","id":"agent-a"},
+                    "timestampMs":11,
+                }))
+                .unwrap();
+        }
+        let first = host
+            .dispatch(
+                "feature.contentSearch.messages",
+                &json!({"query":"launch checklist","limit":50}),
+            )
+            .unwrap();
+        assert_eq!(first.as_array().unwrap().len(), 1);
+        assert_eq!(first[0]["entryId"], "search-a");
+        drop(host);
+
+        let mut reopened = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+        let second = reopened
+            .dispatch(
+                "feature.contentSearch.messages",
+                &json!({"query":"launch checklist","limit":50}),
+            )
+            .unwrap();
+        assert_eq!(second.as_array().unwrap().len(), 1);
+        assert!(reopened
+            .dispatch(
+                "feature.contentSearch.messages",
+                &json!({"query":"launch","limit":0}),
+            )
+            .is_err());
     }
 
     #[test]
