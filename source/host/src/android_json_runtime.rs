@@ -22,6 +22,8 @@ use crate::mcp_auth::{
     SandPrivacyMode as BackendSandPrivacyMode,
 };
 use crate::extensions::teach_recording::{DurableTeachRecordingOwner, TeachRecordingPhase};
+use crate::extensions::trays::extension::{start_trays_extension, HostTraysExtension};
+use crate::extensions::trays::trays_service::{TrayEvent, TraySubscription};
 use crate::extensions::transcript::{AsyncTask, SandPendingWakeStore, TranscriptStore, merge_async_tasks};
 use crate::extensions::transcript::pending_wake_rearm::PENDING_WAKE_STALE_MAX_AGE_MS;
 use crate::extensions::webauthn_proxy::{
@@ -674,6 +676,9 @@ pub struct AndroidJsonHost {
     subagent_events: Arc<Mutex<VecDeque<Value>>>,
     subagent_review_approvals: Arc<SubagentReviewApprovalRegistry>,
     teach_recording: Arc<Mutex<DurableTeachRecordingOwner>>,
+    trays: HostTraysExtension,
+    tray_events: Arc<Mutex<VecDeque<Value>>>,
+    _tray_subscription: TraySubscription,
     installed_plugins: BTreeSet<String>,
     plugin_installer: PluginInstaller,
     plugin_permissions: PermissionManager,
@@ -811,6 +816,23 @@ impl AndroidJsonHost {
             DurableTeachRecordingOwner::open(app_data_dir.join("teach-recording.json"), now_ms())
                 .unwrap_or_else(|error| panic!("failed to open durable Teach Recording owner: {error}")),
         ));
+        let trays = start_trays_extension();
+        let tray_events = Arc::new(Mutex::new(VecDeque::new()));
+        let tray_event_sink = Arc::clone(&tray_events);
+        let tray_subscription = trays.subscribe(Arc::new(move |event| {
+            let projected = match event {
+                TrayEvent::Pushed(tray) => serde_json::to_value(tray)
+                    .ok()
+                    .map(|tray| json!({"type":"tray.pushed","tray":tray})),
+                TrayEvent::Cleared => Some(json!({"type":"tray.cleared"})),
+                TrayEvent::Dismissed(id) => Some(json!({"type":"tray.dismissed","id":id})),
+            };
+            if let Some(projected) = projected {
+                if let Ok(mut queue) = tray_event_sink.lock() {
+                    queue.push_back(projected);
+                }
+            }
+        }));
         Self {
             mode,
             account,
@@ -866,6 +888,9 @@ impl AndroidJsonHost {
             subagent_events,
             subagent_review_approvals,
             teach_recording,
+            trays,
+            tray_events,
+            _tray_subscription: tray_subscription,
             installed_plugins: BTreeSet::new(),
             plugin_installer,
             plugin_permissions,
@@ -1045,6 +1070,16 @@ impl AndroidJsonHost {
             "feature.automation.cancel" => self.automation_cancel(params),
             "feature.automation.settle" => self.automation_settle(params),
             "feature.automation.snapshot" => self.automation_snapshot(params),
+            "getTrays" => serde_json::to_value(self.trays.list())
+                .map_err(|error| format!("failed to project trays: {error}")),
+            "dismissTray" => {
+                let id = required_string(params, "id")?;
+                Ok(json!({"dismissed":self.trays.dismiss(id)}))
+            }
+            "clearTrays" => {
+                self.trays.clear_all();
+                Ok(json!({"cleared":true}))
+            }
             "listAgents" => Ok(Value::Array(self.project_agent_roster()?)),
             "countAgents" => {
                 let agents = self.agents.lock().map_err(|_| "canonical Android Agent roster lock poisoned".to_string())?;
@@ -5395,6 +5430,14 @@ impl AndroidJsonHost {
         self.drain_mcp_auth_owner_events()?;
         self.drain_agent_wake_once()?;
         if let Some(event) = self.events.pop_front() {
+            return Ok(event);
+        }
+        if let Some(event) = self
+            .tray_events
+            .lock()
+            .map_err(|_| "tray event queue lock poisoned".to_string())?
+            .pop_front()
+        {
             return Ok(event);
         }
         if let Some(event) = self
