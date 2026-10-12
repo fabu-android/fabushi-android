@@ -6721,13 +6721,17 @@ mod tests {
             .unwrap();
         let first_id = first_agent["agent"]["id"].as_str().unwrap().to_string();
         let second_id = second_agent["agent"]["id"].as_str().unwrap().to_string();
+        let initial = first
+            .dispatch("feature.agent.sidebarSections", &json!({}))
+            .unwrap();
+        let account_fence = initial["accountFence"].as_str().unwrap().to_string();
 
         let payload = json!({
             "operationId":"sidebar-op-1",
-            "accountFence":"session:test:android",
+            "accountFence":account_fence.clone(),
             "mutation":{
                 "kind":"sidebar-sections",
-                "accountFence":"session:test:android",
+                "accountFence":account_fence.clone(),
                 "expectedRevision":0,
                 "baseSections":[],
                 "sections":[{
@@ -6758,10 +6762,10 @@ mod tests {
             "feature.agent.rosterMutation",
             &json!({
                 "operationId":"sidebar-op-1",
-                "accountFence":"session:test:android",
+                "accountFence":account_fence.clone(),
                 "mutation":{
                     "kind":"sidebar-sections",
-                    "accountFence":"session:test:android",
+                    "accountFence":account_fence.clone(),
                     "expectedRevision":0,
                     "baseSections":[],
                     "sections":[{
