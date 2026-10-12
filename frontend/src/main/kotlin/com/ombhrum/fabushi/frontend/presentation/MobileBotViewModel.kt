@@ -26,6 +26,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.ByteArrayOutputStream
+import java.io.File
 import java.util.UUID
 
 data class MobileBotSummaryAndroid(
@@ -2209,6 +2211,132 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
                         error = error.message ?: "Attachment could not be removed",
                     ),
                 )
+            }
+        }
+    }
+
+    fun loadAgentAttachmentBytes(
+        agentId: String,
+        attachmentId: String,
+        sizeBytes: Long,
+        onResult: (Result<ByteArray>) -> Unit,
+    ) {
+        val accountSlot = rosterSelectionAccountSlot
+        val expectedBotId = mutableState.value.activeBot?.id
+        if (
+            agentId.isBlank() ||
+            attachmentId.isBlank() ||
+            sizeBytes <= 0L ||
+            sizeBytes > Int.MAX_VALUE ||
+            expectedBotId != agentId
+        ) {
+            onResult(Result.failure(IllegalArgumentException("Agent attachment is unavailable")))
+            return
+        }
+        viewModelScope.launch {
+            val result = withContext(Dispatchers.IO) {
+                runCatching {
+                    val output = ByteArrayOutputStream(sizeBytes.toInt())
+                    var offset = 0L
+                    while (offset < sizeBytes) {
+                        val requested = minOf(4L * 1024L * 1024L, sizeBytes - offset).toInt()
+                        val chunk = coordinator.composerDraftAttachmentReadRange(
+                            accountSlot = accountSlot,
+                            agentId = agentId,
+                            attachmentId = attachmentId,
+                            offset = offset,
+                            length = requested,
+                        )
+                        check(chunk.attachmentId == attachmentId) {
+                            "Agent attachment reader switched attachment identity"
+                        }
+                        check(chunk.offset == offset && chunk.nextOffset > offset) {
+                            "Agent attachment reader returned a stale continuation"
+                        }
+                        check(chunk.sizeBytes == sizeBytes) {
+                            "Agent attachment size changed while reading"
+                        }
+                        check(chunk.bytes.size.toLong() == chunk.nextOffset - offset) {
+                            "Agent attachment chunk length did not match continuation"
+                        }
+                        output.write(chunk.bytes)
+                        offset = chunk.nextOffset
+                        if (chunk.eof) {
+                            check(offset == sizeBytes) {
+                                "Agent attachment ended before its declared size"
+                            }
+                            break
+                        }
+                    }
+                    check(offset == sizeBytes) { "Agent attachment read ended before its declared size" }
+                    output.toByteArray()
+                }
+            }
+            if (
+                accountSlot != rosterSelectionAccountSlot ||
+                mutableState.value.activeBot?.id != agentId
+            ) {
+                onResult(Result.failure(CancellationException("Agent attachment read became stale")))
+            } else {
+                onResult(result)
+            }
+        }
+    }
+
+    fun loadAgentAttachmentFile(
+        agentId: String,
+        attachmentId: String,
+        sizeBytes: Long,
+        onResult: (Result<File>) -> Unit,
+    ) {
+        val accountSlot = rosterSelectionAccountSlot
+        val expectedBotId = mutableState.value.activeBot?.id
+        if (
+            agentId.isBlank() ||
+            attachmentId.isBlank() ||
+            sizeBytes <= 0L ||
+            sizeBytes > Int.MAX_VALUE ||
+            expectedBotId != agentId
+        ) {
+            onResult(Result.failure(IllegalArgumentException("Agent attachment is unavailable")))
+            return
+        }
+        viewModelScope.launch {
+            val result = withContext(Dispatchers.IO) {
+                runCatching {
+                    val directory = File(getApplication<Application>().cacheDir, "agent-attachment-viewer")
+                    streamAndroidBlobToTemporaryFile(
+                        sizeBytes = sizeBytes.toInt(),
+                        directory = directory,
+                    ) { offset, length ->
+                        val chunk = coordinator.composerDraftAttachmentReadRange(
+                            accountSlot = accountSlot,
+                            agentId = agentId,
+                            attachmentId = attachmentId,
+                            offset = offset.toLong(),
+                            length = length,
+                        )
+                        check(chunk.attachmentId == attachmentId) {
+                            "Agent attachment reader switched attachment identity"
+                        }
+                        check(chunk.offset == offset.toLong()) {
+                            "Agent attachment reader returned a stale offset"
+                        }
+                        check(chunk.sizeBytes == sizeBytes) {
+                            "Agent attachment size changed while streaming"
+                        }
+                        chunk.bytes
+                    }
+                }
+            }
+            if (
+                accountSlot != rosterSelectionAccountSlot ||
+                mutableState.value.activeBot?.id != agentId
+            ) {
+                result.getOrNull()?.let { runCatching { it.delete() } }
+                onResult(Result.failure(CancellationException("Agent attachment stream became stale")))
+            } else {
+                onResult(result)
             }
         }
     }
