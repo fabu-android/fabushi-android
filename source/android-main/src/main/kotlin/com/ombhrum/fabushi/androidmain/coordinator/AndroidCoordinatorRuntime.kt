@@ -53,6 +53,7 @@ import com.ombhrum.fabushi.androidpreload.runtime.AndroidClientSideToolV2Event
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidComposerDraft
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidConversationOutlineItem
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidContentSearchMessage
+import com.ombhrum.fabushi.androidpreload.runtime.AndroidContentSearchMedia
 import com.ombhrum.fabushi.androidpreload.runtime.parseAndroidConversationOutlineItems
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidMcpOAuthCompletion
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidToolResultCard
@@ -2294,6 +2295,54 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
                         role = role,
                         timestampMs = row.optLong("timestampMs", 0L),
                         snippet = snippet,
+                    ),
+                )
+            }
+        }
+    }
+
+    override fun contentSearchMedia(
+        query: String,
+        limit: Int,
+    ): List<AndroidContentSearchMedia> {
+        require(limit in 1..50) { "Media search limit must be between 1 and 50" }
+        val rows = host.requestValue(
+            "feature.contentSearch.media",
+            JSONObject()
+                .put("query", query.trim())
+                .put("limit", limit),
+        ) as? JSONArray ?: error("Media search returned a malformed result")
+        return buildList(rows.length()) {
+            for (index in 0 until rows.length()) {
+                val row = rows.optJSONObject(index)
+                    ?: error("Media search row $index is not an object")
+                val agentId = row.getString("agentId").trim()
+                val entryId = row.getString("entryId").trim()
+                val fileName = row.getString("fileName").trim()
+                val path = row.getString("path").trim()
+                val kind = row.getString("kind").trim()
+                check(agentId.isNotEmpty()) { "Media search row is missing Agent identity" }
+                check(entryId.isNotEmpty()) { "Media search row is missing entry identity" }
+                check(fileName.isNotEmpty() && path.isNotEmpty()) {
+                    "Media search row is missing open metadata"
+                }
+                check(kind in setOf(
+                    "image", "video", "audio", "pdf", "markdown", "table",
+                    "json", "text", "document", "archive", "file",
+                )) { "Media search row has unsupported kind" }
+                add(
+                    AndroidContentSearchMedia(
+                        agentId = agentId,
+                        entryId = entryId,
+                        fileName = fileName,
+                        path = path,
+                        ext = row.optString("ext"),
+                        mime = row.optString("mime").trim().takeIf(String::isNotEmpty),
+                        kind = kind,
+                        timestampMs = row.optLong("timestampMs", 0L),
+                        sizeBytes = if (row.has("sizeBytes") && !row.isNull("sizeBytes")) row.getLong("sizeBytes") else null,
+                        width = if (row.has("width") && !row.isNull("width")) row.getLong("width") else null,
+                        height = if (row.has("height") && !row.isNull("height")) row.getLong("height") else null,
                     ),
                 )
             }
