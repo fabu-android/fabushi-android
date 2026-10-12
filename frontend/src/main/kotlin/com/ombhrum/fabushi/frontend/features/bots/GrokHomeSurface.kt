@@ -1,5 +1,8 @@
 package com.ombhrum.fabushi
 
+import com.ombhrum.fabushi.androidpreload.runtime.AndroidAvatarCrop
+import com.ombhrum.fabushi.androidpreload.runtime.AndroidAvatarImageSource
+
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
@@ -102,6 +105,9 @@ internal fun GrokHomeSurface(
     onUpdateBotProfile: (String, String, String?, String, String?, String?) -> Unit,
     onSetBotAvatarImage: (String, String?) -> Unit,
     onGenerateBotAvatarImage: suspend (String, String) -> Result<AndroidGeneratedAvatarImage>,
+    onStagePickedBotAvatarImage: suspend (String) -> Result<AndroidAvatarImageSource>,
+    onStageGeneratedBotAvatarImage: suspend (String, String) -> Result<AndroidAvatarImageSource>,
+    onEncodeBotAvatarCrop: suspend (AndroidAvatarImageSource, AndroidAvatarCrop) -> Result<String>,
     onSetBotNotifyOnUpdates: (String, Boolean) -> Unit,
     onHideBot: (String) -> Unit,
     onUnhideBot: (String) -> Unit,
@@ -202,6 +208,9 @@ internal fun GrokHomeSurface(
             },
             onSetAvatarImage = onSetBotAvatarImage,
             onGenerateAvatarImage = onGenerateBotAvatarImage,
+            onStagePickedAvatarImage = onStagePickedBotAvatarImage,
+            onStageGeneratedAvatarImage = onStageGeneratedBotAvatarImage,
+            onEncodeAvatarCrop = onEncodeBotAvatarCrop,
             onSetNotifications = onSetBotNotifyOnUpdates,
         )
         return
