@@ -11,11 +11,16 @@ CHAT = ROOT / "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/features/bo
 TEST = ROOT / "mobile/android/app/src/test/java/com/ombhrum/fabushi/GlobalKeyboardShortcutsTest.kt"
 
 class GlobalKeyboardShortcutWiringTest(unittest.TestCase):
-    def test_activity_bubbles_to_children_before_root_dispatch(self):
+    def test_activity_uses_framework_child_first_key_dispatch_without_restricted_api(self):
         s = ACTIVITY.read_text(encoding="utf-8")
         self.assertIn("internal val globalKeyboardShortcutController = GlobalKeyboardShortcutController()", s)
-        self.assertIn("val childHandled = super.dispatchKeyEvent(event)", s)
-        self.assertIn("defaultPrevented = childHandled", s)
+        self.assertIn("override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean", s)
+        self.assertNotIn("super.dispatchKeyEvent(event)", s)
+        self.assertIn("defaultPrevented = false", s)
+        self.assertLess(
+            s.index("globalKeyboardShortcutController.dispatch("),
+            s.index("super.onKeyDown(keyCode, event)"),
+        )
         self.assertIn("globalKeyboardShortcutController.clearPresentationBinding()", s)
         self.assertIn("keyboardShortcutController = globalKeyboardShortcutController", s)
 
