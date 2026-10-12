@@ -1,3 +1,4 @@
+use crate::automation_schedule::{compute_next_run_at, normalize_schedule};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
@@ -16,7 +17,7 @@ pub enum AutomationRunState {
     OutcomeUnknown,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 pub struct AutomationSpec {
     pub id: String,
     pub name: String,
@@ -93,15 +94,28 @@ impl AutomationRuntime {
         Ok(runtime)
     }
 
-    pub fn upsert_spec(&mut self, spec: AutomationSpec) -> Result<(), String> {
+    pub fn upsert_spec(&mut self, mut spec: AutomationSpec, fallback_time_zone: Option<&str>) -> Result<(), String> {
+        spec.schedule = normalize_schedule(&spec.schedule);
         validate_spec(&spec)?;
+        spec.next_run_at_ms = canonical_next_run_ms(&spec, fallback_time_zone)?;
         if let Some(existing) = self.state.specs.get(&spec.id) {
-            if existing.account_fence != spec.account_fence {
-                return Err("automation id belongs to another account fence".into());
-            }
+            if existing.account_fence != spec.account_fence { return Err("automation id belongs to another account fence".into()); }
         }
         self.state.specs.insert(spec.id.clone(), spec);
         self.persist()
+    }
+
+    pub fn refresh_next_runs(&mut self, fallback_time_zone: Option<&str>) -> Result<(), String> {
+        let mut changed = false;
+        for spec in self.state.specs.values_mut() {
+            let normalized = normalize_schedule(&spec.schedule);
+            if normalized != spec.schedule { spec.schedule = normalized; changed = true; }
+            validate_spec(spec)?;
+            let next = canonical_next_run_ms(spec, fallback_time_zone)?;
+            if spec.next_run_at_ms != next { spec.next_run_at_ms = next; changed = true; }
+        }
+        if changed { self.persist()?; }
+        Ok(())
     }
 
     pub fn list_for_account(&self, account_fence: &str) -> Vec<Value> {
@@ -128,6 +142,7 @@ impl AutomationRuntime {
         agent_id: &str,
         automation_id: &str,
         enabled: bool,
+        fallback_time_zone: Option<&str>,
     ) -> Result<AutomationSpec, String> {
         let agent_id = agent_id.trim();
         let automation_id = automation_id.trim();
@@ -146,6 +161,7 @@ impl AutomationRuntime {
             return Err("automation belongs to a different Agent".into());
         }
         spec.enabled = enabled;
+        spec.next_run_at_ms = canonical_next_run_ms(spec, fallback_time_zone)?;
         let copy = spec.clone();
         self.persist()?;
         Ok(copy)
@@ -327,6 +343,7 @@ impl AutomationRuntime {
         succeeded: bool,
         reason: Option<String>,
         now_ms: u64,
+        fallback_time_zone: Option<&str>,
     ) -> Result<AutomationRun, String> {
         let run = self.current_mut(run_id, account_fence, generation)?;
         if run.state != AutomationRunState::Running {
@@ -343,6 +360,7 @@ impl AutomationRuntime {
         let copy = run.clone();
         if let Some(spec) = self.state.specs.get_mut(&automation_id) {
             spec.last_run_at_ms = Some(now_ms);
+            spec.next_run_at_ms = canonical_next_run_ms(spec, fallback_time_zone)?;
         }
         self.persist()?;
         Ok(copy)
@@ -391,6 +409,15 @@ impl AutomationRuntime {
         }
         result
     }
+}
+
+fn canonical_next_run_ms(spec: &AutomationSpec, fallback_time_zone: Option<&str>) -> Result<Option<u64>, String> {
+    if !spec.enabled { return Ok(None); }
+    let anchor = spec.last_run_at_ms.unwrap_or(spec.created_at_ms);
+    let next = compute_next_run_at(&spec.schedule, anchor as f64, fallback_time_zone)
+        .ok_or_else(|| "automation schedule is invalid or has no next run".to_string())?;
+    if !next.is_finite() || next < 0.0 || next > u64::MAX as f64 { return Err("automation next run is out of range".into()); }
+    Ok(Some(next.floor() as u64))
 }
 
 fn validate_spec(spec: &AutomationSpec) -> Result<(), String> {
@@ -447,7 +474,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("automation.json");
         let mut runtime = AutomationRuntime::open(&path, 1).unwrap();
-        runtime.upsert_spec(spec("acct-a")).unwrap();
+        runtime.upsert_spec(spec("acct-a"), Some("UTC")).unwrap();
         drop(runtime);
 
         let recovered = AutomationRuntime::open(&path, 2).unwrap();
@@ -482,7 +509,7 @@ mod tests {
         let mut replacement = spec("acct-a");
         replacement.id = "legacy".into();
         replacement.agent_id.clear();
-        assert!(runtime.upsert_spec(replacement).is_err());
+        assert!(runtime.upsert_spec(replacement, Some("UTC")).is_err());
     }
 
     #[test]
@@ -490,18 +517,18 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("automation.json");
         let mut runtime = AutomationRuntime::open(&path, 1).unwrap();
-        runtime.upsert_spec(spec("acct-a")).unwrap();
+        runtime.upsert_spec(spec("acct-a"), Some("UTC")).unwrap();
 
         let disabled = runtime
-            .set_agent_workflow_enabled("acct-a", "agent-a", "daily-brief", false)
+            .set_agent_workflow_enabled("acct-a", "agent-a", "daily-brief", false, Some("UTC"))
             .unwrap();
         assert!(!disabled.enabled);
         assert_eq!(runtime.list_for_agent("acct-a", "agent-a").len(), 1);
         assert!(runtime
-            .set_agent_workflow_enabled("acct-b", "agent-a", "daily-brief", true)
+            .set_agent_workflow_enabled("acct-b", "agent-a", "daily-brief", true, Some("UTC"))
             .is_err());
         assert!(runtime
-            .set_agent_workflow_enabled("acct-a", "agent-b", "daily-brief", true)
+            .set_agent_workflow_enabled("acct-a", "agent-b", "daily-brief", true, Some("UTC"))
             .is_err());
         assert!(runtime
             .begin_run("daily-brief", "request-disabled", "run-disabled", "acct-a", 2)
@@ -512,7 +539,7 @@ mod tests {
         let listed = reopened.list_for_agent("acct-a", "agent-a");
         assert_eq!(listed[0].get("enabled").and_then(Value::as_bool), Some(false));
         reopened
-            .set_agent_workflow_enabled("acct-a", "agent-a", "daily-brief", true)
+            .set_agent_workflow_enabled("acct-a", "agent-a", "daily-brief", true, Some("UTC"))
             .unwrap();
         assert!(reopened
             .begin_run("daily-brief", "request-enabled", "run-enabled", "acct-a", 4)
@@ -528,7 +555,7 @@ mod tests {
     fn duplicate_request_converges_only_after_known_terminal_state() {
         let dir = tempfile::tempdir().unwrap();
         let mut runtime = AutomationRuntime::open(dir.path().join("automation.json"), 1).unwrap();
-        runtime.upsert_spec(spec("acct-a")).unwrap();
+        runtime.upsert_spec(spec("acct-a"), Some("UTC")).unwrap();
         let run = runtime
             .begin_run("daily-brief", "request-1", "run-1", "acct-a", 2)
             .unwrap();
@@ -536,7 +563,7 @@ mod tests {
             .begin_run("daily-brief", "request-1", "run-2", "acct-a", 3)
             .is_err());
         runtime
-            .settle("run-1", "acct-a", run.generation, true, None, 4)
+            .settle("run-1", "acct-a", run.generation, true, None, 4, Some("UTC"))
             .unwrap();
         let replay = runtime
             .begin_run("daily-brief", "request-1", "run-2", "acct-a", 5)
@@ -549,7 +576,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("automation.json");
         let mut runtime = AutomationRuntime::open(&path, 1).unwrap();
-        runtime.upsert_spec(spec("acct-a")).unwrap();
+        runtime.upsert_spec(spec("acct-a"), Some("UTC")).unwrap();
         runtime
             .begin_run("daily-brief", "request-1", "run-1", "acct-a", 2)
             .unwrap();
@@ -572,7 +599,7 @@ mod tests {
     fn approval_and_account_generation_are_fenced() {
         let dir = tempfile::tempdir().unwrap();
         let mut runtime = AutomationRuntime::open(dir.path().join("automation.json"), 1).unwrap();
-        runtime.upsert_spec(spec("acct-a")).unwrap();
+        runtime.upsert_spec(spec("acct-a"), Some("UTC")).unwrap();
         let run = runtime
             .begin_run("daily-brief", "request-1", "run-1", "acct-a", 2)
             .unwrap();
@@ -626,7 +653,7 @@ mod tests {
     fn step_mutation_identity_is_stable_and_monotonic() {
         let dir = tempfile::tempdir().unwrap();
         let mut runtime = AutomationRuntime::open(dir.path().join("automation.json"), 1).unwrap();
-        runtime.upsert_spec(spec("acct-a")).unwrap();
+        runtime.upsert_spec(spec("acct-a"), Some("UTC")).unwrap();
         let run = runtime
             .begin_run("daily-brief", "request-1", "run-1", "acct-a", 2)
             .unwrap();
@@ -636,4 +663,31 @@ mod tests {
             .unwrap();
         assert_eq!(next.step_mutation_id.as_deref(), Some("request-1:step:1"));
     }
+    #[test]
+    fn schedule_is_normalized_and_next_run_is_host_owned() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut runtime = AutomationRuntime::open(dir.path().join("automation.json"), 1).unwrap();
+        let mut value = spec("acct-a");
+        value.schedule = "  @every   5m  ".into();
+        value.created_at_ms = 1_000;
+        value.next_run_at_ms = Some(9_999_999);
+        runtime.upsert_spec(value, Some("UTC")).unwrap();
+        let listed = runtime.list_for_account("acct-a");
+        assert_eq!(listed[0]["schedule"], "@every 5m");
+        assert_eq!(listed[0]["next_run_at_ms"], 301_000);
+    }
+
+    #[test]
+    fn invalid_schedule_is_rejected_and_disable_clears_next_run() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut runtime = AutomationRuntime::open(dir.path().join("automation.json"), 1).unwrap();
+        let mut invalid = spec("acct-a"); invalid.schedule = "not a cron".into();
+        assert!(runtime.upsert_spec(invalid, Some("UTC")).is_err());
+        runtime.upsert_spec(spec("acct-a"), Some("UTC")).unwrap();
+        let disabled = runtime.set_agent_workflow_enabled("acct-a", "agent-a", "daily-brief", false, Some("UTC")).unwrap();
+        assert_eq!(disabled.next_run_at_ms, None);
+        let enabled = runtime.set_agent_workflow_enabled("acct-a", "agent-a", "daily-brief", true, Some("UTC")).unwrap();
+        assert!(enabled.next_run_at_ms.is_some());
+    }
+
 }

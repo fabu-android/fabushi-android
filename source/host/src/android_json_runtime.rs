@@ -3829,15 +3829,18 @@ impl AndroidJsonHost {
             account_fence,
             created_at_ms: params.get("createdAtMs").and_then(Value::as_u64).unwrap_or_else(now_ms),
             last_run_at_ms: params.get("lastRunAtMs").and_then(Value::as_u64),
-            next_run_at_ms: params.get("nextRunAtMs").and_then(Value::as_u64),
+            next_run_at_ms: None,
         };
         let id = spec.id.clone();
-        self.automation_runtime.upsert_spec(spec)?;
+        let time_zone = self.effective_time_zone()?;
+        self.automation_runtime.upsert_spec(spec, time_zone.as_deref())?;
         Ok(json!({"id":id,"stored":true}))
     }
 
     fn automation_list(&mut self) -> Result<Value, String> {
         let account_fence = self.current_turn_account_fence()?;
+        let time_zone = self.effective_time_zone()?;
+        self.automation_runtime.refresh_next_runs(time_zone.as_deref())?;
         Ok(Value::Array(self.automation_runtime.list_for_account(&account_fence)))
     }
 
@@ -3853,6 +3856,8 @@ impl AndroidJsonHost {
                 return Err("automation Agent owner not found".into());
             }
         }
+        let time_zone = self.effective_time_zone()?;
+        self.automation_runtime.refresh_next_runs(time_zone.as_deref())?;
         Ok(Value::Array(
             self.automation_runtime
                 .list_for_agent(&account_fence, agent_id),
@@ -3875,11 +3880,13 @@ impl AndroidJsonHost {
             .get("enabled")
             .and_then(Value::as_bool)
             .ok_or("enabled is required")?;
+        let time_zone = self.effective_time_zone()?;
         let spec = self.automation_runtime.set_agent_workflow_enabled(
             &account_fence,
             agent_id,
             required_string(params, "automationId")?,
             enabled,
+            time_zone.as_deref(),
         )?;
         serde_json::to_value(spec).map_err(|error| error.to_string())
     }
@@ -3955,6 +3962,7 @@ impl AndroidJsonHost {
             succeeded,
             params.get("reason").and_then(Value::as_str).map(str::to_string),
             now_ms(),
+            self.effective_time_zone()?.as_deref(),
         )?;
         Ok(automation_run_json(&run))
     }
