@@ -228,8 +228,9 @@ impl HumanCallRuntime {
         let next = match (session.state.clone(), action) {
             (HumanCallState::Invited, "ring") => HumanCallState::Ringing,
             (HumanCallState::Invited | HumanCallState::Ringing, "accept") => HumanCallState::Negotiating,
-            (HumanCallState::Negotiating | HumanCallState::Reconnecting, "connect") => HumanCallState::Connected,
+            (HumanCallState::Negotiating | HumanCallState::Reconnecting, "connected" | "connect") => HumanCallState::Connected,
             (HumanCallState::Connected, "reconnect") => HumanCallState::Reconnecting,
+            (HumanCallState::Reconnecting, "resume") => HumanCallState::Negotiating,
             (HumanCallState::Invited | HumanCallState::Ringing, "decline") => HumanCallState::Ended,
             (state, "hangup") if !state.terminal() => HumanCallState::Ended,
             (state, "fail") if !state.terminal() => HumanCallState::Failed,
@@ -488,8 +489,11 @@ mod tests {
         let call = runtime.create("call-1", "req-1", "conversation-1", "human-a", vec!["human-b".into()], "acct-a", 2).unwrap();
         assert!(runtime.transition("call-1", "acct-a", call.generation, "connect", None, 3).is_err());
         runtime.transition("call-1", "acct-a", call.generation, "accept", None, 4).unwrap();
-        runtime.transition("call-1", "acct-a", call.generation, "connect", None, 5).unwrap();
-        runtime.transition("call-1", "acct-a", call.generation, "hangup", Some("local hangup".into()), 6).unwrap();
+        runtime.transition("call-1", "acct-a", call.generation, "connected", None, 5).unwrap();
+        runtime.transition("call-1", "acct-a", call.generation, "reconnect", None, 6).unwrap();
+        runtime.transition("call-1", "acct-a", call.generation, "resume", None, 7).unwrap();
+        runtime.transition("call-1", "acct-a", call.generation, "connected", None, 8).unwrap();
+        runtime.transition("call-1", "acct-a", call.generation, "hangup", Some("local hangup".into()), 9).unwrap();
         assert!(runtime.update_media("call-1", "acct-a", call.generation, json!({}), json!({}), 7).is_err());
     }
 }
