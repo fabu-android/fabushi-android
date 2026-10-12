@@ -44,10 +44,12 @@ pub struct TranscriptMediaMatch {
     pub agent_id: String,
     pub entry_id: String,
     pub file_name: String,
+    pub path: String,
     pub ext: String,
     pub mime: Option<String>,
     pub kind: String,
     pub timestamp_ms: f64,
+    pub size_bytes: Option<i64>,
     pub width: Option<i64>,
     pub height: Option<i64>,
 }
@@ -446,10 +448,11 @@ fn project_media_search_entry(entry: &Value) -> Option<TranscriptMediaMatch> {
         return None;
     }
     let kind = entry.get("kind").and_then(Value::as_str).unwrap_or_default();
-    let (raw_path, explicit_name, width, height) = match kind {
+    let (raw_path, explicit_name, size_bytes, width, height) = match kind {
         "user-attachment" | "userAttachment" => (
             entry.get("filePath").and_then(Value::as_str)?,
             entry.get("fileName").and_then(Value::as_str),
+            whole_media_dimension(entry.get("sizeBytes").or_else(|| entry.get("size"))),
             whole_media_dimension(entry.get("width")),
             whole_media_dimension(entry.get("height")),
         ),
@@ -463,6 +466,7 @@ fn project_media_search_entry(entry: &Value) -> Option<TranscriptMediaMatch> {
             (
                 message.get("url").or_else(|| message.get("filePath")).and_then(Value::as_str)?,
                 message.get("fileName").and_then(Value::as_str),
+                whole_media_dimension(message.get("sizeBytes").or_else(|| message.get("size"))),
                 None,
                 None,
             )
@@ -481,6 +485,7 @@ fn project_media_search_entry(entry: &Value) -> Option<TranscriptMediaMatch> {
     Some(TranscriptMediaMatch {
         agent_id: agent_id.to_string(),
         entry_id: entry_id.to_string(),
+        path: raw_path.to_string(),
         ext: if extension.is_empty() { String::new() } else { format!(".{extension}") },
         mime: media_mime(&extension).map(str::to_string),
         kind: media_kind(&extension).to_string(),
@@ -780,6 +785,7 @@ mod tests {
         assert_eq!(all.len(), 2);
         assert_eq!(all[0].entry_id, "new-doc");
         assert_eq!(all[0].file_name, "Project-Alpha.pdf");
+        assert_eq!(all[0].path, "https://example.invalid/reports/Project-Alpha.pdf?download=1");
         assert_eq!(all[0].kind, "pdf");
         assert_eq!(all[1].file_name, "Project Alpha.png");
         assert_eq!(all[1].mime.as_deref(), Some("image/png"));
