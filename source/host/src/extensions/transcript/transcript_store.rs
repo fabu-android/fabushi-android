@@ -444,7 +444,7 @@ fn entry_id(entry: &Value) -> io::Result<&str> {
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "transcript entry id is required"))
 }
 
-fn project_media_search_entry(entry: &Value) -> Option<TranscriptMediaMatch> {
+pub(crate) fn project_media_search_entry(entry: &Value) -> Option<TranscriptMediaMatch> {
     let agent_id = entry.get("agentId").and_then(Value::as_str)?.trim();
     let entry_id = entry.get("id").and_then(Value::as_str)?.trim();
     if agent_id.is_empty() || entry_id.is_empty() {
