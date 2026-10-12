@@ -1,3 +1,4 @@
+use crate::extensions::content_search::android_search_index::AndroidContentSearchIndex;
 use crate::edge_failures::EdgeFailureBuffer;
 use crate::account_service::{AccountSessionMutation, AndroidAccountService};
 use crate::account_telemetry::{
@@ -734,6 +735,7 @@ pub struct AndroidJsonHost {
     detected_time_zone: Arc<Mutex<Option<String>>>,
     auto_review_settings: Arc<Mutex<DurableAutoReviewSettings>>,
     transcript: Arc<Mutex<TranscriptStore>>,
+    content_search: AndroidContentSearchIndex,
     send_acknowledgements: Arc<Mutex<DurableSendAcknowledgementOwner>>,
     composer_drafts: Arc<Mutex<DurableComposerDraftOwner>>,
     agent_attachments: Arc<Mutex<DurableAgentAttachmentOwner>>,
@@ -961,6 +963,8 @@ impl AndroidJsonHost {
             );
         }
         let transcript = Arc::new(Mutex::new(transcript_store));
+        let content_search = AndroidContentSearchIndex::open(app_data_dir.join("search-index.db"))
+            .unwrap_or_else(|error| panic!("failed to open Android content search index: {error}"));
         let send_acknowledgement_observed_at_ms = now_ms();
         let send_acknowledgement_owner = DurableSendAcknowledgementOwner::open(
             app_data_dir.join("send-acknowledgements.json"),
@@ -1171,6 +1175,7 @@ impl AndroidJsonHost {
             detected_time_zone: Arc::new(Mutex::new(None)),
             auto_review_settings,
             transcript,
+            content_search,
             send_acknowledgements,
             composer_drafts,
             agent_attachments,
@@ -2707,6 +2712,7 @@ impl AndroidJsonHost {
             )),
             "feature.transcript.page" => self.transcript_page(params),
             "feature.search.agentContent" => self.agent_content_search(params),
+            "feature.search.global" => self.global_content_search(params),
             "feature.contentSearch.messages" => self.content_search_messages(params),
             "feature.contentSearch.media" => self.content_search_media(params),
             "feature.assistant.projection" => self.assistant_projection(),
@@ -2724,6 +2730,23 @@ impl AndroidJsonHost {
         result
     }
 
+
+    fn global_content_search(&mut self, params: &Value) -> Result<Value, String> {
+        let query = params.get("query").and_then(Value::as_str).unwrap_or_default();
+        let message_limit = params.get("messageLimit").and_then(Value::as_u64).unwrap_or(50).min(50) as usize;
+        let media_limit = params.get("mediaLimit").and_then(Value::as_u64).unwrap_or(50).min(50) as usize;
+        let account_slot = self.account.account_storage_scope();
+        let account_fence = self.current_turn_account_fence().ok();
+        let entries = self.transcript.lock().map_err(|_| "transcript lock poisoned".to_string())?.get_transcript().into_iter().filter(|entry| {
+            let slot_ok = entry.get("accountSlot").and_then(Value::as_str).map(|slot| Some(slot) == account_slot.as_deref()).unwrap_or(true);
+            let fence_ok = entry.get("accountFence").and_then(Value::as_str).map(|fence| account_fence.as_deref() == Some(fence)).unwrap_or(true);
+            slot_ok && fence_ok
+        }).collect::<Vec<_>>();
+        let (messages, media) = self.content_search.search(&entries, query, message_limit, media_limit)?;
+        let messages = messages.into_iter().map(|item| json!({"agentId":item.agent_id,"entryId":item.entry_id,"role":item.role,"timestampMs":item.timestamp_ms,"snippet":item.snippet})).collect::<Vec<_>>();
+        let media = media.into_iter().map(|item| json!({"agentId":item.agent_id,"entryId":item.entry_id,"fileName":item.file_name,"ext":item.ext,"mime":item.mime,"kind":format!("{:?}",item.kind).to_ascii_lowercase(),"timestampMs":item.timestamp_ms,"width":item.width,"height":item.height})).collect::<Vec<_>>();
+        Ok(json!({"ready":self.content_search.is_ready(),"messages":messages,"media":media}))
+    }
 
     fn agent_content_search(&self, params: &Value) -> Result<Value, String> {
         let _account_fence = self.current_turn_account_fence()?;
@@ -9608,6 +9631,26 @@ fn encode_api_path_segment(value: &str) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+#[test]
+    fn global_content_search_is_persistent_account_fenced_and_reconciles_changes() {
+        let root=tempfile::tempdir().unwrap();
+        {
+            let mut host=AndroidJsonHost::new(root.path(),AndroidHostMode::Test);
+            host.logged_in=true;
+            let fence=host.current_turn_account_fence().unwrap();
+            let mut transcript=host.transcript.lock().unwrap();
+            transcript.append_entry(json!({"id":"m1","agentId":"a","kind":"message","role":"user","content":"needle old","timestampMs":1,"accountFence":fence})).unwrap();
+            transcript.append_entry(json!({"id":"m2","agentId":"b","kind":"message","role":"assistant","content":"needle new","timestampMs":2,"accountFence":fence})).unwrap();
+            transcript.append_entry(json!({"id":"foreign","agentId":"x","kind":"message","role":"assistant","content":"needle foreign","timestampMs":3,"accountFence":"foreign:epoch"})).unwrap();
+        }
+        let mut reopened=AndroidJsonHost::new(root.path(),AndroidHostMode::Test); reopened.logged_in=true;
+        let first=reopened.dispatch("feature.search.global",&json!({"query":"needle"})).unwrap();
+        assert_eq!(first["messages"].as_array().unwrap().iter().map(|v|v["entryId"].as_str().unwrap()).collect::<Vec<_>>(),vec!["m2","m1"]);
+        reopened.transcript.lock().unwrap().update_entry("m1",|entry|{let mut next=entry.clone();next["content"]=Value::String("changed".into());next}).unwrap();
+        assert_eq!(reopened.dispatch("feature.search.global",&json!({"query":"needle"})).unwrap()["messages"].as_array().unwrap().len(),1);
+        assert_eq!(reopened.dispatch("feature.search.global",&json!({"query":"changed"})).unwrap()["messages"].as_array().unwrap().len(),1);
+    }
+
 #[test]
     fn agent_content_search_reads_canonical_transcript_and_survives_reopen() {
         let root = tempfile::tempdir().unwrap();
