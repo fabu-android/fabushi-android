@@ -6915,23 +6915,25 @@
       "android_disposition": "android-adapted",
       "android_target": [
         "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/production/AgentProfileEditor_view.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/production/AgentAvatarImageImport.kt",
         "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/presentation/MobileBotViewModel.kt",
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/media/AndroidAvatarImageProcessor.kt",
         "source/android-preload/src/main/kotlin/com/ombhrum/fabushi/androidpreload/runtime/AndroidCoordinatorPort.kt",
         "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/coordinator/AndroidCoordinatorRuntime.kt",
         "source/host/src/android_agent_roster.rs"
       ],
       "android_owner": "Compose AgentProfileEditor transient UI; AndroidCoordinatorRuntime + AgentRosterMutationOwner durable dispatch; Rust AndroidAgentRoster canonical state; Android media adapter picker/codec; Host/provider generation boundary",
-      "platform_delta": "Use Android Photo Picker/ContentResolver plus bounded bitmap decode/crop/PNG encoding instead of FileReader/Canvas/drop. Preserve Desktop limits/replacement semantics and lifecycle fencing. Current Android has no production avatar picker/codec/generation owner or canonical avatar fields.",
+      "platform_delta": "Android uses the system Photo Picker/ContentResolver, an android-main bounded bitmap/crop adapter, Compose touch-drag plus zoom controls, and the existing account-fenced durable AgentRoster mutation path. Source <=25 MiB, decode <=4096 px, normalized source <=1024 px, crop zoom 1..5, and committed image is 256x256 PNG. Desktop AI generate still depends on a Host/Rust GenerateImage backend/tool closure that is not present in the current Android Host, so the overall responsibility remains mapped.",
       "implementation_status": "mapped",
-      "production_wiring": "Not implemented at audit parent 610289ca736f7dd0cd1b079599c5adf02e3eda11: AgentProfileEditor edits name/description only; MobileBotSummaryAndroid has no avatarDataUrl/avatarShape/avatarColor; AndroidCoordinatorPort has no avatar mutation; AndroidCoordinatorRuntime updates name/description only; AndroidAgentRoster has no avatar fields/mutations. Generic durable AgentRosterMutationOwner is reusable but is not avatar wiring.",
-      "unit_test": "Existing AgentProfileEditorTest covers name/description only and AgentRosterMutationOwnerTest covers generic durable mutation identity; avatar limit/crop/character/cancellation tests are missing.",
-      "contract_test": "Required typed Coordinator/Host avatar set-clear-character contract with account fence and unknown-outcome reconciliation; no exact-head avatar contract evidence yet.",
-      "integration_test": "Required Compose -> Android media/generation adapter -> Coordinator -> Rust Host roster path including close/account-switch stale fencing.",
+      "production_wiring": "Upload/crop/clear is now production-wired: AgentProfileEditor stages a Photo Picker content URI, AndroidAvatarImageProcessor bounds/normalizes/crops it, MobileBotViewModel fences the mutation by current account/Agent selection, AndroidCoordinatorPort/Runtime dispatches one durable roster operation, and Rust AndroidAgentRoster persists/replays avatarDataUrl. Commits include 8b99b3f91de4e6f9587732c18b490df6ebe7b8e4, 3564649df512e15ff25818929eb541ec3ce52b8b, 5ffb559978a08204f97afd3fee4730c7485e0cd4, a9ddf036, 832b0c18, 76d139a9, d8121d6b, f7e8302c905dd9eec26e87fffad0d7d949f42396, e6cc83ad4004ce4f0d1e8c837f0bbe9291bdf7ea, d1253473f8111124d3cc83b7a97f19993c9080a4 and 8df8b3993fd9421b5055c515bcf305a85fc2ed5b. AI generation remains open and prevents implemented/verified closure.",
+      "unit_test": "Rust AndroidAgentRoster covers durable reopen/replay/duplicate/rejection/clear of avatarDataUrl. AgentProfileEditorTest covers Desktop source/decode bounds plus crop centering, zoom clamp and pan direction/bounds. Exact-head CI is still pending.",
+      "contract_test": "Typed Coordinator avatar set/clear uses the existing durable AgentRosterMutationOwner operation identity and account fence; same-final-head Rust/Kotlin contract CI pending. GenerateImage Host/tool contract remains missing on Android.",
+      "integration_test": "Upload/crop path is production-wired Compose -> Photo Picker/ContentResolver -> AndroidAvatarImageProcessor -> ViewModel account fence -> typed Coordinator -> Rust Host roster. AI generate path remains missing.",
       "packaged_test": "Required on final production package: picker/generate/upload/crop/reset with no test/session backdoor.",
       "device_test": "Required on supported emulator/physical device with picker/ContentResolver, process death/account switch, large/invalid image and offline/error cases.",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Fresh semantic audit of four Desktop 92fcc2b0 avatar-editor blobs. This intentionally records a real missing Android responsibility; do not upgrade until production wiring and same-head CI/package/device evidence exist."
+      "notes": "Partial closure recorded at current migration line: upload, crop, clear, preview and durable replay are implemented; do not mark implemented/verified until the Rust GenerateImage backend/tool/provider closure is ported and same-final-head package/device evidence proves picker/crop/generate/process-death/account-switch behavior."
     },
     {
       "responsibility_id": "AGENT-CHANNEL-CONNECTIONS-ANDROID-001",
