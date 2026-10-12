@@ -13590,7 +13590,7 @@
       "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
       "source_owner": "Desktop production account edge",
       "android_disposition": "android-adapted",
-      "implementation_status": "mapped",
+      "implementation_status": "implemented",
       "contract_test": "required",
       "integration_test": "required",
       "packaged_test": "required",
@@ -13613,13 +13613,19 @@
       "visible_effect": "Account privacy mode remains visible and usable for equivalent product decisions.",
       "android_target": [
         "source/host/src/mcp_auth/dashboard_mcp_auth_backend.rs",
-        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/production/FabushiSettingsSurface.kt"
+        "source/host/src/android_json_runtime.rs",
+        "source/android-preload/src/main/kotlin/com/ombhrum/fabushi/androidpreload/runtime/AndroidCoordinatorPort.kt",
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/coordinator/AndroidCoordinatorRuntime.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/presentation/MarketplaceViewModel.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/production/FabushiSettingsSurface.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/production/ProductionRenderer_view.kt",
+        "mobile/android/app/src/test/java/com/ombhrum/fabushi/AccountPrivacyModePresentationTest.kt"
       ],
       "android_owner": "Rust Host Dashboard backend plus native Settings projection",
       "platform_delta": "Existing SandPrivacyMode cache is reusable but needs a typed user-facing projection.",
-      "production_wiring": "Partial backend privacy read/cache exists; native account-privacy surface is incomplete.",
-      "unit_test": "existing backend parsing/cache plus presentation tests required",
-      "notes": "Separate from ROSTER-PRIVACY-BLOCK-ANDROID-001 and PRIVACY-REDACTION-001."
+      "production_wiring": "Rust Host remains the sole authenticated privacy-policy owner through feature.account.privacyMode and CursorDashboardMcpAuthBackend. The typed AndroidCoordinatorPort/Runtime exposes that read without creating a Kotlin network owner. MarketplaceViewModel refreshes the immutable mode after auth restore/login and when native Settings opens, clears it on logout, and maps read failures to absent rather than inventing a policy. FabushiSettingsSurface displays the canonical mode read-only beside canonical account identity; presentation never persists or enforces the policy.",
+      "unit_test": "AccountPrivacyModePresentationTest@1b568c2aa8d4d460c05de2c3525bbaf33d5a3488 covers all current wire labels plus missing/unknown/future values as Unavailable. Existing Rust dashboard backend parsing/cache coverage remains applicable. Exact-head Actions and authenticated packaged/device policy refresh evidence are still required.",
+      "notes": "Implemented source/runtime/presentation slice from Desktop cursor-profile.ts privacy responsibility without moving privacy truth into Compose. Keep verification_status not-verified until same-final-head Rust/Kotlin/package/device evidence exists."
     }
   ],
   "traceability": {
