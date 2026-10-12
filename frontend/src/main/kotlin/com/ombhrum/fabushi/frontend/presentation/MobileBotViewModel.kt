@@ -852,6 +852,30 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
+    fun updateBotAvatarImage(botId: String, avatarDataUrl: String?) {
+        if (mutableState.value.bots.none { it.id == botId }) return
+        val accountSlot = rosterSelectionAccountSlot
+        val token = agentSettingsFence.beginMutation(botId, accountSlot) ?: return
+        viewModelScope.launch {
+            runCatching {
+                withContext(Dispatchers.IO) {
+                    coordinator.agentUpdateAvatarImage(botId, avatarDataUrl)
+                }
+            }.onSuccess {
+                if (agentSettingsFence.isCurrent(token) && accountSlot == rosterSelectionAccountSlot) {
+                    refreshBots()
+                }
+            }.onFailure { error ->
+                if (agentSettingsFence.isCurrent(token) && accountSlot == rosterSelectionAccountSlot) {
+                    mutableState.value = mutableState.value.copy(
+                        error = error.message ?: "Agent avatar image update failed",
+                    )
+                }
+            }
+            agentSettingsFence.finish(token)
+        }
+    }
+
     fun setBotNotifyOnUpdates(botId: String, isEnabled: Boolean) {
         val bot = mutableState.value.bots.firstOrNull { it.id == botId && !it.isGroup } ?: return
         if (bot.notifyOnUpdatesEnabled == isEnabled) return
