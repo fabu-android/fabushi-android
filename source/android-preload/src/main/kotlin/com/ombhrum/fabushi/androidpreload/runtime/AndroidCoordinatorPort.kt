@@ -535,6 +535,12 @@ interface AndroidCoordinatorPort {
         stepIndex: Int,
         direction: String,
     ): JSONObject = error("Onboarding telemetry is unavailable on this Coordinator port")
+    fun reportReactionAck(
+        ackMs: Long,
+        outcome: String,
+        conversationId: String,
+        emoji: String,
+    ): JSONObject = error("Reaction acknowledgement telemetry is unavailable on this Coordinator port")
 
     fun reportRebuildEscalation(
         rebuildKind: String,
