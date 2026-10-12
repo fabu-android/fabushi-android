@@ -241,6 +241,7 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
         )
         computerRebuildOwner.observeAccount(accountAccessOwner.currentProjection().accountEpoch)
         runCatching { connectivityManager.registerDefaultNetworkCallback(sendNetworkCallback) }
+        runCatching { restoreSendSubmissionJournalOnStartup() }
         startComputerRebuildEventPump()
         resumeComputerRebuildMigrationIfNeeded()
         resumeQueuedComputerUpdateIfNeeded()
@@ -1406,6 +1407,9 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
             }.runAll()
         }
         computerRebuildOwner.observeAccount(currentEpoch)
+        if (loggedIn && currentEpoch != previousEpoch) {
+            runCatching { restoreSendSubmissionJournalOnStartup() }
+        }
         if (loggedIn) resumeQueuedComputerUpdateIfNeeded()
     }
     private fun publishRootConnectionProjection(
@@ -1908,20 +1912,7 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
         // A snapshot begun under an older account epoch may still be returned to its caller, but
         // it must never repopulate the live transport scheduler after an account switch.
         if (accountAccessOwner.currentProjection().accountEpoch == requestAccountEpoch) {
-            parsed.forEach { record ->
-                when (record.phase) {
-                    AndroidSendAcknowledgementPhase.PENDING ->
-                        reportRestoredSendJournal(record, "parked", phaseOverride = "prepared")
-                    AndroidSendAcknowledgementPhase.ACCEPTED_AWAITING_ECHO ->
-                        reportRestoredSendJournal(record, "parked")
-                    AndroidSendAcknowledgementPhase.OUTCOME_UNKNOWN ->
-                        if (record.reason?.contains("Host reopened while dispatch outcome was unknown") == true) {
-                            reportRestoredSendJournal(record, "parked", phaseOverride = "dispatching")
-                        }
-                    else -> Unit
-                }
-            }
-            sendSubmissionQueue.discover(parsed)
+            sendSubmissionQueue.discover(parsed, trackRestoreOutcome = false)
             if (!isSendTransportDown()) scheduleSendSubmissionFlush()
         }
         return parsed
@@ -2332,6 +2323,45 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
             "feature.sendAcknowledgement.cancelQueued",
             scope.toJson(),
         ).optBoolean("cancelled", false)
+
+    private fun restoreSendSubmissionJournalOnStartup() {
+        val projection = host.request("feature.sendAcknowledgement.restoredSnapshot")
+        val rows = projection.optJSONArray("records") ?: JSONArray()
+        if (rows.length() == 0) return
+        val restored = buildList(rows.length()) {
+            for (index in 0 until rows.length()) add(parseSendAcknowledgement(rows.getJSONObject(index)))
+        }
+        restored.forEach { record ->
+            when (record.phase) {
+                AndroidSendAcknowledgementPhase.PENDING ->
+                    reportRestoredSendJournal(record, "parked", phaseOverride = "prepared")
+                AndroidSendAcknowledgementPhase.DISPATCHING ->
+                    reportRestoredSendJournal(record, "parked", phaseOverride = "dispatching")
+                AndroidSendAcknowledgementPhase.ACCEPTED_AWAITING_ECHO ->
+                    reportRestoredSendJournal(record, "parked")
+                else -> Unit
+            }
+        }
+        restored.filter { it.phase == AndroidSendAcknowledgementPhase.QUEUED }
+            .groupBy { it.accountSlot to it.agentId }
+            .forEach { (scope, evidence) ->
+                val (accountSlot, agentId) = scope
+                val restoredNonces = evidence.mapTo(linkedSetOf()) { it.nonce }
+                val canonical = host.request(
+                    "feature.sendAcknowledgement.snapshot",
+                    JSONObject().putNullable("accountSlot", accountSlot).put("agentId", agentId),
+                )
+                val canonicalRows = canonical.optJSONArray("records") ?: JSONArray()
+                val queued = buildList(canonicalRows.length()) {
+                    for (index in 0 until canonicalRows.length()) {
+                        val record = parseSendAcknowledgement(canonicalRows.getJSONObject(index))
+                        if (record.phase == AndroidSendAcknowledgementPhase.QUEUED && record.nonce in restoredNonces) add(record)
+                    }
+                }
+                sendSubmissionQueue.discover(queued, trackRestoreOutcome = true)
+            }
+        if (!isSendTransportDown()) scheduleSendSubmissionFlush()
+    }
 
     private fun reportRestoredSendJournal(
         record: AndroidSendAcknowledgement,
