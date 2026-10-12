@@ -2,7 +2,6 @@ package com.ombhrum.fabushi
 
 import android.app.Application
 import android.content.Intent
-import android.util.Log
 import androidx.activity.ComponentActivity
 import com.ombhrum.fabushi.androidmain.adapters.AndroidAccountOAuthAdapter
 import com.ombhrum.fabushi.androidmain.adapters.AndroidExternalUrlAdapter
@@ -10,7 +9,6 @@ import com.ombhrum.fabushi.androidmain.adapters.AndroidMcpOAuthAdapter
 import java.lang.ref.WeakReference
 import java.util.concurrent.Executors
 import com.ombhrum.fabushi.androidmain.coordinator.AndroidCoordinatorPorts
-import com.ombhrum.fabushi.androidmain.coordinator.AndroidEdgeFailures
 import com.ombhrum.fabushi.androidmain.coordinator.RootShellFocusRefreshOwner
 import com.ombhrum.fabushi.androidmain.coordinator.RootShellFocusRefreshToken
 import com.ombhrum.fabushi.androidmain.notifications.AndroidNotificationRuntime
@@ -26,16 +24,6 @@ import com.ombhrum.fabushi.androidpreload.runtime.AndroidPresentationRuntimePort
  * typed bridge and the remote-device transport is process-scoped rather than tied to a screen.
  */
 class FabushiApplication : Application() {
-    override fun onCreate() {
-        super.onCreate()
-        AndroidEdgeFailures.installReporter { failure ->
-            Log.w(
-                "FabushiEdge",
-                "area=${failure.area} leg=${failure.leg} errorClass=${failure.errorClass}",
-            )
-        }
-    }
-
     @Volatile
     private var processRuntime: FabushiProcessRuntime? = null
 
