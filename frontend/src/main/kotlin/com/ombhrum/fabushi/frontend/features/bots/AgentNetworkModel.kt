@@ -9,7 +9,7 @@ import kotlin.math.sqrt
 
 internal enum class AgentNetworkEdgeKind { MEMBERSHIP, MESSAGE }
 internal enum class AgentNetworkEdgeActivity { IDLE, RECENT, TALKING }
-internal enum class AgentNetworkActivity { IDLE, WORKING, WAITING }
+internal enum class AgentNetworkActivity { IDLE, TYPING, WORKING, WAITING }
 
 internal data class AgentNetworkNode(
     val id: String,
@@ -19,6 +19,7 @@ internal data class AgentNetworkNode(
     val memberIds: List<String>,
     val conversationPartnerIds: List<String>,
     val awaitingUserResponse: Boolean?,
+    val isComposingMessage: Boolean,
     val isRunning: Boolean,
     val lastMessage: String,
     val updatedAt: Long,
@@ -42,6 +43,7 @@ internal fun MobileBotSummaryAndroid.toAgentNetworkNode() = AgentNetworkNode(
     memberIds = memberIds,
     conversationPartnerIds = conversationPartnerIds,
     awaitingUserResponse = awaitingUserResponse,
+    isComposingMessage = isComposingMessage,
     isRunning = isRunning,
     lastMessage = lastMessage,
     updatedAt = updatedAt,
@@ -83,6 +85,7 @@ internal fun agentNetworkEdgeActivity(edge: AgentNetworkEdge, nodesById: Map<Str
 
 internal fun agentNetworkActivity(node: AgentNetworkNode): AgentNetworkActivity = when {
     node.awaitingUserResponse != null -> AgentNetworkActivity.WAITING
+    node.isComposingMessage -> AgentNetworkActivity.TYPING
     node.isRunning -> AgentNetworkActivity.WORKING
     else -> AgentNetworkActivity.IDLE
 }
