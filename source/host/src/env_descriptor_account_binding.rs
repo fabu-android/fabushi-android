@@ -1,6 +1,6 @@
 use crate::sha256::sha256_hex;
 use serde::{Deserialize, Serialize};
-use std::{collections::BTreeMap, fs, io, path::PathBuf};
+use std::{collections::BTreeMap, fs, io::{self, Write}, path::PathBuf};
 
 const BINDING_VERSION: u32 = 1;
 
@@ -76,10 +76,21 @@ impl EnvDescriptorAccountBinding {
             crate::android_json_runtime::now_ms(),
         ));
         let result = (|| -> Result<(), String> {
-            fs::write(&temporary, &encoded)
+            let mut file = fs::File::create(&temporary)
+                .map_err(|error| format!("failed to create account binding temporary file: {error}"))?;
+            file.write_all(&encoded)
                 .map_err(|error| format!("failed to write account binding temporary file: {error}"))?;
+            file.sync_all()
+                .map_err(|error| format!("failed to sync account binding temporary file: {error}"))?;
+            drop(file);
             fs::rename(&temporary, &self.path)
-                .map_err(|error| format!("failed to atomically replace account binding: {error}"))
+                .map_err(|error| format!("failed to atomically replace account binding: {error}"))?;
+            if let Some(parent) = self.path.parent() {
+                fs::File::open(parent)
+                    .and_then(|directory| directory.sync_all())
+                    .map_err(|error| format!("failed to sync account binding directory: {error}"))?;
+            }
+            Ok(())
         })();
         if result.is_err() {
             let _ = fs::remove_file(&temporary);
@@ -122,6 +133,26 @@ mod tests {
         assert!(binding.authorize("account-a", "https://api.ombhrum.com/", true, true).unwrap());
         assert!(binding.authorize("account-a", "https://api.ombhrum.com/", false, true).unwrap());
         assert!(!binding.authorize("account-b", "https://api.ombhrum.com/", true, true).unwrap());
+    }
+
+    #[test]
+    fn binding_survives_reopen_and_keeps_foreign_account_fenced() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("binding.json");
+        {
+            let binding = EnvDescriptorAccountBinding::new(path.clone());
+            assert!(binding
+                .authorize("account-a", "https://api.ombhrum.com/", true, true)
+                .unwrap());
+        }
+
+        let reopened = EnvDescriptorAccountBinding::new(path);
+        assert!(reopened
+            .authorize("account-a", "https://api.ombhrum.com/", false, true)
+            .unwrap());
+        assert!(!reopened
+            .authorize("account-b", "https://api.ombhrum.com/", true, true)
+            .unwrap());
     }
 
     #[test]
