@@ -1429,6 +1429,8 @@ impl AndroidJsonHost {
             "feature.settings.timeZone.set" => self.set_time_zone_settings(params),
             "feature.settings.localToolPermission" => self.local_tool_permission(),
             "feature.settings.localToolPermission.set" => self.set_local_tool_permission(params),
+            "feature.settings.onboardingSeen" => self.onboarding_seen(),
+            "feature.settings.onboardingSeen.set" => self.set_onboarding_seen(params),
             "feature.settings.autoReviewInstructions" => self.auto_review_instructions(),
             "feature.settings.autoReviewInstructions.set" => self.set_auto_review_instructions(params),
             "feature.remote.binding.status" => Ok(self.remote_binding_status()),
@@ -2373,6 +2375,37 @@ impl AndroidJsonHost {
             .set_time_zone_override(value)
             .map_err(|error| format!("failed to persist Android time zone override: {error}"))?;
         Ok(json!({"overrideTimeZone": saved}))
+    }
+
+    fn onboarding_seen(&self) -> Result<Value, String> {
+        let account_scope = self.current_sidebar_account_scope()?;
+        let has_seen = self
+            .user_settings
+            .lock()
+            .map_err(|_| "canonical Android user settings lock poisoned".to_string())?
+            .onboarding_seen(&account_scope);
+        Ok(json!({
+            "accountScope": account_scope,
+            "hasSeenOnboarding": has_seen,
+        }))
+    }
+
+    fn set_onboarding_seen(&mut self, params: &Value) -> Result<Value, String> {
+        let value = params
+            .get("hasSeenOnboarding")
+            .and_then(Value::as_bool)
+            .ok_or("hasSeenOnboarding boolean is required")?;
+        let account_scope = self.current_sidebar_account_scope()?;
+        let saved = self
+            .user_settings
+            .lock()
+            .map_err(|_| "canonical Android user settings lock poisoned".to_string())?
+            .set_onboarding_seen(&account_scope, value)
+            .map_err(|error| format!("failed to persist Android onboarding state: {error}"))?;
+        Ok(json!({
+            "accountScope": account_scope,
+            "hasSeenOnboarding": saved,
+        }))
     }
 
     fn local_tool_permission(&self) -> Result<Value, String> {
@@ -10444,6 +10477,44 @@ mod local_tool_permission_dispatch_tests {
                 .unwrap()["permission"],
             "always",
         );
+    }
+}
+
+#[cfg(test)]
+mod onboarding_settings_dispatch_tests {
+    use super::*;
+
+    #[test]
+    fn onboarding_seen_is_host_owned_durable_and_bound_to_current_account_scope() {
+        let root = tempfile::tempdir().unwrap();
+        let mut host = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+        assert_eq!(
+            host.dispatch("feature.settings.onboardingSeen", &json!({}))
+                .unwrap()["hasSeenOnboarding"],
+            false,
+        );
+        assert_eq!(
+            host.dispatch(
+                "feature.settings.onboardingSeen.set",
+                &json!({"hasSeenOnboarding":true}),
+            )
+            .unwrap()["hasSeenOnboarding"],
+            true,
+        );
+        drop(host);
+
+        let mut reopened = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+        let restored = reopened
+            .dispatch("feature.settings.onboardingSeen", &json!({}))
+            .unwrap();
+        assert_eq!(restored["hasSeenOnboarding"], true);
+        assert_eq!(restored["accountScope"], "account-device:test:android");
+        assert!(reopened
+            .dispatch(
+                "feature.settings.onboardingSeen.set",
+                &json!({"hasSeenOnboarding":"yes"}),
+            )
+            .is_err());
     }
 }
 
