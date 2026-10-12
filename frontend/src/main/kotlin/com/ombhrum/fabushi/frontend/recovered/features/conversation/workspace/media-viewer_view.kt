@@ -69,6 +69,10 @@ private const val ANDROID_PDF_MAX_ZOOM = 4f
 internal fun isAndroidMediaPreviewable(message: ChatMessage): Boolean =
     message.contentType == "photo" || message.contentType == "video"
 
+internal fun shouldStreamAndroidMediaToFile(message: ChatMessage): Boolean =
+    message.contentType != "photo" &&
+        !isAndroidSpreadsheet(message.mediaFileName, message.mediaMimeType)
+
 internal fun isAndroidPdfMessage(message: ChatMessage): Boolean {
     val mime = message.mediaMimeType
         ?.substringBefore(';')
@@ -183,6 +187,7 @@ internal fun AndroidMediaViewer(
     messages: List<ChatMessage>,
     startMessageId: String,
     onLoadBlob: (String, Int, (Result<ByteArray>) -> Unit) -> Unit,
+    onLoadBlobFile: (String, Int, (Result<File>) -> Unit) -> Unit,
     onClose: () -> Unit,
 ) {
     val context = LocalContext.current
@@ -273,6 +278,22 @@ internal fun AndroidMediaViewer(
         if (blobId == null || message.mediaSizeBytes <= 0) {
             error = "媒体文件不可用"
             loading = false
+        } else if (shouldStreamAndroidMediaToFile(message)) {
+            onLoadBlobFile(blobId, message.mediaSizeBytes) { result ->
+                result.onSuccess { streamed ->
+                    if (generation == loadGeneration) {
+                        file = streamed
+                        loading = false
+                    } else {
+                        runCatching { streamed.delete() }
+                    }
+                }.onFailure { failure ->
+                    if (generation == loadGeneration) {
+                        error = failure.message ?: "无法读取媒体"
+                        loading = false
+                    }
+                }
+            }
         } else {
             onLoadBlob(blobId, message.mediaSizeBytes) { result ->
                 if (generation == loadGeneration) {
