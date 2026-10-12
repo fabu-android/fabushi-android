@@ -14575,6 +14575,135 @@
       "artifact": null,
       "verification_status": "not-verified",
       "notes": "Desktop path/PID mechanisms are not portable, but the migration/conflict/recovery product responsibility remains applicable. Do not mark implemented from individual store versions alone."
+    },
+    {
+      "responsibility_id": "TELEMETRY-AGENT-LOAD-ANDROID-001",
+      "domain": "telemetry",
+      "desktop_sources": [
+        {
+          "path": "source/electron-main/telemetry/agent-load-telemetry.ts",
+          "blob_sha": "f5fe6bb0fa3c4e59c1923548d5d3368e7301e6e4",
+          "symbols": [
+            "isValidAgentLoadReport",
+            "agentLoadReportToTelemetry"
+          ]
+        }
+      ],
+      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "responsibility": "Validate and project bounded agent-load latency/outcome telemetry with stable box-state and severity semantics.",
+      "source_owner": "Desktop agent-load telemetry projection",
+      "direct_callers": [
+        "agent load lifecycle"
+      ],
+      "downstream_dependencies": [
+        "structured telemetry spool"
+      ],
+      "state_owner": "Rust Host telemetry projection; no Presentation owner",
+      "persistent_state": [
+        "account-fenced structured log spill"
+      ],
+      "protocol_wire_contract": [
+        "durationMs required finite nonnegative",
+        "openRpcMs/queueMs/renderMs optional finite nonnegative",
+        "cold required boolean",
+        "stale optional boolean",
+        "outcome ready|superseded|failed",
+        "known box states preserved; unknown -> other"
+      ],
+      "visible_effect": "Agent load regressions and failed loads remain diagnosable without unbounded metadata.",
+      "failure_behavior": [
+        "invalid duration rejected",
+        "invalid outcome rejected"
+      ],
+      "cancellation_behavior": "not applicable",
+      "retry_semantics": "each lifecycle report is an independent observation",
+      "idempotency_semantics": "telemetry does not mutate canonical product state",
+      "process_death_recovery": "durable structured-log spill handles Host/process restart independently of product state",
+      "account_fencing": "structured log spool rotates with canonical account slot",
+      "security_boundary": "only bounded typed metadata is persisted; no arbitrary payload or tokens",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "source/host/src/extensions/telemetry/product_events.rs",
+        "source/host/src/android_json_runtime.rs"
+      ],
+      "android_owner": "Rust Host product telemetry projection",
+      "platform_delta": "Electron telemetry IPC is replaced by typed Host feature.telemetry.agentLoad dispatch; semantics remain equivalent.",
+      "implementation_status": "implemented",
+      "production_wiring": "AndroidJsonHost feature.telemetry.agentLoad validates through agent_load_event and records sand.agent_load into structured log spool.",
+      "unit_test": "product_events::tests::agent_load_bounds_unknown_box_state_without_rejecting_it; exact-head Actions pending",
+      "contract_test": "feature.telemetry.agentLoad production dispatch path; exact-head Rust gate pending",
+      "integration_test": "required: real agent load lifecycle emits production event",
+      "packaged_test": "required final artifact",
+      "device_test": "required performance/usage journey",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Implemented; same-final-head verification pending."
+    },
+    {
+      "responsibility_id": "TELEMETRY-AGENTS-UNREACHABLE-ANDROID-001",
+      "domain": "telemetry",
+      "desktop_sources": [
+        {
+          "path": "source/electron-main/telemetry/agents-unreachable-telemetry.ts",
+          "blob_sha": "7e4277b9581e03e0719282976664b4d5032eb68e",
+          "symbols": [
+            "isValidAgentsUnreachableReport",
+            "agentsUnreachableReportToTelemetry"
+          ]
+        }
+      ],
+      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "responsibility": "Project entered/retry/recovered agent-unreachable lifecycle telemetry from the canonical connectivity owner with bounded optional failure metadata.",
+      "source_owner": "Desktop agents-unreachable telemetry projection",
+      "direct_callers": [
+        "root/agent connectivity lifecycle"
+      ],
+      "downstream_dependencies": [
+        "RootConnectionResilienceOwner",
+        "structured telemetry spool"
+      ],
+      "state_owner": "Coordinator RootConnection owner determines lifecycle; Rust Host only validates/projects telemetry",
+      "persistent_state": [
+        "root connection state owned separately",
+        "account-fenced structured log spill"
+      ],
+      "protocol_wire_contract": [
+        "phase entered|retry|recovered",
+        "isManual required boolean",
+        "errorClass optional",
+        "msSinceLastReached optional finite nonnegative",
+        "entered warn; retry/recovered info"
+      ],
+      "visible_effect": "Connectivity failures, retries and recoveries remain diagnosable without Presentation owning connection truth.",
+      "failure_behavior": [
+        "invalid phase rejected",
+        "negative/nonfinite optional duration rejected",
+        "Android producer bounds errorClass to 128 characters"
+      ],
+      "cancellation_behavior": "retry cancellation semantics remain in RootConnection owner; telemetry observation itself is not cancellable",
+      "retry_semantics": "manual and automatic retry each emit retry; recovery emits only on transport edge",
+      "idempotency_semantics": "steady transport state emits no duplicate entered/recovered edge",
+      "process_death_recovery": "root connection truth is rebuilt and telemetry follows new canonical transitions; no stale UI timer is replayed",
+      "account_fencing": "producer lives in process Coordinator and downstream spool is account-fenced",
+      "security_boundary": "only bounded error class and typed fields reach Host telemetry",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "source/host/src/extensions/telemetry/product_events.rs",
+        "source/host/src/android_json_runtime.rs",
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/coordinator/AndroidCoordinatorRuntime.kt"
+      ],
+      "android_owner": "Coordinator connectivity lifecycle + Rust Host telemetry projection",
+      "platform_delta": "Android native connectivity/retry owner replaces Desktop reachability producer; optional elapsed field is omitted when no canonical elapsed value exists.",
+      "implementation_status": "implemented",
+      "production_wiring": "AndroidCoordinatorRuntime emits canonical transport/retry edges to feature.telemetry.agentsUnreachable; Rust validates with agents_unreachable_event and records sand.agents_unreachable.",
+      "unit_test": "product_events::tests::unreachable_event_keeps_desktop_warn_edge_and_nonnegative_contract; exact-head Actions pending",
+      "contract_test": "production Coordinator -> Host dispatch is wired; exact-head architecture/Rust gate pending",
+      "integration_test": "required: transport down -> retry -> recovery production journey",
+      "packaged_test": "required final artifact",
+      "device_test": "required network interruption/recovery journey",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Implemented; Desktop optional msSinceLastReachedMs is not fabricated when Android has no canonical elapsed value."
     }
   ],
   "traceability": {
