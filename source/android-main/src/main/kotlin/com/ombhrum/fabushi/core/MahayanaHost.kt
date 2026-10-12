@@ -6,6 +6,7 @@ import com.ombhrum.fabushi.androidmain.security.AndroidMachineIdStore
 import com.ombhrum.fabushi.androidmain.security.AndroidCredentialVaultStore
 import com.ombhrum.fabushi.androidmain.security.AndroidPluginVariableSecretStore
 import com.ombhrum.fabushi.androidmain.security.AndroidRemoteBindingStore
+import com.ombhrum.fabushi.androidmain.startup.AndroidDataRootBootstrap
 import org.json.JSONObject
 import java.io.Closeable
 import java.util.ArrayDeque
@@ -25,7 +26,7 @@ class MahayanaHost(
     private val featureHostTest: Boolean = false,
     processGeneration: Long = 1L,
 ) : Closeable {
-    private val appDataDir = context.filesDir.absolutePath
+    private val appDataDir = AndroidDataRootBootstrap.settle(context).absolutePath
     private val accountSessionStore = AndroidAccountSessionStore(context)
     private val machineIdStore = AndroidMachineIdStore(context)
     private val pluginSecretStore = AndroidPluginVariableSecretStore(context)
