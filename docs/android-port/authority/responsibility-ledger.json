@@ -15285,6 +15285,35 @@
       "artifact": null,
       "verification_status": "not-verified",
       "notes": "Narrow source responsibility closed; this does not imply complete Box snapshot parity."
+    },
+    {
+      "responsibility_id": "ACTION-AUDIT-ANDROID-001",
+      "domain": "security-action-audit",
+      "desktop_path": "source/host/src/extensions/action_audit/**",
+      "desktop_symbol": "SandActionAuditor / ActionAuditBackend / start_action_audit_extension",
+      "source_sha": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "responsibility": "Collect canonical MCP tool, shell, browser-navigation and computer-use audit events from Host/Runner execution; persist/bound/dedupe them; batch with retry/backoff; and submit to the authenticated Dashboard backend without exposing audit authority to UI.",
+      "source_owner": "Desktop Host action-audit extension + runner audit hooks",
+      "visible_effect": "Security-sensitive Agent actions have durable accountable audit records and backend delivery/drop diagnostics.",
+      "android_disposition": "direct-port",
+      "android_target": [
+        "source/host/src/capability_broker.rs",
+        "source/host/src/mcp_auth/dashboard_mcp_auth_backend.rs",
+        "source/host/src/runner",
+        "source/host/src/android_json_runtime.rs"
+      ],
+      "android_owner": "Rust Host/Runner action-audit service; Presentation has no audit mutation owner",
+      "platform_delta": "Core audit queue/wire semantics are platform-independent Rust. Android execution sources differ (bounded Local/Remote Runner), but each authorized action must emit the same audit semantics.",
+      "implementation_status": "mapped",
+      "production_wiring": "Missing: current Android source has no ActionAudit/AuditAction/RecordSandAuditEvents owner or batch shipper. Existing capability decisions and Dashboard RPC backend are prerequisites only.",
+      "unit_test": "required for encoding, queue cap/dedupe, flush size/timing/backoff and feature gate",
+      "contract_test": "required for event fields and privacy/auth/machine-id wire headers",
+      "integration_test": "required for real authorized MCP/local/remote actions and backend submission",
+      "packaged_test": "required on final APK/AAB",
+      "device_test": "required for auditable tool/computer-use execution and recovery",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Do not infer audit parity from permission enforcement alone; execution authorization and action audit are distinct responsibilities."
     }
   ],
   "traceability": {
