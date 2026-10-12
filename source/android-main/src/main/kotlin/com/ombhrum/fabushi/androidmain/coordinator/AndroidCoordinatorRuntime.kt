@@ -1525,6 +1525,15 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
                 .put("ids", JSONArray().put(id)),
         ) as? JSONObject ?: JSONObject()
 
+    override fun agentPinnedIds(): List<String> {
+        val result = host.requestValue("getPinnedAgents") as? JSONArray ?: JSONArray()
+        return buildList {
+            for (index in 0 until result.length()) {
+                result.optString(index).trim().takeIf(String::isNotEmpty)?.let(::add)
+            }
+        }
+    }
+
     override fun agentSetPinned(ids: List<String>): List<String> {
         val values = JSONArray()
         ids.forEach(values::put)
