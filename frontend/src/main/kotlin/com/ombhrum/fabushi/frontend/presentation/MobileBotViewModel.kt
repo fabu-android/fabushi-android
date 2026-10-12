@@ -7,6 +7,7 @@ import com.ombhrum.fabushi.androidpreload.runtime.AndroidAgentAttachment
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidCoordinatorPort
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidConversationOutlineItem
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidFindInChatEntry
+import com.ombhrum.fabushi.androidpreload.runtime.AndroidGeneratedAvatarImage
 import com.ombhrum.fabushi.androidpreload.runtime.parseAndroidFindInChatEntries
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidSendAcknowledgementEntry
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidSidebarSection
@@ -848,6 +849,36 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
                     mutableState.value = mutableState.value.copy(error = error.message ?: "Agent profile update failed")
                 }
             }
+            agentSettingsFence.finish(token)
+        }
+    }
+
+    suspend fun generateBotAvatarImage(
+        botId: String,
+        description: String,
+    ): Result<AndroidGeneratedAvatarImage> {
+        if (mutableState.value.bots.none { it.id == botId }) {
+            return Result.failure(IllegalStateException("Agent is no longer available"))
+        }
+        val prompt = description.trim()
+        if (prompt.isEmpty()) {
+            return Result.failure(IllegalArgumentException("Describe the avatar to generate"))
+        }
+        val accountSlot = rosterSelectionAccountSlot
+        val token = agentSettingsFence.beginMutation(botId, accountSlot)
+            ?: return Result.failure(IllegalStateException("Another Agent settings operation is in progress"))
+        return try {
+            val result = runCatching {
+                withContext(Dispatchers.IO) {
+                    coordinator.agentGenerateAvatarImage(prompt)
+                }
+            }
+            if (!agentSettingsFence.isCurrent(token) || accountSlot != rosterSelectionAccountSlot) {
+                Result.failure(CancellationException("Agent avatar generation became stale after account or settings change"))
+            } else {
+                result
+            }
+        } finally {
             agentSettingsFence.finish(token)
         }
     }
