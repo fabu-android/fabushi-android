@@ -1887,6 +1887,71 @@ mod tests {
     }
 
     #[test]
+    fn available_server_projection_is_bounded_and_fail_closed() {
+        let projected = project_available_server(AvailableServerWire {
+            id: 17,
+            name: " Calendar ".into(),
+            enabled: true,
+            transport: "streamable-http".into(),
+            url: Some("https://mcp.example.test/api".into()),
+            disabled_by_team_admin_policy: true,
+            server_identifier: Some("calendar/default".into()),
+        })
+        .unwrap();
+        assert_eq!(projected.server_id, "17");
+        assert_eq!(projected.server_name, "Calendar");
+        assert_eq!(projected.server_url.as_deref(), Some("https://mcp.example.test/api"));
+        assert_eq!(projected.transport, McpAuthTransport::Http);
+        assert!(projected.disabled_by_team_admin_policy);
+
+        let invalid_id = AvailableServerWire {
+            id: 0,
+            name: "Calendar".into(),
+            enabled: true,
+            transport: "http".into(),
+            url: Some("https://mcp.example.test".into()),
+            disabled_by_team_admin_policy: false,
+            server_identifier: None,
+        };
+        assert!(project_available_server(invalid_id).is_err());
+
+        let invalid_transport = AvailableServerWire {
+            id: 18,
+            name: "Drive".into(),
+            enabled: true,
+            transport: "pipe".into(),
+            url: Some("https://mcp.example.test".into()),
+            disabled_by_team_admin_policy: false,
+            server_identifier: None,
+        };
+        assert!(project_available_server(invalid_transport).is_err());
+
+        let invalid_url = AvailableServerWire {
+            id: 19,
+            name: "Docs".into(),
+            enabled: true,
+            transport: "sse".into(),
+            url: Some("file:///tmp/mcp.sock".into()),
+            disabled_by_team_admin_policy: false,
+            server_identifier: None,
+        };
+        assert!(project_available_server(invalid_url).is_err());
+
+        let stdio = project_available_server(AvailableServerWire {
+            id: 20,
+            name: "Local".into(),
+            enabled: true,
+            transport: "stdio".into(),
+            url: None,
+            disabled_by_team_admin_policy: false,
+            server_identifier: Some("local/default".into()),
+        })
+        .unwrap();
+        assert_eq!(stdio.transport, McpAuthTransport::Stdio);
+        assert!(stdio.server_url.is_none());
+    }
+
+    #[test]
     fn list_tools_reload_request_and_response_match_desktop_wire_contract() {
         let request = encode_list_sand_mcp_tools_request(&["calendar/default"]);
         assert_eq!(request[0], 0x0a);
