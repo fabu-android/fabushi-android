@@ -439,6 +439,12 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
             JSONObject().put("serverId", serverId).put("toolName", toolName),
         ).optJSONArray("tools") ?: JSONArray()
 
+    override fun mcpServerAccounts(serverId: String): JSONArray =
+        host.request(
+            "feature.mcp.serverAccounts.list",
+            JSONObject().put("serverId", serverId),
+        ).optJSONArray("accounts") ?: JSONArray()
+
     override fun logoutMcpAccount(serverId: String, accountKey: String): JSONObject =
         host.request(
             "feature.mcp.account.logout",
