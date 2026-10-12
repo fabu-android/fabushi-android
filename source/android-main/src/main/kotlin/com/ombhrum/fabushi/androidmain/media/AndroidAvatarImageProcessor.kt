@@ -96,6 +96,59 @@ internal object AndroidAvatarImageProcessor {
         return AndroidAvatarImageSource(dataUrl, bounds.outWidth, bounds.outHeight)
     }
 
+    fun stageGeneratedImage(imageData: String, mimeType: String): AndroidAvatarImageSource {
+        val mime = mimeType.trim().lowercase()
+        require(mime.startsWith("image/")) { "Generated avatar has an invalid MIME type" }
+        val bytes = try {
+            Base64.decode(imageData.trim(), Base64.DEFAULT)
+        } catch (_: IllegalArgumentException) {
+            throw IOException("Generated avatar image is not valid base64")
+        }
+        require(bytes.isNotEmpty()) { "Generated avatar image is empty" }
+        require(bytes.size <= MAX_AGENT_AVATAR_SOURCE_BYTES) {
+            "Generated avatar image exceeds the 25 MB source limit"
+        }
+
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+        require(avatarDimensionsAllowed(bounds.outWidth, bounds.outHeight)) {
+            "Generated avatar image has invalid dimensions"
+        }
+        val options = BitmapFactory.Options().apply {
+            inSampleSize = avatarDecodeSampleSize(bounds.outWidth, bounds.outHeight)
+        }
+        val decoded = BitmapFactory.decodeByteArray(bytes, 0, bytes.size, options)
+            ?: throw IOException("Android could not decode the generated avatar image")
+        val normalized = decoded.scaleWithin(MAX_AGENT_AVATAR_OUTPUT_DIMENSION)
+        if (normalized !== decoded) decoded.recycle()
+
+        var current = normalized
+        try {
+            while (true) {
+                val encoded = ByteArrayOutputStream().also { stream ->
+                    check(current.compress(Bitmap.CompressFormat.PNG, 100, stream)) {
+                        "Android could not encode the generated avatar image"
+                    }
+                }.toByteArray()
+                if (encoded.size <= MAX_AGENT_AVATAR_OUTPUT_BYTES) {
+                    val dataUrl = avatarPngDataUrl(encoded)
+                    return AndroidAvatarImageSource(dataUrl, current.width, current.height)
+                }
+                val nextWidth = (current.width * 0.85f).roundToInt().coerceAtLeast(1)
+                val nextHeight = (current.height * 0.85f).roundToInt().coerceAtLeast(1)
+                check(nextWidth < current.width || nextHeight < current.height) {
+                    "Generated avatar image exceeds the durable avatar limit"
+                }
+                val previous = current
+                current = Bitmap.createScaledBitmap(previous, nextWidth, nextHeight, true)
+                if (previous !== normalized) previous.recycle()
+            }
+        } finally {
+            if (current !== normalized) current.recycle()
+            normalized.recycle()
+        }
+    }
+
     fun encodeCrop(source: AndroidAvatarImageSource, crop: AndroidAvatarCrop): String {
         val separator = source.dataUrl.indexOf(',')
         require(separator > 0 && separator < source.dataUrl.lastIndex) { "Avatar source is invalid" }
