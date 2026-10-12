@@ -45,6 +45,7 @@ import kotlinx.coroutines.withContext
 
 private enum class FabushiSettingsSection {
     GENERAL,
+    CREDENTIALS,
     UPDATES,
 }
 
@@ -201,6 +202,12 @@ internal fun FabushiSettingsSurface(
     accountUsageSummary: AndroidAccountUsageSummary?,
     accountUsageBusy: Boolean,
     accountUsageError: String?,
+    credentialVaultItems: List<CredentialVaultMetadata>,
+    credentialVaultBusy: Boolean,
+    credentialVaultError: String?,
+    onRefreshCredentialVault: () -> Unit,
+    onSaveCredential: (String, String, String, List<String>, Boolean) -> Unit,
+    onRevokeCredential: (String) -> Unit,
     onUpdateAccountDisplayName: (String) -> Unit,
     updateState: AndroidUpdateUiState,
     updateTrackPolicy: AndroidUpdateTrackPolicy,
@@ -216,11 +223,19 @@ internal fun FabushiSettingsSurface(
 ) {
     var section by remember { mutableStateOf(FabushiSettingsSection.GENERAL) }
     var accountNameDraft by remember(accountName) { mutableStateOf(accountName) }
+    var credentialNameDraft by remember { mutableStateOf("") }
+    var credentialLabelDraft by remember { mutableStateOf("") }
+    var credentialSecretDraft by remember { mutableStateOf("") }
+    var credentialOriginsDraft by remember { mutableStateOf("https://") }
+    var credentialRotate by remember { mutableStateOf(false) }
     val theme = LocalFabushiThemeController.current
     LaunchedEffect(accountLoggedIn) {
         if (accountLoggedIn) {
             onRefreshAccountPrivacyMode()
             onRefreshAccountUsage()
+            onRefreshCredentialVault()
+        } else {
+            credentialSecretDraft = ""
         }
     }
     AlertDialog(
@@ -235,6 +250,9 @@ internal fun FabushiSettingsSurface(
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     TextButton(onClick = { section = FabushiSettingsSection.GENERAL }) {
                         Text(if (section == FabushiSettingsSection.GENERAL) "✓ General" else "General")
+                    }
+                    TextButton(onClick = { section = FabushiSettingsSection.CREDENTIALS }) {
+                        Text(if (section == FabushiSettingsSection.CREDENTIALS) "✓ Credentials" else "Credentials")
                     }
                     TextButton(onClick = { section = FabushiSettingsSection.UPDATES }) {
                         Text(if (section == FabushiSettingsSection.UPDATES) "✓ Updates" else "Updates")
@@ -343,6 +361,149 @@ internal fun FabushiSettingsSurface(
                             "Theme preference is stored on this Android device. " +
                                 "Account, Agent and runtime truth remain owned by their canonical services.",
                         )
+                    }
+                    FabushiSettingsSection.CREDENTIALS -> {
+                        if (!accountLoggedIn) {
+                            Text("Sign in to manage account-scoped credentials.")
+                        } else {
+                            Text("Credential Vault")
+                            Text(
+                                "Secrets are encrypted with Android Keystore. Saved values cannot be revealed; " +
+                                    "only metadata and origin bindings are shown.",
+                                modifier = Modifier.testTag("settings-credential-vault-description"),
+                            )
+                            if (credentialVaultBusy) {
+                                LinearProgressIndicator(
+                                    modifier = Modifier.testTag("settings-credential-vault-busy"),
+                                )
+                            }
+                            credentialVaultError?.takeIf(String::isNotBlank)?.let { error ->
+                                Text(
+                                    error,
+                                    color = MaterialTheme.colorScheme.error,
+                                    modifier = Modifier.testTag("settings-credential-vault-error"),
+                                )
+                            }
+                            credentialVaultItems.forEach { credential ->
+                                Column(
+                                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                                    modifier = Modifier.testTag("settings-credential-${credential.name}"),
+                                ) {
+                                    Text(credential.label.ifBlank { credential.name })
+                                    Text(credential.name)
+                                    Text(
+                                        "Allowed origins: " +
+                                            credential.allowedOrigins.joinToString().ifBlank { "none" },
+                                    )
+                                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        TextButton(
+                                            onClick = {
+                                                credentialNameDraft = credential.name
+                                                credentialLabelDraft = credential.label
+                                                credentialOriginsDraft =
+                                                    credential.allowedOrigins.joinToString("\n")
+                                                credentialSecretDraft = ""
+                                                credentialRotate = true
+                                            },
+                                            enabled = !credentialVaultBusy,
+                                            modifier = Modifier.testTag(
+                                                "settings-credential-rotate-${credential.name}",
+                                            ),
+                                        ) { Text("Rotate") }
+                                        TextButton(
+                                            onClick = { onRevokeCredential(credential.name) },
+                                            enabled = !credentialVaultBusy,
+                                            modifier = Modifier.testTag(
+                                                "settings-credential-revoke-${credential.name}",
+                                            ),
+                                        ) { Text("Revoke") }
+                                    }
+                                }
+                            }
+                            OutlinedTextField(
+                                value = credentialNameDraft,
+                                onValueChange = { credentialNameDraft = it.take(512) },
+                                enabled = !credentialVaultBusy && !credentialRotate,
+                                singleLine = true,
+                                label = { Text("Secret reference") },
+                                modifier = Modifier.testTag("settings-credential-name"),
+                            )
+                            OutlinedTextField(
+                                value = credentialLabelDraft,
+                                onValueChange = { credentialLabelDraft = it.take(200) },
+                                enabled = !credentialVaultBusy,
+                                singleLine = true,
+                                label = { Text("Label") },
+                                modifier = Modifier.testTag("settings-credential-label"),
+                            )
+                            OutlinedTextField(
+                                value = credentialSecretDraft,
+                                onValueChange = { credentialSecretDraft = it },
+                                enabled = !credentialVaultBusy,
+                                singleLine = true,
+                                label = { Text(if (credentialRotate) "New secret value" else "Secret value") },
+                                modifier = Modifier.testTag("settings-credential-secret"),
+                            )
+                            OutlinedTextField(
+                                value = credentialOriginsDraft,
+                                onValueChange = { credentialOriginsDraft = it.take(4096) },
+                                enabled = !credentialVaultBusy,
+                                label = { Text("Allowed origins (one per line)") },
+                                modifier = Modifier.testTag("settings-credential-origins"),
+                            )
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                TextButton(
+                                    onClick = {
+                                        val name = credentialNameDraft.trim()
+                                        val secret = credentialSecretDraft
+                                        val origins = credentialOriginsDraft
+                                            .lineSequence()
+                                            .map(String::trim)
+                                            .filter(String::isNotEmpty)
+                                            .toList()
+                                        if (name.isNotEmpty() && secret.isNotEmpty() && origins.isNotEmpty()) {
+                                            onSaveCredential(
+                                                name,
+                                                credentialLabelDraft.trim(),
+                                                secret,
+                                                origins,
+                                                credentialRotate,
+                                            )
+                                            credentialSecretDraft = ""
+                                            if (!credentialRotate) {
+                                                credentialNameDraft = ""
+                                                credentialLabelDraft = ""
+                                                credentialOriginsDraft = "https://"
+                                            }
+                                            credentialRotate = false
+                                        }
+                                    },
+                                    enabled = !credentialVaultBusy &&
+                                        credentialNameDraft.trim().isNotEmpty() &&
+                                        credentialSecretDraft.isNotEmpty() &&
+                                        credentialOriginsDraft.lineSequence().any { it.trim().isNotEmpty() },
+                                    modifier = Modifier.testTag("settings-credential-save"),
+                                ) {
+                                    Text(if (credentialRotate) "Rotate credential" else "Save credential")
+                                }
+                                TextButton(
+                                    onClick = {
+                                        credentialNameDraft = ""
+                                        credentialLabelDraft = ""
+                                        credentialSecretDraft = ""
+                                        credentialOriginsDraft = "https://"
+                                        credentialRotate = false
+                                    },
+                                    enabled = !credentialVaultBusy,
+                                    modifier = Modifier.testTag("settings-credential-discard"),
+                                ) { Text("Discard") }
+                                TextButton(
+                                    onClick = onRefreshCredentialVault,
+                                    enabled = !credentialVaultBusy,
+                                    modifier = Modifier.testTag("settings-credential-refresh"),
+                                ) { Text("Refresh") }
+                            }
+                        }
                     }
                     FabushiSettingsSection.UPDATES -> {
                         Text("App updates")
