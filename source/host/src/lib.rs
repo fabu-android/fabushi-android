@@ -59,6 +59,7 @@ pub mod production_binding_providers;
 pub mod remote_execution;
 pub mod remote_browser_ua;
 pub mod remote_box_store_sync;
+pub mod remote_codebase_telemetry;
 pub mod remote_codebase_snapshot;
 pub mod runner;
 pub mod runner_context_production_provider;
