@@ -18,6 +18,12 @@ object AndroidCoordinatorBridge {
         installed = port
     }
 
+    internal fun clearTrustedRuntime(expected: AndroidCoordinatorPort) {
+        synchronized(this) {
+            if (installed === expected) installed = null
+        }
+    }
+
     fun presentation(): AndroidCoordinatorPort =
         checkNotNull(installed) { "coordinator_runtime_not_installed" }
 }
