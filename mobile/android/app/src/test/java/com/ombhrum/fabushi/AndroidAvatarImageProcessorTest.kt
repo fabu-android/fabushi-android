@@ -1,6 +1,7 @@
 package com.ombhrum.fabushi
 
 import com.ombhrum.fabushi.androidmain.media.MAX_AGENT_AVATAR_OUTPUT_DIMENSION
+import com.ombhrum.fabushi.androidmain.media.MAX_AGENT_AVATAR_SOURCE_DIMENSION
 import com.ombhrum.fabushi.androidmain.media.avatarDecodeSampleSize
 import com.ombhrum.fabushi.androidmain.media.avatarDimensionsAllowed
 import org.junit.Assert.assertEquals
