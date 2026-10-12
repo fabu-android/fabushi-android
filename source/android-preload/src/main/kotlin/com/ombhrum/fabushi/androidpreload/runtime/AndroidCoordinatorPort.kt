@@ -447,6 +447,10 @@ interface AndroidCoordinatorPort {
         error("MCP server catalog is unavailable on this Coordinator port")
     fun mcpServerTools(serverId: String): JSONArray =
         error("MCP server tool catalog is unavailable on this Coordinator port")
+    fun mcpServerCustomInstructions(serverId: String): String? =
+        error("MCP server custom instructions are unavailable on this Coordinator port")
+    fun setMcpServerCustomInstructions(serverId: String, instructions: String): String? =
+        error("MCP server custom instruction mutation is unavailable on this Coordinator port")
     fun toggleMcpServerTool(serverId: String, toolName: String): JSONArray =
         error("MCP server tool toggle is unavailable on this Coordinator port")
     fun mcpOAuthRegister(state: String, provider: String): Boolean
