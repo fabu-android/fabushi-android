@@ -6,7 +6,11 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class GlobalKeyboardShortcutsTest {
-    private data class Fixture(val controller: GlobalKeyboardShortcutController, val calls: MutableList<String>)
+    private data class Fixture(
+        val controller: GlobalKeyboardShortcutController,
+        val binding: GlobalKeyboardShortcutPresentationBinding,
+        val calls: MutableList<String>,
+    )
 
     private fun fixture(agentCount: Int = 12, includeFind: Boolean = true): Fixture {
         val calls = mutableListOf<String>()
@@ -19,9 +23,10 @@ class GlobalKeyboardShortcutsTest {
             navigateBack = { calls += "back" }, navigateForward = { calls += "forward" },
             focusAgent = { calls += "agent:$it" }, toggleSidebar = { calls += "sidebar" },
         )
-        return Fixture(GlobalKeyboardShortcutController().also {
-            it.bindPresentation().setActions(createRootShellShortcutActions(handlers, agentCount))
-        }, calls)
+        val controller = GlobalKeyboardShortcutController()
+        val binding = controller.bindPresentation()
+        binding.setActions(createRootShellShortcutActions(handlers, agentCount))
+        return Fixture(controller, binding, calls)
     }
 
     @Test fun orderedRegistryCoversDesktopChordsAndBoundsFocusAgents() {
@@ -49,12 +54,12 @@ class GlobalKeyboardShortcutsTest {
 
     @Test fun editableDefaultPreventedRepeatAndOptionalFindAreFenced() {
         val f = fixture(agentCount = 2)
-        f.controller.setEditableFocused(true)
+        f.binding.setEditableFocused(true)
         assertFalse(f.controller.dispatch(GlobalShortcutKeyEvent("i", ctrl = true)))
         assertTrue(f.controller.dispatch(GlobalShortcutKeyEvent("k", ctrl = true)))
         assertFalse(f.controller.dispatch(GlobalShortcutKeyEvent("k", ctrl = true, defaultPrevented = true)))
         assertFalse(f.controller.dispatch(GlobalShortcutKeyEvent("k", ctrl = true, repeat = true)))
-        f.controller.setEditableFocused(false)
+        f.binding.setEditableFocused(false)
         assertTrue(f.controller.dispatch(GlobalShortcutKeyEvent("l", meta = true)))
         assertEquals("focus", f.calls.last())
         assertTrue(f.controller.dispatch(GlobalShortcutKeyEvent("f", ctrl = true)))
@@ -64,14 +69,14 @@ class GlobalKeyboardShortcutsTest {
 
     @Test fun escapeOnlyClosesRootOverlayWhenUnstackedAndAllowed() {
         val f = fixture()
-        f.controller.acceptOverlayState(RootOverlayEscapeState(isArmed = true, close = { f.calls += "close" }))
+        f.binding.acceptOverlayState(RootOverlayEscapeState(isArmed = true, close = { f.calls += "close" }))
         assertTrue(f.controller.dispatch(GlobalShortcutKeyEvent("escape")))
-        f.controller.acceptOverlayState(RootOverlayEscapeState(isArmed = true, isOverlayStacked = true, close = { f.calls += "bad" }))
+        f.binding.acceptOverlayState(RootOverlayEscapeState(isArmed = true, isOverlayStacked = true, close = { f.calls += "bad" }))
         assertFalse(f.controller.dispatch(GlobalShortcutKeyEvent("escape")))
         assertFalse(f.calls.contains("bad"))
-        f.controller.acceptOverlayState(RootOverlayEscapeState(isArmed = true, close = { f.calls += "prevented" }))
+        f.binding.acceptOverlayState(RootOverlayEscapeState(isArmed = true, close = { f.calls += "prevented" }))
         assertFalse(f.controller.dispatch(GlobalShortcutKeyEvent("escape", defaultPrevented = true)))
-        f.controller.acceptOverlayState(RootOverlayEscapeState(isArmed = true, allowPreventedRootSearchEscape = true, close = { f.calls += "root-search" }))
+        f.binding.acceptOverlayState(RootOverlayEscapeState(isArmed = true, allowPreventedRootSearchEscape = true, close = { f.calls += "root-search" }))
         assertTrue(f.controller.dispatch(GlobalShortcutKeyEvent("escape", defaultPrevented = true)))
         assertEquals("root-search", f.calls.last())
     }
