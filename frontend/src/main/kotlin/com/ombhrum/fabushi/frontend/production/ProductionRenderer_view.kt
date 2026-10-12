@@ -896,6 +896,7 @@ internal fun ProductionRenderer(
                             onEndAgentSettings = botModel::endAgentSettings,
                             onUpdateBotProfile = botModel::updateBotProfile,
                             onSetBotAvatarImage = botModel::updateBotAvatarImage,
+                            onGenerateBotAvatarImage = botModel::generateBotAvatarImage,
                             onSetBotNotifyOnUpdates = botModel::setBotNotifyOnUpdates,
                             onHideBot = botModel::hideBot,
                             onUnhideBot = botModel::unhideBot,
