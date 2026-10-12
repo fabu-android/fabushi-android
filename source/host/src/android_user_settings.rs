@@ -53,14 +53,6 @@ impl LocalToolPermission {
         }
     }
 
-    fn rank(self) -> u8 {
-        match self {
-            Self::Never => 0,
-            Self::Ask => 1,
-            Self::Always => 2,
-        }
-    }
-
     pub fn clamp_to_ceiling(self, ceiling: Option<Self>) -> Self {
         match ceiling {
             Some(ceiling) if self.rank() > ceiling.rank() => ceiling,
