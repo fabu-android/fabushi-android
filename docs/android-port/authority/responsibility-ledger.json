@@ -14428,21 +14428,25 @@
       "android_target": [
         "docs/android-port/verification/performance.md",
         "source/android-main/src/main/kotlin/com/ombhrum/fabushi/FabushiApplication.kt",
-        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/coordinator/CoordinatorTelemetry.kt"
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/coordinator/CoordinatorTelemetry.kt",
+        "source/host/src/android_process_metrics.rs",
+        "source/host/src/process_metrics.rs",
+        "source/host/src/android_json_runtime.rs",
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/coordinator/AndroidCoordinatorRuntime.kt"
       ],
-      "android_owner": "Process-scoped Android runtime plus Actions-driven Android benchmark/device diagnostics",
+      "android_owner": "Rust Host process-metrics collector owns canonical sampling/session state; AndroidCoordinatorRuntime is the platform-only self-process CPU/PSS source.",
       "platform_delta": "Desktop cursor-proclist scans Electron/local-daemon process trees and can report to Cursor backend. Android sandboxing forbids equivalent arbitrary process-tree enumeration; replacement is app/Host-owned resource sampling plus official Android benchmark/tracing on Actions devices. Cursor-specific backend upload is not assumed to be an Android product-account contract.",
       "implementation_status": "mapped",
-      "production_wiring": "Process lifecycle owner and CI performance specification exist, but a shipping bounded Android process-resource sampler/report sink has not yet been proven. This record intentionally remains mapped.",
-      "unit_test": "required for rate clamp, aggregation, redaction, stale generation, disable/dispose and single in-flight semantics",
+      "production_wiring": "Production sampling is now wired: AndroidCoordinatorRuntime runs a process-scoped bounded scheduler, reads durable feature.settings.processMetrics localEnabled before each sample, samples only the current app process via Process.getElapsedCpuTime()/Debug.MemoryInfo.totalPss, and sends feature.telemetry.processMetrics.observe through the typed Host path. Rust AndroidProcessMetricsCollector owns monotonic time/CPU checks, sequence/session/peak state and bounded memory validation. bf825ae21c9bbf744c717523b0b005b7440344e0 removed a stale nonexistent AndroidProcessMetricsRuntime second owner. Remaining gap: observed samples are not yet retained/projected into a bounded diagnostic sink or authenticated report sink, so this stays mapped/not-verified.",
+      "unit_test": "Rust AndroidProcessMetricsCollector covers stable session/sequence/peak and invalid/stale/backwards input without state advance; ProcessMetricsSampler covers Desktop-equivalent window/redaction semantics. Exact-head GitHub Actions are pending.",
       "contract_test": "Desktop process-metrics sources read at current Desktop main; Android telemetry/privacy contract is docs/android-port/features/12-settings.md + verification/performance.md",
       "integration_test": "required at FabushiProcessRuntime lifecycle boundary",
       "packaged_test": "required on release variant",
       "device_test": "required on Actions-driven reference Android devices using official tracing/benchmark methods",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Do not treat Desktop cursor-proclist or Cursor numeric-metrics backend as directly portable Android mechanisms. Source closure requires a bounded Android replacement and exact-head device evidence. Concurrent duplicate OBSERVABILITY-PROCESS-METRICS-ANDROID-001 was consolidated here; generic telemetry does not upgrade this responsibility.",
-      "android_head_at_update": "9c0b61b8f666c6991399354bbf471437d3226805"
+      "notes": "Do not treat Desktop cursor-proclist or Cursor numeric-metrics backend as directly portable Android mechanisms. Self-process collection is implemented and single-owned by Rust Host; source closure still requires a bounded diagnostic/report sink plus exact-head package/device performance evidence. Concurrent duplicate OBSERVABILITY-PROCESS-METRICS-ANDROID-001 was consolidated here.",
+      "android_head_at_update": "700f7dc5c017b3cea8222b00ce4be9cb5f3362b8"
     },
     {
       "responsibility_id": "STORAGE-MIGRATION-ANDROID-001",
