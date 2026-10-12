@@ -15431,6 +15431,35 @@
       "artifact": null,
       "verification_status": "not-verified",
       "notes": "Keep fail-closed: absence/failure of auto-review must never turn into automatic approval."
+    },
+    {
+      "responsibility_id": "AUTOMATION-CLOUD-SYNC-ANDROID-001",
+      "domain": "automation-cloud-sync",
+      "desktop_path": "source/host/src/extensions/automations/**",
+      "desktop_symbol": "AutomationsService proto / SandAutomationCloudSync / ProductionAutomationsBackendRuntime / SandAutomationFireConsumer / listener watcher",
+      "source_sha": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "responsibility": "Own server/cloud automation parity above local workflow execution: authenticated wire protocol, integration/listener subscription state, cloud trigger scheduling authority/shadow reconcile, backend relay/fire polling, trigger matching and durable fire completion/failure without duplicate side effects.",
+      "source_owner": "Desktop Host automations extension",
+      "visible_effect": "Scheduled and external-event workflows continue firing from cloud/integration sources while Android is restarted/offline, reconnect cleanly, and avoid duplicate workflow side effects.",
+      "android_disposition": "direct-port",
+      "android_target": [
+        "source/host/src/automation_runtime.rs",
+        "source/host/src/automation_schedule.rs",
+        "source/host/src/android_json_runtime.rs",
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/automation/AndroidAutomationScheduler.kt"
+      ],
+      "android_owner": "Rust Host cloud-automation runtime plus Android OS scheduler only for local wakeups; cloud authority must remain Host/backend owned",
+      "platform_delta": "Wire/sync/fire/listener semantics are platform-neutral Rust. Android WorkManager/OS scheduling replaces desktop process wake mechanics but must not become a second workflow state owner.",
+      "implementation_status": "mapped",
+      "production_wiring": "Local durable AutomationRuntime and schedule parsing exist. Missing: AutomationsService wire/client, cloud definition/shadow reconcile, relay/listener integration watcher, cloud fire consumer and production backend polling lifecycle.",
+      "unit_test": "required for proto/trigger mapping, reconcile/prune, relay/fire matching, backoff and duplicate completion",
+      "contract_test": "required for authenticated cloud wire protocol, integration scopes and scheduling authority",
+      "integration_test": "required with real automation backend plus GitHub/Slack listener events",
+      "packaged_test": "required on final APK/AAB",
+      "device_test": "required for restart/offline/reconnect/cloud fire without duplicate execution",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Separate from AUTOMATION-WORKFLOW-001 local durable run lifecycle. Local success does not prove cloud/listener automation parity."
     }
   ],
   "traceability": {
