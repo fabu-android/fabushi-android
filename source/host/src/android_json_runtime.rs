@@ -1130,8 +1130,12 @@ impl AndroidJsonHost {
                 }
             })),
             "feature.auth.status" => self.account_status(),
-            "feature.account.telemetry.snapshot" => serde_json::to_value(self.account_telemetry.snapshot())
-                .map_err(|error| format!("failed to serialize account telemetry snapshot: {error}")),
+            "feature.account.telemetry.snapshot" => {
+                let mut snapshot = self.account_telemetry.snapshot();
+                snapshot.extend(self.account.session_telemetry_snapshot());
+                serde_json::to_value(snapshot)
+                    .map_err(|error| format!("failed to serialize account telemetry snapshot: {error}"))
+            },
             "feature.account.fence" => Ok(json!({"accountFence":self.current_turn_account_fence()?})),
             "feature.account.sandAccess" => self.account_sand_access(),
             "feature.account.privacyMode" => Ok(self.account_privacy_mode()),
