@@ -235,5 +235,6 @@ internal class FabushiProcessRuntime(
         notificationEventSubscription.close()
         notificationRuntime.reset()
         remoteDeviceGateway.close()
+        AndroidCoordinatorPorts.closeProcessRuntime()
     }
 }
