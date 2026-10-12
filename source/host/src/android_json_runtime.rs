@@ -12,6 +12,7 @@ use crate::agent_attachment::{
 };
 use crate::android_sidebar_sections::{AndroidSidebarSection, AndroidSidebarSections};
 use crate::host_secret_store::get_or_create_host_machine_id;
+use crate::human_call_runtime::HumanCallRuntime;
 use crate::env_descriptor_account_binding::EnvDescriptorAccountBinding;
 use crate::host_runner_composition::AuthenticatedRemoteHostRunner;
 use crate::messaging_service::AndroidMessagingService;
@@ -704,6 +705,7 @@ pub struct AndroidJsonHost {
     remote_runner: Arc<Mutex<Option<AuthenticatedRemoteHostRunner<AuthenticatedRemoteHttpTransport>>>>,
     remote_journal_path: PathBuf,
     automation_runtime: AutomationRuntime,
+    human_calls: HumanCallRuntime,
     webauthn: WebAuthnProxyExtension,
     webauthn_provider_queues: BTreeMap<String, VecDeque<WebAuthnRequestFrame>>,
 }
@@ -983,6 +985,8 @@ impl AndroidJsonHost {
             remote_journal_path: app_data_dir.join("remote-execution-journal.json"),
             automation_runtime: AutomationRuntime::open(app_data_dir.join("automation-runtime.json"), now_ms())
                 .unwrap_or_else(|error| panic!("failed to open durable Android automation runtime: {error}")),
+            human_calls: HumanCallRuntime::open(app_data_dir.join("human-calls.json"), now_ms())
+                .unwrap_or_else(|error| panic!("failed to open durable Android Human call runtime: {error}")),
             webauthn: WebAuthnProxyExtension::new(WebAuthnProxyExtensionConfig::default()),
             webauthn_provider_queues: BTreeMap::new(),
         }
@@ -1255,6 +1259,14 @@ impl AndroidJsonHost {
             "feature.agent.rosterMutation" => self.agent_roster_mutation(params),
             "feature.agent.sidebarSections" => self.agent_sidebar_sections(),
             "feature.agent.upgradeQuiesce" => self.agent_upgrade_quiesce(params),
+            "feature.call.create" => self.human_call_create(params),
+            "feature.call.list" => self.human_call_list(params),
+            "feature.call.lease" => self.human_call_lease(params),
+            "feature.call.transition" => self.human_call_transition(params),
+            "feature.call.media.update" => self.human_call_media_update(params),
+            "feature.call.signal.send" => self.human_call_signal_send(params),
+            "feature.call.signal.list" => self.human_call_signal_list(params),
+            "feature.call.reconcile" => self.human_call_reconcile(params),
             "feature.automation.upsert" => self.automation_upsert(params),
             "feature.automation.list" => self.automation_list(),
             "feature.automation.start" => self.automation_start(params),
@@ -2102,6 +2114,117 @@ impl AndroidJsonHost {
                 .resolve_sand_team_rules()?,
         };
         Ok(json!({"rules": rules}))
+    }
+
+    fn human_call_create(&mut self, params: &Value) -> Result<Value, String> {
+        let account_fence = self.current_turn_account_fence()?;
+        let (creator_id, _) = self.current_messaging_identity()?;
+        let participants = params
+            .get("participantIds")
+            .and_then(Value::as_array)
+            .ok_or("participantIds array is required")?
+            .iter()
+            .map(|value| value.as_str().ok_or("participantIds must contain strings").map(str::to_string))
+            .collect::<Result<Vec<_>, _>>()?;
+        let session = self.human_calls.create(
+            required_string(params, "callId")?,
+            required_string(params, "requestId")?,
+            required_string(params, "scopeId")?,
+            &creator_id,
+            participants,
+            &account_fence,
+            now_ms(),
+        )?;
+        serde_json::to_value(session).map_err(|error| error.to_string())
+    }
+
+    fn human_call_list(&mut self, params: &Value) -> Result<Value, String> {
+        let account_fence = self.current_turn_account_fence()?;
+        let limit = params.get("limit").and_then(Value::as_u64).unwrap_or(20) as usize;
+        serde_json::to_value(self.human_calls.list(
+            required_string(params, "scopeId")?,
+            &account_fence,
+            limit,
+        ))
+        .map_err(|error| error.to_string())
+    }
+
+    fn human_call_lease(&mut self, params: &Value) -> Result<Value, String> {
+        let account_fence = self.current_turn_account_fence()?;
+        let (user_id, _) = self.current_messaging_identity()?;
+        let lease = self.human_calls.lease(
+            required_string(params, "callId")?,
+            &account_fence,
+            required_u64(params, "generation")?,
+            &user_id,
+            required_string(params, "deviceId")?,
+            params.get("allowClaim").and_then(Value::as_bool).unwrap_or(false),
+        )?;
+        serde_json::to_value(lease).map_err(|error| error.to_string())
+    }
+
+    fn human_call_transition(&mut self, params: &Value) -> Result<Value, String> {
+        let account_fence = self.current_turn_account_fence()?;
+        let session = self.human_calls.transition(
+            required_string(params, "callId")?,
+            &account_fence,
+            required_u64(params, "generation")?,
+            required_string(params, "action")?,
+            params.get("terminalReason").and_then(Value::as_str).map(str::to_string),
+            now_ms(),
+        )?;
+        serde_json::to_value(session).map_err(|error| error.to_string())
+    }
+
+    fn human_call_media_update(&mut self, params: &Value) -> Result<Value, String> {
+        let account_fence = self.current_turn_account_fence()?;
+        let session = self.human_calls.update_media(
+            required_string(params, "callId")?,
+            &account_fence,
+            required_u64(params, "generation")?,
+            params.get("mediaCapabilities").cloned().unwrap_or_else(|| json!({})),
+            params.get("deviceSelection").cloned().unwrap_or_else(|| json!({})),
+            now_ms(),
+        )?;
+        serde_json::to_value(session).map_err(|error| error.to_string())
+    }
+
+    fn human_call_signal_send(&mut self, params: &Value) -> Result<Value, String> {
+        let account_fence = self.current_turn_account_fence()?;
+        let signal = self.human_calls.send_signal(
+            required_string(params, "callId")?,
+            &account_fence,
+            required_u64(params, "generation")?,
+            required_string(params, "senderDeviceId")?,
+            required_string(params, "kind")?,
+            params.get("payload").cloned().ok_or("signal payload is required")?,
+            now_ms(),
+        )?;
+        serde_json::to_value(signal).map_err(|error| error.to_string())
+    }
+
+    fn human_call_signal_list(&mut self, params: &Value) -> Result<Value, String> {
+        let account_fence = self.current_turn_account_fence()?;
+        let signals = self.human_calls.signals_since(
+            required_string(params, "callId")?,
+            &account_fence,
+            required_u64(params, "generation")?,
+            params.get("afterSeq").and_then(Value::as_u64).unwrap_or(0),
+        )?;
+        serde_json::to_value(signals).map_err(|error| error.to_string())
+    }
+
+    fn human_call_reconcile(&mut self, params: &Value) -> Result<Value, String> {
+        let account_fence = self.current_turn_account_fence()?;
+        let session = self.human_calls.reconcile_unknown(
+            required_string(params, "callId")?,
+            &account_fence,
+            required_u64(params, "generation")?,
+            required_string(params, "terminalState")?,
+            params.get("reason").and_then(Value::as_str).map(str::to_string),
+            now_ms(),
+        )?;
+        serde_json::to_value(session).map_err(|error| error.to_string())
     }
 
     fn automation_upsert(&mut self, params: &Value) -> Result<Value, String> {
