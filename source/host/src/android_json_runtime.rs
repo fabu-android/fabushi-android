@@ -15,6 +15,7 @@ use crate::agent_attachment::{
 use crate::android_sidebar_sections::{AndroidSidebarSection, AndroidSidebarSections};
 use crate::android_user_settings::AndroidUserSettings;
 use crate::host_secret_store::get_or_create_host_machine_id;
+use crate::onepassword_provisioning::{DurableOnePasswordProvisioningOwner, DurableProvisioningPhase};
 use crate::human_call_runtime::HumanCallRuntime;
 use crate::env_descriptor_account_binding::EnvDescriptorAccountBinding;
 use crate::host_runner_composition::AuthenticatedRemoteHostRunner;
@@ -699,6 +700,7 @@ pub struct AndroidJsonHost {
     subagent_events: Arc<Mutex<VecDeque<Value>>>,
     subagent_review_approvals: Arc<SubagentReviewApprovalRegistry>,
     teach_recording: Arc<Mutex<DurableTeachRecordingOwner>>,
+    onepassword_provisioning: Arc<Mutex<DurableOnePasswordProvisioningOwner>>,
     trays: HostTraysExtension,
     tray_events: Arc<Mutex<VecDeque<Value>>>,
     _tray_subscription: TraySubscription,
@@ -914,6 +916,14 @@ impl AndroidJsonHost {
             DurableTeachRecordingOwner::open(app_data_dir.join("teach-recording.json"), now_ms())
                 .unwrap_or_else(|error| panic!("failed to open durable Teach Recording owner: {error}")),
         ));
+        let onepassword_provisioning = Arc::new(Mutex::new(
+            DurableOnePasswordProvisioningOwner::open(
+                app_data_dir.join("onepassword-provisioning.json"),
+            )
+            .unwrap_or_else(|error| {
+                panic!("failed to open durable 1Password provisioning owner: {error}")
+            }),
+        ));
         let trays = start_trays_extension();
         let tray_events = Arc::new(Mutex::new(VecDeque::new()));
         let tray_event_sink = Arc::clone(&tray_events);
@@ -998,6 +1008,7 @@ impl AndroidJsonHost {
             subagent_events,
             subagent_review_approvals,
             teach_recording,
+            onepassword_provisioning,
             trays,
             tray_events,
             _tray_subscription: tray_subscription,
@@ -1274,6 +1285,135 @@ impl AndroidJsonHost {
             .client_action(action, &args)
     }
 
+    fn onepassword_provisioning_status(&self) -> Result<Value, String> {
+        let snapshot = self
+            .onepassword_provisioning
+            .lock()
+            .map_err(|_| "1Password provisioning owner lock poisoned".to_string())?
+            .snapshot()
+            .clone();
+        Ok(json!({
+            "phase": match snapshot.phase {
+                DurableProvisioningPhase::Idle => "idle",
+                DurableProvisioningPhase::Prepared => "prepared",
+                DurableProvisioningPhase::Delivering => "delivering",
+                DurableProvisioningPhase::OutcomeUnknown => "outcome-unknown",
+                DurableProvisioningPhase::Delivered => "delivered",
+            },
+            "accountFence": snapshot.account_fence,
+            "accountEpoch": if snapshot.account_epoch == 0 { Value::Null } else { json!(snapshot.account_epoch) },
+            "requestId": snapshot.request_id,
+            "operationId": snapshot.operation_id,
+            "consumerReference": snapshot.consumer_reference,
+            "outcomeUnknownReason": snapshot.outcome_unknown_reason,
+            "requiresReconciliation": snapshot.requires_reconciliation(),
+            "remoteExecutorReady": false,
+            "unavailableReason": "authorized_remote_runner_onepassword_executor_not_wired",
+        }))
+    }
+
+    fn onepassword_provisioning_identity(
+        &self,
+        params: &Value,
+    ) -> Result<(String, u64, String), String> {
+        let requested_fence = required_string(params, "accountFence")?;
+        let current_fence = self.current_turn_account_fence()?;
+        if requested_fence != current_fence {
+            return Err("1Password provisioning request is fenced to a stale account".into());
+        }
+        let account_epoch = params
+            .get("accountEpoch")
+            .and_then(Value::as_u64)
+            .filter(|value| *value > 0)
+            .ok_or("1Password provisioning accountEpoch must be positive")?;
+        let operation_id = required_string(params, "operationId")?.to_string();
+        Ok((current_fence, account_epoch, operation_id))
+    }
+
+    fn onepassword_provisioning_begin(&mut self, params: &Value) -> Result<Value, String> {
+        let (account_fence, account_epoch, operation_id) =
+            self.onepassword_provisioning_identity(params)?;
+        let request_id = required_string(params, "requestId")?;
+        self.onepassword_provisioning
+            .lock()
+            .map_err(|_| "1Password provisioning owner lock poisoned".to_string())?
+            .begin(
+                &account_fence,
+                account_epoch,
+                request_id,
+                &operation_id,
+            )?;
+        self.onepassword_provisioning_status()
+    }
+
+    fn onepassword_provisioning_mark_delivering(
+        &mut self,
+        params: &Value,
+    ) -> Result<Value, String> {
+        let (account_fence, account_epoch, operation_id) =
+            self.onepassword_provisioning_identity(params)?;
+        self.onepassword_provisioning
+            .lock()
+            .map_err(|_| "1Password provisioning owner lock poisoned".to_string())?
+            .mark_delivering(&account_fence, account_epoch, &operation_id)?;
+        self.onepassword_provisioning_status()
+    }
+
+    fn onepassword_provisioning_mark_outcome_unknown(
+        &mut self,
+        params: &Value,
+    ) -> Result<Value, String> {
+        let (account_fence, account_epoch, operation_id) =
+            self.onepassword_provisioning_identity(params)?;
+        let reason = required_string(params, "reason")?;
+        self.onepassword_provisioning
+            .lock()
+            .map_err(|_| "1Password provisioning owner lock poisoned".to_string())?
+            .mark_outcome_unknown(
+                &account_fence,
+                account_epoch,
+                &operation_id,
+                reason,
+            )?;
+        self.onepassword_provisioning_status()
+    }
+
+    fn onepassword_provisioning_settle_delivered(
+        &mut self,
+        params: &Value,
+    ) -> Result<Value, String> {
+        let (account_fence, account_epoch, operation_id) =
+            self.onepassword_provisioning_identity(params)?;
+        let consumer_reference = required_string(params, "consumerReference")?;
+        self.onepassword_provisioning
+            .lock()
+            .map_err(|_| "1Password provisioning owner lock poisoned".to_string())?
+            .settle_delivered(
+                &account_fence,
+                account_epoch,
+                &operation_id,
+                consumer_reference,
+            )?;
+        self.onepassword_provisioning_status()
+    }
+
+    fn onepassword_provisioning_reconcile_not_delivered(
+        &mut self,
+        params: &Value,
+    ) -> Result<Value, String> {
+        let (account_fence, account_epoch, operation_id) =
+            self.onepassword_provisioning_identity(params)?;
+        self.onepassword_provisioning
+            .lock()
+            .map_err(|_| "1Password provisioning owner lock poisoned".to_string())?
+            .reconcile_not_delivered(
+                &account_fence,
+                account_epoch,
+                &operation_id,
+            )?;
+        self.onepassword_provisioning_status()
+    }
+
     fn teach_recording_status(&self) -> Result<Value, String> {
         let snapshot = self
             .teach_recording
@@ -1435,6 +1575,12 @@ impl AndroidJsonHost {
             "feature.settings.autoReviewInstructions.set" => self.set_auto_review_instructions(params),
             "feature.remote.binding.status" => Ok(self.remote_binding_status()),
             "feature.teachRecording.status" => self.teach_recording_status(),
+            "feature.onePassword.provisioning.status" => self.onepassword_provisioning_status(),
+            "feature.onePassword.provisioning.begin" => self.onepassword_provisioning_begin(params),
+            "feature.onePassword.provisioning.markDelivering" => self.onepassword_provisioning_mark_delivering(params),
+            "feature.onePassword.provisioning.markOutcomeUnknown" => self.onepassword_provisioning_mark_outcome_unknown(params),
+            "feature.onePassword.provisioning.settleDelivered" => self.onepassword_provisioning_settle_delivered(params),
+            "feature.onePassword.provisioning.reconcileNotDelivered" => self.onepassword_provisioning_reconcile_not_delivered(params),
             "feature.auth.deviceAgentSession" => Ok(self.device_agent_session()),
             "feature.auth.providers" => Ok(json!([
                 {"id":"google","displayName":"Google"},
@@ -2825,6 +2971,25 @@ impl AndroidJsonHost {
                 .lock()
                 .map_err(|_| "Teach Recording owner lock poisoned".to_string())?
                 .fence_account_switch(previous_fence, teach_identity.account_epoch)?;
+        }
+
+        let provisioning_identity = self
+            .onepassword_provisioning
+            .lock()
+            .map_err(|_| "1Password provisioning owner lock poisoned".to_string())?
+            .snapshot()
+            .clone();
+        if matches!(
+            provisioning_identity.phase,
+            DurableProvisioningPhase::Prepared
+                | DurableProvisioningPhase::Delivering
+                | DurableProvisioningPhase::OutcomeUnknown
+        ) && provisioning_identity.account_fence.as_deref() == Some(previous_fence)
+        {
+            self.onepassword_provisioning
+                .lock()
+                .map_err(|_| "1Password provisioning owner lock poisoned".to_string())?
+                .fence_account_switch(previous_fence, provisioning_identity.account_epoch)?;
         }
 
         // Prepared variable writes may contain secret values. Even though commit is account-fenced,
