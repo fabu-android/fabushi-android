@@ -28,6 +28,7 @@ import com.ombhrum.fabushi.androidpreload.deeplink.AndroidPresentationDeepLink
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidEntrypointAvailabilitySnapshot
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidAutoReviewInstructions
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidAutoReviewInstructionsSnapshot
+import com.ombhrum.fabushi.androidpreload.runtime.AndroidTimeZoneSettings
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidEntrypointId
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidPresentationRuntimePort
 import kotlinx.coroutines.Dispatchers
@@ -82,6 +83,10 @@ internal fun ProductionRenderer(
                 var autoReviewBusy by remember { mutableStateOf(false) }
                 var autoReviewError by remember { mutableStateOf<String?>(null) }
                 var autoReviewRequestGeneration by remember { mutableStateOf(0L) }
+                var timeZoneSettings by remember { mutableStateOf<AndroidTimeZoneSettings?>(null) }
+                var timeZoneBusy by remember { mutableStateOf(false) }
+                var timeZoneError by remember { mutableStateOf<String?>(null) }
+                var timeZoneRequestGeneration by remember { mutableStateOf(0L) }
                 var computerUpdateConfirmAction by remember {
                     mutableStateOf<CommandPaletteComputerUpdateAction?>(null)
                 }
@@ -171,6 +176,38 @@ internal fun ProductionRenderer(
                         onClose = { showAbout = false },
                     )
                 }
+                fun refreshTimeZoneSettings() {
+                    val generation = timeZoneRequestGeneration + 1L
+                    timeZoneRequestGeneration = generation
+                    timeZoneBusy = true
+                    timeZoneError = null
+                    coroutineScope.launch {
+                        val result = withContext(Dispatchers.IO) {
+                            runCatching { coordinator.timeZoneSettings() }
+                        }
+                        if (generation != timeZoneRequestGeneration) return@launch
+                        timeZoneBusy = false
+                        result.onSuccess { timeZoneSettings = it }
+                            .onFailure { timeZoneError = it.message ?: "Time zone settings unavailable" }
+                    }
+                }
+
+                fun saveTimeZoneOverride(value: String?) {
+                    val generation = timeZoneRequestGeneration + 1L
+                    timeZoneRequestGeneration = generation
+                    timeZoneBusy = true
+                    timeZoneError = null
+                    coroutineScope.launch {
+                        val result = withContext(Dispatchers.IO) {
+                            runCatching { coordinator.setTimeZoneOverride(value) }
+                        }
+                        if (generation != timeZoneRequestGeneration) return@launch
+                        timeZoneBusy = false
+                        result.onSuccess { timeZoneSettings = it }
+                            .onFailure { timeZoneError = it.message ?: "Time zone setting was not saved" }
+                    }
+                }
+
                 fun refreshAutoReviewInstructions() {
                     val generation = autoReviewRequestGeneration + 1L
                     autoReviewRequestGeneration = generation
@@ -227,6 +264,13 @@ internal fun ProductionRenderer(
                     autoReviewSnapshot = null
                     autoReviewError = null
                     autoReviewBusy = false
+                    timeZoneRequestGeneration += 1L
+                    timeZoneSettings = null
+                    timeZoneError = null
+                    timeZoneBusy = false
+                    if (showSettings) {
+                        refreshTimeZoneSettings()
+                    }
                     if (showSettings && state.loggedIn) {
                         refreshAutoReviewInstructions()
                     }
@@ -245,6 +289,10 @@ internal fun ProductionRenderer(
                         accountUsageSummary = state.accountUsageSummary,
                         accountUsageBusy = state.accountUsageBusy,
                         accountUsageError = state.accountUsageError,
+                        timeZoneSettings = timeZoneSettings,
+                        timeZoneBusy = timeZoneBusy,
+                        timeZoneError = timeZoneError,
+                        onSaveTimeZoneOverride = ::saveTimeZoneOverride,
                         autoReviewSnapshot = autoReviewSnapshot,
                         autoReviewBusy = autoReviewBusy,
                         autoReviewError = autoReviewError,
