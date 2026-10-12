@@ -24,6 +24,7 @@ import javax.crypto.spec.GCMParameterSpec
 internal class AndroidAccountSessionStore(context: Context) {
     private val applicationContext = context.applicationContext
     private val sessionFile = File(applicationContext.noBackupFilesDir, SESSION_FILE_NAME)
+    @Volatile private var protectedStoreUnavailable = false
 
     fun readSessionJson(): String? {
         val encoded = runCatching { sessionFile.readText(StandardCharsets.UTF_8) }.getOrNull()
@@ -39,7 +40,7 @@ internal class AndroidAccountSessionStore(context: Context) {
             require(iv.size in 12..16) { "invalid account-session IV" }
             require(ciphertext.isNotEmpty()) { "empty account-session ciphertext" }
             val cipher = Cipher.getInstance(TRANSFORMATION)
-            cipher.init(Cipher.DECRYPT_MODE, secretKey(), GCMParameterSpec(GCM_TAG_BITS, iv))
+            cipher.init(Cipher.DECRYPT_MODE, protectedSecretKey(), GCMParameterSpec(GCM_TAG_BITS, iv))
             String(cipher.doFinal(ciphertext), StandardCharsets.UTF_8)
                 .takeIf { it.isNotBlank() }
                 ?: error("empty decrypted account session")
@@ -55,7 +56,7 @@ internal class AndroidAccountSessionStore(context: Context) {
             "account session exceeds bounded secret payload"
         }
         val cipher = Cipher.getInstance(TRANSFORMATION)
-        cipher.init(Cipher.ENCRYPT_MODE, secretKey())
+        cipher.init(Cipher.ENCRYPT_MODE, protectedSecretKey())
         val ciphertext = cipher.doFinal(value.toByteArray(StandardCharsets.UTF_8))
         val document = buildString {
             append(FORMAT_VERSION).append('\n')
@@ -82,6 +83,27 @@ internal class AndroidAccountSessionStore(context: Context) {
     fun clear() {
         runCatching { sessionFile.delete() }
     }
+
+    /**
+     * Returns and clears the platform-store failure latch.
+     *
+     * Corrupt/legacy ciphertext is not reported as a Keystore outage. Only failures while opening
+     * or creating the AndroidKeyStore key trip this latch, so the Rust Host can preserve Desktop's
+     * protected-store-unavailable telemetry without making Kotlin a second account-state owner.
+     */
+    fun consumeProtectedStoreUnavailable(): Boolean {
+        val observed = protectedStoreUnavailable
+        protectedStoreUnavailable = false
+        return observed
+    }
+
+    private fun protectedSecretKey(): SecretKey =
+        try {
+            secretKey()
+        } catch (error: Throwable) {
+            protectedStoreUnavailable = true
+            throw error
+        }
 
     private fun secretKey(): SecretKey {
         val keyStore = KeyStore.getInstance(ANDROID_KEY_STORE).apply { load(null) }
