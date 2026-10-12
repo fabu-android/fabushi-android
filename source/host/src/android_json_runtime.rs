@@ -11415,6 +11415,47 @@ mod process_metrics_recent_dispatch_tests {
 }
 
 #[cfg(test)]
+mod event_loop_pressure_dispatch_tests {
+    use super::*;
+
+    #[test]
+    fn event_loop_pressure_records_only_elevated_windows_and_rejects_invalid_values() {
+        let root = tempfile::tempdir().unwrap();
+        let mut host = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+
+        let quiet = host
+            .dispatch(
+                "feature.telemetry.eventLoopPressure",
+                &json!({"p50Ms":10,"p95Ms":99,"maxMs":120,"windowMs":60_000}),
+            )
+            .unwrap();
+        assert_eq!(quiet["recorded"], false);
+
+        let elevated = host
+            .dispatch(
+                "feature.telemetry.eventLoopPressure",
+                &json!({"p50Ms":25,"p95Ms":150,"maxMs":500,"windowMs":60_000}),
+            )
+            .unwrap();
+        assert_eq!(elevated["recorded"], true);
+
+        let durable = std::fs::read_to_string(
+            root.path().join("android-structured-log-spill.v1.json"),
+        )
+        .unwrap();
+        assert!(durable.contains("sand.desktop.event_loop"));
+        assert!(durable.contains("elevated"));
+
+        assert!(host
+            .dispatch(
+                "feature.telemetry.eventLoopPressure",
+                &json!({"p50Ms":0,"p95Ms":-1,"maxMs":0,"windowMs":60_000}),
+            )
+            .is_err());
+    }
+}
+
+#[cfg(test)]
 mod process_crash_telemetry_dispatch_tests {
     use super::*;
 
