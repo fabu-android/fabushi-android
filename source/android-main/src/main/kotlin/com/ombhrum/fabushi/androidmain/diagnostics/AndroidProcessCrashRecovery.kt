@@ -3,6 +3,7 @@ package com.ombhrum.fabushi.androidmain.diagnostics
 import android.content.Context
 import android.os.Process
 import android.os.SystemClock
+import android.util.AtomicFile
 import org.json.JSONObject
 import java.io.File
 import java.nio.charset.StandardCharsets
@@ -23,7 +24,8 @@ internal data class AndroidProcessCrashMarker(
  */
 internal class AndroidProcessCrashRecovery(context: Context) {
     private val directory = File(context.filesDir, "telemetry")
-    private val markerFile = File(directory, "android-process-crash.v1.json")
+    private val markerPath = File(directory, "android-process-crash.v1.json")
+    private val markerFile = AtomicFile(markerPath)
 
     @Volatile
     private var installedHandler: Thread.UncaughtExceptionHandler? = null
@@ -54,7 +56,9 @@ internal class AndroidProcessCrashRecovery(context: Context) {
     }
 
     fun pending(): AndroidProcessCrashMarker? {
-        val raw = runCatching { markerFile.readText(StandardCharsets.UTF_8) }.getOrNull() ?: return null
+        val raw = runCatching {
+            markerFile.openRead().bufferedReader(StandardCharsets.UTF_8).use { it.readText() }
+        }.getOrNull() ?: return null
         val parsed = runCatching { JSONObject(raw) }.getOrNull() ?: return null
         if (parsed.optInt("schemaVersion", 0) != 1) return null
         val kind = parsed.optString("kind").takeIf { it == "uncaught_exception" } ?: return null
@@ -69,7 +73,10 @@ internal class AndroidProcessCrashRecovery(context: Context) {
     fun acknowledge(marker: AndroidProcessCrashMarker): Boolean {
         val current = pending() ?: return true
         if (current != marker) return false
-        return !markerFile.exists() || markerFile.delete()
+        return runCatching {
+            markerFile.delete()
+            !markerPath.exists()
+        }.getOrDefault(false)
     }
 
     internal fun persist(marker: AndroidProcessCrashMarker) {
@@ -82,7 +89,6 @@ internal class AndroidProcessCrashRecovery(context: Context) {
         }
         directory.mkdirs()
         check(directory.isDirectory) { "process crash marker directory unavailable" }
-        val temporary = File(directory, markerFile.name + ".tmp")
         val payload = JSONObject()
             .put("schemaVersion", 1)
             .put("kind", marker.kind)
@@ -91,14 +97,15 @@ internal class AndroidProcessCrashRecovery(context: Context) {
             .put("uptimeMs", marker.uptimeMs)
             .toString()
             .toByteArray(StandardCharsets.UTF_8)
-        temporary.outputStream().use { stream ->
+        val stream = markerFile.startWrite()
+        try {
             stream.write(payload)
             stream.flush()
             stream.fd.sync()
-        }
-        if (!temporary.renameTo(markerFile)) {
-            temporary.delete()
-            error("failed to atomically publish Android process crash marker")
+            markerFile.finishWrite(stream)
+        } catch (error: Throwable) {
+            markerFile.failWrite(stream)
+            throw error
         }
     }
 }
