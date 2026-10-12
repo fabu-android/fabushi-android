@@ -234,6 +234,7 @@ internal fun FabushiSettingsSurface(
     onCancelSandTrial: () -> Unit,
     onCheckUpdate: () -> Unit,
     onInstallUpdate: () -> Unit,
+    onOpenFeedback: () -> Unit,
     onClose: () -> Unit,
 ) {
     var section by remember { mutableStateOf(FabushiSettingsSection.GENERAL) }
@@ -499,6 +500,19 @@ internal fun FabushiSettingsSurface(
                                 color = MaterialTheme.colorScheme.error,
                                 modifier = Modifier.testTag("settings-process-metrics-error"),
                             )
+                        }
+
+                        Text("Feedback")
+                        Text(
+                            "Send product feedback through the canonical Host. Account credentials never enter Compose.",
+                            modifier = Modifier.testTag("settings-feedback-description"),
+                        )
+                        TextButton(
+                            onClick = onOpenFeedback,
+                            enabled = accountLoggedIn,
+                            modifier = Modifier.testTag("settings-feedback-open"),
+                        ) {
+                            Text("Send feedback")
                         }
 
                         Text("Appearance")
