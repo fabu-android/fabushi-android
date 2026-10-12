@@ -6111,11 +6111,20 @@ impl AndroidJsonHost {
         Ok(owner.projection(account_slot.as_deref(), &account_fence, &agent_id))
     }
     fn send_acknowledgement_restored_snapshot(&self) -> Result<Value, String> {
+        let account_slot = self.account.account_storage_scope();
+        let account_fence = self.current_turn_account_fence()?;
         let owner = self
             .send_acknowledgements
             .lock()
             .map_err(|_| "send acknowledgement owner lock poisoned".to_string())?;
-        Ok(json!({ "records": owner.restored_on_open() }))
+        let records = owner
+            .restored_on_open()
+            .into_iter()
+            .filter(|record| {
+                record.account_slot == account_slot && record.account_fence == account_fence
+            })
+            .collect::<Vec<_>>();
+        Ok(json!({ "records": records }))
     }
 
 
