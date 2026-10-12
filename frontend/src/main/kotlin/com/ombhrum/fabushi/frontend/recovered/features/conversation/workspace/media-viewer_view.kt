@@ -935,11 +935,7 @@ private fun mediaUri(context: Context, file: File): Uri =
 private fun copyMediaImageToClipboard(context: Context, file: File, mimeType: String?) {
     val uri = mediaUri(context, file)
     val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-    val clip = ClipData.newUri(context.contentResolver, "Fabushi image", uri).apply {
-        description.extras = android.os.PersistableBundle().apply {
-            putString("fabushi_mime_type", mimeType ?: "image/*")
-        }
-    }
+    val clip = ClipData.newUri(context.contentResolver, "Fabushi image", uri)
     clipboard.setPrimaryClip(clip)
 }
 
