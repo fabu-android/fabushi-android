@@ -44,6 +44,7 @@ import com.ombhrum.fabushi.AndroidMandatoryUpdateFacts
 import com.ombhrum.fabushi.AndroidMandatoryUpdateOwner
 import com.ombhrum.fabushi.SharedPreferencesMandatoryUpdateStateStore
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidAgentAttachment
+import com.ombhrum.fabushi.androidpreload.runtime.AndroidAgentAttachmentReadChunk
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidApprovalCleanupResult
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidClientSideToolV2Event
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidComposerDraft
@@ -2069,6 +2070,55 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
                 .put("attachmentId", attachmentId),
         )
         return response.optJSONObject("draft")?.let(::parseComposerDraft)
+    }
+
+    override fun composerDraftAttachmentReadRange(
+        accountSlot: String?,
+        agentId: String,
+        attachmentId: String,
+        offset: Long,
+        length: Int,
+    ): AndroidAgentAttachmentReadChunk {
+        require(offset >= 0L) { "Agent attachment read offset must be non-negative" }
+        require(length in 1..(4 * 1024 * 1024)) {
+            "Agent attachment read length must be between 1 byte and 4 MiB"
+        }
+        val response = host.request(
+            "feature.composerDraft.attachment.readRange",
+            JSONObject()
+                .putNullable("accountSlot", accountSlot)
+                .put("agentId", agentId)
+                .put("attachmentId", attachmentId)
+                .put("offset", offset)
+                .put("length", length),
+        )
+        val responseAttachmentId = response.getString("attachmentId")
+        check(responseAttachmentId == attachmentId) {
+            "Agent attachment range read returned a mismatched attachment id"
+        }
+        val responseOffset = response.getLong("offset")
+        check(responseOffset == offset) {
+            "Agent attachment range read returned a stale offset"
+        }
+        val bytes = Base64.decode(response.getString("dataBase64"), Base64.DEFAULT)
+        val nextOffset = response.getLong("nextOffset")
+        check(nextOffset == offset + bytes.size.toLong()) {
+            "Agent attachment range read returned an invalid continuation offset"
+        }
+        val sizeBytes = response.getLong("size")
+        check(sizeBytes >= nextOffset) {
+            "Agent attachment range read exceeded the declared file size"
+        }
+        return AndroidAgentAttachmentReadChunk(
+            attachmentId = responseAttachmentId,
+            name = response.getString("name"),
+            mimeType = response.optString("mimeType").takeIf(String::isNotBlank),
+            offset = responseOffset,
+            nextOffset = nextOffset,
+            sizeBytes = sizeBytes,
+            eof = response.optBoolean("eof", false),
+            bytes = bytes,
+        )
     }
 
     override fun acceptClientSideToolV2(event: JSONObject): AndroidClientSideToolV2Event =
