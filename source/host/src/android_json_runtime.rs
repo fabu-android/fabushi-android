@@ -1127,6 +1127,17 @@ impl AndroidJsonHost {
     fn mcp_server_custom_instructions(&self, params: &Value) -> Result<Value, String> {
         let server_id = required_string(params, "serverId")?;
         let account_fence = self.current_turn_account_fence()?;
+        let backend = self
+            .mcp_dashboard_backend
+            .as_ref()
+            .ok_or("MCP server catalog backend is unavailable")?;
+        if !backend
+            .list_server_snapshots()?
+            .iter()
+            .any(|server| server.server_id == server_id)
+        {
+            return Err("MCP server not found".into());
+        }
         let instructions = self
             .mcp_server_tool_settings
             .lock()
@@ -1146,6 +1157,17 @@ impl AndroidJsonHost {
             .and_then(Value::as_str)
             .ok_or("MCP custom instructions string is required")?;
         let account_fence = self.current_turn_account_fence()?;
+        let backend = self
+            .mcp_dashboard_backend
+            .as_ref()
+            .ok_or("MCP server catalog backend is unavailable")?;
+        if !backend
+            .list_server_snapshots()?
+            .iter()
+            .any(|server| server.server_id == server_id)
+        {
+            return Err("MCP server not found".into());
+        }
         let saved = self
             .mcp_server_tool_settings
             .lock()
