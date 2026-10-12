@@ -525,7 +525,6 @@ interface AndroidCoordinatorPort {
     fun humanCallLease(
         callId: String,
         generation: Long,
-        deviceId: String,
         allowClaim: Boolean,
     ): AndroidHumanCallLease = error("Human call transport lease is unavailable on this Coordinator port")
     fun humanCallTransition(
@@ -543,7 +542,6 @@ interface AndroidCoordinatorPort {
     fun humanCallSendSignal(
         callId: String,
         generation: Long,
-        senderDeviceId: String,
         kind: String,
         payload: JSONObject,
     ): AndroidHumanCallSignal = error("Human call signaling is unavailable on this Coordinator port")
