@@ -2659,6 +2659,10 @@ impl AndroidJsonHost {
             .map_err(|_| "Android user settings lock poisoned".to_string())?
             .set_process_metrics_local_enabled(local_enabled)
             .map_err(|error| format!("failed to persist Android process metrics setting: {error}"))?;
+        if !enabled {
+            self.process_metrics.reset();
+            self.process_metrics_recent.clear();
+        }
         Ok(json!({
             "localEnabled": enabled,
             "backendReportingEnabled": false,
