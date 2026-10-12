@@ -38,7 +38,8 @@ use crate::mcp_auth::{
     SandPrivacyMode as BackendSandPrivacyMode,
 };
 use crate::extensions::telemetry::product_events::{
-    agent_load_event, agents_unreachable_event, StructuredTelemetryEvent, TelemetryLevel,
+    agent_load_event, agents_unreachable_event, event_loop_pressure_event,
+    StructuredTelemetryEvent, TelemetryLevel,
 };
 use crate::extensions::teach_recording::{DurableTeachRecordingOwner, TeachRecordingPhase};
 use crate::extensions::trays::extension::{start_trays_extension, HostTraysExtension};
@@ -1616,6 +1617,30 @@ impl AndroidJsonHost {
         self.record_product_telemetry("sand.agents_unreachable", event)
     }
 
+    fn event_loop_pressure_telemetry(&mut self, params: &Value) -> Result<Value, String> {
+        let p50_ms = params
+            .get("p50Ms")
+            .and_then(Value::as_f64)
+            .ok_or("p50Ms is required")?;
+        let p95_ms = params
+            .get("p95Ms")
+            .and_then(Value::as_f64)
+            .ok_or("p95Ms is required")?;
+        let max_ms = params
+            .get("maxMs")
+            .and_then(Value::as_f64)
+            .ok_or("maxMs is required")?;
+        let window_ms = params
+            .get("windowMs")
+            .and_then(Value::as_f64)
+            .ok_or("windowMs is required")?;
+        let Some(event) = event_loop_pressure_event(p50_ms, p95_ms, max_ms, window_ms)? else {
+            return Ok(json!({"recorded":false}));
+        };
+        self.record_product_telemetry("sand.desktop.event_loop", event)?;
+        Ok(json!({"recorded":true}))
+    }
+
     fn sync_structured_log_account_slot(&mut self) {
         let account_slot = self
             .account
@@ -1798,6 +1823,7 @@ impl AndroidJsonHost {
             },
             "feature.telemetry.agentLoad" => self.agent_load_telemetry(params),
             "feature.telemetry.agentsUnreachable" => self.agents_unreachable_telemetry(params),
+            "feature.telemetry.eventLoopPressure" => self.event_loop_pressure_telemetry(params),
             "feature.diagnostics.edgeFailures.snapshot" => serde_json::to_value(self.edge_failures.snapshot()).map_err(|error| format!("failed to serialize edge failure snapshot: {error}")),
             "feature.diagnostics.edgeFailures.report" => {
                 let area = required_string(params, "area")?;
