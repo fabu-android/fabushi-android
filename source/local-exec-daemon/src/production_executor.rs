@@ -12,9 +12,10 @@ impl ProductionExecutor {
     pub fn register(&mut self, capability_id: impl Into<String>, action: Box<dyn ProductionAction>) -> Result<(), ExecutionError> {
         let id=capability_id.into();
         if id.trim().is_empty() { return Err(ExecutionError::InvalidRequest("capability id is required".into())); }
-        if self.actions.insert(id.clone(), action).is_some() {
+        if self.actions.contains_key(&id) {
             return Err(ExecutionError::InvalidRequest(format!("duplicate production capability: {id}")));
         }
+        self.actions.insert(id, action);
         Ok(())
     }
 
@@ -53,6 +54,28 @@ mod tests {
         let result = executor.execute(&request).unwrap();
         assert_eq!(result.operation_id, "op-1");
         assert_eq!(result.output_json, r#"{"echo":{"value":1}}"#);
+    }
+
+
+    struct NamedAction(&'static str);
+    impl ProductionAction for NamedAction {
+        fn execute(&mut self, _input_json: &str) -> Result<String, ExecutionError> {
+            Ok(format!(r#"{{"owner":"{}"}}"#, self.0))
+        }
+    }
+
+    #[test]
+    fn duplicate_registration_never_replaces_the_original_production_owner() {
+        let mut executor = ProductionExecutor::default();
+        executor.register("android.owner", Box::new(NamedAction("first"))).unwrap();
+        assert!(executor.register("android.owner", Box::new(NamedAction("replacement"))).is_err());
+        let result = executor.execute(&ExecutionRequest {
+            operation_id: "owner-op".into(),
+            capability_id: "android.owner".into(),
+            input_json: "{}".into(),
+            timeout_ms: 1_000,
+        }).unwrap();
+        assert_eq!(result.output_json, r#"{"owner":"first"}"#);
     }
 
     #[test]
