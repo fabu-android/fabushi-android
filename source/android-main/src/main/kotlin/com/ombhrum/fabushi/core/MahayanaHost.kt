@@ -27,6 +27,14 @@ class MahayanaHost(
     processGeneration: Long = 1L,
 ) : Closeable {
     private val appDataDir = AndroidDataRootBootstrap.settle(context).absolutePath
+    private val appVersion = runCatching {
+        context.applicationContext.packageManager
+            .getPackageInfo(context.applicationContext.packageName, 0)
+            .versionName
+            ?.trim()
+            ?.takeIf { value -> value.matches(Regex("^[0-9A-Za-z.+-]{1,64}$")) }
+            ?: "unknown"
+    }.getOrDefault("unknown")
     private val accountSessionStore = AndroidAccountSessionStore(context)
     private val machineIdStore = AndroidMachineIdStore(context)
     private val pluginSecretStore = AndroidPluginVariableSecretStore(context)
@@ -63,6 +71,7 @@ class MahayanaHost(
                         processGeneration,
                         initialAccountSessionJson,
                         machineIdStore.getOrCreate(),
+                        appVersion,
                     )
                     check(value != 0L) { "Failed to initialize Mahayana Rust host" }
                     SharedHost(handle = value, generation = processGeneration).also { created ->
@@ -616,6 +625,7 @@ class MahayanaHost(
         processGeneration: Long,
         initialAccountSessionJson: String,
         machineId: String,
+        appVersion: String,
     ): Long
     private external fun nativeCreateTest(appDataDir: String): Long
     private external fun nativeDispatch(handle: Long, requestJson: String): String
