@@ -61,6 +61,11 @@ data class McpServerCatalogItem(
     val disabledByTeamAdminPolicy: Boolean,
 )
 
+data class McpServerAccountUiItem(
+    val accountKey: String,
+    val rowServerIdentifier: String,
+)
+
 data class McpServerToolUiItem(
     val name: String,
     val title: String?,
@@ -112,6 +117,27 @@ internal fun parseMcpServerCatalog(values: JSONArray): List<McpServerCatalogItem
                     url = url,
                     transport = transport,
                     disabledByTeamAdminPolicy = value.optBoolean("disabledByTeamAdminPolicy", false),
+                ),
+            )
+        }
+    }
+
+internal fun parseMcpServerAccounts(values: JSONArray): List<McpServerAccountUiItem> =
+    buildList {
+        val seen = linkedSetOf<String>()
+        for (index in 0 until values.length()) {
+            val value = values.optJSONObject(index) ?: continue
+            val accountKey = value.optString("accountKey").trim()
+            val rowServerIdentifier = value.optString("rowServerIdentifier").trim()
+            if (
+                accountKey.isEmpty() ||
+                rowServerIdentifier.isEmpty() ||
+                !seen.add(accountKey)
+            ) continue
+            add(
+                McpServerAccountUiItem(
+                    accountKey = accountKey,
+                    rowServerIdentifier = rowServerIdentifier,
                 ),
             )
         }
@@ -356,6 +382,9 @@ data class MarketplaceUiState(
     val mcpServerInstructions: Map<String, String> = emptyMap(),
     val mcpServerInstructionsBusy: Set<String> = emptySet(),
     val mcpServerInstructionsError: Map<String, String> = emptyMap(),
+    val mcpServerAccounts: Map<String, List<McpServerAccountUiItem>> = emptyMap(),
+    val mcpServerAccountBusy: Set<String> = emptySet(),
+    val mcpServerAccountError: Map<String, String> = emptyMap(),
     val permissionRequest: PermissionRequest? = null,
     val variableRequest: PluginVariableRequest? = null,
     val authResolved: Boolean = false,
@@ -1306,6 +1335,9 @@ class MarketplaceViewModel(application: Application) : AndroidViewModel(applicat
                 mcpServerInstructions = emptyMap(),
                 mcpServerInstructionsBusy = emptySet(),
                 mcpServerInstructionsError = emptyMap(),
+                mcpServerAccounts = emptyMap(),
+                mcpServerAccountBusy = emptySet(),
+                mcpServerAccountError = emptyMap(),
             )
             return
         }
@@ -1320,9 +1352,12 @@ class MarketplaceViewModel(application: Application) : AndroidViewModel(applicat
                     val instructions = servers.associate { server ->
                         server.id to coordinator.mcpServerCustomInstructions(server.id).orEmpty()
                     }
-                    servers to instructions
+                    val accounts = servers.associate { server ->
+                        server.id to parseMcpServerAccounts(coordinator.mcpServerAccounts(server.id))
+                    }
+                    Triple(servers, instructions, accounts)
                 }
-            }.onSuccess { (servers, instructions) ->
+            }.onSuccess { (servers, instructions, accounts) ->
                 val latest = mutableState.value
                 if (!shouldApplyMcpServerCatalogResult(
                         requestGeneration = generation,
@@ -1339,6 +1374,9 @@ class MarketplaceViewModel(application: Application) : AndroidViewModel(applicat
                     mcpServerInstructions = instructions,
                     mcpServerInstructionsBusy = emptySet(),
                     mcpServerInstructionsError = emptyMap(),
+                    mcpServerAccounts = accounts,
+                    mcpServerAccountBusy = emptySet(),
+                    mcpServerAccountError = emptyMap(),
                 )
             }.onFailure { error ->
                 val latest = mutableState.value
@@ -1357,6 +1395,80 @@ class MarketplaceViewModel(application: Application) : AndroidViewModel(applicat
             }
         }
     }
+
+    private fun mutateMcpServerAccount(
+        serverId: String,
+        accountKey: String,
+        action: String,
+        mutation: () -> JSONObject,
+    ) {
+        val current = mutableState.value
+        val normalizedServerId = serverId.trim()
+        val normalizedAccountKey = accountKey.trim()
+        if (
+            !current.loggedIn ||
+            current.accountAuthId.isBlank() ||
+            normalizedServerId.isBlank() ||
+            normalizedAccountKey.isBlank() ||
+            current.mcpServerAccounts[normalizedServerId]
+                .orEmpty()
+                .none { it.accountKey == normalizedAccountKey }
+        ) return
+        val key = "$normalizedServerId\u0000$normalizedAccountKey"
+        if (key in current.mcpServerAccountBusy) return
+        val expectedAuthId = current.accountAuthId
+        mutableState.value = current.copy(
+            mcpServerAccountBusy = current.mcpServerAccountBusy + key,
+            mcpServerAccountError = current.mcpServerAccountError - key,
+        )
+        viewModelScope.launch {
+            runCatching {
+                withContext(Dispatchers.IO) {
+                    mutation()
+                    parseMcpServerAccounts(coordinator.mcpServerAccounts(normalizedServerId))
+                }
+            }.onSuccess { accounts ->
+                val latest = mutableState.value
+                if (!latest.loggedIn || latest.accountAuthId != expectedAuthId) return@onSuccess
+                mutableState.value = latest.copy(
+                    mcpServerAccounts = latest.mcpServerAccounts + (normalizedServerId to accounts),
+                    mcpServerAccountBusy = latest.mcpServerAccountBusy - key,
+                    mcpServerAccountError = latest.mcpServerAccountError - key,
+                    message = when (action) {
+                        "logout" -> "连接器账户已退出"
+                        "rename" -> "连接器账户已重命名"
+                        else -> "连接器账户已移除"
+                    },
+                )
+            }.onFailure { error ->
+                val latest = mutableState.value
+                if (!latest.loggedIn || latest.accountAuthId != expectedAuthId) return@onFailure
+                mutableState.value = latest.copy(
+                    mcpServerAccountBusy = latest.mcpServerAccountBusy - key,
+                    mcpServerAccountError = latest.mcpServerAccountError +
+                        (key to (error.message ?: error::class.java.simpleName)),
+                )
+            }
+        }
+    }
+
+    fun logoutMcpAccount(serverId: String, accountKey: String) =
+        mutateMcpServerAccount(serverId, accountKey, "logout") {
+            coordinator.logoutMcpAccount(serverId, accountKey)
+        }
+
+    fun renameMcpAccount(serverId: String, accountKey: String, newAccountKey: String) {
+        val normalized = newAccountKey.trim()
+        if (normalized.isBlank()) return
+        mutateMcpServerAccount(serverId, accountKey, "rename") {
+            coordinator.renameMcpAccount(serverId, accountKey, normalized)
+        }
+    }
+
+    fun removeMcpAccount(serverId: String, accountKey: String) =
+        mutateMcpServerAccount(serverId, accountKey, "remove") {
+            coordinator.removeMcpAccount(serverId, accountKey)
+        }
 
     fun saveMcpServerInstructions(serverId: String, instructions: String) {
         val current = mutableState.value
