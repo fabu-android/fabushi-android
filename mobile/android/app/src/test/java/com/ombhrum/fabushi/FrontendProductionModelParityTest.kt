@@ -583,6 +583,64 @@ class FrontendProductionModelParityTest {
     }
 
     @Test
+    fun canonicalSearchProjectionHidesAgentPeerMessagesAndAttachments() {
+        fun attachment(path: String, name: String) = JSONObject()
+            .put("path", path)
+            .put("name", name)
+            .put("mimeType", "application/pdf")
+
+        val transcript = JSONArray()
+            .put(
+                JSONObject()
+                    .put("kind", "message")
+                    .put("id", "visible")
+                    .put("agentId", "agent-a")
+                    .put("role", "assistant")
+                    .put("content", "Visible launch report")
+                    .put("timestampMs", 100L)
+                    .put("attachments", JSONArray().put(attachment("/visible/report.pdf", "Launch Report.pdf"))),
+            )
+            .put(
+                JSONObject()
+                    .put("kind", "message")
+                    .put("id", "hidden-flag")
+                    .put("agentId", "agent-a")
+                    .put("role", "assistant")
+                    .put("content", "Secret peer report")
+                    .put("hiddenOutboundAgentPeerMessage", true)
+                    .put("attachments", JSONArray().put(attachment("/secret/flag.pdf", "Secret Flag.pdf"))),
+            )
+            .put(
+                JSONObject()
+                    .put("kind", "message")
+                    .put("id", "hidden-target")
+                    .put("agentId", "agent-a")
+                    .put("role", "assistant")
+                    .put("content", "Internal peer report")
+                    .put("toAgent", JSONObject().put("kind", "agent").put("id", "agent-b"))
+                    .put("attachments", JSONArray().put(attachment("/secret/target.pdf", "Internal Target.pdf"))),
+            )
+
+        assertEquals(
+            listOf("visible"),
+            canonicalAgentTranscriptMessages(transcript).map { it.id },
+        )
+        assertEquals(
+            listOf("visible"),
+            canonicalMobileTranscriptForAgent(transcript, "agent-a").map { it.id },
+        )
+        assertEquals(
+            listOf("visible"),
+            commandPaletteMessagesFromTranscript(transcript, "report").map { it.entryId },
+        )
+        val files = commandPaletteFilesFromTranscript(transcript, "pdf")
+        assertEquals(listOf("visible"), files.map { it.entryId })
+        assertEquals("Launch Report.pdf", files.single().name)
+        assertTrue(commandPaletteMessagesFromTranscript(transcript, "secret peer").isEmpty())
+        assertTrue(commandPaletteFilesFromTranscript(transcript, "secret").isEmpty())
+    }
+
+    @Test
     fun canonicalAgentTranscriptPreservesReadOnlyAdjacencyMetadata() {
         val transcript = JSONArray()
             .put(
