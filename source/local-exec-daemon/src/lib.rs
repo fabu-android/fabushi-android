@@ -37,6 +37,15 @@ impl AndroidLocalRunner {
         if capability.id.trim().is_empty() {
             return Err(ExecutionError::InvalidRequest("capability id must not be empty".into()));
         }
+        if capability.cancellable {
+            // execute() currently owns &mut self for the entire bounded local action, so there is
+            // no independently callable cancellation lane while that action is executing. Never
+            // advertise Desktop-equivalent cancellation until a real concurrent cancellation
+            // boundary exists; long-running/side-effectful work belongs on an authorized Runner.
+            return Err(ExecutionError::InvalidRequest(
+                "cancellable local capability requires an independently reachable cancellation boundary".into(),
+            ));
+        }
         if self.capabilities.contains_key(&capability.id) {
             return Err(ExecutionError::InvalidRequest(format!(
                 "duplicate local capability registration: {}",
@@ -169,6 +178,19 @@ mod tests {
         assert!(runner
             .register(wrong, Box::new(EchoHandler("remote")))
             .is_err());
+        assert!(runner.advertised_capabilities().is_empty());
+    }
+
+    #[test]
+    fn cancellable_capability_is_not_advertised_without_a_real_cancel_lane() {
+        let mut runner = AndroidLocalRunner::new();
+        let mut cancellable = capability("android.long-running");
+        cancellable.cancellable = true;
+        assert!(matches!(
+            runner.register(cancellable, Box::new(EchoHandler("unsafe"))),
+            Err(ExecutionError::InvalidRequest(message))
+                if message.contains("cancellation boundary")
+        ));
         assert!(runner.advertised_capabilities().is_empty());
     }
 }
