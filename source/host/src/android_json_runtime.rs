@@ -10,6 +10,7 @@ use crate::automation_runtime::{run_json as automation_run_json, AutomationRunti
 use crate::auto_review_settings::{AutoReviewInstructions, DurableAutoReviewSettings};
 use crate::android_agent_roster::AndroidAgentRoster;
 use crate::android_process_metrics::AndroidProcessMetricsCollector;
+use crate::process_crash_guard::AndroidUncleanExitMarker;
 use crate::android_structured_log_spill::AndroidStructuredLogSpool;
 use crate::agent_attachment::{
     prompt_with_agent_attachments, with_agent_attachment_tools, AgentAttachment,
@@ -665,6 +666,7 @@ pub struct AndroidJsonHost {
     process_metrics: AndroidProcessMetricsCollector,
     process_metrics_recent: VecDeque<Value>,
     process_crash_recent: VecDeque<Value>,
+    unclean_exit: AndroidUncleanExitMarker,
     agents: Arc<Mutex<AndroidAgentRoster>>,
     sidebar_sections: Arc<Mutex<AndroidSidebarSections>>,
     user_settings: Arc<Mutex<AndroidUserSettings>>,
@@ -965,6 +967,23 @@ impl AndroidJsonHost {
                 }
             }
         }));
+        let (unclean_exit, prior_unclean_exit) = AndroidUncleanExitMarker::open(
+            app_data_dir.join("host-session-marker.json"),
+            now_ms(),
+        )
+        .unwrap_or_else(|error| panic!("failed to arm Android Host session marker: {error}"));
+        let mut process_crash_recent = VecDeque::new();
+        if let Some(prior) = prior_unclean_exit {
+            process_crash_recent.push_back(json!({
+                "kind":"unclean_exit",
+                "occurredAtMs":prior.last_alive_at_ms,
+                "uptimeMs":prior.last_alive_at_ms.saturating_sub(prior.started_at_ms),
+                "crashSeen":prior.crash_seen,
+                "errorCode":"SAND-E0604",
+                "errorDomain":"android-process",
+                "errorRetryable":false,
+            }));
+        }
         Self {
             mode,
             device_id: device_id.clone(),
@@ -981,7 +1000,8 @@ impl AndroidJsonHost {
             structured_log_counter_id,
             process_metrics: AndroidProcessMetricsCollector::default(),
             process_metrics_recent: VecDeque::new(),
-            process_crash_recent: VecDeque::new(),
+            process_crash_recent,
+            unclean_exit,
             agents,
             sidebar_sections,
             user_settings,
@@ -1781,6 +1801,13 @@ impl AndroidJsonHost {
             "feature.telemetry.processMetrics.observe" => self.process_metrics_observe(params),
             "feature.telemetry.processMetrics.recent" => Ok(Value::Array(self.process_metrics_recent.iter().cloned().collect())),
             "feature.telemetry.processCrash.record" => self.process_crash_record(params),
+            "feature.telemetry.session.heartbeat" => {
+                let observed_at_ms = required_u64(params, "observedAtMs")?;
+                self.unclean_exit
+                    .heartbeat(observed_at_ms)
+                    .map_err(|error| format!("failed to persist Android Host session heartbeat: {error}"))?;
+                Ok(json!({"accepted":true,"observedAtMs":observed_at_ms}))
+            },
             "feature.telemetry.processCrash.recent" => Ok(Value::Array(self.process_crash_recent.iter().cloned().collect())),
             "feature.agent.diskPressure.observe" => self.agent_disk_pressure_observe(params),
             "feature.agent.diskPressure.record" => self.agent_disk_pressure_record(params),
@@ -3371,6 +3398,9 @@ impl AndroidJsonHost {
         }
         let occurred_at_ms = required_u64(params, "occurredAtMs")?;
         let uptime_ms = required_u64(params, "uptimeMs")?;
+        self.unclean_exit
+            .mark_crash_seen(occurred_at_ms)
+            .map_err(|error| format!("failed to persist Android crash marker: {error}"))?;
         let record = json!({
             "kind": kind,
             "occurredAtMs": occurred_at_ms,
