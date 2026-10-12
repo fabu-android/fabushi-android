@@ -139,6 +139,7 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
     private val accountAccessOwner = AccountAccessProjectionOwner(
         SharedPreferencesAccountAccessEpochStore(application),
     )
+    private val accessBlockedTelemetryOwner = AccessBlockedTelemetryOwner()
     private val rootConnectionOwner = RootConnectionResilienceOwner()
     private val rootConnectionListeners =
         CopyOnWriteArrayList<(RootConnectionResilienceProjection) -> Unit>()
@@ -785,6 +786,7 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
                     recoveryState = AccountRecoveryState.READY,
                 ),
             )
+            reportAccessBlockedTelemetry(settled)
             publishRootConnectionProjection(rootConnectionOwner.observeReadiness(settled))
             return settled
         }
@@ -943,6 +945,7 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
                 detail = failures.takeIf { it.isNotEmpty() }?.joinToString("; ")?.take(240),
             ),
         )
+        reportAccessBlockedTelemetry(settled)
         rootConnectionOwner.observeReadiness(settled)
         if (
             settled.rosterFailureTransportKind == "network" ||
@@ -982,6 +985,25 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
 
     override fun authLogout(): JSONObject =
         host.request("feature.auth.logout").also(::observeAccountAccessAuth)
+
+    private fun reportAccessBlockedTelemetry(projection: AccountAccessProjection) {
+        val edge = accessBlockedTelemetryOwner.observe(
+            projection = projection,
+            nowMs = SystemClock.elapsedRealtime(),
+        ) ?: return
+        runCatching {
+            host.request(
+                "feature.account.telemetry.accessBlocked",
+                JSONObject()
+                    .put("edge", edge.edge)
+                    .put("cause", edge.cause)
+                    .put("accessReason", edge.accessReason)
+                    .apply {
+                        edge.msBlocked?.let { put("msBlocked", it) }
+                    },
+            )
+        }
+    }
 
     private fun observeAccountAccessAuth(auth: JSONObject) {
         val previousEpoch = accountAccessOwner.currentProjection().accountEpoch
