@@ -1,6 +1,7 @@
 package com.ombhrum.fabushi
 
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -44,7 +45,7 @@ internal fun AgentProfileEditor(
     var avatarImageBusy by remember(target.id) { mutableStateOf(false) }
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    val avatarImagePicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+    val avatarImagePicker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
         if (uri == null || avatarImageBusy) return@rememberLauncherForActivityResult
         avatarImageBusy = true
         avatarImageError = null
@@ -109,7 +110,11 @@ internal fun AgentProfileEditor(
                 Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                     TextButton(
                         enabled = !avatarImageBusy,
-                        onClick = { avatarImagePicker.launch("image/*") },
+                        onClick = {
+                            avatarImagePicker.launch(
+                                PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
+                            )
+                        },
                         modifier = Modifier.testTag("agent-profile-avatar-image-pick-${target.id}"),
                     ) {
                         Text(if (avatarImageBusy) "Importing…" else if (avatarDataUrl.isNullOrBlank()) "Choose image" else "Replace image")
