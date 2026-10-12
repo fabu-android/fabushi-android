@@ -17,13 +17,17 @@ class OnboardingSettingsOwnerWiringTest(unittest.TestCase):
         self.assertNotIn("SharedPreferences", source)
         self.assertNotIn("MessageDigest", source)
         self.assertIn("coordinator.onboardingSeen()", source)
-        self.assertIn("coordinator.setOnboardingSeen(true)", source)
+        self.assertIn("coordinator.setOnboardingSeen(", source)
+        self.assertIn("expectedAccountScope = expectedAccountScope", source)
+        self.assertIn("hasSeenOnboarding = true", source)
 
     def test_typed_coordinator_routes_onboarding_seen_to_host(self):
         port = PORT.read_text(encoding="utf-8")
         runtime = RUNTIME.read_text(encoding="utf-8")
         self.assertIn("fun onboardingSeen(): JSONObject", port)
-        self.assertIn("fun setOnboardingSeen(hasSeenOnboarding: Boolean): JSONObject", port)
+        self.assertIn("fun setOnboardingSeen(", port)
+        self.assertIn("expectedAccountScope: String", port)
+        self.assertIn("hasSeenOnboarding: Boolean", port)
         self.assertIn('host.request("feature.settings.onboardingSeen")', runtime)
         self.assertIn('"feature.settings.onboardingSeen.set"', runtime)
 
@@ -43,7 +47,9 @@ class OnboardingSettingsOwnerWiringTest(unittest.TestCase):
         self.assertNotIn('"onboarding-complete"', bootstrap)
         self.assertNotIn('getSharedPreferences("fabushi.mobile"', bootstrap)
         self.assertIn("if (ciBootstrapActive)", application)
-        self.assertIn("it.setOnboardingSeen(true)", application)
+        self.assertIn("val accountScope = onboarding.getString(\"accountScope\").trim()", application)
+        self.assertIn("expectedAccountScope = accountScope", application)
+        self.assertIn("hasSeenOnboarding = true", application)
         self.assertIn('optBoolean("hasSeenOnboarding", false)', application)
         self.assertIn("CI authenticated session could not settle canonical onboarding state", application)
 
