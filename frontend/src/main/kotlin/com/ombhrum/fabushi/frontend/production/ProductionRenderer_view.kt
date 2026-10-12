@@ -112,6 +112,9 @@ internal fun ProductionRenderer(
                         if (link is AndroidDeepLink.Info) {
                             deepLinkInfo = link.toDeepLinkInfo()
                         } else {
+                            if (link is AndroidDeepLink.PluginAdd || link is AndroidDeepLink.Open) {
+                                rendererRoute = RendererRoute.MESSAGING
+                            }
                             model.handleDeepLink(link)
                         }
                     }
