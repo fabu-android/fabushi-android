@@ -1,9 +1,12 @@
 package com.ombhrum.fabushi.androidmain.remote
 
 import android.content.Context
+import android.os.SystemClock
 import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.View
+import com.ombhrum.fabushi.androidpreload.VncLivenessCounters
+import com.ombhrum.fabushi.androidpreload.VncLivenessDetector
 import org.json.JSONArray
 import org.json.JSONObject
 import org.webrtc.DataChannel
@@ -19,6 +22,7 @@ import org.webrtc.RtpReceiver
 import org.webrtc.SdpObserver
 import org.webrtc.SessionDescription
 import org.webrtc.SurfaceViewRenderer
+import org.webrtc.VideoSink
 import org.webrtc.VideoTrack
 import java.nio.ByteBuffer
 import java.nio.charset.StandardCharsets
@@ -118,6 +122,11 @@ internal class AndroidRemoteComputerDataPlane(
         Thread(runnable, "fabushi-remote-computer-dataplane").apply { isDaemon = true }
     }
     private val connectionGeneration = AtomicLong(0L)
+    private val receivedFrameCount = AtomicLong(0L)
+    private val sentInputCount = AtomicLong(0L)
+    private val sentImpactfulInputCount = AtomicLong(0L)
+    private val livenessDetector = VncLivenessDetector()
+    private val livenessVideoSink = VideoSink { receivedFrameCount.incrementAndGet() }
 
     @Volatile private var activeFence: RemoteComputerDataPlaneFence? = null
     @Volatile private var peerConnection: PeerConnection? = null
@@ -125,6 +134,7 @@ internal class AndroidRemoteComputerDataPlane(
     @Volatile private var renderer: SurfaceViewRenderer? = null
     @Volatile private var remoteVideoTrack: VideoTrack? = null
     @Volatile private var drainTask: ScheduledFuture<*>? = null
+    @Volatile private var livenessTask: ScheduledFuture<*>? = null
     @Volatile private var closed = false
 
     init {
@@ -171,6 +181,10 @@ internal class AndroidRemoteComputerDataPlane(
         }
         disconnectInternal()
         activeFence = fence
+        receivedFrameCount.set(0L)
+        sentInputCount.set(0L)
+        sentImpactfulInputCount.set(0L)
+        livenessDetector.reset()
         val generation = connectionGeneration.incrementAndGet()
         val rtcConfig = PeerConnection.RTCConfiguration(parseIceServers(iceServersJson)).apply {
             sdpSemantics = PeerConnection.SdpSemantics.UNIFIED_PLAN
@@ -209,6 +223,7 @@ internal class AndroidRemoteComputerDataPlane(
                         renderer?.let(previous::removeSink)
                     }
                     remoteVideoTrack = track
+                    track.addSink(livenessVideoSink)
                     renderer?.let(track::addSink)
                 }
             }
@@ -274,6 +289,12 @@ internal class AndroidRemoteComputerDataPlane(
             { runCatching { drainOnce(generation) } },
             0L,
             SIGNAL_DRAIN_PERIOD_MILLIS,
+            TimeUnit.MILLISECONDS,
+        )
+        livenessTask = executor.scheduleWithFixedDelay(
+            { runCatching { checkLiveness(generation) } },
+            LIVENESS_SAMPLE_PERIOD_MILLIS,
+            LIVENESS_SAMPLE_PERIOD_MILLIS,
             TimeUnit.MILLISECONDS,
         )
     }
@@ -369,6 +390,7 @@ internal class AndroidRemoteComputerDataPlane(
                 y,
                 event.buttonState,
             ),
+            impactful = action == "down",
         )
     }
 
@@ -389,15 +411,37 @@ internal class AndroidRemoteComputerDataPlane(
                 event.metaState,
                 event.repeatCount,
             ),
+            impactful = action == "down" && event.repeatCount == 0,
         )
     }
 
-    private fun sendInput(envelope: JSONObject): Boolean {
+    private fun sendInput(envelope: JSONObject, impactful: Boolean): Boolean {
         val bytes = envelope.toString().toByteArray(StandardCharsets.UTF_8)
         if (bytes.size > MAX_INPUT_BYTES) return false
         val channel = controlChannel ?: return false
         if (channel.state() != DataChannel.State.OPEN) return false
-        return channel.send(DataChannel.Buffer(ByteBuffer.wrap(bytes), false))
+        val sent = channel.send(DataChannel.Buffer(ByteBuffer.wrap(bytes), false))
+        if (sent) {
+            sentInputCount.incrementAndGet()
+            if (impactful) sentImpactfulInputCount.incrementAndGet()
+        }
+        return sent
+    }
+
+    private fun checkLiveness(generation: Long) {
+        if (!isCurrent(generation)) return
+        val stall = livenessDetector.sample(
+            VncLivenessCounters(
+                frames = receivedFrameCount.get(),
+                inputEvents = sentInputCount.get(),
+                observedAtMs = SystemClock.elapsedRealtime(),
+                impactfulInputEvents = sentImpactfulInputCount.get(),
+            ),
+        ) ?: return
+        if (stall.impactfulInputs <= 0L || !isCurrent(generation)) return
+        val reconnectFence = activeFence ?: return
+        disconnectInternal()
+        onReconnectRequired(reconnectFence)
     }
 
     @Synchronized
@@ -405,11 +449,17 @@ internal class AndroidRemoteComputerDataPlane(
         connectionGeneration.incrementAndGet()
         drainTask?.cancel(false)
         drainTask = null
+        livenessTask?.cancel(false)
+        livenessTask = null
         controlChannel?.close()
         controlChannel?.dispose()
         controlChannel = null
-        remoteVideoTrack?.let { track -> renderer?.let(track::removeSink) }
+        remoteVideoTrack?.let { track ->
+            track.removeSink(livenessVideoSink)
+            renderer?.let(track::removeSink)
+        }
         remoteVideoTrack = null
+        livenessDetector.reset()
         peerConnection?.close()
         peerConnection?.dispose()
         peerConnection = null
@@ -479,6 +529,7 @@ internal class AndroidRemoteComputerDataPlane(
 
     private companion object {
         const val SIGNAL_DRAIN_PERIOD_MILLIS = 750L
+        const val LIVENESS_SAMPLE_PERIOD_MILLIS = 1_000L
         const val MAX_SDP_CHARS = 512 * 1024
         const val MAX_ICE_CANDIDATE_CHARS = 16 * 1024
         const val MAX_INPUT_BYTES = 16 * 1024
