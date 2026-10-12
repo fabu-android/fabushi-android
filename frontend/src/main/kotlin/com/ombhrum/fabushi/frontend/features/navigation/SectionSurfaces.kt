@@ -75,7 +75,18 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
+import com.ombhrum.fabushi.androidpreload.runtime.AndroidHumanCallSession
 import kotlinx.coroutines.delay
+
+
+internal fun humanCallSectionCalls(state: MessagingUiState): List<AndroidHumanCallSession> =
+    state.callsByConversation
+        .values
+        .asSequence()
+        .flatten()
+        .distinctBy(AndroidHumanCallSession::id)
+        .sortedByDescending(AndroidHumanCallSession::updatedAtMs)
+        .toList()
 
 
 @Composable
@@ -155,6 +166,11 @@ internal fun AndroidSectionSurface(
         AndroidMobileSection.BOTS -> messagingState.contacts.filter { it.kind == "bot" || it.kind == "assistant" }
         else -> emptyList()
     }
+    val humanCalls = if (section == AndroidMobileSection.CALLS) {
+        humanCallSectionCalls(messagingState)
+    } else {
+        emptyList()
+    }
     Scaffold(containerColor = homeBackground) { padding ->
         Column(Modifier.fillMaxSize().padding(padding)) {
             Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -182,7 +198,41 @@ internal fun AndroidSectionSurface(
                         if (section == AndroidMobileSection.ARCHIVE) Text("恢复", color = homeAccent, modifier = Modifier.clickable { onUnarchive(conversation) }.padding(14.dp))
                     }
                 }
-                if (contacts.isEmpty() && conversations.isEmpty() && (section != AndroidMobileSection.FOLDERS || messagingState.folders.isEmpty())) item {
+                if (humanCalls.isNotEmpty()) items(humanCalls, key = { "call:${it.id}" }) { call ->
+                    val conversation = messagingState.conversations.firstOrNull { it.id == call.scopeId }
+                    Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .clickable(enabled = conversation != null) {
+                                conversation?.let(onOpenConversation)
+                            }
+                            .padding(horizontal = 18.dp, vertical = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Box(
+                            Modifier.size(46.dp).background(homeAccent, CircleShape),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Text("☎", color = Color.Black, fontWeight = FontWeight.Bold)
+                        }
+                        Column(Modifier.weight(1f).padding(start = 13.dp)) {
+                            Text(
+                                conversation?.title ?: call.scopeId,
+                                color = homePrimaryText,
+                                fontWeight = FontWeight.SemiBold,
+                            )
+                            Text(
+                                "${call.state.wireName.replace('_', ' ')} · ${call.participantIds.size} participants",
+                                color = homeSecondaryText,
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                        }
+                        if (call.state == com.ombhrum.fabushi.androidpreload.runtime.AndroidHumanCallState.OUTCOME_UNKNOWN) {
+                            Text("待对账", color = Color(0xFFFFB86B), style = MaterialTheme.typography.bodySmall)
+                        }
+                    }
+                }
+                if (contacts.isEmpty() && conversations.isEmpty() && humanCalls.isEmpty() && (section != AndroidMobileSection.FOLDERS || messagingState.folders.isEmpty())) item {
                     Column(Modifier.fillMaxWidth().padding(top = 96.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                         Text(section.label, color = homePrimaryText, fontWeight = FontWeight.SemiBold)
                         Text(
