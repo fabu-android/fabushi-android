@@ -3,7 +3,7 @@ use serde_json::{json, Value};
 use std::{
     collections::BTreeSet,
     fs,
-    io,
+    io::{self, Write},
     path::{Path, PathBuf},
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -773,14 +773,27 @@ fn management_call_key(
 }
 
 fn persist(path: &Path, state: &AndroidAgentRosterFile) -> io::Result<()> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)?;
-    }
+    let parent = path
+        .parent()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "roster path has no parent"))?;
+    fs::create_dir_all(parent)?;
     let temporary = path.with_extension(format!("json.tmp-{}", std::process::id()));
     let bytes = serde_json::to_vec_pretty(state)
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
-    fs::write(&temporary, bytes)?;
-    fs::rename(temporary, path)
+    let result = (|| -> io::Result<()> {
+        let mut file = fs::File::create(&temporary)?;
+        file.write_all(&bytes)?;
+        file.sync_all()?;
+        fs::rename(&temporary, path)?;
+        if let Ok(directory) = fs::File::open(parent) {
+            directory.sync_all()?;
+        }
+        Ok(())
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(&temporary);
+    }
+    result
 }
 
 fn normalize_state(state: &mut AndroidAgentRosterFile) {
@@ -910,18 +923,15 @@ fn parse_avatar_color(value: Option<&Value>) -> Result<Option<String>, String> {
 }
 
 fn parse_avatar_data_url(value: Option<&Value>) -> Result<Option<String>, String> {
-    // Desktop refuses avatar source files larger than 25 MiB. Base64 expands by roughly 4/3,
-    // so bound the canonical roster value as well instead of accepting an unbounded data URL.
-    const MAX_ENCODED_BYTES: usize = 35_000_000;
+    // Desktop source/host/src/agents/agent_avatar.rs caps avatar source files at 5 MiB and
+    // accepts PNG/JPEG/WEBP/GIF/SVG. Keep the canonical Android projection at the same boundary.
+    const MAX_SOURCE_BYTES: usize = 5 * 1024 * 1024;
     match value {
         None | Some(Value::Null) => Ok(None),
         Some(Value::String(raw)) => {
             let data_url = raw.trim();
             if data_url.is_empty() {
                 return Ok(None);
-            }
-            if data_url.len() > MAX_ENCODED_BYTES {
-                return Err("avatarDataUrl exceeds the 25 MB Desktop avatar source boundary".into());
             }
             let comma = data_url
                 .find(',')
@@ -934,18 +944,31 @@ fn parse_avatar_data_url(value: Option<&Value>) -> Result<Option<String>, String
                     | "data:image/jpg;base64"
                     | "data:image/webp;base64"
                     | "data:image/gif;base64"
-                    | "data:image/bmp;base64"
-                    | "data:image/avif;base64"
+                    | "data:image/svg+xml;base64"
             ) {
-                return Err("avatarDataUrl must use a supported base64 image MIME type".into());
+                return Err("avatarDataUrl must use a Desktop-supported base64 image MIME type".into());
             }
             let payload = &data_url[comma + 1..];
             if payload.is_empty()
+                || payload.len() % 4 != 0
                 || !payload
                     .bytes()
                     .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'+' | b'/' | b'='))
             {
                 return Err("avatarDataUrl contains invalid base64 image data".into());
+            }
+            let padding = payload.as_bytes().iter().rev().take_while(|byte| **byte == b'=').count();
+            if padding > 2 {
+                return Err("avatarDataUrl contains invalid base64 padding".into());
+            }
+            let decoded_bytes = payload
+                .len()
+                .checked_div(4)
+                .and_then(|groups| groups.checked_mul(3))
+                .and_then(|bytes| bytes.checked_sub(padding))
+                .ok_or_else(|| "avatarDataUrl size overflow".to_string())?;
+            if decoded_bytes == 0 || decoded_bytes > MAX_SOURCE_BYTES {
+                return Err("avatarDataUrl exceeds the 5 MiB Desktop avatar source boundary".into());
             }
             Ok(Some(data_url.to_string()))
         }
@@ -1299,6 +1322,30 @@ mod tests {
         assert_eq!(reopened.get(&agent_id).unwrap().avatar_shape, None);
         assert_eq!(reopened.get(&agent_id).unwrap().avatar_color, None);
         let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn avatar_data_url_matches_desktop_mime_and_five_mib_boundary() {
+        let svg = "data:image/svg+xml;base64,PHN2Zz48L3N2Zz4=";
+        assert_eq!(
+            parse_avatar_data_url(Some(&Value::String(svg.into()))).unwrap().as_deref(),
+            Some(svg)
+        );
+        assert!(parse_avatar_data_url(Some(&Value::String(
+            "data:image/bmp;base64,AAAA".into()
+        ))).is_err());
+        assert!(parse_avatar_data_url(Some(&Value::String(
+            "data:image/avif;base64,AAAA".into()
+        ))).is_err());
+
+        let max_payload_len = ((5 * 1024 * 1024 + 2) / 3) * 4;
+        let max_payload = "A".repeat(max_payload_len);
+        let max_value = format!("data:image/png;base64,{max_payload}");
+        assert!(parse_avatar_data_url(Some(&Value::String(max_value))).is_ok());
+
+        let too_large_payload = "A".repeat(max_payload_len + 4);
+        let too_large = format!("data:image/png;base64,{too_large_payload}");
+        assert!(parse_avatar_data_url(Some(&Value::String(too_large))).is_err());
     }
 
     #[test]
