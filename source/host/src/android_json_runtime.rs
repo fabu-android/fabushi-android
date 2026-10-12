@@ -41,7 +41,7 @@ use crate::extensions::telemetry::product_events::{
     access_blocked_event, agent_load_event, agents_unreachable_event, client_persistence_event,
     client_resource_event, connector_auth_clicked_event, entrypoint_error_event,
     event_loop_pressure_event, renderer_boundary_caught_event, renderer_unhandled_event,
-    send_queued_flush_event, StructuredTelemetryEvent, TelemetryLevel,
+    send_queued_flush_event, startup_lifecycle_event, StructuredTelemetryEvent, TelemetryLevel,
 };
 use crate::extensions::teach_recording::{DurableTeachRecordingOwner, TeachRecordingPhase};
 use crate::extensions::trays::extension::{start_trays_extension, HostTraysExtension};
@@ -1610,6 +1610,20 @@ impl AndroidJsonHost {
         self.record_product_telemetry("sand.agent_load", event)
     }
 
+    fn startup_lifecycle_telemetry(&mut self, params: &Value) -> Result<Value, String> {
+        let event = startup_lifecycle_event(
+            required_string(params, "outcome")?,
+            required_string(params, "phase")?,
+            params
+                .get("elapsedMs")
+                .and_then(Value::as_f64)
+                .ok_or("elapsedMs is required")?,
+            params.get("phaseElapsedMs").and_then(Value::as_f64),
+            params.get("windowMs").and_then(Value::as_f64),
+        )?;
+        self.record_product_telemetry("sand.desktop.startup", event)
+    }
+
     fn agents_unreachable_telemetry(&mut self, params: &Value) -> Result<Value, String> {
         let phase = required_string(params, "phase")?;
         let is_manual = params
@@ -1911,6 +1925,7 @@ impl AndroidJsonHost {
             },
             "feature.account.telemetry.accessBlocked" => self.access_blocked_telemetry(params),
             "feature.telemetry.agentLoad" => self.agent_load_telemetry(params),
+            "feature.telemetry.startupLifecycle" => self.startup_lifecycle_telemetry(params),
             "feature.telemetry.agentsUnreachable" => self.agents_unreachable_telemetry(params),
             "feature.telemetry.eventLoopPressure" => self.event_loop_pressure_telemetry(params),
             "feature.telemetry.clientFailure" => self.client_failure_telemetry(params),
