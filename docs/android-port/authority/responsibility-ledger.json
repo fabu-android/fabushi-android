@@ -13512,6 +13512,113 @@
       "artifact": null,
       "verification_status": "not-verified",
       "notes": "Do not upgrade to verified until the final exact HEAD passes required Actions and package/device evidence. snapshot-store.ts is intentionally excluded because its direct-caller closure remains incomplete."
+    },
+    {
+      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_owner": "Desktop production account edge",
+      "android_disposition": "android-adapted",
+      "implementation_status": "mapped",
+      "contract_test": "required",
+      "integration_test": "required",
+      "packaged_test": "required",
+      "device_test": "required",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "responsibility_id": "ACCOUNT-PR-REVIEW-PREFERENCES-ANDROID-001",
+      "domain": "account-preferences",
+      "desktop_sources": [
+        {
+          "path": "source/electron-main/account/cursor-pr-review.ts",
+          "blob_sha": "700ee2f8bf05f317a74e724f413b78b154ab4221",
+          "symbols": [
+            "fetchSandPrReviewPreferences",
+            "teamDestination",
+            "narrowDestination"
+          ]
+        }
+      ],
+      "responsibility": "Read canonical user/team PR-review destinations with bounded backend calls and preserve github/graphite/reviewCursor semantics.",
+      "visible_effect": "PR-review actions honor configured user/team destination.",
+      "android_target": [
+        "source/host/src/mcp_auth/dashboard_mcp_auth_backend.rs"
+      ],
+      "android_owner": "Rust Host Dashboard backend",
+      "platform_delta": "Reuse the existing Rust Connect-RPC boundary; do not create a Kotlin network or credential owner.",
+      "production_wiring": "Missing user/team preference RPC and native projection.",
+      "unit_test": "required: enum normalization, user/team merge, malformed/unknown/failure",
+      "notes": "Do not guess protobuf fields from empty generated placeholders."
+    },
+    {
+      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_owner": "Desktop production account edge",
+      "android_disposition": "android-adapted",
+      "implementation_status": "mapped",
+      "contract_test": "required",
+      "integration_test": "required",
+      "packaged_test": "required",
+      "device_test": "required",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "responsibility_id": "ACCOUNT-USAGE-CONTROLS-ANDROID-001",
+      "domain": "account-usage",
+      "desktop_sources": [
+        {
+          "path": "source/electron-main/account/cursor-profile.ts",
+          "blob_sha": "69645a4dee5b40a700fef5199c044892f46eaf3a",
+          "symbols": [
+            "fetchSandWeeklyUsage",
+            "fetchSandUsageSummary",
+            "cancelSandTrial",
+            "invokeSandDashboardAction"
+          ]
+        }
+      ],
+      "responsibility": "Project bounded usage/allowance/reset/trial state and settle trial cancellation and approved dashboard actions without duplicate side effects.",
+      "visible_effect": "Usage, limits, trial state and supported upgrade actions remain available.",
+      "android_target": [
+        "source/host/src/mcp_auth/dashboard_mcp_auth_backend.rs",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/production/FabushiSettingsSurface.kt"
+      ],
+      "android_owner": "Rust Host Dashboard backend plus native Settings projection",
+      "platform_delta": "Native Settings replaces Electron IPC while Host owns authenticated reads and actions.",
+      "production_wiring": "ClientAction primitive exists but usage/trial projection and cancellation flow are incomplete.",
+      "unit_test": "required",
+      "notes": "Generic ClientAction is not parity for usage/trial state."
+    },
+    {
+      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_owner": "Desktop production account edge",
+      "android_disposition": "android-adapted",
+      "implementation_status": "mapped",
+      "contract_test": "required",
+      "integration_test": "required",
+      "packaged_test": "required",
+      "device_test": "required",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "responsibility_id": "ACCOUNT-PRIVACY-MODE-ANDROID-001",
+      "domain": "account-privacy",
+      "desktop_sources": [
+        {
+          "path": "source/electron-main/account/cursor-profile.ts",
+          "blob_sha": "69645a4dee5b40a700fef5199c044892f46eaf3a",
+          "symbols": [
+            "fetchUserPrivacyMode",
+            "fetchUserPrivacyModeEnabled"
+          ]
+        }
+      ],
+      "responsibility": "Read canonical authenticated account privacy mode, normalize it and project user-visible policy separately from roster and redaction diagnostics.",
+      "visible_effect": "Account privacy mode remains visible and usable for equivalent product decisions.",
+      "android_target": [
+        "source/host/src/mcp_auth/dashboard_mcp_auth_backend.rs",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/production/FabushiSettingsSurface.kt"
+      ],
+      "android_owner": "Rust Host Dashboard backend plus native Settings projection",
+      "platform_delta": "Existing SandPrivacyMode cache is reusable but needs a typed user-facing projection.",
+      "production_wiring": "Partial backend privacy read/cache exists; native account-privacy surface is incomplete.",
+      "unit_test": "existing backend parsing/cache plus presentation tests required",
+      "notes": "Separate from ROSTER-PRIVACY-BLOCK-ANDROID-001 and PRIVACY-REDACTION-001."
     }
   ],
   "traceability": {
