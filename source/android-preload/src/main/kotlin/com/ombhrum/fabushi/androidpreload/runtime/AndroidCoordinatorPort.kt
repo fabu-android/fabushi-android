@@ -25,6 +25,14 @@ data class AndroidMcpOAuthCompletion(
     val outcome: String,
 )
 
+data class AndroidGeneratedAvatarImage(
+    val imageData: String,
+    val mimeType: String,
+) {
+    val dataUrl: String
+        get() = "data:$mimeType;base64,$imageData"
+}
+
 enum class AndroidHumanCallState(val wireName: String) {
     INVITED("invited"),
     RINGING("ringing"),
@@ -714,6 +722,8 @@ interface AndroidCoordinatorPort {
     ): JSONObject = agentUpdate(id, name, description)
     fun agentUpdateAvatarImage(id: String, avatarDataUrl: String?): JSONObject =
         error("Agent avatar image updates are unavailable on this Coordinator port")
+    fun agentGenerateAvatarImage(description: String): AndroidGeneratedAvatarImage =
+        error("Agent avatar generation is unavailable on this Coordinator port")
     fun agentSetNotifyOnUpdates(id: String, isEnabled: Boolean): JSONObject =
         error("Agent notification settings are unavailable on this Coordinator port")
     fun agentSetHidden(id: String, isHidden: Boolean): JSONObject
