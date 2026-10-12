@@ -1562,6 +1562,15 @@
           ]
         },
         {
+          "path": "frontend/src/recovered/runtime/async-action.ts",
+          "blob_sha": "c3844ef7a700df93830bbb06886d72ea355c8660",
+          "symbols": [
+            "useAsyncAction",
+            "AsyncActionHandle",
+            "latest-generation failure fencing"
+          ]
+        },
+        {
           "path": "frontend/src/recovered/features/settings/overlay/desktop-preview.tsx",
           "blob_sha": "5f7f33e68a9a5f0b0f1c88eadb246d4345531dd6",
           "symbols": [
@@ -1636,7 +1645,8 @@
       "responsibility": "Own settings scope, migrations and durable preferences without leaking canonical account/runtime truth into presentation.",
       "source_owner": "Desktop settings store",
       "direct_callers": [
-        "shipping Desktop composition; exact callers require continued per-domain decomposition"
+        "Settings overlay CallMediaSettingsPanel, UiPreferencesSettingsPanel, SecurityKeySettingsGroup, LocalToolPermissionSettingsPanel and TimeZoneSettingsPanel use useAsyncAction for mutation pending/failure presentation",
+        "other Settings callers remain subject to continued per-domain decomposition"
       ],
       "downstream_dependencies": [
         "canonical state/protocol dependencies tracked by the cited Desktop source"
