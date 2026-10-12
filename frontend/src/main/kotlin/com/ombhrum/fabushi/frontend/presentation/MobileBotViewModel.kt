@@ -287,6 +287,7 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
         },
     )
     private val messagesByBot = mutableMapOf<String, List<MobileChatMessage>>()
+    private val renderTelemetry = MobileRenderTelemetryTracker()
     private val draftWriteMutex = Mutex()
     private var draftScopeGeneration = 0L
     private var draftWriteGeneration = 0L
@@ -2355,6 +2356,7 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
                     refreshDurableSendProjection(bot.id, accountSlot, scopeGeneration)
                     return@launch
                 }
+                renderTelemetry.begin(operationId)
                 clearApprovalsAfterJournal(
                     agentId = bot.id,
                     accountSlot = accountSlot,
@@ -2466,6 +2468,7 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
             try {
                 val continuationOperationId = action.operationId
                 if (response != null && continuationOperationId != null) {
+                    renderTelemetry.begin(continuationOperationId)
                     commitState(
                         mutableState.value.copy(
                             busy = true,
@@ -2580,6 +2583,7 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
                     refreshDurableSendProjection(bot.id, accountSlot, scopeGeneration)
                     return@launch
                 }
+                renderTelemetry.begin(operationId)
                 clearApprovalsAfterJournal(
                     agentId = bot.id,
                     accountSlot = accountSlot,
@@ -3021,6 +3025,7 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
             }
             if (event.optString("agentId") != active.id || eventAccountSlot != accountSlot) return
             val operationId = event.optString("operationId").takeIf(String::isNotBlank) ?: return
+            renderTelemetry.begin(operationId)
             val nonce = event.optString("nonce").takeIf(String::isNotBlank) ?: return
             val generation = event.optLong("generation", 0L).takeIf { it > 0L } ?: return
             val scopeGeneration = sendPresentationGeneration
@@ -3118,11 +3123,14 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
             return
         }
         when (type) {
+            "operation.started" -> renderTelemetry.begin(operationId)
             "chat.message" -> if (event.optString("role") != "user") {
+                recordRenderChunk(operationId)
                 removeThinking(operationId)
                 upsertAssistant(operationId, event.optString("text"), append = false, streaming = false)
             }
             "chat.delta" -> {
+                recordRenderChunk(operationId)
                 removeThinking(operationId)
                 upsertAssistant(operationId, event.optString("delta"), append = true, streaming = true)
             }
@@ -3156,15 +3164,55 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
                     commitState(mutableState.value.copy(pendingApproval = null))
                 }
             }
-            "operation.completed", "operation.interrupted" -> {
+            "operation.completed" -> {
+                finishRenderTelemetry(operationId, "turn_ended")
+                removeThinking(operationId)
+                finishAssistant(operationId)
+                commitState(mutableState.value.copy(busy = false, operationId = null, pendingApproval = null))
+            }
+            "operation.interrupted" -> {
+                finishRenderTelemetry(operationId, "superseded")
                 removeThinking(operationId)
                 finishAssistant(operationId)
                 commitState(mutableState.value.copy(busy = false, operationId = null, pendingApproval = null))
             }
             "operation.failed" -> {
+                renderTelemetry.abandon(operationId)
                 removeThinking(operationId)
                 finishAssistant(operationId)
                 commitState(mutableState.value.copy(busy = false, operationId = null, pendingApproval = null, error = event.optString("message").ifBlank { "Bot run failed" }))
+            }
+        }
+    }
+
+    private fun recordRenderChunk(operationId: String) {
+        val ttfr = renderTelemetry.observeChunk(operationId, "assistant_text") ?: return
+        viewModelScope.launch(Dispatchers.IO) {
+            runCatching {
+                coordinator.reportRenderTtfr(
+                    ttfrMs = ttfr.ttfrMs,
+                    outcome = "rendered",
+                    chunkType = ttfr.chunkType,
+                    enterEpochMs = ttfr.enterEpochMs,
+                    isFork = false,
+                )
+            }
+        }
+    }
+
+    private fun finishRenderTelemetry(operationId: String, outcome: String) {
+        val stream = renderTelemetry.finish(operationId, outcome) ?: return
+        viewModelScope.launch(Dispatchers.IO) {
+            runCatching {
+                coordinator.reportRenderStream(
+                    outcome = stream.outcome,
+                    chunkCount = stream.chunkCount,
+                    maxGapMs = stream.maxGapMs,
+                    stalledMs = stream.stalledMs,
+                    stallCount = stream.stallCount,
+                    streamMs = stream.streamMs,
+                    isFork = false,
+                )
             }
         }
     }
@@ -3243,6 +3291,7 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
         rosterSelection.dispose()
         featureEventSubscription?.close()
         featureEventSubscription = null
+        renderTelemetry.clear()
         super.onCleared()
     }
 }
