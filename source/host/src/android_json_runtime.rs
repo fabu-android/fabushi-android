@@ -11851,7 +11851,6 @@ mod process_crash_telemetry_dispatch_tests {
     }
 
     #[test]
-    #[test]
     fn cold_start_unclean_session_is_persisted_as_structured_telemetry() {
         let root = tempfile::tempdir().unwrap();
         let marker_path = root.path().join("host-session-marker.json");
