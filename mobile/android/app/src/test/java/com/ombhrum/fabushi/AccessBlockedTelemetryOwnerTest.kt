@@ -33,7 +33,7 @@ class AccessBlockedTelemetryOwnerTest {
             2_750L,
         )
         assertEquals("recovered", recovered?.edge)
-        assertEquals("none", recovered?.accessReason)
+        assertEquals("paywallIndividual", recovered?.accessReason)
         assertEquals(1_750L, recovered?.msBlocked)
 
         val switched = blocked.copy(accountEpoch = 5L)
