@@ -150,6 +150,7 @@ internal class FabushiProcessRuntime(
         runCatching {
             coordinator.reportRecoveredProcessCrash(
                 kind = marker.kind,
+                errorClass = marker.errorClass,
                 occurredAtMs = marker.occurredAtMs,
                 uptimeMs = marker.uptimeMs,
             )
