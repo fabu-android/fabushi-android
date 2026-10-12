@@ -550,5 +550,4 @@ mod tests {
         assert_eq!(decoded.summary_archives, vec![vec![0xaa]]);
         assert_eq!(decoded.turns, vec![vec![0xbb]]);
     }
-    }
 }
