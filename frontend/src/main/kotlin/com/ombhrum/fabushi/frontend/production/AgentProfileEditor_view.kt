@@ -3,28 +3,42 @@ package com.ombhrum.fabushi
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.size
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import androidx.compose.ui.unit.dp
+import com.ombhrum.fabushi.androidmain.media.AGENT_AVATAR_MAX_ZOOM
+import com.ombhrum.fabushi.androidmain.media.AGENT_AVATAR_MIN_ZOOM
+import com.ombhrum.fabushi.androidmain.media.AndroidAvatarCrop
+import com.ombhrum.fabushi.androidmain.media.AndroidAvatarImageSource
+import com.ombhrum.fabushi.androidmain.media.clampAndroidAvatarCrop
+import com.ombhrum.fabushi.androidmain.media.initialAndroidAvatarCrop
+import com.ombhrum.fabushi.androidmain.media.panAndroidAvatarCrop
 
 @Composable
 internal fun AgentProfileEditor(
@@ -43,24 +57,45 @@ internal fun AgentProfileEditor(
     var avatarDataUrl by remember(target.id, target.avatarDataUrl) { mutableStateOf(target.avatarDataUrl) }
     var avatarImageError by remember(target.id) { mutableStateOf<String?>(null) }
     var avatarImageBusy by remember(target.id) { mutableStateOf(false) }
+    var stagedAvatarSource by remember(target.id) { mutableStateOf<AndroidAvatarImageSource?>(null) }
+    var stagedAvatarCrop by remember(target.id) { mutableStateOf<AndroidAvatarCrop?>(null) }
+    var stagedAvatarPreview by remember(target.id) { mutableStateOf<String?>(null) }
     val context = LocalContext.current
+    val density = LocalDensity.current
     val scope = rememberCoroutineScope()
+    val cropStageSize = 180.dp
+    val cropStageSizePx = with(density) { cropStageSize.toPx() }
     val avatarImagePicker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
         if (uri == null || avatarImageBusy) return@rememberLauncherForActivityResult
         avatarImageBusy = true
         avatarImageError = null
         scope.launch {
             val result = withContext(Dispatchers.IO) {
-                importAgentAvatarImageDataUrl(context, uri)
+                stageAgentAvatarImage(context, uri)
             }
-            result.onSuccess { dataUrl ->
-                avatarDataUrl = dataUrl
-                onSetAvatarImage(target.id, dataUrl)
+            result.onSuccess { source ->
+                stagedAvatarSource = source
+                stagedAvatarCrop = initialAndroidAvatarCrop(source)
+                stagedAvatarPreview = null
             }.onFailure { error ->
                 avatarImageError = error.message ?: "Avatar image import failed"
             }
             avatarImageBusy = false
         }
+    }
+
+    LaunchedEffect(stagedAvatarSource, stagedAvatarCrop) {
+        val source = stagedAvatarSource
+        val crop = stagedAvatarCrop
+        if (source == null || crop == null) {
+            stagedAvatarPreview = null
+            return@LaunchedEffect
+        }
+        val encoded = withContext(Dispatchers.IO) {
+            encodeAgentAvatarCrop(source, crop)
+        }
+        encoded.onSuccess { stagedAvatarPreview = it }
+            .onFailure { error -> avatarImageError = error.message ?: "Avatar crop failed" }
     }
 
     AlertDialog(
@@ -98,15 +133,82 @@ internal fun AgentProfileEditor(
                         .fillMaxWidth()
                         .testTag("agent-profile-description-${target.id}"),
                 )
-                AgentAvatarAndroid(
-                    bot = target.copy(
-                        avatarShape = avatarShape,
-                        avatarColor = avatarColor,
-                        avatarDataUrl = avatarDataUrl,
-                    ),
-                    size = 72.dp,
-                    modifier = Modifier.testTag("agent-profile-avatar-preview-${target.id}"),
-                )
+                val cropSource = stagedAvatarSource
+                val crop = stagedAvatarCrop
+                if (cropSource != null && crop != null) {
+                    Box(
+                        Modifier
+                            .size(cropStageSize)
+                            .pointerInput(cropSource, crop) {
+                                detectDragGestures { change, dragAmount ->
+                                    change.consume()
+                                    stagedAvatarCrop = panAndroidAvatarCrop(
+                                        source = cropSource,
+                                        crop = crop,
+                                        deltaStageX = dragAmount.x,
+                                        deltaStageY = dragAmount.y,
+                                        stageSizePx = cropStageSizePx,
+                                    )
+                                }
+                            }
+                            .testTag("agent-profile-avatar-crop-stage-${target.id}"),
+                    ) {
+                        AgentAvatarAndroid(
+                            bot = target.copy(
+                                avatarShape = avatarShape,
+                                avatarColor = avatarColor,
+                                avatarDataUrl = stagedAvatarPreview ?: cropSource.dataUrl,
+                            ),
+                            size = cropStageSize,
+                        )
+                    }
+                    Text("Drag to reposition")
+                    Slider(
+                        value = crop.zoom,
+                        onValueChange = { zoom ->
+                            stagedAvatarCrop = clampAndroidAvatarCrop(cropSource, crop.copy(zoom = zoom))
+                        },
+                        valueRange = AGENT_AVATAR_MIN_ZOOM..AGENT_AVATAR_MAX_ZOOM,
+                        modifier = Modifier.testTag("agent-profile-avatar-zoom-${target.id}"),
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        TextButton(
+                            onClick = { stagedAvatarCrop = initialAndroidAvatarCrop(cropSource) },
+                            modifier = Modifier.testTag("agent-profile-avatar-crop-reset-${target.id}"),
+                        ) { Text("Restart") }
+                        TextButton(
+                            enabled = stagedAvatarPreview != null,
+                            onClick = {
+                                val committed = stagedAvatarPreview ?: return@TextButton
+                                avatarDataUrl = committed
+                                stagedAvatarSource = null
+                                stagedAvatarCrop = null
+                                stagedAvatarPreview = null
+                                avatarImageError = null
+                                onSetAvatarImage(target.id, committed)
+                            },
+                            modifier = Modifier.testTag("agent-profile-avatar-crop-save-${target.id}"),
+                        ) { Text("Set image") }
+                        TextButton(
+                            onClick = {
+                                stagedAvatarSource = null
+                                stagedAvatarCrop = null
+                                stagedAvatarPreview = null
+                            },
+                            modifier = Modifier.testTag("agent-profile-avatar-crop-cancel-${target.id}"),
+                        ) { Text("Cancel crop") }
+                    }
+                } else {
+                    AgentAvatarAndroid(
+                        bot = target.copy(
+                            avatarShape = avatarShape,
+                            avatarColor = avatarColor,
+                            avatarDataUrl = avatarDataUrl,
+                        ),
+                        size = 72.dp,
+                        modifier = Modifier.testTag("agent-profile-avatar-preview-${target.id}"),
+                    )
+                }
                 Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                     TextButton(
                         enabled = !avatarImageBusy,
