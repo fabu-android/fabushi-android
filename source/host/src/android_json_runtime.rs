@@ -2731,21 +2731,76 @@ impl AndroidJsonHost {
     }
 
 
-    fn global_content_search(&mut self, params: &Value) -> Result<Value, String> {
-        let query = params.get("query").and_then(Value::as_str).unwrap_or_default();
-        let message_limit = params.get("messageLimit").and_then(Value::as_u64).unwrap_or(50).min(50) as usize;
-        let media_limit = params.get("mediaLimit").and_then(Value::as_u64).unwrap_or(50).min(50) as usize;
+    fn current_account_search_entries(&self) -> Result<Vec<Value>, String> {
         let account_slot = self.account.account_storage_scope();
         let account_fence = self.current_turn_account_fence()?;
-        let entries = self.transcript.lock().map_err(|_| "transcript lock poisoned".to_string())?.get_transcript().into_iter().filter(|entry| {
-            let slot_ok = entry.get("accountSlot").and_then(Value::as_str).map(|slot| Some(slot) == account_slot.as_deref()).unwrap_or(true);
-            let fence_ok = entry.get("accountFence").and_then(Value::as_str).map(|fence| account_fence.as_str() == fence).unwrap_or(true);
-            slot_ok && fence_ok
-        }).collect::<Vec<_>>();
-        let (messages, media) = self.content_search.search(&entries, query, message_limit, media_limit)?;
-        let messages = messages.into_iter().map(|item| json!({"agentId":item.agent_id,"entryId":item.entry_id,"role":item.role,"timestampMs":item.timestamp_ms,"snippet":item.snippet})).collect::<Vec<_>>();
-        let media = media.into_iter().map(|item| json!({"agentId":item.agent_id,"entryId":item.entry_id,"fileName":item.file_name,"ext":item.ext,"mime":item.mime,"kind":format!("{:?}",item.kind).to_ascii_lowercase(),"timestampMs":item.timestamp_ms,"width":item.width,"height":item.height})).collect::<Vec<_>>();
-        Ok(json!({"ready":self.content_search.is_ready(),"messages":messages,"media":media}))
+        Ok(self
+            .transcript
+            .lock()
+            .map_err(|_| "transcript lock poisoned".to_string())?
+            .get_transcript()
+            .into_iter()
+            .filter(|entry| {
+                let slot_ok = entry
+                    .get("accountSlot")
+                    .and_then(Value::as_str)
+                    .map(|slot| Some(slot) == account_slot.as_deref())
+                    .unwrap_or(true);
+                let fence_ok = entry
+                    .get("accountFence")
+                    .and_then(Value::as_str)
+                    .map(|fence| account_fence.as_str() == fence)
+                    .unwrap_or(true);
+                slot_ok && fence_ok
+            })
+            .collect())
+    }
+
+    fn global_content_search(&mut self, params: &Value) -> Result<Value, String> {
+        let query = params.get("query").and_then(Value::as_str).unwrap_or_default();
+        let message_limit = params
+            .get("messageLimit")
+            .and_then(Value::as_u64)
+            .unwrap_or(50)
+            .min(50) as usize;
+        let media_limit = params
+            .get("mediaLimit")
+            .and_then(Value::as_u64)
+            .unwrap_or(50)
+            .min(50) as usize;
+        let entries = self.current_account_search_entries()?;
+        let (messages, media) =
+            self.content_search.search(&entries, query, message_limit, media_limit)?;
+        let messages = messages
+            .into_iter()
+            .map(|item| {
+                json!({
+                    "agentId":item.agent_id,
+                    "entryId":item.entry_id,
+                    "role":item.role,
+                    "timestampMs":item.timestamp_ms,
+                    "snippet":item.snippet
+                })
+            })
+            .collect::<Vec<_>>();
+        let canonical_media = entries
+            .iter()
+            .filter_map(crate::extensions::transcript::transcript_store::project_media_search_entry)
+            .map(|item| ((item.agent_id.clone(), item.entry_id.clone()), item))
+            .collect::<BTreeMap<_, _>>();
+        let media = media
+            .into_iter()
+            .filter_map(|item| {
+                canonical_media
+                    .get(&(item.agent_id.clone(), item.entry_id.clone()))
+                    .cloned()
+            })
+            .collect::<Vec<_>>();
+        Ok(json!({
+            "ready":self.content_search.is_ready(),
+            "messages":messages,
+            "media":media
+        }))
     }
 
     fn agent_content_search(&self, params: &Value) -> Result<Value, String> {
@@ -2777,10 +2832,7 @@ impl AndroidJsonHost {
         }
 
         let entries = self
-            .transcript
-            .lock()
-            .map_err(|_| "transcript lock poisoned".to_string())?
-            .get_transcript()
+            .current_account_search_entries()?
             .into_iter()
             .filter(|entry| entry.get("agentId").and_then(Value::as_str) == Some(agent_id.as_str()))
             .filter_map(|entry| {
@@ -2883,8 +2935,7 @@ impl AndroidJsonHost {
         }))
     }
 
-    fn content_search_messages(&self, params: &Value) -> Result<Value, String> {
-        let _account_fence = self.current_turn_account_fence()?;
+    fn content_search_messages(&mut self, params: &Value) -> Result<Value, String> {
         let query = required_string(params, "query")?;
         let limit = params
             .get("limit")
@@ -2892,18 +2943,16 @@ impl AndroidJsonHost {
             .unwrap_or(50);
         let limit = usize::try_from(limit)
             .map_err(|_| "content search limit is out of range".to_string())?;
-        let matches = self
-            .transcript
-            .lock()
-            .map_err(|_| "transcript lock poisoned".to_string())?
-            .search_content(query, limit)
-            .map_err(|error| error.to_string())?;
+        if limit == 0 || limit > 50 {
+            return Err("content search limit must be between 1 and 50".to_string());
+        }
+        let entries = self.current_account_search_entries()?;
+        let (matches, _) = self.content_search.search(&entries, query, limit, 0)?;
         serde_json::to_value(matches)
             .map_err(|error| format!("failed to serialize content search result: {error}"))
     }
 
-    fn content_search_media(&self, params: &Value) -> Result<Value, String> {
-        let _account_fence = self.current_turn_account_fence()?;
+    fn content_search_media(&mut self, params: &Value) -> Result<Value, String> {
         let query = params
             .get("query")
             .and_then(Value::as_str)
@@ -2914,12 +2963,24 @@ impl AndroidJsonHost {
             .unwrap_or(50);
         let limit = usize::try_from(limit)
             .map_err(|_| "media search limit is out of range".to_string())?;
-        let matches = self
-            .transcript
-            .lock()
-            .map_err(|_| "transcript lock poisoned".to_string())?
-            .search_media(query, limit)
-            .map_err(|error| error.to_string())?;
+        if limit == 0 || limit > 50 {
+            return Err("media search limit must be between 1 and 50".to_string());
+        }
+        let entries = self.current_account_search_entries()?;
+        let (_, indexed_matches) = self.content_search.search(&entries, query, 0, limit)?;
+        let canonical_media = entries
+            .iter()
+            .filter_map(crate::extensions::transcript::transcript_store::project_media_search_entry)
+            .map(|item| ((item.agent_id.clone(), item.entry_id.clone()), item))
+            .collect::<BTreeMap<_, _>>();
+        let matches = indexed_matches
+            .into_iter()
+            .filter_map(|item| {
+                canonical_media
+                    .get(&(item.agent_id.clone(), item.entry_id.clone()))
+                    .cloned()
+            })
+            .collect::<Vec<_>>();
         serde_json::to_value(matches)
             .map_err(|error| format!("failed to serialize media search result: {error}"))
     }
