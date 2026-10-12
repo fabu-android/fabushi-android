@@ -17,7 +17,7 @@ use crate::agent_attachment::{
     DurableAgentAttachmentOwner, COMPOSER_ATTACHMENT_LIMIT,
 };
 use crate::android_sidebar_sections::{AndroidSidebarSection, AndroidSidebarSections};
-use crate::android_user_settings::AndroidUserSettings;
+use crate::android_user_settings::{AndroidUserSettings, LocalToolPermission};
 use crate::host_secret_store::get_or_create_host_machine_id;
 use crate::onepassword_provisioning::{DurableOnePasswordProvisioningOwner, DurableProvisioningPhase};
 use crate::human_call_runtime::HumanCallRuntime;
@@ -7046,6 +7046,19 @@ impl AndroidJsonHost {
         let remote_runner = Arc::clone(&self.remote_runner);
         let remote_approvals = self.remote_approvals.clone();
         let remote_user_settings = Arc::clone(&self.user_settings);
+        let remote_local_tool_permission_ceiling = match self.mode {
+            AndroidHostMode::Test => None,
+            AndroidHostMode::Production => match self.mcp_dashboard_backend.as_ref() {
+                Some(backend) => match backend.try_resolve_local_tool_permission_ceiling() {
+                    Ok(Some(value)) => LocalToolPermission::parse(value)
+                        .ok()
+                        .or(Some(LocalToolPermission::Ask)),
+                    Ok(None) => None,
+                    Err(_) => Some(LocalToolPermission::Ask),
+                },
+                None => Some(LocalToolPermission::Ask),
+            },
+        };
         let frozen_privacy = match self.mode {
             AndroidHostMode::Test => ProductionTurnPrivacyMode::NoStorage,
             AndroidHostMode::Production => self
@@ -7342,6 +7355,7 @@ impl AndroidJsonHost {
                         Arc::clone(&remote_runner),
                         remote_approvals.clone(),
                         Arc::clone(&remote_user_settings),
+                        remote_local_tool_permission_ceiling,
                         Arc::clone(&live_account_fence),
                         Arc::clone(&turn_events),
                         &operation_id_owned,
@@ -15683,6 +15697,7 @@ mod structured_log_spill_runtime_tests {
                         Arc::clone(&remote_runner),
                         remote_approvals.clone(),
                         Arc::clone(&remote_user_settings),
+                        remote_local_tool_permission_ceiling,
                         Arc::clone(&live_account_fence),
                         Arc::clone(&turn_events),
                         &operation_id_owned,
