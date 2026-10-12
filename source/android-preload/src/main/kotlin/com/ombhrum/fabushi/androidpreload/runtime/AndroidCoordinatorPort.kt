@@ -507,6 +507,11 @@ interface AndroidCoordinatorPort {
         error("Process metrics settings are unavailable on this Coordinator port")
     fun setProcessMetricsLocalEnabled(enabled: Boolean): JSONObject =
         error("Process metrics setting mutation is unavailable on this Coordinator port")
+    fun reportRecoveredProcessCrash(
+        kind: String,
+        occurredAtMs: Long,
+        uptimeMs: Long,
+    ): JSONObject = error("Process crash telemetry is unavailable on this Coordinator port")
     fun autoReviewInstructions(): AndroidAutoReviewInstructionsSnapshot =
         error("Auto Review instructions are unavailable on this Coordinator port")
     fun setAutoReviewInstructions(
