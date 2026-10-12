@@ -63,7 +63,6 @@ internal class FabushiProcessRuntime(
         AndroidCoordinatorBridge.installTrustedRuntime(it)
     }
     private val rootShellFocusRefreshOwner = RootShellFocusRefreshOwner()
-    private val processMetricsRuntime = AndroidProcessMetricsRuntime().also { it.start() }
     private val rootShellFocusRefreshExecutor = Executors.newSingleThreadExecutor { runnable ->
         Thread(runnable, "fabushi-root-focus-refresh").apply { isDaemon = true }
     }
@@ -230,7 +229,6 @@ internal class FabushiProcessRuntime(
         rootShellFocusRefreshSubscription.close()
         rootShellFocusRefreshOwner.dispose()
         rootShellFocusRefreshExecutor.shutdownNow()
-        processMetricsRuntime.close()
         webAuthnRuntime.close()
         rootNotificationEventSubscription.close()
         rootNotificationListeners.clear()
