@@ -539,12 +539,6 @@ interface AndroidCoordinatorPort {
     ): JSONObject = error("Credential Vault rotation is unavailable on this Coordinator port")
     fun credentialVaultRevoke(name: String): Boolean =
         error("Credential Vault revocation is unavailable on this Coordinator port")
-    fun reportProcessCrashTelemetry(
-        kind: String,
-        errorClass: String,
-        uptimeMs: Long,
-        occurredAtMs: Long,
-    ): Boolean = false
     fun accountAccessProjection(): AccountAccessProjection
     fun rootConnectionResilienceProjection(): RootConnectionResilienceProjection =
         RootConnectionResilienceProjection.initial()
