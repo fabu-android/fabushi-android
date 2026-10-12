@@ -13,6 +13,7 @@ class AgentNetworkModelTest {
         partners: List<String> = emptyList(),
         running: Boolean = false,
         waiting: Boolean? = null,
+        composing: Boolean = false,
         updatedAt: Long = 0L,
     ) = AgentNetworkNode(
         id = id,
@@ -22,6 +23,7 @@ class AgentNetworkModelTest {
         memberIds = members,
         conversationPartnerIds = partners,
         awaitingUserResponse = waiting,
+        isComposingMessage = composing,
         isRunning = running,
         lastMessage = "",
         updatedAt = updatedAt,
@@ -52,6 +54,14 @@ class AgentNetworkModelTest {
         assertEquals(AgentNetworkEdgeActivity.TALKING, agentNetworkEdgeActivity(message, nodes.associateBy { it.id }, 110_000))
         assertEquals(AgentNetworkActivity.WAITING, agentNetworkActivity(nodes.last()))
         assertEquals(AgentNetworkActivity.WORKING, agentNetworkActivity(nodes.first()))
+        assertEquals(
+            AgentNetworkActivity.TYPING,
+            agentNetworkActivity(node("typing", running = true, composing = true)),
+        )
+        assertEquals(
+            AgentNetworkActivity.WAITING,
+            agentNetworkActivity(node("waiting-beats-typing", waiting = true, composing = true)),
+        )
         assertEquals("2 agents · 1 group · 1 message link", agentNetworkSummary(nodes, edges))
     }
 
