@@ -7,6 +7,8 @@ PORT = ROOT / "source/android-preload/src/main/kotlin/com/ombhrum/fabushi/androi
 RUNTIME = ROOT / "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/coordinator/AndroidCoordinatorRuntime.kt"
 HOST = ROOT / "source/host/src/android_json_runtime.rs"
 SETTINGS = ROOT / "source/host/src/android_user_settings.rs"
+CI_BOOTSTRAP = ROOT / "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/startup/FabushiCiBootstrap.kt"
+APPLICATION = ROOT / "source/android-main/src/main/kotlin/com/ombhrum/fabushi/FabushiApplication.kt"
 
 class OnboardingSettingsOwnerWiringTest(unittest.TestCase):
     def test_presentation_does_not_own_durable_onboarding_seen_truth(self):
@@ -34,6 +36,16 @@ class OnboardingSettingsOwnerWiringTest(unittest.TestCase):
         self.assertIn("onboarding_seen_by_account: BTreeMap<String, bool>", settings)
         self.assertIn("pub fn onboarding_seen(&self, account_scope: &str) -> bool", settings)
         self.assertIn("pub fn set_onboarding_seen(", settings)
+
+    def test_ci_bootstrap_uses_host_owned_onboarding_seen_truth(self):
+        bootstrap = CI_BOOTSTRAP.read_text(encoding="utf-8")
+        application = APPLICATION.read_text(encoding="utf-8")
+        self.assertNotIn('"onboarding-complete"', bootstrap)
+        self.assertNotIn('getSharedPreferences("fabushi.mobile"', bootstrap)
+        self.assertIn("if (ciBootstrapActive)", application)
+        self.assertIn("it.setOnboardingSeen(true)", application)
+        self.assertIn('optBoolean("hasSeenOnboarding", false)', application)
+        self.assertIn("CI authenticated session could not settle canonical onboarding state", application)
 
     def test_create_success_never_reports_agent_creation_failure_when_seen_persist_fails(self):
         source = VIEW_MODEL.read_text(encoding="utf-8")
