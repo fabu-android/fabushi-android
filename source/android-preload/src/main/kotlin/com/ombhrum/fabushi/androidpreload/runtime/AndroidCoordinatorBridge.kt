@@ -11,11 +11,13 @@ object AndroidCoordinatorBridge {
     private var installed: AndroidCoordinatorPort? = null
 
     internal fun installTrustedRuntime(port: AndroidCoordinatorPort) {
-        val current = installed
-        require(current == null || current === port) {
-            "coordinator_runtime_already_installed"
+        synchronized(this) {
+            val current = installed
+            require(current == null || current === port) {
+                "coordinator_runtime_already_installed"
+            }
+            installed = port
         }
-        installed = port
     }
 
     internal fun clearTrustedRuntime(expected: AndroidCoordinatorPort) {
@@ -25,5 +27,7 @@ object AndroidCoordinatorBridge {
     }
 
     fun presentation(): AndroidCoordinatorPort =
-        checkNotNull(installed) { "coordinator_runtime_not_installed" }
+        synchronized(this) {
+            checkNotNull(installed) { "coordinator_runtime_not_installed" }
+        }
 }
