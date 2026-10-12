@@ -445,6 +445,8 @@ interface AndroidCoordinatorPort {
     fun isUpdateHostIdle(): Boolean = false
     fun mcpServerCatalog(): JSONArray =
         error("MCP server catalog is unavailable on this Coordinator port")
+    fun mcpTeamPopularity(): JSONObject =
+        error("MCP team popularity is unavailable on this Coordinator port")
     fun mcpServerTools(serverId: String): JSONArray =
         error("MCP server tool catalog is unavailable on this Coordinator port")
     fun mcpServerCustomInstructions(serverId: String): String? =
