@@ -1,7 +1,8 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
-use std::fs;
+use std::fs::{self, File};
+use std::io::Write;
 use std::path::PathBuf;
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -110,6 +111,44 @@ impl AutomationRuntime {
             .filter(|spec| spec.account_fence == account_fence)
             .map(|spec| serde_json::to_value(spec).unwrap_or(Value::Null))
             .collect()
+    }
+
+    pub fn list_for_agent(&self, account_fence: &str, agent_id: &str) -> Vec<Value> {
+        self.state
+            .specs
+            .values()
+            .filter(|spec| spec.account_fence == account_fence && spec.agent_id == agent_id)
+            .map(|spec| serde_json::to_value(spec).unwrap_or(Value::Null))
+            .collect()
+    }
+
+    pub fn set_agent_workflow_enabled(
+        &mut self,
+        account_fence: &str,
+        agent_id: &str,
+        automation_id: &str,
+        enabled: bool,
+    ) -> Result<AutomationSpec, String> {
+        let agent_id = agent_id.trim();
+        let automation_id = automation_id.trim();
+        if agent_id.is_empty() || automation_id.is_empty() {
+            return Err("automation agent and workflow ids are required".into());
+        }
+        let spec = self
+            .state
+            .specs
+            .get_mut(automation_id)
+            .ok_or("automation not found")?;
+        if spec.account_fence != account_fence {
+            return Err("automation account fence mismatch".into());
+        }
+        if spec.agent_id != agent_id {
+            return Err("automation belongs to a different Agent".into());
+        }
+        spec.enabled = enabled;
+        let copy = spec.clone();
+        self.persist()?;
+        Ok(copy)
     }
 
     pub fn begin_run(
@@ -330,16 +369,27 @@ impl AutomationRuntime {
     }
 
     fn persist(&self) -> Result<(), String> {
-        if let Some(parent) = self.path.parent() {
-            fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-        }
+        let parent = self
+            .path
+            .parent()
+            .ok_or("automation runtime path has no parent")?;
+        fs::create_dir_all(parent).map_err(|e| e.to_string())?;
         let temp = self.path.with_extension("json.tmp");
-        fs::write(
-            &temp,
-            serde_json::to_vec_pretty(&self.state).map_err(|e| e.to_string())?,
-        )
-        .map_err(|e| e.to_string())?;
-        fs::rename(temp, &self.path).map_err(|e| e.to_string())
+        let bytes = serde_json::to_vec_pretty(&self.state).map_err(|e| e.to_string())?;
+        let result = (|| -> Result<(), String> {
+            let mut file = File::create(&temp).map_err(|e| e.to_string())?;
+            file.write_all(&bytes).map_err(|e| e.to_string())?;
+            file.sync_all().map_err(|e| e.to_string())?;
+            fs::rename(&temp, &self.path).map_err(|e| e.to_string())?;
+            if let Ok(directory) = File::open(parent) {
+                directory.sync_all().map_err(|e| e.to_string())?;
+            }
+            Ok(())
+        })();
+        if result.is_err() {
+            let _ = fs::remove_file(&temp);
+        }
+        result
     }
 }
 
@@ -433,6 +483,45 @@ mod tests {
         replacement.id = "legacy".into();
         replacement.agent_id.clear();
         assert!(runtime.upsert_spec(replacement).is_err());
+    }
+
+    #[test]
+    fn per_agent_workflow_enablement_is_account_fenced_and_durable() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("automation.json");
+        let mut runtime = AutomationRuntime::open(&path, 1).unwrap();
+        runtime.upsert_spec(spec("acct-a")).unwrap();
+
+        let disabled = runtime
+            .set_agent_workflow_enabled("acct-a", "agent-a", "daily-brief", false)
+            .unwrap();
+        assert!(!disabled.enabled);
+        assert_eq!(runtime.list_for_agent("acct-a", "agent-a").len(), 1);
+        assert!(runtime
+            .set_agent_workflow_enabled("acct-b", "agent-a", "daily-brief", true)
+            .is_err());
+        assert!(runtime
+            .set_agent_workflow_enabled("acct-a", "agent-b", "daily-brief", true)
+            .is_err());
+        assert!(runtime
+            .begin_run("daily-brief", "request-disabled", "run-disabled", "acct-a", 2)
+            .is_err());
+        drop(runtime);
+
+        let mut reopened = AutomationRuntime::open(&path, 3).unwrap();
+        let listed = reopened.list_for_agent("acct-a", "agent-a");
+        assert_eq!(listed[0].get("enabled").and_then(Value::as_bool), Some(false));
+        reopened
+            .set_agent_workflow_enabled("acct-a", "agent-a", "daily-brief", true)
+            .unwrap();
+        assert!(reopened
+            .begin_run("daily-brief", "request-enabled", "run-enabled", "acct-a", 4)
+            .is_ok());
+        assert!(
+            fs::read_dir(dir.path())
+                .unwrap()
+                .all(|entry| !entry.unwrap().file_name().to_string_lossy().ends_with(".tmp"))
+        );
     }
 
     #[test]
