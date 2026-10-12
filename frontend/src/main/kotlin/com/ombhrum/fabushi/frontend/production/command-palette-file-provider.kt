@@ -116,7 +116,7 @@ internal fun commandPaletteFilesFromHostMatches(
             entryId = match.entryId,
             fileName = match.fileName,
             path = match.path,
-            ext = match.ext,
+            ext = match.ext.removePrefix("."),
             mime = match.mime,
             kind = kind,
             timestampMs = match.timestampMs,
