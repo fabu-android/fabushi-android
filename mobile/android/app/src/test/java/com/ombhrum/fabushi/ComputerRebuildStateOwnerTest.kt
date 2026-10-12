@@ -572,3 +572,59 @@ class ComputerRebuildStateOwnerTest {
 
 
 }
+
+class AndroidStartupTelemetryTrackerTest {
+    @Test
+    fun bufferedStartupTelemetryFlushesBeforeReady() {
+        var now = 100L
+        var scheduledDelay = -1L
+        var stuckCallback: (() -> Unit)? = null
+        val tracker = AndroidStartupTelemetryTracker(
+            monotonicNowMs = { now },
+            scheduleStuck = { delay, callback ->
+                scheduledDelay = delay
+                stuckCallback = callback
+            },
+        )
+        tracker.markPhase("coordinator")
+        tracker.armStuckWatchdog()
+        val events = mutableListOf<AndroidStartupTelemetryEvent>()
+        tracker.attach(events::add)
+        assertEquals(ANDROID_STARTUP_STUCK_MS, scheduledDelay)
+        assertEquals(listOf("start"), events.map { it.outcome })
+
+        now = 120_200L
+        stuckCallback!!.invoke()
+        tracker.markPhase("window")
+        now = 120_260L
+        tracker.noteReady()
+        assertEquals(listOf("start", "stuck", "ready"), events.map { it.outcome })
+        assertEquals("coordinator", events[1].phase)
+        assertEquals(120_100L, events[1].elapsedMs)
+        assertEquals(120_100L, events[1].phaseElapsedMs)
+        assertEquals(60L, events[2].windowMs)
+    }
+
+    @Test
+    fun startupFailureSettlesOnceAndSuppressesLateWatchdog() {
+        var now = 5L
+        var stuckCallback: (() -> Unit)? = null
+        val tracker = AndroidStartupTelemetryTracker(
+            monotonicNowMs = { now },
+            scheduleStuck = { _, callback -> stuckCallback = callback },
+        )
+        tracker.armStuckWatchdog()
+        tracker.markPhase("services")
+        val events = mutableListOf<AndroidStartupTelemetryEvent>()
+        tracker.attach(events::add)
+        now = 25L
+        tracker.noteFailed()
+        tracker.noteReady()
+        now = 130_000L
+        stuckCallback!!.invoke()
+        assertEquals(listOf("start", "failed"), events.map { it.outcome })
+        assertEquals("services", events.last().phase)
+        assertEquals(20L, events.last().elapsedMs)
+    }
+}
+
