@@ -128,8 +128,9 @@ impl AndroidStructuredLogSpillState {
     }
 
     pub fn normalize(mut self, now_ms: u64) -> Self {
-        let mut eligible = Vec::with_capacity(self.checkpoint.records.len());
-        for record in self.checkpoint.records.drain(..) {
+        let records = std::mem::take(&mut self.checkpoint.records);
+        let mut eligible = Vec::with_capacity(records.len());
+        for record in records {
             if !ALLOWED_EVENTS.contains(&record.message.as_str()) {
                 continue;
             }
