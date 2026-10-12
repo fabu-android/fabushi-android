@@ -10272,7 +10272,7 @@ export function apply(ctx) {
         let records = host.subagent_owner.lock().unwrap().all_records();
         assert_eq!(records.len(), 1);
         let frozen = records[0].frozen_turn.as_ref().expect("frozen child turn");
-        assert_eq!(frozen.model_id, "deepseek-chat");
+        assert_eq!(frozen.model_id, "grok-4.5");
         assert_eq!(frozen.allowed_subagent_types, vec!["general-purpose"]);
         assert!(
             frozen.tool_names.is_empty(),
