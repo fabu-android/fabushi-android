@@ -160,6 +160,8 @@ class CommandPaletteFileProviderTest {
             projected.map { it.kind },
         )
         assertEquals("fabushi-blob://archive", projected.first().path)
+        assertEquals("bin", projected.first().ext)
+        assertEquals("png", projected.last().ext)
         assertEquals(42L, projected.first().sizeBytes)
     }
 
