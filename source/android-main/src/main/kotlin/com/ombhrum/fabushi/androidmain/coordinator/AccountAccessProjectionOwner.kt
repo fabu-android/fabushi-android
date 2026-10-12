@@ -26,6 +26,65 @@ internal class SharedPreferencesAccountAccessEpochStore(context: Context) : Acco
     }
 }
 
+internal data class AccessBlockedTelemetryEdge(
+    val edge: String,
+    val cause: String,
+    val accessReason: String,
+    val msBlocked: Long?,
+)
+
+internal class AccessBlockedTelemetryOwner {
+    private var accountEpoch: Long? = null
+    private var blockedSinceMs: Long? = null
+    private var blocked = false
+
+    @Synchronized
+    fun observe(projection: AccountAccessProjection, nowMs: Long): AccessBlockedTelemetryEdge? {
+        val safeNow = nowMs.coerceAtLeast(0L)
+        if (accountEpoch != projection.accountEpoch) {
+            accountEpoch = projection.accountEpoch
+            blocked = false
+            blockedSinceMs = null
+        }
+        val nextBlocked = projection.loggedIn && projection.explicitlyBlocked
+        if (nextBlocked == blocked) return null
+        val reason = projection.blockReason.toTelemetryReason()
+        return if (nextBlocked) {
+            blocked = true
+            blockedSinceMs = safeNow
+            AccessBlockedTelemetryEdge(
+                edge = "entered",
+                cause = "unknown",
+                accessReason = reason,
+                msBlocked = null,
+            )
+        } else {
+            val startedAt = blockedSinceMs
+            blocked = false
+            blockedSinceMs = null
+            AccessBlockedTelemetryEdge(
+                edge = "recovered",
+                cause = "unknown",
+                accessReason = reason,
+                msBlocked = startedAt?.let { (safeNow - it).coerceAtLeast(0L) },
+            )
+        }
+    }
+}
+
+internal fun AccountAccessBlockReason.toTelemetryReason(): String = when (this) {
+    AccountAccessBlockReason.NONE -> "none"
+    AccountAccessBlockReason.TEAM_PRIVACY_MODE -> "teamPrivacyMode"
+    AccountAccessBlockReason.TEAM_SETUP_REQUIRED -> "teamSetupRequired"
+    AccountAccessBlockReason.TEAM_ACCESS_REQUIRED -> "teamAccessRequired"
+    AccountAccessBlockReason.NOT_OFFERED -> "notOffered"
+    AccountAccessBlockReason.FREE_TRIAL_AVAILABLE -> "freeTrialAvailable"
+    AccountAccessBlockReason.PAYWALL_INDIVIDUAL -> "paywallIndividual"
+    AccountAccessBlockReason.PAYWALL_TEAM_MEMBER -> "paywallTeamMember"
+    AccountAccessBlockReason.PAYWALL_TEAM_ADMIN -> "paywallTeamAdmin"
+    AccountAccessBlockReason.UNSPECIFIED -> "unspecified"
+}
+
 internal data class AccountAccessRefreshToken(val generation: Long, val accountEpoch: Long)
 internal data class RosterAccessFailureClassification(
     val code: String,
