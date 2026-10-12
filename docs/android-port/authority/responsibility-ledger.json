@@ -15802,6 +15802,74 @@
       "artifact": null,
       "verification_status": "not-verified",
       "notes": "Fresh audit at Android 5af9ae0df3e77a6a6513b1fdbcaf29bb58d284f9. This is an explicit platform replacement mapping, not N/A and not a claim that remote codebase telemetry is implemented."
+    },
+    {
+      "responsibility_id": "CODEBASE-TELEMETRY-SAND-OWNER-ANDROID-001",
+      "domain": "telemetry-codebase-snapshot-platform-boundary",
+      "desktop_sources": [
+        {
+          "path": "source/host/src/extensions/codebase_telemetry/codebase_snapshot_trigger.rs",
+          "blob_sha": "ca1f043dded6b20660d8d5489d91d4da070e075f"
+        },
+        {
+          "path": "source/host/src/extensions/codebase_telemetry/codebase_telemetry_adapter.rs",
+          "blob_sha": "6bf538ebb0a735ac9a166921f88a4279801d17dd"
+        },
+        {
+          "path": "source/host/src/extensions/codebase_telemetry/codebase_telemetry_host.rs",
+          "blob_sha": "98b6868ad4b705e70c277e47a766803e3e627fab"
+        },
+        {
+          "path": "source/host/src/extensions/codebase_telemetry/codebase_telemetry_service.rs",
+          "blob_sha": "c2b012d6678ea4fd5afb688303f810265c9d9ee8"
+        },
+        {
+          "path": "source/host/src/extensions/codebase_telemetry/csnaps_capability.rs",
+          "blob_sha": "351c26abe3395cc5ab618b31e9153e6f2422fb2e"
+        },
+        {
+          "path": "source/host/src/extensions/codebase_telemetry/csnaps_process.rs",
+          "blob_sha": "77a9071ee904a697b16d4a77f0222d2c73d4e17f"
+        },
+        {
+          "path": "source/host/src/extensions/codebase_telemetry/csnaps_protocol.rs",
+          "blob_sha": "5f1523f020558e3303cab0dc10bb67fb82f9938f"
+        },
+        {
+          "path": "source/host/src/extensions/codebase_telemetry/extension.rs",
+          "blob_sha": "001e4ec58de70b726bb30612b93dd550eb6a8212"
+        },
+        {
+          "path": "source/host/src/extensions/codebase_telemetry/mod.rs",
+          "blob_sha": "1be6aa0cc117fd8247f9405fa7b5395205fd4b72"
+        },
+        {
+          "path": "source/host/src/extensions/codebase_telemetry/privacy_mode.rs",
+          "blob_sha": "0b3963b06a4806ef546e65b3e1ec3481d8d411b9"
+        }
+      ],
+      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "responsibility": "Preserve the product/privacy boundary of Desktop codebase telemetry: Sand execution environments may snapshot their own codebase under telemetry privacy policy, while Android must not reinterpret phone storage as that codebase, spawn csnaps, or smuggle telemetry collection through a generic Remote Runner privilege.",
+      "source_owner": "Desktop Sand Host codebase_telemetry extension + csnaps process",
+      "visible_effect": "No Android user-visible feature is removed; codebase telemetry remains attached to the environment that actually owns the codebase. Android avoids unexpected phone/remote-code collection and keeps explicit Remote Runner actions separately authorized.",
+      "android_disposition": "not-applicable-with-replacement",
+      "android_target": [
+        "tests/test_codebase_telemetry_android_replacement.py",
+        "source/host/src/runner/remote_routed_tools.rs",
+        "source/host/src/extensions/telemetry"
+      ],
+      "android_owner": "No Android codebase-snapshot owner; Sand/Desktop execution environment remains telemetry owner. Android Host owns only ordinary Android structured telemetry and explicit Remote Runner authorization.",
+      "platform_delta": "Desktop runs external csnaps against Sand /workspace and /home. Android scoped storage and process sandbox make that mechanism invalid; Android intentionally ships no local csnaps and no hidden remote telemetry executor.",
+      "implementation_status": "implemented",
+      "production_wiring": "Android production tree contains no codebase_telemetry extension or csnaps process. Remote routed tools require account/device fences, permission grants and approval consumption, and intentionally expose neither codebase-telemetry nor csnaps executor names.",
+      "unit_test": "tests/test_codebase_telemetry_android_replacement.py statically enforces the absence/prohibition contract; exact-head Actions pending",
+      "contract_test": "same test asserts authorized-remote-runner-v1/account_fence/account_epoch/approval/grant primitives remain explicit and no hidden telemetry executor exists",
+      "integration_test": "not applicable locally; Sand/Desktop telemetry remains independently owned by that environment",
+      "packaged_test": "required: final APK/AAB contains no csnaps/codebase telemetry executable path",
+      "device_test": "required negative acceptance: Android device does not gain hidden codebase collection authority",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Reviewed as not-applicable-with-replacement, not as a deleted capability. The original capability is telemetry of the environment that owns the codebase; that owner remains Sand/Desktop. Final verification still needs same-exact-head Actions/package negative evidence."
     }
   ],
   "traceability": {
