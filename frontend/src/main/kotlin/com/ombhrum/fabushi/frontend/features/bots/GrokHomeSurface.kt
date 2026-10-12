@@ -71,6 +71,7 @@ internal fun GrokHomeSurface(
     botState: MobileBotUiState,
     appAgentSurface: FabushiAppAgentSurface,
     agentNetworkAvailability: AndroidEntrypointAvailability,
+    hiddenChatsAvailability: AndroidEntrypointAvailability,
     onOpenMessaging: () -> Unit,
     onRefreshAccess: () -> Unit,
     onOpenAccessOnboarding: () -> Unit,
@@ -211,8 +212,12 @@ internal fun GrokHomeSurface(
         }
     }
 
+    LaunchedEffect(hiddenChatsAvailability) {
+        if (!hiddenChatsAvailability.isOpenable) showHiddenBots = false
+    }
+
     HiddenBotsDialog(
-        open = showHiddenBots,
+        open = showHiddenBots && hiddenChatsAvailability.isOpenable,
         hiddenBots = botState.bots.filter { it.isHidden },
         pendingMutationIds = botState.hiddenMutationPendingIds,
         onClose = { showHiddenBots = false },
@@ -242,6 +247,7 @@ internal fun GrokHomeSurface(
         showHiddenBots,
         messagingState.conversations,
         agentNetworkAvailability,
+        hiddenChatsAvailability,
         appAgentSurface,
     ) {
         val elements = mutableListOf<FabushiAppAgentSurface.Element>()
@@ -640,7 +646,10 @@ internal fun GrokHomeSurface(
             if (botState.bots.any { it.isHidden }) {
                 item {
                     TextButton(
-                        onClick = { showHiddenBots = true },
+                        onClick = {
+                            if (hiddenChatsAvailability.isOpenable) showHiddenBots = true
+                        },
+                        enabled = hiddenChatsAvailability.isOpenable,
                         modifier = Modifier
                             .fillMaxWidth()
                             .testTag("hidden-bots-open"),
@@ -687,7 +696,9 @@ internal fun GrokHomeSurface(
                     item {
                         RosterStatus(
                             kind = RosterStatusKind.ALL_HIDDEN,
-                            onShowHiddenBots = { showHiddenBots = true },
+                            onShowHiddenBots = {
+                                if (hiddenChatsAvailability.isOpenable) showHiddenBots = true
+                            },
                             modifier = Modifier.padding(horizontal = 18.dp, vertical = 8.dp),
                         )
                     }
