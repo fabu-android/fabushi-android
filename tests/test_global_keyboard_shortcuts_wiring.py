@@ -33,6 +33,23 @@ class GlobalKeyboardShortcutWiringTest(unittest.TestCase):
         self.assertNotIn("activity.globalKeyboardShortcutController", renderer)
         self.assertNotIn("activity as MainActivity", renderer)
 
+    def test_root_shell_navigation_uses_durable_multi_step_owner(self):
+        s = RENDERER.read_text(encoding="utf-8")
+        owner = (ROOT / "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/recovered/features/window-chrome/RootShellNavigationHistory.kt").read_text(encoding="utf-8")
+        self.assertNotIn("KeyboardForwardTarget", s)
+        self.assertIn("RootShellNavigationOwner(", s)
+        self.assertIn("rootShellNavigationOwner.observeAccount(", s)
+        self.assertIn("rootShellNavigationOwner.observeAppliedAgent(botState.activeBot?.id)", s)
+        self.assertIn("RootShellNavigationDirection.BACK", s)
+        self.assertIn("RootShellNavigationDirection.FORWARD", s)
+        self.assertIn("val entries: List<String>", owner)
+        self.assertIn("val cursor: Int", owner)
+        self.assertIn("val pendingTarget: String?", owner)
+        self.assertIn("val appliedAgentId: String?", owner)
+        self.assertIn("candidate in availableAgentIds", owner)
+        self.assertIn("persistence.load(nextScope)", owner)
+        self.assertIn("nextAccountEpoch < current.accountEpoch", owner)
+
     def test_registry_covers_contract_and_agent_bounds(self):
         s = CONTROLLER.read_text(encoding="utf-8")
         for n in ('listOf("mod+n")','listOf("mod+k")','listOf("mod+comma")','listOf("mod+shift+m")',

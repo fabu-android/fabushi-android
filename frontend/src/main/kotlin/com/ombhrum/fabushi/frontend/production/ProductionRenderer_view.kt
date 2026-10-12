@@ -31,11 +31,6 @@ import org.json.JSONObject
 
 private enum class RendererRoute { GROK_HOME, AGENT_NETWORK, MESSAGING }
 
-private data class KeyboardForwardTarget(
-    val route: RendererRoute,
-    val agentId: String?,
-)
-
 /**
  * Shipping production renderer corresponding to Grok ProductionRenderer.
  *
@@ -80,7 +75,16 @@ internal fun ProductionRenderer(
                 var shortcutNewAgentNonce by remember { mutableStateOf(0) }
                 var shortcutFocusPromptNonce by remember { mutableStateOf(0) }
                 var shortcutFindInChatNonce by remember { mutableStateOf(0) }
-                var keyboardForwardTarget by remember { mutableStateOf<KeyboardForwardTarget?>(null) }
+                val rootShellNavigationOwner = remember(activity.applicationContext) {
+                    RootShellNavigationOwner(
+                        SharedPreferencesRootShellNavigationPersistence(
+                            activity.applicationContext.getSharedPreferences(
+                                "fabushi.root-shell-navigation",
+                                android.content.Context.MODE_PRIVATE,
+                            ),
+                        ),
+                    )
+                }
 
                 val coroutineScope = rememberCoroutineScope()
                 val appAlertController = remember(coroutineScope) {
@@ -207,6 +211,24 @@ internal fun ProductionRenderer(
                         rendererRoute = RendererRoute.GROK_HOME
                     }
                 }
+                LaunchedEffect(
+                    state.loggedIn,
+                    state.rootConnectionProjection.accountGeneration,
+                    state.rootConnectionProjection.accountEpoch,
+                    state.rootConnectionProjection.accountIdentity,
+                    botState.activeBot?.id,
+                ) {
+                    rootShellNavigationOwner.observeAccount(
+                        loggedIn = state.loggedIn,
+                        nextAccountGeneration = state.rootConnectionProjection.accountGeneration,
+                        nextAccountEpoch = state.rootConnectionProjection.accountEpoch,
+                        nextAccountIdentity = state.rootConnectionProjection.accountIdentity,
+                    )
+                    if (state.loggedIn) {
+                        rootShellNavigationOwner.observeAppliedAgent(botState.activeBot?.id)
+                    }
+                }
+
                 LaunchedEffect(state.authResolved, state.loggedIn, state.onboardingStep) {
                     if (state.authResolved && state.loggedIn && state.onboardingStep >= 3) {
                         signedInOnboardingModel.refresh()
@@ -285,17 +307,33 @@ internal fun ProductionRenderer(
                                 previousAgent = { moveAgent(-1) },
                                 nextAgent = { moveAgent(1) },
                                 navigateBack = {
-                                    keyboardForwardTarget = KeyboardForwardTarget(rendererRoute, botState.activeBot?.id)
-                                    if (botState.activeBot != null) botModel.closeBot()
-                                    else if (rendererRoute != RendererRoute.GROK_HOME) rendererRoute = RendererRoute.GROK_HOME
+                                    val available = botState.bots.mapTo(linkedSetOf()) { it.id }
+                                    val targetId = rootShellNavigationOwner.navigate(
+                                        RootShellNavigationDirection.BACK,
+                                        available,
+                                    )
+                                    val target = targetId?.let { id ->
+                                        botState.bots.firstOrNull { it.id == id }
+                                    }
+                                    if (target != null) {
+                                        rendererRoute = RendererRoute.GROK_HOME
+                                        botModel.openBot(target)
+                                    } else if (botState.activeBot != null) {
+                                        botModel.closeBot()
+                                    } else if (rendererRoute != RendererRoute.GROK_HOME) {
+                                        rendererRoute = RendererRoute.GROK_HOME
+                                    }
                                 },
                                 navigateForward = {
-                                    keyboardForwardTarget?.let { target ->
-                                        rendererRoute = target.route
-                                        target.agentId?.let { id ->
-                                            botState.bots.firstOrNull { it.id == id }?.let { bot -> botModel.openBot(bot) }
+                                    val available = botState.bots.mapTo(linkedSetOf()) { it.id }
+                                    rootShellNavigationOwner.navigate(
+                                        RootShellNavigationDirection.FORWARD,
+                                        available,
+                                    )?.let { id ->
+                                        botState.bots.firstOrNull { it.id == id }?.let { bot ->
+                                            rendererRoute = RendererRoute.GROK_HOME
+                                            botModel.openBot(bot)
                                         }
-                                        keyboardForwardTarget = null
                                     }
                                 },
                                 focusAgent = { index ->
