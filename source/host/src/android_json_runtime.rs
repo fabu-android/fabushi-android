@@ -3269,6 +3269,9 @@ impl AndroidJsonHost {
         let cpu_time_ms_cumulative = params.get("cpuTimeMsCumulative").and_then(Value::as_u64).ok_or("cpuTimeMsCumulative is required")?;
         let memory_bytes = params.get("memoryBytes").and_then(Value::as_u64).ok_or("memoryBytes is required")?;
         let sample = self.process_metrics.observe(observed_at_ms, cpu_time_ms_cumulative, memory_bytes)?;
+        let Some(sample) = sample else {
+            return Ok(Value::Null);
+        };
         let projected = serde_json::to_value(sample)
             .map_err(|error| format!("failed to project Android process metrics: {error}"))?;
         if self.process_metrics_recent.len() >= 32 {
@@ -10926,8 +10929,8 @@ mod process_metrics_recent_dispatch_tests {
             host.dispatch(
                 "feature.telemetry.processMetrics.observe",
                 &json!({
-                    "observedAtMs": 1_000 + index,
-                    "cpuTimeMsCumulative": 10_000 + index,
+                    "observedAtMs": 1_000 + index * 300_000,
+                    "cpuTimeMsCumulative": 10_000 + index * 100,
                     "memoryBytes": (64 + index) * 1024 * 1024,
                 }),
             )
@@ -10940,8 +10943,8 @@ mod process_metrics_recent_dispatch_tests {
             .cloned()
             .unwrap();
         assert_eq!(recent.len(), 32);
-        assert_eq!(recent.first().unwrap()["sampleSeqno"], 8);
-        assert_eq!(recent.last().unwrap()["sampleSeqno"], 39);
+        assert_eq!(recent.first().unwrap()["sampleSeqno"], 7);
+        assert_eq!(recent.last().unwrap()["sampleSeqno"], 38);
         assert!(recent.iter().all(|sample| sample.get("sessionId").is_some()));
         assert!(recent.iter().all(|sample| sample.get("memoryMb").is_some()));
         assert!(recent.iter().all(|sample| sample.get("cpuTimeMsSample").is_some()));
