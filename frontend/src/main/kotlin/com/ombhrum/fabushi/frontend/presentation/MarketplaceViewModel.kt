@@ -133,6 +133,18 @@ data class MobileChatMessage(
     val hasTranscriptThreadChip: Boolean = false,
 )
 
+internal fun shouldApplyAccountPrivacyModeResult(
+    requestGeneration: Long,
+    currentGeneration: Long,
+    expectedAuthId: String,
+    currentLoggedIn: Boolean,
+    currentAuthId: String,
+): Boolean =
+    requestGeneration == currentGeneration &&
+        currentLoggedIn &&
+        expectedAuthId.isNotBlank() &&
+        currentAuthId == expectedAuthId
+
 data class MarketplaceUiState(
     val loading: Boolean = false,
     val installingPluginId: String? = null,
@@ -174,6 +186,7 @@ class MarketplaceViewModel(application: Application) : AndroidViewModel(applicat
     val state: StateFlow<MarketplaceUiState> = mutableState.asStateFlow()
     private var featureEventSubscription: AutoCloseable? = null
     private var rootConnectionSubscription: AutoCloseable? = null
+    private var accountPrivacyRefreshGeneration: Long = 0L
 
     init {
         featureEventSubscription = coordinator.addFeatureEventListener { event ->
@@ -372,6 +385,7 @@ class MarketplaceViewModel(application: Application) : AndroidViewModel(applicat
             runCatching { withContext(Dispatchers.IO) { coordinator.authLogout() } }
                 .onSuccess { result ->
                     val user = result.optJSONObject("user")
+                    accountPrivacyRefreshGeneration += 1
                     mutableState.value = mutableState.value.copy(
                         authResolved = true,
                         loggedIn = result.optBoolean("loggedIn", false),
@@ -601,18 +615,42 @@ class MarketplaceViewModel(application: Application) : AndroidViewModel(applicat
     }
 
     fun refreshAccountPrivacyMode() {
-        if (!mutableState.value.loggedIn) {
-            mutableState.value = mutableState.value.copy(accountPrivacyMode = null)
+        val snapshot = mutableState.value
+        val generation = ++accountPrivacyRefreshGeneration
+        if (!snapshot.loggedIn || snapshot.accountAuthId.isBlank()) {
+            mutableState.value = snapshot.copy(accountPrivacyMode = null)
             return
         }
+        val expectedAuthId = snapshot.accountAuthId
         viewModelScope.launch {
             runCatching {
                 withContext(Dispatchers.IO) { coordinator.accountPrivacyMode() }
             }.onSuccess { result ->
+                val current = mutableState.value
+                if (
+                    !shouldApplyAccountPrivacyModeResult(
+                        requestGeneration = generation,
+                        currentGeneration = accountPrivacyRefreshGeneration,
+                        expectedAuthId = expectedAuthId,
+                        currentLoggedIn = current.loggedIn,
+                        currentAuthId = current.accountAuthId,
+                    )
+                ) return@onSuccess
                 val mode = result.optString("mode").trim().takeIf { it.isNotEmpty() }
-                mutableState.value = mutableState.value.copy(accountPrivacyMode = mode)
+                mutableState.value = current.copy(accountPrivacyMode = mode)
             }.onFailure {
-                mutableState.value = mutableState.value.copy(accountPrivacyMode = null)
+                val current = mutableState.value
+                if (
+                    shouldApplyAccountPrivacyModeResult(
+                        requestGeneration = generation,
+                        currentGeneration = accountPrivacyRefreshGeneration,
+                        expectedAuthId = expectedAuthId,
+                        currentLoggedIn = current.loggedIn,
+                        currentAuthId = current.accountAuthId,
+                    )
+                ) {
+                    mutableState.value = current.copy(accountPrivacyMode = null)
+                }
             }
         }
     }
