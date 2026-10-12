@@ -649,6 +649,57 @@ mod tests {
         assert_eq!(remote.executes, vec!["remote-op"]);
     }
 
+    struct RealLocalEcho;
+
+    impl fabushi_android_local_exec_daemon::LocalCapabilityHandler for RealLocalEcho {
+        fn execute(
+            &mut self,
+            request: &ExecutionRequest,
+        ) -> Result<ExecutionResult, ExecutionError> {
+            Ok(ExecutionResult {
+                operation_id: request.operation_id.clone(),
+                output_json: r#"{"runner":"android-local"}"#.into(),
+            })
+        }
+
+        fn cancel(&mut self, _operation_id: &str) -> Result<(), ExecutionError> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn real_android_local_runner_is_the_host_local_execution_boundary() {
+        use fabushi_android_shared::ExecutionCapability;
+
+        let mut local = AndroidLocalRunner::new();
+        local.register(
+            ExecutionCapability {
+                id: "computer.use".into(),
+                target: ExecutionTarget::AndroidLocal,
+                cancellable: true,
+                supports_streaming: false,
+            },
+            Box::new(RealLocalEcho),
+        ).unwrap();
+        let root = tempfile::tempdir().unwrap();
+        let journal = RemoteExecutionJournal::open(root.path().join("remote.json"), 1).unwrap();
+        let remote = AuthenticatedRemoteHostRunner::new(
+            RecordingRemoteTransport::default(),
+            journal,
+        );
+        let mut composition = AuthorizedHostRunnerComposition::new(local, remote);
+        let result = composition
+            .run(
+                ExecutionTarget::AndroidLocal,
+                &request("real-local-op"),
+                None,
+                2,
+            )
+            .unwrap();
+        assert_eq!(result.output_json, r#"{"runner":"android-local"}"#);
+        assert!(composition.remote().journal().record("real-local-op").is_none());
+    }
+
     #[test]
     fn local_target_never_falls_through_to_remote_runner() {
         let root = tempfile::tempdir().unwrap();
