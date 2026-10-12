@@ -42,6 +42,27 @@ class AndroidWebAuthnContractTest {
     }
 
     @Test
+    fun nativePasskeyStallMatchesDesktopDeadlineAndFailsClosed() {
+        assertEquals(60_000L, AndroidCredentialManagerWebAuthn.PASSKEY_STALL_MS)
+
+        val ceremony = AndroidWebAuthnCeremony(
+            requestId = "request-stalled",
+            kind = "get",
+            origin = "https://cursor.com",
+            payloadJson = "{}",
+        )
+        val frames = AndroidCredentialManagerWebAuthn.passkeyStallFrames(ceremony)
+        assertEquals(2, frames.size)
+        assertEquals("stage", frames[0].getString("kind"))
+        assertEquals("sign", frames[0].getString("stage"))
+        assertEquals("failed", frames[0].getString("outcome"))
+        assertEquals("error", frames[1].getString("kind"))
+        assertEquals("request-stalled", frames[1].getString("requestId"))
+        assertEquals("NotAllowedError", frames[1].getString("name"))
+        assertEquals("passkey_stall", frames[1].getString("code"))
+    }
+
+    @Test
     fun stageFramesUseOnlySharedGrantSignAndOutcomeVocabulary() {
         val frame = AndroidCredentialManagerWebAuthn.stageFrame(
             requestId = "request-1",
