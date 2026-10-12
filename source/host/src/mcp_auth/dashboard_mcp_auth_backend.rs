@@ -1011,7 +1011,14 @@ impl CursorDashboardMcpAuthBackend {
             USAGE_REQUEST_TIMEOUT_MS,
             ghost_mode,
         )?;
-        decode_sand_usage_summary(&status, &current_period, &trial, system_now_ms())
+        let teams = self.send_unary(
+            &credentials,
+            DASHBOARD_GET_TEAMS_PATH,
+            &[],
+            USAGE_REQUEST_TIMEOUT_MS,
+            ghost_mode,
+        )?;
+        decode_sand_usage_summary(&status, &current_period, &trial, &teams, system_now_ms())
     }
 
     pub fn cancel_sand_trial(&self) -> Result<(), String> {
@@ -2353,6 +2360,7 @@ fn decode_sand_usage_summary(
     status: &[u8],
     current_period: &[u8],
     trial: &[u8],
+    teams: &[u8],
     now_ms: u64,
 ) -> Result<Value, String> {
     let usage_percent = decode_optional_fixed64_field(status, 3)?
@@ -2374,6 +2382,11 @@ fn decode_sand_usage_summary(
     let trial_cancelable = decode_optional_varint_field(status, 11)?.unwrap_or_default() != 0;
     let claim_status = decode_optional_varint_field(trial, 1)?.unwrap_or_default();
     let is_sand_trial = trial_expires_at_ms.is_some_and(|expires| expires > now_ms);
+
+    let is_enterprise = repeated_message_fields(teams, 1)?
+        .into_iter()
+        .any(|team| decode_optional_varint_field(team, 13).ok().flatten().unwrap_or_default() != 0);
+    let upgrade_cta = decode_sand_upgrade_cta(status)?;
 
     let billing_cycle_end = decode_optional_varint_field(current_period, 2)?
         .filter(|value| *value > 0);
@@ -2397,11 +2410,75 @@ fn decode_sand_usage_summary(
         "hasAvailableUsage": has_available_usage,
         "hasNonZeroIncludedLimit": has_non_zero_included_limit,
         "usesPooledEnterpriseAllowance": uses_pooled_enterprise_allowance,
+        "isEnterprise": is_enterprise,
+        "upgradeCta": upgrade_cta,
         "isSandTrial": is_sand_trial,
         "hasEndedSandTrial": claim_status == 3 && !is_sand_trial,
         "canCancelSandTrial": is_sand_trial && trial_cancelable,
         "onDemand": on_demand,
     }))
+}
+
+fn decode_sand_upgrade_cta(status: &[u8]) -> Result<Option<Value>, String> {
+    let Some(recommendation) = first_message_field(status, 9)? else {
+        return Ok(None);
+    };
+    let disabled = decode_optional_varint_field(recommendation, 2)?.unwrap_or_default() != 0;
+    let Some(button) = first_message_field(recommendation, 1)? else {
+        return Ok(None);
+    };
+    let Some(label) = string_fields(button, 1)?.into_iter().next() else {
+        return Ok(None);
+    };
+
+    if let Some(url_action) = first_message_field(button, 5)? {
+        let Some(url) = string_fields(url_action, 1)?.into_iter().next() else {
+            return Ok(None);
+        };
+        let parsed = Url::parse(&url).map_err(|_| "Sand upgrade CTA URL is invalid")?;
+        if !matches!(parsed.scheme(), "http" | "https") {
+            return Ok(None);
+        }
+        return Ok(Some(json!({
+            "label": label,
+            "disabled": disabled,
+            "action": {"kind":"open-url","url":url},
+        })));
+    }
+
+    if let Some(dashboard_action) = first_message_field(button, 7)? {
+        let Some(action) = string_fields(dashboard_action, 1)?.into_iter().next() else {
+            return Ok(None);
+        };
+        if action != "requestLimitIncrease" {
+            return Ok(None);
+        }
+        let mut args = std::collections::BTreeMap::<String, String>::new();
+        for raw in repeated_message_fields(dashboard_action, 2)? {
+            let Some(key) = string_fields(raw, 1)?.into_iter().next() else {
+                continue;
+            };
+            let Some(value) = string_fields(raw, 2)?.into_iter().next() else {
+                continue;
+            };
+            args.insert(key, value);
+        }
+        let success_message = string_fields(dashboard_action, 3)?
+            .into_iter()
+            .next();
+        return Ok(Some(json!({
+            "label": label,
+            "disabled": disabled,
+            "action": {
+                "kind":"dashboard-action",
+                "action":action,
+                "args":args,
+                "successMessage":success_message,
+            },
+        })));
+    }
+
+    Ok(None)
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -2919,13 +2996,15 @@ mod tests {
         let trial = vec![0x08, 0x03];
 
         assert_eq!(
-            decode_sand_usage_summary(&status, &period, &trial, 2_000_000_000_000).unwrap(),
+            decode_sand_usage_summary(&status, &period, &trial, &[], 2_000_000_000_000).unwrap(),
             json!({
                 "sandUsagePercent":42.5,
                 "sandUsageResetTimestampMs":2_000_000_000_000_u64,
                 "hasAvailableUsage":true,
                 "hasNonZeroIncludedLimit":true,
                 "usesPooledEnterpriseAllowance":false,
+                "isEnterprise":false,
+                "upgradeCta":null,
                 "isSandTrial":true,
                 "hasEndedSandTrial":false,
                 "canCancelSandTrial":true,
@@ -2934,6 +3013,96 @@ mod tests {
         );
     }
 
+
+    #[test]
+    fn usage_decoder_preserves_enterprise_and_safe_upgrade_cta_contract() {
+        let mut url = Vec::new();
+        encode_string(1, "https://cursor.com/settings", &mut url);
+        let mut button = Vec::new();
+        encode_string(1, "Upgrade", &mut button);
+        encode_len_delimited(5, &url, &mut button);
+        let mut recommendation = Vec::new();
+        encode_len_delimited(1, &button, &mut recommendation);
+        encode_bool(2, true, &mut recommendation);
+        let mut status = Vec::new();
+        encode_len_delimited(9, &recommendation, &mut status);
+
+        let mut enterprise_team = Vec::new();
+        encode_bool(13, true, &mut enterprise_team);
+        let mut teams = Vec::new();
+        encode_len_delimited(1, &enterprise_team, &mut teams);
+
+        let decoded = decode_sand_usage_summary(&status, &[], &[], &teams, 0).unwrap();
+        assert_eq!(decoded["isEnterprise"], true);
+        assert_eq!(
+            decoded["upgradeCta"],
+            json!({
+                "label":"Upgrade",
+                "disabled":true,
+                "action":{"kind":"open-url","url":"https://cursor.com/settings"}
+            })
+        );
+
+        let mut args_entry = Vec::new();
+        encode_string(1, "plan", &mut args_entry);
+        encode_string(2, "pro", &mut args_entry);
+        let mut dashboard = Vec::new();
+        encode_string(1, "requestLimitIncrease", &mut dashboard);
+        encode_len_delimited(2, &args_entry, &mut dashboard);
+        encode_string(3, "Request sent", &mut dashboard);
+        let mut button = Vec::new();
+        encode_string(1, "Request more", &mut button);
+        encode_len_delimited(7, &dashboard, &mut button);
+        let mut recommendation = Vec::new();
+        encode_len_delimited(1, &button, &mut recommendation);
+        let mut status = Vec::new();
+        encode_len_delimited(9, &recommendation, &mut status);
+        let decoded = decode_sand_usage_summary(&status, &[], &[], &[], 0).unwrap();
+        assert_eq!(
+            decoded["upgradeCta"],
+            json!({
+                "label":"Request more",
+                "disabled":false,
+                "action":{
+                    "kind":"dashboard-action",
+                    "action":"requestLimitIncrease",
+                    "args":{"plan":"pro"},
+                    "successMessage":"Request sent"
+                }
+            })
+        );
+    }
+
+    #[test]
+    fn usage_decoder_rejects_unsafe_upgrade_cta_variants() {
+        let mut javascript = Vec::new();
+        encode_string(1, "javascript:alert(1)", &mut javascript);
+        let mut button = Vec::new();
+        encode_string(1, "Bad", &mut button);
+        encode_len_delimited(5, &javascript, &mut button);
+        let mut recommendation = Vec::new();
+        encode_len_delimited(1, &button, &mut recommendation);
+        let mut status = Vec::new();
+        encode_len_delimited(9, &recommendation, &mut status);
+        assert_eq!(
+            decode_sand_usage_summary(&status, &[], &[], &[], 0).unwrap()["upgradeCta"],
+            Value::Null
+        );
+
+        let mut dashboard = Vec::new();
+        encode_string(1, "deleteEverything", &mut dashboard);
+        let mut button = Vec::new();
+        encode_string(1, "Bad", &mut button);
+        encode_len_delimited(7, &dashboard, &mut button);
+        let mut recommendation = Vec::new();
+        encode_len_delimited(1, &button, &mut recommendation);
+        let mut status = Vec::new();
+        encode_len_delimited(9, &recommendation, &mut status);
+        assert_eq!(
+            decode_sand_usage_summary(&status, &[], &[], &[], 0).unwrap()["upgradeCta"],
+            Value::Null
+        );
+    }
 
     #[test]
     fn account_telemetry_submit_logs_wire_matches_desktop_contract() {
