@@ -7547,13 +7547,16 @@
         "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/features/bots/GrokHomeSurface.kt",
         "source/host/src/extensions/cross_user_sharing/mod.rs",
         "source/host/src/extensions/cross_user_sharing/xuser_state_reconcile.rs",
-        "source/host/src/extensions/cross_user_sharing/xuser_wire_normalization.rs"
+        "source/host/src/extensions/cross_user_sharing/xuser_wire_normalization.rs",
+        "source/host/src/extensions/cross_user_sharing/xuser_departure_obligations.rs",
+        "source/host/src/extensions/cross_user_sharing/xuser_pending_departure_store.rs",
+        "source/host/src/extensions/cross_user_sharing/xuser_room_tombstone_store.rs"
       ],
       "android_owner": "Rust Host foundation now owns deterministic shared-room wire normalization and room reconciliation. Canonical sharing service/relay/durable room store and Coordinator/native presentation remain missing.",
       "platform_delta": "React provider/dialog should become typed Coordinator-backed native Compose UI while retaining service canonical ownership, lifecycle/account fencing and Android accessibility/focus semantics.",
       "implementation_status": "mapped",
-      "production_wiring": "Android Host now contains direct Rust ports of Desktop xuser wire normalization and deterministic room-state reconciliation, including bounded inline images/turn messages, strict mirror entry identities, stable room de-dup/order, self-membership filtering and added/revoked diffs. These modules are deliberately not exposed directly to Compose. The shipping getSharingState/createRoomInvite/respond/add/remove/leave service, relay, persistent room binding, Coordinator event transport and native management surface are still absent, so the responsibility remains mapped/not-verified.",
-      "unit_test": "Rust Host unit tests cover image count/MIME fallback, mirror entry identity/content validation, guest-name normalization, 24-message cap, duplicate room resolution, stable ordering, self-membership/host visibility and added/revoked diff semantics. Frontend projection/permission/pending/reconnect tests plus service integration remain required.",
+      "production_wiring": "Android Host now contains direct Rust ports of Desktop xuser wire normalization and deterministic room-state reconciliation, including bounded inline images/turn messages, strict mirror entry identities, stable room de-dup/order, self-membership filtering and added/revoked diffs. These modules are deliberately not exposed directly to Compose. The shipping getSharingState/createRoomInvite/respond/add/remove/leave service, relay, persistent room binding, Coordinator event transport and native management surface are still absent, so the responsibility remains mapped/not-verified. Durable pending departure + account-scoped room tombstone recovery stores are now implemented and tested; canonical sharing service/relay/Coordinator/native management surface are still absent, so this aggregate responsibility remains mapped/not-verified.",
+      "unit_test": "Rust Host unit tests cover image count/MIME fallback, mirror entry identity/content validation, guest-name normalization, 24-message cap, duplicate room resolution, stable ordering, self-membership/host visibility and added/revoked diff semantics. Frontend projection/permission/pending/reconnect tests plus service integration remain required. Durable recovery tests cover reopen/dedupe, account-scoped tombstones, and successful drain retaining tombstones.",
       "contract_test": "Desktop shared-room.contract.test.ts@c9e6241a48ff2f8ab71496c6fdc11122801c088f now reverse-linked to this responsibility; it proves whole-state malformed nested row rejection, invite projection, SharedRoom agent projection, the closed RPC method set, and identity/reply validation. Android direct Rust normalization/reconciliation remains partial; shipping service/relay/persistence/Coordinator events/native management surface are still missing.",
       "integration_test": "missing canonical sharing service/Coordinator/native UI integration",
       "packaged_test": "required in final packaged Agent shared-room journey",
@@ -7561,6 +7564,92 @@
       "artifact": null,
       "verification_status": "not-verified",
       "notes": "The first strict source-inventory unreviewed row is now genuinely audited and mapped to this responsibility. Do not advance implementation_status beyond mapped until the missing shipping shared-room service and native management surface are production-wired and tested."
+    },
+    {
+      "responsibility_id": "AGENT-SHARED-ROOM-DEPARTURE-RECOVERY-ANDROID-001",
+      "domain": "agent-collaboration-recovery",
+      "desktop_sources": [
+        {
+          "path": "source/host/src/extensions/cross_user_sharing/xuser_departure_obligations.rs",
+          "blob_sha": "dd61c083ef99d45fe8409b6c18a3fadbb28ce9d1",
+          "symbols": [
+            "SandXuserDepartureObligations",
+            "record_leave",
+            "record_agent_removal",
+            "drain",
+            "is_departure_owed",
+            "is_room_abandoned"
+          ]
+        },
+        {
+          "path": "source/host/src/extensions/cross_user_sharing/xuser_pending_departure_store.rs",
+          "blob_sha": "42e69412fe082386673db933163b3c34dd473f2c",
+          "symbols": [
+            "SandXuserPendingDepartureStore",
+            "XuserDeparture",
+            "departure_key"
+          ]
+        },
+        {
+          "path": "source/host/src/extensions/cross_user_sharing/xuser_room_tombstone_store.rs",
+          "blob_sha": "a9b33f8af9384df8a107b9010080d85f0d74777d",
+          "symbols": [
+            "SandXuserRoomTombstoneStore",
+            "XuserRoomTombstone",
+            "tombstone_key"
+          ]
+        }
+      ],
+      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "responsibility": "Durably preserve cross-user room departure/removal obligations and account-scoped room tombstones across process death so unknown/failed relay outcomes can be retried without duplicate room state.",
+      "source_owner": "Rust Host cross-user sharing durable departure stores",
+      "direct_callers": [
+        "canonical cross-user sharing service teardown/remove-agent lifecycle"
+      ],
+      "downstream_dependencies": [
+        "authorized cross-user relay",
+        "shared-room state reconciliation"
+      ],
+      "state_owner": "Rust Host durable pending-departure and room-tombstone stores; Compose owns no canonical departure state",
+      "persistent_state": [
+        "host-xuser-pending-departures.json",
+        "host-xuser-room-tombstones.json"
+      ],
+      "protocol_wire_contract": [
+        "leave-room(ownerAuthId?,roomId,agentId)",
+        "remove-agent(ownerAuthId?,agentId)",
+        "account-scoped room tombstone"
+      ],
+      "visible_effect": "Leaving/deleting shared-room membership remains recoverable after crash/restart and does not silently resurrect abandoned rooms.",
+      "failure_behavior": [
+        "relay failure leaves obligation durable",
+        "malformed persisted rows are ignored instead of granting membership",
+        "successful relay clears only the pending obligation while tombstone remains"
+      ],
+      "cancellation_behavior": "durable obligation outlives UI cancellation/process death until canonical relay settlement",
+      "retry_semantics": "drain retries only still-pending obligations; successful items are cleared",
+      "idempotency_semantics": "departure_key/tombstone_key de-duplicate by owner+room or owner+agent identity",
+      "process_death_recovery": "stores lazy-load persisted obligations/tombstones on reopen and retain account-scoped keys",
+      "account_fencing": "ownerAuthId participates in durable keying so one account cannot clear another account room tombstone",
+      "security_boundary": "Rust Host owns recovery truth; UI cannot synthesize successful departure or clear tombstones directly",
+      "android_disposition": "direct-port",
+      "android_target": [
+        "source/host/src/extensions/cross_user_sharing/xuser_departure_obligations.rs",
+        "source/host/src/extensions/cross_user_sharing/xuser_pending_departure_store.rs",
+        "source/host/src/extensions/cross_user_sharing/xuser_room_tombstone_store.rs"
+      ],
+      "android_owner": "Rust Host cross-user departure recovery stores",
+      "platform_delta": "none for platform-independent durable state; Android service/relay transport remains a separate adapted responsibility",
+      "implementation_status": "implemented",
+      "production_wiring": "Modules are exported by cross_user_sharing and ready for canonical service composition. Shipping service/relay invocation is still missing and remains tracked by AGENT-SHARED-ROOM-ANDROID-001.",
+      "unit_test": "pending_departures_survive_reopen_and_dedupe; tombstones_are_durable_and_account_scoped; successful_drain_clears_pending_but_retains_room_tombstone; exact-head Actions pending",
+      "contract_test": "Desktop persistence/key semantics retained Rust-to-Rust; service-level contract remains open",
+      "integration_test": "required when canonical sharing service/relay is wired",
+      "packaged_test": "required final shared-room journey",
+      "device_test": "required process-death/reconnect shared-room departure journey",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Source implementation and focused recovery tests landed; do not mark verified until descendant exact-head Rust gate and service integration succeed."
     },
     {
       "responsibility_id": "COMPUTER-OVERLAY-ANDROID-001",
