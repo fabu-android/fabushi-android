@@ -1,5 +1,6 @@
 package com.ombhrum.fabushi
 
+import com.ombhrum.fabushi.androidpreload.runtime.AndroidContentSearchMedia
 import org.json.JSONArray
 
 internal const val COMMAND_PALETTE_FILE_RESULT_LIMIT = 50
@@ -86,6 +87,42 @@ internal fun commandPaletteFileKind(fileName: String, mime: String?): CommandPal
         else -> CommandPaletteFileKind.FILE
     }
 }
+
+internal fun commandPaletteFilesFromHostMatches(
+    matches: List<AndroidContentSearchMedia>,
+): List<CommandPaletteFile> =
+    matches.map { match ->
+        require(match.agentId.isNotBlank()) { "Host media-search match has no Agent id" }
+        require(match.entryId.isNotBlank()) { "Host media-search match has no entry id" }
+        require(match.fileName.isNotBlank() && match.path.isNotBlank()) {
+            "Host media-search match has no open metadata"
+        }
+        val kind = when (match.kind) {
+            "image" -> CommandPaletteFileKind.IMAGE
+            "video" -> CommandPaletteFileKind.VIDEO
+            "audio" -> CommandPaletteFileKind.AUDIO
+            "pdf" -> CommandPaletteFileKind.PDF
+            "markdown" -> CommandPaletteFileKind.MARKDOWN
+            "table" -> CommandPaletteFileKind.TABLE
+            "json" -> CommandPaletteFileKind.JSON
+            "text" -> CommandPaletteFileKind.TEXT
+            "document" -> CommandPaletteFileKind.DOCUMENT
+            "archive" -> CommandPaletteFileKind.ARCHIVE
+            "file" -> CommandPaletteFileKind.FILE
+            else -> error("Unsupported Host media-search kind: ${match.kind}")
+        }
+        CommandPaletteFile(
+            agentId = match.agentId,
+            entryId = match.entryId,
+            fileName = match.fileName,
+            path = match.path,
+            ext = match.ext,
+            mime = match.mime,
+            kind = kind,
+            timestampMs = match.timestampMs,
+            sizeBytes = match.sizeBytes,
+        )
+    }
 
 internal fun commandPaletteFilesFromTranscript(
     transcript: JSONArray,
