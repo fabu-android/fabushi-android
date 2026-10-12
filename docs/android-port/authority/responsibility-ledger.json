@@ -15870,6 +15870,69 @@
       "artifact": null,
       "verification_status": "not-verified",
       "notes": "Reviewed as not-applicable-with-replacement, not as a deleted capability. The original capability is telemetry of the environment that owns the codebase; that owner remains Sand/Desktop. Final verification still needs same-exact-head Actions/package negative evidence."
+    },
+    {
+      "responsibility_id": "SEARCH-AGENT-CONTENT-ANDROID-001",
+      "domain": "agent-transcript-search",
+      "desktop_sources": [
+        {
+          "path": "source/host/src/extensions/content_search/agent_content_search.rs",
+          "blob_sha": "49ef853b73fdea376a13156631ace97004eb482c",
+          "symbols": [
+            "build_content_snippet",
+            "find_agent_content_matches",
+            "find_agent_content_matches_default"
+          ]
+        }
+      ],
+      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "responsibility": "Search one canonical Agent transcript for visible user/assistant text using Desktop-equivalent normalization, recent-first ordering, snippets and bounded result limits without exposing hidden agent-to-agent traffic.",
+      "source_owner": "Desktop content-search Agent transcript matcher",
+      "direct_callers": [
+        "AndroidJsonHost feature.search.agentContent"
+      ],
+      "downstream_dependencies": [
+        "canonical Rust TranscriptStore"
+      ],
+      "state_owner": "No second canonical state; search reads an immutable projection of Rust TranscriptStore.",
+      "persistent_state": [
+        "none for this bounded per-Agent matcher"
+      ],
+      "protocol_wire_contract": [
+        "agentId",
+        "query",
+        "optional limit",
+        "matches[{entryId,role,timestampMs,snippet}]"
+      ],
+      "visible_effect": "Agent transcript search returns recent visible matching messages/notices with contextual snippets while hidden peer traffic and non-text attachments do not leak into results.",
+      "failure_behavior": [
+        "missing/invalid agentId or query is rejected",
+        "invalid limit is rejected",
+        "empty normalized query returns no matches"
+      ],
+      "cancellation_behavior": "bounded in-process projection has no external side effect and requires no retry/cancellation owner",
+      "retry_semantics": "safe read-only query; repeating the same query over the same canonical transcript is idempotent",
+      "idempotency_semantics": "read-only search; no canonical mutation",
+      "process_death_recovery": "no search state is recovered; cold start reads the recovered canonical TranscriptStore and recomputes matches",
+      "account_fencing": "search input comes through the current Host runtime; hidden outbound agent-peer rows are excluded. Broader account-scoped transcript ownership remains canonical Host responsibility.",
+      "security_boundary": "Compose does not scan files or own transcript truth; Rust Host performs search over canonical transcript projection.",
+      "android_disposition": "direct-port",
+      "android_target": [
+        "source/host/src/extensions/content_search/agent_content_search.rs",
+        "source/host/src/android_json_runtime.rs"
+      ],
+      "android_owner": "Rust Host Agent content search projection",
+      "platform_delta": "Pure matching/snippet logic ports Rust-to-Rust. Android reads its canonical TranscriptStore rather than Desktop per-Agent store.db layout.",
+      "implementation_status": "implemented",
+      "production_wiring": "AndroidJsonHost dispatch routes feature.search.agentContent to agent_content_search(), which projects the canonical TranscriptStore and calls find_agent_content_matches.",
+      "unit_test": "agent_content_search::tests::search_matches_desktop_whitespace_case_recent_order_and_limit; hidden_agent_peer_rows_and_non_text_send_messages_are_excluded; exact-head Actions pending",
+      "contract_test": "AndroidJsonHost feature.search.agentContent production route is present; exact-head Rust/architecture gate pending",
+      "integration_test": "required same-head Host bridge query against recovered transcript",
+      "packaged_test": "required final APK/AAB acceptance",
+      "device_test": "required final device search acceptance/accessibility path",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Source and production route implemented. This does not close Desktop SQLite/global media index responsibilities in the remaining content_search files."
     }
   ],
   "traceability": {
