@@ -54,7 +54,7 @@ use crate::extensions::telemetry::recovery_events::{
 use crate::extensions::teach_recording::{DurableTeachRecordingOwner, TeachRecordingPhase};
 use crate::extensions::trays::extension::{start_trays_extension, HostTraysExtension};
 use crate::extensions::trays::trays_service::{TrayEvent, TraySubscription};
-use crate::extensions::transcript::{AsyncTask, SandPendingWakeStore, TranscriptStore, merge_async_tasks};
+use crate::extensions::transcript::{AsyncTask, SandPendingWakeStore, TranscriptRecoveryOutcome, TranscriptStore, merge_async_tasks};
 use crate::extensions::transcript::pending_wake_rearm::PENDING_WAKE_STALE_MAX_AGE_MS;
 use crate::extensions::webauthn_proxy::{
     WebAuthnBridgeError, WebAuthnProxyExtension, WebAuthnProxyExtensionConfig,
@@ -928,10 +928,32 @@ impl AndroidJsonHost {
                 .unwrap_or_else(|error| panic!("failed to open durable Android Auto Review settings: {error}")),
         ));
 
-        let transcript = Arc::new(Mutex::new(
-            TranscriptStore::open(app_data_dir.join("transcript.json"))
-                .unwrap_or_else(|error| panic!("failed to open canonical Android transcript: {error}")),
-        ));
+        let (transcript_store, transcript_recovery) =
+            TranscriptStore::open_recovering(app_data_dir.join("transcript.json"))
+                .unwrap_or_else(|error| panic!("failed to recover canonical Android transcript: {error}"));
+        if let Some(recovery) = transcript_recovery {
+            let (level, outcome) = match recovery.outcome {
+                TranscriptRecoveryOutcome::RecoveredInterruptedWrite => {
+                    ("warn", "recovered_interrupted_write")
+                }
+                TranscriptRecoveryOutcome::ResetCorruptStore => {
+                    ("error", "reset_corrupt_store")
+                }
+            };
+            let _ = structured_log_spool.record(
+                level,
+                "sand.transcript.recovery",
+                json!({
+                    "outcome": outcome,
+                    "quarantinePath": recovery
+                        .quarantine_path
+                        .as_ref()
+                        .map(|path| path.to_string_lossy().to_string()),
+                }),
+                now_ms(),
+            );
+        }
+        let transcript = Arc::new(Mutex::new(transcript_store));
         let send_acknowledgement_observed_at_ms = now_ms();
         let send_acknowledgement_owner = DurableSendAcknowledgementOwner::open(
             app_data_dir.join("send-acknowledgements.json"),
