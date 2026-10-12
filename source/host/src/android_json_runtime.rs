@@ -20279,3 +20279,116 @@ mod access_blocked_durable_dispatch_tests {
         assert!(host.dispatch("feature.account.telemetry.accessBlocked", &json!({"edge":"entered","cause":"secret free text","accessReason":"none"})).is_err());
     }
 }
+
+
+#[cfg(test)]
+mod reaction_ack_runtime_tests {
+    use super::*;
+
+    fn messaging_envelope(request_id: &str, command: Value) -> Value {
+        json!({
+            "requestId":request_id,
+            "envelope":{
+                "protocolVersion":2,
+                "context":{
+                    "requestId":request_id,
+                    "deviceId":"android:test-device",
+                    "actorId":"human:android-test",
+                    "sessionId":"android:test-session",
+                    "sentAtMs":1
+                },
+                "command":command
+            }
+        })
+    }
+
+    #[test]
+    fn canonical_reaction_ack_is_durable_after_host_mutation() {
+        let root = tempfile::tempdir().unwrap();
+        let spill = root.path().join("android-structured-log-spill.v1.json");
+        let mut host = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+        host.logged_in = true;
+
+        host.dispatch(
+            "feature.messaging.access.issue",
+            &json!({
+                "deviceId":"android:test-device",
+                "sessionId":"android:test-session",
+                "scopes":["messaging"]
+            }),
+        )
+        .unwrap();
+
+        host.dispatch(
+            "feature.messaging.execute",
+            &messaging_envelope(
+                "profile",
+                json!({"type":"upsertProfile","actor":{
+                    "id":"human:android-test",
+                    "kind":"human",
+                    "displayName":"Android Test"
+                }}),
+            ),
+        )
+        .unwrap();
+        host.dispatch(
+            "feature.messaging.execute",
+            &messaging_envelope(
+                "conversation",
+                json!({"type":"createConversation","conversation":{
+                    "id":"conversation:telemetry",
+                    "kind":"group",
+                    "title":"Telemetry",
+                    "ownerId":"human:android-test",
+                    "participants":[{
+                        "actorId":"human:android-test",
+                        "role":"owner",
+                        "joinedAtMs":1
+                    }]
+                }}),
+            ),
+        )
+        .unwrap();
+        let sent = host
+            .dispatch(
+                "feature.messaging.execute",
+                &messaging_envelope(
+                    "message",
+                    json!({
+                        "type":"sendMessage",
+                        "conversationId":"conversation:telemetry",
+                        "clientMessageId":"message:telemetry",
+                        "content":{"type":"text","data":{"text":{"text":"hello","entities":[]}}}
+                    }),
+                ),
+            )
+            .unwrap();
+        let message_id = sent["envelopes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|envelope| envelope["event"]["type"] == "messageAdded")
+            .and_then(|envelope| envelope["event"]["message"]["id"].as_str())
+            .unwrap()
+            .to_string();
+
+        host.dispatch(
+            "feature.messaging.execute",
+            &messaging_envelope(
+                "reaction",
+                json!({
+                    "type":"setReaction",
+                    "conversationId":"conversation:telemetry",
+                    "messageId":message_id,
+                    "reaction":{"reaction":"👍","chosenByMe":true}
+                }),
+            ),
+        )
+        .unwrap();
+
+        let raw = std::fs::read_to_string(spill).unwrap();
+        assert!(raw.contains("sand.reaction.ack"));
+        assert!(raw.contains("conversation:telemetry"));
+        assert!(raw.contains("thumbs_up"));
+    }
+}
