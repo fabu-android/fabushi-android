@@ -34,6 +34,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import kotlinx.coroutines.Dispatchers
@@ -517,8 +520,19 @@ fun RemoteComputerSurface(onClose: () -> Unit) {
         )
     }
 
-    DisposableEffect(coordinator) {
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(coordinator, lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_STOP) {
+                // Android visibility replacement for Desktop's VNC viewer gate: once the app is
+                // no longer visible, tear down the native data plane. Re-entry must establish a
+                // fresh Coordinator-fenced session/viewport generation before input can resume.
+                runCatching { coordinator.remoteComputerDataPlaneDisconnect() }
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
         onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
             runCatching { coordinator.remoteComputerDataPlaneDisconnect() }
         }
     }
