@@ -6626,6 +6626,35 @@ mod tests {
     use super::*;
     use crate::runner::SubagentLineage;
 
+    #[test]
+    fn platform_injected_machine_id_does_not_create_plaintext_host_file() {
+        let root = tempfile::tempdir().unwrap();
+        let injected = "android-keystore-device-123";
+        let host = AndroidJsonHost::new_with_account_session_and_device_id(
+            root.path(),
+            AndroidHostMode::Test,
+            None,
+            injected,
+        );
+        assert!(
+            !root.path().join("machine-id").exists(),
+            "platform-injected identity must not create the legacy plaintext machine-id file",
+        );
+        drop(host);
+
+        let reopened = AndroidJsonHost::new_with_account_session_and_device_id(
+            root.path(),
+            AndroidHostMode::Test,
+            None,
+            injected,
+        );
+        assert!(
+            !root.path().join("machine-id").exists(),
+            "reopen with the protected platform identity must remain plaintext-free",
+        );
+        drop(reopened);
+    }
+
 
     #[test]
     fn in_process_messaging_grant_binds_account_context_and_scopes() {
