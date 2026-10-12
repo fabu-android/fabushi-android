@@ -146,6 +146,25 @@ internal fun shouldApplyAccountPrivacyModeResult(
         expectedAuthId.isNotBlank() &&
         currentAuthId == expectedAuthId
 
+internal enum class SandTrialCancellationOutcome {
+    CONFIRMED,
+    SUBMITTED_UNCONFIRMED,
+    OUTCOME_UNKNOWN,
+}
+
+internal fun classifySandTrialCancellationOutcome(
+    cancelSucceeded: Boolean,
+    reconciled: AndroidAccountUsageSummary?,
+): SandTrialCancellationOutcome {
+    val cancellationObserved =
+        reconciled != null && (!reconciled.isSandTrial || !reconciled.canCancelSandTrial)
+    return when {
+        cancellationObserved -> SandTrialCancellationOutcome.CONFIRMED
+        cancelSucceeded -> SandTrialCancellationOutcome.SUBMITTED_UNCONFIRMED
+        else -> SandTrialCancellationOutcome.OUTCOME_UNKNOWN
+    }
+}
+
 internal fun shouldApplyAccountUsageResult(
     requestGeneration: Long,
     currentGeneration: Long,
@@ -751,25 +770,32 @@ class MarketplaceViewModel(application: Application) : AndroidViewModel(applicat
                 )) return@launch
 
             val summary = reconcileResult.getOrNull()
-            val cancellationObserved =
-                summary != null && (!summary.isSandTrial || !summary.canCancelSandTrial)
-            val error = when {
-                cancellationObserved -> null
-                cancelResult.isSuccess && summary != null ->
-                    "Cancellation was submitted, but the latest account state still reports an active trial. No automatic retry was performed."
-                cancelResult.isSuccess ->
-                    "Cancellation was submitted, but the latest account state could not be read. No automatic retry was performed."
-                else ->
+            val outcome = classifySandTrialCancellationOutcome(
+                cancelSucceeded = cancelResult.isSuccess,
+                reconciled = summary,
+            )
+            val error = when (outcome) {
+                SandTrialCancellationOutcome.CONFIRMED -> null
+                SandTrialCancellationOutcome.SUBMITTED_UNCONFIRMED ->
+                    if (summary != null) {
+                        "Cancellation was submitted, but the latest account state still reports an active trial. No automatic retry was performed."
+                    } else {
+                        "Cancellation was submitted, but the latest account state could not be read. No automatic retry was performed."
+                    }
+                SandTrialCancellationOutcome.OUTCOME_UNKNOWN ->
                     "Cancellation outcome is unknown. The app did not retry the side effect automatically."
             }
             mutableState.value = current.copy(
                 accountUsageSummary = summary ?: current.accountUsageSummary,
                 accountUsageBusy = false,
                 accountUsageError = error,
-                message = when {
-                    cancellationObserved -> "Trial cancellation confirmed from account state"
-                    cancelResult.isSuccess -> "Trial cancellation submitted; awaiting canonical account state"
-                    else -> "Trial cancellation outcome unknown; not retried"
+                message = when (outcome) {
+                    SandTrialCancellationOutcome.CONFIRMED ->
+                        "Trial cancellation confirmed from account state"
+                    SandTrialCancellationOutcome.SUBMITTED_UNCONFIRMED ->
+                        "Trial cancellation submitted; awaiting canonical account state"
+                    SandTrialCancellationOutcome.OUTCOME_UNKNOWN ->
+                        "Trial cancellation outcome unknown; not retried"
                 },
             )
         }
