@@ -535,6 +535,47 @@ interface AndroidCoordinatorPort {
         stepIndex: Int,
         direction: String,
     ): JSONObject = error("Onboarding telemetry is unavailable on this Coordinator port")
+
+    fun reportRebuildEscalation(
+        rebuildKind: String,
+        elapsedMs: Long,
+        action: String,
+        escalation: String,
+    ): JSONObject = error("Rebuild telemetry is unavailable on this Coordinator port")
+
+    fun reportRebuildPendingStall(
+        rebuildKind: String,
+        elapsedMs: Long,
+        hasAck: Boolean,
+        streamAttached: Boolean,
+    ): JSONObject = error("Rebuild telemetry is unavailable on this Coordinator port")
+
+    fun reportReplicaResync(
+        replica: String,
+        outcome: String,
+        attempts: Int,
+        durationMs: Long,
+        bufferOverflowed: Boolean,
+        epochChanged: Boolean,
+    ): JSONObject = error("Reconciliation telemetry is unavailable on this Coordinator port")
+
+    fun reportSendJournalRestore(
+        outcome: String,
+        phase: String,
+        ageMs: Long,
+        recordCount: Int,
+    ): JSONObject = error("Reconciliation telemetry is unavailable on this Coordinator port")
+
+    fun reportResyncCompleted(
+        failedSteps: List<String>,
+        durationMs: Long,
+    ): JSONObject = error("Reconciliation telemetry is unavailable on this Coordinator port")
+
+    fun reportRecoveryAction(
+        action: String,
+        failureClass: String,
+        consecutiveIdentical: Int,
+    ): JSONObject = error("Recovery telemetry is unavailable on this Coordinator port")
     fun autoReviewInstructions(): AndroidAutoReviewInstructionsSnapshot =
         error("Auto Review instructions are unavailable on this Coordinator port")
     fun setAutoReviewInstructions(
