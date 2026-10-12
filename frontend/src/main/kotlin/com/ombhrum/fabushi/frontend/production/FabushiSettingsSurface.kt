@@ -2,6 +2,7 @@ package com.ombhrum.fabushi
 
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidAccountUsageSummary
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidAutoReviewInstructionsSnapshot
+import com.ombhrum.fabushi.androidpreload.runtime.AndroidTimeZoneSettings
 
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
@@ -203,6 +204,10 @@ internal fun FabushiSettingsSurface(
     accountUsageSummary: AndroidAccountUsageSummary?,
     accountUsageBusy: Boolean,
     accountUsageError: String?,
+    timeZoneSettings: AndroidTimeZoneSettings?,
+    timeZoneBusy: Boolean,
+    timeZoneError: String?,
+    onSaveTimeZoneOverride: (String?) -> Unit,
     autoReviewSnapshot: AndroidAutoReviewInstructionsSnapshot?,
     autoReviewBusy: Boolean,
     autoReviewError: String?,
@@ -234,6 +239,9 @@ internal fun FabushiSettingsSurface(
     var credentialSecretDraft by remember { mutableStateOf("") }
     var credentialOriginsDraft by remember { mutableStateOf("https://") }
     var credentialRotate by remember { mutableStateOf(false) }
+    var timeZoneDraft by remember(timeZoneSettings?.overrideTimeZone) {
+        mutableStateOf(timeZoneSettings?.overrideTimeZone.orEmpty())
+    }
     var autoReviewEnabledDraft by remember(
         autoReviewSnapshot?.accountFence,
         autoReviewSnapshot?.revision,
@@ -417,6 +425,50 @@ internal fun FabushiSettingsSurface(
                                     modifier = Modifier.testTag("settings-auto-review-error"),
                                 )
                             }
+                        }
+                        Text("Time zone")
+                        Text(
+                            "System: " + (timeZoneSettings?.detectedTimeZone ?: "Unavailable") +
+                                " · Effective: " + (timeZoneSettings?.effectiveTimeZone ?: "Unavailable"),
+                            modifier = Modifier.testTag("settings-time-zone-summary"),
+                        )
+                        OutlinedTextField(
+                            value = timeZoneDraft,
+                            onValueChange = { timeZoneDraft = it.take(128) },
+                            enabled = !timeZoneBusy && timeZoneSettings != null,
+                            singleLine = true,
+                            label = { Text("Override (IANA time zone)") },
+                            placeholder = { Text("America/Los_Angeles") },
+                            modifier = Modifier.testTag("settings-time-zone-override"),
+                        )
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            TextButton(
+                                onClick = {
+                                    onSaveTimeZoneOverride(timeZoneDraft.trim().takeIf(String::isNotEmpty))
+                                },
+                                enabled = !timeZoneBusy && timeZoneSettings != null,
+                                modifier = Modifier.testTag("settings-time-zone-save"),
+                            ) {
+                                Text(if (timeZoneBusy) "Saving…" else "Save time zone")
+                            }
+                            TextButton(
+                                onClick = {
+                                    timeZoneDraft = ""
+                                    onSaveTimeZoneOverride(null)
+                                },
+                                enabled = !timeZoneBusy &&
+                                    timeZoneSettings?.overrideTimeZone != null,
+                                modifier = Modifier.testTag("settings-time-zone-system"),
+                            ) {
+                                Text("Use system")
+                            }
+                        }
+                        timeZoneError?.takeIf(String::isNotBlank)?.let { error ->
+                            Text(
+                                error,
+                                color = MaterialTheme.colorScheme.error,
+                                modifier = Modifier.testTag("settings-time-zone-error"),
+                            )
                         }
                         Text("Appearance")
                         Text("Theme")
