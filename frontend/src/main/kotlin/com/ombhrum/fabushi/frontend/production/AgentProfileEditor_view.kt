@@ -25,21 +25,27 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import androidx.compose.ui.unit.dp
-import com.ombhrum.fabushi.androidpreload.media.AGENT_AVATAR_MAX_ZOOM
-import com.ombhrum.fabushi.androidpreload.media.AGENT_AVATAR_MIN_ZOOM
+import com.ombhrum.fabushi.androidpreload.media.ANDROID_AGENT_AVATAR_MAX_ZOOM
+import com.ombhrum.fabushi.androidpreload.media.ANDROID_AGENT_AVATAR_MIN_ZOOM
 import com.ombhrum.fabushi.androidpreload.media.AndroidAvatarCrop
 import com.ombhrum.fabushi.androidpreload.media.AndroidAvatarImageSource
 import com.ombhrum.fabushi.androidpreload.media.clampAndroidAvatarCrop
 import com.ombhrum.fabushi.androidpreload.media.initialAndroidAvatarCrop
 import com.ombhrum.fabushi.androidpreload.media.panAndroidAvatarCrop
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidGeneratedAvatarImage
+import com.ombhrum.fabushi.androidpreload.runtime.ANDROID_ANDROID_AGENT_AVATAR_MAX_ZOOM
+import com.ombhrum.fabushi.androidpreload.runtime.ANDROID_ANDROID_AGENT_AVATAR_MIN_ZOOM
+import com.ombhrum.fabushi.androidpreload.runtime.AndroidAvatarCrop
+import com.ombhrum.fabushi.androidpreload.runtime.AndroidAvatarImageSource
+import com.ombhrum.fabushi.androidpreload.runtime.clampAndroidAvatarCrop
+import com.ombhrum.fabushi.androidpreload.runtime.initialAndroidAvatarCrop
+import com.ombhrum.fabushi.androidpreload.runtime.panAndroidAvatarCrop
 
 @Composable
 internal fun AgentProfileEditor(
@@ -48,6 +54,9 @@ internal fun AgentProfileEditor(
     onConfirm: (String, String, String?, String, String?, String?) -> Unit,
     onSetAvatarImage: (String, String?) -> Unit,
     onGenerateAvatarImage: suspend (String, String) -> Result<AndroidGeneratedAvatarImage>,
+    onStagePickedAvatarImage: suspend (String) -> Result<AndroidAvatarImageSource>,
+    onStageGeneratedAvatarImage: suspend (String, String) -> Result<AndroidAvatarImageSource>,
+    onEncodeAvatarCrop: suspend (AndroidAvatarImageSource, AndroidAvatarCrop) -> Result<String>,
     onSetNotifications: (String, Boolean) -> Unit,
 ) {
     val target = agent ?: return
@@ -63,7 +72,6 @@ internal fun AgentProfileEditor(
     var stagedAvatarSource by remember(target.id) { mutableStateOf<AndroidAvatarImageSource?>(null) }
     var stagedAvatarCrop by remember(target.id) { mutableStateOf<AndroidAvatarCrop?>(null) }
     var stagedAvatarPreview by remember(target.id) { mutableStateOf<String?>(null) }
-    val context = LocalContext.current
     val density = LocalDensity.current
     val scope = rememberCoroutineScope()
     val cropStageSize = 180.dp
@@ -74,7 +82,7 @@ internal fun AgentProfileEditor(
         avatarImageError = null
         scope.launch {
             val result = withContext(Dispatchers.IO) {
-                stageAgentAvatarImage(context, uri)
+                onStagePickedAvatarImage(uri.toString())
             }
             result.onSuccess { source ->
                 stagedAvatarSource = source
@@ -95,7 +103,7 @@ internal fun AgentProfileEditor(
             return@LaunchedEffect
         }
         val encoded = withContext(Dispatchers.IO) {
-            encodeAgentAvatarCrop(source, crop)
+            onEncodeAvatarCrop(source, crop)
         }
         encoded.onSuccess { stagedAvatarPreview = it }
             .onFailure { error -> avatarImageError = error.message ?: "Avatar crop failed" }
@@ -171,7 +179,7 @@ internal fun AgentProfileEditor(
                         onValueChange = { zoom ->
                             stagedAvatarCrop = clampAndroidAvatarCrop(cropSource, crop.copy(zoom = zoom))
                         },
-                        valueRange = AGENT_AVATAR_MIN_ZOOM..AGENT_AVATAR_MAX_ZOOM,
+                        valueRange = ANDROID_AGENT_AVATAR_MIN_ZOOM..ANDROID_AGENT_AVATAR_MAX_ZOOM,
                         modifier = Modifier.testTag("agent-profile-avatar-zoom-${target.id}"),
                     )
                     Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -250,7 +258,7 @@ internal fun AgentProfileEditor(
                                     val generated = onGenerateAvatarImage(target.id, prompt)
                                     generated.onSuccess { image ->
                                         val staged = withContext(Dispatchers.IO) {
-                                            stageGeneratedAgentAvatarImage(image.imageData, image.mimeType)
+                                            onStageGeneratedAvatarImage(image.imageData, image.mimeType)
                                         }
                                         staged.onSuccess { source ->
                                             stagedAvatarSource = source
