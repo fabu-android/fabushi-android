@@ -513,6 +513,13 @@ interface AndroidCoordinatorPort {
         occurredAtMs: Long,
         uptimeMs: Long,
     ): JSONObject = error("Process crash telemetry is unavailable on this Coordinator port")
+    fun reportStartupLifecycle(
+        outcome: String,
+        phase: String,
+        elapsedMs: Long,
+        phaseElapsedMs: Long? = null,
+        windowMs: Long? = null,
+    ): JSONObject = error("Startup lifecycle telemetry is unavailable on this Coordinator port")
     fun reportAgentLoad(
         durationMs: Long,
         openRpcMs: Long?,
