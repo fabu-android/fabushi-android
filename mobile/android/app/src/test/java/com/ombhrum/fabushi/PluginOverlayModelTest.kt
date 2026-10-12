@@ -1,5 +1,8 @@
 package com.ombhrum.fabushi
 
+import org.json.JSONArray
+import org.json.JSONObject
+
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -71,6 +74,24 @@ class PluginOverlayModelTest {
             pluginOverlayAuthenticationNotice("unreachable", "offline"),
         )
         assertFalse(pluginOverlayAuthenticationNotice("started").isError)
+    }
+
+    @Test
+    fun serverToolParserIsBoundedAndDeduplicated() {
+        val tools = parsePluginServerTools(
+            JSONArray()
+                .put(JSONObject().put("name", " read ").put("title", "Read").put("description", "Reads data").put("isDisabled", false))
+                .put(JSONObject().put("name", "read").put("title", "Duplicate").put("isDisabled", true))
+                .put(JSONObject().put("name", "").put("title", "Missing"))
+                .put(JSONObject().put("name", "write").put("isDisabled", true)),
+        )
+        assertEquals(
+            listOf(
+                PluginOverlayTool("read", "Read", "Reads data", false),
+                PluginOverlayTool("write", isDisabled = true),
+            ),
+            tools,
+        )
     }
 
     @Test
