@@ -25,15 +25,39 @@ pub struct AndroidUserSettings {
 impl AndroidUserSettings {
     pub fn open(path: impl Into<PathBuf>) -> io::Result<Self> {
         let path = path.into();
-        let state = match fs::read_to_string(&path) {
-            Ok(raw) => serde_json::from_str::<PersistedAndroidUserSettings>(&raw)
-                .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?,
-            Err(error) if error.kind() == io::ErrorKind::NotFound => {
-                PersistedAndroidUserSettings::default()
-            }
-            Err(error) => return Err(error),
-        };
+        let state = read_state(&path)?;
         Ok(Self { path, state })
+    }
+
+    /// Opens the canonical settings owner and imports a predecessor file exactly once when the
+    /// canonical file does not exist. This is a migration seam, not a second state owner: after
+    /// import every read/write uses only `canonical_path`.
+    pub fn open_migrating(
+        canonical_path: impl Into<PathBuf>,
+        legacy_path: impl Into<PathBuf>,
+    ) -> io::Result<Self> {
+        let canonical_path = canonical_path.into();
+        let legacy_path = legacy_path.into();
+        match fs::read_to_string(&canonical_path) {
+            Ok(raw) => {
+                let state = parse_state(&raw)?;
+                Ok(Self { path: canonical_path, state })
+            }
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                let state = match fs::read_to_string(&legacy_path) {
+                    Ok(raw) => parse_state(&raw)?,
+                    Err(legacy_error) if legacy_error.kind() == io::ErrorKind::NotFound => {
+                        PersistedAndroidUserSettings::default()
+                    }
+                    Err(legacy_error) => return Err(legacy_error),
+                };
+                if legacy_path.exists() {
+                    write_atomic_json(&canonical_path, &state)?;
+                }
+                Ok(Self { path: canonical_path, state })
+            }
+            Err(error) => Err(error),
+        }
     }
 
     pub fn time_zone_override(&self) -> Option<&str> {
@@ -51,6 +75,21 @@ impl AndroidUserSettings {
         write_atomic_json(&self.path, &next)?;
         self.state = next;
         Ok(normalized)
+    }
+}
+
+fn parse_state(raw: &str) -> io::Result<PersistedAndroidUserSettings> {
+    serde_json::from_str::<PersistedAndroidUserSettings>(raw)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
+}
+
+fn read_state(path: &Path) -> io::Result<PersistedAndroidUserSettings> {
+    match fs::read_to_string(path) {
+        Ok(raw) => parse_state(&raw),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            Ok(PersistedAndroidUserSettings::default())
+        }
+        Err(error) => Err(error),
     }
 }
 
@@ -130,6 +169,37 @@ mod tests {
             None,
         );
         let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn predecessor_settings_are_imported_once_into_the_canonical_owner() {
+        let canonical = test_path("canonical");
+        let legacy = test_path("legacy");
+        let legacy_state = PersistedAndroidUserSettings {
+            time_zone_override: Some("Asia/Tokyo".into()),
+        };
+        write_atomic_json(&legacy, &legacy_state).unwrap();
+
+        let mut migrated = AndroidUserSettings::open_migrating(&canonical, &legacy).unwrap();
+        assert_eq!(migrated.time_zone_override(), Some("Asia/Tokyo"));
+        migrated
+            .set_time_zone_override(Some("America/Los_Angeles"))
+            .unwrap();
+        drop(migrated);
+
+        // Mutating the predecessor after migration cannot regain ownership.
+        write_atomic_json(
+            &legacy,
+            &PersistedAndroidUserSettings {
+                time_zone_override: Some("Europe/London".into()),
+            },
+        )
+        .unwrap();
+        let reopened = AndroidUserSettings::open_migrating(&canonical, &legacy).unwrap();
+        assert_eq!(reopened.time_zone_override(), Some("America/Los_Angeles"));
+
+        let _ = fs::remove_file(canonical);
+        let _ = fs::remove_file(legacy);
     }
 
     #[test]
