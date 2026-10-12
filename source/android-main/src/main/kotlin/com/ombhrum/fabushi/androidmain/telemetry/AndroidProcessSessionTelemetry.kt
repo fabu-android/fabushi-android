@@ -134,6 +134,126 @@ class AndroidProcessSessionTelemetry(
     }
 }
 
+const val ANDROID_STARTUP_STUCK_MS = 120_000L
+const val ANDROID_LIFECYCLE_PRE_ATTACH_BUFFER_LIMIT = 100
+
+data class AndroidStartupTelemetryEvent(
+    val outcome: String,
+    val phase: String,
+    val elapsedMs: Long,
+    val phaseElapsedMs: Long? = null,
+    val windowMs: Long? = null,
+)
+
+/**
+ * Process-owned startup telemetry projection. Durable crash/unclean-exit truth remains in the
+ * process marker owners; this tracker only preserves startup phases until the Host sink attaches.
+ */
+class AndroidStartupTelemetryTracker(
+    private val monotonicNowMs: () -> Long,
+    private val scheduleStuck: (delayMs: Long, listener: () -> Unit) -> Unit,
+) {
+    private val startedAtMs = monotonicNowMs().coerceAtLeast(0L)
+    private var phase = "app_ready_wait"
+    private var phaseStartedAtMs = startedAtMs
+    private var windowStartedAtMs: Long? = null
+    private var settled = false
+    private var watchdogArmed = false
+    private var reporter: ((AndroidStartupTelemetryEvent) -> Unit)? = null
+    private val buffered = java.util.ArrayDeque<AndroidStartupTelemetryEvent>()
+
+    init {
+        emit(AndroidStartupTelemetryEvent("start", phase, 0L))
+    }
+
+    fun attach(reporter: (AndroidStartupTelemetryEvent) -> Unit) {
+        val pending = synchronized(this) {
+            check(this.reporter == null) { "startup telemetry reporter is already attached" }
+            this.reporter = reporter
+            buildList(buffered.size) {
+                while (buffered.isNotEmpty()) add(buffered.removeFirst())
+            }
+        }
+        pending.forEach(reporter)
+    }
+
+    @Synchronized
+    fun markPhase(next: String) {
+        if (settled) return
+        require(next.isNotBlank() && next.length <= 128) { "startup phase is invalid" }
+        phase = next
+        phaseStartedAtMs = monotonicNowMs().coerceAtLeast(startedAtMs)
+        if (next == "window") windowStartedAtMs = phaseStartedAtMs
+    }
+
+    fun armStuckWatchdog() {
+        val shouldSchedule = synchronized(this) {
+            if (watchdogArmed || settled) false else {
+                watchdogArmed = true
+                true
+            }
+        }
+        if (!shouldSchedule) return
+        scheduleStuck(ANDROID_STARTUP_STUCK_MS) {
+            val event = synchronized(this) {
+                if (settled) null else {
+                    val now = monotonicNowMs().coerceAtLeast(startedAtMs)
+                    AndroidStartupTelemetryEvent(
+                        outcome = "stuck",
+                        phase = phase,
+                        elapsedMs = now - startedAtMs,
+                        phaseElapsedMs = (now - phaseStartedAtMs).coerceAtLeast(0L),
+                    )
+                }
+            }
+            event?.let(::emit)
+        }
+    }
+
+    fun noteReady() {
+        val event = synchronized(this) {
+            if (settled) return
+            settled = true
+            val now = monotonicNowMs().coerceAtLeast(startedAtMs)
+            AndroidStartupTelemetryEvent(
+                outcome = "ready",
+                phase = phase,
+                elapsedMs = now - startedAtMs,
+                windowMs = windowStartedAtMs?.let { (now - it).coerceAtLeast(0L) },
+            )
+        }
+        emit(event)
+    }
+
+    fun noteFailed() {
+        val event = synchronized(this) {
+            if (settled) return
+            settled = true
+            val now = monotonicNowMs().coerceAtLeast(startedAtMs)
+            AndroidStartupTelemetryEvent("failed", phase, now - startedAtMs)
+        }
+        emit(event)
+    }
+
+    @Synchronized
+    fun cancel() {
+        settled = true
+    }
+
+    private fun emit(event: AndroidStartupTelemetryEvent) {
+        val target = synchronized(this) {
+            reporter ?: run {
+                if (buffered.size >= ANDROID_LIFECYCLE_PRE_ATTACH_BUFFER_LIMIT) {
+                    buffered.removeFirst()
+                }
+                buffered.addLast(event)
+                null
+            }
+        }
+        target?.invoke(event)
+    }
+}
+
 class SharedPreferencesAndroidProcessSessionMarkerStore(
     context: Context,
 ) : AndroidProcessSessionMarkerStore {
