@@ -2975,7 +2975,7 @@
       "device_test": "Not applicable: no user-visible runtime mechanism exists to execute on device.",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Audit conclusion: the Desktop writeback importer is intentionally absent on Android. The user-visible/product-quality requirement—reproducible, non-drifting migration authority—is retained by the pinned Desktop-main inventory/checker. This row remains not-verified until the ledger-update exact HEAD passes the same authority workflows."
+      "notes": "Audit conclusion: the Desktop writeback importer is intentionally absent on Android. The user-visible/product-quality requirement—reproducible, non-drifting migration authority—is retained by the pinned Desktop-main inventory/checker. This row remains not-verified until the ledger-update exact HEAD passes the same authority workflows. Rows 556-570 of current Desktop authority were semantically reviewed as historical TDRP/Grok discovery, architecture-import and Rust-finalization tooling; Android maps their applicable fail-closed authority/provenance duties to current Desktop source closure and exact-head CI without inheriting historical completion."
     },
     {
       "responsibility_id": "CI-RUST-PARITY-FINALIZE-REPLACEMENT-001",
@@ -3040,7 +3040,7 @@
       "device_test": "Not applicable to the finalize mechanism itself; device evidence belongs to the underlying product responsibility.",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Audit conclusion: the Desktop contents:write finalizer is intentionally absent. Android keeps its product-quality invariant—tests before promotion—while forbidding CI from bulk-inheriting or auto-promoting verification."
+      "notes": "Audit conclusion: the Desktop contents:write finalizer is intentionally absent. Android keeps its product-quality invariant—tests before promotion—while forbidding CI from bulk-inheriting or auto-promoting verification. Rows 556-570 of current Desktop authority were semantically reviewed as historical TDRP/Grok discovery, architecture-import and Rust-finalization tooling; Android maps their applicable fail-closed authority/provenance duties to current Desktop source closure and exact-head CI without inheriting historical completion."
     },
     {
       "responsibility_id": "CI-PR20-VERIFY-REPLACEMENT-001",
@@ -3489,7 +3489,7 @@
       "device_test": "Not applicable to source-authority accounting itself; device acceptance is a downstream final gate.",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Replacement is implemented but deliberately not verified while full source closure remains nonzero. Do not mark this responsibility or its source row verified until the same final HEAD has zero strict debt and final package/device gates."
+      "notes": "Replacement is implemented but deliberately not verified while full source closure remains nonzero. Do not mark this responsibility or its source row verified until the same final HEAD has zero strict debt and final package/device gates. Rows 556-570 of current Desktop authority were semantically reviewed as historical TDRP/Grok discovery, architecture-import and Rust-finalization tooling; Android maps their applicable fail-closed authority/provenance duties to current Desktop source closure and exact-head CI without inheriting historical completion."
     },
     {
       "responsibility_id": "SEARCH-CANONICAL-IDENTITY-001",
@@ -3723,7 +3723,7 @@
       "device_test": "Not applicable directly; protected device acceptance remains a downstream gate.",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Implemented replacement only. Final verification waits for zero strict source debt and same-final-head package/device acceptance. Rows 546-553 of the current Desktop source inventory were semantically reviewed at Android predecessor head b3d6220: historical TDRP message lifecycle/provenance/governance documents are source evidence only, mapped to current Android owners without inheriting their DONE/accepted status."
+      "notes": "Implemented replacement only. Final verification waits for zero strict source debt and same-final-head package/device acceptance. Rows 546-553 of the current Desktop source inventory were semantically reviewed at Android predecessor head b3d6220: historical TDRP message lifecycle/provenance/governance documents are source evidence only, mapped to current Android owners without inheriting their DONE/accepted status. Rows 556-570 of current Desktop authority were semantically reviewed as historical TDRP/Grok discovery, architecture-import and Rust-finalization tooling; Android maps their applicable fail-closed authority/provenance duties to current Desktop source closure and exact-head CI without inheriting historical completion."
     },
     {
       "responsibility_id": "AUTHORITY-CANONICAL-MIGRATION-SOURCE-001",
