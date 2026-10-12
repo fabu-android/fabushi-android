@@ -124,6 +124,7 @@ internal class AndroidSendSubmissionTransportQueue(
             lifecycleGeneration += 1L
             disposed = true
             queued.clear()
+            restored.clear()
             activeAgents.clear()
         }
     }
