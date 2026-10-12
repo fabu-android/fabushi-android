@@ -84,8 +84,8 @@ internal fun humanCallSectionCalls(state: MessagingUiState): List<AndroidHumanCa
         .values
         .asSequence()
         .flatten()
-        .distinctBy(AndroidHumanCallSession::id)
         .sortedByDescending(AndroidHumanCallSession::updatedAtMs)
+        .distinctBy(AndroidHumanCallSession::id)
         .toList()
 
 
