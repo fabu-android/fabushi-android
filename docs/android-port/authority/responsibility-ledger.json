@@ -9466,16 +9466,17 @@
       "android_owner": "Host DurableAgentAttachmentOwner owns staged/completed bytes and durable scope; DurableComposerDraftOwner owns selected attachment metadata; AndroidCoordinatorRuntime is the ContentResolver adapter; Compose/ViewModel consume typed projections only.",
       "platform_delta": "Android OpenMultipleDocuments + ContentResolver streaming replaces browser File/DesktopBridge staging. Selected URIs are consumed immediately into Host private durable storage; canonical public identities are fabushi-attachment:// ids, never raw content:// or arbitrary filesystem authority.",
       "implementation_status": "implemented",
-      "production_wiring": "2424250e87362a422c46059b99d3a008dc1e85da adds the durable scoped attachment owner with contiguous/replay-safe chunks and process-reopen partial-stage discard; 8773db6be6383e911dceafc702be08c95bad4125 wires Host draft/ack/chat.send; 10f8eb14492c8595daf1152695db497193651940 preserves typed Coordinator compatibility while ContentResolver streams 1 MiB chunks; 23b78adbeca23044e378781ebce45e2140435c50 adds OpenMultipleDocuments/removal UI; 5289116c1fee52ba06daa9f981a3ad9600d9ccab restores Desktop empty/25MB/200MB/multi-file partial-success failure semantics.",
-      "unit_test": "source/host/src/agent_attachment.rs covers scoped durable staging, bounded granted reads, process-reopen partial-stage discard, empty-file and video-limit notices. Exact-head GitHub Actions are pending.",
+      "production_wiring": "2424250e87362a422c46059b99d3a008dc1e85da adds the durable scoped attachment owner with contiguous/replay-safe chunks and process-reopen partial-stage discard; 8773db6be6383e911dceafc702be08c95bad4125 wires Host draft/ack/chat.send; 10f8eb14492c8595daf1152695db497193651940 preserves typed Coordinator compatibility while ContentResolver streams 1 MiB chunks; 23b78adbeca23044e378781ebce45e2140435c50 adds OpenMultipleDocuments/removal UI; 5289116c1fee52ba06daa9f981a3ad9600d9ccab restores Desktop empty/25MB/200MB/multi-file partial-success failure semantics. a6ae49b3dedca5d424615d715c4491e70df82516 hardens process-death recovery: chunk bytes sync before durable received_bytes advances; state temp file fsyncs before atomic rename; cold reopen prunes orphan .part/.bin files and completed metadata whose file is missing or has the wrong length.",
+      "unit_test": "source/host/src/agent_attachment.rs covers scoped durable staging, replay-safe chunks, bounded granted reads, process-reopen partial-stage discard, orphan-stage/orphan-completed cleanup, missing-completed metadata reconciliation, empty-file and video-limit notices. a6ae49b3dedca5d424615d715c4491e70df82516 exact-head/descendant GitHub Actions evidence pending.",
       "contract_test": "source/host/tests/send_acknowledgement_android_contract.rs at 731864b1351b07ade5601e441cf1ba0beca648be covers staging→draft→attachment-only acknowledgement→dispatch→canonical echo settlement; Coordinator exposes only typed contentUri staging/removal and acknowledgement metadata.",
       "integration_test": "Production Compose picker→AndroidCoordinatorRuntime ContentResolver→Host durable staging→composer draft→send acknowledgement→canonical transcript path is wired; device scoped-storage/open acceptance remains required.",
       "packaged_test": "required final minified package",
       "device_test": "required picker/scoped-storage acceptance",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Implemented but not verified. Final device/package evidence and Agent attachment open/media-viewer routing remain separate responsibilities; no Human-composer URI state is reused as an Agent canonical owner.",
-      "android_head_at_update": "5289116c1fee52ba06daa9f981a3ad9600d9ccab"
+      "notes": "Implemented but not verified. a6ae49b3dedca5d424615d715c4491e70df82516 closes the durable staging crash window; final same-head Rust/package/device evidence and Agent attachment open/media-viewer routing remain separate responsibilities.",
+      "android_head_at_update": "a6ae49b3dedca5d424615d715c4491e70df82516",
+      "process_death_recovery": "Incomplete ContentResolver streams are outcome-unknown and discarded after process death; untracked staging/completed files are pruned, stale completed metadata is removed, and durable chunk offsets never advance ahead of synced bytes."
     },
     {
       "responsibility_id": "COMPOSER-DRAFT-ANDROID-001",
@@ -13668,6 +13669,67 @@
       "production_wiring": "AndroidAccountService validates 1-200 characters, refreshes the canonical session, posts same-origin authenticated profile mutation, rejects account-id changes, updates the session user, and returns a protected session mutation. If the downstream profile request fails after refresh, the refreshed session mutation is still returned for Keystore persistence. AndroidJsonHost exposes feature.auth.profileUpdate, AndroidCoordinatorRuntime owns the typed bridge and account observation, MarketplaceViewModel owns busy/error presentation state, and native Settings exposes the user action.",
       "unit_test": "Rust account_service profile_display_name_validation_is_bounded_before_network_dispatch plus exact-head Android compile/static gates; remote success/failure integration and packaged/device evidence remain required.",
       "notes": "Implemented source/runtime/presentation slice only. Keep verification_status not-verified until descendant exact-head Rust/Kotlin/package/device evidence proves refresh persistence, remote success/failure, process restart and protected-account behavior."
+    },
+    {
+      "responsibility_id": "CONVERSATION-ATTACHMENT-DOWNLOAD-ANDROID-001",
+      "domain": "conversation-attachments",
+      "desktop_sources": [
+        {
+          "path": "source/electron-main/attachments/attachments.ts",
+          "blob_sha": "764654b8f97b94215a015168c6ba82ae5e80aa45",
+          "symbols": [
+            "createAttachmentEdgePort",
+            "download",
+            "readBytes",
+            "resolveMedia",
+            "stageBytes",
+            "commitStaged",
+            "discardStaged"
+          ]
+        },
+        {
+          "path": "source/electron-main/attachments/attachment-manager.ts",
+          "blob_sha": "0d055b7d65c49911deb18ff08af2caa1639d93f7",
+          "symbols": [
+            "resolveImageAttachment",
+            "readDesktopImageAttachment",
+            "ATTACHMENT_PREVIEW_BYTE_CAP"
+          ]
+        }
+      ],
+      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "responsibility": "Preserve bounded attachment preview/read semantics and explicit save/download to a user-selected destination, deleting partial output on transfer failure.",
+      "source_owner": "Desktop attachment edge owns transient transfer/download state; canonical bytes remain runtime-owned.",
+      "visible_effect": "Users can preview supported attachments and explicitly save a complete file; failed transfers do not leave a misleading partial download.",
+      "failure_behavior": [
+        "invalid/unavailable source fails visibly",
+        "read/transfer errors return failure",
+        "partial destination output is removed before failure is reported"
+      ],
+      "cancellation_behavior": "Cancelled destination selection creates no completed file; transfer cancellation is never success.",
+      "retry_semantics": "Retry starts a fresh user-authorized transfer; uncertain partial output is reconciled by deletion.",
+      "idempotency_semantics": "Preview reads are bounded/read-only; save is user-directed and is not automatically retried after an uncertain write.",
+      "process_death_recovery": "Partial destination output must never be projected as completed; Android replacement needs SAF/ContentResolver cleanup/reconciliation.",
+      "account_fencing": "Source blob reads remain fenced by current message/account ownership; destination URI grants do not grant cross-account blob access.",
+      "security_boundary": "Use SAF/ContentResolver or FileProvider-scoped APIs; no arbitrary raw filesystem authority to Compose/web content.",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/recovered/features/conversation/workspace/media-viewer_view.kt",
+        "source/host/src/agent_attachment.rs",
+        "source/shared/src/media/attachment_open_policy.rs"
+      ],
+      "android_owner": "Messaging/Host owns source bytes; native Android document/share adapter must own ephemeral destination I/O.",
+      "platform_delta": "FileProvider share/open and native preview exist, but there is no Desktop-equivalent ACTION_CREATE_DOCUMENT/SAF explicit-save transaction with partial-output cleanup.",
+      "implementation_status": "mapped",
+      "production_wiring": "Native viewer loads canonical blob bytes and offers FileProvider open/share; Host owns durable Agent staging. Explicit save-to-user-selected-location is not production-wired.",
+      "unit_test": "required: source/name validation, bounded reads, destination cancel, transfer failure cleanup, stale/account fencing",
+      "contract_test": "required: canonical source remains Host-owned and destination URI does not become a second attachment owner",
+      "integration_test": "required: attachment -> user-selected destination -> complete bytes; mid-transfer failure leaves no completed partial",
+      "packaged_test": "required final minified APK/AAB",
+      "device_test": "required scoped-storage/SAF acceptance",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Known product gap. Existing FileProvider share/open is not treated as equivalent to Desktop explicit Save/Download."
     }
   ],
   "traceability": {
