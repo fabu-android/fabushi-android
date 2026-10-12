@@ -336,6 +336,73 @@
       "android_head_at_update": "170facdd2f04e0fb51301e5dbdcdcbbec31fdb2d"
     },
     {
+      "responsibility_id": "ACCOUNT-ACCESS-BLOCKED-TELEMETRY-ANDROID-001",
+      "domain": "account-telemetry",
+      "desktop_sources": [
+        {
+          "path": "source/electron-main/telemetry/access-blocked-telemetry.ts",
+          "blob_sha": "8f85e1739ecf0abca1780787c9a1dff8f359bf74",
+          "symbols": [
+            "isValidAccessBlockedReport",
+            "isPagingAccessBlockedEdge",
+            "accessBlockedReportToTelemetry",
+            "ACCESS_BLOCKED_MS_BLOCKED_CAP_MS"
+          ]
+        }
+      ],
+      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "responsibility": "Validate and project bounded account access-blocked entered/recovered telemetry with stable cause/reason taxonomy, severity and blocked-duration semantics without allowing presentation to own access truth.",
+      "source_owner": "Desktop access-blocked telemetry projection",
+      "direct_callers": [
+        "account/access lifecycle telemetry producer"
+      ],
+      "downstream_dependencies": [
+        "bounded telemetry sink",
+        "canonical account access projection"
+      ],
+      "state_owner": "Rust Host telemetry buffer owns emitted telemetry; Coordinator owns only epoch-fenced transition observation over immutable account-access projection.",
+      "persistent_state": [],
+      "protocol_wire_contract": [
+        "edge=entered|recovered",
+        "cause in wrong_account_suspected|seat_revoked|plan_expired|no_plan|unknown",
+        "accessReason in canonical Sand access block reasons",
+        "msBlocked optional, capped at seven days"
+      ],
+      "visible_effect": "Access denial/recovery is diagnosable with bounded structured telemetry without leaking arbitrary free text or credentials.",
+      "failure_behavior": [
+        "invalid edge rejected",
+        "invalid cause rejected",
+        "invalid access reason rejected",
+        "free-text telemetry values rejected"
+      ],
+      "cancellation_behavior": "not applicable; observation is side-effect-free until a validated telemetry edge is submitted",
+      "retry_semantics": "duplicate steady-state observations emit nothing; only state edges produce telemetry",
+      "idempotency_semantics": "steady state is idempotent; account-epoch change resets transition memory so an old account cannot emit recovery for a new account",
+      "process_death_recovery": "no stale blocked timer is replayed after process death; canonical account/access truth is re-observed and a new lifecycle begins",
+      "account_fencing": "Coordinator observer resets its edge state on accountEpoch change",
+      "security_boundary": "only allowlisted taxonomy and bounded duration reach Host telemetry; no tokens or arbitrary error text are accepted",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "source/host/src/account_telemetry.rs",
+        "source/host/src/android_json_runtime.rs",
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/coordinator/AccountAccessProjectionOwner.kt",
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/coordinator/AndroidCoordinatorRuntime.kt",
+        "mobile/android/app/src/test/java/com/ombhrum/fabushi/AccessBlockedTelemetryOwnerTest.kt"
+      ],
+      "android_owner": "Rust Host telemetry projection + Coordinator account-epoch transition observer",
+      "platform_delta": "Desktop renderer/main-process validation becomes one native Coordinator observer feeding a Rust Host validator; Compose has no telemetry or access-state ownership.",
+      "implementation_status": "implemented",
+      "production_wiring": "AndroidCoordinatorRuntime observes settled AccountAccessProjection, sends transition edges through feature.account.telemetry.accessBlocked, and Rust Host validates/projects the bounded contract.",
+      "unit_test": "Rust account_telemetry::access_blocked_projection_is_bounded_and_rejects_free_text plus AccessBlockedTelemetryOwnerTest; exact-head Actions pending",
+      "contract_test": "Host feature.account.telemetry.accessBlocked dispatch path is production wired; exact-head Rust/architecture gate pending",
+      "integration_test": "required: access block -> recovery and account-switch telemetry through production Coordinator/Host composition",
+      "packaged_test": "required on final exact-head APK/AAB",
+      "device_test": "required as part of protected account/access journey",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Implemented source and production wiring. Desktop validates supplied cause values; it does not infer causes, so Android may emit allowlisted unknown when no stronger canonical cause exists. Same-head CI/package/device evidence remains required."
+    },
+    {
       "responsibility_id": "MSG-CANONICAL-COMMANDS-002",
       "domain": "messaging",
       "desktop_sources": [
