@@ -657,6 +657,7 @@ pub struct AndroidJsonHost {
     account_telemetry_shipping: Arc<AtomicBool>,
     edge_failures: EdgeFailureBuffer,
     process_metrics: AndroidProcessMetricsCollector,
+    process_metrics_recent: VecDeque<Value>,
     agents: Arc<Mutex<AndroidAgentRoster>>,
     sidebar_sections: Arc<Mutex<AndroidSidebarSections>>,
     user_settings: Arc<Mutex<AndroidUserSettings>>,
@@ -955,6 +956,7 @@ impl AndroidJsonHost {
             account_telemetry_shipping: Arc::new(AtomicBool::new(false)),
             edge_failures: EdgeFailureBuffer::default(),
             process_metrics: AndroidProcessMetricsCollector::default(),
+            process_metrics_recent: VecDeque::new(),
             agents,
             sidebar_sections,
             user_settings,
@@ -1658,6 +1660,7 @@ impl AndroidJsonHost {
             "feature.auth.profileUpdate" => self.account_profile_update(params),
             "feature.auth.logout" => self.account_logout(),
             "feature.telemetry.processMetrics.observe" => self.process_metrics_observe(params),
+            "feature.telemetry.processMetrics.recent" => Ok(Value::Array(self.process_metrics_recent.iter().cloned().collect())),
             "feature.agent.diskPressure.observe" => self.agent_disk_pressure_observe(params),
             "feature.agent.diskPressure.record" => self.agent_disk_pressure_record(params),
             "feature.agent.turn.reconcile" => self.agent_turn_reconcile(params),
@@ -3231,7 +3234,13 @@ impl AndroidJsonHost {
         let cpu_time_ms_cumulative = params.get("cpuTimeMsCumulative").and_then(Value::as_u64).ok_or("cpuTimeMsCumulative is required")?;
         let memory_bytes = params.get("memoryBytes").and_then(Value::as_u64).ok_or("memoryBytes is required")?;
         let sample = self.process_metrics.observe(observed_at_ms, cpu_time_ms_cumulative, memory_bytes)?;
-        serde_json::to_value(sample).map_err(|error| format!("failed to project Android process metrics: {error}"))
+        let projected = serde_json::to_value(sample)
+            .map_err(|error| format!("failed to project Android process metrics: {error}"))?;
+        if self.process_metrics_recent.len() >= 32 {
+            self.process_metrics_recent.pop_front();
+        }
+        self.process_metrics_recent.push_back(projected.clone());
+        Ok(projected)
     }
 
     fn agent_disk_pressure_observe(&mut self, params: &Value) -> Result<Value, String> {
@@ -10869,6 +10878,50 @@ mod time_zone_settings_dispatch_tests {
     }
 }
 
+
+#[cfg(test)]
+mod process_metrics_recent_dispatch_tests {
+    use super::*;
+
+    #[test]
+    fn process_metrics_recent_sink_is_bounded_ordered_and_process_local() {
+        let root = tempfile::tempdir().unwrap();
+        let mut host = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+        for index in 0..40_u64 {
+            host.dispatch(
+                "feature.telemetry.processMetrics.observe",
+                &json!({
+                    "observedAtMs": 1_000 + index,
+                    "cpuTimeMsCumulative": 10_000 + index,
+                    "memoryBytes": (64 + index) * 1024 * 1024,
+                }),
+            )
+            .unwrap();
+        }
+        let recent = host
+            .dispatch("feature.telemetry.processMetrics.recent", &json!({}))
+            .unwrap()
+            .as_array()
+            .cloned()
+            .unwrap();
+        assert_eq!(recent.len(), 32);
+        assert_eq!(recent.first().unwrap()["sampleSeqno"], 8);
+        assert_eq!(recent.last().unwrap()["sampleSeqno"], 39);
+        assert!(recent.iter().all(|sample| sample.get("sessionId").is_some()));
+        assert!(recent.iter().all(|sample| sample.get("memoryMb").is_some()));
+        assert!(recent.iter().all(|sample| sample.get("cpuTimeMsSample").is_some()));
+
+        drop(host);
+        let mut reopened = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+        assert_eq!(
+            reopened
+                .dispatch("feature.telemetry.processMetrics.recent", &json!({}))
+                .unwrap(),
+            json!([]),
+            "diagnostic samples are process-local and must not replay after process death",
+        );
+    }
+}
 
 #[cfg(test)]
 mod process_metrics_settings_dispatch_tests {
