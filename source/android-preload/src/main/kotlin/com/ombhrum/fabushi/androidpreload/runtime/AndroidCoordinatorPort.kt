@@ -478,6 +478,10 @@ interface AndroidCoordinatorPort {
         error("Account usage summary is unavailable on this Coordinator port")
     fun accountCancelSandTrial(): Unit =
         error("Sand trial cancellation is unavailable on this Coordinator port")
+    fun settingsTimeZone(): AndroidTimeZoneSettings =
+        error("Time zone settings are unavailable on this Coordinator port")
+    fun settingsSetTimeZoneOverride(timeZone: String?): AndroidTimeZoneSettings =
+        error("Time zone settings are unavailable on this Coordinator port")
     fun credentialVaultList(): org.json.JSONArray =
         error("Credential Vault metadata is unavailable on this Coordinator port")
     fun credentialVaultUpsert(
