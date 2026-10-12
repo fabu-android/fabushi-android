@@ -1151,11 +1151,12 @@ impl AndroidJsonHost {
         let projected = tools
             .into_iter()
             .map(|tool| {
+                let is_disabled = disabled.contains(&tool.name);
                 json!({
                     "name": tool.name,
                     "title": tool.title,
                     "description": tool.description,
-                    "isDisabled": disabled.contains(&tool.name),
+                    "isDisabled": is_disabled,
                 })
             })
             .collect::<Vec<_>>();
