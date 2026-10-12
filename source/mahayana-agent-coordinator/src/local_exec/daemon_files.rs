@@ -12,7 +12,10 @@ impl DaemonDescriptor {
         self.pid > 0 && self.started_at_ms > 0 && !self.generation_token.is_empty() && !self.entry_identity.is_empty()
     }
     pub fn same_generation(&self, other: &Self) -> bool {
-        self.pid == other.pid && self.generation_token == other.generation_token && self.entry_identity == other.entry_identity
+        self.pid == other.pid
+            && self.started_at_ms == other.started_at_ms
+            && self.generation_token == other.generation_token
+            && self.entry_identity == other.entry_identity
     }
 }
 
