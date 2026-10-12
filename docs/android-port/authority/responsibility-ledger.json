@@ -5582,6 +5582,74 @@
       "notes": "Structured-log persistence core is implemented and production-wired for sanitized edge failures, but the umbrella remains mapped/not-verified until backend delivery, lifecycle/unclean-exit/quit-flush and remaining producer families are independently closed."
     },
     {
+      "responsibility_id": "TELEMETRY-STARTUP-ANDROID-001",
+      "domain": "telemetry-startup-lifecycle",
+      "desktop_sources": [
+        {
+          "path": "source/electron-main/telemetry/desktop-startup-telemetry.ts",
+          "blob_sha": "924a057d44fbe07e9ceb6d90911e9f36ea680b50",
+          "symbols": [
+            "createDesktopStartupTracker",
+            "DESKTOP_STARTUP_STUCK_MS"
+          ]
+        }
+      ],
+      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "responsibility": "Own process-start lifecycle telemetry from first app startup through services/coordinator/window phases, emit a 120000 ms stuck edge without terminal settlement, and settle exactly once as ready, failed, or cancelled with bounded phase/duration metadata.",
+      "source_owner": "Desktop startup telemetry tracker; Android process owner",
+      "direct_callers": [
+        "FabushiApplication.onCreate",
+        "FabushiApplication.ensurePresentationRuntime",
+        "FabushiProcessRuntime construction"
+      ],
+      "downstream_dependencies": [
+        "typed AndroidCoordinatorPort telemetry bridge",
+        "Rust Host structured-log spool"
+      ],
+      "state_owner": "AndroidStartupTelemetryTracker in process-scoped Android main runtime; Activity and Compose own no startup truth",
+      "persistent_state": [
+        "No canonical startup state is persisted; pre-Host startup events are bounded to 100 in-memory records while crash/unclean-exit durability remains owned by dedicated marker owners"
+      ],
+      "protocol_wire_contract": [
+        "feature.telemetry.startupLifecycle {outcome,phase,elapsedMs,phaseElapsedMs?,windowMs?}",
+        "SAND-E0601 failed startup",
+        "SAND-E0602 stuck startup"
+      ],
+      "visible_effect": "Startup failures and hangs retain actionable phase/timing diagnostics while normal startup remains behaviorally unchanged.",
+      "failure_behavior": [
+        "telemetry delivery failure is fail-open for product startup",
+        "failed startup emits SAND-E0601 once",
+        "stuck startup emits SAND-E0602 without settling the tracker"
+      ],
+      "cancellation_behavior": "cancel suppresses later watchdog/terminal telemetry without inventing ready or failed",
+      "retry_semantics": "no side-effect retry owner; bounded buffered startup projections flush once when the Host sink attaches",
+      "idempotency_semantics": "watchdog arms once; terminal settlement is single-shot; late ready/failed/watchdog callbacks are ignored after terminal settlement",
+      "process_death_recovery": "process death before Host attach is covered by durable crash/unclean-exit marker owners rather than replaying volatile startup events as a new request",
+      "account_fencing": "startup telemetry is process-scoped and contains no account credentials; Host structured-log spool applies its existing account-slot rotation boundary",
+      "security_boundary": "only bounded phase names and nonnegative durations cross the typed Coordinator bridge; no exception message, stack, token or user content is sent",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/telemetry/AndroidProcessSessionTelemetry.kt",
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/FabushiApplication.kt",
+        "source/android-preload/src/main/kotlin/com/ombhrum/fabushi/androidpreload/runtime/AndroidCoordinatorPort.kt",
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/coordinator/AndroidCoordinatorRuntime.kt",
+        "source/host/src/extensions/telemetry/product_events.rs",
+        "source/host/src/android_json_runtime.rs"
+      ],
+      "android_owner": "FabushiApplication process owner + typed Coordinator bridge + Rust Host telemetry validator/spool",
+      "platform_delta": "Desktop tracks Electron app/services/coordinator/window and Rosetta translation. Android tracks process/services/coordinator/window with SystemClock monotonic time; Rosetta translated-runtime metadata is not applicable. Pre-Host failures fall back to Android durable crash/unclean markers.",
+      "implementation_status": "implemented",
+      "production_wiring": "FabushiApplication starts the tracker in Application.onCreate, arms a main-Looper 120 s watchdog, marks services/coordinator/window phases, attaches the sink after Coordinator creation, records failed construction, and marks ready after production runtime dependencies are initialized. Coordinator routes only typed bounded fields to Host startup_lifecycle_event and the durable structured-log spool.",
+      "unit_test": "AndroidProcessSessionTelemetryTest bufferedStartupTelemetryFlushesBeforeReady + startupFailureSettlesOnceAndSuppressesLateWatchdog; product_events::startup_lifecycle_preserves_desktop_terminal_and_stuck_contract",
+      "contract_test": "Rust Host dispatch feature.telemetry.startupLifecycle validates outcome/phase/durations and SAND-E0601/E0602 tags",
+      "integration_test": "production wiring is present; exact-head GitHub Actions pending",
+      "packaged_test": "required on final exact-head APK/AAB",
+      "device_test": "required: cold start/failed startup/watchdog behavior on final supported Android device/API matrix",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Implemented in commits fcdb0229b881f285681beb36e307ecc1877081f5, 9c8d19d3e04b28aa2c27fa965e4d8752792229c0, 7b7cd2521b1b939d971377ff1b09693cb669cb08, 8e6025c83fc7ce4cf4fa533724251c31ba43a531, 9084add3ed6f2ac9b273893e4890954737ab67af, 5facc5f649aceba74ed7b1347c1fef9e5315bbc3 and 3e85f9b3a8d8d90df2832113b8aa85a6234dd6e5. Same-final-head CI/package/device evidence is still required."
+    },
+    {
       "responsibility_id": "PRODUCT-SHARED-EXPERIENCE-ANDROID-001",
       "domain": "product-experience",
       "desktop_sources": [
