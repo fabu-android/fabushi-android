@@ -304,6 +304,10 @@ data class MarketplaceUiState(
     val credentialVaultItems: List<CredentialVaultMetadata> = emptyList(),
     val credentialVaultBusy: Boolean = false,
     val credentialVaultError: String? = null,
+    val detectedTimeZone: String = "",
+    val timeZoneOverride: String? = null,
+    val timeZoneBusy: Boolean = false,
+    val timeZoneError: String? = null,
     val onboardingStep: Int = 0,
     val browserLoginAttemptId: String? = null,
     val browserLoginUrl: String? = null,
@@ -331,6 +335,7 @@ class MarketplaceViewModel(application: Application) : AndroidViewModel(applicat
     private var accountPrivacyRefreshGeneration: Long = 0L
     private var accountUsageRefreshGeneration: Long = 0L
     private var credentialVaultGeneration: Long = 0L
+    private var timeZoneSettingsGeneration: Long = 0L
     private var mcpServerCatalogGeneration: Long = 0L
 
     init {
@@ -344,6 +349,7 @@ class MarketplaceViewModel(application: Application) : AndroidViewModel(applicat
         }
         val onboardingComplete = application.getSharedPreferences("fabushi.mobile", 0).getBoolean("onboarding-complete", false)
         mutableState.value = mutableState.value.copy(onboardingStep = if (onboardingComplete) 3 else 0)
+        refreshTimeZoneSettings()
         initializeAuth()
     }
 
@@ -925,6 +931,61 @@ class MarketplaceViewModel(application: Application) : AndroidViewModel(applicat
                         "Trial cancellation outcome unknown; not retried"
                 },
             )
+        }
+    }
+
+    fun refreshTimeZoneSettings() {
+        val generation = ++timeZoneSettingsGeneration
+        mutableState.value = mutableState.value.copy(timeZoneBusy = true, timeZoneError = null)
+        viewModelScope.launch {
+            runCatching {
+                withContext(Dispatchers.IO) { coordinator.settingsTimeZone() }
+            }.onSuccess { settings ->
+                if (generation != timeZoneSettingsGeneration) return@onSuccess
+                mutableState.value = mutableState.value.copy(
+                    detectedTimeZone = settings.detectedTimeZone,
+                    timeZoneOverride = settings.overrideTimeZone,
+                    timeZoneBusy = false,
+                    timeZoneError = null,
+                )
+            }.onFailure { error ->
+                if (generation != timeZoneSettingsGeneration) return@onFailure
+                mutableState.value = mutableState.value.copy(
+                    timeZoneBusy = false,
+                    timeZoneError = error.message ?: error::class.java.simpleName,
+                )
+            }
+        }
+    }
+
+    fun setTimeZoneOverride(value: String?) {
+        val generation = ++timeZoneSettingsGeneration
+        mutableState.value = mutableState.value.copy(timeZoneBusy = true, timeZoneError = null)
+        viewModelScope.launch {
+            runCatching {
+                withContext(Dispatchers.IO) {
+                    coordinator.settingsSetTimeZoneOverride(value?.trim()?.takeIf(String::isNotEmpty))
+                }
+            }.onSuccess { settings ->
+                if (generation != timeZoneSettingsGeneration) return@onSuccess
+                mutableState.value = mutableState.value.copy(
+                    detectedTimeZone = settings.detectedTimeZone,
+                    timeZoneOverride = settings.overrideTimeZone,
+                    timeZoneBusy = false,
+                    timeZoneError = null,
+                    message = if (settings.overrideTimeZone == null) {
+                        "Using system time zone"
+                    } else {
+                        "Time zone override saved"
+                    },
+                )
+            }.onFailure { error ->
+                if (generation != timeZoneSettingsGeneration) return@onFailure
+                mutableState.value = mutableState.value.copy(
+                    timeZoneBusy = false,
+                    timeZoneError = error.message ?: error::class.java.simpleName,
+                )
+            }
         }
     }
 
