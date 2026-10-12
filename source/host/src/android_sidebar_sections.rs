@@ -329,6 +329,10 @@ fn merge_sections(
         let c = current_map.get(id).copied();
         let d = desired_map.get(id).copied();
         let value = match (b, c, d) {
+            // `id` is drawn from the union of base/current/desired keys, so this arm is
+            // unreachable by construction. Keep it explicit so the merge stays exhaustive
+            // without turning a malformed future caller into a panic.
+            (None, None, None) => continue,
             (None, None, Some(value)) | (None, Some(value), None) => Some(value.clone()),
             (None, Some(left), Some(right)) if left == right => Some(left.clone()),
             (None, Some(_), Some(_)) => return Err(format!("concurrent section addition conflicts for {id}")),
