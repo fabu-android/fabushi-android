@@ -8,10 +8,12 @@ internal class AndroidAgentsControlFeed(
     private val dockBadge: AndroidDockBadgeManager,
 ) {
     fun handleFeatureEvent(payload: JSONObject) {
-        val kind = payload.optString("kind")
         val event = payload.optJSONObject("event") ?: payload
+        val kind = payload.optString("kind").ifBlank {
+            event.optString("kind").ifBlank { event.optString("type") }
+        }
 
-        when (kind.ifBlank { event.optString("kind") }) {
+        when (kind) {
             "agents" -> {
                 val agents = parseAgents(event.optJSONArray("agents")) ?: return
                 osNotifications.handleAgents(agents.map(::notificationAgent))
