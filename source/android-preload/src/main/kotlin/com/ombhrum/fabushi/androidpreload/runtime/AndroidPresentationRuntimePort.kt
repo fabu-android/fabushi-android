@@ -3,6 +3,8 @@ package com.ombhrum.fabushi.androidpreload.runtime
 import androidx.activity.ComponentActivity
 import com.ombhrum.fabushi.FabushiAppAgentSurface
 import com.ombhrum.fabushi.androidpreload.deeplink.AndroidDeepLink
+import org.json.JSONArray
+import org.json.JSONObject
 
 /**
  * Process-scoped services that presentation is allowed to observe or signal.
@@ -20,6 +22,16 @@ internal interface AndroidPresentationRuntimePort {
     fun launchExternalAuth(url: String): Boolean
 
     fun launchExternalUrl(url: String): Boolean
+
+    fun rootNotificationTrays(): JSONArray
+
+    fun dismissRootNotificationTray(id: String): Boolean
+
+    fun clearRootNotificationTrays(): Boolean
+
+    fun invokeRootNotificationDashboardAction(action: String, args: JSONObject): JSONObject
+
+    fun addRootNotificationEventListener(listener: (JSONObject) -> Unit): AutoCloseable
 
     fun handlePlatformDeepLink(link: AndroidDeepLink): Boolean
 

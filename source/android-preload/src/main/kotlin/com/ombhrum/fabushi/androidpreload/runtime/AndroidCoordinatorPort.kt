@@ -492,6 +492,11 @@ interface AndroidCoordinatorPort {
     fun messagingBlobRead(params: JSONObject): JSONObject
     fun messagingExecute(params: JSONObject): JSONObject
 
+    fun rootNotificationTrays(): JSONArray
+    fun dismissRootNotificationTray(id: String): Boolean
+    fun clearRootNotificationTrays(): Boolean
+    fun invokeRootNotificationDashboardAction(action: String, args: JSONObject): JSONObject
+
     fun platformRequest(params: JSONObject): JSONObject
     fun remoteComputerList(): JSONObject = error("remote_computer_list_not_implemented")
     fun remoteComputerPair(pairingCode: String, label: String): JSONObject =

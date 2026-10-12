@@ -1581,6 +1581,25 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
     override fun messagingBlobRead(params: JSONObject) = host.request("feature.messaging.blob.read", params)
     override fun messagingExecute(params: JSONObject) = host.request("feature.messaging.execute", params)
 
+    override fun rootNotificationTrays(): JSONArray =
+        host.requestValue("getTrays") as? JSONArray ?: JSONArray()
+
+    override fun dismissRootNotificationTray(id: String): Boolean =
+        host.request("dismissTray", JSONObject().put("id", id))
+            .optBoolean("dismissed", false)
+
+    override fun clearRootNotificationTrays(): Boolean =
+        host.request("clearTrays").optBoolean("cleared", false)
+
+    override fun invokeRootNotificationDashboardAction(
+        action: String,
+        args: JSONObject,
+    ): JSONObject =
+        host.request(
+            "feature.account.dashboardAction",
+            JSONObject().put("action", action).put("args", JSONObject(args.toString())),
+        )
+
     override fun platformRequest(params: JSONObject) = host.request("platform.request", params)
 
     override fun remoteComputerList(): JSONObject =

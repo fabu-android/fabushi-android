@@ -86,6 +86,16 @@ internal class FabushiProcessRuntime(
         coordinator.addFeatureEventListener(notificationRuntime.feed::handleFeatureEvent)
     private val mcpOAuthEventSubscription =
         coordinator.addFeatureEventListener(::handleRuntimeFeatureEvent)
+    private val rootNotificationListeners =
+        java.util.concurrent.CopyOnWriteArrayList<(org.json.JSONObject) -> Unit>()
+    private val rootNotificationEventSubscription =
+        coordinator.addFeatureEventListener { event ->
+            if (event.optString("type").startsWith("tray.")) {
+                rootNotificationListeners.forEach { listener ->
+                    runCatching { listener(org.json.JSONObject(event.toString())) }
+                }
+            }
+        }
     private val remoteDeviceGateway = FabushiRemoteDeviceGateway(
         context = application,
         coordinator = coordinator,
@@ -145,6 +155,28 @@ internal class FabushiProcessRuntime(
     override fun launchExternalUrl(url: String): Boolean =
         externalUrl.openExternalAuth(interactiveActivityOrNull(), url)
 
+    override fun rootNotificationTrays(): org.json.JSONArray =
+        coordinator.rootNotificationTrays()
+
+    override fun dismissRootNotificationTray(id: String): Boolean =
+        coordinator.dismissRootNotificationTray(id)
+
+    override fun clearRootNotificationTrays(): Boolean =
+        coordinator.clearRootNotificationTrays()
+
+    override fun invokeRootNotificationDashboardAction(
+        action: String,
+        args: org.json.JSONObject,
+    ): org.json.JSONObject =
+        coordinator.invokeRootNotificationDashboardAction(action, args)
+
+    override fun addRootNotificationEventListener(
+        listener: (org.json.JSONObject) -> Unit,
+    ): AutoCloseable {
+        rootNotificationListeners += listener
+        return AutoCloseable { rootNotificationListeners.remove(listener) }
+    }
+
     override fun attachInteractiveActivity(activity: ComponentActivity) {
         interactiveActivityRef = WeakReference(activity)
         webAuthnRuntime.attach(activity)
@@ -166,6 +198,8 @@ internal class FabushiProcessRuntime(
         rootShellFocusRefreshOwner.dispose()
         rootShellFocusRefreshExecutor.shutdownNow()
         webAuthnRuntime.close()
+        rootNotificationEventSubscription.close()
+        rootNotificationListeners.clear()
         mcpOAuthEventSubscription.close()
         notificationEventSubscription.close()
         notificationRuntime.reset()
