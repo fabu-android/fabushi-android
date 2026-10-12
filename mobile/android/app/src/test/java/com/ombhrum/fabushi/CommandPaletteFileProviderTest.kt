@@ -204,4 +204,73 @@ class CommandPaletteFileProviderTest {
             )
         }
     }
+
+    @Test
+    fun projectsHostOwnedMediaSearchWithOpenMetadata() {
+        val projected = commandPaletteFilesFromHostMatches(
+            listOf(
+                AndroidContentSearchMedia(
+                    agentId = "agent-a",
+                    entryId = "entry-a",
+                    fileName = "report.pdf",
+                    path = "content://fabushi/report",
+                    ext = ".pdf",
+                    mime = "application/pdf",
+                    kind = "pdf",
+                    timestampMs = 42L,
+                    sizeBytes = 128L,
+                    width = null,
+                    height = null,
+                ),
+            ),
+        )
+
+        assertEquals(1, projected.size)
+        assertEquals("entry-a", projected.single().entryId)
+        assertEquals("content://fabushi/report", projected.single().path)
+        assertEquals(CommandPaletteFileKind.PDF, projected.single().kind)
+        assertEquals(128L, projected.single().sizeBytes)
+    }
+
+    @Test
+    fun rejectsMalformedHostOwnedMediaSearchProjection() {
+        assertThrows(IllegalArgumentException::class.java) {
+            commandPaletteFilesFromHostMatches(
+                listOf(
+                    AndroidContentSearchMedia(
+                        agentId = "agent-a",
+                        entryId = "entry-a",
+                        fileName = "report.pdf",
+                        path = "",
+                        ext = ".pdf",
+                        mime = "application/pdf",
+                        kind = "pdf",
+                        timestampMs = 42L,
+                        sizeBytes = null,
+                        width = null,
+                        height = null,
+                    ),
+                ),
+            )
+        }
+        assertThrows(IllegalStateException::class.java) {
+            commandPaletteFilesFromHostMatches(
+                listOf(
+                    AndroidContentSearchMedia(
+                        agentId = "agent-a",
+                        entryId = "entry-a",
+                        fileName = "report.bin",
+                        path = "content://fabushi/report",
+                        ext = ".bin",
+                        mime = null,
+                        kind = "unknown",
+                        timestampMs = 42L,
+                        sizeBytes = null,
+                        width = null,
+                        height = null,
+                    ),
+                ),
+            )
+        }
+    }
 }
