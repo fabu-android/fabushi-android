@@ -69,6 +69,9 @@ pub const LIST_TOOLS_TIMEOUT_MS: u64 = 60_000;
 pub const CONTROL_RPC_TIMEOUT_MS: u64 = 30_000;
 pub const RUN_GENERATE_IMAGE_PATH: &str = "/aiserver.v1.AiService/RunGenerateImage";
 pub const GENERATE_IMAGE_REQUEST_TIMEOUT_MS: u64 = 60_000;
+pub const AI_AVAILABLE_MODELS_PATH: &str = "/aiserver.v1.AiService/AvailableModels";
+pub const AVAILABLE_MODELS_REQUEST_TIMEOUT_MS: u64 = 15_000;
+pub const AVAILABLE_MODELS_SCOPE_USER_AVAILABLE: u64 = 1;
 pub const SAND_DEFAULT_GENERATE_IMAGE_MODEL_ID: &str = "grok-4.5";
 pub const DEFAULT_CURSOR_BACKEND_URL: &str = "https://api2.cursor.sh";
 pub const SAND_INFERENCE_RENEWAL_CREDENTIAL_ENV: &str =
@@ -416,6 +419,22 @@ impl CursorDashboardMcpAuthBackend {
             )
             .map_err(GenerateImageBackendError::Generate)?;
         decode_generate_image_response(&response)
+    }
+
+    /// Resolve the authenticated user's model picker catalog from the same Cursor backend
+    /// credential owner used by inference-adjacent account services. Presentation receives an
+    /// immutable projection and never becomes a second catalog owner.
+    pub fn resolve_available_models(&self) -> Result<Value, String> {
+        let credentials = self.credentials.credentials()?;
+        let ghost_mode = self.resolve_ghost_mode(&credentials);
+        let response = self.send_unary(
+            &credentials,
+            AI_AVAILABLE_MODELS_PATH,
+            &encode_available_models_request(),
+            AVAILABLE_MODELS_REQUEST_TIMEOUT_MS,
+            ghost_mode,
+        )?;
+        decode_available_models_response(&response)
     }
 
     pub fn submit_account_telemetry(
@@ -1322,6 +1341,118 @@ fn decode_validate_result(input: &[u8]) -> Result<ValidateResultWire, String> {
     })
 }
 
+fn encode_available_models_request() -> Vec<u8> {
+    let mut output = Vec::new();
+    encode_bool(5, true, &mut output);
+    encode_key(10, 0, &mut output);
+    encode_varint(AVAILABLE_MODELS_SCOPE_USER_AVAILABLE, &mut output);
+    output
+}
+
+fn optional_string_field(input: &[u8], wanted_field: u32) -> Result<Option<String>, String> {
+    Ok(string_fields(input, wanted_field)?.into_iter().next())
+}
+
+fn decode_model_parameter_definition(input: &[u8]) -> Result<Value, String> {
+    let id = optional_string_field(input, 1)?.unwrap_or_default();
+    let name = optional_string_field(input, 2)?.unwrap_or_default();
+    let markdown_tooltip = optional_string_field(input, 3)?;
+    let parameter_type = first_message_field(input, 4)?;
+    let parameter_kind = parameter_type
+        .map(|value| -> Result<&'static str, String> {
+            if first_message_field(value, 1)?.is_some() {
+                Ok("boolean")
+            } else if first_message_field(value, 2)?.is_some() {
+                Ok("enum")
+            } else {
+                Ok("unknown")
+            }
+        })
+        .transpose()?
+        .unwrap_or("unknown");
+    let is_cycleable_by_hotkey = decode_optional_varint_field(input, 5)?.map(|value| value != 0);
+    Ok(json!({
+        "id": id,
+        "name": name,
+        "markdownTooltip": markdown_tooltip,
+        "kind": parameter_kind,
+        "isCycleableByHotkey": is_cycleable_by_hotkey,
+    }))
+}
+
+fn decode_available_model(input: &[u8]) -> Result<Value, String> {
+    let name = optional_string_field(input, 1)?.unwrap_or_default();
+    if name.trim().is_empty() {
+        return Err("available model row is missing name".into());
+    }
+    let default_on = decode_optional_varint_field(input, 2)?.unwrap_or_default() != 0;
+    let supports_agent = decode_optional_varint_field(input, 5)?.map(|value| value != 0);
+    let degradation_status = decode_optional_varint_field(input, 6)?;
+    let supports_thinking = decode_optional_varint_field(input, 9)?.map(|value| value != 0);
+    let supports_images = decode_optional_varint_field(input, 10)?.map(|value| value != 0);
+    let supports_auto_context = decode_optional_varint_field(input, 11)?.map(|value| value != 0);
+    let supports_max_mode = decode_optional_varint_field(input, 14)?.map(|value| value != 0);
+    let context_token_limit = decode_optional_varint_field(input, 15)?;
+    let client_display_name = optional_string_field(input, 17)?;
+    let server_model_name = optional_string_field(input, 18)?;
+    let supports_non_max_mode = decode_optional_varint_field(input, 19)?.map(|value| value != 0);
+    let supports_plan_mode = decode_optional_varint_field(input, 22)?.map(|value| value != 0);
+    let inputbox_short_model_name = optional_string_field(input, 24)?;
+    let is_hidden = decode_optional_varint_field(input, 35)?.map(|value| value != 0);
+    let legacy_slugs = string_fields(input, 36)?;
+    let id_aliases = string_fields(input, 37)?;
+    let tagline = optional_string_field(input, 39)?;
+    let visible_in_routed_model_view = decode_optional_varint_field(input, 40)?.map(|value| value != 0);
+    let vendor_name = optional_string_field(input, 41)?;
+    let requires_data_retention = decode_optional_varint_field(input, 46)?.map(|value| value != 0);
+    let reason_for_zdr_consent_block = optional_string_field(input, 47)?;
+    let parameter_definitions = repeated_message_fields(input, 29)?
+        .into_iter()
+        .map(decode_model_parameter_definition)
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(json!({
+        "name": name,
+        "displayName": client_display_name.clone().unwrap_or_else(|| name.clone()),
+        "clientDisplayName": client_display_name,
+        "serverModelName": server_model_name,
+        "inputboxShortModelName": inputbox_short_model_name,
+        "defaultOn": default_on,
+        "supportsAgent": supports_agent,
+        "supportsThinking": supports_thinking,
+        "supportsImages": supports_images,
+        "supportsAutoContext": supports_auto_context,
+        "supportsMaxMode": supports_max_mode,
+        "supportsNonMaxMode": supports_non_max_mode,
+        "supportsPlanMode": supports_plan_mode,
+        "contextTokenLimit": context_token_limit,
+        "degradationStatus": degradation_status,
+        "isHidden": is_hidden,
+        "visibleInRoutedModelView": visible_in_routed_model_view,
+        "legacySlugs": legacy_slugs,
+        "idAliases": id_aliases,
+        "tagline": tagline,
+        "vendorName": vendor_name,
+        "requiresDataRetention": requires_data_retention,
+        "reasonForZdrConsentBlock": reason_for_zdr_consent_block,
+        "parameterDefinitions": parameter_definitions,
+    }))
+}
+
+fn decode_available_models_response(input: &[u8]) -> Result<Value, String> {
+    let model_names = string_fields(input, 1)?;
+    let models = repeated_message_fields(input, 2)?
+        .into_iter()
+        .map(decode_available_model)
+        .collect::<Result<Vec<_>, _>>()?;
+    let use_model_parameters = decode_optional_varint_field(input, 11)?.unwrap_or_default() != 0;
+    Ok(json!({
+        "scope": "user-available",
+        "useModelParameters": use_model_parameters,
+        "modelNames": model_names,
+        "models": models,
+    }))
+}
+
 fn encode_generate_image_request(
     description: &str,
     reference_images: &[(String, String)],
@@ -1998,6 +2129,45 @@ mod tests {
         let mut value = Vec::new();
         encode_len_delimited(field, payload, &mut value);
         value
+    }
+
+    #[test]
+    fn available_models_wire_matches_desktop_generated_schema() {
+        assert_eq!(AI_AVAILABLE_MODELS_PATH, "/aiserver.v1.AiService/AvailableModels");
+        assert_eq!(AVAILABLE_MODELS_SCOPE_USER_AVAILABLE, 1);
+        assert_eq!(AVAILABLE_MODELS_REQUEST_TIMEOUT_MS, 15_000);
+        assert_eq!(encode_available_models_request(), vec![0x28, 0x01, 0x50, 0x01]);
+
+        let mut parameter = Vec::new();
+        encode_string(1, "thinking", &mut parameter);
+        encode_string(2, "Thinking", &mut parameter);
+        let mut parameter_type = Vec::new();
+        encode_len_delimited(1, &[], &mut parameter_type);
+        encode_len_delimited(4, &parameter_type, &mut parameter);
+        encode_bool(5, true, &mut parameter);
+        let mut model = Vec::new();
+        encode_string(1, "grok-test", &mut model);
+        encode_bool(2, true, &mut model);
+        encode_bool(5, true, &mut model);
+        encode_bool(9, true, &mut model);
+        encode_string(17, "Grok Test", &mut model);
+        encode_key(15, 0, &mut model);
+        encode_varint(131_072, &mut model);
+        encode_len_delimited(29, &parameter, &mut model);
+        let mut response = Vec::new();
+        encode_string(1, "grok-test", &mut response);
+        encode_len_delimited(2, &model, &mut response);
+        encode_bool(11, true, &mut response);
+        let decoded = decode_available_models_response(&response).unwrap();
+        assert_eq!(decoded["scope"], "user-available");
+        assert_eq!(decoded["useModelParameters"], true);
+        assert_eq!(decoded["modelNames"][0], "grok-test");
+        assert_eq!(decoded["models"][0]["name"], "grok-test");
+        assert_eq!(decoded["models"][0]["displayName"], "Grok Test");
+        assert_eq!(decoded["models"][0]["supportsAgent"], true);
+        assert_eq!(decoded["models"][0]["supportsThinking"], true);
+        assert_eq!(decoded["models"][0]["contextTokenLimit"], 131_072);
+        assert_eq!(decoded["models"][0]["parameterDefinitions"][0]["kind"], "boolean");
     }
 
     #[test]
