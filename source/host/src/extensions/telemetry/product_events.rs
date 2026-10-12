@@ -253,6 +253,124 @@ fn bounded_tag_value(value: &str) -> bool {
         })
 }
 
+const CLIENT_RESOURCE_STATES: [&str; 2] = ["failed", "recovered"];
+const CLIENT_PERSISTENCE_SLICES: [&str; 12] = [
+    "client-meta.account-slot", "composer-drafts", "host-settings.onboarding",
+    "roster.agent-avatars", "roster.last-roster", "selection.last-agent", "send-journal",
+    "sidebar.last-sections", "transcript.replicas", "ui-agent-refs", "ui-layout", "other",
+];
+const CLIENT_IO_ERRNOS: [&str; 22] = [
+    "ECONNREFUSED", "ECONNRESET", "ECONNABORTED", "ETIMEDOUT", "EPIPE", "ENETRESET",
+    "ENETDOWN", "ENETUNREACH", "EHOSTUNREACH", "EHOSTDOWN", "EAI_AGAIN", "ENOTFOUND",
+    "EADDRINUSE", "EACCES", "EPERM", "ENOENT", "ENOSPC", "EDQUOT", "EROFS", "EBUSY",
+    "EMFILE", "EIO",
+];
+
+#[allow(clippy::too_many_arguments)]
+pub fn client_resource_event(
+    domain: &str,
+    operation: &str,
+    state: &str,
+    failure_code: &str,
+    boundary: &str,
+    retry_owner: Option<&str>,
+    transport_kind: Option<&str>,
+    failed_ms: Option<f64>,
+) -> Result<StructuredTelemetryEvent, String> {
+    for (name, value) in [
+        ("domain", Some(domain)),
+        ("operation", Some(operation)),
+        ("failureCode", Some(failure_code)),
+        ("boundary", Some(boundary)),
+        ("retryOwner", retry_owner),
+        ("transportKind", transport_kind),
+    ] {
+        if value.is_some_and(|value| !bounded_token(value)) {
+            return Err(format!("{name} must be a bounded token"));
+        }
+    }
+    if !CLIENT_RESOURCE_STATES.contains(&state) {
+        return Err("client-resource state is invalid".into());
+    }
+    if failed_ms.is_some_and(|value| !value.is_finite() || value < 0.0) {
+        return Err("client-resource failed duration must be finite and nonnegative".into());
+    }
+    let mut metadata = BTreeMap::from([
+        ("domain".into(), domain.into()),
+        ("operation".into(), operation.into()),
+        ("state".into(), state.into()),
+        ("failure_code".into(), failure_code.into()),
+        ("boundary".into(), boundary.into()),
+    ]);
+    for (key, value) in [("retry_owner", retry_owner), ("transport_kind", transport_kind)] {
+        if let Some(value) = value { metadata.insert(key.into(), value.into()); }
+    }
+    if let Some(value) = failed_ms {
+        metadata.insert("failed_ms".into(), value.round().to_string());
+    }
+    Ok(StructuredTelemetryEvent {
+        level: if state == "failed" { TelemetryLevel::Warn } else { TelemetryLevel::Info },
+        metadata,
+    })
+}
+
+pub fn client_persistence_event(
+    op: &str,
+    outcome: &str,
+    slice: &str,
+    bytes: Option<f64>,
+    error_code: Option<&str>,
+    errno: Option<&str>,
+) -> Result<StructuredTelemetryEvent, String> {
+    if !CLIENT_PERSISTENCE_SLICES.contains(&slice) {
+        return Err("client-persistence slice is invalid".into());
+    }
+    if bytes.is_some_and(|value| !value.is_finite() || value < 0.0) {
+        return Err("client-persistence bytes must be finite and nonnegative".into());
+    }
+    let valid = match op {
+        "writeback" => outcome == "ok" && error_code.is_none() && bytes.is_none(),
+        "load" => match outcome {
+            "ok" => error_code.is_none(),
+            "corrupt" => error_code == Some("SAND-E0700"),
+            "io_error" => error_code == Some("SAND-E0701"),
+            _ => false,
+        },
+        "persist" => match outcome {
+            "quota" => error_code == Some("SAND-E0702"),
+            "io_error" => error_code == Some("SAND-E0701"),
+            _ => false,
+        },
+        _ => false,
+    };
+    if !valid {
+        return Err("client-persistence op/outcome/error combination is invalid".into());
+    }
+    if errno.is_some() && error_code != Some("SAND-E0701") {
+        return Err("errno is only valid for SAND-E0701".into());
+    }
+    let mut metadata = BTreeMap::from([
+        ("op".into(), op.into()),
+        ("outcome".into(), outcome.into()),
+        ("slice".into(), slice.into()),
+    ]);
+    if let Some(value) = bytes { metadata.insert("bytes".into(), value.round().to_string()); }
+    if let Some(code) = error_code {
+        metadata.insert("error_code".into(), code.into());
+        metadata.insert("error_domain".into(), "storage".into());
+        metadata.insert("error_retryable".into(), (code == "SAND-E0701").to_string());
+        if code == "SAND-E0701" {
+            if let Some(errno) = errno {
+                metadata.insert("errno".into(), if CLIENT_IO_ERRNOS.contains(&errno) { errno.into() } else { "E_OTHER".into() });
+            }
+        }
+    }
+    Ok(StructuredTelemetryEvent {
+        level: if outcome == "ok" { TelemetryLevel::Info } else { TelemetryLevel::Warn },
+        metadata,
+    })
+}
+
 const QUEUED_FLUSH_NONCE_MISMATCH: &str = "SAND-E0703";
 const QUEUED_FLUSH_CAPABILITY_UNAVAILABLE: &str = "SAND-E0704";
 const QUEUED_FLUSH_HOST_REJECTED: &str = "SAND-E0705";
@@ -693,6 +811,28 @@ mod tests {
         assert!(!tags.contains_key("phase"));
     }
 
+
+    #[test]
+    fn client_resource_preserves_failure_and_recovery_contract() {
+        let failed = client_resource_event("host", "open", "failed", "SAND-E0605", "android-host-jni", Some("coordinator"), Some("jni"), Some(12.6)).unwrap();
+        assert_eq!(failed.level, TelemetryLevel::Warn);
+        assert_eq!(failed.metadata.get("failed_ms").map(String::as_str), Some("13"));
+        assert_eq!(client_resource_event("host", "open", "recovered", "SAND-E0605", "android-host-jni", None, None, None).unwrap().level, TelemetryLevel::Info);
+        assert!(client_resource_event("bad value", "open", "failed", "SAND-E0605", "android-host-jni", None, None, None).is_err());
+        assert!(client_resource_event("host", "open", "unknown", "SAND-E0605", "android-host-jni", None, None, None).is_err());
+    }
+
+    #[test]
+    fn client_persistence_preserves_storage_error_contract() {
+        let load = client_persistence_event("load", "io_error", "composer-drafts", Some(42.4), Some("SAND-E0701"), Some("ENOSPC")).unwrap();
+        assert_eq!(load.level, TelemetryLevel::Warn);
+        assert_eq!(load.metadata.get("bytes").map(String::as_str), Some("42"));
+        assert_eq!(load.metadata.get("errno").map(String::as_str), Some("ENOSPC"));
+        let unknown_errno = client_persistence_event("persist", "io_error", "send-journal", None, Some("SAND-E0701"), Some("ESECRET")).unwrap();
+        assert_eq!(unknown_errno.metadata.get("errno").map(String::as_str), Some("E_OTHER"));
+        assert!(client_persistence_event("load", "corrupt", "unknown-slice", None, Some("SAND-E0700"), None).is_err());
+        assert!(client_persistence_event("writeback", "ok", "ui-layout", Some(1.0), None, None).is_err());
+    }
 
     #[test]
     fn queued_flush_preserves_outcome_cause_contract() {
