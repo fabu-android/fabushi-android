@@ -208,6 +208,10 @@ internal fun FabushiSettingsSurface(
     timeZoneBusy: Boolean,
     timeZoneError: String?,
     onSaveTimeZoneOverride: (String?) -> Unit,
+    processMetricsLocalEnabled: Boolean,
+    processMetricsBusy: Boolean,
+    processMetricsError: String?,
+    onSetProcessMetricsLocalEnabled: (Boolean) -> Unit,
     autoReviewSnapshot: AndroidAutoReviewInstructionsSnapshot?,
     autoReviewBusy: Boolean,
     autoReviewError: String?,
@@ -470,6 +474,33 @@ internal fun FabushiSettingsSurface(
                                 modifier = Modifier.testTag("settings-time-zone-error"),
                             )
                         }
+                        Text("Performance diagnostics")
+                        Text(
+                            "Local process metrics are off by default. When enabled, Fabushi samples only " +
+                                "this app's CPU time and memory on this device. Backend reporting remains disabled.",
+                            modifier = Modifier.testTag("settings-process-metrics-description"),
+                        )
+                        TextButton(
+                            onClick = { onSetProcessMetricsLocalEnabled(!processMetricsLocalEnabled) },
+                            enabled = !processMetricsBusy,
+                            modifier = Modifier.testTag("settings-process-metrics-toggle"),
+                        ) {
+                            Text(
+                                when {
+                                    processMetricsBusy -> "Saving…"
+                                    processMetricsLocalEnabled -> "✓ Local diagnostics enabled"
+                                    else -> "Enable local diagnostics"
+                                },
+                            )
+                        }
+                        processMetricsError?.takeIf(String::isNotBlank)?.let { error ->
+                            Text(
+                                error,
+                                color = MaterialTheme.colorScheme.error,
+                                modifier = Modifier.testTag("settings-process-metrics-error"),
+                            )
+                        }
+
                         Text("Appearance")
                         Text("Theme")
                         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
