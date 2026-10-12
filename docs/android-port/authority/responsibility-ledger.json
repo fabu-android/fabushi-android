@@ -5484,20 +5484,22 @@
         "source/host/src/host_diagnostics.rs",
         "source/mahayana-agent-coordinator/src/telemetry/mod.rs",
         "source/packages/constants/src/structured_log.rs",
-        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/coordinator/CoordinatorTelemetry.kt"
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/coordinator/CoordinatorTelemetry.kt",
+        "source/host/src/android_structured_log_spill.rs",
+        "source/host/src/android_json_runtime.rs"
       ],
       "android_owner": "Rust Host telemetry/diagnostic modules with source-neutral Coordinator transport telemetry",
       "platform_delta": "Desktop/Electron producer call sites become Android Host/Coordinator producers; OS-specific fields change, but unique ownership, producer evidence, redaction and settlement semantics remain required.",
       "implementation_status": "mapped",
-      "production_wiring": "Partial: Android has Host crash/WebAuthn diagnostics, Coordinator transport-stage telemetry and structured-log constants. The Desktop audit's complete 90-entry producer surface has not been decomposed and proven against Android shipping composition.",
-      "unit_test": "partial existing telemetry-focused Rust/Kotlin tests; complete 90-entry producer oracle not yet present",
+      "production_wiring": "Partial but advanced: Android now has a Host-owned bounded structured-log spill with Desktop-equivalent 1 MiB/18h/1000-entry limits, allowlisted events, drop counters, atomic replacement, account-slot rotation and a real sanitized edge-failure producer wired through AndroidJsonHost. Generic structured-log backend shipping, quit flush, app-process exit settlement and the Desktop audit's remaining producer families remain open.",
+      "unit_test": "AndroidStructuredLogSpill tests cover current-account reopen, account rotation, expiry/drop checkpoint, overflow eviction, atomic replacement and invalid/oversize fail-closed intake; AndroidJsonHost runtime test proves sanitized edge telemetry persists without raw secret detail. Exact-head Actions pending.",
       "contract_test": "required: event-by-event mapper/producer/owner/redaction contracts on the exact Android HEAD",
       "integration_test": "required: shipping Host/Coordinator lifecycle producers write through the unique owner without a Presentation duplicate",
       "packaged_test": "required for release diagnostics/provenance where applicable",
       "device_test": "required for Android lifecycle/process-death/permission failures that only occur on device",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Mapped from the Desktop structured-log facade audit. Do not infer parity from module presence or old Desktop exact-head evidence; Android must independently close producer semantics."
+      "notes": "Structured-log persistence core is implemented and production-wired for sanitized edge failures, but the umbrella remains mapped/not-verified until backend delivery, lifecycle/unclean-exit/quit-flush and remaining producer families are independently closed."
     },
     {
       "responsibility_id": "PRODUCT-SHARED-EXPERIENCE-ANDROID-001",
