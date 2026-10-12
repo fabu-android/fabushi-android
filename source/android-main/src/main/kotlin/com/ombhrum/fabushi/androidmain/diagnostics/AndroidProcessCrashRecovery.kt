@@ -10,6 +10,7 @@ import kotlin.system.exitProcess
 
 internal data class AndroidProcessCrashMarker(
     val kind: String,
+    val errorClass: String,
     val occurredAtMs: Long,
     val uptimeMs: Long,
 )
@@ -35,6 +36,7 @@ internal class AndroidProcessCrashRecovery(context: Context) {
                 persist(
                     AndroidProcessCrashMarker(
                         kind = "uncaught_exception",
+                        errorClass = boundedCrashErrorClass(throwable.javaClass.simpleName),
                         occurredAtMs = System.currentTimeMillis().coerceAtLeast(0L),
                         uptimeMs = SystemClock.elapsedRealtime().coerceAtLeast(0L),
                     ),
@@ -56,9 +58,12 @@ internal class AndroidProcessCrashRecovery(context: Context) {
         val parsed = runCatching { JSONObject(raw) }.getOrNull() ?: return null
         if (parsed.optInt("schemaVersion", 0) != 1) return null
         val kind = parsed.optString("kind").takeIf { it == "uncaught_exception" } ?: return null
+        val errorClass = parsed.optString("errorClass")
+            .takeIf { it == boundedCrashErrorClass(it) }
+            ?: return null
         val occurredAtMs = parsed.optLong("occurredAtMs", -1L).takeIf { it >= 0L } ?: return null
         val uptimeMs = parsed.optLong("uptimeMs", -1L).takeIf { it >= 0L } ?: return null
-        return AndroidProcessCrashMarker(kind, occurredAtMs, uptimeMs)
+        return AndroidProcessCrashMarker(kind, errorClass, occurredAtMs, uptimeMs)
     }
 
     fun acknowledge(marker: AndroidProcessCrashMarker): Boolean {
@@ -69,6 +74,9 @@ internal class AndroidProcessCrashRecovery(context: Context) {
 
     internal fun persist(marker: AndroidProcessCrashMarker) {
         require(marker.kind == "uncaught_exception") { "unsupported process crash kind" }
+        require(marker.errorClass == boundedCrashErrorClass(marker.errorClass)) {
+            "invalid process crash error class"
+        }
         require(marker.occurredAtMs >= 0L && marker.uptimeMs >= 0L) {
             "process crash timestamps must be nonnegative"
         }
@@ -78,6 +86,7 @@ internal class AndroidProcessCrashRecovery(context: Context) {
         val payload = JSONObject()
             .put("schemaVersion", 1)
             .put("kind", marker.kind)
+            .put("errorClass", marker.errorClass)
             .put("occurredAtMs", marker.occurredAtMs)
             .put("uptimeMs", marker.uptimeMs)
             .toString()
@@ -92,4 +101,17 @@ internal class AndroidProcessCrashRecovery(context: Context) {
             error("failed to atomically publish Android process crash marker")
         }
     }
+}
+
+
+private fun boundedCrashErrorClass(value: String): String {
+    val normalized = value.trim()
+    if (
+        normalized.isEmpty() ||
+        normalized.length > 96 ||
+        !normalized.all { it.isLetterOrDigit() || it == '_' || it == '.' || it == '$' }
+    ) {
+        return "Throwable"
+    }
+    return normalized
 }
