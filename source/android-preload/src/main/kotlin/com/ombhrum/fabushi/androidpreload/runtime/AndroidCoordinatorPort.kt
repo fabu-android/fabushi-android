@@ -531,6 +531,7 @@ interface AndroidCoordinatorPort {
         outcome: String,
     ): JSONObject = error("Agent load telemetry is unavailable on this Coordinator port")
     fun reportOnboardingStep(
+        expectedAccountScope: String,
         step: String,
         stepIndex: Int,
         direction: String,
