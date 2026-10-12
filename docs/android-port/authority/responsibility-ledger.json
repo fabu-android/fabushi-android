@@ -13892,6 +13892,60 @@
       "verification_status": "not-verified",
       "notes": "Implemented in production, not verified. Do not upgrade until same exact HEAD compile/unit plus packaged/device SAF evidence succeeds.",
       "android_head_at_update": "162d76b9183721632a7975a2791abcb6ea108d55"
+    },
+    {
+      "responsibility_id": "EDGE-FAILURE-TELEMETRY-ANDROID-001",
+      "domain": "diagnostics",
+      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "desktop_sources": [
+        {
+          "path": "source/electron-main/desktop-edge-failures.ts",
+          "blob_sha": "4954b1b6274c5f3e9e593174e78b2119e725b2d1",
+          "symbols": [
+            "installDesktopEdgeFailureReporter",
+            "reportDesktopEdgeFailure",
+            "reportDesktopEdgeFailureClass",
+            "PRE_INSTALL_BUFFER_CAP"
+          ]
+        }
+      ],
+      "responsibility": "Bound early edge failures before a reporter/consumer exists using only area, leg and error class, then expose the bounded diagnostic projection without retaining sensitive error details.",
+      "source_owner": "Desktop edge failure buffer/reporter",
+      "visible_effect": "Early Host/bridge failures remain diagnosable after startup without leaking request/error payloads or growing unbounded.",
+      "state_owner": "Rust AndroidJsonHost EdgeFailureBuffer",
+      "persistent_state": [],
+      "protocol_wire_contract": [
+        "feature.diagnostics.edgeFailures.snapshot",
+        "buffer cap 32"
+      ],
+      "failure_behavior": [
+        "buffer stops accepting entries at 32 like Desktop pre-install buffer",
+        "invalid error-class labels collapse to Error instead of persisting details"
+      ],
+      "cancellation_behavior": "diagnostic only; no side effects retried",
+      "retry_semantics": "none",
+      "idempotency_semantics": "snapshot is read-only",
+      "process_death_recovery": "pre-install buffer is process-local like Desktop; durable domain outcomes remain in their canonical owners",
+      "account_fencing": "method labels contain no account identity; account/domain owners remain separately fenced",
+      "security_boundary": "no error message, stack, token or params JSON is stored in edge telemetry",
+      "android_disposition": "direct-port",
+      "android_target": [
+        "source/host/src/edge_failures.rs",
+        "source/host/src/android_json_runtime.rs",
+        "source/android-host-jni/src/lib.rs"
+      ],
+      "android_owner": "Rust Host/JNI edge diagnostics owner",
+      "platform_delta": "Electron main process edge reporter becomes Rust Host/JNI boundary diagnostics.",
+      "implementation_status": "implemented",
+      "production_wiring": "CoordinatorHost records malformed request and Host dispatch failures into AndroidJsonHost; Host exposes a read-only diagnostics snapshot.",
+      "unit_test": "edge_failures::tests::pre_install_buffer_matches_desktop_cap_and_rejects_error_details; exact-head Actions pending",
+      "contract_test": "JNI writes only bounded class labels and no error message; exact-head Rust/JNI gate pending",
+      "integration_test": "production JNI HostPort path wired",
+      "packaged_test": "required",
+      "device_test": "required",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Implemented in 265254efcb6ecd513aab083215bd8fdd99cc0291. Not verified until a descendant exact HEAD has terminal CI/package/device evidence."
     }
   ],
   "traceability": {
