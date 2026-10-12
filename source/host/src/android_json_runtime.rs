@@ -38,8 +38,9 @@ use crate::mcp_auth::{
     SandPrivacyMode as BackendSandPrivacyMode,
 };
 use crate::extensions::telemetry::product_events::{
-    access_blocked_event, agent_load_event, agents_unreachable_event, event_loop_pressure_event,
-    StructuredTelemetryEvent, TelemetryLevel,
+    access_blocked_event, agent_load_event, agents_unreachable_event, client_persistence_event,
+    client_resource_event, connector_auth_clicked_event, event_loop_pressure_event,
+    send_queued_flush_event, StructuredTelemetryEvent, TelemetryLevel,
 };
 use crate::extensions::teach_recording::{DurableTeachRecordingOwner, TeachRecordingPhase};
 use crate::extensions::trays::extension::{start_trays_extension, HostTraysExtension};
@@ -1653,6 +1654,57 @@ impl AndroidJsonHost {
         Ok(json!({"recorded":true}))
     }
 
+    fn client_failure_telemetry(&mut self, params: &Value) -> Result<Value, String> {
+        let kind = required_string(params, "kind")?;
+        let (message, event) = match kind {
+            "client_resource" => (
+                "sand.client_resource",
+                client_resource_event(
+                    required_string(params, "domain")?,
+                    required_string(params, "operation")?,
+                    required_string(params, "state")?,
+                    required_string(params, "failureCode")?,
+                    required_string(params, "boundary")?,
+                    params.get("retryOwner").and_then(Value::as_str),
+                    params.get("transportKind").and_then(Value::as_str),
+                    params.get("failedMs").and_then(Value::as_f64),
+                )?,
+            ),
+            "send_queued_flush" => (
+                "sand.send.queued_flush",
+                send_queued_flush_event(
+                    required_string(params, "outcome")?,
+                    params.get("queuedMs").and_then(Value::as_f64).ok_or("queuedMs is required")?,
+                    params.get("queueDepth").and_then(Value::as_f64).ok_or("queueDepth is required")?,
+                    params.get("cause").and_then(Value::as_str),
+                )?,
+            ),
+            "client_persistence" => {
+                let error = params.get("error").and_then(Value::as_object);
+                (
+                    "sand.client_persistence",
+                    client_persistence_event(
+                        required_string(params, "op")?,
+                        required_string(params, "outcome")?,
+                        required_string(params, "slice")?,
+                        params.get("bytes").and_then(Value::as_f64),
+                        error.and_then(|value| value.get("code")).and_then(Value::as_str),
+                        error.and_then(|value| value.get("errno")).and_then(Value::as_str),
+                    )?,
+                )
+            }
+            "connector_auth_clicked" => (
+                "sand.connector_auth",
+                connector_auth_clicked_event(
+                    params.get("serverName").and_then(Value::as_str),
+                    params.get("serverId").and_then(Value::as_str),
+                )?,
+            ),
+            _ => return Err("unsupported client-failure telemetry kind".into()),
+        };
+        self.record_product_telemetry(message, event)
+    }
+
     fn sync_structured_log_account_slot(&mut self) {
         let account_slot = self
             .account
@@ -1828,6 +1880,7 @@ impl AndroidJsonHost {
             "feature.telemetry.agentLoad" => self.agent_load_telemetry(params),
             "feature.telemetry.agentsUnreachable" => self.agents_unreachable_telemetry(params),
             "feature.telemetry.eventLoopPressure" => self.event_loop_pressure_telemetry(params),
+            "feature.telemetry.clientFailure" => self.client_failure_telemetry(params),
             "feature.diagnostics.edgeFailures.snapshot" => serde_json::to_value(self.edge_failures.snapshot()).map_err(|error| format!("failed to serialize edge failure snapshot: {error}")),
             "feature.diagnostics.edgeFailures.report" => {
                 let area = required_string(params, "area")?;
