@@ -1043,7 +1043,7 @@ class MarketplaceViewModel(application: Application) : AndroidViewModel(applicat
         mutableState.value = mutableState.value.copy(timeZoneBusy = true, timeZoneError = null)
         viewModelScope.launch {
             runCatching {
-                withContext(Dispatchers.IO) { coordinator.settingsTimeZone() }
+                withContext(Dispatchers.IO) { coordinator.timeZoneSettings() }
             }.onSuccess { settings ->
                 if (generation != timeZoneSettingsGeneration) return@onSuccess
                 mutableState.value = mutableState.value.copy(
@@ -1068,7 +1068,7 @@ class MarketplaceViewModel(application: Application) : AndroidViewModel(applicat
         viewModelScope.launch {
             runCatching {
                 withContext(Dispatchers.IO) {
-                    coordinator.settingsSetTimeZoneOverride(value?.trim()?.takeIf(String::isNotEmpty))
+                    coordinator.setTimeZoneOverride(value?.trim()?.takeIf(String::isNotEmpty))
                 }
             }.onSuccess { settings ->
                 if (generation != timeZoneSettingsGeneration) return@onSuccess
