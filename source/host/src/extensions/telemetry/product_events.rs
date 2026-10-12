@@ -195,8 +195,8 @@ mod tests {
         .unwrap();
         assert_eq!(event.level, TelemetryLevel::Warn);
         assert_eq!(
-            event.metadata.get("ms_blocked").map(String::as_str),
-            Some(ACCESS_BLOCKED_MS_CAP.to_string().as_str()),
+            event.metadata.get("ms_blocked").cloned(),
+            Some(ACCESS_BLOCKED_MS_CAP.to_string()),
         );
         assert!(access_blocked_event("bad", "seat_revoked", "teamAccessRequired", None).is_err());
         assert!(access_blocked_event("entered", "bad", "teamAccessRequired", None).is_err());
