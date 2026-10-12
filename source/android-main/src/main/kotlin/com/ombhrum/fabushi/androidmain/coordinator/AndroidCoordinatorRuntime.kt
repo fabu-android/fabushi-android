@@ -433,36 +433,6 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
 
     override fun accountUsageSummary(): AndroidAccountUsageSummary {
         val projection = host.request("feature.account.usageSummary")
-        val onDemandJson = projection.optJSONObject("onDemand")
-        val onDemand = onDemandJson?.let { value ->
-            AndroidOnDemandUsage(
-                usedCents = value.optLong("usedCents", 0L).coerceAtLeast(0L),
-                limitCents = value.optLong("limitCents", 0L).coerceAtLeast(0L),
-                resetTimestampMs = value.optLong("resetTimestampMs", 0L).takeIf { it > 0L },
-            )
-        }
-        return AndroidAccountUsageSummary(
-            sandUsagePercent = projection.optDouble("sandUsagePercent", Double.NaN)
-                .takeIf { it.isFinite() && it >= 0.0 },
-            sandUsageResetTimestampMs = projection.optLong("sandUsageResetTimestampMs", 0L)
-                .takeIf { it > 0L },
-            hasAvailableUsage = projection.optBoolean("hasAvailableUsage", false),
-            hasNonZeroIncludedLimit = projection.optBoolean("hasNonZeroIncludedLimit", false),
-            usesPooledEnterpriseAllowance = projection.optBoolean("usesPooledEnterpriseAllowance", false),
-            isSandTrial = projection.optBoolean("isSandTrial", false),
-            hasEndedSandTrial = projection.optBoolean("hasEndedSandTrial", false),
-            canCancelSandTrial = projection.optBoolean("canCancelSandTrial", false),
-            onDemand = onDemand,
-        )
-    }
-
-    override fun accountCancelSandTrial() {
-        val result = host.request("feature.account.cancelSandTrial")
-        check(result.optBoolean("ok", false)) { "Sand trial cancellation was not acknowledged" }
-    }
-
-    override fun accountUsageSummary(): AndroidAccountUsageSummary {
-        val projection = host.request("feature.account.usageSummary")
         fun optionalLong(source: JSONObject, key: String): Long? =
             source.takeIf { it.has(key) && !it.isNull(key) }?.optLong(key)
         fun optionalDouble(source: JSONObject, key: String): Double? =
