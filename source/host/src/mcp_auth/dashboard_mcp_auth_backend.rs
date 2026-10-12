@@ -33,6 +33,15 @@ pub const DASHBOARD_LIST_SAND_MCP_TOOLS_PATH: &str =
     "/aiserver.v1.DashboardService/ListSandMcpTools";
 pub const DASHBOARD_CLIENT_ACTION_PATH: &str =
     "/aiserver.v1.DashboardService/ClientAction";
+pub const DASHBOARD_GET_CURRENT_PERIOD_USAGE_PATH: &str =
+    "/aiserver.v1.DashboardService/GetCurrentPeriodUsage";
+pub const DASHBOARD_GET_SAND_USAGE_STATUS_PATH: &str =
+    "/aiserver.v1.DashboardService/GetSandUsageStatus";
+pub const DASHBOARD_GET_SAND_TRIAL_CLAIM_STATUS_PATH: &str =
+    "/aiserver.v1.DashboardService/GetSandTrialClaimStatus";
+pub const DASHBOARD_CANCEL_SAND_TRIAL_PATH: &str =
+    "/aiserver.v1.DashboardService/CancelSandTrial";
+pub const USAGE_REQUEST_TIMEOUT_MS: u64 = 15_000;
 pub const BACKGROUND_COMPOSER_GET_USER_SETTINGS_PATH: &str =
     "/aiserver.v1.BackgroundComposerService/GetBackgroundComposerUserSettings";
 pub const DASHBOARD_GET_TEAM_ADMIN_SETTINGS_PATH: &str =
@@ -475,6 +484,46 @@ impl CursorDashboardMcpAuthBackend {
                 "team": decode_team_pr_review_destination(&team_bytes)?,
             }))
         })
+    }
+
+    pub fn resolve_sand_usage_summary(&self) -> Result<Value, String> {
+        let credentials = self.credentials.credentials()?;
+        let ghost_mode = self.resolve_ghost_mode(&credentials);
+        let status = self.send_unary(
+            &credentials,
+            DASHBOARD_GET_SAND_USAGE_STATUS_PATH,
+            &[],
+            USAGE_REQUEST_TIMEOUT_MS,
+            ghost_mode,
+        )?;
+        let current_period = self.send_unary(
+            &credentials,
+            DASHBOARD_GET_CURRENT_PERIOD_USAGE_PATH,
+            &[],
+            USAGE_REQUEST_TIMEOUT_MS,
+            ghost_mode,
+        )?;
+        let trial = self.send_unary(
+            &credentials,
+            DASHBOARD_GET_SAND_TRIAL_CLAIM_STATUS_PATH,
+            &[],
+            USAGE_REQUEST_TIMEOUT_MS,
+            ghost_mode,
+        )?;
+        decode_sand_usage_summary(&status, &current_period, &trial, system_now_ms())
+    }
+
+    pub fn cancel_sand_trial(&self) -> Result<(), String> {
+        let credentials = self.credentials.credentials()?;
+        let ghost_mode = self.resolve_ghost_mode(&credentials);
+        let _ = self.send_unary(
+            &credentials,
+            DASHBOARD_CANCEL_SAND_TRIAL_PATH,
+            &[],
+            USAGE_REQUEST_TIMEOUT_MS,
+            ghost_mode,
+        )?;
+        Ok(())
     }
 
     pub fn client_action(
@@ -1048,6 +1097,91 @@ fn string_fields(input: &[u8], wanted_field: u32) -> Result<Vec<String>, String>
     Ok(values)
 }
 
+fn decode_optional_fixed64_field(input: &[u8], wanted_field: u32) -> Result<Option<u64>, String> {
+    let mut cursor = 0usize;
+    while cursor < input.len() {
+        let key = read_varint(input, &mut cursor)?;
+        let field = (key >> 3) as u32;
+        let wire = (key & 0x07) as u8;
+        if field == wanted_field && wire == 1 {
+            let end = cursor.checked_add(8).filter(|end| *end <= input.len())
+                .ok_or("truncated Dashboard fixed64 field")?;
+            let bytes: [u8; 8] = input[cursor..end].try_into()
+                .map_err(|_| "invalid Dashboard fixed64 field")?;
+            return Ok(Some(u64::from_le_bytes(bytes)));
+        }
+        skip_field(input, &mut cursor, wire)?;
+    }
+    Ok(None)
+}
+
+fn first_message_field<'a>(input: &'a [u8], wanted_field: u32) -> Result<Option<&'a [u8]>, String> {
+    Ok(repeated_message_fields(input, wanted_field)?.into_iter().next())
+}
+
+fn decode_timestamp_ms(input: &[u8]) -> Result<u64, String> {
+    let seconds = decode_optional_varint_field(input, 1)?.unwrap_or_default();
+    let nanos = decode_optional_varint_field(input, 2)?.unwrap_or_default();
+    seconds.checked_mul(1_000)
+        .and_then(|value| value.checked_add(nanos / 1_000_000))
+        .ok_or_else(|| "Dashboard timestamp exceeds supported range".to_string())
+}
+
+fn decode_sand_usage_summary(
+    status: &[u8],
+    current_period: &[u8],
+    trial: &[u8],
+    now_ms: u64,
+) -> Result<Value, String> {
+    let usage_percent = decode_optional_fixed64_field(status, 3)?
+        .map(f64::from_bits)
+        .filter(|value| value.is_finite() && *value >= 0.0);
+    let uses_pooled_enterprise_allowance =
+        decode_optional_varint_field(status, 6)?.unwrap_or_default() != 0;
+    let has_available_usage = decode_optional_varint_field(status, 7)?.unwrap_or_default() != 0;
+    let has_non_zero_included_limit =
+        decode_optional_varint_field(status, 8)?.unwrap_or_default() != 0;
+    let next_reset_ms = first_message_field(status, 2)?
+        .map(decode_timestamp_ms)
+        .transpose()?
+        .filter(|value| *value > 0);
+    let trial_expires_at_ms = first_message_field(status, 10)?
+        .map(decode_timestamp_ms)
+        .transpose()?
+        .filter(|value| *value > 0);
+    let trial_cancelable = decode_optional_varint_field(status, 11)?.unwrap_or_default() != 0;
+    let claim_status = decode_optional_varint_field(trial, 1)?.unwrap_or_default();
+    let is_sand_trial = trial_expires_at_ms.is_some_and(|expires| expires > now_ms);
+
+    let billing_cycle_end = decode_optional_varint_field(current_period, 2)?
+        .filter(|value| *value > 0);
+    let on_demand = first_message_field(current_period, 4)?
+        .map(|spend| -> Result<Option<Value>, String> {
+            let limit = decode_optional_varint_field(spend, 5)?;
+            let used = decode_optional_varint_field(spend, 6)?.unwrap_or_default();
+            let normalized_limit = limit.filter(|value| *value > 0 && *value < 2_147_483_647);
+            Ok(normalized_limit.map(|limit| json!({
+                "usedCents": used,
+                "limitCents": limit,
+                "resetTimestampMs": billing_cycle_end,
+            })))
+        })
+        .transpose()?
+        .flatten();
+
+    Ok(json!({
+        "sandUsagePercent": usage_percent,
+        "sandUsageResetTimestampMs": next_reset_ms,
+        "hasAvailableUsage": has_available_usage,
+        "hasNonZeroIncludedLimit": has_non_zero_included_limit,
+        "usesPooledEnterpriseAllowance": uses_pooled_enterprise_allowance,
+        "isSandTrial": is_sand_trial,
+        "hasEndedSandTrial": claim_status == 3 && !is_sand_trial,
+        "canCancelSandTrial": is_sand_trial && trial_cancelable,
+        "onDemand": on_demand,
+    }))
+}
+
 fn encode_client_action_request(
     action: &str,
     args: &std::collections::BTreeMap<String, String>,
@@ -1257,6 +1391,57 @@ mod tests {
         encode_len_delimited(field, payload, &mut value);
         value
     }
+
+    #[test]
+    fn usage_paths_and_decoder_match_desktop_dashboard_contract() {
+        assert_eq!(DASHBOARD_GET_CURRENT_PERIOD_USAGE_PATH, "/aiserver.v1.DashboardService/GetCurrentPeriodUsage");
+        assert_eq!(DASHBOARD_GET_SAND_USAGE_STATUS_PATH, "/aiserver.v1.DashboardService/GetSandUsageStatus");
+        assert_eq!(DASHBOARD_GET_SAND_TRIAL_CLAIM_STATUS_PATH, "/aiserver.v1.DashboardService/GetSandTrialClaimStatus");
+        assert_eq!(DASHBOARD_CANCEL_SAND_TRIAL_PATH, "/aiserver.v1.DashboardService/CancelSandTrial");
+        assert_eq!(USAGE_REQUEST_TIMEOUT_MS, 15_000);
+
+        let mut reset = Vec::new();
+        encode_key(1, 0, &mut reset);
+        encode_varint(2_000_000_000, &mut reset);
+        let mut trial_expiry = Vec::new();
+        encode_key(1, 0, &mut trial_expiry);
+        encode_varint(2_000_000_100, &mut trial_expiry);
+        let mut status = Vec::new();
+        encode_len_delimited(2, &reset, &mut status);
+        encode_key(3, 1, &mut status);
+        status.extend_from_slice(&42.5_f64.to_bits().to_le_bytes());
+        encode_bool(7, true, &mut status);
+        encode_bool(8, true, &mut status);
+        encode_len_delimited(10, &trial_expiry, &mut status);
+        encode_bool(11, true, &mut status);
+
+        let mut spend = Vec::new();
+        encode_key(5, 0, &mut spend);
+        encode_varint(5_000, &mut spend);
+        encode_key(6, 0, &mut spend);
+        encode_varint(1_250, &mut spend);
+        let mut period = Vec::new();
+        encode_key(2, 0, &mut period);
+        encode_varint(2_000_000_200_000, &mut period);
+        encode_len_delimited(4, &spend, &mut period);
+        let trial = vec![0x08, 0x03];
+
+        assert_eq!(
+            decode_sand_usage_summary(&status, &period, &trial, 2_000_000_000_000).unwrap(),
+            json!({
+                "sandUsagePercent":42.5,
+                "sandUsageResetTimestampMs":2_000_000_000_000_u64,
+                "hasAvailableUsage":true,
+                "hasNonZeroIncludedLimit":true,
+                "usesPooledEnterpriseAllowance":false,
+                "isSandTrial":true,
+                "hasEndedSandTrial":false,
+                "canCancelSandTrial":true,
+                "onDemand":{"usedCents":1_250_u64,"limitCents":5_000_u64,"resetTimestampMs":2_000_000_200_000_u64},
+            })
+        );
+    }
+
 
     #[test]
     fn client_action_wire_matches_desktop_dashboard_contract() {

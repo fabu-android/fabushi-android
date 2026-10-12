@@ -1031,6 +1031,21 @@ impl AndroidJsonHost {
     }
 
 
+    fn account_usage_summary(&self) -> Result<Value, String> {
+        self.mcp_dashboard_backend
+            .as_ref()
+            .ok_or("Account usage backend is unavailable")?
+            .resolve_sand_usage_summary()
+    }
+
+    fn account_cancel_sand_trial(&self) -> Result<Value, String> {
+        self.mcp_dashboard_backend
+            .as_ref()
+            .ok_or("Account usage backend is unavailable")?
+            .cancel_sand_trial()?;
+        Ok(json!({"ok":true}))
+    }
+
     fn account_dashboard_action(&self, params: &Value) -> Result<Value, String> {
         let action = required_string(params, "action")?;
         let args_value = params
@@ -1116,6 +1131,8 @@ impl AndroidJsonHost {
             "feature.account.teamRules" => self.account_team_rules(),
             "feature.account.prReviewPreferences" => self.account_pr_review_preferences(),
             "feature.account.dashboardAction" => self.account_dashboard_action(params),
+            "feature.account.usageSummary" => self.account_usage_summary(),
+            "feature.account.cancelSandTrial" => self.account_cancel_sand_trial(),
             "feature.remote.binding.status" => Ok(self.remote_binding_status()),
             "feature.teachRecording.status" => self.teach_recording_status(),
             "feature.auth.deviceAgentSession" => Ok(self.device_agent_session()),
