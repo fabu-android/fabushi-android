@@ -38,10 +38,11 @@ class AndroidProcessSessionTelemetryTest {
         assertEquals(AndroidProcessSessionMarker(8, 250L), store.active)
     }
 
-    @Test fun activity_recreation_in_same_process_does_not_invent_unclean_exit() {
+    @Test fun reused_pid_does_not_hide_previous_unclean_process() {
         val store = MemoryStore().apply { active = AndroidProcessSessionMarker(7, 100L) }
-        assertNull(AndroidProcessSessionTelemetry(store, nowMs = { 150L }, processId = { 7 }).start())
-        assertNull(store.lastUnclean)
+        val settlement = AndroidProcessSessionTelemetry(store, nowMs = { 150L }, processId = { 7 }).start()
+        assertEquals(AndroidUncleanExitSettlement(7, 100L, 150L), settlement)
+        assertEquals(settlement, store.lastUnclean)
         assertEquals(AndroidProcessSessionMarker(7, 150L), store.active)
     }
 }
