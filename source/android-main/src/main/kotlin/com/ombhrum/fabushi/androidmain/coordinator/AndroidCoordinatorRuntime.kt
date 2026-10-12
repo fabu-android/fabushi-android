@@ -2450,7 +2450,7 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
             record.generation.toString(),
             outcome,
             phase,
-        ).joinToString("^@")
+        ).joinToString("\u0000")
         val shouldReport = synchronized(sendJournalRestoreTelemetryLock) {
             sendJournalRestoreTelemetryReported.add(telemetryKey)
         }
