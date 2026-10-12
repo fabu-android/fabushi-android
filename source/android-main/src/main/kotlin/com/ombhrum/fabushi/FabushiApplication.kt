@@ -61,7 +61,15 @@ internal class FabushiProcessRuntime(
     private val coordinator = AndroidCoordinatorPorts.presentation(application).also {
         AndroidCoordinatorBridge.installTrustedRuntime(it)
         if (ciBootstrapActive) {
-            val settled = it.setOnboardingSeen(true)
+            val onboarding = it.onboardingSeen()
+            val accountScope = onboarding.getString("accountScope").trim()
+            check(accountScope.isNotEmpty()) {
+                "CI authenticated session is missing canonical onboarding account scope"
+            }
+            val settled = it.setOnboardingSeen(
+                expectedAccountScope = accountScope,
+                hasSeenOnboarding = true,
+            )
             check(settled.optBoolean("hasSeenOnboarding", false)) {
                 "CI authenticated session could not settle canonical onboarding state"
             }
