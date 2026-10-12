@@ -19,7 +19,7 @@ impl BoundedLocalFs {
         let root = root.into();
         fs::create_dir_all(&root)?;
         let canonical_root = fs::canonicalize(&root)?;
-        Ok(Self { root, canonical_root, max_file_bytes })
+        Ok(Self { root: canonical_root.clone(), canonical_root, max_file_bytes })
     }
 
     pub fn root(&self) -> &Path { &self.root }
@@ -169,13 +169,13 @@ mod tests {
     #[test]
     fn symlink_escape_is_rejected_for_existing_and_future_children() {
         use std::os::unix::fs::symlink;
-        let root = root("symlink");
+        let sandbox = root("symlink");
         let outside = root("outside");
         std::fs::create_dir_all(&outside).unwrap();
-        let fs = BoundedLocalFs::open(&root, 1024).unwrap();
-        symlink(&outside, root.join("link")).unwrap();
+        let fs = BoundedLocalFs::open(&sandbox, 1024).unwrap();
+        symlink(&outside, sandbox.join("link")).unwrap();
         assert_eq!(fs.resolve_contained(Path::new("link/file.txt")).unwrap_err().kind(), io::ErrorKind::PermissionDenied);
-        let _ = std::fs::remove_dir_all(root);
+        let _ = std::fs::remove_dir_all(sandbox);
         let _ = std::fs::remove_dir_all(outside);
     }
 
