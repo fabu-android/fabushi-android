@@ -1795,11 +1795,17 @@
       "android_disposition": "android-adapted",
       "android_target": [
         "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/notifications/os-notification-manager.kt",
-        "source/shared/src/os_notification.rs"
+        "source/shared/src/os_notification.rs",
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/notifications/agents-control-feed.kt",
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/notifications/dock-badge-manager.kt",
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/notifications/dock-badge.kt",
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/FabushiApplication.kt",
+        "mobile/android/app/src/test/java/com/ombhrum/fabushi/AndroidNotificationsTest.kt",
+        "tests/test_android_notification_production_wiring.py"
       ],
       "android_owner": "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/notifications/os-notification-manager.kt",
       "platform_delta": "Android uses native Compose/platform adapters + typed JNI while preserving canonical Rust owners where platform-independent.",
-      "implementation_status": "mapped",
+      "implementation_status": "implemented",
       "production_wiring": "mapped target(s); production parity not yet established",
       "unit_test": "required",
       "contract_test": "required on same exact HEAD",
@@ -1808,7 +1814,7 @@
       "device_test": "required on emulator/physical device as applicable",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Requires packaged notification permission/channel/deep-link/device evidence. FBCP Revision 7 is a cross-cutting source authority for this responsibility; this mapping does not upgrade implementation_status or verification_status."
+      "notes": "Requires packaged notification permission/channel/deep-link/device evidence. FBCP Revision 7 is a cross-cutting source authority for this responsibility; this mapping does not upgrade implementation_status or verification_status. Desktop 371b72f1 notification sources 8ccc74b/e072ecd/97d5d94/009be9c were re-read against Android native owners. Android preserves baseline/pre-seed buffering, needs-input/done transitions, notify/hidden/foreground gating, 5s throttle, last-message dedupe, bounded 140-character content, stale badge epoch/seq fencing and Agent deep-link PendingIntent. Desktop Dock badge is replaced by Android notification-number badge channel. Source implementation is present; verification remains not-verified until current exact-head CI plus packaged permission/channel/deep-link/device acceptance succeeds."
     },
     {
       "responsibility_id": "PRIVACY-REDACTION-001",
