@@ -2382,6 +2382,7 @@ impl AndroidJsonHost {
             &account_fence,
             required_u64(params, "generation")?,
             &self.device_id,
+            required_u64(params, "seq")?,
             required_string(params, "kind")?,
             params.get("payload").cloned().ok_or("signal payload is required")?,
             now_ms(),
