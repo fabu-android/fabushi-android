@@ -4,6 +4,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.ByteArrayOutputStream
+import java.io.File
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 
@@ -24,6 +25,46 @@ class AndroidMediaViewerProjectionTest {
             mediaMimeType = mimeType,
             mediaFileName = fileName,
         )
+
+    @Test
+    fun attachmentSaveNameSanitizesPathAuthorityAndFallsBack() {
+        assertEquals(
+            "report-2026.csv",
+            androidAttachmentSuggestedSaveName("report/2026.csv", "message"),
+        )
+        assertEquals(
+            "fabushi-message",
+            androidAttachmentSuggestedSaveName("..", "message"),
+        )
+        assertEquals(
+            "fabushi-message",
+            androidAttachmentSuggestedSaveName("   ", "message"),
+        )
+    }
+
+    @Test
+    fun failedAttachmentSaveDiscardsPartialDestinationWithoutRetrying() {
+        val source = File.createTempFile("fabushi-save", ".bin").apply {
+            writeBytes(byteArrayOf(1, 2, 3))
+            deleteOnExit()
+        }
+        class Target : AndroidAttachmentSaveTarget {
+            var writes = 0
+            var discards = 0
+            override fun writeFrom(source: File) {
+                writes += 1
+                throw IllegalStateException("injected write failure")
+            }
+            override fun discard() {
+                discards += 1
+            }
+        }
+        val target = Target()
+        val result = saveAndroidAttachment(source, target)
+        assertTrue(result.isFailure)
+        assertEquals(1, target.writes)
+        assertEquals(1, target.discards)
+    }
 
     @Test
     fun previewableStartBuildsPhotoVideoGalleryInTranscriptOrder() {
