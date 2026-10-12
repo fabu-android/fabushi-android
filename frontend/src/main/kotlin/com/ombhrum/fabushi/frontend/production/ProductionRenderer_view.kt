@@ -1044,6 +1044,7 @@ internal fun ProductionRenderer(
                         messagingState = messagingState,
                         messagingActorId = messagingModel.currentActorId,
                         onMessagingRefresh = messagingModel::refresh,
+                        onHumanCallsRefresh = messagingModel::refreshHumanCalls,
                         onCreateDirect = messagingModel::createDirect,
                         onCreateConversation = messagingModel::createConversation,
                         onSendText = { conversationId, text, replyTo, silent, scheduledAt -> messagingModel.sendText(conversationId, text, replyTo, silent, scheduledAt) },
