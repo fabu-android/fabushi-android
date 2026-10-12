@@ -357,6 +357,18 @@ class MarketplaceViewModel(application: Application) : AndroidViewModel(applicat
                 }
             }
             is AndroidDeepLink.Info -> Unit
+            is AndroidDeepLink.PluginAdd -> {
+                mutableState.value = mutableState.value.copy(
+                    query = link.pluginId,
+                    message = "已打开插件链接：${link.pluginId}",
+                )
+                refresh()
+            }
+            is AndroidDeepLink.Open -> {
+                mutableState.value = mutableState.value.copy(
+                    message = "已打开插件市场",
+                )
+            }
             is AndroidDeepLink.Agent -> {
                 mutableState.value = mutableState.value.copy(
                     message = "已接收智能体链接：${link.agentId}",
