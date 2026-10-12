@@ -20602,5 +20602,91 @@ mod reaction_ack_runtime_tests {
         assert!(raw.contains("conversation:telemetry"));
         assert!(raw.contains("thumbs_up"));
     }
+
+    #[test]
+    fn canonical_send_telemetry_records_success_and_failure() {
+        let root = tempfile::tempdir().unwrap();
+        let spill = root.path().join("android-structured-log-spill.v1.json");
+        let mut host = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+        host.logged_in = true;
+
+        host.dispatch(
+            "feature.messaging.access.issue",
+            &json!({
+                "deviceId":"android:test-device",
+                "sessionId":"android:test-session",
+                "scopes":["messaging"]
+            }),
+        )
+        .unwrap();
+        host.dispatch(
+            "feature.messaging.execute",
+            &messaging_envelope(
+                "send-profile",
+                json!({"type":"upsertProfile","actor":{
+                    "id":"human:android-test",
+                    "kind":"human",
+                    "displayName":"Android Test"
+                }}),
+            ),
+        )
+        .unwrap();
+        host.dispatch(
+            "feature.messaging.execute",
+            &messaging_envelope(
+                "send-conversation",
+                json!({"type":"createConversation","conversation":{
+                    "id":"conversation:send-telemetry",
+                    "kind":"group",
+                    "title":"Send Telemetry",
+                    "ownerId":"human:android-test",
+                    "participants":[{
+                        "actorId":"human:android-test",
+                        "role":"owner",
+                        "joinedAtMs":1
+                    }]
+                }}),
+            ),
+        )
+        .unwrap();
+
+        host.dispatch(
+            "feature.messaging.execute",
+            &messaging_envelope(
+                "send-success",
+                json!({
+                    "type":"sendMessage",
+                    "conversationId":"conversation:send-telemetry",
+                    "clientMessageId":"client:send-success",
+                    "content":{"type":"text","data":{"text":{"text":"hello","entities":[]}}}
+                }),
+            ),
+        )
+        .unwrap();
+
+        let failed = host.dispatch(
+            "feature.messaging.execute",
+            &messaging_envelope(
+                "send-failure",
+                json!({
+                    "type":"sendMessage",
+                    "conversationId":"conversation:missing",
+                    "clientMessageId":"client:send-failure",
+                    "content":{"type":"text","data":{"text":{"text":"fail","entities":[]}}}
+                }),
+            ),
+        );
+        assert!(failed.is_err(), "telemetry must not convert the canonical failure to success");
+
+        let raw = std::fs::read_to_string(spill).unwrap();
+        assert!(raw.contains("sand.send.ack"));
+        assert!(raw.contains("\"outcome\":\"acked\""));
+        assert!(raw.contains("\"outcome\":\"failed\""));
+        assert!(raw.contains("sand.send"));
+        assert!(raw.contains("conversation:send-telemetry"));
+        assert!(raw.contains("client:send-success"));
+        assert!(raw.contains("client:send-failure"));
+    }
+
 }
 
