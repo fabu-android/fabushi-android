@@ -1,10 +1,16 @@
 package com.ombhrum.fabushi
 
+import com.ombhrum.fabushi.androidmain.media.AGENT_AVATAR_MAX_ZOOM
+import com.ombhrum.fabushi.androidmain.media.AndroidAvatarCrop
+import com.ombhrum.fabushi.androidmain.media.AndroidAvatarImageSource
 import com.ombhrum.fabushi.androidmain.media.MAX_AGENT_AVATAR_OUTPUT_DIMENSION
 import com.ombhrum.fabushi.androidmain.media.MAX_AGENT_AVATAR_SOURCE_BYTES
 import com.ombhrum.fabushi.androidmain.media.MAX_AGENT_AVATAR_SOURCE_DIMENSION
 import com.ombhrum.fabushi.androidmain.media.avatarDecodeSampleSize
 import com.ombhrum.fabushi.androidmain.media.avatarDimensionsAllowed
+import com.ombhrum.fabushi.androidmain.media.clampAndroidAvatarCrop
+import com.ombhrum.fabushi.androidmain.media.initialAndroidAvatarCrop
+import com.ombhrum.fabushi.androidmain.media.panAndroidAvatarCrop
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -29,6 +35,36 @@ class AgentProfileEditorTest {
         assertEquals(1, avatarDecodeSampleSize(1024, 1024))
         assertEquals(2, avatarDecodeSampleSize(2048, 1024))
         assertEquals(4, avatarDecodeSampleSize(4096, 2048))
+    }
+
+    @Test
+    fun avatarCropStartsCenteredAndClampsZoomAndCenters() {
+        val source = AndroidAvatarImageSource("data:image/png;base64,AA==", width = 800, height = 400)
+        assertEquals(AndroidAvatarCrop(1f, 400f, 200f), initialAndroidAvatarCrop(source))
+        val bounded = clampAndroidAvatarCrop(
+            source,
+            AndroidAvatarCrop(zoom = 99f, centerX = -500f, centerY = 9_000f),
+        )
+        assertEquals(AGENT_AVATAR_MAX_ZOOM, bounded.zoom)
+        assertEquals(40f, bounded.centerX, 0.001f)
+        assertEquals(360f, bounded.centerY, 0.001f)
+    }
+
+    @Test
+    fun avatarCropPanMatchesDesktopDragDirectionAndBounds() {
+        val source = AndroidAvatarImageSource("data:image/png;base64,AA==", width = 800, height = 400)
+        val start = AndroidAvatarCrop(zoom = 2f, centerX = 400f, centerY = 200f)
+        val moved = panAndroidAvatarCrop(
+            source = source,
+            crop = start,
+            deltaStageX = 20f,
+            deltaStageY = -10f,
+            stageSizePx = 200f,
+        )
+        assertTrue(moved.centerX < start.centerX)
+        assertTrue(moved.centerY > start.centerY)
+        assertTrue(moved.centerX >= 100f)
+        assertTrue(moved.centerY in 100f..300f)
     }
 
     @Test
