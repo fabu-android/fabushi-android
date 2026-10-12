@@ -384,7 +384,8 @@ interface AndroidCoordinatorPort {
     fun authBrowserReopen(params: JSONObject): JSONObject
     fun authBrowserCancel(params: JSONObject): JSONObject
     fun authBrowserPoll(params: JSONObject): JSONObject
-    fun authProfileUpdate(displayName: String): JSONObject
+    fun authProfileUpdate(displayName: String): JSONObject =
+        error("Account profile mutation is unavailable on this Coordinator port")
     fun authLogout(): JSONObject
     fun automationUpsert(params: JSONObject): JSONObject
     fun automationList(): org.json.JSONArray
