@@ -75,6 +75,12 @@ internal class AndroidCredentialManagerWebAuthn(
     private var providerLoop: Job? = null
     private var activeCeremony: Job? = null
 
+    @Volatile
+    private var activeCeremonyRequestId: String? = null
+
+    @Volatile
+    private var activeCeremonyGeneration: Long = 0L
+
     fun attach(activity: ComponentActivity) {
         if (attachedActivity === activity && providerLoop?.isActive == true) return
         detach(attachedActivity)
@@ -87,6 +93,8 @@ internal class AndroidCredentialManagerWebAuthn(
     fun detach(activity: ComponentActivity?) {
         if (activity != null && attachedActivity !== activity) return
         attachedActivity = null
+        activeCeremonyGeneration += 1L
+        activeCeremonyRequestId = null
         activeCeremony?.cancel()
         activeCeremony = null
         providerLoop?.cancel()
@@ -148,14 +156,21 @@ internal class AndroidCredentialManagerWebAuthn(
                     }
                     "ceremony" -> AndroidWebAuthnCeremony.fromFrame(frame)?.let { ceremony ->
                         activeCeremony?.cancel()
+                        val generation = activeCeremonyGeneration + 1L
+                        activeCeremonyGeneration = generation
+                        activeCeremonyRequestId = ceremony.requestId
                         activeCeremony = scope.launch {
-                            performCeremony(activity, id, ceremony)
+                            performCeremony(activity, id, ceremony, generation)
                         }
                     }
                     "cancel" -> {
-                        val requestId = frame.optString("requestId")
-                        activeCeremony?.cancel(CancellationException("Host cancelled $requestId"))
-                        activeCeremony = null
+                        val requestId = frame.optString("requestId").trim()
+                        if (shouldCancelActiveCeremony(activeCeremonyRequestId, requestId)) {
+                            activeCeremonyGeneration += 1L
+                            activeCeremonyRequestId = null
+                            activeCeremony?.cancel(CancellationException("Host cancelled $requestId"))
+                            activeCeremony = null
+                        }
                     }
                 }
             }
@@ -173,6 +188,7 @@ internal class AndroidCredentialManagerWebAuthn(
         activity: ComponentActivity,
         providerId: String,
         ceremony: AndroidWebAuthnCeremony,
+        generation: Long,
     ) {
         try {
             val credentialJson = withTimeout(PASSKEY_STALL_MS) {
@@ -204,6 +220,7 @@ internal class AndroidCredentialManagerWebAuthn(
                 }
             }
 
+            if (!isCurrentCeremony(activity, providerId, ceremony.requestId, generation)) return
             submitFrames(
                 providerId,
                 listOf(
@@ -216,10 +233,13 @@ internal class AndroidCredentialManagerWebAuthn(
                 ),
             )
         } catch (_: TimeoutCancellationException) {
-            submitFrames(providerId, passkeyStallFrames(ceremony))
+            if (isCurrentCeremony(activity, providerId, ceremony.requestId, generation)) {
+                submitFrames(providerId, passkeyStallFrames(ceremony))
+            }
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (error: Throwable) {
+            if (!isCurrentCeremony(activity, providerId, ceremony.requestId, generation)) return
             submitFrames(
                 providerId,
                 listOf(
@@ -232,9 +252,23 @@ internal class AndroidCredentialManagerWebAuthn(
                 ),
             )
         } finally {
-            activeCeremony = null
+            if (activeCeremonyGeneration == generation && activeCeremonyRequestId == ceremony.requestId) {
+                activeCeremonyRequestId = null
+                activeCeremony = null
+            }
         }
     }
+
+    private fun isCurrentCeremony(
+        activity: ComponentActivity,
+        providerId: String,
+        requestId: String,
+        generation: Long,
+    ): Boolean =
+        activeCeremonyGeneration == generation &&
+            activeCeremonyRequestId == requestId &&
+            this.providerId == providerId &&
+            attachedActivity === activity
 
     private fun submitFrames(providerId: String, frames: List<JSONObject>) {
         if (frames.isEmpty()) return
@@ -256,6 +290,13 @@ internal class AndroidCredentialManagerWebAuthn(
         internal const val HEARTBEAT_INTERVAL_MS = 10_000L
         internal const val POLL_INTERVAL_MS = 250L
         internal const val PASSKEY_STALL_MS = 60_000L
+
+        internal fun shouldCancelActiveCeremony(
+            activeRequestId: String?,
+            cancelRequestId: String,
+        ): Boolean = activeRequestId != null &&
+            cancelRequestId.isNotBlank() &&
+            activeRequestId == cancelRequestId
 
         internal fun passkeyStallFrames(ceremony: AndroidWebAuthnCeremony): List<JSONObject> = listOf(
             stageFrame(ceremony.requestId, "sign", "failed"),
