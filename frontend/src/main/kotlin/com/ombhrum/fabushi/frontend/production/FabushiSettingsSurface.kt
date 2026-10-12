@@ -15,6 +15,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -192,7 +193,10 @@ internal fun FabushiSettingsSurface(
     accountEmail: String,
     accountAuthId: String,
     accountAvatarUrl: String,
+    accountProfileBusy: Boolean,
+    accountProfileError: String?,
     accountPrivacyMode: String?,
+    onUpdateAccountDisplayName: (String) -> Unit,
     updateState: AndroidUpdateUiState,
     updateTrackPolicy: AndroidUpdateTrackPolicy,
     autoUpdateWhenIdleOptIn: Boolean,
@@ -204,6 +208,7 @@ internal fun FabushiSettingsSurface(
     onClose: () -> Unit,
 ) {
     var section by remember { mutableStateOf(FabushiSettingsSection.GENERAL) }
+    var accountNameDraft by remember(accountName) { mutableStateOf(accountName) }
     val theme = LocalFabushiThemeController.current
     LaunchedEffect(accountLoggedIn) {
         if (accountLoggedIn) onRefreshAccountPrivacyMode()
@@ -248,8 +253,32 @@ internal fun FabushiSettingsSurface(
                                 "Privacy mode: ${accountPrivacyModeLabel(accountPrivacyMode)}",
                                 modifier = Modifier.testTag("settings-account-privacy-mode"),
                             )
+                            OutlinedTextField(
+                                value = accountNameDraft,
+                                onValueChange = { value -> accountNameDraft = value.take(200) },
+                                enabled = !accountProfileBusy,
+                                singleLine = true,
+                                label = { Text("Display name") },
+                                modifier = Modifier.testTag("settings-account-name"),
+                            )
+                            TextButton(
+                                onClick = { onUpdateAccountDisplayName(accountNameDraft) },
+                                enabled = !accountProfileBusy &&
+                                    accountNameDraft.trim().isNotEmpty() &&
+                                    accountNameDraft.trim() != accountName.trim(),
+                                modifier = Modifier.testTag("settings-account-name-save"),
+                            ) {
+                                Text(if (accountProfileBusy) "Saving…" else "Save name")
+                            }
+                            accountProfileError?.takeIf(String::isNotBlank)?.let { error ->
+                                Text(
+                                    error,
+                                    color = MaterialTheme.colorScheme.error,
+                                    modifier = Modifier.testTag("settings-account-profile-error"),
+                                )
+                            }
                             Text(
-                                "Account identity and privacy policy are read-only here and remain owned by the canonical Host session.",
+                                "Account identity, profile mutation and privacy policy remain owned by canonical Host services.",
                             )
                         }
                         Text("Appearance")
