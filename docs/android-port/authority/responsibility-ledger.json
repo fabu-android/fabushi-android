@@ -2058,6 +2058,16 @@
             "signinLoginToTelemetry",
             "signinGateToTelemetry"
           ]
+        },
+        {
+          "path": "source/electron-main/telemetry/access-blocked-telemetry.ts",
+          "blob_sha": "8f85e1739ecf0abca1780787c9a1dff8f359bf74",
+          "symbols": [
+            "isValidAccessBlockedReport",
+            "isPagingAccessBlockedEdge",
+            "accessBlockedReportToTelemetry",
+            "ACCESS_BLOCKED_MS_BLOCKED_CAP_MS"
+          ]
         }
       ],
       "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
@@ -2101,20 +2111,23 @@
         "source/host/src/account_service.rs",
         "source/host/src/android_json_runtime.rs",
         "source/host/src/mcp_auth/dashboard_mcp_auth_backend.rs",
-        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/security/AndroidMachineIdStore.kt"
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/security/AndroidMachineIdStore.kt",
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/coordinator/AccountAccessProjectionOwner.kt",
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/coordinator/AndroidCoordinatorRuntime.kt",
+        "mobile/android/app/src/test/java/com/ombhrum/fabushi/AccessBlockedTelemetryOwnerTest.kt"
       ],
       "android_owner": "Rust Host account telemetry buffer/outbox + CursorDashboardMcpAuthBackend transport",
       "platform_delta": "Desktop fire-and-forget TypeScript shipper becomes a Rust bounded singleflight background outbox using the same protobuf AnalyticsService and the Android protected machine-id/backend credential owners.",
       "implementation_status": "implemented",
-      "production_wiring": "Login start/completed/failure/cancel/logout and session refresh/recovery/rotation/sign-out projections feed the Host outbox; Dashboard backend encodes and submits structured logs under a 15s bounded request. Boot-gate/account-consult and protected-store-unavailable producer parity remain separate open work and keep their aggregate source rows mapped.",
-      "unit_test": "account_telemetry taxonomy/buffer tests plus dashboard SubmitLogs wire/receipt tests and Host outbox-cap test; exact-head Actions pending",
+      "production_wiring": "Login start/completed/failure/cancel/logout and session refresh/recovery/rotation/sign-out projections feed the Host outbox; Dashboard backend encodes and submits structured logs under a 15s bounded request. Boot-gate/account-consult and protected-store-unavailable producer parity remain separate open work and keep their aggregate source rows mapped. Access-blocked entered/recovered edges are account-epoch fenced in Coordinator, preserve the entered block reason through recovery, and are submitted to the Rust Host bounded telemetry owner.",
+      "unit_test": "account_telemetry taxonomy/buffer tests plus dashboard SubmitLogs wire/receipt tests and Host outbox-cap test; exact-head Actions pending AccessBlockedTelemetryOwnerTest covers edge dedupe, original-reason recovery, account switch fencing and non-negative duration.",
       "contract_test": "AnalyticsService path, ClientLogEntry fields, event names, machine-id metadata and 15s deadline are source-anchored to Desktop current main; exact-head Rust gate pending",
       "integration_test": "required: controlled backend success/failure proves retry preserves auth outcome and bounded queue semantics",
       "packaged_test": "required on final exact-head APK/AAB with production backend configuration",
       "device_test": "not required for protobuf unit semantics; packaged protected-account journey should confirm no auth regression",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Session settlement shipper is implemented. Do not upgrade the broad OBSERVABILITY-STRUCTURED-LOG-001 responsibility or signin/session aggregate rows whose remaining producers are explicitly open."
+      "notes": "Session settlement shipper is implemented. Do not upgrade the broad OBSERVABILITY-STRUCTURED-LOG-001 responsibility or signin/session aggregate rows whose remaining producers are explicitly open. access-blocked-telemetry.ts is now implemented on Android; broad signin/session rows remain independently mapped where producers are still open."
     },
     {
       "responsibility_id": "PLUGIN-IMMUTABLE-INSTALL-001",
