@@ -14441,6 +14441,52 @@
       "verification_status": "not-verified",
       "notes": "Do not treat Desktop cursor-proclist or Cursor numeric-metrics backend as directly portable Android mechanisms. Source closure requires a bounded Android replacement and exact-head device evidence. Concurrent duplicate OBSERVABILITY-PROCESS-METRICS-ANDROID-001 was consolidated here; generic telemetry does not upgrade this responsibility.",
       "android_head_at_update": "9c0b61b8f666c6991399354bbf471437d3226805"
+    },
+    {
+      "responsibility_id": "STORAGE-MIGRATION-ANDROID-001",
+      "domain": "storage-startup",
+      "desktop_sources": [
+        {
+          "path": "source/electron-main/startup/desktop-user-data-bootstrap.ts",
+          "blob_sha": "95b67e98e09038a32935b4d51f9cf41173986fa2"
+        },
+        {
+          "path": "source/electron-main/startup/startup-data-root-migration.ts",
+          "blob_sha": "7ebfb05b0870a546617b2a69b6f49cc550dc4166"
+        },
+        {
+          "path": "source/electron-main/startup/windows-user-data-migration.ts",
+          "blob_sha": "48493d6f77dbb0116320af3ea089941877a10e1d"
+        }
+      ],
+      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "responsibility": "Own one canonical Android storage root per data class, version and migrate durable schemas explicitly, fail closed on foreign/corrupt/conflicting storage or unknown writers, and recover upgrades/process death without duplicate canonical owners or destructive clear-and-recreate fallback.",
+      "source_owner": "Desktop startup data-root/user-data settlement",
+      "visible_effect": "App upgrades and process restarts preserve account-scoped messages, runs, approvals, settings and protected credentials without reverting to an old writer or silently losing state.",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "docs/android-port/contracts/storage.md",
+        "source/packages/agent-kv/src/agent_store.rs",
+        "source/packages/agent-kv/src/blob_store.rs",
+        "source/host/src/extensions/transcript/transcript_store.rs",
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/security/AndroidAccountSessionStore.kt",
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/security/AndroidCredentialVaultStore.kt",
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/security/AndroidMachineIdStore.kt",
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/security/AndroidPluginVariableSecretStore.kt",
+        "mobile/android/app/src/main/AndroidManifest.xml"
+      ],
+      "android_owner": "canonical Rust repositories plus narrowly scoped Android Keystore/noBackup stores; no presentation-owned canonical DB",
+      "platform_delta": "Android package sandbox/noBackup directories replace Desktop home/appData root selection and macOS/Windows path migration. Android does not inspect or kill arbitrary peer processes; upgrade compatibility is handled by explicit store/schema versions and process-scoped single runtime ownership.",
+      "implementation_status": "mapped",
+      "production_wiring": "Partial: release manifest disables Android backup; sensitive stores use app-private/noBackup and atomic/fail-closed storage; canonical Rust stores remain production owners. A unified upgrade fixture/migration registry and cross-version packaged acceptance are still open.",
+      "unit_test": "required per store: old-schema fixture, corrupt/foreign data, interrupted migration, idempotent rerun and disk/write failure",
+      "contract_test": "required: no second owner, no destructive migration fallback, account-scope preservation",
+      "integration_test": "required: old packaged data -> upgraded process -> same canonical projections without duplicate side effects",
+      "packaged_test": "required across real prior APK/AAB fixture",
+      "device_test": "required: upgrade/process-kill/account-switch and Keystore invalidation behavior",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Desktop path/PID mechanisms are not portable, but the migration/conflict/recovery product responsibility remains applicable. Do not mark implemented from individual store versions alone."
     }
   ],
   "traceability": {
