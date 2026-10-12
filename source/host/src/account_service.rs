@@ -187,6 +187,15 @@ impl AndroidAccountService {
         Some(format!("account-device:{}", crate::sha256::sha256_hex(&encoded)))
     }
 
+    pub fn environment_descriptor_url(&self) -> String {
+        self.base_url.to_string()
+    }
+
+    pub fn clear_local_session(&mut self) -> AccountSessionMutation {
+        self.session = None;
+        AccountSessionMutation::Clear
+    }
+
     pub(crate) fn authenticated_api_request(
         &mut self,
         method: &str,
