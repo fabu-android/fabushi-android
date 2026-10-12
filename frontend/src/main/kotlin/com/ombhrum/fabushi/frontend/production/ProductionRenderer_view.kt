@@ -26,10 +26,13 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.ombhrum.fabushi.androidpreload.deeplink.AndroidDeepLink
 import com.ombhrum.fabushi.androidpreload.deeplink.AndroidPresentationDeepLink
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidEntrypointAvailabilitySnapshot
+import com.ombhrum.fabushi.androidpreload.runtime.AndroidAutoReviewInstructions
+import com.ombhrum.fabushi.androidpreload.runtime.AndroidAutoReviewInstructionsSnapshot
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidEntrypointId
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidPresentationRuntimePort
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
 
@@ -73,6 +76,12 @@ internal fun ProductionRenderer(
                 var commandPaletteInitialTab by remember { mutableStateOf(CommandPaletteTab.ALL) }
                 var showAbout by remember { mutableStateOf(false) }
                 var showSettings by remember { mutableStateOf(false) }
+                var autoReviewSnapshot by remember {
+                    mutableStateOf<AndroidAutoReviewInstructionsSnapshot?>(null)
+                }
+                var autoReviewBusy by remember { mutableStateOf(false) }
+                var autoReviewError by remember { mutableStateOf<String?>(null) }
+                var autoReviewRequestGeneration by remember { mutableStateOf(0L) }
                 var computerUpdateConfirmAction by remember {
                     mutableStateOf<CommandPaletteComputerUpdateAction?>(null)
                 }
@@ -162,6 +171,67 @@ internal fun ProductionRenderer(
                         onClose = { showAbout = false },
                     )
                 }
+                fun refreshAutoReviewInstructions() {
+                    val generation = autoReviewRequestGeneration + 1L
+                    autoReviewRequestGeneration = generation
+                    autoReviewBusy = true
+                    autoReviewError = null
+                    coroutineScope.launch {
+                        val result = withContext(Dispatchers.IO) {
+                            runCatching { coordinator.autoReviewInstructions() }
+                        }
+                        if (generation != autoReviewRequestGeneration) return@launch
+                        autoReviewBusy = false
+                        result.onSuccess { autoReviewSnapshot = it }
+                            .onFailure { autoReviewError = it.message ?: "Auto Review settings unavailable" }
+                    }
+                }
+
+                fun saveAutoReviewInstructions(
+                    expectedRevision: Long,
+                    isEnabled: Boolean,
+                    allowInstructions: List<String>,
+                    blockInstructions: List<String>,
+                ) {
+                    val generation = autoReviewRequestGeneration + 1L
+                    autoReviewRequestGeneration = generation
+                    autoReviewBusy = true
+                    autoReviewError = null
+                    coroutineScope.launch {
+                        val result = withContext(Dispatchers.IO) {
+                            runCatching {
+                                coordinator.setAutoReviewInstructions(
+                                    expectedRevision = expectedRevision,
+                                    instructions = AndroidAutoReviewInstructions(
+                                        isEnabled = isEnabled,
+                                        allowInstructions = allowInstructions,
+                                        blockInstructions = blockInstructions,
+                                    ),
+                                )
+                            }
+                        }
+                        if (generation != autoReviewRequestGeneration) return@launch
+                        autoReviewBusy = false
+                        result.onSuccess { autoReviewSnapshot = it }
+                            .onFailure { autoReviewError = it.message ?: "Auto Review settings were not saved" }
+                    }
+                }
+
+                LaunchedEffect(
+                    showSettings,
+                    state.loggedIn,
+                    state.rootConnectionProjection.accountEpoch,
+                    state.rootConnectionProjection.accountIdentity,
+                ) {
+                    autoReviewRequestGeneration += 1L
+                    autoReviewSnapshot = null
+                    autoReviewError = null
+                    autoReviewBusy = false
+                    if (showSettings && state.loggedIn) {
+                        refreshAutoReviewInstructions()
+                    }
+                }
+
                 if (showSettings) {
                     FabushiSettingsSurface(
                         accountLoggedIn = state.loggedIn,
@@ -175,6 +245,11 @@ internal fun ProductionRenderer(
                         accountUsageSummary = state.accountUsageSummary,
                         accountUsageBusy = state.accountUsageBusy,
                         accountUsageError = state.accountUsageError,
+                        autoReviewSnapshot = autoReviewSnapshot,
+                        autoReviewBusy = autoReviewBusy,
+                        autoReviewError = autoReviewError,
+                        onRefreshAutoReviewInstructions = ::refreshAutoReviewInstructions,
+                        onSaveAutoReviewInstructions = ::saveAutoReviewInstructions,
                         credentialVaultItems = state.credentialVaultItems,
                         credentialVaultBusy = state.credentialVaultBusy,
                         credentialVaultError = state.credentialVaultError,
