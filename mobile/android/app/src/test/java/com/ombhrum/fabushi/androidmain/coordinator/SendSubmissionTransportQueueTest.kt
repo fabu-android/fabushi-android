@@ -104,6 +104,88 @@ class SendSubmissionTransportQueueTest {
         assertEquals(listOf("restored"), dispatched)
     }
 
+
+    @Test
+    fun restoredQueueReportsRealSettlementOutcomeButNewSubmissionDoesNot() {
+        var down = false
+        val restoredOutcomes = mutableListOf<Pair<String, String>>()
+        val owner = AndroidSendSubmissionTransportQueue(
+            isTransportDown = { down },
+            queue = { acknowledgement(it, AndroidSendAcknowledgementPhase.QUEUED) },
+            dispatch = {
+                AndroidSendAcknowledgementDispatch(
+                    acknowledgement(it, AndroidSendAcknowledgementPhase.ACCEPTED_AWAITING_ECHO),
+                    "op-" + it.nonce,
+                )
+            },
+            cancelQueuedPersisted = { true },
+            onFlushed = { _, _ -> },
+            onRestoredSettled = { record, outcome -> restoredOutcomes += record.nonce to outcome },
+        )
+
+        val restored = AndroidSendSubmissionScope("slot-a", "agent-a", "restored", 9)
+        owner.discover(listOf(acknowledgement(restored, AndroidSendAcknowledgementPhase.QUEUED)))
+        owner.flush()
+        assertEquals(listOf("restored" to "dispatched"), restoredOutcomes)
+
+        owner.submit(AndroidSendSubmissionScope("slot-a", "agent-a", "new", 9))
+        assertEquals(
+            "ordinary submissions must not be projected as journal restoration",
+            listOf("restored" to "dispatched"),
+            restoredOutcomes,
+        )
+    }
+
+    @Test
+    fun restoredQueueReportsParkedOfflineWithoutLaterDoubleCounting() {
+        var down = true
+        val restoredOutcomes = mutableListOf<Pair<String, String>>()
+        val owner = AndroidSendSubmissionTransportQueue(
+            isTransportDown = { down },
+            queue = { acknowledgement(it, AndroidSendAcknowledgementPhase.QUEUED) },
+            dispatch = {
+                AndroidSendAcknowledgementDispatch(
+                    acknowledgement(it, AndroidSendAcknowledgementPhase.ACCEPTED_AWAITING_ECHO),
+                    "op-" + it.nonce,
+                )
+            },
+            cancelQueuedPersisted = { true },
+            onFlushed = { _, _ -> },
+            onRestoredSettled = { record, outcome -> restoredOutcomes += record.nonce to outcome },
+        )
+
+        val restored = AndroidSendSubmissionScope("slot-a", "agent-a", "offline", 11)
+        owner.discover(listOf(acknowledgement(restored, AndroidSendAcknowledgementPhase.QUEUED)))
+        assertEquals(listOf("offline" to "parked"), restoredOutcomes)
+
+        down = false
+        owner.flush()
+        assertEquals(
+            "the same restoration episode must not be counted again after it was reported parked",
+            listOf("offline" to "parked"),
+            restoredOutcomes,
+        )
+    }
+
+    @Test
+    fun restoredQueueReportsFailedDispatch() {
+        val restoredOutcomes = mutableListOf<Pair<String, String>>()
+        val owner = AndroidSendSubmissionTransportQueue(
+            isTransportDown = { false },
+            queue = { acknowledgement(it, AndroidSendAcknowledgementPhase.QUEUED) },
+            dispatch = { error("transport failed") },
+            cancelQueuedPersisted = { true },
+            onFlushed = { _, _ -> },
+            onRestoredSettled = { record, outcome -> restoredOutcomes += record.nonce to outcome },
+        )
+
+        val restored = AndroidSendSubmissionScope("slot-a", "agent-a", "failed", 12)
+        owner.discover(listOf(acknowledgement(restored, AndroidSendAcknowledgementPhase.QUEUED)))
+        owner.flush()
+
+        assertEquals(listOf("failed" to "failed"), restoredOutcomes)
+    }
+
     @Test
     fun accountChangeFenceDropsOnlyInMemoryQueueWithoutDispatchingOldScope() {
         var down = true
