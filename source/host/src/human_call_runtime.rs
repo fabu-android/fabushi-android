@@ -126,8 +126,8 @@ impl HumanCallRuntime {
         if account_fence.trim().is_empty() {
             return Err("call account fence is required".into());
         }
-        if participant_ids.is_empty() || participant_ids.len() > 64 {
-            return Err("call participants are invalid".into());
+        if participant_ids.len() < 2 || participant_ids.len() > 64 {
+            return Err("call session requires between 2 and 64 participants".into());
         }
         let mut unique = BTreeSet::new();
         for participant in &participant_ids {
@@ -135,6 +135,9 @@ impl HumanCallRuntime {
             if !unique.insert(participant.clone()) {
                 return Err("duplicate call participant".into());
             }
+        }
+        if !unique.contains(creator_id) {
+            return Err("call creator must be a call participant".into());
         }
         if let Some(existing_id) = self.state.request_to_call.get(request_id) {
             let existing = self.state.sessions.get(existing_id).ok_or("call request index is corrupt")?;
@@ -146,7 +149,6 @@ impl HumanCallRuntime {
         if self.state.sessions.contains_key(call_id) {
             return Err("duplicate call id".into());
         }
-        self.state.next_generation = self.state.next_generation.saturating_add(1).max(1);
         let session = HumanCallSession {
             id: call_id.into(),
             request_id: request_id.into(),
@@ -154,7 +156,7 @@ impl HumanCallRuntime {
             creator_id: creator_id.into(),
             participant_ids,
             state: HumanCallState::Invited,
-            generation: self.state.next_generation,
+            generation: 0,
             signal_seq: 0,
             account_fence: account_fence.into(),
             media_capabilities: json!({"audio":false,"video":false,"screenShare":false}),
@@ -236,12 +238,17 @@ impl HumanCallRuntime {
             (state, "fail") if !state.terminal() => HumanCallState::Failed,
             _ => return Err("invalid Human call state transition".into()),
         };
+        let reconnect_generation = action == "reconnect";
         session.state = next;
+        if reconnect_generation {
+            session.generation = session.generation.saturating_add(1);
+            session.signal_seq = 0;
+        }
         session.updated_at_ms = now_ms;
         session.terminal_reason = terminal_reason;
         let terminal = session.state.terminal();
         let copy = session.clone();
-        if terminal {
+        if terminal || reconnect_generation {
             self.state.owner_device_by_call.remove(call_id);
         }
         self.persist()?;
@@ -278,6 +285,7 @@ impl HumanCallRuntime {
         account_fence: &str,
         generation: u64,
         sender_device_id: &str,
+        seq: u64,
         kind: &str,
         payload: Value,
         now_ms: u64,
@@ -289,16 +297,40 @@ impl HumanCallRuntime {
         if owner != sender_device_id {
             return Err("call signal sender does not own the transport lease".into());
         }
-        let session = self.current_mut(call_id, account_fence, generation)?;
-        if session.state.terminal() || session.state == HumanCallState::OutcomeUnknown {
+        let current = self.current(call_id, account_fence, generation)?;
+        if current.state.terminal() || current.state == HumanCallState::OutcomeUnknown {
             return Err("call cannot signal from current state".into());
         }
-        session.signal_seq = session.signal_seq.saturating_add(1);
+        if seq <= current.signal_seq {
+            let existing = self
+                .state
+                .signals
+                .get(call_id)
+                .and_then(|signals| signals.iter().find(|signal| signal.generation == generation && signal.seq == seq))
+                .cloned()
+                .ok_or("call signal sequence is stale")?;
+            if existing.sender_device_id == sender_device_id
+                && existing.kind == kind
+                && existing.payload == payload
+            {
+                return Ok(existing);
+            }
+            return Err("call signal sequence conflicts with previously accepted payload".into());
+        }
+        if seq != current.signal_seq.saturating_add(1) {
+            return Err(format!(
+                "call signal sequence gap: expected {}, received {}",
+                current.signal_seq.saturating_add(1),
+                seq
+            ));
+        }
+        let session = self.current_mut(call_id, account_fence, generation)?;
+        session.signal_seq = seq;
         session.updated_at_ms = now_ms;
         let signal = HumanCallSignal {
             call_id: call_id.into(),
             generation,
-            seq: session.signal_seq,
+            seq,
             sender_device_id: sender_device_id.into(),
             kind: kind.into(),
             payload,
@@ -434,8 +466,8 @@ mod tests {
     #[test]
     fn duplicate_request_converges_but_stale_generation_is_fenced() {
         let (_root, mut runtime) = runtime();
-        let first = runtime.create("call-1", "req-1", "conversation-1", "human-a", vec!["human-b".into()], "acct-a", 2).unwrap();
-        let replay = runtime.create("call-other", "req-1", "conversation-1", "human-a", vec!["human-b".into()], "acct-a", 3).unwrap();
+        let first = runtime.create("call-1", "req-1", "conversation-1", "human-a", vec!["human-a".into(), "human-b".into()], "acct-a", 2).unwrap();
+        let replay = runtime.create("call-other", "req-1", "conversation-1", "human-a", vec!["human-a".into(), "human-b".into()], "acct-a", 3).unwrap();
         assert_eq!(replay.id, first.id);
         assert!(runtime.transition("call-1", "acct-a", first.generation + 1, "accept", None, 4).is_err());
         assert!(runtime.transition("call-1", "acct-b", first.generation, "accept", None, 4).is_err());
@@ -444,15 +476,15 @@ mod tests {
     #[test]
     fn transport_lease_rejects_second_device_and_signals_are_monotonic() {
         let (_root, mut runtime) = runtime();
-        let call = runtime.create("call-1", "req-1", "conversation-1", "human-a", vec!["human-b".into()], "acct-a", 2).unwrap();
+        let call = runtime.create("call-1", "req-1", "conversation-1", "human-a", vec!["human-a".into(), "human-b".into()], "acct-a", 2).unwrap();
         let owner = runtime.lease("call-1", "acct-a", call.generation, "human-a", "device-a", true).unwrap();
         assert!(owner.is_owner);
         let other = runtime.lease("call-1", "acct-a", call.generation, "human-a", "device-b", true).unwrap();
         assert!(!other.is_owner);
-        let first = runtime.send_signal("call-1", "acct-a", call.generation, "device-a", "offer", json!({"sdp":"one"}), 3).unwrap();
-        let second = runtime.send_signal("call-1", "acct-a", call.generation, "device-a", "candidate", json!({"candidate":"two"}), 4).unwrap();
+        let first = runtime.send_signal("call-1", "acct-a", call.generation, "device-a", 1, "offer", json!({"sdp":"one"}), 3).unwrap();
+        let second = runtime.send_signal("call-1", "acct-a", call.generation, "device-a", 2, "candidate", json!({"candidate":"two"}), 4).unwrap();
         assert_eq!((first.seq, second.seq), (1, 2));
-        assert!(runtime.send_signal("call-1", "acct-a", call.generation, "device-b", "answer", json!({}), 5).is_err());
+        assert!(runtime.send_signal("call-1", "acct-a", call.generation, "device-b", 3, "answer", json!({}), 5).is_err());
     }
 
     #[test]
@@ -462,7 +494,7 @@ mod tests {
         let generation;
         {
             let mut runtime = HumanCallRuntime::open(&path, 1).unwrap();
-            let call = runtime.create("call-1", "req-1", "conversation-1", "human-a", vec!["human-b".into()], "acct-a", 2).unwrap();
+            let call = runtime.create("call-1", "req-1", "conversation-1", "human-a", vec!["human-a".into(), "human-b".into()], "acct-a", 2).unwrap();
             generation = call.generation;
             runtime.transition("call-1", "acct-a", generation, "accept", None, 3).unwrap();
         }
@@ -476,17 +508,17 @@ mod tests {
     #[test]
     fn account_switch_fences_live_calls_and_releases_transport_owner() {
         let (_root, mut runtime) = runtime();
-        let call = runtime.create("call-1", "req-1", "conversation-1", "human-a", vec!["human-b".into()], "acct-a", 2).unwrap();
+        let call = runtime.create("call-1", "req-1", "conversation-1", "human-a", vec!["human-a".into(), "human-b".into()], "acct-a", 2).unwrap();
         runtime.lease("call-1", "acct-a", call.generation, "human-a", "device-a", true).unwrap();
         assert_eq!(runtime.fence_account("acct-a", "account switched", 3).unwrap(), 1);
         assert_eq!(runtime.list("conversation-1", "acct-a", 20)[0].state, HumanCallState::OutcomeUnknown);
-        assert!(runtime.send_signal("call-1", "acct-a", call.generation, "device-a", "offer", json!({}), 4).is_err());
+        assert!(runtime.send_signal("call-1", "acct-a", call.generation, "device-a", 1, "offer", json!({}), 4).is_err());
     }
 
     #[test]
     fn transition_table_rejects_invalid_edges_and_terminal_media_updates() {
         let (_root, mut runtime) = runtime();
-        let call = runtime.create("call-1", "req-1", "conversation-1", "human-a", vec!["human-b".into()], "acct-a", 2).unwrap();
+        let call = runtime.create("call-1", "req-1", "conversation-1", "human-a", vec!["human-a".into(), "human-b".into()], "acct-a", 2).unwrap();
         assert!(runtime.transition("call-1", "acct-a", call.generation, "connect", None, 3).is_err());
         runtime.transition("call-1", "acct-a", call.generation, "accept", None, 4).unwrap();
         runtime.transition("call-1", "acct-a", call.generation, "connected", None, 5).unwrap();
