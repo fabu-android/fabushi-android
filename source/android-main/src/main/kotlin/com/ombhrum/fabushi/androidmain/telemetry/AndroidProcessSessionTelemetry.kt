@@ -36,7 +36,6 @@ class AndroidProcessSessionTelemetry(
         val currentPid = processId()
         val now = nowMs()
         val settlement = store.readActive()
-            ?.takeIf { it.processId != currentPid }
             ?.let {
                 AndroidUncleanExitSettlement(
                     previousProcessId = it.processId,
