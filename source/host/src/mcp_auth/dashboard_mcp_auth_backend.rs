@@ -19,6 +19,12 @@ pub const DASHBOARD_VALIDATE_MCP_OAUTH_TOKENS_PATH: &str =
     "/aiserver.v1.DashboardService/ValidateMcpOAuthTokens";
 pub const DASHBOARD_COMPLETE_MCP_OAUTH_PATH: &str =
     "/aiserver.v1.DashboardService/CompleteMcpOAuth";
+pub const DASHBOARD_DELETE_MCP_OAUTH_TOKEN_PATH: &str =
+    "/aiserver.v1.DashboardService/DeleteMcpOAuthToken";
+pub const DASHBOARD_RENAME_MCP_OAUTH_ACCOUNT_PATH: &str =
+    "/aiserver.v1.DashboardService/RenameMcpOAuthAccount";
+pub const DASHBOARD_DELETE_MCP_OAUTH_ACCOUNT_PATH: &str =
+    "/aiserver.v1.DashboardService/DeleteMcpOAuthAccount";
 pub const DASHBOARD_GET_USER_PRIVACY_MODE_PATH: &str =
     "/aiserver.v1.DashboardService/GetUserPrivacyMode";
 pub const DASHBOARD_GET_TEAMS_PATH: &str =
@@ -530,6 +536,77 @@ impl CursorDashboardMcpAuthBackend {
             .find(|server| server.id == requested_id)
             .map(project_available_server)
             .transpose()
+    }
+
+    pub fn logout_mcp_account(
+        &self,
+        server_url: &str,
+        account_key: &str,
+    ) -> Result<(), String> {
+        let server_url = server_url.trim();
+        let account_key = account_key.trim();
+        let parsed = Url::parse(server_url)
+            .map_err(|_| "MCP account logout server URL is invalid".to_string())?;
+        if !matches!(parsed.scheme(), "http" | "https")
+            || account_key.is_empty()
+            || account_key.len() > 320
+            || account_key.chars().any(char::is_control)
+        {
+            return Err("MCP account logout target is invalid".into());
+        }
+        let credentials = self.credentials.credentials()?;
+        let ghost_mode = self.resolve_ghost_mode(&credentials);
+        self.send_unary(
+            &credentials,
+            DASHBOARD_DELETE_MCP_OAUTH_TOKEN_PATH,
+            &encode_delete_mcp_oauth_token_request(server_url, account_key),
+            CONTROL_RPC_TIMEOUT_MS,
+            ghost_mode,
+        )?;
+        Ok(())
+    }
+
+    pub fn rename_mcp_account(
+        &self,
+        server_id: &str,
+        account_key: &str,
+        new_account_key: &str,
+    ) -> Result<(), String> {
+        let server_id = parse_mcp_server_id(server_id)?;
+        let account_key = validate_mcp_account_key(account_key, "account key")?;
+        let new_account_key = validate_mcp_account_key(new_account_key, "new account key")?;
+        if account_key == new_account_key {
+            return Ok(());
+        }
+        let credentials = self.credentials.credentials()?;
+        let ghost_mode = self.resolve_ghost_mode(&credentials);
+        self.send_unary(
+            &credentials,
+            DASHBOARD_RENAME_MCP_OAUTH_ACCOUNT_PATH,
+            &encode_rename_mcp_oauth_account_request(server_id, account_key, new_account_key),
+            CONTROL_RPC_TIMEOUT_MS,
+            ghost_mode,
+        )?;
+        Ok(())
+    }
+
+    pub fn delete_mcp_account(
+        &self,
+        server_id: &str,
+        account_key: &str,
+    ) -> Result<(), String> {
+        let server_id = parse_mcp_server_id(server_id)?;
+        let account_key = validate_mcp_account_key(account_key, "account key")?;
+        let credentials = self.credentials.credentials()?;
+        let ghost_mode = self.resolve_ghost_mode(&credentials);
+        self.send_unary(
+            &credentials,
+            DASHBOARD_DELETE_MCP_OAUTH_ACCOUNT_PATH,
+            &encode_delete_mcp_oauth_account_request(server_id, account_key),
+            CONTROL_RPC_TIMEOUT_MS,
+            ghost_mode,
+        )?;
+        Ok(())
     }
 
     pub fn resolve_sand_team_rules(&self) -> Result<Vec<Value>, String> {
@@ -1096,6 +1173,54 @@ fn encode_complete_mcp_oauth_request(state_id: &str, authorization_code: &str) -
     let mut output = Vec::new();
     encode_string(1, state_id, &mut output);
     encode_string(2, authorization_code, &mut output);
+    output
+}
+
+fn parse_mcp_server_id(server_id: &str) -> Result<i32, String> {
+    let value = server_id
+        .trim()
+        .parse::<i32>()
+        .map_err(|_| "MCP server id is outside signed int32 range".to_string())?;
+    if value <= 0 {
+        return Err("MCP server id must be positive".into());
+    }
+    Ok(value)
+}
+
+fn validate_mcp_account_key<'a>(raw: &'a str, label: &str) -> Result<&'a str, String> {
+    let value = raw.trim();
+    if value.is_empty() || value.len() > 320 || value.chars().any(char::is_control) {
+        return Err(format!("MCP {label} is invalid"));
+    }
+    Ok(value)
+}
+
+fn encode_delete_mcp_oauth_token_request(server_url: &str, account_key: &str) -> Vec<u8> {
+    let mut output = Vec::new();
+    encode_string(1, server_url, &mut output);
+    encode_string(3, "sand", &mut output);
+    encode_string(4, account_key, &mut output);
+    output
+}
+
+fn encode_rename_mcp_oauth_account_request(
+    server_id: i32,
+    account_key: &str,
+    new_account_key: &str,
+) -> Vec<u8> {
+    let mut output = Vec::new();
+    encode_key(1, 0, &mut output);
+    encode_varint(server_id as u32 as u64, &mut output);
+    encode_string(2, account_key, &mut output);
+    encode_string(3, new_account_key, &mut output);
+    output
+}
+
+fn encode_delete_mcp_oauth_account_request(server_id: i32, account_key: &str) -> Vec<u8> {
+    let mut output = Vec::new();
+    encode_key(1, 0, &mut output);
+    encode_varint(server_id as u32 as u64, &mut output);
+    encode_string(2, account_key, &mut output);
     output
 }
 
@@ -2212,6 +2337,18 @@ mod tests {
             DASHBOARD_COMPLETE_MCP_OAUTH_PATH,
             "/aiserver.v1.DashboardService/CompleteMcpOAuth"
         );
+        assert_eq!(
+            DASHBOARD_DELETE_MCP_OAUTH_TOKEN_PATH,
+            "/aiserver.v1.DashboardService/DeleteMcpOAuthToken"
+        );
+        assert_eq!(
+            DASHBOARD_RENAME_MCP_OAUTH_ACCOUNT_PATH,
+            "/aiserver.v1.DashboardService/RenameMcpOAuthAccount"
+        );
+        assert_eq!(
+            DASHBOARD_DELETE_MCP_OAUTH_ACCOUNT_PATH,
+            "/aiserver.v1.DashboardService/DeleteMcpOAuthAccount"
+        );
         let request = encode_check_http_mcp_status_request(
             17,
             "http://127.0.0.1:18080/oauth/callback",
@@ -2227,6 +2364,22 @@ mod tests {
         let validate =
             encode_validate_mcp_oauth_tokens_request("https://mcp.example.test", "work");
         assert_eq!(validate.first().copied(), Some(0x1a));
+
+        let logout =
+            encode_delete_mcp_oauth_token_request("https://mcp.example.test", "work");
+        assert_eq!(logout.first().copied(), Some(0x0a));
+        assert!(logout.windows(5).any(|window| window == b"work\x00".get(..5).unwrap_or(b"")));
+        assert!(logout.windows(4).any(|window| window == b"sand"));
+
+        let rename = encode_rename_mcp_oauth_account_request(17, "work", "personal");
+        assert_eq!(rename[..2], [0x08, 0x11]);
+        assert!(rename.ends_with(b"personal"));
+
+        let delete = encode_delete_mcp_oauth_account_request(17, "work");
+        assert_eq!(delete[..2], [0x08, 0x11]);
+        assert!(delete.ends_with(b"work"));
+        assert!(parse_mcp_server_id("0").is_err());
+        assert!(validate_mcp_account_key("bad\nkey", "account key").is_err());
     }
 
     #[test]
