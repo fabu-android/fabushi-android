@@ -59,6 +59,7 @@ internal fun AgentProfileEditor(
     var avatarDataUrl by remember(target.id, target.avatarDataUrl) { mutableStateOf(target.avatarDataUrl) }
     var avatarImageError by remember(target.id) { mutableStateOf<String?>(null) }
     var avatarImageBusy by remember(target.id) { mutableStateOf(false) }
+    var avatarGenerationPrompt by remember(target.id) { mutableStateOf("") }
     var avatarGenerateDescription by remember(target.id) { mutableStateOf("") }
     var stagedAvatarSource by remember(target.id) { mutableStateOf<AndroidAvatarImageSource?>(null) }
     var stagedAvatarCrop by remember(target.id) { mutableStateOf<AndroidAvatarCrop?>(null) }
@@ -212,6 +213,20 @@ internal fun AgentProfileEditor(
                         modifier = Modifier.testTag("agent-profile-avatar-preview-${target.id}"),
                     )
                 }
+                if (!target.isGroup) {
+                    OutlinedTextField(
+                        value = avatarGenerationPrompt,
+                        onValueChange = { avatarGenerationPrompt = it },
+                        label = { Text("Describe avatar") },
+                        enabled = !avatarImageBusy,
+                        singleLine = false,
+                        minLines = 1,
+                        maxLines = 3,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("agent-profile-avatar-generate-prompt-${target.id}"),
+                    )
+                }
                 Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                     TextButton(
                         enabled = !avatarImageBusy,
@@ -223,6 +238,38 @@ internal fun AgentProfileEditor(
                         modifier = Modifier.testTag("agent-profile-avatar-image-pick-${target.id}"),
                     ) {
                         Text(if (avatarImageBusy) "Importing…" else if (avatarDataUrl.isNullOrBlank()) "Choose image" else "Replace image")
+                    }
+                    if (!target.isGroup) {
+                        TextButton(
+                            enabled = !avatarImageBusy && avatarGenerationPrompt.isNotBlank(),
+                            onClick = {
+                                val prompt = avatarGenerationPrompt.trim()
+                                if (prompt.isEmpty()) return@TextButton
+                                avatarImageBusy = true
+                                avatarImageError = null
+                                scope.launch {
+                                    val generated = onGenerateAvatarImage(target.id, prompt)
+                                    generated.onSuccess { image ->
+                                        val staged = withContext(Dispatchers.IO) {
+                                            stageGeneratedAgentAvatarImage(image.imageData, image.mimeType)
+                                        }
+                                        staged.onSuccess { source ->
+                                            stagedAvatarSource = source
+                                            stagedAvatarCrop = initialAndroidAvatarCrop(source)
+                                            stagedAvatarPreview = null
+                                        }.onFailure { error ->
+                                            avatarImageError = error.message ?: "Generated avatar could not be prepared"
+                                        }
+                                    }.onFailure { error ->
+                                        avatarImageError = error.message ?: "Avatar generation failed"
+                                    }
+                                    avatarImageBusy = false
+                                }
+                            },
+                            modifier = Modifier.testTag("agent-profile-avatar-generate-${target.id}"),
+                        ) {
+                            Text(if (avatarImageBusy) "Generating…" else "Generate image")
+                        }
                     }
                     if (!avatarDataUrl.isNullOrBlank()) {
                         TextButton(
