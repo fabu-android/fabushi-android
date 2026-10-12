@@ -6727,6 +6727,9 @@ mod tests {
             "accountFence":"session:test:android",
             "mutation":{
                 "kind":"sidebar-sections",
+                "accountFence":"session:test:android",
+                "expectedRevision":0,
+                "baseSections":[],
                 "sections":[{
                     "id":"section-a",
                     "name":"Team",
@@ -6758,6 +6761,9 @@ mod tests {
                 "accountFence":"session:test:android",
                 "mutation":{
                     "kind":"sidebar-sections",
+                    "accountFence":"session:test:android",
+                    "expectedRevision":0,
+                    "baseSections":[],
                     "sections":[{
                         "id":"section-a",
                         "name":"Changed",
@@ -6774,7 +6780,13 @@ mod tests {
             &json!({
                 "operationId":"sidebar-op-stale",
                 "accountFence":"session:stale",
-                "mutation":{"kind":"sidebar-sections","sections":[]}
+                "mutation":{
+                    "kind":"sidebar-sections",
+                    "accountFence":"session:stale",
+                    "expectedRevision":0,
+                    "baseSections":[],
+                    "sections":[]
+                }
             }),
         );
         assert!(stale.is_err());

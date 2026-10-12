@@ -1008,7 +1008,7 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
         commitSidebarSections(next, "Delete Agent section failed")
     }
 
-    fun moveSidebarSection(
+    internal fun moveSidebarSection(
         sectionId: String,
         targetId: String,
         position: AgentSidebarSectionMovePosition,
