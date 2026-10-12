@@ -478,7 +478,7 @@ mod tests {
             owner.begin("session:a", 7, "req-1", "op-1").unwrap();
             owner.mark_delivering("session:a", 7, "op-1").unwrap();
         }
-        let reopened = DurableOnePasswordProvisioningOwner::open(&path).unwrap();
+        let mut reopened = DurableOnePasswordProvisioningOwner::open(&path).unwrap();
         assert_eq!(reopened.snapshot().phase, DurableProvisioningPhase::OutcomeUnknown);
         assert!(reopened.snapshot().requires_reconciliation());
         let persisted = std::fs::read_to_string(path).unwrap();
