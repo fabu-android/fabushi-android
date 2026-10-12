@@ -61,6 +61,9 @@ pub const DASHBOARD_GET_TEAM_ADMIN_SETTINGS_PATH: &str =
 pub const PR_REVIEW_REQUEST_TIMEOUT_MS: u64 = 10_000;
 pub const LIST_TOOLS_TIMEOUT_MS: u64 = 60_000;
 pub const CONTROL_RPC_TIMEOUT_MS: u64 = 30_000;
+pub const RUN_GENERATE_IMAGE_PATH: &str = "/aiserver.v1.AiService/RunGenerateImage";
+pub const GENERATE_IMAGE_REQUEST_TIMEOUT_MS: u64 = 60_000;
+pub const SAND_DEFAULT_GENERATE_IMAGE_MODEL_ID: &str = "grok-4.5";
 pub const DEFAULT_CURSOR_BACKEND_URL: &str = "https://api2.cursor.sh";
 pub const SAND_INFERENCE_RENEWAL_CREDENTIAL_ENV: &str =
     "SAND_INFERENCE_RENEWAL_CREDENTIAL";
@@ -293,6 +296,20 @@ pub trait McpAuthBackendPort: Send + Sync {
     fn reload_server_tools(&self, server_id: &str) -> Result<usize, String>;
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GeneratedImageBackendResult {
+    pub image_data: String,
+    pub mime_type: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
+pub enum GenerateImageBackendError {
+    #[error("{0}")]
+    Generate(String),
+    #[error("{0}")]
+    ModelRestricted(String),
+}
+
 pub struct CursorDashboardMcpAuthBackend {
     credentials: Box<dyn SandMcpCredentialProvider>,
     privacy_cache: Mutex<Option<PrivacyCacheEntry>>,
@@ -359,6 +376,40 @@ impl CursorDashboardMcpAuthBackend {
             return Err("MCP backend RPC response exceeds bounded size".into());
         }
         Ok(bytes)
+    }
+
+    pub fn generate_image(
+        &self,
+        description: &str,
+        reference_images: &[(String, String)],
+    ) -> Result<GeneratedImageBackendResult, GenerateImageBackendError> {
+        let description = description.trim();
+        if description.is_empty() {
+            return Err(GenerateImageBackendError::Generate(
+                "Image generation requires a description.".into(),
+            ));
+        }
+        let credentials = self
+            .credentials
+            .credentials()
+            .map_err(GenerateImageBackendError::Generate)?;
+        let model_id = env::var("SAND_AGENT_MODEL")
+            .ok()
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+            .unwrap_or_else(|| SAND_DEFAULT_GENERATE_IMAGE_MODEL_ID.to_string());
+        let request = encode_generate_image_request(description, reference_images, &model_id);
+        let ghost_mode = self.resolve_ghost_mode(&credentials);
+        let response = self
+            .send_unary(
+                &credentials,
+                RUN_GENERATE_IMAGE_PATH,
+                &request,
+                GENERATE_IMAGE_REQUEST_TIMEOUT_MS,
+                ghost_mode,
+            )
+            .map_err(GenerateImageBackendError::Generate)?;
+        decode_generate_image_response(&response)
     }
 
     pub fn submit_account_telemetry(
@@ -1146,6 +1197,111 @@ fn decode_validate_result(input: &[u8]) -> Result<ValidateResultWire, String> {
     })
 }
 
+fn encode_generate_image_request(
+    description: &str,
+    reference_images: &[(String, String)],
+    model_id: &str,
+) -> Vec<u8> {
+    let mut output = Vec::new();
+    encode_string(1, description, &mut output);
+    for (data, mime_type) in reference_images {
+        let mut reference = Vec::new();
+        encode_string(1, data, &mut reference);
+        encode_string(2, mime_type, &mut reference);
+        encode_len_delimited(2, &reference, &mut output);
+    }
+    encode_string(3, model_id, &mut output);
+    encode_bool(4, true, &mut output);
+    output
+}
+
+fn decode_generate_image_response(
+    input: &[u8],
+) -> Result<GeneratedImageBackendResult, GenerateImageBackendError> {
+    let mut cursor = 0usize;
+    let mut success = None;
+    let mut failure = None;
+    while cursor < input.len() {
+        let key = read_varint(input, &mut cursor).map_err(GenerateImageBackendError::Generate)?;
+        let field = (key >> 3) as u32;
+        let wire = (key & 0x07) as u8;
+        match (field, wire) {
+            (1, 2) => {
+                success = Some(decode_generate_image_success(
+                    read_len_delimited(input, &mut cursor).map_err(GenerateImageBackendError::Generate)?,
+                )?);
+            }
+            (2, 2) => {
+                failure = Some(decode_generate_image_failure(
+                    read_len_delimited(input, &mut cursor).map_err(GenerateImageBackendError::Generate)?,
+                )?);
+            }
+            _ => skip_field(input, &mut cursor, wire).map_err(GenerateImageBackendError::Generate)?,
+        }
+    }
+    if let Some(result) = success {
+        if result.image_data.trim().is_empty() || result.mime_type.trim().is_empty() {
+            return Err(GenerateImageBackendError::Generate(
+                "Image generation returned an incomplete result.".into(),
+            ));
+        }
+        return Ok(result);
+    }
+    if let Some((message, model_restricted)) = failure {
+        let message = if message.trim().is_empty() {
+            "Image generation failed.".to_string()
+        } else {
+            message
+        };
+        return if model_restricted {
+            Err(GenerateImageBackendError::ModelRestricted(message))
+        } else {
+            Err(GenerateImageBackendError::Generate(message))
+        };
+    }
+    Err(GenerateImageBackendError::Generate(
+        "Image generation returned no result.".into(),
+    ))
+}
+
+fn decode_generate_image_success(
+    input: &[u8],
+) -> Result<GeneratedImageBackendResult, GenerateImageBackendError> {
+    let mut cursor = 0usize;
+    let mut image_data = String::new();
+    let mut mime_type = String::new();
+    while cursor < input.len() {
+        let key = read_varint(input, &mut cursor).map_err(GenerateImageBackendError::Generate)?;
+        let field = (key >> 3) as u32;
+        let wire = (key & 0x07) as u8;
+        match (field, wire) {
+            (1, 2) => image_data = read_string(input, &mut cursor).map_err(GenerateImageBackendError::Generate)?,
+            (2, 2) => mime_type = read_string(input, &mut cursor).map_err(GenerateImageBackendError::Generate)?,
+            _ => skip_field(input, &mut cursor, wire).map_err(GenerateImageBackendError::Generate)?,
+        }
+    }
+    Ok(GeneratedImageBackendResult { image_data, mime_type })
+}
+
+fn decode_generate_image_failure(
+    input: &[u8],
+) -> Result<(String, bool), GenerateImageBackendError> {
+    let mut cursor = 0usize;
+    let mut message = String::new();
+    let mut model_restricted = false;
+    while cursor < input.len() {
+        let key = read_varint(input, &mut cursor).map_err(GenerateImageBackendError::Generate)?;
+        let field = (key >> 3) as u32;
+        let wire = (key & 0x07) as u8;
+        match (field, wire) {
+            (1, 2) => message = read_string(input, &mut cursor).map_err(GenerateImageBackendError::Generate)?,
+            (2, 0) => model_restricted = read_varint(input, &mut cursor).map_err(GenerateImageBackendError::Generate)? != 0,
+            _ => skip_field(input, &mut cursor, wire).map_err(GenerateImageBackendError::Generate)?,
+        }
+    }
+    Ok((message, model_restricted))
+}
+
 fn encode_bool(field: u32, value: bool, output: &mut Vec<u8>) {
     encode_key(field, 0, output);
     encode_varint(value as u64, output);
@@ -1716,6 +1872,47 @@ mod tests {
         let mut value = Vec::new();
         encode_len_delimited(field, payload, &mut value);
         value
+    }
+
+    #[test]
+    fn generate_image_wire_matches_desktop_contract() {
+        assert_eq!(RUN_GENERATE_IMAGE_PATH, "/aiserver.v1.AiService/RunGenerateImage");
+        assert_eq!(SAND_DEFAULT_GENERATE_IMAGE_MODEL_ID, "grok-4.5");
+        let request = encode_generate_image_request(
+            "a lotus",
+            &[("cmVmZXJlbmNl".into(), "image/png".into())],
+            "grok-image-test",
+        );
+        assert_eq!(string_fields(&request, 1).unwrap(), vec!["a lotus".to_string()]);
+        let references = repeated_message_fields(&request, 2).unwrap();
+        assert_eq!(references.len(), 1);
+        assert_eq!(string_fields(references[0], 1).unwrap(), vec!["cmVmZXJlbmNl".to_string()]);
+        assert_eq!(string_fields(references[0], 2).unwrap(), vec!["image/png".to_string()]);
+        assert_eq!(string_fields(&request, 3).unwrap(), vec!["grok-image-test".to_string()]);
+        assert_eq!(decode_optional_varint_field(&request, 4).unwrap(), Some(1));
+
+        let mut success = Vec::new();
+        encode_string(1, "aW1hZ2U=", &mut success);
+        encode_string(2, "image/webp", &mut success);
+        let mut response = Vec::new();
+        encode_len_delimited(1, &success, &mut response);
+        assert_eq!(
+            decode_generate_image_response(&response).unwrap(),
+            GeneratedImageBackendResult {
+                image_data: "aW1hZ2U=".into(),
+                mime_type: "image/webp".into(),
+            }
+        );
+
+        let mut failure = Vec::new();
+        encode_string(1, "model unavailable", &mut failure);
+        encode_bool(2, true, &mut failure);
+        let mut response = Vec::new();
+        encode_len_delimited(2, &failure, &mut response);
+        assert_eq!(
+            decode_generate_image_response(&response).unwrap_err(),
+            GenerateImageBackendError::ModelRestricted("model unavailable".into())
+        );
     }
 
     #[test]
