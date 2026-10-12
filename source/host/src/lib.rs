@@ -38,6 +38,7 @@ pub mod host_request_context;
 pub mod host_roster_bookkeeping;
 pub mod host_runner_composition;
 pub mod host_secret_store;
+pub mod human_call_runtime;
 #[allow(special_module_name)]
 pub mod main;
 pub mod mcp_auth;
