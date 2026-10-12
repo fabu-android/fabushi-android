@@ -1628,7 +1628,7 @@
       "device_test": "required on emulator/physical device as applicable",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "AUTOMATION-DURABLE-RUN-001 closes only the platform-independent durable run/approval/idempotency slice. Ten recovered Routines source rows are now semantically mapped to this umbrella without claiming implementation. Full native routines presentation, trigger/listener breadth, schedule semantics, actual executor/background scheduling and packaged/device evidence remain open; keep mapped/not-verified. Per-Agent enablement persistence is implemented with AutomationRuntime as the only owner; clone-time automation/enablement copy and the larger Routines/workflow product remain open."
+      "notes": "Durable run/approval/idempotency and Host-owned cron/@every/time-zone next-run derivation are implemented. Stable IDs, GitHub/Slack listener triggers, status/routine notices, full native routines presentation, actual background executor and packaged/device evidence remain open; keep mapped/not-verified."
     },
     {
       "responsibility_id": "SETTINGS-SCOPE-001",
@@ -2764,6 +2764,45 @@
       "artifact": null,
       "verification_status": "not-verified",
       "notes": "Durable run state machine + durable Agent ownership only; full AUTOMATION-WORKFLOW-001 remains open (event/cron execution adapters, full schedule-description semantics, step executor, packaged background/device evidence)."
+    },
+    {
+      "responsibility_id": "AUTOMATION-SCHEDULE-ANDROID-001",
+      "domain": "automation-scheduling",
+      "desktop_sources": [
+        {
+          "path": "source/host/src/automations/automation_schedule.rs",
+          "blob_sha": "156e0483699813d1c98cdec187ed4b3b477a7489",
+          "symbols": [
+            "normalize_schedule",
+            "parse_every_interval_ms",
+            "compile_cron_matcher",
+            "compute_next_run_at",
+            "summarize_schedule_next_7_days"
+          ]
+        }
+      ],
+      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "responsibility": "Own schedule normalization, cron/@every/time-zone parsing and next-run derivation in Host; presentation cannot submit canonical execution-time truth.",
+      "source_owner": "Desktop automation schedule runtime",
+      "visible_effect": "Automation next-run projections stay deterministic across restart/time-zone changes.",
+      "android_disposition": "direct-port",
+      "android_target": [
+        "source/host/src/automation_schedule.rs",
+        "source/host/src/automation_runtime.rs",
+        "source/host/src/android_json_runtime.rs"
+      ],
+      "android_owner": "Rust Host AutomationRuntime",
+      "platform_delta": "Source-neutral parser direct-ported; Android effective user timezone comes from AndroidUserSettings/platform detection.",
+      "implementation_status": "implemented",
+      "production_wiring": "upsert/list/listForAgent/setAgentEnabled/settle recompute next-run in Host and ignore client nextRunAtMs.",
+      "unit_test": "AutomationRuntime schedule_is_normalized_and_next_run_is_host_owned; invalid_schedule_is_rejected_and_disable_clears_next_run; exact-head CI pending",
+      "contract_test": "required exact-head Rust/Host dispatch",
+      "integration_test": "required restart/timezone/background executor coverage",
+      "packaged_test": "required",
+      "device_test": "required",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Implemented at 2846c62b69a8fe3fac826376a486b61577344979; full AUTOMATION-WORKFLOW-001 remains open."
     },
     {
       "responsibility_id": "TOOLS-CLIENT-SIDE-TOOL-V2-RELAY-001",
