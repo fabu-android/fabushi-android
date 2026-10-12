@@ -1,6 +1,7 @@
 package com.ombhrum.fabushi
 
 import com.ombhrum.fabushi.androidmain.coordinator.RootConnectionResilienceOwner
+import com.ombhrum.fabushi.androidmain.coordinator.RootShellFocusRefreshOwner
 import com.ombhrum.fabushi.androidpreload.runtime.AccountAccessProjection
 import com.ombhrum.fabushi.androidpreload.runtime.RootConnectionPhase
 import com.ombhrum.fabushi.androidpreload.runtime.RootConnectionTransportState
@@ -8,6 +9,22 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class RootConnectionResilienceOwnerTest {
+    private fun connection(
+        transport: RootConnectionTransportState,
+        epoch: Long = 1L,
+        generation: Long = 1L,
+    ) = com.ombhrum.fabushi.androidpreload.runtime.RootConnectionResilienceProjection.initial().copy(
+        accountGeneration = generation,
+        accountEpoch = epoch,
+        accountIdentity = "account-$epoch",
+        transport = transport,
+        phase = if (transport == RootConnectionTransportState.CONNECTED) {
+            RootConnectionPhase.CONNECTED
+        } else {
+            RootConnectionPhase.LOADING
+        },
+    )
+
     private fun access(
         epoch: Long = 1L,
         loggedIn: Boolean = true,
@@ -174,5 +191,78 @@ class RootConnectionResilienceOwnerTest {
         assertFalse(reopened.currentProjection().retryQueued)
         assertFalse(reopened.currentProjection().isRetrying)
         assertEquals(RootConnectionPhase.LOADING, reopened.currentProjection().phase)
+    }
+
+    @Test fun focusRefreshRequiresConnectedAndVisible() {
+        val owner = RootShellFocusRefreshOwner()
+        assertNull(owner.observeConnection(connection(RootConnectionTransportState.DOWN)))
+        assertNull(owner.observeVisibility(true))
+        assertNull(owner.observeConnection(connection(RootConnectionTransportState.CONNECTING)))
+        val token = owner.observeConnection(connection(RootConnectionTransportState.CONNECTED))
+        assertNotNull(token)
+        assertNull(owner.observeVisibility(true))
+        assertTrue(owner.complete(token!!))
+    }
+
+    @Test fun backgroundReconnectWaitsForForegroundEdge() {
+        val owner = RootShellFocusRefreshOwner()
+        owner.observeConnection(connection(RootConnectionTransportState.CONNECTED))
+        val first = owner.observeVisibility(true)!!
+        assertTrue(owner.complete(first))
+
+        owner.observeVisibility(false)
+        owner.observeConnection(connection(RootConnectionTransportState.DOWN))
+        assertNull(owner.observeConnection(connection(RootConnectionTransportState.CONNECTED)))
+        assertNotNull(owner.observeVisibility(true))
+    }
+
+    @Test fun activityRecreationFencesOldFocusBinding() {
+        val owner = RootShellFocusRefreshOwner()
+        owner.observeConnection(connection(RootConnectionTransportState.CONNECTED))
+        val stale = owner.observeVisibility(true)!!
+        owner.observeVisibility(false)
+        assertFalse(owner.complete(stale))
+
+        val recreated = owner.observeVisibility(true)
+        assertNotNull(recreated)
+        assertNotEquals(stale.ownerGeneration, recreated!!.ownerGeneration)
+        assertTrue(owner.complete(recreated))
+    }
+
+    @Test fun processRecoveryRebuildsEligibilityFromCanonicalFacts() {
+        val old = RootShellFocusRefreshOwner()
+        old.observeConnection(connection(RootConnectionTransportState.CONNECTED))
+        assertNotNull(old.observeVisibility(true))
+
+        val reopened = RootShellFocusRefreshOwner()
+        assertNull(reopened.observeConnection(connection(RootConnectionTransportState.CONNECTED)))
+        val recovered = reopened.observeVisibility(true)
+        assertNotNull(recovered)
+        assertTrue(reopened.complete(recovered!!))
+    }
+
+    @Test fun staleAccountEpochCannotCompleteFocusRefresh() {
+        val owner = RootShellFocusRefreshOwner()
+        owner.observeConnection(connection(RootConnectionTransportState.CONNECTED, epoch = 7L, generation = 3L))
+        val stale = owner.observeVisibility(true)!!
+
+        val current = owner.observeConnection(
+            connection(RootConnectionTransportState.CONNECTED, epoch = 8L, generation = 4L),
+        )
+        assertNotNull(current)
+        assertFalse(owner.complete(stale))
+        assertTrue(owner.complete(current!!))
+    }
+
+    @Test fun disconnectInvalidatesInFlightFocusRefreshAndForegroundReconnectStartsNewOne() {
+        val owner = RootShellFocusRefreshOwner()
+        owner.observeConnection(connection(RootConnectionTransportState.CONNECTED))
+        val stale = owner.observeVisibility(true)!!
+        assertNull(owner.observeConnection(connection(RootConnectionTransportState.DOWN)))
+        assertFalse(owner.complete(stale))
+
+        val fresh = owner.observeConnection(connection(RootConnectionTransportState.CONNECTED))
+        assertNotNull(fresh)
+        assertTrue(owner.complete(fresh!!))
     }
 }

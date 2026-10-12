@@ -4,6 +4,7 @@ import unittest
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 OWNER = ROOT / "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/coordinator/AccountAccessProjectionOwner.kt"
 RUNTIME = ROOT / "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/coordinator/AndroidCoordinatorRuntime.kt"
+PROCESS = ROOT / "source/android-main/src/main/kotlin/com/ombhrum/fabushi/FabushiApplication.kt"
 PORT = ROOT / "source/android-preload/src/main/kotlin/com/ombhrum/fabushi/androidpreload/runtime/AndroidCoordinatorPort.kt"
 VIEWMODEL = ROOT / "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/presentation/MarketplaceViewModel.kt"
 HOST = ROOT / "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/recovered/features/root-resilience/connection-state_view.kt"
@@ -30,6 +31,20 @@ class RootConnectionResilienceWiringTest(unittest.TestCase):
         self.assertNotIn("observeRootConnectionTransport", send_callback)
         self.assertNotIn("RootConnectionResilienceOwner(", viewmodel)
         self.assertIn("coordinator.rootConnectionRetry()", viewmodel)
+
+    def test_focus_refresh_joins_transport_and_activity_lifecycle(self):
+        owner = OWNER.read_text(encoding="utf-8")
+        process = PROCESS.read_text(encoding="utf-8")
+        self.assertIn("internal class RootShellFocusRefreshOwner", owner)
+        self.assertIn("transport != RootConnectionTransportState.CONNECTED", owner)
+        self.assertIn("!visible", owner)
+        self.assertIn("accountEpoch != projection.accountEpoch", owner)
+        self.assertIn("private val rootShellFocusRefreshOwner = RootShellFocusRefreshOwner()", process)
+        self.assertIn("coordinator.addRootConnectionResilienceListener", process)
+        self.assertIn("rootShellFocusRefreshOwner.observeConnection(projection)", process)
+        self.assertIn("rootShellFocusRefreshOwner.observeVisibility(foreground)", process)
+        self.assertIn("coordinator.accountAccessProjection()", process)
+        self.assertNotIn("if (foreground) coordinator.accountAccessProjection()", process)
 
     def test_typed_port_exposes_projection_retry_and_subscription(self):
         source = PORT.read_text(encoding="utf-8")

@@ -202,6 +202,119 @@ internal data class RootConnectionRetryToken(
     val attempt: Long,
 )
 
+internal data class RootShellFocusRefreshToken(
+    val ownerGeneration: Long,
+    val accountGeneration: Long,
+    val accountEpoch: Long,
+    val requestId: Long,
+)
+
+/**
+ * Lifecycle/transport join for Desktop window-chrome focus refresh semantics.
+ *
+ * A refresh is eligible only while the Android root is visible and the canonical transport is
+ * CONNECTED. Foreground reconnect is treated as a new eligible edge. Backgrounding, disconnect,
+ * account epoch changes, and disposal fence any in-flight completion so an old Activity/account
+ * cannot publish freshness for the current root.
+ */
+internal class RootShellFocusRefreshOwner {
+    private var visible = false
+    private var transport = RootConnectionTransportState.CONNECTING
+    private var accountGeneration = 0L
+    private var accountEpoch = 0L
+    private var ownerGeneration = 0L
+    private var requestId = 0L
+    private var inFlight: RootShellFocusRefreshToken? = null
+    private var disposed = false
+
+    @Synchronized
+    fun observeVisibility(isVisible: Boolean): RootShellFocusRefreshToken? {
+        if (disposed) return null
+        val becameVisible = !visible && isVisible
+        visible = isVisible
+        if (!isVisible) {
+            invalidateFlight()
+            return null
+        }
+        return if (becameVisible) beginIfEligible() else null
+    }
+
+    @Synchronized
+    fun observeConnection(
+        projection: RootConnectionResilienceProjection,
+    ): RootShellFocusRefreshToken? {
+        if (disposed) return null
+        val accountChanged =
+            accountGeneration != projection.accountGeneration ||
+                accountEpoch != projection.accountEpoch
+        val becameConnected =
+            transport != RootConnectionTransportState.CONNECTED &&
+                projection.transport == RootConnectionTransportState.CONNECTED
+
+        if (accountChanged) invalidateFlight()
+        accountGeneration = projection.accountGeneration
+        accountEpoch = projection.accountEpoch
+        transport = projection.transport
+
+        if (transport != RootConnectionTransportState.CONNECTED) {
+            invalidateFlight()
+            return null
+        }
+        return if (becameConnected || accountChanged) beginIfEligible() else null
+    }
+
+    @Synchronized
+    fun complete(token: RootShellFocusRefreshToken): Boolean {
+        if (
+            disposed ||
+            token != inFlight ||
+            token.ownerGeneration != ownerGeneration ||
+            token.accountGeneration != accountGeneration ||
+            token.accountEpoch != accountEpoch ||
+            !visible ||
+            transport != RootConnectionTransportState.CONNECTED
+        ) {
+            return false
+        }
+        inFlight = null
+        return true
+    }
+
+    @Synchronized
+    fun dispose() {
+        if (disposed) return
+        disposed = true
+        visible = false
+        transport = RootConnectionTransportState.CONNECTING
+        invalidateFlight()
+    }
+
+    private fun beginIfEligible(): RootShellFocusRefreshToken? {
+        if (
+            !visible ||
+            transport != RootConnectionTransportState.CONNECTED ||
+            inFlight != null
+        ) {
+            return null
+        }
+        requestId = next(requestId)
+        return RootShellFocusRefreshToken(
+            ownerGeneration = ownerGeneration,
+            accountGeneration = accountGeneration,
+            accountEpoch = accountEpoch,
+            requestId = requestId,
+        ).also { inFlight = it }
+    }
+
+    private fun invalidateFlight() {
+        ownerGeneration = next(ownerGeneration)
+        inFlight = null
+    }
+
+    private fun next(value: Long) =
+        if (value == Long.MAX_VALUE) Long.MAX_VALUE else (value + 1L).coerceAtLeast(1L)
+}
+
 /**
  * Process-scoped owner for the Desktop root connection resilience contract.
  *

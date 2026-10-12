@@ -7,7 +7,10 @@ import com.ombhrum.fabushi.androidmain.adapters.AndroidAccountOAuthAdapter
 import com.ombhrum.fabushi.androidmain.adapters.AndroidExternalUrlAdapter
 import com.ombhrum.fabushi.androidmain.adapters.AndroidMcpOAuthAdapter
 import java.lang.ref.WeakReference
+import java.util.concurrent.Executors
 import com.ombhrum.fabushi.androidmain.coordinator.AndroidCoordinatorPorts
+import com.ombhrum.fabushi.androidmain.coordinator.RootShellFocusRefreshOwner
+import com.ombhrum.fabushi.androidmain.coordinator.RootShellFocusRefreshToken
 import com.ombhrum.fabushi.androidmain.notifications.AndroidNotificationRuntime
 import com.ombhrum.fabushi.androidmain.webauthn.AndroidCredentialManagerWebAuthn
 import com.ombhrum.fabushi.androidpreload.deeplink.AndroidDeepLink
@@ -58,6 +61,15 @@ internal class FabushiProcessRuntime(
     private val coordinator = AndroidCoordinatorPorts.presentation(application).also {
         AndroidCoordinatorBridge.installTrustedRuntime(it)
     }
+    private val rootShellFocusRefreshOwner = RootShellFocusRefreshOwner()
+    private val rootShellFocusRefreshExecutor = Executors.newSingleThreadExecutor { runnable ->
+        Thread(runnable, "fabushi-root-focus-refresh").apply { isDaemon = true }
+    }
+    private val rootShellFocusRefreshSubscription =
+        coordinator.addRootConnectionResilienceListener { projection ->
+            rootShellFocusRefreshOwner.observeConnection(projection)
+                ?.let(::dispatchRootShellFocusRefresh)
+        }
     private val accountOAuth = AndroidAccountOAuthAdapter()
     private val externalUrl = AndroidExternalUrlAdapter()
     private val mcpOAuth = AndroidMcpOAuthAdapter(coordinator)
@@ -116,6 +128,15 @@ internal class FabushiProcessRuntime(
 
     override fun setForeground(foreground: Boolean) {
         appForeground = foreground
+        rootShellFocusRefreshOwner.observeVisibility(foreground)
+            ?.let(::dispatchRootShellFocusRefresh)
+    }
+
+    private fun dispatchRootShellFocusRefresh(token: RootShellFocusRefreshToken) {
+        rootShellFocusRefreshExecutor.execute {
+            runCatching { coordinator.accountAccessProjection() }
+            rootShellFocusRefreshOwner.complete(token)
+        }
     }
 
     override fun launchExternalAuth(url: String): Boolean =
@@ -141,6 +162,9 @@ internal class FabushiProcessRuntime(
 
     override fun close() {
         interactiveActivityRef = null
+        rootShellFocusRefreshSubscription.close()
+        rootShellFocusRefreshOwner.dispose()
+        rootShellFocusRefreshExecutor.shutdownNow()
         webAuthnRuntime.close()
         mcpOAuthEventSubscription.close()
         notificationEventSubscription.close()
