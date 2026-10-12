@@ -41,3 +41,4 @@ pub mod persistence;
 pub mod update;
 pub mod feedback;
 pub mod retry_after;
+pub mod model_catalog;
