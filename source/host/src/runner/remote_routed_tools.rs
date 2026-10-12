@@ -23,6 +23,13 @@ const APPROVAL_POLL: Duration = Duration::from_millis(250);
 const MAX_SHELL_COMMAND: usize = 32 * 1024;
 const MAX_READ_PATH: usize = 4096;
 const REMOTE_BROWSER_EXECUTION_TIMEOUT_MS: u64 = 90_000;
+const REMOTE_CLOUD_AGENT_EXECUTION_TIMEOUT_MS: u64 = 120_000;
+const CLOUD_AGENT_TOOL_NAME: &str = "CloudAgent";
+const CLOUD_AGENT_ACTIONS: &[&str] = &[
+    "launch", "list", "models", "get", "dump", "watch", "reply", "rename",
+    "cancel", "archive", "unarchive", "delete", "list_artifacts",
+];
+const CLOUD_AGENT_DESTRUCTIVE_ACTIONS: &[&str] = &["cancel", "archive", "unarchive", "delete"];
 
 const REMOTE_BROWSER_TOOL_NAMES: &[&str] = &[
     "browser_navigate",
@@ -71,6 +78,36 @@ fn remote_browser_specs() -> Vec<RemoteBrowserToolSpec> {
 
 fn is_remote_browser_tool(name: &str) -> bool {
     REMOTE_BROWSER_TOOL_NAMES.contains(&name)
+}
+
+fn remote_cloud_agent_tool_definition() -> Value {
+    json!({
+        "type":"function",
+        "name":CLOUD_AGENT_TOOL_NAME,
+        "description":"Manage Desktop-compatible cloud agents through the currently paired trusted Remote Runner. Every dispatch is account/device fenced and approval-gated; destructive lifecycle actions also require confirm: true.",
+        "parameters":{
+            "type":"object",
+            "additionalProperties":false,
+            "required":["action"],
+            "properties":{
+                "action":{"type":"string","enum":CLOUD_AGENT_ACTIONS},
+                "prompt":{"type":"string"},
+                "images":{"type":"array","maxItems":16,"items":{"type":"object","additionalProperties":false,"required":["url"],"properties":{"url":{"type":"string","minLength":1}}}},
+                "repo_url":{"type":"string"},
+                "starting_ref":{"type":"string"},
+                "model":{"type":"string"},
+                "model_params":{"type":"object","additionalProperties":{"type":"string"}},
+                "title":{"type":"string"},
+                "environment":{"type":"object"},
+                "interrupt":{"type":"boolean"},
+                "agent_id":{"type":"string"},
+                "scope":{"type":"string","enum":["launched","all"]},
+                "include_archived":{"type":"boolean"},
+                "limit":{"type":"integer","minimum":1,"maximum":100},
+                "confirm":{"type":"boolean"}
+            }
+        }
+    })
 }
 
 fn remote_browser_tool_definitions() -> Vec<Value> {
@@ -165,6 +202,7 @@ impl RemoteDispatchBinding {
             "browser",
             "external-shell",
             "external-read",
+            "cloud-agent",
         ];
         if let Some(executor) = self.executors.iter().find(|value| !ALLOWED_EXECUTORS.contains(&value.as_str())) {
             return Err(format!("remote binding executor is unsupported: {executor}"));
@@ -465,6 +503,9 @@ impl AndroidRoutedToolBridge for RemoteRoutedTools {
                 }
             }));
         }
+        if binding.supports("cloud-agent") {
+            tools.push(remote_cloud_agent_tool_definition());
+        }
         if binding.supports("external-read") {
             tools.push(json!({
                 "type":"function",
@@ -490,7 +531,7 @@ impl AndroidRoutedToolBridge for RemoteRoutedTools {
         let browser_tool = is_remote_browser_tool(name);
         if !matches!(
             name,
-            "Shell" | "Read" | "Computer" | "Screenshot" | "ExternalShell" | "ExternalRead"
+            "Shell" | "Read" | "Computer" | "Screenshot" | "ExternalShell" | "ExternalRead" | CLOUD_AGENT_TOOL_NAME
         ) && !browser_tool {
             return self.delegate.call_tool(name, args, tool_call_id);
         }
@@ -516,6 +557,7 @@ impl AndroidRoutedToolBridge for RemoteRoutedTools {
             "Shell" | "ExternalShell" => "remote.shell",
             "Read" | "ExternalRead" => "remote.read",
             "Computer" | "Screenshot" => "computer.use",
+            CLOUD_AGENT_TOOL_NAME => "cloud.agent",
             _ if browser_tool => "browser.use",
             _ => unreachable!("unsupported Remote routed tool was delegated"),
         };
@@ -529,6 +571,7 @@ impl AndroidRoutedToolBridge for RemoteRoutedTools {
             "Read" => "read",
             "Computer" => "computer",
             "Screenshot" => "screenshot",
+            CLOUD_AGENT_TOOL_NAME => "cloud-agent",
             _ if browser_tool => "browser",
             "ExternalShell" => "external-shell",
             "ExternalRead" => "external-read",
@@ -909,6 +952,7 @@ fn validate_remote_tool_input(name: &str, args: &Value) -> Result<u64, String> {
             }
             Ok(30_000)
         }
+        CLOUD_AGENT_TOOL_NAME => validate_remote_cloud_agent_input(object),
         "ExternalShell" => {
             const KEYS: &[&str] = &["command", "workingDirectory"];
             if let Some(key) = object.keys().find(|key| !KEYS.contains(&key.as_str())) {
@@ -1211,6 +1255,111 @@ fn validate_remote_browser_tool_input(name: &str, args: &Value) -> Result<u64, S
     Ok(REMOTE_BROWSER_EXECUTION_TIMEOUT_MS)
 }
 
+fn validate_remote_cloud_agent_input(object: &serde_json::Map<String, Value>) -> Result<u64, String> {
+    const KEYS: &[&str] = &[
+        "action", "prompt", "images", "repo_url", "starting_ref", "model", "model_params",
+        "title", "environment", "interrupt", "agent_id", "scope", "include_archived", "limit",
+        "confirm",
+    ];
+    if let Some(key) = object.keys().find(|key| !KEYS.contains(&key.as_str())) {
+        return Err(format!("Remote CloudAgent argument is unsupported: {key}"));
+    }
+    let action = object.get("action").and_then(Value::as_str).map(str::trim)
+        .filter(|value| !value.is_empty()).ok_or("Remote CloudAgent action is required")?;
+    if !CLOUD_AGENT_ACTIONS.contains(&action) {
+        return Err(format!("Remote CloudAgent action is unsupported: {action}"));
+    }
+    if CLOUD_AGENT_DESTRUCTIVE_ACTIONS.contains(&action)
+        && object.get("confirm").and_then(Value::as_bool) != Some(true)
+    {
+        return Err(format!("Remote CloudAgent {action} requires confirm: true"));
+    }
+    if object.get("confirm").is_some_and(|value| !value.is_boolean()) {
+        return Err("Remote CloudAgent confirm must be boolean".into());
+    }
+    if object.get("interrupt").is_some_and(|value| !value.is_boolean()) {
+        return Err("Remote CloudAgent interrupt must be boolean".into());
+    }
+    if object.get("include_archived").is_some_and(|value| !value.is_boolean()) {
+        return Err("Remote CloudAgent include_archived must be boolean".into());
+    }
+    if let Some(limit) = object.get("limit") {
+        let limit = limit.as_u64().ok_or("Remote CloudAgent limit must be a positive integer")?;
+        if !(1..=100).contains(&limit) {
+            return Err("Remote CloudAgent limit is outside the bounded range".into());
+        }
+    }
+    if let Some(scope) = object.get("scope") {
+        let scope = scope.as_str().ok_or("Remote CloudAgent scope must be a string")?;
+        if !matches!(scope, "launched" | "all") {
+            return Err("Remote CloudAgent scope is unsupported".into());
+        }
+    }
+    for key in ["prompt", "repo_url", "starting_ref", "model", "title", "agent_id"] {
+        if let Some(value) = object.get(key) {
+            let value = value.as_str().ok_or_else(|| format!("Remote CloudAgent {key} must be a string"))?;
+            if value.len() > 65_536 || value.chars().any(|c| c == ' ') {
+                return Err(format!("Remote CloudAgent {key} is invalid or too large"));
+            }
+        }
+    }
+    if let Some(params) = object.get("model_params") {
+        let params = params.as_object().ok_or("Remote CloudAgent model_params must be an object")?;
+        if params.len() > 64 || params.values().any(|value| !value.is_string()) {
+            return Err("Remote CloudAgent model_params must contain bounded string values".into());
+        }
+    }
+    if let Some(images) = object.get("images") {
+        let images = images.as_array().ok_or("Remote CloudAgent images must be an array")?;
+        if images.len() > 16 {
+            return Err("Remote CloudAgent images exceed the bounded attachment count".into());
+        }
+        for (index, image) in images.iter().enumerate() {
+            let image = image.as_object().ok_or_else(|| format!("Remote CloudAgent images[{index}] must be an object"))?;
+            if image.len() != 1 || !image.contains_key("url") {
+                return Err(format!("Remote CloudAgent images[{index}] only supports url"));
+            }
+            let url = image.get("url").and_then(Value::as_str).map(str::trim).filter(|v| !v.is_empty())
+                .ok_or_else(|| format!("Remote CloudAgent images[{index}].url is required"))?;
+            if url.len() > 4096 || url.chars().any(|c| c == ' ') {
+                return Err(format!("Remote CloudAgent images[{index}].url is invalid"));
+            }
+        }
+    }
+    match action {
+        "launch" => {
+            let prompt = object.get("prompt").and_then(Value::as_str).map(str::trim).filter(|v| !v.is_empty())
+                .ok_or("Remote CloudAgent launch prompt is required")?;
+            if prompt.len() > 65_536 { return Err("Remote CloudAgent launch prompt is too large".into()); }
+        }
+        "reply" => {
+            required_cloud_agent_identity(object, "agent_id", action)?;
+            let prompt = object.get("prompt").and_then(Value::as_str).map(str::trim).filter(|v| !v.is_empty())
+                .ok_or("Remote CloudAgent reply prompt is required")?;
+            if prompt.len() > 65_536 { return Err("Remote CloudAgent reply prompt is too large".into()); }
+        }
+        "get" | "dump" | "watch" | "rename" | "cancel" | "archive" | "unarchive" | "delete" | "list_artifacts" => {
+            required_cloud_agent_identity(object, "agent_id", action)?;
+            if action == "rename" { required_cloud_agent_identity(object, "title", action)?; }
+        }
+        "list" | "models" => {}
+        _ => unreachable!("validated CloudAgent action"),
+    }
+    Ok(REMOTE_CLOUD_AGENT_EXECUTION_TIMEOUT_MS)
+}
+
+fn required_cloud_agent_identity(
+    object: &serde_json::Map<String, Value>, key: &str, action: &str,
+) -> Result<(), String> {
+    let value = object.get(key).and_then(Value::as_str).map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| format!("Remote CloudAgent {action} requires {key}"))?;
+    if value.len() > 512 || value.chars().any(char::is_control) {
+        return Err(format!("Remote CloudAgent {key} identity is invalid"));
+    }
+    Ok(())
+}
+
 fn validate_remote_computer_action(args: &Value, allow_followups: bool) -> Result<(), String> {
     const ACTIONS: &[&str] = &["screenshot", "click", "move", "drag", "type", "key", "scroll", "wait"];
     const KEYS: &[&str] = &[
@@ -1510,10 +1659,11 @@ mod tests {
             "deviceId":"device-1",
             "accountFence":"session:a",
             "accountEpoch":7,
-            "executors":["computer","screenshot"]
+            "executors":["computer","screenshot","cloud-agent"]
         }).to_string()).unwrap();
         assert!(scoped.supports("computer"));
         assert!(scoped.supports("screenshot"));
+        assert!(scoped.supports("cloud-agent"));
         assert!(!scoped.supports("shell"));
         assert!(!scoped.supports("external-shell"));
     }
@@ -1607,6 +1757,25 @@ mod tests {
                 4,
             )
             .is_err());
+    }
+
+    #[test]
+    fn cloud_agent_executor_requires_explicit_enrollment_and_destructive_confirmation() {
+        assert_eq!(
+            validate_remote_tool_input(
+                CLOUD_AGENT_TOOL_NAME,
+                &json!({"action":"launch","prompt":"fix CI","repo_url":"https://example/repo"}),
+            ).unwrap(),
+            REMOTE_CLOUD_AGENT_EXECUTION_TIMEOUT_MS,
+        );
+        assert!(validate_remote_tool_input(CLOUD_AGENT_TOOL_NAME, &json!({"action":"launch"})).is_err());
+        assert!(validate_remote_tool_input(CLOUD_AGENT_TOOL_NAME, &json!({"action":"delete","agent_id":"bc-1"})).is_err());
+        assert_eq!(
+            validate_remote_tool_input(CLOUD_AGENT_TOOL_NAME, &json!({"action":"delete","agent_id":"bc-1","confirm":true})).unwrap(),
+            REMOTE_CLOUD_AGENT_EXECUTION_TIMEOUT_MS,
+        );
+        assert!(validate_remote_tool_input(CLOUD_AGENT_TOOL_NAME, &json!({"action":"reply","agent_id":"bc-1"})).is_err());
+        assert!(validate_remote_tool_input(CLOUD_AGENT_TOOL_NAME, &json!({"action":"unknown"})).is_err());
     }
 
     #[test]
