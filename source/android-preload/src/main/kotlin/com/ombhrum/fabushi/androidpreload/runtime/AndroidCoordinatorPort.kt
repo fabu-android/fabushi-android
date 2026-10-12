@@ -283,6 +283,50 @@ data class AndroidMandatoryUpdatePolicy(
     val autoUpdateWhenIdleGateEnabled: Boolean = false,
 )
 
+enum class AndroidEntrypointId(val wireId: String) {
+    COMPUTER("overlay:computer"),
+    HIDDEN_CHATS("overlay:hidden-chats"),
+    AGENT_NETWORK("view:org-chart"),
+    PLUGINS("overlay:plugins"),
+    SETTINGS("overlay:settings"),
+}
+
+sealed interface AndroidEntrypointAvailability {
+    data object Available : AndroidEntrypointAvailability
+    data class Retained(val reason: String) : AndroidEntrypointAvailability
+    data class Unavailable(val reason: String) : AndroidEntrypointAvailability
+
+    val isOpenable: Boolean
+        get() = this !is Unavailable
+}
+
+data class AndroidEntrypointAvailabilitySnapshot(
+    val accountEpoch: Long,
+    val processGeneration: Long,
+    val entries: Map<AndroidEntrypointId, AndroidEntrypointAvailability>,
+) {
+    fun availability(id: AndroidEntrypointId): AndroidEntrypointAvailability =
+        entries[id] ?: AndroidEntrypointAvailability.Unavailable("missing")
+
+    companion object {
+        fun initial(
+            processGeneration: Long = 0L,
+            accountEpoch: Long = 0L,
+        ): AndroidEntrypointAvailabilitySnapshot =
+            AndroidEntrypointAvailabilitySnapshot(
+                accountEpoch = accountEpoch,
+                processGeneration = processGeneration,
+                entries = mapOf(
+                    AndroidEntrypointId.COMPUTER to AndroidEntrypointAvailability.Available,
+                    AndroidEntrypointId.HIDDEN_CHATS to AndroidEntrypointAvailability.Available,
+                    AndroidEntrypointId.AGENT_NETWORK to AndroidEntrypointAvailability.Unavailable("gate"),
+                    AndroidEntrypointId.PLUGINS to AndroidEntrypointAvailability.Available,
+                    AndroidEntrypointId.SETTINGS to AndroidEntrypointAvailability.Available,
+                ),
+            )
+    }
+}
+
 interface AndroidCoordinatorPort {
     fun coordinatorStatus(): JSONObject
     fun coordinatorResync(generation: Long, afterSequence: Long): JSONObject
@@ -295,6 +339,8 @@ interface AndroidCoordinatorPort {
         error("Update-track policy is unavailable on this Coordinator port")
     fun refreshMandatoryUpdatePolicy(): AndroidMandatoryUpdatePolicy =
         error("Mandatory update policy is unavailable on this Coordinator port")
+    fun refreshEntrypointAvailability(): AndroidEntrypointAvailabilitySnapshot =
+        error("Entrypoint availability is unavailable on this Coordinator port")
     fun isUpdateHostIdle(): Boolean = false
     fun mcpOAuthRegister(state: String, provider: String): Boolean
     fun mcpOAuthRegisterBound(
