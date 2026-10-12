@@ -80,12 +80,9 @@ internal object FabushiCiBootstrap {
         return runCatching {
             Os.setenv("GITHUB_ACTIONS", "true", true)
             Os.setenv("FABUSHI_CI_ACCOUNT_SESSION_FILE", privateFile.absolutePath, true)
-            check(
-                context.getSharedPreferences("fabushi.mobile", 0)
-                    .edit()
-                    .putBoolean("onboarding-complete", true)
-                    .commit(),
-            )
+            // CI bootstrap only stages the bounded authenticated session. Product state such as
+            // onboarding completion must be owned by the canonical Host settings repository after
+            // the Host has consumed this session; never create a second SharedPreferences truth.
             activeDocument.optString("sessionId").isNotBlank()
         }.getOrElse {
             privateFile.delete()
