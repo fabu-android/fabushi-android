@@ -9,7 +9,7 @@ pub mod invariant_violation_log;
 pub mod main;
 pub mod production_executor;
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 use fabushi_android_shared::{
     ExecutionCapability, ExecutionError, ExecutionRequest, ExecutionResult, ExecutionTarget,
@@ -22,12 +22,12 @@ pub trait LocalCapabilityHandler: Send {
 
 pub struct AndroidLocalRunner {
     capabilities: BTreeMap<String, (ExecutionCapability, Box<dyn LocalCapabilityHandler>)>,
-    active: BTreeSet<String>,
+    active: BTreeMap<String, String>,
 }
 
 impl AndroidLocalRunner {
     pub fn new() -> Self {
-        Self { capabilities: BTreeMap::new(), active: BTreeSet::new() }
+        Self { capabilities: BTreeMap::new(), active: BTreeMap::new() }
     }
 
     pub fn register(&mut self, capability: ExecutionCapability, handler: Box<dyn LocalCapabilityHandler>) -> Result<(), ExecutionError> {
@@ -49,15 +49,28 @@ impl AndroidLocalRunner {
 
     pub fn execute(&mut self, request: ExecutionRequest) -> Result<ExecutionResult, ExecutionError> {
         request.validate()?;
-        if !self.active.insert(request.operation_id.clone()) {
+        if self.active.contains_key(&request.operation_id) {
             return Err(ExecutionError::InvalidRequest("operation id is already active".into()));
         }
+        self.active.insert(request.operation_id.clone(), request.capability_id.clone());
         let result = match self.capabilities.get_mut(&request.capability_id) {
             Some((_, handler)) => handler.execute(&request),
             None => Err(ExecutionError::CapabilityUnavailable(request.capability_id.clone())),
         };
         self.active.remove(&request.operation_id);
         result
+    }
+
+    pub fn cancel(&mut self, operation_id: &str) -> Result<(), ExecutionError> {
+        if operation_id.trim().is_empty() {
+            return Err(ExecutionError::InvalidRequest("operation id must not be empty".into()));
+        }
+        let capability_id = self.active.get(operation_id)
+            .cloned()
+            .ok_or_else(|| ExecutionError::InvalidRequest("operation is not active".into()))?;
+        let (_, handler) = self.capabilities.get_mut(&capability_id)
+            .ok_or_else(|| ExecutionError::CapabilityUnavailable(capability_id.clone()))?;
+        handler.cancel(operation_id)
     }
 
     pub fn advertised_capabilities(&self) -> Vec<ExecutionCapability> {
@@ -119,6 +132,33 @@ mod tests {
             .unwrap();
         assert_eq!(result.output_json, r#"{"owner":"first"}"#);
         assert_eq!(runner.advertised_capabilities().len(), 1);
+    }
+
+
+    struct ReentrantCancelProbe {
+        cancels: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
+    }
+
+    impl LocalCapabilityHandler for ReentrantCancelProbe {
+        fn execute(&mut self, request: &ExecutionRequest) -> Result<ExecutionResult, ExecutionError> {
+            Ok(ExecutionResult { operation_id: request.operation_id.clone(), output_json: "{}".into() })
+        }
+        fn cancel(&mut self, operation_id: &str) -> Result<(), ExecutionError> {
+            self.cancels.lock().unwrap().push(operation_id.to_string());
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn cancelling_unknown_operation_fails_closed() {
+        let mut runner = AndroidLocalRunner::new();
+        runner.register(capability("android.cancel"), Box::new(ReentrantCancelProbe {
+            cancels: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
+        })).unwrap();
+        assert!(matches!(
+            runner.cancel("missing"),
+            Err(ExecutionError::InvalidRequest(message)) if message.contains("not active")
+        ));
     }
 
     #[test]
