@@ -43,6 +43,8 @@ pub const DASHBOARD_GET_AVAILABLE_MCP_SERVERS_PATH: &str =
     "/aiserver.v1.DashboardService/GetAvailableMcpServers";
 pub const DASHBOARD_LIST_SAND_MCP_TOOLS_PATH: &str =
     "/aiserver.v1.DashboardService/ListSandMcpTools";
+pub const DASHBOARD_EXECUTE_SAND_MCP_TOOL_PATH: &str =
+    "/aiserver.v1.DashboardService/ExecuteSandMcpTool";
 pub const DASHBOARD_CLIENT_ACTION_PATH: &str =
     "/aiserver.v1.DashboardService/ClientAction";
 pub const ANALYTICS_SUBMIT_LOGS_PATH: &str =
@@ -66,6 +68,9 @@ pub const DASHBOARD_GET_TEAM_ADMIN_SETTINGS_PATH: &str =
     "/aiserver.v1.DashboardService/GetTeamAdminSettingsOrEmptyIfNotInTeam";
 pub const PR_REVIEW_REQUEST_TIMEOUT_MS: u64 = 10_000;
 pub const LIST_TOOLS_TIMEOUT_MS: u64 = 60_000;
+pub const EXECUTE_TOOL_TIMEOUT_MS: u64 = 180_000;
+const MAX_MCP_TOOL_ARGUMENT_BYTES: usize = 1024 * 1024;
+const MAX_PROTO_JSON_DEPTH: usize = 32;
 pub const CONTROL_RPC_TIMEOUT_MS: u64 = 30_000;
 pub const RUN_GENERATE_IMAGE_PATH: &str = "/aiserver.v1.AiService/RunGenerateImage";
 pub const GENERATE_IMAGE_REQUEST_TIMEOUT_MS: u64 = 60_000;
@@ -138,6 +143,12 @@ pub struct McpServerToolSummary {
 pub struct McpServerAccountSummary {
     pub account_key: String,
     pub row_server_identifier: String,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum McpToolExecutionBackendResult {
+    Settled(Value),
+    OutcomeUnknown { message: String },
 }
 
 pub trait SandMcpCredentialProvider: Send + Sync {
@@ -574,6 +585,82 @@ impl CursorDashboardMcpAuthBackend {
             ghost_mode,
         )?;
         decode_list_sand_mcp_accounts(&response, identifier)
+    }
+
+    pub fn execute_server_tool(
+        &self,
+        server_id: &str,
+        tool_name: &str,
+        args: &Value,
+        tool_call_id: &str,
+        agent_id: Option<&str>,
+    ) -> Result<McpToolExecutionBackendResult, String> {
+        let requested_id = parse_mcp_server_id(server_id)?;
+        let tool_name = validate_mcp_tool_execution_string(tool_name, "tool name", 512)?;
+        let tool_call_id =
+            validate_mcp_tool_execution_string(tool_call_id, "tool call id", 512)?;
+        let agent_id = agent_id
+            .map(|value| validate_mcp_tool_execution_string(value, "agent id", 512))
+            .transpose()?
+            .unwrap_or("");
+        let encoded_args = encode_json_struct(args, 0)?;
+        if encoded_args.len() > MAX_MCP_TOOL_ARGUMENT_BYTES {
+            return Err("MCP tool arguments exceed bounded size".into());
+        }
+
+        let credentials = self.credentials.credentials()?;
+        let ghost_mode = self.resolve_ghost_mode(&credentials);
+        let available = self.send_unary(
+            &credentials,
+            DASHBOARD_GET_AVAILABLE_MCP_SERVERS_PATH,
+            &[],
+            CONTROL_RPC_TIMEOUT_MS,
+            ghost_mode,
+        )?;
+        let server = decode_available_mcp_servers_response(&available)?
+            .into_iter()
+            .find(|server| server.id == requested_id)
+            .ok_or("MCP server disappeared during tool execution")?;
+        if server.disabled_by_team_admin_policy {
+            return Err("MCP server is blocked by current team admin policy".into());
+        }
+        let identifier = server
+            .server_identifier
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .ok_or("MCP server has no backend server identifier")?;
+
+        let request = encode_execute_sand_mcp_tool_request(
+            identifier,
+            tool_name,
+            &encoded_args,
+            tool_call_id,
+            agent_id,
+        );
+        match self.send_unary(
+            &credentials,
+            DASHBOARD_EXECUTE_SAND_MCP_TOOL_PATH,
+            &request,
+            EXECUTE_TOOL_TIMEOUT_MS,
+            ghost_mode,
+        ) {
+            Ok(response) => Ok(McpToolExecutionBackendResult::Settled(
+                decode_execute_sand_mcp_tool_response(&response)?,
+            )),
+            Err(error) if is_timeout_like_rpc_error(&error) => {
+                Ok(McpToolExecutionBackendResult::OutcomeUnknown {
+                    message: format!(
+                        "Backend MCP execution for \"{tool_name}\" timed out after {}s. The connector may still have applied it, so retry only if repeating the call is safe.",
+                        EXECUTE_TOOL_TIMEOUT_MS / 1_000
+                    ),
+                })
+            }
+            Err(error) => Ok(McpToolExecutionBackendResult::Settled(json!({
+                "case": "error",
+                "error": format!("Backend MCP execution failed for \"{tool_name}\": {error}"),
+            }))),
+        }
     }
 
     pub fn fresh_server_snapshot(
@@ -1087,6 +1174,272 @@ fn decode_available_server(input: &[u8]) -> Result<AvailableServerWire, String> 
         }
     }
     Ok(server)
+}
+
+fn validate_mcp_tool_execution_string<'a>(
+    raw: &'a str,
+    label: &str,
+    max_len: usize,
+) -> Result<&'a str, String> {
+    let value = raw.trim();
+    if value.is_empty() || value.len() > max_len || value.chars().any(char::is_control) {
+        return Err(format!("MCP {label} is invalid"));
+    }
+    Ok(value)
+}
+
+fn encode_execute_sand_mcp_tool_request(
+    server_identifier: &str,
+    tool_name: &str,
+    encoded_args: &[u8],
+    tool_call_id: &str,
+    agent_id: &str,
+) -> Vec<u8> {
+    let mut output = Vec::new();
+    encode_string(1, server_identifier, &mut output);
+    encode_string(2, tool_name, &mut output);
+    encode_len_delimited(3, encoded_args, &mut output);
+    encode_string(4, tool_call_id, &mut output);
+    if !agent_id.is_empty() {
+        encode_string(5, agent_id, &mut output);
+    }
+    output
+}
+
+fn encode_json_struct(value: &Value, depth: usize) -> Result<Vec<u8>, String> {
+    if depth > MAX_PROTO_JSON_DEPTH {
+        return Err("MCP tool arguments exceed maximum nesting depth".into());
+    }
+    let object = value
+        .as_object()
+        .ok_or("MCP tool arguments must be a JSON object")?;
+    if object.len() > 4_096 {
+        return Err("MCP tool arguments contain too many object fields".into());
+    }
+    let mut output = Vec::new();
+    for (key, value) in object {
+        if key.is_empty() || key.len() > 4_096 || key.chars().any(|ch| ch == '\0') {
+            return Err("MCP tool argument key is invalid".into());
+        }
+        let mut entry = Vec::new();
+        encode_string(1, key, &mut entry);
+        let encoded_value = encode_json_value(value, depth + 1)?;
+        encode_len_delimited(2, &encoded_value, &mut entry);
+        encode_len_delimited(1, &entry, &mut output);
+    }
+    Ok(output)
+}
+
+fn encode_json_value(value: &Value, depth: usize) -> Result<Vec<u8>, String> {
+    if depth > MAX_PROTO_JSON_DEPTH {
+        return Err("MCP tool arguments exceed maximum nesting depth".into());
+    }
+    let mut output = Vec::new();
+    match value {
+        Value::Null => {
+            encode_key(1, 0, &mut output);
+            encode_varint(0, &mut output);
+        }
+        Value::Bool(value) => encode_bool(4, *value, &mut output),
+        Value::Number(value) => {
+            let number = value
+                .as_f64()
+                .ok_or("MCP tool argument number cannot be represented as protobuf double")?;
+            if !number.is_finite() {
+                return Err("MCP tool argument number must be finite".into());
+            }
+            encode_key(2, 1, &mut output);
+            output.extend_from_slice(&number.to_bits().to_le_bytes());
+        }
+        Value::String(value) => encode_string(3, value, &mut output),
+        Value::Array(values) => {
+            if values.len() > 4_096 {
+                return Err("MCP tool arguments contain too many list values".into());
+            }
+            let mut list = Vec::new();
+            for value in values {
+                let encoded = encode_json_value(value, depth + 1)?;
+                encode_len_delimited(1, &encoded, &mut list);
+            }
+            encode_len_delimited(6, &list, &mut output);
+        }
+        Value::Object(_) => {
+            let encoded = encode_json_struct(value, depth + 1)?;
+            encode_len_delimited(5, &encoded, &mut output);
+        }
+    }
+    Ok(output)
+}
+
+fn decode_execute_sand_mcp_tool_response(input: &[u8]) -> Result<Value, String> {
+    let result = first_message_field(input, 1)?
+        .ok_or("Backend MCP execution returned no result")?;
+    decode_mcp_result(result)
+}
+
+fn decode_mcp_result(input: &[u8]) -> Result<Value, String> {
+    let mut cursor = 0usize;
+    while cursor < input.len() {
+        let key = read_varint(input, &mut cursor)?;
+        let field = (key >> 3) as u32;
+        let wire = (key & 0x07) as u8;
+        if wire != 2 {
+            skip_field(input, &mut cursor, wire)?;
+            continue;
+        }
+        let bytes = read_len_delimited(input, &mut cursor)?;
+        return match field {
+            1 => decode_mcp_success(bytes),
+            2 => Ok(json!({"case":"error","error": optional_string_field(bytes, 1)?.unwrap_or_default()})),
+            3 => Ok(json!({
+                "case":"rejected",
+                "reason": optional_string_field(bytes, 1)?.unwrap_or_default(),
+                "readOnly": decode_optional_varint_field(bytes, 2)?.unwrap_or_default() != 0,
+            })),
+            4 => Ok(json!({
+                "case":"permission-denied",
+                "error": optional_string_field(bytes, 1)?.unwrap_or_default(),
+                "readOnly": decode_optional_varint_field(bytes, 2)?.unwrap_or_default() != 0,
+            })),
+            5 => Ok(json!({
+                "case":"tool-not-found",
+                "name": optional_string_field(bytes, 1)?.unwrap_or_default(),
+                "availableTools": string_fields(bytes, 2)?,
+            })),
+            6 => Ok(json!({
+                "case":"server-not-found",
+                "name": optional_string_field(bytes, 1)?.unwrap_or_default(),
+                "availableServers": string_fields(bytes, 2)?,
+            })),
+            7 => Ok(json!({"case":"approved"})),
+            _ => Err(format!("Backend MCP execution returned unknown result field {field}")),
+        };
+    }
+    Err("Backend MCP execution returned empty result".into())
+}
+
+fn decode_mcp_success(input: &[u8]) -> Result<Value, String> {
+    let mut content = Vec::new();
+    for item in repeated_message_fields(input, 1)? {
+        content.push(decode_mcp_content_item(item)?);
+    }
+    let is_error = decode_optional_varint_field(input, 2)?.unwrap_or_default() != 0;
+    let structured = first_message_field(input, 3)?
+        .map(|bytes| decode_proto_struct(bytes, 0))
+        .transpose()?;
+    Ok(json!({
+        "case":"success",
+        "content":content,
+        "isError":is_error,
+        "structuredContent":structured,
+    }))
+}
+
+fn decode_mcp_content_item(input: &[u8]) -> Result<Value, String> {
+    let mut cursor = 0usize;
+    while cursor < input.len() {
+        let key = read_varint(input, &mut cursor)?;
+        let field = (key >> 3) as u32;
+        let wire = (key & 0x07) as u8;
+        if wire != 2 {
+            skip_field(input, &mut cursor, wire)?;
+            continue;
+        }
+        let bytes = read_len_delimited(input, &mut cursor)?;
+        return match field {
+            1 => Ok(json!({
+                "type":"text",
+                "text":optional_string_field(bytes, 1)?.unwrap_or_default(),
+            })),
+            2 => {
+                let data = first_message_field(bytes, 1)?.unwrap_or_default();
+                let mime_type = optional_string_field(bytes, 2)?.unwrap_or_default();
+                Ok(json!({
+                    "type":"image",
+                    "dataBase64":base64::engine::general_purpose::STANDARD.encode(data),
+                    "mimeType":mime_type,
+                }))
+            }
+            _ => Err(format!("Backend MCP execution returned unknown content field {field}")),
+        };
+    }
+    Err("Backend MCP execution returned empty content item".into())
+}
+
+fn decode_proto_struct(input: &[u8], depth: usize) -> Result<Value, String> {
+    if depth > MAX_PROTO_JSON_DEPTH {
+        return Err("Backend MCP structured content exceeds maximum nesting depth".into());
+    }
+    let mut object = serde_json::Map::new();
+    for entry in repeated_message_fields(input, 1)? {
+        let key = optional_string_field(entry, 1)?.unwrap_or_default();
+        let value = first_message_field(entry, 2)?
+            .ok_or("Backend MCP structured content map entry has no value")?;
+        object.insert(key, decode_proto_value(value, depth + 1)?);
+    }
+    Ok(Value::Object(object))
+}
+
+fn decode_proto_value(input: &[u8], depth: usize) -> Result<Value, String> {
+    if depth > MAX_PROTO_JSON_DEPTH {
+        return Err("Backend MCP structured content exceeds maximum nesting depth".into());
+    }
+    let mut cursor = 0usize;
+    while cursor < input.len() {
+        let key = read_varint(input, &mut cursor)?;
+        let field = (key >> 3) as u32;
+        let wire = (key & 0x07) as u8;
+        match (field, wire) {
+            (1, 0) => {
+                let _ = read_varint(input, &mut cursor)?;
+                return Ok(Value::Null);
+            }
+            (2, 1) => {
+                let bits = read_fixed64(input, &mut cursor)?;
+                let number = f64::from_bits(bits);
+                if !number.is_finite() {
+                    return Err("Backend MCP structured number is non-finite".into());
+                }
+                return serde_json::Number::from_f64(number)
+                    .map(Value::Number)
+                    .ok_or_else(|| "Backend MCP structured number is invalid".into());
+            }
+            (3, 2) => return Ok(Value::String(read_string(input, &mut cursor)?)),
+            (4, 0) => return Ok(Value::Bool(read_varint(input, &mut cursor)? != 0)),
+            (5, 2) => {
+                return decode_proto_struct(read_len_delimited(input, &mut cursor)?, depth + 1)
+            }
+            (6, 2) => {
+                let list = read_len_delimited(input, &mut cursor)?;
+                let values = repeated_message_fields(list, 1)?
+                    .into_iter()
+                    .map(|value| decode_proto_value(value, depth + 1))
+                    .collect::<Result<Vec<_>, _>>()?;
+                return Ok(Value::Array(values));
+            }
+            _ => skip_field(input, &mut cursor, wire)?,
+        }
+    }
+    Err("Backend MCP structured content contains empty Value".into())
+}
+
+fn read_fixed64(input: &[u8], cursor: &mut usize) -> Result<u64, String> {
+    let end = cursor
+        .checked_add(8)
+        .filter(|end| *end <= input.len())
+        .ok_or("truncated MCP backend fixed64 value")?;
+    let bytes: [u8; 8] = input[*cursor..end]
+        .try_into()
+        .map_err(|_| "truncated MCP backend fixed64 value")?;
+    *cursor = end;
+    Ok(u64::from_le_bytes(bytes))
+}
+
+fn is_timeout_like_rpc_error(error: &str) -> bool {
+    let normalized = error.to_ascii_lowercase();
+    normalized.contains("timed out")
+        || normalized.contains("timeout")
+        || normalized.contains("deadline")
 }
 
 fn encode_list_sand_mcp_tools_request(server_identifiers: &[&str]) -> Vec<u8> {
@@ -2785,6 +3138,55 @@ mod tests {
                 },
             ]
         );
+    }
+
+    #[test]
+    fn execute_tool_request_and_result_match_desktop_wire_contract() {
+        assert_eq!(
+            DASHBOARD_EXECUTE_SAND_MCP_TOOL_PATH,
+            "/aiserver.v1.DashboardService/ExecuteSandMcpTool"
+        );
+        let args = json!({"query":"today","limit":2,"flags":[true,null]});
+        let encoded_args = encode_json_struct(&args, 0).unwrap();
+        assert_eq!(decode_proto_struct(&encoded_args, 0).unwrap(), args);
+        let request = encode_execute_sand_mcp_tool_request(
+            "calendar/default",
+            "events.list",
+            &encoded_args,
+            "call-17",
+            "agent-2",
+        );
+        assert_eq!(optional_string_field(&request, 1).unwrap().as_deref(), Some("calendar/default"));
+        assert_eq!(optional_string_field(&request, 2).unwrap().as_deref(), Some("events.list"));
+        assert_eq!(optional_string_field(&request, 4).unwrap().as_deref(), Some("call-17"));
+        assert_eq!(optional_string_field(&request, 5).unwrap().as_deref(), Some("agent-2"));
+        assert_eq!(
+            decode_proto_struct(first_message_field(&request, 3).unwrap().unwrap(), 0).unwrap(),
+            args
+        );
+
+        let mut text = Vec::new();
+        encode_string(1, "done", &mut text);
+        let mut content_item = Vec::new();
+        encode_len_delimited(1, &text, &mut content_item);
+        let mut success = Vec::new();
+        encode_len_delimited(1, &content_item, &mut success);
+        encode_bool(2, false, &mut success);
+        let mut result = Vec::new();
+        encode_len_delimited(1, &success, &mut result);
+        let mut response = Vec::new();
+        encode_len_delimited(1, &result, &mut response);
+        assert_eq!(
+            decode_execute_sand_mcp_tool_response(&response).unwrap(),
+            json!({
+                "case":"success",
+                "content":[{"type":"text","text":"done"}],
+                "isError":false,
+                "structuredContent":Value::Null,
+            })
+        );
+        assert!(is_timeout_like_rpc_error("MCP backend RPC failed: timed out"));
+        assert!(!is_timeout_like_rpc_error("MCP backend RPC failed: HTTP 401"));
     }
 
     #[test]
