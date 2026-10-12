@@ -5,9 +5,9 @@
     "desktop_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
     "android_repository": "fabu-android/fabushi-android",
     "android_pr": 3,
-    "android_head_at_update": "dfbbd6349fc1681fae099264671c678c23294b78",
+    "android_head_at_update": "1539107caea517fcaa0cef2d5d3e2391e6f2d418",
     "status": "incomplete",
-    "note": "Incrementally rebased to Desktop main 371b72f1cd20de03dc4dff9a15ed761054968093. Source closure has now semantically reviewed desktop-chat-streaming-parity through source/README.md and continued through fabushi-communication-platform architecture/screen/owner/design/governance plus quality policy/oracles/functional plan at rows 497-511. These rows are mapped, not verified: Android still lacks full source closure, packaged/device acceptance, complete adaptive/focus/TalkBack coverage, and secret-gated protected/release evidence. Exact-head architecture strict failure remains expected closure debt rather than a newly detected owner bypass."
+    "note": "Desktop main authority remains 371b72f1cd20de03dc4dff9a15ed761054968093. Source closure now continues through fabushi-communication-platform quality performance/security/temporal/UI plans, release/RTM/test-strategy governance, source/status/capability graph and UI component/IA/visual contracts (rows 512-526). These are mapped obligations, not verified implementation. Full source closure, packaged/device matrix, adaptive focus/TalkBack and protected/signing evidence remain open."
   },
   "responsibilities": [
     {
