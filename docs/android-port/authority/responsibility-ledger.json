@@ -16018,6 +16018,176 @@
       "artifact": null,
       "verification_status": "not-verified",
       "notes": "Narrow durable prerequisite only. Keep AGENT-SHARED-ROOM-ANDROID-001 mapped until relay, remote turns, departures, tombstones, Coordinator transport and native room management are production-wired."
+    },
+    {
+      "responsibility_id": "SEARCH-CONTENT-CANONICAL-SCAN-ANDROID-001",
+      "domain": "content-search",
+      "desktop_sources": [
+        {
+          "path": "source/host/src/extensions/content_search/search_index_db.rs",
+          "blob_sha": "8d07eae4cf89bbcbe161c2e051c6c8e7e2abd7a1",
+          "symbols": [
+            "search_messages",
+            "search_media"
+          ]
+        },
+        {
+          "path": "source/host/src/extensions/content_search/search_index_writer.rs",
+          "blob_sha": "419f1307e13849c799183a90c638d29039ce73be",
+          "symbols": [
+            "message_of",
+            "media_of"
+          ]
+        }
+      ],
+      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "responsibility": "Expose account-fenced global message and media search with Desktop-equivalent visible filtering, recent ordering, bounded results, filename/media classification and cold-start durability without creating a second canonical transcript owner.",
+      "source_owner": "Desktop content-search query/index projection",
+      "direct_callers": [
+        "Host content-search surfaces"
+      ],
+      "downstream_dependencies": [
+        "canonical transcript",
+        "media attachment metadata"
+      ],
+      "state_owner": "Rust TranscriptStore remains the only canonical Android transcript owner; search is a read-only derived projection.",
+      "persistent_state": [
+        "canonical TranscriptStore only; no second Android search truth"
+      ],
+      "protocol_wire_contract": [
+        "feature.contentSearch.messages(query,limit)",
+        "feature.contentSearch.media(query,limit)"
+      ],
+      "visible_effect": "Users can search visible transcript text and attachment/media names after restart with bounded recent results.",
+      "failure_behavior": [
+        "invalid limits reject",
+        "empty text query returns no message matches",
+        "hidden outbound agent-peer entries are excluded",
+        "malformed media rows are skipped"
+      ],
+      "cancellation_behavior": "read-only bounded scan has no side effects",
+      "retry_semantics": "safe idempotent read against the same recovered transcript",
+      "idempotency_semantics": "no canonical mutation",
+      "process_death_recovery": "TranscriptStore durable reopen restores canonical entries; search recomputes projections without replaying side effects.",
+      "account_fencing": "AndroidJsonHost requires current account fence before both production search methods.",
+      "security_boundary": "Host performs search over canonical account-scoped transcript; Compose owns no transcript/search truth.",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "source/host/src/extensions/transcript/transcript_store.rs",
+        "source/host/src/android_json_runtime.rs"
+      ],
+      "android_owner": "Rust Host canonical TranscriptStore search projection",
+      "platform_delta": "Android replaces Desktop SQLite FTS query execution with a direct read-only scan of the canonical durable transcript to avoid a second canonical owner; durable FTS worker parity remains separately open.",
+      "implementation_status": "implemented",
+      "production_wiring": "AndroidJsonHost routes feature.contentSearch.messages/media through current account fence into TranscriptStore.search_content/search_media.",
+      "unit_test": "TranscriptStore content search + media search cold-reopen tests; exact-head Actions pending",
+      "contract_test": "Host production routes/result serialization present; exact-head Rust/architecture gate pending",
+      "integration_test": "required same-head bridge search on recovered account transcript",
+      "packaged_test": "required final APK/AAB acceptance",
+      "device_test": "required final device search surface acceptance",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Implemented semantic/user-visible search at Android head 6fe7a346047245d3d27ca9dba8078b25bf97b4e5; intentionally does not claim Desktop FTS index worker/rebuild parity."
+    },
+    {
+      "responsibility_id": "SEARCH-DURABLE-INDEX-ANDROID-001",
+      "domain": "content-search-runtime",
+      "desktop_sources": [
+        {
+          "path": "source/host/src/extensions/content_search/extension.rs",
+          "blob_sha": "de352c29b522180afb77e5521b70b1f3595dad9c",
+          "symbols": [
+            "ContentSearchExtension"
+          ]
+        },
+        {
+          "path": "source/host/src/extensions/content_search/search_index_db.rs",
+          "blob_sha": "8d07eae4cf89bbcbe161c2e051c6c8e7e2abd7a1",
+          "symbols": [
+            "FTS5 schema",
+            "search_messages",
+            "search_media"
+          ]
+        },
+        {
+          "path": "source/host/src/extensions/content_search/search_index_service.rs",
+          "blob_sha": "561cdb6ef5375f5e25e2d9b8dad3de63805b7495",
+          "symbols": [
+            "SandSearchIndexService",
+            "SearchIndexServiceSnapshot"
+          ]
+        },
+        {
+          "path": "source/host/src/extensions/content_search/search_index_worker.rs",
+          "blob_sha": "fed841480151fed3201c7cbdd8723356a132a060",
+          "symbols": [
+            "SearchIndexWorker"
+          ]
+        },
+        {
+          "path": "source/host/src/extensions/content_search/search_index_writer.rs",
+          "blob_sha": "419f1307e13849c799183a90c638d29039ce73be",
+          "symbols": [
+            "SearchIndexJob",
+            "IndexEntry"
+          ]
+        }
+      ],
+      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "responsibility": "Maintain a derived durable FTS message/media index fed by transcript mutations with worker isolation, reconcile, corruption rebuild, bounded respawn/retry, health state and deterministic disposal.",
+      "source_owner": "Desktop SandSearchIndexService/worker/writer",
+      "direct_callers": [
+        "content-search extension",
+        "transcript mutation subscription"
+      ],
+      "downstream_dependencies": [
+        "SQLite FTS5",
+        "transcript mutation stream",
+        "search health telemetry"
+      ],
+      "state_owner": "Derived search-index runtime only; canonical transcript remains upstream truth.",
+      "persistent_state": [
+        "search-index.db",
+        "FTS tables/triggers",
+        "reconcile marker",
+        "derived media/message rows"
+      ],
+      "protocol_wire_contract": [
+        "mutation jobs",
+        "worker request/response",
+        "health snapshots"
+      ],
+      "visible_effect": "Large histories remain searchable with indexed message/media results while corruption/worker failures rebuild or fail explicitly rather than silently losing search.",
+      "failure_behavior": [
+        "bounded index rebuild",
+        "bounded worker respawn",
+        "failed-job reconcile",
+        "corruption detection",
+        "unavailable state"
+      ],
+      "cancellation_behavior": "dispose drains/stops worker with bounded timeout",
+      "retry_semantics": "only derived-index jobs/rebuilds retry within bounded counters; canonical transcript side effects are never replayed",
+      "idempotency_semantics": "upsert/delete/reconcile jobs derive from canonical transcript and can rebuild from source truth",
+      "process_death_recovery": "derived index opens/reconciles or rebuilds from canonical transcript after restart",
+      "account_fencing": "derived index must remain within current account-scoped transcript storage",
+      "security_boundary": "index contains derived searchable content only and must remain app-private; UI cannot mutate it directly.",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "source/host/src/extensions/transcript/transcript_store.rs",
+        "source/host/src/android_json_runtime.rs"
+      ],
+      "android_owner": "not yet implemented as an independent Android derived-index runtime",
+      "platform_delta": "Android semantic search currently scans canonical TranscriptStore. A future derived index must remain rebuildable rather than becoming a second transcript owner.",
+      "implementation_status": "mapped",
+      "production_wiring": "No equivalent durable FTS mutation worker/rebuild/health owner yet; current production routes use canonical scan replacement only.",
+      "unit_test": "pending",
+      "contract_test": "pending",
+      "integration_test": "pending",
+      "packaged_test": "pending",
+      "device_test": "pending performance/recovery acceptance",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Open responsibility. Do not upgrade merely because semantic message/media search is already user-visible."
     }
   ],
   "traceability": {
