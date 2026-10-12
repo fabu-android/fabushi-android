@@ -41,8 +41,9 @@ use crate::mcp_auth::{
 use crate::extensions::telemetry::product_events::{
     access_blocked_event, agent_load_event, agents_unreachable_event, client_persistence_event,
     client_resource_event, connector_auth_clicked_event, entrypoint_error_event,
-    event_loop_pressure_event, onboarding_step_event, reaction_ack_event, renderer_boundary_caught_event,
-    renderer_unhandled_event, send_ack_event, send_latency_event, send_queued_flush_event,
+    event_loop_pressure_event, onboarding_step_event, reaction_ack_event, render_stream_event,
+    render_ttfr_event, renderer_boundary_caught_event, renderer_unhandled_event, send_ack_event,
+    send_latency_event, send_queued_flush_event,
     startup_lifecycle_event,
     StructuredTelemetryEvent, TelemetryLevel,
 };
@@ -1827,6 +1828,71 @@ impl AndroidJsonHost {
         Ok(json!({"recorded":true}))
     }
 
+    fn render_telemetry(&mut self, params: &Value) -> Result<Value, String> {
+        let kind = required_string(params, "kind")?;
+        let (message, event) = match kind {
+            "ttfr" => (
+                "sand.render.ttfr",
+                render_ttfr_event(
+                    params
+                        .get("ttfrMs")
+                        .and_then(Value::as_f64)
+                        .ok_or("ttfrMs is required")?,
+                    required_string(params, "outcome")?,
+                    params.get("chunkType").and_then(Value::as_str),
+                    params
+                        .get("enterEpochMs")
+                        .and_then(Value::as_f64)
+                        .ok_or("enterEpochMs is required")?,
+                    params
+                        .get("isFork")
+                        .and_then(Value::as_bool)
+                        .ok_or("isFork is required")?,
+                    params.get("traceId").and_then(Value::as_str),
+                    params.get("spanId").and_then(Value::as_str),
+                    params.get("clientNonce").and_then(Value::as_str),
+                    params.get("conversationId").and_then(Value::as_str),
+                )?,
+            ),
+            "stream" => (
+                "sand.render.stream",
+                render_stream_event(
+                    required_string(params, "outcome")?,
+                    params
+                        .get("chunkCount")
+                        .and_then(Value::as_f64)
+                        .ok_or("chunkCount is required")?,
+                    params
+                        .get("maxGapMs")
+                        .and_then(Value::as_f64)
+                        .ok_or("maxGapMs is required")?,
+                    params
+                        .get("stalledMs")
+                        .and_then(Value::as_f64)
+                        .ok_or("stalledMs is required")?,
+                    params
+                        .get("stallCount")
+                        .and_then(Value::as_f64)
+                        .ok_or("stallCount is required")?,
+                    params
+                        .get("streamMs")
+                        .and_then(Value::as_f64)
+                        .ok_or("streamMs is required")?,
+                    params
+                        .get("isFork")
+                        .and_then(Value::as_bool)
+                        .ok_or("isFork is required")?,
+                    params.get("traceId").and_then(Value::as_str),
+                    params.get("spanId").and_then(Value::as_str),
+                    params.get("clientNonce").and_then(Value::as_str),
+                    params.get("conversationId").and_then(Value::as_str),
+                )?,
+            ),
+            _ => return Err("unsupported render telemetry kind".into()),
+        };
+        self.record_product_telemetry(message, event)
+    }
+
     fn recovery_telemetry(&mut self, params: &Value) -> Result<Value, String> {
         let kind = required_string(params, "kind")?;
         let (message, event) = match kind {
@@ -2194,6 +2260,7 @@ impl AndroidJsonHost {
             "feature.telemetry.agentsUnreachable" => self.agents_unreachable_telemetry(params),
             "feature.telemetry.eventLoopPressure" => self.event_loop_pressure_telemetry(params),
             "feature.telemetry.clientFailure" => self.client_failure_telemetry(params),
+            "feature.telemetry.render" => self.render_telemetry(params),
             "feature.telemetry.recovery" => self.recovery_telemetry(params),
             "feature.diagnostics.edgeFailures.snapshot" => serde_json::to_value(self.edge_failures.snapshot()).map_err(|error| format!("failed to serialize edge failure snapshot: {error}")),
             "feature.diagnostics.edgeFailures.report" => {
