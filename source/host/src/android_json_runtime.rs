@@ -39,8 +39,9 @@ use crate::mcp_auth::{
 };
 use crate::extensions::telemetry::product_events::{
     access_blocked_event, agent_load_event, agents_unreachable_event, client_persistence_event,
-    client_resource_event, connector_auth_clicked_event, entrypoint_error_event,
-    event_loop_pressure_event, onboarding_step_event, renderer_boundary_caught_event,
+    client_resource_event, connector_auth_clicked_event, dns_diagnostic_metadata,
+    entrypoint_error_event, event_loop_pressure_event, gateway_reachability_event,
+    onboarding_step_event, renderer_boundary_caught_event,
     renderer_unhandled_event, send_queued_flush_event, startup_lifecycle_event,
     StructuredTelemetryEvent, TelemetryLevel,
 };
@@ -1716,6 +1717,40 @@ impl AndroidJsonHost {
         self.record_product_telemetry("sand.agents_unreachable", event)
     }
 
+    fn gateway_reachability_telemetry(&mut self, params: &Value) -> Result<Value, String> {
+        let latency_ms = params.get("latencyMs").and_then(Value::as_f64).ok_or("latencyMs is required")?;
+        let http_status = params
+            .get("httpStatus")
+            .and_then(Value::as_u64)
+            .map(|value| u16::try_from(value).map_err(|_| "httpStatus is outside u16 range"))
+            .transpose()?;
+        let event = gateway_reachability_event(
+            required_string(params, "outcome")?,
+            required_string(params, "method")?,
+            latency_ms,
+            required_string(params, "baseUrlKind")?,
+            http_status,
+            params.get("causeSummary").and_then(Value::as_str),
+        )?;
+        self.record_product_telemetry("sand.gateway_reachability", event)
+    }
+
+    fn dns_diagnostic_telemetry(&mut self, params: &Value) -> Result<Value, String> {
+        let metadata = dns_diagnostic_metadata(
+            required_string(params, "cluster")?,
+            required_string(params, "trigger")?,
+            required_string(params, "diagnosis")?,
+            params.get("systemExact").and_then(Value::as_str),
+            params.get("independentExact").and_then(Value::as_str),
+            params.get("independentWildcard").and_then(Value::as_str),
+            params.get("independentGeneral").and_then(Value::as_str),
+        );
+        self.record_product_telemetry(
+            "sand.gateway_dns_diagnostic",
+            StructuredTelemetryEvent { level: TelemetryLevel::Info, metadata },
+        )
+    }
+
     fn event_loop_pressure_telemetry(&mut self, params: &Value) -> Result<Value, String> {
         let p50_ms = params
             .get("p50Ms")
@@ -1999,6 +2034,8 @@ impl AndroidJsonHost {
             "feature.telemetry.onboardingStep" => self.onboarding_step_telemetry(params),
             "feature.telemetry.agentsUnreachable" => self.agents_unreachable_telemetry(params),
             "feature.telemetry.eventLoopPressure" => self.event_loop_pressure_telemetry(params),
+            "feature.telemetry.gatewayReachability" => self.gateway_reachability_telemetry(params),
+            "feature.telemetry.dnsDiagnostic" => self.dns_diagnostic_telemetry(params),
             "feature.telemetry.clientFailure" => self.client_failure_telemetry(params),
             "feature.diagnostics.edgeFailures.snapshot" => serde_json::to_value(self.edge_failures.snapshot()).map_err(|error| format!("failed to serialize edge failure snapshot: {error}")),
             "feature.diagnostics.edgeFailures.report" => {
@@ -20392,3 +20429,37 @@ mod reaction_ack_runtime_tests {
         assert!(raw.contains("thumbs_up"));
     }
 }
+
+#[cfg(test)]
+mod gateway_telemetry_dispatch_tests {
+    use super::*;
+
+    #[test]
+    fn gateway_and_dns_reports_use_the_durable_host_telemetry_owner() {
+        let root = tempfile::tempdir().unwrap();
+        let mut host = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+        assert_eq!(
+            host.dispatch(
+                "feature.telemetry.gatewayReachability",
+                &json!({"outcome":"failed","method":"GET","latencyMs":12.4,"baseUrlKind":"api","httpStatus":503,"causeSummary":"timeout"}),
+            ).unwrap()["recorded"],
+            true,
+        );
+        assert_eq!(
+            host.dispatch(
+                "feature.telemetry.dnsDiagnostic",
+                &json!({"cluster":"api","trigger":"gateway_failure","diagnosis":"resolver_mismatch","systemExact":"NXDOMAIN","independentExact":"1.2.3.4","independentGeneral":"8.8.8.8"}),
+            ).unwrap()["recorded"],
+            true,
+        );
+        assert!(host.dispatch(
+            "feature.telemetry.gatewayReachability",
+            &json!({"outcome":"ok","method":"GET","latencyMs":-1,"baseUrlKind":"api"}),
+        ).is_err());
+        assert!(host.dispatch(
+            "feature.telemetry.gatewayReachability",
+            &json!({"outcome":"ok","method":"GET","latencyMs":1,"baseUrlKind":"api","httpStatus":70000}),
+        ).is_err());
+    }
+}
+
