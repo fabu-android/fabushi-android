@@ -191,6 +191,7 @@ data class MobileApprovalCleanupState(
 
 data class MobileBotUiState(
     val bots: List<MobileBotSummaryAndroid> = emptyList(),
+    val pinnedAgentIds: List<String> = emptyList(),
     val sidebarSnapshot: AndroidSidebarSectionsSnapshot = AndroidSidebarSectionsSnapshot(
         accountFence = "",
         revision = 0L,
@@ -504,6 +505,7 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
             val restoredSelection = rosterSelection.get().currentAgentId
             val installedResult = withContext(Dispatchers.IO) { runCatching { loadInstalledMiniAppBots() } }
             val surfaceResult = withContext(Dispatchers.IO) { runCatching { loadSurfaceBots() } }
+            val pinnedResult = withContext(Dispatchers.IO) { runCatching { coordinator.agentPinnedIds() } }
             val sectionsResult = withContext(Dispatchers.IO) { runCatching { coordinator.agentSidebarSections() } }
             val cachedInstalledBots = if (installedResult.isFailure) {
                 withContext(Dispatchers.IO) {
@@ -537,6 +539,9 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
                 surfaceResult.exceptionOrNull()?.let { error ->
                     add("surface bot list: ${(error.message ?: error::class.java.simpleName).take(240)}")
                 }
+                pinnedResult.exceptionOrNull()?.let { error ->
+                    add("pinned Agent order: ${(error.message ?: error::class.java.simpleName).take(240)}")
+                }
                 sectionsResult.exceptionOrNull()?.let { error ->
                     add("sidebar sections: ${(error.message ?: error::class.java.simpleName).take(240)}")
                 }
@@ -549,6 +554,7 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
             }
             mutableState.value = mutableState.value.copy(
                 bots = bots,
+                pinnedAgentIds = pinnedResult.getOrElse { mutableState.value.pinnedAgentIds },
                 sidebarSnapshot = sectionsResult.getOrElse { mutableState.value.sidebarSnapshot },
                 error = diagnostics.takeIf { it.isNotEmpty() }?.joinToString(" | "),
                 rosterLoading = false,
@@ -943,7 +949,7 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     fun setBotPinned(botId: String, isPinned: Boolean) {
-        val current = mutableState.value.bots.filter { it.isPinned }.map { it.id }.toMutableList()
+        val current = mutableState.value.pinnedAgentIds.toMutableList()
         if (isPinned) {
             if (botId !in current) current += botId
         } else {
@@ -952,10 +958,33 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
         viewModelScope.launch {
             runCatching {
                 withContext(Dispatchers.IO) { coordinator.agentSetPinned(current) }
-            }.onSuccess {
+            }.onSuccess { settled ->
+                mutableState.value = mutableState.value.copy(
+                    pinnedAgentIds = settled,
+                    error = null,
+                )
                 refreshBots()
             }.onFailure { error ->
                 mutableState.value = mutableState.value.copy(error = error.message ?: "Pin state update failed")
+            }
+        }
+    }
+
+    fun reorderPinnedBot(movedId: String, targetId: String, position: PinnedMovePosition) {
+        val current = mutableState.value.pinnedAgentIds
+        val next = movePinnedAgent(current, movedId, targetId, position)
+        if (next == current) return
+        viewModelScope.launch {
+            runCatching {
+                withContext(Dispatchers.IO) { coordinator.agentSetPinned(next) }
+            }.onSuccess { settled ->
+                mutableState.value = mutableState.value.copy(
+                    pinnedAgentIds = settled,
+                    error = null,
+                )
+                refreshBots()
+            }.onFailure { error ->
+                mutableState.value = mutableState.value.copy(error = error.message ?: "Pinned Agent reorder failed")
             }
         }
     }
