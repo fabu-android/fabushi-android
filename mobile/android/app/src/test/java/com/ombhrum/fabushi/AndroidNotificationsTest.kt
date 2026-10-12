@@ -6,6 +6,7 @@ import com.ombhrum.fabushi.androidmain.notifications.DockBadgeAgent
 import com.ombhrum.fabushi.androidmain.notifications.DockBadgeRosterAgent
 import com.ombhrum.fabushi.androidmain.notifications.computeDockBadgeTotal
 import com.ombhrum.fabushi.androidmain.notifications.isStaleDockBadgeRow
+import com.ombhrum.fabushi.androidmain.notifications.agentNotificationEventKind
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -74,6 +75,37 @@ class AndroidNotificationsTest {
             ),
         )
         assertEquals(listOf(2, 0), totals)
+    }
+
+    @Test
+    fun notificationFeedAcceptsDesktopAndNativeEventShapes() {
+        assertEquals(
+            "agents",
+            agentNotificationEventKind(
+                org.json.JSONObject()
+                    .put("kind", "agents")
+                    .put("event", org.json.JSONObject().put("agents", org.json.JSONArray())),
+            ),
+        )
+        assertEquals(
+            "agent-upserted",
+            agentNotificationEventKind(
+                org.json.JSONObject().put(
+                    "event",
+                    org.json.JSONObject()
+                        .put("kind", "agent-upserted")
+                        .put("agent", org.json.JSONObject().put("id", "agent-a")),
+                ),
+            ),
+        )
+        assertEquals(
+            "agent-upserted",
+            agentNotificationEventKind(
+                org.json.JSONObject()
+                    .put("type", "agent-upserted")
+                    .put("agent", org.json.JSONObject().put("id", "agent-a")),
+            ),
+        )
     }
 
     @Test
