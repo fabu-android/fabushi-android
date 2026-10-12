@@ -82,6 +82,9 @@ internal class SignedInOnboardingViewModel(application: Application) : AndroidVi
                 } else {
                     SignedInOnboardingUiState(active = shouldOpen, accountSlot = accountSlot)
                 }
+                if (shouldOpen && (!current.active || current.accountSlot != accountSlot)) {
+                    reportOnboardingStep(SignedInOnboardingStep.MEET, "forward")
+                }
             }.onFailure { error ->
                 mutableState.value = mutableState.value.copy(
                     active = false,
@@ -115,10 +118,12 @@ internal class SignedInOnboardingViewModel(application: Application) : AndroidVi
     }
 
     private fun reportOnboardingStep(step: SignedInOnboardingStep, direction: String) {
+        val expectedAccountScope = onboardingAccountScope ?: return
         val telemetry = signedInOnboardingTelemetryStep(step)
         viewModelScope.launch(Dispatchers.IO) {
             runCatching {
                 coordinator.reportOnboardingStep(
+                    expectedAccountScope = expectedAccountScope,
                     step = telemetry.name,
                     stepIndex = telemetry.index,
                     direction = direction,
