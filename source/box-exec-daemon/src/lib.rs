@@ -19,6 +19,23 @@ pub use box_store_sync_backend::{
     open_box_store_sync_service, BoxStoreSyncAction, BoxStoreSyncBackend, BoxStoreSyncExecutor,
     BoxStoreSyncRequest, BOX_STORE_SYNC_CAPABILITY,
 };
+pub use box_store_backend::{RemoteBoxStoreBackend, RemoteBoxStoreBackendConfig};
+
+/// Compose the dedicated box.store.sync Remote Runner service with the real bounded
+/// filesystem/object-store backend. Android never calls this inside the APK; an explicitly
+/// authorized external runner owns this service and its workspace roots.
+pub fn open_production_box_store_sync_service<A>(
+    journal_path: impl Into<std::path::PathBuf>,
+    authorizer: A,
+    backend_config: RemoteBoxStoreBackendConfig,
+    now_ms: u64,
+) -> Result<server::RemoteExecutionService<A, RemoteBoxStoreBackend>, ExecutionError>
+where
+    A: server::RemoteExecutionAuthorizer,
+{
+    let backend = RemoteBoxStoreBackend::open(backend_config)?;
+    server::RemoteExecutionService::open(journal_path, authorizer, backend, now_ms)
+}
 pub use transport::{
     AuthenticatedRemoteHttpTransport, RemoteBearerCredential, RemoteCancelOutcome,
     RemoteDispatchOutcome, RemoteExecutionContext, RemoteExecutionTransport,
