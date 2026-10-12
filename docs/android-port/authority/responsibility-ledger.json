@@ -4967,6 +4967,15 @@
             "selectActiveHumanCall",
             "requireLocalCallLease"
           ]
+        },
+        {
+          "path": "source/electron-main/call-media.ts",
+          "blob_sha": "451d53d5e08b12b63b867e0e481c93780a091f9b",
+          "symbols": [
+            "createDesktopCallMediaPort",
+            "requestPermissions",
+            "listDisplaySources"
+          ]
         }
       ],
       "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
@@ -5006,22 +5015,27 @@
       "security_boundary": "Android runtime, not Compose, owns microphone/camera/screen-capture grants; screen capture requires Android user-consent flow.",
       "android_disposition": "android-adapted",
       "android_target": [
+        "source/host/src/human_call_runtime.rs",
+        "source/host/src/android_json_runtime.rs",
+        "source/android-preload/src/main/kotlin/com/ombhrum/fabushi/androidpreload/runtime/AndroidCoordinatorPort.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/presentation/MessagingViewModel.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/features/navigation/SectionSurfaces.kt",
         "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/features/conversations/ConversationSurfaces.kt",
-        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/media/NativeVoiceRecorder.kt",
-        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/media/NativeVoicePlayer.kt"
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/features/conversations/FabushiMessagingSurface.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/production/ProductionRenderer_view.kt"
       ],
-      "android_owner": "No complete canonical Android Human-call owner yet; current conversation and media adapters are dependencies only.",
+      "android_owner": "Rust HumanCallRuntime owns durable canonical call/session/signaling state; typed Coordinator + MessagingViewModel own immutable presentation projection. Android call-media permission, WebRTC transport and MediaProjection adapters remain open platform responsibilities.",
       "platform_delta": "Electron callMedia/display-source bridge must be replaced by Android-native WebRTC/media-device APIs and MediaProjection-style user-consent boundaries; Desktop arbitrary display-source enumeration is not copied.",
       "implementation_status": "mapped",
-      "production_wiring": "Not complete. Current native conversation/media owners do not yet constitute a Human WebRTC call state machine, signaling owner, device/permission lifecycle, process-death recovery or packaged call acceptance.",
-      "unit_test": "required: state transitions, duplicate start, hangup/cancel race, stale callback/account fence and device preference validation",
+      "production_wiring": "Partial production wiring is now real: CALLS navigation triggers MessagingViewModel.refreshHumanCalls(), which calls typed AndroidCoordinatorPort.humanCallList() -> Host feature.call.list -> durable HumanCallRuntime and projects immutable call history into SectionSurfaces. HumanCallRuntime already owns idempotent request IDs, account/generation fencing, transport lease, signal sequencing, reconnect generation, process-restart outcome_unknown and reconciliation. Still incomplete: CAMERA/RECORD_AUDIO call permission adapter, Android WebRTC media transport/device selection, MediaProjection user-consent screen sharing, and packaged physical-device call acceptance.",
+      "unit_test": "Rust HumanCallRuntime tests cover durable lifecycle/signaling/recovery; mobile/android/app/src/test/java/com/ombhrum/fabushi/HumanCallSectionProjectionTest.kt covers newest-wins duplicate call projection and ordering. Current exact-head Actions pending.",
       "contract_test": "required against Desktop Human call control and callMedia preference/permission semantics",
-      "integration_test": "required through typed Android bridge, native media runtime and real signaling/provider boundary",
+      "integration_test": "Typed Host call APIs are wired through AndroidCoordinatorPort and production CALLS presentation. Still required: real Android media permission + WebRTC + MediaProjection integration through the same call/session owner.",
       "packaged_test": "required on final exact-head minified APK/AAB",
       "device_test": "required on physical Android hardware for microphone/camera permission, voice/video media and lifecycle recovery",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Registered from the Desktop Mahayana workbench source audit only; this does not claim the missing Android call runtime is implemented. FBCP-ADR-003 explicitly says the canonical call/signaling owner is still proposed and must be separate from Computer, Transcript and Coordinator. Current Android native recorder/player and conversation call surface do not yet implement offer/answer sequencing, reconnect generation fencing, participant/device session truth, or durable terminal call metadata; keep mapped/not-verified. FBCP Revision 7 is a cross-cutting source authority for this responsibility; this mapping does not upgrade implementation_status or verification_status."
+      "notes": "Canonical call/session/signaling ownership is no longer missing: Rust HumanCallRuntime and typed AndroidCoordinatorPort are production-wired, and commits 1dbc98b44347940382e43ffcc9e515060321463e, 24d9ca5ec927b1c84c437df6a0eb20b2cfb40eab, 3b1b392b49fbd6fcc61c66ecf5352cf29fdfb3c7, 29bf8d5fc87745c22193b12ae55623119b807d72, 11b931da0c2041875a059a98ab546e6e2dd3483e, ae23828786ff694cd22610dd0d485ac7de2f3bfc and 8e45fb85765bdfd958813caedd68ad6e4cbe281f add the shipping call-history presentation slice. Keep mapped/not-verified because Desktop call-media.ts permission/display-source product effect still lacks Android CAMERA/RECORD_AUDIO + WebRTC + MediaProjection production replacement and physical-device evidence."
     },
     {
       "responsibility_id": "UI-I18N-A11Y-IME-ANDROID-001",
