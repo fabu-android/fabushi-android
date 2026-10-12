@@ -966,6 +966,25 @@ impl AndroidJsonHost {
     }
 
 
+    fn account_dashboard_action(&self, params: &Value) -> Result<Value, String> {
+        let action = required_string(params, "action")?;
+        let args_value = params
+            .get("args")
+            .and_then(Value::as_object)
+            .ok_or("Dashboard client action args object is required")?;
+        let mut args = std::collections::BTreeMap::new();
+        for (key, value) in args_value {
+            let string_value = value
+                .as_str()
+                .ok_or("Dashboard client action args must contain string values")?;
+            args.insert(key.clone(), string_value.to_string());
+        }
+        self.mcp_dashboard_backend
+            .as_ref()
+            .ok_or("Dashboard client action backend is unavailable")?
+            .client_action(action, &args)
+    }
+
     fn teach_recording_status(&self) -> Result<Value, String> {
         let snapshot = self
             .teach_recording
@@ -1030,6 +1049,7 @@ impl AndroidJsonHost {
             "feature.account.sandAccess" => self.account_sand_access(),
             "feature.account.privacyMode" => Ok(self.account_privacy_mode()),
             "feature.account.teamRules" => self.account_team_rules(),
+            "feature.account.dashboardAction" => self.account_dashboard_action(params),
             "feature.remote.binding.status" => Ok(self.remote_binding_status()),
             "feature.teachRecording.status" => self.teach_recording_status(),
             "feature.auth.deviceAgentSession" => Ok(self.device_agent_session()),

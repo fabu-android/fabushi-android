@@ -31,6 +31,8 @@ pub const DASHBOARD_GET_AVAILABLE_MCP_SERVERS_PATH: &str =
     "/aiserver.v1.DashboardService/GetAvailableMcpServers";
 pub const DASHBOARD_LIST_SAND_MCP_TOOLS_PATH: &str =
     "/aiserver.v1.DashboardService/ListSandMcpTools";
+pub const DASHBOARD_CLIENT_ACTION_PATH: &str =
+    "/aiserver.v1.DashboardService/ClientAction";
 pub const LIST_TOOLS_TIMEOUT_MS: u64 = 60_000;
 pub const CONTROL_RPC_TIMEOUT_MS: u64 = 30_000;
 pub const DEFAULT_CURSOR_BACKEND_URL: &str = "https://api2.cursor.sh";
@@ -433,6 +435,27 @@ impl CursorDashboardMcpAuthBackend {
             }
         }
         Ok(merged)
+    }
+
+    pub fn client_action(
+        &self,
+        action: &str,
+        args: &std::collections::BTreeMap<String, String>,
+    ) -> Result<Value, String> {
+        let action = action.trim();
+        if action.is_empty() {
+            return Err("Dashboard client action is required".into());
+        }
+        let credentials = self.credentials.credentials()?;
+        let ghost_mode = self.resolve_ghost_mode(&credentials);
+        let response = self.send_unary(
+            &credentials,
+            DASHBOARD_CLIENT_ACTION_PATH,
+            &encode_client_action_request(action, args),
+            CONTROL_RPC_TIMEOUT_MS,
+            ghost_mode,
+        )?;
+        decode_client_action_response(&response)
     }
 
     pub fn resolve_sand_privacy_mode(&self) -> Option<SandPrivacyMode> {
@@ -985,6 +1008,43 @@ fn string_fields(input: &[u8], wanted_field: u32) -> Result<Vec<String>, String>
     Ok(values)
 }
 
+fn encode_client_action_request(
+    action: &str,
+    args: &std::collections::BTreeMap<String, String>,
+) -> Vec<u8> {
+    let mut body = Vec::new();
+    encode_string(1, action, &mut body);
+    for (key, value) in args {
+        let mut entry = Vec::new();
+        encode_string(1, key, &mut entry);
+        encode_string(2, value, &mut entry);
+        encode_len_delimited(2, &entry, &mut body);
+    }
+    body
+}
+
+fn decode_client_action_response(input: &[u8]) -> Result<Value, String> {
+    let mut cursor = 0usize;
+    let mut success = false;
+    let mut error_message: Option<String> = None;
+    let mut info_message: Option<String> = None;
+    while cursor < input.len() {
+        let key = read_varint(input, &mut cursor)?;
+        let field = (key >> 3) as u32;
+        let wire = (key & 0x07) as u8;
+        match (field, wire) {
+            (1, 0) => success = read_varint(input, &mut cursor)? != 0,
+            (2, 2) => error_message = Some(read_string(input, &mut cursor)?),
+            (3, 2) => info_message = Some(read_string(input, &mut cursor)?),
+            _ => skip_field(input, &mut cursor, wire)?,
+        }
+    }
+    let message = if success { info_message } else { error_message }
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    Ok(json!({"ok":success,"message":message}))
+}
+
 fn encode_get_team_rules_request(team_id: u64) -> Vec<u8> {
     let mut body = vec![0x08, 0x01];
     encode_key(2, 0, &mut body);
@@ -1121,6 +1181,39 @@ mod tests {
         let mut value = Vec::new();
         encode_len_delimited(field, payload, &mut value);
         value
+    }
+
+    #[test]
+    fn client_action_wire_matches_desktop_dashboard_contract() {
+        assert_eq!(
+            DASHBOARD_CLIENT_ACTION_PATH,
+            "/aiserver.v1.DashboardService/ClientAction"
+        );
+        let args = std::collections::BTreeMap::from([
+            ("plan".to_string(), "pro".to_string()),
+            ("source".to_string(), "tray".to_string()),
+        ]);
+        let request = encode_client_action_request("upgrade", &args);
+        assert_eq!(request.first().copied(), Some(0x0a));
+        assert!(request.windows("upgrade".len()).any(|w| w == b"upgrade"));
+        assert!(request.windows("plan".len()).any(|w| w == b"plan"));
+        assert!(request.windows("pro".len()).any(|w| w == b"pro"));
+
+        let mut ok = Vec::new();
+        encode_bool(1, true, &mut ok);
+        encode_string(3, "Opened billing", &mut ok);
+        assert_eq!(
+            decode_client_action_response(&ok).unwrap(),
+            json!({"ok":true,"message":"Opened billing"})
+        );
+
+        let mut failed = Vec::new();
+        encode_bool(1, false, &mut failed);
+        encode_string(2, "Not allowed", &mut failed);
+        assert_eq!(
+            decode_client_action_response(&failed).unwrap(),
+            json!({"ok":false,"message":"Not allowed"})
+        );
     }
 
     #[test]
