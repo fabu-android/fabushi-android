@@ -14468,17 +14468,18 @@
         "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/production/ProductionRenderer_view.kt"
       ],
       "android_owner": "Rust AndroidUserSettings durable owner + typed Coordinator platform detector + native Settings projection",
-      "platform_delta": "Desktop detects with Intl.DateTimeFormat and echoes detected/override values to the Box Host. Android detects with java.time.ZoneId and persists the override directly inside the Rust Host owner, eliminating Electron IPC. Downstream Agent/Host consumption of the effective setting is still being audited.",
-      "implementation_status": "mapped",
-      "production_wiring": "Native Settings surface refresh/save -> typed Coordinator presentation port -> AndroidCoordinatorRuntime ZoneId validation/detection -> MahayanaHost/JNI -> feature.settings.timeZone(.set) -> one Rust AndroidUserSettings owner. Persisted/detected projection is complete; downstream effective-time-zone consumption by canonical Host/Agent execution remains open.",
-      "unit_test": "Rust AndroidUserSettings tests cover durability, clear, invalid-value no-mutation and predecessor migration; AndroidJsonHost time_zone_settings_dispatch_tests cover durable Host command round-trip. Fresh exact-head Actions pending.",
-      "contract_test": "typed AndroidTimeZoneSettings + Host command contract present; exact-head contract execution pending",
-      "integration_test": "native Settings read/write path present; downstream Host/Agent effective-time-zone consumption not yet closed",
+      "platform_delta": "Desktop detects with Intl.DateTimeFormat and synchronizes detected/override fields into Host settings. Android detects with java.time.ZoneId, synchronizes the process-owned detected IANA zone into Rust Host, keeps the optional override in canonical durable AndroidUserSettings, and freezes the effective override-or-detected zone into each production Agent turn as a trusted system reminder. Electron IPC is eliminated.",
+      "implementation_status": "implemented",
+      "production_wiring": "Native Settings refresh/save -> typed Coordinator presentation port -> AndroidCoordinatorRuntime ZoneId validation/detection -> MahayanaHost/JNI -> feature.settings.timeZone.detected + feature.settings.timeZone(.set) -> one Rust AndroidUserSettings override owner. agent_turn_send resolves Host effective_time_zone before any durable turn mutation and appends the frozen value as trusted system context to the provider prompt; Presentation never owns downstream timezone truth.",
+      "unit_test": "Rust AndroidUserSettings tests cover durability, clear, invalid-value no-mutation and predecessor migration; AndroidJsonHost time_zone_settings_dispatch_tests cover durable override, detected synchronization, override precedence, invalid detected values and process-death re-synchronization semantics. Fresh exact-head Actions pending.",
+      "contract_test": "typed AndroidTimeZoneSettings + detected/override Host command contract present; production turn code consumes Host effective_time_zone. Exact-head contract execution pending.",
+      "integration_test": "production Settings -> Host effective timezone -> Agent turn prompt wiring is present; packaged authenticated Agent/device behavior remains to be verified on the final exact head.",
       "packaged_test": "required on final exact-head package",
       "device_test": "required: change override, process-kill/relaunch, clear to system, verify effective downstream behavior",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Consolidated the concurrent duplicate SETTINGS-TIMEZONE-ANDROID-001 into this single responsibility. Do not promote from mapped until canonical downstream Host/Agent execution consumes the effective time zone and same-head CI/package/device evidence succeeds."
+      "notes": "Downstream Host/Agent consumption is now implemented: agent_turn_send freezes effective override-or-detected timezone into trusted turn context. Keep verification_status=not-verified until same-head CI/package/device evidence proves the integrated behavior.",
+      "android_head_at_update": "f738e31e4692821933a37949e7bd143980266baa"
     },
     {
       "responsibility_id": "MCP-TEAM-PLUGIN-POPULARITY-ANDROID-001",
