@@ -2450,6 +2450,8 @@ impl AndroidJsonHost {
         reason: &str,
     ) -> Result<(), String> {
         self.fence_turns_for_account_change(previous_fence, reason)?;
+        self.human_calls
+            .fence_account(previous_fence, reason, now_ms())?;
 
         let teach_identity = self
             .teach_recording
