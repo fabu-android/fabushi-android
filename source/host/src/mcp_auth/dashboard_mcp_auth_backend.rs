@@ -110,6 +110,13 @@ pub struct SandMcpBackendCredentials {
     pub box_namespace: String,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct McpServerToolSummary {
+    pub name: String,
+    pub title: Option<String>,
+    pub description: Option<String>,
+}
+
 pub trait SandMcpCredentialProvider: Send + Sync {
     fn credentials(&self) -> Result<SandMcpBackendCredentials, String>;
 }
@@ -404,7 +411,7 @@ impl CursorDashboardMcpAuthBackend {
             .collect()
     }
 
-    pub fn reload_server_tools(&self, server_id: &str) -> Result<usize, String> {
+    pub fn list_server_tools(&self, server_id: &str) -> Result<Vec<McpServerToolSummary>, String> {
         let requested_id = server_id
             .parse::<i32>()
             .map_err(|_| "MCP server id is outside signed int32 range".to_string())?;
@@ -420,7 +427,7 @@ impl CursorDashboardMcpAuthBackend {
         let server = decode_available_mcp_servers_response(&available)?
             .into_iter()
             .find(|server| server.id == requested_id)
-            .ok_or("MCP server disappeared during reload")?;
+            .ok_or("MCP server disappeared during tool discovery")?;
         if server.disabled_by_team_admin_policy {
             return Err("MCP server is blocked by current team admin policy".into());
         }
@@ -438,7 +445,11 @@ impl CursorDashboardMcpAuthBackend {
             LIST_TOOLS_TIMEOUT_MS,
             ghost_mode,
         )?;
-        decode_list_sand_mcp_tools_count(&response, identifier)
+        decode_list_sand_mcp_tools(&response, identifier)
+    }
+
+    pub fn reload_server_tools(&self, server_id: &str) -> Result<usize, String> {
+        Ok(self.list_server_tools(server_id)?.len())
     }
 
     pub fn fresh_server_snapshot(
@@ -853,10 +864,10 @@ fn encode_list_sand_mcp_tools_request(server_identifiers: &[&str]) -> Vec<u8> {
     output
 }
 
-fn decode_list_sand_mcp_tools_count(
+fn decode_list_sand_mcp_tools(
     input: &[u8],
     requested_identifier: &str,
-) -> Result<usize, String> {
+) -> Result<Vec<McpServerToolSummary>, String> {
     let mut cursor = 0usize;
     let mut matched = None;
     while cursor < input.len() {
@@ -865,25 +876,32 @@ fn decode_list_sand_mcp_tools_count(
         let wire = (key & 0x07) as u8;
         if field == 1 && wire == 2 {
             let bytes = read_len_delimited(input, &mut cursor)?;
-            let (identifier, tool_count) = decode_list_sand_mcp_server(bytes)?;
+            let (identifier, tools) = decode_list_sand_mcp_server(bytes)?;
             if identifier == requested_identifier {
-                matched = Some(tool_count);
+                matched = Some(tools);
             }
         } else {
             skip_field(input, &mut cursor, wire)?;
         }
     }
     matched.ok_or_else(|| {
-        format!(
-            "MCP tool reload did not return server identifier {requested_identifier}"
-        )
+        format!("MCP tool reload did not return server identifier {requested_identifier}")
     })
 }
 
-fn decode_list_sand_mcp_server(input: &[u8]) -> Result<(String, usize), String> {
+fn decode_list_sand_mcp_tools_count(
+    input: &[u8],
+    requested_identifier: &str,
+) -> Result<usize, String> {
+    Ok(decode_list_sand_mcp_tools(input, requested_identifier)?.len())
+}
+
+fn decode_list_sand_mcp_server(
+    input: &[u8],
+) -> Result<(String, Vec<McpServerToolSummary>), String> {
     let mut cursor = 0usize;
     let mut identifier = String::new();
-    let mut tool_count = 0usize;
+    let mut tools = Vec::new();
     while cursor < input.len() {
         let key = read_varint(input, &mut cursor)?;
         let field = (key >> 3) as u32;
@@ -891,13 +909,58 @@ fn decode_list_sand_mcp_server(input: &[u8]) -> Result<(String, usize), String> 
         match (field, wire) {
             (1, 2) => identifier = read_string(input, &mut cursor)?,
             (3, 2) => {
-                let _ = read_len_delimited(input, &mut cursor)?;
-                tool_count = tool_count.saturating_add(1);
+                let tool = decode_mcp_tool_definition(read_len_delimited(input, &mut cursor)?)?;
+                if !tool.name.is_empty() && !tools.iter().any(|existing: &McpServerToolSummary| existing.name == tool.name) {
+                    tools.push(tool);
+                }
             }
             _ => skip_field(input, &mut cursor, wire)?,
         }
     }
-    Ok((identifier, tool_count))
+    Ok((identifier, tools))
+}
+
+fn decode_mcp_tool_definition(input: &[u8]) -> Result<McpServerToolSummary, String> {
+    let mut cursor = 0usize;
+    let mut name = String::new();
+    let mut title = None;
+    let mut description = None;
+    while cursor < input.len() {
+        let key = read_varint(input, &mut cursor)?;
+        let field = (key >> 3) as u32;
+        let wire = (key & 0x07) as u8;
+        match (field, wire) {
+            // agent.v1.McpToolDefinition:
+            // name=1, description=2, provider_identifier=4, tool_name=5.
+            (1, 2) => {
+                let value = read_string(input, &mut cursor)?;
+                if !value.trim().is_empty() {
+                    title = Some(value);
+                }
+            }
+            (2, 2) => {
+                let value = read_string(input, &mut cursor)?;
+                if !value.trim().is_empty() {
+                    description = Some(value);
+                }
+            }
+            (5, 2) => name = read_string(input, &mut cursor)?,
+            _ => skip_field(input, &mut cursor, wire)?,
+        }
+    }
+    if name.trim().is_empty() {
+        return Err("MCP tool definition is missing tool_name".into());
+    }
+    if name.len() > 512 || title.as_ref().is_some_and(|value| value.len() > 1_024)
+        || description.as_ref().is_some_and(|value| value.len() > 16_384)
+    {
+        return Err("MCP tool definition exceeds bounded metadata limits".into());
+    }
+    Ok(McpServerToolSummary {
+        name,
+        title,
+        description,
+    })
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1963,10 +2026,12 @@ mod tests {
         encode_len_delimited(3, &[0x0a, 0x04, b'l', b'i', b's', b't'], &mut server);
         encode_len_delimited(3, &[0x0a, 0x06, b'c', b'r', b'e', b'a', b't', b'e'], &mut server);
         let response = len_field(1, &server);
-        assert_eq!(
-            decode_list_sand_mcp_tools_count(&response, "calendar/default").unwrap(),
-            2
-        );
+        let tools = decode_list_sand_mcp_tools(&response, "calendar/default").unwrap();
+        assert_eq!(tools.len(), 2);
+        assert_eq!(tools[0].name, "list");
+        assert_eq!(tools[0].title.as_deref(), Some("list"));
+        assert_eq!(tools[1].name, "create");
+        assert_eq!(decode_list_sand_mcp_tools_count(&response, "calendar/default").unwrap(), 2);
         assert!(decode_list_sand_mcp_tools_count(&response, "other").is_err());
     }
 
