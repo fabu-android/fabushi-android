@@ -2785,6 +2785,9 @@ impl AndroidJsonHost {
             if let Some(path) = self.ci_session_path.take() {
                 let _ = std::fs::remove_file(path);
             }
+            self.account_telemetry.report_signin(SigninLoginReport::SignedOut(
+                SigninSignoutCause::UserLogout,
+            ));
             return Ok(self.auth_status());
         }
         let (status, mutation) = self.account.logout()?;
@@ -2892,8 +2895,6 @@ impl AndroidJsonHost {
                     .live_account_fence
                     .lock()
                     .map_err(|_| "live account fence lock poisoned".to_string())? = None;
-                self.account_telemetry
-                    .report_signin(SigninLoginReport::LoginFailed("policy_refused"));
                 self.account_telemetry
                     .report_signin(SigninLoginReport::LoginFailed("policy_refused"));
                 return Ok(with_account_session_mutation(
