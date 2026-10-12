@@ -116,8 +116,10 @@ pub struct DurableAgentAttachmentOwner {
 impl DurableAgentAttachmentOwner {
     pub fn open(root: impl Into<PathBuf>) -> Result<Self, String> {
         let root = root.into();
-        fs::create_dir_all(root.join("staging")).map_err(|error| error.to_string())?;
-        fs::create_dir_all(root.join("files")).map_err(|error| error.to_string())?;
+        let staging_root = root.join("staging");
+        let completed_root = root.join("files");
+        fs::create_dir_all(&staging_root).map_err(|error| error.to_string())?;
+        fs::create_dir_all(&completed_root).map_err(|error| error.to_string())?;
         let state_path = root.join("state.json");
         let mut state = match fs::read(&state_path) {
             Ok(raw) => serde_json::from_slice::<AttachmentState>(&raw)
@@ -128,11 +130,41 @@ impl DurableAgentAttachmentOwner {
         if state.schema_version != SCHEMA_VERSION {
             return Err("unsupported Agent attachment state schema".into());
         }
-        // Incomplete ContentResolver streams are never resumed blindly after process death.
-        for id in state.staged.keys() {
-            let _ = fs::remove_file(root.join("staging").join(format!("{id}.part")));
-        }
+
+        // An interrupted ContentResolver stream is outcome-unknown, not a completed upload.
+        // Never resume it blindly after process death: clear both the durable stage records and
+        // every orphan .part file, including a file created before its state update reached disk.
         state.staged.clear();
+        for entry in fs::read_dir(&staging_root).map_err(|error| error.to_string())? {
+            let entry = entry.map_err(|error| error.to_string())?;
+            if entry.file_type().map_err(|error| error.to_string())?.is_file()
+                && entry.path().extension().and_then(|value| value.to_str()) == Some("part")
+            {
+                fs::remove_file(entry.path()).map_err(|error| error.to_string())?;
+            }
+        }
+
+        // A crash can happen on either side of the staging -> completed rename. Only a completed
+        // file that also has matching durable metadata is canonical. Prune stale metadata and
+        // delete untracked completed files rather than guessing that an uncertain upload succeeded.
+        state.completed.retain(|id, record| {
+            fs::metadata(completed_root.join(format!("{id}.bin")))
+                .is_ok_and(|metadata| metadata.is_file() && metadata.len() == record.attachment.size_bytes)
+        });
+        let canonical_completed = state.completed.keys().cloned().collect::<std::collections::BTreeSet<_>>();
+        for entry in fs::read_dir(&completed_root).map_err(|error| error.to_string())? {
+            let entry = entry.map_err(|error| error.to_string())?;
+            if !entry.file_type().map_err(|error| error.to_string())?.is_file() {
+                continue;
+            }
+            let path = entry.path();
+            let Some(name) = path.file_name().and_then(|value| value.to_str()) else { continue; };
+            let Some(id) = name.strip_suffix(".bin") else { continue; };
+            if !canonical_completed.contains(id) {
+                fs::remove_file(path).map_err(|error| error.to_string())?;
+            }
+        }
+
         let owner = Self { root, state_path, state };
         owner.persist()?;
         Ok(owner)
@@ -229,6 +261,9 @@ impl DurableAgentAttachmentOwner {
             .open(&path)
             .map_err(|error| error.to_string())?;
         file.write_all(bytes).map_err(|error| error.to_string())?;
+        // Never persist received_bytes ahead of the actual attachment bytes. A process death after
+        // this point may discard the stage, but it must not expose bytes that were only in userspace.
+        file.sync_data().map_err(|error| error.to_string())?;
         let record = self.state.staged.get_mut(attachment_id).expect("stage retained");
         record.received_bytes = end;
         self.persist()?;
@@ -366,12 +401,25 @@ impl DurableAgentAttachmentOwner {
 
     fn persist(&self) -> Result<(), String> {
         let tmp = self.state_path.with_extension("json.tmp");
-        fs::write(
-            &tmp,
-            serde_json::to_vec_pretty(&self.state).map_err(|error| error.to_string())?,
-        )
-        .map_err(|error| error.to_string())?;
-        fs::rename(tmp, &self.state_path).map_err(|error| error.to_string())
+        let encoded =
+            serde_json::to_vec_pretty(&self.state).map_err(|error| error.to_string())?;
+        let mut file = fs::OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(true)
+            .open(&tmp)
+            .map_err(|error| error.to_string())?;
+        file.write_all(&encoded).map_err(|error| error.to_string())?;
+        file.sync_all().map_err(|error| error.to_string())?;
+        drop(file);
+        fs::rename(&tmp, &self.state_path).map_err(|error| error.to_string())?;
+        #[cfg(unix)]
+        if let Some(parent) = self.state_path.parent() {
+            fs::File::open(parent)
+                .and_then(|directory| directory.sync_all())
+                .map_err(|error| error.to_string())?;
+        }
+        Ok(())
     }
 }
 
@@ -623,5 +671,30 @@ mod tests {
         };
         let mut reopened = DurableAgentAttachmentOwner::open(&root).unwrap();
         assert!(!reopened.abort(None, "session:a", "agent-a", &id).unwrap());
+    }
+
+    #[test]
+    fn process_reopen_reconciles_orphan_and_missing_completed_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("attachments");
+        let attachment = {
+            let mut owner = DurableAgentAttachmentOwner::open(&root).unwrap();
+            let id = owner
+                .begin(None, "session:a", "agent-a", "kept.txt", Some("text/plain"), Some(4))
+                .unwrap();
+            owner.append(None, "session:a", "agent-a", &id, 0, b"kept").unwrap();
+            owner.finish(None, "session:a", "agent-a", &id).unwrap()
+        };
+
+        fs::write(root.join("staging").join("orphan.part"), b"partial").unwrap();
+        fs::write(root.join("files").join("orphan.bin"), b"uncertain").unwrap();
+        fs::remove_file(root.join("files").join(format!("{}.bin", attachment.id))).unwrap();
+
+        let mut reopened = DurableAgentAttachmentOwner::open(&root).unwrap();
+        assert!(!root.join("staging").join("orphan.part").exists());
+        assert!(!root.join("files").join("orphan.bin").exists());
+        assert!(!reopened
+            .remove_completed(None, "session:a", "agent-a", &attachment.id)
+            .unwrap());
     }
 }
