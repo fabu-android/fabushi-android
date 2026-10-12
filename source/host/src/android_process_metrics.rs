@@ -24,6 +24,13 @@ pub struct AndroidProcessMetricsCollector {
 }
 
 impl AndroidProcessMetricsCollector {
+    pub fn reset(&mut self) {
+        self.sampler = None;
+        self.previous_cpu_time_ms = None;
+        self.last_observed_at_ms = None;
+        self.window_started_at_ms = None;
+    }
+
     pub fn observe(
         &mut self,
         observed_at_ms: u64,
@@ -125,6 +132,35 @@ mod tests {
         assert_eq!(second.cpu_time_ms_sample, 500);
         assert_eq!(second.memory_mb, 40.0);
         assert_eq!(second.session_peak_memory_mb, 96.0);
+    }
+
+    #[test]
+    fn reset_starts_a_fresh_session_without_disabled_interval_carryover() {
+        let mut collector = AndroidProcessMetricsCollector::default();
+        assert!(collector
+            .observe(1_000, 1_000, 64 * 1024 * 1024)
+            .unwrap()
+            .is_none());
+        let before = collector
+            .observe(301_000, 2_000, 96 * 1024 * 1024)
+            .unwrap()
+            .unwrap();
+
+        collector.reset();
+
+        assert!(collector
+            .observe(900_000, 9_000, 32 * 1024 * 1024)
+            .unwrap()
+            .is_none());
+        let after = collector
+            .observe(1_200_000, 9_250, 48 * 1024 * 1024)
+            .unwrap()
+            .unwrap();
+
+        assert_ne!(after.session_id, before.session_id);
+        assert_eq!(after.sample_seqno, 0);
+        assert_eq!(after.cpu_time_ms_sample, 250);
+        assert_eq!(after.session_peak_memory_mb, 48.0);
     }
 
     #[test]
