@@ -15933,6 +15933,61 @@
       "artifact": null,
       "verification_status": "not-verified",
       "notes": "Source and production route implemented. This does not close Desktop SQLite/global media index responsibilities in the remaining content_search files."
+    },
+    {
+      "responsibility_id": "CONTENT-SEARCH-INDEX-ANDROID-001",
+      "domain": "messaging-search",
+      "desktop_sources": [
+        {
+          "path": "source/host/src/extensions/content_search/extension.rs",
+          "blob_sha": "de352c29b522180afb77e5521b70b1f3595dad9c"
+        },
+        {
+          "path": "source/host/src/extensions/content_search/mod.rs",
+          "blob_sha": "275fb5b0a684e37b71987ffc65837c7aeb1cc1d7"
+        },
+        {
+          "path": "source/host/src/extensions/content_search/search_index_db.rs",
+          "blob_sha": "8d07eae4cf89bbcbe161c2e051c6c8e7e2abd7a1"
+        },
+        {
+          "path": "source/host/src/extensions/content_search/search_index_service.rs",
+          "blob_sha": "561cdb6ef5375f5e25e2d9b8dad3de63805b7495"
+        },
+        {
+          "path": "source/host/src/extensions/content_search/search_index_worker.rs",
+          "blob_sha": "fed841480151fed3201c7cbdd8723356a132a060"
+        },
+        {
+          "path": "source/host/src/extensions/content_search/search_index_writer.rs",
+          "blob_sha": "419f1307e13849c799183a90c638d29039ce73be"
+        }
+      ],
+      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "responsibility": "Preserve global Agent transcript message/media search semantics, deterministic limits and attachment projection while keeping the search index rebuildable rather than canonical.",
+      "source_owner": "Desktop ProductionContentSearchExtension / SandSearchIndexService derived-index owner",
+      "visible_effect": "Users can search durable Agent conversation text and media across restarts with bounded results and current-account fencing.",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "source/host/src/extensions/transcript/transcript_store.rs",
+        "source/host/src/android_json_runtime.rs",
+        "source/host/src/extensions/content_search/search_index_db.rs",
+        "source/host/src/extensions/content_search/search_index_service.rs",
+        "source/host/src/extensions/content_search/search_index_worker.rs",
+        "source/host/src/extensions/content_search/search_index_writer.rs"
+      ],
+      "android_owner": "Rust Host canonical TranscriptStore for shipping queries; FTS modules remain rebuildable projection code and do not own transcript truth.",
+      "platform_delta": "Desktop queries an asynchronously maintained Sand FTS SQLite projection. Android shipping queries its smaller app-private canonical transcript directly, eliminating mutation-subscription/worker/index-corruption failure modes. Ported FTS modules may later serve as a performance projection but cannot become a second canonical owner.",
+      "implementation_status": "implemented",
+      "production_wiring": "AndroidJsonHost dispatches account-fenced feature.contentSearch.messages and feature.contentSearch.media to durable TranscriptStore search_content/search_media. No UI or Kotlin layer owns a second index.",
+      "unit_test": "TranscriptStore content/media search tests cover restart persistence, per-agent cap, hidden peer exclusion, attachment metadata, query limits and ordering; exact-head Actions pending.",
+      "contract_test": "Host RPC methods are account-fenced and serialize canonical search projections; exact-head Actions pending.",
+      "integration_test": "required on same exact head through typed JNI/Android search surface",
+      "packaged_test": "required on final APK/AAB",
+      "device_test": "required on device acceptance",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Implemented semantic replacement; do not mark verified from code presence. Ported FTS core is not itself production evidence until explicitly wired as a derived projection."
     }
   ],
   "traceability": {
