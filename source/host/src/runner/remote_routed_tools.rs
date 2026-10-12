@@ -1400,6 +1400,26 @@ fn validate_remote_cloud_agent_input(object: &serde_json::Map<String, Value>) ->
         if params.len() > 64 || params.values().any(|value| !value.is_string()) {
             return Err("Remote CloudAgent model_params must contain bounded string values".into());
         }
+        if !params.is_empty()
+            && object
+                .get("model")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .is_none()
+        {
+            return Err("Remote CloudAgent model is required when model_params are provided".into());
+        }
+        if params.iter().any(|(key, value)| {
+            key.trim().is_empty()
+                || key.len() > 512
+                || key.chars().any(char::is_control)
+                || value
+                    .as_str()
+                    .is_some_and(|value| value.len() > 4096 || value.chars().any(char::is_control))
+        }) {
+            return Err("Remote CloudAgent model_params contain an invalid id or value".into());
+        }
     }
     if let Some(images) = object.get("images") {
         let images = images.as_array().ok_or("Remote CloudAgent images must be an array")?;
@@ -1412,6 +1432,13 @@ fn validate_remote_cloud_agent_input(object: &serde_json::Map<String, Value>) ->
                 .ok_or_else(|| format!("Remote CloudAgent images[{index}].url is required"))?;
             if url.len() > 4096 || url.chars().any(|c| c == '\0') {
                 return Err(format!("Remote CloudAgent images[{index}].url is invalid"));
+            }
+            let parsed = url::Url::parse(url)
+                .map_err(|_| format!("Remote CloudAgent images[{index}].url is not a valid URL"))?;
+            if parsed.scheme() != "file" || parsed.to_file_path().is_err() {
+                return Err(format!(
+                    "Remote CloudAgent images[{index}].url must be an absolute file:// URL"
+                ));
             }
         }
     }
@@ -1867,6 +1894,28 @@ mod tests {
             REMOTE_CLOUD_AGENT_EXECUTION_TIMEOUT_MS,
         );
         assert!(validate_remote_tool_input(CLOUD_AGENT_TOOL_NAME, &json!({"action":"reply","agent_id":"bc-1"})).is_err());
+        assert!(validate_remote_tool_input(
+            CLOUD_AGENT_TOOL_NAME,
+            &json!({"action":"launch","prompt":"x","model_params":{"fast":"true"}}),
+        ).is_err());
+        assert_eq!(
+            validate_remote_tool_input(
+                CLOUD_AGENT_TOOL_NAME,
+                &json!({"action":"launch","prompt":"x","model":"grok-4.5","model_params":{"fast":"true"}}),
+            ).unwrap(),
+            REMOTE_CLOUD_AGENT_EXECUTION_TIMEOUT_MS,
+        );
+        assert!(validate_remote_tool_input(
+            CLOUD_AGENT_TOOL_NAME,
+            &json!({"action":"launch","prompt":"x","images":[{"url":"https://example.com/a.png"}]}),
+        ).is_err());
+        assert_eq!(
+            validate_remote_tool_input(
+                CLOUD_AGENT_TOOL_NAME,
+                &json!({"action":"launch","prompt":"x","images":[{"url":"file:///workspace/a.png"}]}),
+            ).unwrap(),
+            REMOTE_CLOUD_AGENT_EXECUTION_TIMEOUT_MS,
+        );
         assert!(validate_remote_tool_input(CLOUD_AGENT_TOOL_NAME, &json!({"action":"unknown"})).is_err());
     }
 
