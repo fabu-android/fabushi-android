@@ -52,6 +52,7 @@ import com.ombhrum.fabushi.androidpreload.runtime.AndroidApprovalCleanupResult
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidClientSideToolV2Event
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidComposerDraft
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidConversationOutlineItem
+import com.ombhrum.fabushi.androidpreload.runtime.AndroidContentSearchMessage
 import com.ombhrum.fabushi.androidpreload.runtime.parseAndroidConversationOutlineItems
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidMcpOAuthCompletion
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidToolResultCard
@@ -2240,6 +2241,45 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
             null
         }
         return AndroidTranscriptHistoryPage(entries = entries, nextBeforeSeq = nextBeforeSeq)
+    }
+
+    override fun contentSearchMessages(
+        query: String,
+        limit: Int,
+    ): List<AndroidContentSearchMessage> {
+        val normalized = query.trim()
+        require(normalized.isNotEmpty()) { "Content search query must not be empty" }
+        require(limit in 1..50) { "Content search limit must be between 1 and 50" }
+        val rows = host.requestValue(
+            "feature.contentSearch.messages",
+            JSONObject()
+                .put("query", normalized)
+                .put("limit", limit),
+        ) as? JSONArray ?: error("Content search returned a malformed result")
+        return buildList(rows.length()) {
+            for (index in 0 until rows.length()) {
+                val row = rows.optJSONObject(index)
+                    ?: error("Content search row $index is not an object")
+                val agentId = row.getString("agentId").trim()
+                val entryId = row.getString("entryId").trim()
+                val role = row.getString("role").trim()
+                val snippet = row.getString("snippet")
+                check(agentId.isNotEmpty()) { "Content search row is missing Agent identity" }
+                check(entryId.isNotEmpty()) { "Content search row is missing entry identity" }
+                check(role == "user" || role == "assistant") {
+                    "Content search row has an unsupported role"
+                }
+                add(
+                    AndroidContentSearchMessage(
+                        agentId = agentId,
+                        entryId = entryId,
+                        role = role,
+                        timestampMs = row.optLong("timestampMs", 0L),
+                        snippet = snippet,
+                    ),
+                )
+            }
+        }
     }
 
     override fun conversationOutlineSnapshot(agentId: String): List<AndroidConversationOutlineItem> =
