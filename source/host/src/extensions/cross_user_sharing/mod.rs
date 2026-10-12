@@ -6,3 +6,5 @@ pub mod xuser_pending_departure_store;
 pub mod xuser_room_tombstone_store;
 pub mod xuser_departure_obligations;
 pub mod xuser_sharing_environment;
+
+pub mod xuser_entry_publisher;
