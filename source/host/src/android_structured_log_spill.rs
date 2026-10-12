@@ -166,13 +166,14 @@ fn encoded_len(state: &AndroidStructuredLogSpillState) -> usize {
     serde_json::to_vec(state).map(|bytes| bytes.len()).unwrap_or(usize::MAX)
 }
 
-fn valid_state(state: &AndroidStructuredLogSpillState) -> bool {
+fn valid_state(state: &AndroidStructuredLogSpillState, enforce_record_cap: bool) -> bool {
     if state.version != 1
         || state.account_slot.is_empty()
         || state.account_slot.chars().count() > 128
         || state.checkpoint.counter_id.is_empty()
         || state.checkpoint.counter_id.chars().count() > 128
-        || state.checkpoint.records.len() > ANDROID_STRUCTURED_LOG_SPILL_MAX_ENTRIES
+        || (enforce_record_cap
+            && state.checkpoint.records.len() > ANDROID_STRUCTURED_LOG_SPILL_MAX_ENTRIES)
     {
         return false;
     }
@@ -234,7 +235,7 @@ impl FileAndroidStructuredLogSpill {
 
         let raw = fs::read(&self.path)?;
         let state: AndroidStructuredLogSpillState = match serde_json::from_slice(&raw) {
-            Ok(state) if valid_state(&state) => state,
+            Ok(state) if valid_state(&state, true) => state,
             _ => {
                 self.clear()?;
                 return Ok(SpillLoad::InvalidDiscarded);
@@ -262,7 +263,7 @@ impl FileAndroidStructuredLogSpill {
         state: &AndroidStructuredLogSpillState,
         now_ms: u64,
     ) -> io::Result<Option<AndroidStructuredLogSpillState>> {
-        if !valid_state(state) {
+        if !valid_state(state, false) {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
                 "invalid structured log spill state",
