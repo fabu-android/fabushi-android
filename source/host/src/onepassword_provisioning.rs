@@ -4,7 +4,8 @@
 //! mutation, validation, and outcome-unknown rules while the actual operation stays behind an
 //! explicitly authorized Remote Runner. No local process execution or credential reveal exists here.
 
-use std::fmt;
+use serde::{Deserialize, Serialize};
+use std::{fmt, fs, path::{Path, PathBuf}};
 
 pub const MIN_EXPIRATION_SECONDS: u64 = 60;
 pub const MAX_EXPIRATION_SECONDS: u64 = 365 * 24 * 60 * 60;
@@ -113,6 +114,321 @@ impl ProvisioningMutationGuard {
     pub fn delivery_indeterminate(&self) -> bool { self.delivery_indeterminate }
 }
 
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum DurableProvisioningPhase {
+    Idle,
+    Prepared,
+    Delivering,
+    OutcomeUnknown,
+    Delivered,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct DurableProvisioningSnapshot {
+    pub phase: DurableProvisioningPhase,
+    pub account_fence: Option<String>,
+    pub account_epoch: u64,
+    pub request_id: Option<String>,
+    pub operation_id: Option<String>,
+    pub consumer_reference: Option<String>,
+    pub outcome_unknown_reason: Option<String>,
+}
+
+impl DurableProvisioningSnapshot {
+    pub fn idle() -> Self {
+        Self {
+            phase: DurableProvisioningPhase::Idle,
+            account_fence: None,
+            account_epoch: 0,
+            request_id: None,
+            operation_id: None,
+            consumer_reference: None,
+            outcome_unknown_reason: None,
+        }
+    }
+    pub fn requires_reconciliation(&self) -> bool {
+        self.phase == DurableProvisioningPhase::OutcomeUnknown
+    }
+}
+
+/// Durable single owner for the side-effect boundary. Secret material is deliberately absent.
+pub struct DurableOnePasswordProvisioningOwner {
+    path: PathBuf,
+    snapshot: DurableProvisioningSnapshot,
+}
+
+impl DurableOnePasswordProvisioningOwner {
+    pub fn open(path: impl Into<PathBuf>) -> Result<Self, String> {
+        let path = path.into();
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+        }
+        let mut snapshot = if path.exists() {
+            serde_json::from_slice::<DurableProvisioningSnapshot>(
+                &fs::read(&path).map_err(|error| error.to_string())?,
+            )
+            .map_err(|error| format!("invalid 1Password provisioning state: {error}"))?
+        } else {
+            DurableProvisioningSnapshot::idle()
+        };
+        validate_durable_snapshot(&snapshot)?;
+
+        match snapshot.phase {
+            DurableProvisioningPhase::Prepared => {
+                snapshot = DurableProvisioningSnapshot::idle();
+            }
+            DurableProvisioningPhase::Delivering => {
+                snapshot.phase = DurableProvisioningPhase::OutcomeUnknown;
+                snapshot.outcome_unknown_reason =
+                    Some("process_reopen_requires_delivery_reconciliation".into());
+            }
+            _ => {}
+        }
+
+        let owner = Self { path, snapshot };
+        owner.persist()?;
+        Ok(owner)
+    }
+
+    pub fn snapshot(&self) -> &DurableProvisioningSnapshot {
+        &self.snapshot
+    }
+
+    pub fn begin(
+        &mut self,
+        account_fence: &str,
+        account_epoch: u64,
+        request_id: &str,
+        operation_id: &str,
+    ) -> Result<(), String> {
+        validate_durable_identity("account fence", account_fence)?;
+        validate_durable_identity("request", request_id)?;
+        validate_durable_identity("operation", operation_id)?;
+        if account_epoch == 0 {
+            return Err("1Password provisioning account epoch must be positive".into());
+        }
+        if matches!(
+            self.snapshot.phase,
+            DurableProvisioningPhase::Prepared
+                | DurableProvisioningPhase::Delivering
+                | DurableProvisioningPhase::OutcomeUnknown
+        ) {
+            return Err("1Password provisioning already has an unsettled operation".into());
+        }
+        self.snapshot = DurableProvisioningSnapshot {
+            phase: DurableProvisioningPhase::Prepared,
+            account_fence: Some(account_fence.into()),
+            account_epoch,
+            request_id: Some(request_id.into()),
+            operation_id: Some(operation_id.into()),
+            consumer_reference: None,
+            outcome_unknown_reason: None,
+        };
+        self.persist()
+    }
+
+    /// Persist before dispatching the authorized Remote Runner side effect.
+    pub fn mark_delivering(
+        &mut self,
+        account_fence: &str,
+        account_epoch: u64,
+        operation_id: &str,
+    ) -> Result<(), String> {
+        self.assert_current(account_fence, account_epoch, operation_id)?;
+        if self.snapshot.phase != DurableProvisioningPhase::Prepared {
+            return Err("1Password delivery cannot begin from current phase".into());
+        }
+        self.snapshot.phase = DurableProvisioningPhase::Delivering;
+        self.persist()
+    }
+
+    pub fn settle_delivered(
+        &mut self,
+        account_fence: &str,
+        account_epoch: u64,
+        operation_id: &str,
+        consumer_reference: &str,
+    ) -> Result<(), String> {
+        self.assert_current(account_fence, account_epoch, operation_id)?;
+        if !matches!(
+            self.snapshot.phase,
+            DurableProvisioningPhase::Delivering | DurableProvisioningPhase::OutcomeUnknown
+        ) {
+            return Err("1Password delivery cannot settle from current phase".into());
+        }
+        validate_durable_identity("consumer reference", consumer_reference)?;
+        self.snapshot.phase = DurableProvisioningPhase::Delivered;
+        self.snapshot.consumer_reference = Some(consumer_reference.into());
+        self.snapshot.outcome_unknown_reason = None;
+        self.persist()
+    }
+
+    pub fn mark_outcome_unknown(
+        &mut self,
+        account_fence: &str,
+        account_epoch: u64,
+        operation_id: &str,
+        reason: &str,
+    ) -> Result<(), String> {
+        self.assert_current(account_fence, account_epoch, operation_id)?;
+        if self.snapshot.phase != DurableProvisioningPhase::Delivering {
+            return Err("only in-flight 1Password delivery can become outcome unknown".into());
+        }
+        validate_durable_text("outcome unknown reason", reason, 320)?;
+        self.snapshot.phase = DurableProvisioningPhase::OutcomeUnknown;
+        self.snapshot.outcome_unknown_reason = Some(reason.into());
+        self.persist()
+    }
+
+    pub fn reconcile_not_delivered(
+        &mut self,
+        account_fence: &str,
+        account_epoch: u64,
+        operation_id: &str,
+    ) -> Result<(), String> {
+        self.assert_current(account_fence, account_epoch, operation_id)?;
+        if self.snapshot.phase != DurableProvisioningPhase::OutcomeUnknown {
+            return Err("1Password delivery does not require reconciliation".into());
+        }
+        self.snapshot = DurableProvisioningSnapshot::idle();
+        self.persist()
+    }
+
+    pub fn fence_account_switch(
+        &mut self,
+        previous_account_fence: &str,
+        previous_account_epoch: u64,
+    ) -> Result<(), String> {
+        if !matches!(
+            self.snapshot.phase,
+            DurableProvisioningPhase::Prepared
+                | DurableProvisioningPhase::Delivering
+                | DurableProvisioningPhase::OutcomeUnknown
+        ) {
+            return Ok(());
+        }
+        if self.snapshot.account_fence.as_deref() != Some(previous_account_fence)
+            || self.snapshot.account_epoch != previous_account_epoch
+        {
+            return Err("1Password provisioning account fence mismatch".into());
+        }
+        match self.snapshot.phase {
+            DurableProvisioningPhase::Prepared => {
+                self.snapshot = DurableProvisioningSnapshot::idle();
+            }
+            DurableProvisioningPhase::Delivering => {
+                self.snapshot.phase = DurableProvisioningPhase::OutcomeUnknown;
+                self.snapshot.outcome_unknown_reason =
+                    Some("account_switch_requires_delivery_reconciliation".into());
+            }
+            DurableProvisioningPhase::OutcomeUnknown => {}
+            _ => unreachable!(),
+        }
+        self.persist()
+    }
+
+    fn assert_current(
+        &self,
+        account_fence: &str,
+        account_epoch: u64,
+        operation_id: &str,
+    ) -> Result<(), String> {
+        if self.snapshot.account_fence.as_deref() != Some(account_fence)
+            || self.snapshot.account_epoch != account_epoch
+        {
+            return Err("stale 1Password callback from old account epoch".into());
+        }
+        if self.snapshot.operation_id.as_deref() != Some(operation_id) {
+            return Err("stale or mismatched 1Password provisioning operation".into());
+        }
+        Ok(())
+    }
+
+    fn persist(&self) -> Result<(), String> {
+        atomic_write_durable_snapshot(&self.path, &self.snapshot)
+    }
+}
+
+fn validate_durable_snapshot(snapshot: &DurableProvisioningSnapshot) -> Result<(), String> {
+    if snapshot.phase == DurableProvisioningPhase::Idle {
+        if snapshot.account_fence.is_some()
+            || snapshot.account_epoch != 0
+            || snapshot.request_id.is_some()
+            || snapshot.operation_id.is_some()
+            || snapshot.consumer_reference.is_some()
+            || snapshot.outcome_unknown_reason.is_some()
+        {
+            return Err("idle 1Password provisioning contains stale identity".into());
+        }
+        return Ok(());
+    }
+    validate_durable_identity(
+        "account fence",
+        snapshot.account_fence.as_deref().ok_or("1Password account fence missing")?,
+    )?;
+    if snapshot.account_epoch == 0 {
+        return Err("1Password provisioning account epoch must be positive".into());
+    }
+    validate_durable_identity(
+        "request",
+        snapshot.request_id.as_deref().ok_or("1Password request missing")?,
+    )?;
+    validate_durable_identity(
+        "operation",
+        snapshot.operation_id.as_deref().ok_or("1Password operation missing")?,
+    )?;
+    if snapshot.phase == DurableProvisioningPhase::Delivered {
+        validate_durable_identity(
+            "consumer reference",
+            snapshot
+                .consumer_reference
+                .as_deref()
+                .ok_or("1Password consumer reference missing")?,
+        )?;
+    } else if snapshot.consumer_reference.is_some() {
+        return Err("unsettled 1Password provisioning contains consumer reference".into());
+    }
+    if snapshot.phase == DurableProvisioningPhase::OutcomeUnknown {
+        validate_durable_text(
+            "outcome unknown reason",
+            snapshot
+                .outcome_unknown_reason
+                .as_deref()
+                .ok_or("1Password outcome unknown reason missing")?,
+            320,
+        )?;
+    } else if snapshot.outcome_unknown_reason.is_some() {
+        return Err("1Password provisioning contains stale outcome unknown reason".into());
+    }
+    Ok(())
+}
+
+fn validate_durable_identity(label: &str, value: &str) -> Result<(), String> {
+    validate_durable_text(label, value, 192)?;
+    if value.trim() != value {
+        return Err(format!("{label} must not contain surrounding whitespace"));
+    }
+    Ok(())
+}
+
+fn validate_durable_text(label: &str, value: &str, max: usize) -> Result<(), String> {
+    if value.is_empty() || value.len() > max || value.chars().any(char::is_control) {
+        return Err(format!("{label} is invalid"));
+    }
+    Ok(())
+}
+
+fn atomic_write_durable_snapshot(path: &Path, snapshot: &DurableProvisioningSnapshot) -> Result<(), String> {
+    let parent = path.parent().ok_or("1Password provisioning store has no parent")?;
+    fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    let temporary = path.with_extension("json.tmp");
+    let bytes = serde_json::to_vec_pretty(snapshot).map_err(|error| error.to_string())?;
+    fs::write(&temporary, bytes).map_err(|error| error.to_string())?;
+    fs::rename(&temporary, path).map_err(|error| error.to_string())
+}
+
 fn invalid(message: &'static str) -> ProvisioningError {
     ProvisioningError { code: ProvisioningErrorCode::InvalidInput, message }
 }
@@ -153,4 +469,53 @@ mod tests {
         guard.reconcile_delivery();
         guard.begin(true).unwrap();
     }
+    #[test]
+    fn durable_delivery_reopens_as_outcome_unknown_without_secret_material() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("onepassword-provisioning.json");
+        {
+            let mut owner = DurableOnePasswordProvisioningOwner::open(&path).unwrap();
+            owner.begin("session:a", 7, "req-1", "op-1").unwrap();
+            owner.mark_delivering("session:a", 7, "op-1").unwrap();
+        }
+        let reopened = DurableOnePasswordProvisioningOwner::open(&path).unwrap();
+        assert_eq!(reopened.snapshot().phase, DurableProvisioningPhase::OutcomeUnknown);
+        assert!(reopened.snapshot().requires_reconciliation());
+        let persisted = std::fs::read_to_string(path).unwrap();
+        assert!(!persisted.contains("ops_"));
+        assert!(!persisted.contains("token"));
+        assert!(reopened.begin("session:a", 7, "req-2", "op-2").is_err());
+    }
+
+    #[test]
+    fn durable_provisioning_fences_account_switch_and_explicit_reconciliation() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("onepassword-provisioning.json");
+        let mut owner = DurableOnePasswordProvisioningOwner::open(&path).unwrap();
+        owner.begin("session:a", 7, "req-1", "op-1").unwrap();
+        owner.mark_delivering("session:a", 7, "op-1").unwrap();
+        owner.fence_account_switch("session:a", 7).unwrap();
+        assert_eq!(owner.snapshot().phase, DurableProvisioningPhase::OutcomeUnknown);
+        assert!(owner
+            .reconcile_not_delivered("session:b", 8, "op-1")
+            .unwrap_err()
+            .contains("old account"));
+        owner
+            .reconcile_not_delivered("session:a", 7, "op-1")
+            .unwrap();
+        assert_eq!(owner.snapshot(), &DurableProvisioningSnapshot::idle());
+    }
+
+    #[test]
+    fn prepared_process_reopen_is_safe_to_discard_before_external_dispatch() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("onepassword-provisioning.json");
+        {
+            let mut owner = DurableOnePasswordProvisioningOwner::open(&path).unwrap();
+            owner.begin("session:a", 7, "req-1", "op-1").unwrap();
+        }
+        let reopened = DurableOnePasswordProvisioningOwner::open(&path).unwrap();
+        assert_eq!(reopened.snapshot(), &DurableProvisioningSnapshot::idle());
+    }
+
 }
