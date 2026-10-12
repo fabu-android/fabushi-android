@@ -881,6 +881,8 @@ interface AndroidCoordinatorPort {
         error("Agent avatar generation is unavailable on this Coordinator port")
     fun agentSetNotifyOnUpdates(id: String, isEnabled: Boolean): JSONObject =
         error("Agent notification settings are unavailable on this Coordinator port")
+    fun agentSetWorkflowEnabled(id: String, workflowId: String, isEnabled: Boolean): JSONObject =
+        error("Agent workflow enablement is unavailable on this Coordinator port")
     fun agentSetHidden(id: String, isHidden: Boolean): JSONObject
     fun agentSetUnread(id: String, isUnread: Boolean): JSONObject
     fun agentDuplicate(id: String): JSONObject

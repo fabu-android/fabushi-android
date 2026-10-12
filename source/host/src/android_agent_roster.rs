@@ -23,6 +23,8 @@ pub struct AndroidAgentRecord {
     #[serde(default)]
     pub notify_on_updates_enabled: bool,
     #[serde(default)]
+    pub disabled_workflow_ids: Vec<String>,
+    #[serde(default)]
     pub is_group: bool,
     #[serde(default)]
     pub member_ids: Vec<String>,
@@ -49,6 +51,7 @@ impl AndroidAgentRecord {
             "description": self.description,
             "title": self.title,
             "notifyOnUpdatesEnabled": self.notify_on_updates_enabled,
+            "disabledWorkflowIds": self.disabled_workflow_ids,
             "isGroup": self.is_group,
             "memberIds": self.member_ids,
             "isHiddenFromSidebar": self.is_hidden_from_sidebar,
@@ -165,6 +168,7 @@ impl AndroidAgentRoster {
             description,
             title: None,
             notify_on_updates_enabled: false,
+            disabled_workflow_ids: Vec::new(),
             is_group: false,
             member_ids: Vec::new(),
             is_hidden_from_sidebar: false,
@@ -197,6 +201,7 @@ impl AndroidAgentRoster {
             description,
             title: None,
             notify_on_updates_enabled: false,
+            disabled_workflow_ids: Vec::new(),
             is_group: true,
             member_ids: members,
             is_hidden_from_sidebar: false,
@@ -268,6 +273,7 @@ impl AndroidAgentRoster {
             description: normalized_description,
             title: None,
             notify_on_updates_enabled: false,
+            disabled_workflow_ids: Vec::new(),
             is_group: false,
             member_ids: Vec::new(),
             is_hidden_from_sidebar: false,
@@ -462,6 +468,44 @@ impl AndroidAgentRoster {
                 agent.updated_at = now_ms();
                 Ok(agent.as_json())
             }
+            "workflow" => {
+                let id = mutation
+                    .get("id")
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .ok_or_else(|| "presentation workflow id is required".to_string())?;
+                let workflow_id = mutation
+                    .get("workflowId")
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .ok_or_else(|| "presentation workflow workflowId is required".to_string())?;
+                let enabled = mutation
+                    .get("enabled")
+                    .and_then(Value::as_bool)
+                    .ok_or_else(|| "presentation workflow enabled is required".to_string())?;
+                let agent = next
+                    .agents
+                    .iter_mut()
+                    .find(|agent| agent.id == id)
+                    .ok_or_else(|| "agent not found".to_string())?;
+                if agent.is_group {
+                    return Err("Agent group workflow enablement is not supported".into());
+                }
+                let mut disabled = agent
+                    .disabled_workflow_ids
+                    .iter()
+                    .filter_map(|value| {
+                        let value = value.trim();
+                        (!value.is_empty()).then(|| value.to_string())
+                    })
+                    .collect::<BTreeSet<_>>();
+                if enabled { disabled.remove(workflow_id); } else { disabled.insert(workflow_id.to_string()); }
+                agent.disabled_workflow_ids = disabled.into_iter().collect();
+                agent.updated_at = now_ms();
+                Ok(agent.as_json())
+            }
             "duplicate" => {
                 let id = mutation
                     .get("id")
@@ -642,6 +686,7 @@ impl AndroidAgentRoster {
             description: source.description,
             title: source.title,
             notify_on_updates_enabled: source.notify_on_updates_enabled,
+            disabled_workflow_ids: source.disabled_workflow_ids,
             is_group: source.is_group,
             member_ids: source.member_ids,
             is_hidden_from_sidebar: false,
@@ -1188,6 +1233,39 @@ mod tests {
                 .contains("reused with mismatched arguments")
         );
         assert_eq!(reopened.count(), 2);
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn workflow_enablement_is_durable_replay_safe_and_duplicate_preserves_it() {
+        let path = temp_path("workflow-enablement");
+        let mut roster = AndroidAgentRoster::open(&path).unwrap();
+        let agent = roster.create("Agent", "description").unwrap();
+        let mutation = json!({"kind":"workflow","id":agent.id,"workflowId":"wf-review","enabled":false});
+        let first = roster.apply_presentation_operation("session:account-a", "workflow-disable", &mutation).unwrap();
+        assert_eq!(first["status"], "completed");
+        assert_eq!(first["result"]["disabledWorkflowIds"], json!(["wf-review"]));
+        let replay = roster.apply_presentation_operation("session:account-a", "workflow-disable", &mutation).unwrap();
+        assert_eq!(replay, first);
+        let duplicate = roster.duplicate(&agent.id).unwrap();
+        assert_eq!(duplicate.disabled_workflow_ids, vec!["wf-review".to_string()]);
+        drop(roster);
+        let mut reopened = AndroidAgentRoster::open(&path).unwrap();
+        assert_eq!(reopened.get(&agent.id).unwrap().disabled_workflow_ids, vec!["wf-review".to_string()]);
+        let enabled = reopened.apply_presentation_operation(
+            "session:account-a",
+            "workflow-enable",
+            &json!({"kind":"workflow","id":agent.id,"workflowId":"wf-review","enabled":true}),
+        ).unwrap();
+        assert_eq!(enabled["result"]["disabledWorkflowIds"], json!([]));
+        let member = reopened.create("Member", "").unwrap();
+        let group = reopened.create_group("Group", "", std::slice::from_ref(&member.id)).unwrap();
+        let rejected = reopened.apply_presentation_operation(
+            "session:account-a",
+            "workflow-group",
+            &json!({"kind":"workflow","id":group.id,"workflowId":"wf-review","enabled":false}),
+        ).unwrap();
+        assert_eq!(rejected["status"], "rejected");
         let _ = fs::remove_file(path);
     }
 
