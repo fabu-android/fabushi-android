@@ -958,7 +958,8 @@ fn parse_avatar_data_url(value: Option<&Value>) -> Result<Option<String>, String
                 return Err("avatarDataUrl contains invalid base64 image data".into());
             }
             let padding = payload.as_bytes().iter().rev().take_while(|byte| **byte == b'=').count();
-            if padding > 2 {
+            let content_len = payload.len().saturating_sub(padding);
+            if padding > 2 || payload.as_bytes()[..content_len].contains(&b'=') {
                 return Err("avatarDataUrl contains invalid base64 padding".into());
             }
             let decoded_bytes = payload
@@ -1339,9 +1340,12 @@ mod tests {
         ))).is_err());
 
         let max_payload_len = ((5 * 1024 * 1024 + 2) / 3) * 4;
-        let max_payload = "A".repeat(max_payload_len);
+        let max_payload = format!("{}=", "A".repeat(max_payload_len - 1));
         let max_value = format!("data:image/png;base64,{max_payload}");
         assert!(parse_avatar_data_url(Some(&Value::String(max_value))).is_ok());
+        assert!(parse_avatar_data_url(Some(&Value::String(
+            "data:image/png;base64,A=AA".into()
+        ))).is_err());
 
         let too_large_payload = "A".repeat(max_payload_len + 4);
         let too_large = format!("data:image/png;base64,{too_large_payload}");
