@@ -463,6 +463,12 @@ interface AndroidCoordinatorPort {
         error("MCP server custom instruction mutation is unavailable on this Coordinator port")
     fun toggleMcpServerTool(serverId: String, toolName: String): JSONArray =
         error("MCP server tool toggle is unavailable on this Coordinator port")
+    fun logoutMcpAccount(serverId: String, accountKey: String): JSONObject =
+        error("MCP account logout is unavailable on this Coordinator port")
+    fun renameMcpAccount(serverId: String, accountKey: String, newAccountKey: String): JSONObject =
+        error("MCP account rename is unavailable on this Coordinator port")
+    fun removeMcpAccount(serverId: String, accountKey: String): JSONObject =
+        error("MCP account removal is unavailable on this Coordinator port")
     fun mcpOAuthRegister(state: String, provider: String): Boolean
     fun mcpOAuthRegisterBound(
         state: String,
