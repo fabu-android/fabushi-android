@@ -46,6 +46,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
@@ -98,6 +100,7 @@ internal fun GrokHomeSurface(
     onDuplicateBot: (String) -> Unit,
     onDeleteBot: suspend (String) -> Unit,
     onSetBotPinned: (String, Boolean) -> Unit,
+    onReorderPinnedBot: (String, String, PinnedMovePosition) -> Unit,
     onToggleSidebarSection: (String) -> Unit,
     onRenameSidebarSection: (String, String) -> Unit,
     onDeleteSidebarSection: (String) -> Unit,
@@ -724,6 +727,11 @@ internal fun GrokHomeSurface(
                     it.description.contains(query.trim(), true)
             }
             val visibleBots = matchingBots.filter { !it.isHidden }
+            val sidebarProjection = projectSidebarAgents(
+                agents = visibleBots,
+                pinnedAgentIds = botState.pinnedAgentIds,
+                updatedAt = MobileBotSummaryAndroid::updatedAt,
+            )
             val allMatchingBotsHidden =
                 matchingBots.isNotEmpty() &&
                     visibleBots.isEmpty() &&
@@ -771,12 +779,19 @@ internal fun GrokHomeSurface(
             }
 
             if (visibleBots.isNotEmpty()) {
-                val visibleById = visibleBots.associateBy { it.id }
+                val visibleById = sidebarProjection.recent.associateBy { it.id }
                 val renderedSections = if (botState.sidebarSnapshot.sections.isEmpty()) {
-                    listOf(null to visibleBots)
+                    listOf(null to (sidebarProjection.pinned + sidebarProjection.recent))
                 } else {
-                    botState.sidebarSnapshot.sections.map { section ->
-                        section to section.agentIds.mapNotNull(visibleById::get)
+                    buildList {
+                        if (sidebarProjection.pinned.isNotEmpty()) {
+                            add(null to sidebarProjection.pinned)
+                        }
+                        addAll(
+                            botState.sidebarSnapshot.sections.map { section ->
+                                section to section.agentIds.mapNotNull(visibleById::get)
+                            },
+                        )
                     }
                 }
                 renderedSections
@@ -784,7 +799,7 @@ internal fun GrokHomeSurface(
                     .forEach { (section, sectionBots) ->
                         val sectionName = section?.name?.ifBlank {
                             if (section.id == AGENT_UNASSIGNED_SECTION_ID) "Unassigned" else "Section"
-                        } ?: "Bots"
+                        } ?: if (sectionBots.any { it.isPinned }) "Pinned" else "Recent"
                         val isCollapsed = section?.isCollapsed == true
                         item {
                             if (section == null) {
@@ -878,6 +893,37 @@ internal fun GrokHomeSurface(
                                 },
                                 trailing = {
                                     Row(verticalAlignment = Alignment.CenterVertically) {
+                                        if (bot.isPinned) {
+                                            val pinnedIndex = sidebarProjection.pinned.indexOfFirst { it.id == bot.id }
+                                            val previousPinned = sidebarProjection.pinned.getOrNull(pinnedIndex - 1)
+                                            val nextPinned = sidebarProjection.pinned.getOrNull(pinnedIndex + 1)
+                                            TextButton(
+                                                onClick = {
+                                                    previousPinned?.let {
+                                                        onReorderPinnedBot(bot.id, it.id, PinnedMovePosition.BEFORE)
+                                                    }
+                                                },
+                                                enabled = previousPinned != null,
+                                                modifier = Modifier
+                                                    .semantics {
+                                                        contentDescription = "Move ${bot.name} up in pinned Agents"
+                                                    }
+                                                    .testTag("agent-pinned-up-${bot.id}"),
+                                            ) { Text("↑", fontSize = 12.sp) }
+                                            TextButton(
+                                                onClick = {
+                                                    nextPinned?.let {
+                                                        onReorderPinnedBot(bot.id, it.id, PinnedMovePosition.AFTER)
+                                                    }
+                                                },
+                                                enabled = nextPinned != null,
+                                                modifier = Modifier
+                                                    .semantics {
+                                                        contentDescription = "Move ${bot.name} down in pinned Agents"
+                                                    }
+                                                    .testTag("agent-pinned-down-${bot.id}"),
+                                            ) { Text("↓", fontSize = 12.sp) }
+                                        }
                                         if (bot.isGroup) {
                                             TextButton(
                                                 onClick = {
