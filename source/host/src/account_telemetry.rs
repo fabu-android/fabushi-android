@@ -7,6 +7,27 @@ pub const DEGRADED_MS_BUCKET_CAP: u64 = 86_400_000;
 pub const DEGRADED_MS_BUCKET_CEILINGS_MS: [u64; 7] =
     [5_000, 30_000, 60_000, 300_000, 1_800_000, 21_600_000, DEGRADED_MS_BUCKET_CAP];
 pub const ACCOUNT_TELEMETRY_BUFFER_CAP: usize = 16;
+pub const ACCESS_BLOCKED_MS_CAP: u64 = 7 * 24 * 60 * 60 * 1_000;
+const ACCESS_BLOCKED_EDGES: [&str; 2] = ["entered", "recovered"];
+const ACCESS_BLOCKED_CAUSES: [&str; 5] = [
+    "wrong_account_suspected",
+    "seat_revoked",
+    "plan_expired",
+    "no_plan",
+    "unknown",
+];
+const ACCESS_BLOCK_REASONS: [&str; 10] = [
+    "unspecified",
+    "none",
+    "teamPrivacyMode",
+    "teamSetupRequired",
+    "teamAccessRequired",
+    "notOffered",
+    "freeTrialAvailable",
+    "paywallIndividual",
+    "paywallTeamMember",
+    "paywallTeamAdmin",
+];
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SessionRefreshFailure {
@@ -88,6 +109,40 @@ impl AccountTelemetryBuffer {
         if let Some(projection) = signin_gate_to_projection(report) {
             self.push(projection);
         }
+    }
+
+    pub fn report_access_blocked(
+        &mut self,
+        edge: &str,
+        cause: &str,
+        access_reason: &str,
+        ms_blocked: Option<u64>,
+    ) -> Result<(), String> {
+        if !ACCESS_BLOCKED_EDGES.contains(&edge) {
+            return Err("invalid access-blocked edge".into());
+        }
+        if !ACCESS_BLOCKED_CAUSES.contains(&cause) {
+            return Err("invalid access-blocked cause".into());
+        }
+        if !ACCESS_BLOCK_REASONS.contains(&access_reason) {
+            return Err("invalid access-blocked reason".into());
+        }
+        let level = if edge == "entered" && cause != "no_plan" {
+            "warn"
+        } else {
+            "info"
+        };
+        self.push(AccountTelemetryProjection {
+            stream: "access-blocked".into(),
+            level: level.into(),
+            metadata: json!({
+                "edge": edge,
+                "cause": cause,
+                "access_reason": access_reason,
+                "ms_blocked": ms_blocked.map(|value| value.min(ACCESS_BLOCKED_MS_CAP).to_string()),
+            }),
+        });
+        Ok(())
     }
 
     pub fn snapshot(&self) -> Vec<AccountTelemetryProjection> {
@@ -273,6 +328,38 @@ mod tests {
             CONSECUTIVE_FAILURES_CAP.to_string()
         );
         assert_eq!(recovered.metadata["degraded_ms"], "60000");
+    }
+
+    #[test]
+    fn access_blocked_projection_is_bounded_and_rejects_free_text() {
+        let mut buffer = AccountTelemetryBuffer::default();
+        buffer
+            .report_access_blocked(
+                "entered",
+                "unknown",
+                "paywallIndividual",
+                Some(u64::MAX),
+            )
+            .unwrap();
+        let entered = buffer.snapshot().pop().unwrap();
+        assert_eq!(entered.stream, "access-blocked");
+        assert_eq!(entered.level, "warn");
+        assert_eq!(entered.metadata["access_reason"], "paywallIndividual");
+        assert_eq!(
+            entered.metadata["ms_blocked"],
+            ACCESS_BLOCKED_MS_CAP.to_string(),
+        );
+
+        buffer
+            .report_access_blocked("recovered", "no_plan", "none", Some(42))
+            .unwrap();
+        assert_eq!(buffer.snapshot().last().unwrap().level, "info");
+        assert!(buffer
+            .report_access_blocked("entered", "token=secret", "none", None)
+            .is_err());
+        assert!(buffer
+            .report_access_blocked("entered", "unknown", "secret reason", None)
+            .is_err());
     }
 
     #[test]
