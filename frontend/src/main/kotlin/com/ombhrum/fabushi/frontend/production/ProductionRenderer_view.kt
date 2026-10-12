@@ -2,10 +2,16 @@ package com.ombhrum.fabushi
 
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.Checkbox
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -16,6 +22,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -36,6 +43,7 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
+import java.util.UUID
 
 private enum class RendererRoute { GROK_HOME, AGENT_NETWORK, MESSAGING }
 
@@ -77,6 +85,7 @@ internal fun ProductionRenderer(
                 var commandPaletteInitialTab by remember { mutableStateOf(CommandPaletteTab.ALL) }
                 var showAbout by remember { mutableStateOf(false) }
                 var showSettings by remember { mutableStateOf(false) }
+                var showFeedback by remember { mutableStateOf(false) }
                 var autoReviewSnapshot by remember {
                     mutableStateOf<AndroidAutoReviewInstructionsSnapshot?>(null)
                 }
@@ -178,6 +187,18 @@ internal fun ProductionRenderer(
                     AndroidAboutDialog(
                         updateState = updateState,
                         onClose = { showAbout = false },
+                    )
+                }
+                if (showFeedback) {
+                    val feedbackAccountScope =
+                        state.rootConnectionProjection.accountGeneration.toString() + ":" +
+                            state.rootConnectionProjection.accountEpoch.toString() + ":" +
+                            state.rootConnectionProjection.accountIdentity
+                    FabushiFeedbackSurface(
+                        accountScopeKey = feedbackAccountScope,
+                        conversationId = null,
+                        submit = coordinator::submitFeedback,
+                        onClose = { showFeedback = false },
                     )
                 }
                 fun refreshTimeZoneSettings() {
@@ -366,6 +387,10 @@ internal fun ProductionRenderer(
                         onCancelSandTrial = model::cancelSandTrial,
                         onCheckUpdate = { updateModel.checkForUpdates(force = true) },
                         onInstallUpdate = updateModel::downloadAndInstall,
+                        onOpenFeedback = {
+                            showSettings = false
+                            showFeedback = true
+                        },
                         onClose = { showSettings = false },
                     )
                 }
@@ -597,6 +622,7 @@ internal fun ProductionRenderer(
                     val rootOverlayClose: (() -> Unit)? = when {
                         commandPaletteOpen -> ({ commandPaletteOpen = false })
                         showSettings -> ({ showSettings = false })
+                        showFeedback -> ({ showFeedback = false })
                         showAbout -> ({ showAbout = false })
                         openedMiniApp != null -> ({ openedMiniApp = null })
                         else -> null
@@ -1092,4 +1118,182 @@ internal fun ProductionRenderer(
                 }
             }
         
+}
+
+
+internal const val FEEDBACK_MESSAGE_MAX_CHARS = 10_000
+
+private enum class FeedbackPhase {
+    IDLE,
+    SENDING,
+    SENT,
+    FAILED,
+}
+
+internal fun feedbackErrorMessage(code: String?): String = when (code) {
+    "access-denied" -> "Feedback is not available for this account."
+    "invalid-feedback" -> "Feedback could not be sent because the message is invalid."
+    "not-signed-in" -> "Sign in again before sending feedback."
+    "rate-limited" -> "Too many feedback requests. Try again later."
+    "subscription-required" -> "Feedback requires an active subscription."
+    else -> "Feedback could not be sent. Try again when the service is available."
+}
+
+@Composable
+internal fun FabushiFeedbackSurface(
+    accountScopeKey: String,
+    conversationId: String?,
+    submit: suspend (message: String, submissionId: String, conversationId: String?) -> JSONObject,
+    onClose: () -> Unit,
+) {
+    var message by remember(accountScopeKey) { mutableStateOf("") }
+    var includeConversation by remember(accountScopeKey, conversationId) {
+        mutableStateOf(conversationId != null)
+    }
+    var phase by remember(accountScopeKey) { mutableStateOf(FeedbackPhase.IDLE) }
+    var failureCode by remember(accountScopeKey) { mutableStateOf<String?>(null) }
+    var submissionId by remember(accountScopeKey) { mutableStateOf<String?>(null) }
+    val latestAccountScopeKey by rememberUpdatedState(accountScopeKey)
+    val scope = rememberCoroutineScope()
+    val sending = phase == FeedbackPhase.SENDING
+    val sent = phase == FeedbackPhase.SENT
+    val cleanMessage = message.trim()
+    val canSend =
+        !sending &&
+            !sent &&
+            cleanMessage.isNotEmpty() &&
+            message.length <= FEEDBACK_MESSAGE_MAX_CHARS
+
+    fun closeIfAllowed() {
+        if (!sending) onClose()
+    }
+
+    fun sendExplicitly() {
+        if (!canSend) return
+        val capturedScope = accountScopeKey
+        val capturedMessage = cleanMessage
+        val capturedConversation = conversationId?.takeIf { includeConversation }
+        val stableSubmissionId = submissionId ?: UUID.randomUUID().toString().also {
+            submissionId = it
+        }
+        phase = FeedbackPhase.SENDING
+        failureCode = null
+        scope.launch {
+            val outcome = withContext(Dispatchers.IO) {
+                runCatching {
+                    submit(capturedMessage, stableSubmissionId, capturedConversation)
+                }
+            }
+            if (capturedScope != latestAccountScopeKey) return@launch
+            outcome.fold(
+                onSuccess = { response ->
+                    if (response.optBoolean("ok", false)) {
+                        phase = FeedbackPhase.SENT
+                        failureCode = null
+                    } else {
+                        phase = FeedbackPhase.FAILED
+                        failureCode = response.optString("code").ifBlank { "unavailable" }
+                    }
+                },
+                onFailure = {
+                    phase = FeedbackPhase.FAILED
+                    failureCode = "unavailable"
+                },
+            )
+        }
+    }
+
+    AlertDialog(
+        onDismissRequest = ::closeIfAllowed,
+        modifier = Modifier.testTag("fabushi-feedback-dialog"),
+        title = { Text(if (sent) "Feedback sent" else "Send feedback") },
+        text = {
+            if (sent) {
+                Text(
+                    "Thank you. Your feedback was sent.",
+                    modifier = Modifier.testTag("feedback-sent"),
+                )
+            } else {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text("Tell us what happened or what would make Fabushi better.")
+                    OutlinedTextField(
+                        value = message,
+                        onValueChange = { value ->
+                            if (!sending) {
+                                message = value.take(FEEDBACK_MESSAGE_MAX_CHARS + 1)
+                                if (phase == FeedbackPhase.FAILED) {
+                                    phase = FeedbackPhase.IDLE
+                                    failureCode = null
+                                }
+                                submissionId = null
+                            }
+                        },
+                        enabled = !sending,
+                        label = { Text("Feedback") },
+                        supportingText = {
+                            Text("${message.length} / $FEEDBACK_MESSAGE_MAX_CHARS")
+                        },
+                        modifier = Modifier.testTag("feedback-message"),
+                    )
+                    if (conversationId != null) {
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Checkbox(
+                                checked = includeConversation,
+                                onCheckedChange = { checked ->
+                                    if (!sending) includeConversation = checked
+                                },
+                                enabled = !sending,
+                                modifier = Modifier.testTag("feedback-include-conversation"),
+                            )
+                            Text("Include current conversation ID")
+                        }
+                    }
+                    if (message.length > FEEDBACK_MESSAGE_MAX_CHARS) {
+                        Text(
+                            "Feedback must be $FEEDBACK_MESSAGE_MAX_CHARS characters or fewer.",
+                            color = MaterialTheme.colorScheme.error,
+                        )
+                    }
+                    if (phase == FeedbackPhase.FAILED) {
+                        Text(
+                            feedbackErrorMessage(failureCode),
+                            color = MaterialTheme.colorScheme.error,
+                            modifier = Modifier.testTag("feedback-error"),
+                        )
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            if (sent) {
+                TextButton(
+                    onClick = onClose,
+                    modifier = Modifier.testTag("feedback-done"),
+                ) { Text("Done") }
+            } else {
+                TextButton(
+                    onClick = ::sendExplicitly,
+                    enabled = canSend,
+                    modifier = Modifier.testTag("feedback-send"),
+                ) {
+                    Text(
+                        when {
+                            sending -> "Sending…"
+                            phase == FeedbackPhase.FAILED -> "Retry"
+                            else -> "Send"
+                        },
+                    )
+                }
+            }
+        },
+        dismissButton = {
+            if (!sent) {
+                TextButton(
+                    onClick = ::closeIfAllowed,
+                    enabled = !sending,
+                    modifier = Modifier.testTag("feedback-close"),
+                ) { Text("Close") }
+            }
+        },
+    )
 }
