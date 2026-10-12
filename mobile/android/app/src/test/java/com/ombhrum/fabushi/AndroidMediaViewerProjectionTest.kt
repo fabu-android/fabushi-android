@@ -1,6 +1,7 @@
 package com.ombhrum.fabushi
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.ByteArrayOutputStream
@@ -9,6 +10,85 @@ import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 
 class AndroidMediaViewerProjectionTest {
+    @Test
+    fun mediaStreamingPolicyKeepsLargePlaybackOutOfJvmByteArrays() {
+        assertTrue(shouldStreamAndroidMediaToFile(message("video", "video", mimeType = "video/mp4")))
+        assertTrue(shouldStreamAndroidMediaToFile(message("pdf", "document", mimeType = "application/pdf")))
+        assertTrue(shouldStreamAndroidMediaToFile(message("doc", "document", mimeType = "application/octet-stream")))
+        assertFalse(shouldStreamAndroidMediaToFile(message("photo", "photo", mimeType = "image/png")))
+        assertFalse(
+            shouldStreamAndroidMediaToFile(
+                message(
+                    "sheet",
+                    "document",
+                    mimeType = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    fileName = "report.xlsx",
+                ),
+            ),
+        )
+    }
+
+    @Test
+    fun rangedBlobStreamingWritesChunksInOrderWithoutWholeBlobBuffer() {
+        val directory = File(
+            System.getProperty("java.io.tmpdir"),
+            "fabushi-media-stream-" + System.nanoTime(),
+        ).apply { check(mkdirs()) }
+        val size = 4 * 1024 * 1024 + 3
+        val calls = mutableListOf<Pair<Int, Int>>()
+        val file = try {
+            streamAndroidBlobToTemporaryFile(size, directory) { offset, length ->
+                calls += offset to length
+                ByteArray(length) { index -> ((offset + index) and 0xff).toByte() }
+            }
+        } finally {
+            // The returned completed file is intentionally inspected below before cleanup.
+        }
+        assertEquals(listOf(0 to 4 * 1024 * 1024, 4 * 1024 * 1024 to 3), calls)
+        assertEquals(size.toLong(), file.length())
+        file.inputStream().use { input -> assertEquals(0, input.read()) }
+        java.io.RandomAccessFile(file, "r").use { input ->
+            input.seek(size.toLong() - 1)
+            assertEquals(2, input.read())
+        }
+        file.delete()
+        directory.delete()
+    }
+
+    @Test
+    fun rangedBlobStreamingDeletesPartialFileOnFailure() {
+        val directory = File(
+            System.getProperty("java.io.tmpdir"),
+            "fabushi-media-stream-failure-" + System.nanoTime(),
+        ).apply { check(mkdirs()) }
+        var calls = 0
+        val result = runCatching {
+            streamAndroidBlobToTemporaryFile(4 * 1024 * 1024 + 1, directory) { _, length ->
+                calls += 1
+                if (calls == 1) ByteArray(length) else error("injected chunk failure")
+            }
+        }
+        assertTrue(result.isFailure)
+        assertEquals(2, calls)
+        assertTrue(directory.listFiles().orEmpty().isEmpty())
+        directory.delete()
+    }
+
+    @Test
+    fun rangedBlobStreamingRejectsChunkBeyondRequestedRange() {
+        val directory = File(
+            System.getProperty("java.io.tmpdir"),
+            "fabushi-media-stream-range-" + System.nanoTime(),
+        ).apply { check(mkdirs()) }
+        val result = runCatching {
+            streamAndroidBlobToTemporaryFile(8, directory) { _, requested ->
+                ByteArray(requested + 1)
+            }
+        }
+        assertTrue(result.isFailure)
+        assertTrue(directory.listFiles().orEmpty().isEmpty())
+        directory.delete()
+    }
     private fun message(
         id: String,
         type: String,
