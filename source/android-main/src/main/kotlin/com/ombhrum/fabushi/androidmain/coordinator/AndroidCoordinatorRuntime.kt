@@ -242,6 +242,12 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
         startComputerRebuildEventPump()
         resumeComputerRebuildMigrationIfNeeded()
         resumeQueuedComputerUpdateIfNeeded()
+        computerRebuildTelemetryExecutor.scheduleWithFixedDelay(
+            { runCatching { emitComputerRebuildLifecycleTelemetry() } },
+            COMPUTER_REBUILD_TELEMETRY_SAMPLE_SECONDS,
+            COMPUTER_REBUILD_TELEMETRY_SAMPLE_SECONDS,
+            TimeUnit.SECONDS,
+        )
         runCatching { reconcileAgentRosterMutations() }
         mainThreadPressureSampler.start()
         processMetricsExecutor.scheduleWithFixedDelay(
@@ -3524,6 +3530,80 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
         }
     }
 
+    private fun emitComputerRebuildLifecycleTelemetry() {
+        val accountEpoch = accountAccessOwner.currentProjection().accountEpoch
+        val snapshot = computerRebuildOwner.snapshot(accountEpoch)
+        val kind = snapshot.kind ?: run {
+            synchronized(computerRebuildTelemetryLock) {
+                computerRebuildTelemetryEpisodeKey = null
+                computerRebuildPendingStallReported = false
+                computerRebuildTakingLongerReported = false
+                computerRebuildUnreachableReported = false
+            }
+            return
+        }
+        if (snapshot.processGeneration != processGeneration) return
+        val visibility = computerRebuildOwner.visibilityTelemetry(accountEpoch) ?: return
+        val episodeKey = listOf(
+            accountEpoch.toString(),
+            processGeneration.toString(),
+            kind.name,
+            snapshot.operationId.orEmpty(),
+            snapshot.requestId.orEmpty(),
+            (snapshot.episodeStartedAtMs ?: 0L).toString(),
+        ).joinToString(":")
+
+        var emitPendingStall = false
+        var emitTakingLonger = false
+        var emitUnreachable = false
+        synchronized(computerRebuildTelemetryLock) {
+            if (computerRebuildTelemetryEpisodeKey != episodeKey) {
+                computerRebuildTelemetryEpisodeKey = episodeKey
+                computerRebuildPendingStallReported = false
+                computerRebuildTakingLongerReported = false
+                computerRebuildUnreachableReported = false
+            }
+            if (snapshot.pending && visibility.isStalled && !computerRebuildPendingStallReported) {
+                computerRebuildPendingStallReported = true
+                emitPendingStall = true
+            }
+            if (visibility.isStalled && !computerRebuildTakingLongerReported) {
+                computerRebuildTakingLongerReported = true
+                emitTakingLonger = true
+            }
+            if (!snapshot.connected && !computerRebuildUnreachableReported) {
+                computerRebuildUnreachableReported = true
+                emitUnreachable = true
+            }
+        }
+
+        val rebuildKind = kind.name.lowercase()
+        if (emitPendingStall) {
+            reportRebuildPendingStall(
+                rebuildKind = rebuildKind,
+                elapsedMs = visibility.elapsedMs,
+                hasAck = snapshot.acknowledged,
+                streamAttached = computerRebuildMigrationRunning.get(),
+            )
+        }
+        if (emitTakingLonger) {
+            reportRebuildEscalation(
+                rebuildKind = rebuildKind,
+                elapsedMs = visibility.elapsedMs,
+                action = "shown",
+                escalation = "taking-longer",
+            )
+        }
+        if (emitUnreachable) {
+            reportRebuildEscalation(
+                rebuildKind = rebuildKind,
+                elapsedMs = visibility.elapsedMs,
+                action = "shown",
+                escalation = "unreachable",
+            )
+        }
+    }
+
     private fun startComputerRebuildEventPump() {
         computerRebuildEventExecutor.execute {
             while (!closed.get()) {
@@ -3776,6 +3856,7 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
         private const val PROCESS_SESSION_HEARTBEAT_SECONDS = 60L
         private const val COMPUTER_REBUILD_TELEMETRY_SECONDS = 30L
         private const val COMPUTER_REBUILD_RECONNECT_MS = 3_000L
+        private const val COMPUTER_REBUILD_TELEMETRY_SAMPLE_SECONDS = 15L
         @Volatile private var instance: AndroidCoordinatorRuntime? = null
 
         fun get(application: Application): AndroidCoordinatorRuntime =
