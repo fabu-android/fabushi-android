@@ -6,6 +6,7 @@ use fabushi_android_box_exec_daemon::{
     RemoteExecutionContext, RemoteExecutionTransport, RemoteReconcileOutcome, RemoteRunner,
     RemoteTransportPolicy,
 };
+use fabushi_android_local_exec_daemon::AndroidLocalRunner;
 use fabushi_android_shared::{ExecutionError, ExecutionRequest, ExecutionResult, ExecutionTarget};
 use std::path::Path;
 
@@ -15,6 +16,16 @@ pub const SAND_SUMMARIZATION_MAX_PROMPT_CHARS: usize = 32_000;
 pub trait HostRunnerSession {
     fn execute(&mut self, request: &ExecutionRequest) -> Result<ExecutionResult, ExecutionError>;
     fn cancel(&mut self, operation_id: &str) -> Result<(), ExecutionError>;
+}
+
+impl HostRunnerSession for AndroidLocalRunner {
+    fn execute(&mut self, request: &ExecutionRequest) -> Result<ExecutionResult, ExecutionError> {
+        AndroidLocalRunner::execute(self, request.clone())
+    }
+
+    fn cancel(&mut self, operation_id: &str) -> Result<(), ExecutionError> {
+        AndroidLocalRunner::cancel(self, operation_id)
+    }
 }
 
 /// Legacy target router retained for local-only call sites. It never upgrades a local
