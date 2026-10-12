@@ -392,6 +392,14 @@ internal fun ProductionRenderer(
                             showSettings = false
                             showFeedback = true
                         },
+                        onOpenHelpCenter = {
+                            runtimePort.launchExternalUrl(FABUSHI_HELP_CENTER_URL)
+                            Unit
+                        },
+                        onOpenAbout = {
+                            showSettings = false
+                            showAbout = true
+                        },
                         onClose = { showSettings = false },
                     )
                 }
