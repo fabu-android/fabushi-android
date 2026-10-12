@@ -14,6 +14,29 @@ class SettingsConfigurationModelsTest {
     }
 
     @Test
+    fun accountAvatarCandidatesMatchDesktopSecurityAndGithubFallbackContract() {
+        assertEquals(
+            listOf(
+                "https://images.example.com/avatar.png",
+                "https://avatars.githubusercontent.com/u/42?v=4&s=192",
+            ),
+            accountAvatarCandidateUrls(
+                authId = "github|42",
+                preferredUrl = "https://images.example.com/avatar.png",
+            ),
+        )
+        assertEquals(
+            listOf("https://avatars.githubusercontent.com/u/42?v=4&s=192"),
+            accountAvatarCandidateUrls(
+                authId = "github|42",
+                preferredUrl = "http://images.example.com/avatar.png",
+            ),
+        )
+        assertEquals(emptyList<String>(), accountAvatarCandidateUrls("google|42", "javascript:alert(1)"))
+        assertNull(githubAccountAvatarUrl("github|not-numeric"))
+    }
+
+    @Test
     fun instructionRowsPreserveIdentityDuplicateRejectionAndCrossListMoves() {
         val base = AutoReviewInstructions(
             allowInstructions = listOf("read files", "run tests"),
