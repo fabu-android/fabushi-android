@@ -15259,6 +15259,32 @@
       "artifact": null,
       "verification_status": "not-verified",
       "notes": "Do not treat MCP connection readiness as proof of channel message delivery."
+    },
+    {
+      "responsibility_id": "DURABLE-FILE-POLICY-ANDROID-001",
+      "domain": "runtime-durable-storage-policy",
+      "desktop_path": "source/host/src/durable_file_policy.rs",
+      "desktop_symbol": "BOX_STORE_SAND_DATA_EXCLUDED_FILE_NAMES + durable Host filenames",
+      "source_sha": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "responsibility": "Keep Host recovery/journal control-plane files out of Box/data snapshot copy semantics so upgrade resume, ack obligations, pending wakes, cross-user dedupe and disk-pressure reminder state remain single-owned durable Host state.",
+      "source_owner": "Rust Host durable file policy",
+      "visible_effect": "Restoring/copying Agent or Box data cannot replay or duplicate Host control-plane obligations, wakeups or dedupe markers.",
+      "android_disposition": "direct-port",
+      "android_target": [
+        "source/host/src/durable_file_policy.rs"
+      ],
+      "android_owner": "Rust Host durable file policy",
+      "platform_delta": "None for the file-name/exclusion contract; Android adds an explicit set helper for callers/tests.",
+      "implementation_status": "implemented",
+      "production_wiring": "The constants are compiled in the shipping Host crate; no Kotlin/Compose owner exists. Full Box snapshot replacement remains tracked separately.",
+      "unit_test": "durable_file_policy::tests::durable_names_match_the_host_contract; exact-head Actions pending",
+      "contract_test": "required on exact-head Rust/storage gate",
+      "integration_test": "required with final Box/snapshot replacement once outbound Runner storage is wired",
+      "packaged_test": "required on final APK/AAB",
+      "device_test": "covered by recovery/upgrade/device acceptance",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Narrow source responsibility closed; this does not imply complete Box snapshot parity."
     }
   ],
   "traceability": {
