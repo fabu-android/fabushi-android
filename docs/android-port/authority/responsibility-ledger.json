@@ -14404,6 +14404,107 @@
       "artifact": null,
       "verification_status": "not-verified",
       "notes": "Registered from exact Desktop source audit. Do not infer implementation from generic telemetry modules."
+    },
+    {
+      "responsibility_id": "DIAGNOSTICS-PROCESS-METRICS-ANDROID-001",
+      "domain": "diagnostics-performance-telemetry",
+      "desktop_sources": [
+        {
+          "path": "source/electron-main/process-metrics/collector.ts",
+          "blob_sha": "f92731766edd976c6af01de107da10c880263fe6",
+          "symbols": [
+            "SandProcessMetricsCollector",
+            "clampProcessMetricsRate"
+          ]
+        },
+        {
+          "path": "source/electron-main/process-metrics/sampler.ts",
+          "blob_sha": "919c92bef2ad8782ef23c68fc6fe68e1b282ca3d",
+          "symbols": [
+            "ProcessMetricsSampler"
+          ]
+        },
+        {
+          "path": "source/electron-main/process-metrics/redaction.ts",
+          "blob_sha": "3583a7c936b2b2c366e692e7c989071a872d921b",
+          "symbols": [
+            "sanitizeProcessName",
+            "hashProcessName"
+          ]
+        },
+        {
+          "path": "source/electron-main/process-metrics/transport.ts",
+          "blob_sha": "e53e66a2997d4ea8125cfef4e6180a879cf52e64",
+          "symbols": [
+            "SandProcessMetricsReporter",
+            "buildSandProcessMetricsRequest"
+          ]
+        },
+        {
+          "path": "source/electron-main/process-metrics/desktop-metrics-runtime.ts",
+          "blob_sha": "4cd7da388bc91fe8747b3bee5c09289f3156eebb",
+          "symbols": [
+            "createDesktopMetricsRuntime"
+          ]
+        }
+      ],
+      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "responsibility": "Collect bounded CPU/memory performance diagnostics under an explicit enable/kill-switch policy, fence stale scans/reports, redact process identity, bound reporting latency, and dispose cleanly without allowing telemetry failure to affect product state.",
+      "source_owner": "Desktop process-metrics collector/sampler/runtime with Cursor numeric/process reporting backend",
+      "direct_callers": [
+        "Desktop metrics runtime bootstrap",
+        "heap-metrics ingest",
+        "experiment/config updates"
+      ],
+      "downstream_dependencies": [
+        "platform process sampler",
+        "telemetry configuration",
+        "redaction",
+        "diagnostic/reporting sink"
+      ],
+      "state_owner": "Android process runtime/diagnostics owner; Compose must not own sampling or reporting state.",
+      "persistent_state": [
+        "no canonical product state; only bounded diagnostic samples/session metadata when enabled"
+      ],
+      "protocol_wire_contract": [
+        "sampling rate clamp",
+        "single scan/report in flight",
+        "generation fence on disable/dispose",
+        "bounded redacted payload",
+        "report timeout/abort",
+        "telemetry failure is fail-safe"
+      ],
+      "visible_effect": "No direct product UI effect; supplies privacy-bounded diagnostics/performance evidence and must never change messaging/Agent/tool outcomes.",
+      "failure_behavior": [
+        "sampling/report errors are contained",
+        "disabled telemetry clears pending local collection",
+        "backend/report sink absence cannot fail the product"
+      ],
+      "cancellation_behavior": "disable/dispose cancels timers and in-flight reporting and fences late results.",
+      "retry_semantics": "periodic collection/reporting may retry only on later scheduled samples; no user/business side effect is replayed.",
+      "idempotency_semantics": "samples are session/sequence scoped and diagnostic-only.",
+      "process_death_recovery": "no optimistic diagnostic state is replayed; a new process begins a new bounded sampling session.",
+      "account_fencing": "diagnostic metrics must not carry credentials, message content, or cross-account identifiers; account-specific reporting requires explicit active-account binding.",
+      "security_boundary": "Android cannot enumerate arbitrary sibling processes like desktop cursor-proclist. Platform replacement must sample only app-owned/authorized runtime resources and keep names/paths/content redacted.",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "docs/android-port/verification/performance.md",
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/FabushiApplication.kt",
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/coordinator/CoordinatorTelemetry.kt"
+      ],
+      "android_owner": "Process-scoped Android runtime plus Actions-driven Android benchmark/device diagnostics",
+      "platform_delta": "Desktop cursor-proclist scans Electron/local-daemon process trees and can report to Cursor backend. Android sandboxing forbids equivalent arbitrary process-tree enumeration; replacement is app/Host-owned resource sampling plus official Android benchmark/tracing on Actions devices. Cursor-specific backend upload is not assumed to be an Android product-account contract.",
+      "implementation_status": "mapped",
+      "production_wiring": "Process lifecycle owner and CI performance specification exist, but a shipping bounded Android process-resource sampler/report sink has not yet been proven. This record intentionally remains mapped.",
+      "unit_test": "required for rate clamp, aggregation, redaction, stale generation, disable/dispose and single in-flight semantics",
+      "contract_test": "Desktop process-metrics sources read at current Desktop main; Android telemetry/privacy contract is docs/android-port/features/12-settings.md + verification/performance.md",
+      "integration_test": "required at FabushiProcessRuntime lifecycle boundary",
+      "packaged_test": "required on release variant",
+      "device_test": "required on Actions-driven reference Android devices using official tracing/benchmark methods",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Do not treat Desktop cursor-proclist or Cursor numeric-metrics backend as directly portable Android mechanisms. Source closure requires a bounded Android replacement and exact-head device evidence.",
+      "android_head_at_update": "9c0b61b8f666c6991399354bbf471437d3226805"
     }
   ],
   "traceability": {
