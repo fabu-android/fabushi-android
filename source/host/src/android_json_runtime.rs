@@ -6728,7 +6728,7 @@ mod tests {
 
         let payload = json!({
             "operationId":"sidebar-op-1",
-            "accountFence":account_fence.clone(),
+            "accountFence":"session:test:android",
             "mutation":{
                 "kind":"sidebar-sections",
                 "accountFence":account_fence.clone(),
@@ -6762,7 +6762,7 @@ mod tests {
             "feature.agent.rosterMutation",
             &json!({
                 "operationId":"sidebar-op-1",
-                "accountFence":account_fence.clone(),
+                "accountFence":"session:test:android",
                 "mutation":{
                     "kind":"sidebar-sections",
                     "accountFence":account_fence.clone(),
@@ -6779,21 +6779,39 @@ mod tests {
         );
         assert!(mismatch.is_err());
 
-        let stale = first.dispatch(
+        let stale_presentation = first.dispatch(
             "feature.agent.rosterMutation",
             &json!({
-                "operationId":"sidebar-op-stale",
+                "operationId":"sidebar-op-stale-presentation",
                 "accountFence":"session:stale",
                 "mutation":{
                     "kind":"sidebar-sections",
-                    "accountFence":"session:stale",
-                    "expectedRevision":0,
-                    "baseSections":[],
+                    "accountFence":account_fence.clone(),
+                    "expectedRevision":1,
+                    "baseSections":projected["sections"].clone(),
                     "sections":[]
                 }
             }),
         );
-        assert!(stale.is_err());
+        assert!(stale_presentation.unwrap_err().contains("stale account"));
+
+        let stale_sidebar_scope = first.dispatch(
+            "feature.agent.rosterMutation",
+            &json!({
+                "operationId":"sidebar-op-stale-scope",
+                "accountFence":"session:test:android",
+                "mutation":{
+                    "kind":"sidebar-sections",
+                    "accountFence":"account-device:stale:android",
+                    "expectedRevision":1,
+                    "baseSections":projected["sections"].clone(),
+                    "sections":[]
+                }
+            }),
+        );
+        assert!(stale_sidebar_scope
+            .unwrap_err()
+            .contains("stale sidebar section mutation account fence"));
 
         drop(first);
         let mut reopened = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
