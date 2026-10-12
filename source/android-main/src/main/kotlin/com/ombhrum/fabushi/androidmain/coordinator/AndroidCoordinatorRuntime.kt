@@ -146,6 +146,11 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
     private val rootConnectionRetryExecutor = Executors.newSingleThreadExecutor { runnable ->
         Thread(runnable, "fabushi-root-connection-retry").apply { isDaemon = true }
     }
+    // Telemetry-only consecutive action counter. Canonical retry state remains owned exclusively
+    // by RootConnectionResilienceOwner; this state never decides or replays a recovery action.
+    private val recoveryActionTelemetryLock = Any()
+    private var lastRecoveryActionTelemetrySignature: String? = null
+    private var consecutiveRecoveryActionTelemetryCount = 0
     private val mandatoryUpdateOwner = AndroidMandatoryUpdateOwner(
         SharedPreferencesMandatoryUpdateStateStore(application),
         processGeneration = processGeneration,
@@ -995,13 +1000,26 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
     }
 
     override fun rootConnectionRetry(): RootConnectionResilienceProjection {
+        val beforeRetry = rootConnectionOwner.currentProjection()
         val token = rootConnectionOwner.requestRetry()
         publishRootConnectionProjection()
         if (token != null) {
+            val failureClass = recoveryTelemetryFailureClass(beforeRetry.failureCode)
+            val consecutiveIdentical = nextRecoveryActionTelemetryCount(
+                action = "retry",
+                failureClass = failureClass,
+            )
+            runCatching {
+                reportRecoveryAction(
+                    action = "retry",
+                    failureClass = failureClass,
+                    consecutiveIdentical = consecutiveIdentical,
+                )
+            }
             reportAgentsUnreachableTelemetry(
                 phase = "retry",
                 isManual = true,
-                errorClass = rootConnectionOwner.currentProjection().failureCode,
+                errorClass = beforeRetry.failureCode,
             )
             dispatchRootConnectionRetry(token)
         }
@@ -1316,6 +1334,35 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
                     errorClass = current.failureCode,
                 )
         }
+    }
+
+    private fun recoveryTelemetryFailureClass(value: String?): String {
+        val normalized = value
+            ?.trim()
+            ?.lowercase()
+            ?.map { character ->
+                if (character.isLetterOrDigit() || character == '_') character else '_'
+            }
+            ?.joinToString(separator = "")
+            ?.trim('_')
+            ?.take(64)
+            .orEmpty()
+        return normalized.ifEmpty { "unknown" }
+    }
+
+    private fun nextRecoveryActionTelemetryCount(
+        action: String,
+        failureClass: String,
+    ): Int = synchronized(recoveryActionTelemetryLock) {
+        val signature = "$action:$failureClass"
+        if (lastRecoveryActionTelemetrySignature == signature) {
+            consecutiveRecoveryActionTelemetryCount =
+                (consecutiveRecoveryActionTelemetryCount + 1).coerceAtMost(Int.MAX_VALUE)
+        } else {
+            lastRecoveryActionTelemetrySignature = signature
+            consecutiveRecoveryActionTelemetryCount = 1
+        }
+        consecutiveRecoveryActionTelemetryCount
     }
 
     private fun reportAgentsUnreachableTelemetry(
