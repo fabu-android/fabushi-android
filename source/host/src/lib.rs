@@ -12,6 +12,7 @@ pub mod box_rebuild_backend;
 pub mod capability_broker;
 pub mod composer_draft;
 pub mod account_service;
+pub mod account_telemetry;
 
 pub mod attachment_paths;
 pub mod durable_file_policy;
