@@ -2596,9 +2596,18 @@ impl AndroidJsonHost {
 
     fn account_sand_access(&mut self) -> Result<Value, String> {
         let status = self.account_status()?;
-        Ok(project_fabushi_sand_access(
-            status.get("loggedIn").and_then(Value::as_bool) == Some(true),
-        ))
+        let logged_in = status.get("loggedIn").and_then(Value::as_bool) == Some(true);
+        if !logged_in {
+            return Ok(project_fabushi_sand_access(false));
+        }
+        match self.mode {
+            AndroidHostMode::Test => Ok(project_fabushi_sand_access(true)),
+            AndroidHostMode::Production => Ok(self
+                .mcp_dashboard_backend
+                .as_ref()
+                .and_then(|backend| backend.resolve_sand_access_status().ok())
+                .unwrap_or_else(|| project_fabushi_sand_access(false))),
+        }
     }
 
     fn account_privacy_mode(&self) -> Value {
@@ -8506,7 +8515,7 @@ mod tests {
     }
 
     #[test]
-    fn fabushi_shipping_sand_access_is_owned_by_authenticated_product_policy() {
+    fn test_mode_sand_access_fixture_does_not_define_production_policy() {
         assert_eq!(
             project_fabushi_sand_access(true),
             json!({"state":"granted","reason":"none"})
