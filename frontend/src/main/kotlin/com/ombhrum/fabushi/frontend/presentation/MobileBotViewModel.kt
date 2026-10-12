@@ -2103,8 +2103,10 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
         paletteMessageSearchJob = viewModelScope.launch {
             try {
                 delay(COMMAND_PALETTE_MESSAGE_DEBOUNCE_MS)
-                val transcript = withContext(Dispatchers.IO) { coordinator.transcriptSnapshot() }
-                val results = commandPaletteMessagesFromTranscript(transcript, normalized)
+                val matches = withContext(Dispatchers.IO) {
+                    coordinator.contentSearchMessages(normalized, limit = 50)
+                }
+                val results = commandPaletteMessagesFromHostMatches(matches)
                 if (!paletteMessageFence.accepts(token)) return@launch
                 mutableState.value = mutableState.value.copy(
                     paletteMessageSearch = CommandPaletteMessageSnapshot(
