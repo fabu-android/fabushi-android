@@ -7235,6 +7235,69 @@
       "notes": "Authority reconciled against Desktop banner.tsx blob eaf9324f9f8eef3a264ba80da124f4ab52752282 and Android exact HEAD 40e3a91c. Previous statements that Android had only a coarse message and lacked focused projection/process-reopen tests were stale. Keep not-verified until same-HEAD integration plus packaged/device acceptance prove the user-visible reopen/reconnect journey."
     },
     {
+      "responsibility_id": "COMPUTER-REBUILD-VISIBILITY-TELEMETRY-ANDROID-001",
+      "domain": "remote-computer-telemetry",
+      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "desktop_sources": [
+        {
+          "path": "source/electron-main/box/box-visibility-telemetry.ts",
+          "blob_sha": "4e3bbe8dc2a550e59ec57c9388e64d2e2bb5fc0b",
+          "symbols": [
+            "SandBoxVisibilityTracker",
+            "BOX_RECREATE_STALLED_AFTER_MS",
+            "createBoxVisibilityReportHandler"
+          ]
+        }
+      ],
+      "responsibility": "Preserve rebuild/setup visibility timing, stage timing, stalled detection and lifecycle reset semantics without creating a second Computer rebuild owner.",
+      "source_owner": "Desktop box visibility tracker around the renderer document lifecycle",
+      "direct_callers": [
+        "Desktop box/rebuild presentation visibility reporting"
+      ],
+      "downstream_dependencies": [
+        "Computer rebuild progress diagnostics and stalled presentation"
+      ],
+      "state_owner": "Android ComputerRebuildStateOwner durable snapshot; telemetry is derived read-only state",
+      "persistent_state": [
+        "episodeStartedAtMs",
+        "stageStartedAtMs"
+      ],
+      "protocol_wire_contract": [
+        "computerRebuildStatus elapsedMs/stageElapsedMs/isStalled/visibilityStage",
+        "stalled threshold 600000ms"
+      ],
+      "visible_effect": "Long-running rebuilds retain elapsed/stage progress across process recreation and can surface a deterministic stalled state.",
+      "failure_behavior": [
+        "legacy snapshots without timestamps project zero elapsed until a new episode",
+        "negative clock deltas clamp to zero",
+        "account switch clears the episode"
+      ],
+      "cancellation_behavior": "telemetry observes canonical rebuild cancellation/settlement and never cancels or retries the rebuild itself",
+      "retry_semantics": "none; telemetry is derived from durable canonical state",
+      "idempotency_semantics": "re-reading status does not mutate or replay rebuild side effects",
+      "process_death_recovery": "episode/stage timestamps are persisted with the rebuild snapshot and rebound to the new process generation",
+      "account_fencing": "ComputerRebuildStateOwner account epoch fencing resets visibility state on account transition",
+      "security_boundary": "no renderer/web frame can inject timing truth; only canonical Coordinator rebuild transitions set timing anchors",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/coordinator/ComputerRebuildStateOwner.kt",
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/coordinator/AndroidCoordinatorRuntime.kt",
+        "mobile/android/app/src/test/java/com/ombhrum/fabushi/ComputerRebuildStateOwnerTest.kt"
+      ],
+      "android_owner": "Coordinator-owned ComputerRebuildStateOwner",
+      "platform_delta": "Electron frame/document identity and navigation reset are replaced by Android account/process lifecycle fencing around the durable rebuild owner.",
+      "implementation_status": "implemented",
+      "production_wiring": "computerRebuildStatus reads visibilityTelemetry from the same durable owner and projects elapsedMs, stageElapsedMs, isStalled and visibilityStage; no second tracker owns rebuild truth.",
+      "unit_test": "ComputerRebuildStateOwnerTest.visibilityTelemetryPersistsEpisodeStageAndStallAcrossProcessReopen; exact-head Actions pending",
+      "contract_test": "600000ms stalled threshold and stage timing are encoded in production owner/test; exact-head Actions pending",
+      "integration_test": "production Coordinator status route wired; final package/device observation pending",
+      "packaged_test": "required",
+      "device_test": "required",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Implemented by dacd8458333301c0264e2f960df16d3dff952bb8. Keep not-verified until same-head CI/package/device evidence succeeds."
+    },
+    {
       "responsibility_id": "REMOTE-COMPUTER-SHELL-ANDROID-001",
       "domain": "remote-computer",
       "desktop_sources": [
