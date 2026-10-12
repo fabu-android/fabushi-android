@@ -144,6 +144,38 @@ internal data class ComputerRebuildVisibilityTelemetry(
     val stage: ComputerRebuildMigrationPhase?,
 )
 
+internal data class ComputerRebuildStallTelemetryProjection(
+    val dedupeKey: String,
+    val rebuildKind: String,
+    val elapsedMs: Long,
+    val hasAck: Boolean,
+    val streamAttached: Boolean,
+)
+
+internal fun projectComputerRebuildStallTelemetry(
+    snapshot: ComputerRebuildSnapshot,
+    visibility: ComputerRebuildVisibilityTelemetry?,
+): ComputerRebuildStallTelemetryProjection? {
+    val activeKind = snapshot.kind ?: return null
+    val currentVisibility = visibility?.takeIf { it.isStalled } ?: return null
+    val episodeIdentity = snapshot.operationId
+        ?: snapshot.requestId
+        ?: snapshot.episodeStartedAtMs?.toString()
+        ?: "anonymous"
+    return ComputerRebuildStallTelemetryProjection(
+        dedupeKey = listOf(
+            snapshot.accountEpoch,
+            snapshot.processGeneration,
+            activeKind.name,
+            episodeIdentity,
+        ).joinToString("|"),
+        rebuildKind = activeKind.name.lowercase(),
+        elapsedMs = currentVisibility.elapsedMs,
+        hasAck = snapshot.acknowledged,
+        streamAttached = snapshot.connected,
+    )
+}
+
 internal class ComputerRebuildStateOwner(
     private val store: ComputerRebuildStateStore,
     private val processGeneration: Long = 1L,
