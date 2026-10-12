@@ -11,8 +11,9 @@ pub use android_mcp_auth_watch_owner::{
     McpAuthOwnerEvent, McpAuthenticateResult,
 };
 pub use dashboard_mcp_auth_backend::{
-    CursorDashboardMcpAuthBackend, McpAuthBackendPort, ProcessSandMcpCredentialProvider,
-    SandMcpBackendCredentials, SandMcpCredentialProvider, SandPrivacyMode,
+    CursorDashboardMcpAuthBackend, McpAuthBackendPort, McpToolExecutionBackendResult,
+    ProcessSandMcpCredentialProvider, SandMcpBackendCredentials, SandMcpCredentialProvider,
+    SandPrivacyMode, EXECUTE_TOOL_TIMEOUT_MS,
 };
 pub use host_mcp_auth_completion::{
     HostMcpAuthCompletion, HostMcpAuthCompletionEvent, McpAuthCompletionRuntime,
