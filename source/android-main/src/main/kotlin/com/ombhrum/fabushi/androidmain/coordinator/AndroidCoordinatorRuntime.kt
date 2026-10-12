@@ -907,7 +907,6 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
     override fun humanCallLease(
         callId: String,
         generation: Long,
-        deviceId: String,
         allowClaim: Boolean,
     ): AndroidHumanCallLease =
         parseHumanCallLease(
@@ -916,7 +915,6 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
                 JSONObject()
                     .put("callId", callId)
                     .put("generation", generation)
-                    .put("deviceId", deviceId)
                     .put("allowClaim", allowClaim),
             ),
         )
@@ -958,7 +956,6 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
     override fun humanCallSendSignal(
         callId: String,
         generation: Long,
-        senderDeviceId: String,
         kind: String,
         payload: JSONObject,
     ): AndroidHumanCallSignal =
@@ -968,7 +965,6 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
                 JSONObject()
                     .put("callId", callId)
                     .put("generation", generation)
-                    .put("senderDeviceId", senderDeviceId)
                     .put("kind", kind)
                     .put("payload", JSONObject(payload.toString())),
             ),
