@@ -487,10 +487,15 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
     override fun onboardingSeen(): JSONObject =
         host.request("feature.settings.onboardingSeen")
 
-    override fun setOnboardingSeen(hasSeenOnboarding: Boolean): JSONObject =
+    override fun setOnboardingSeen(
+        expectedAccountScope: String,
+        hasSeenOnboarding: Boolean,
+    ): JSONObject =
         host.request(
             "feature.settings.onboardingSeen.set",
-            JSONObject().put("hasSeenOnboarding", hasSeenOnboarding),
+            JSONObject()
+                .put("expectedAccountScope", expectedAccountScope)
+                .put("hasSeenOnboarding", hasSeenOnboarding),
         )
 
     override fun timeZoneSettings(): AndroidTimeZoneSettings {
