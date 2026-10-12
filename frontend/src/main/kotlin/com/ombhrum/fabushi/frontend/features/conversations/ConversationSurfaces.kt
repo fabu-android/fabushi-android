@@ -90,6 +90,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import kotlinx.coroutines.delay
+import java.io.File
 import java.util.UUID
 
 
@@ -133,6 +134,7 @@ internal fun ConversationHome(
     onSendAttachment: (String, String, String, ByteArray) -> Unit,
     onSendVoice: (String, String, String, ByteArray, List<Int>) -> Unit,
     onLoadBlob: (String, Int, (Result<ByteArray>) -> Unit) -> Unit,
+    onLoadBlobFile: (String, Int, (Result<File>) -> Unit) -> Unit,
     onSendContact: (String, MessagingContact) -> Unit,
     onSendPoll: (String, String, List<String>, Boolean) -> Unit,
     onVotePoll: (String, String, List<String>) -> Unit,
@@ -260,6 +262,7 @@ internal fun ConversationHome(
             onSendAttachment = { fileName, mimeType, bytes -> onSendAttachment(conversation.id, fileName, mimeType, bytes) },
             onSendVoice = { fileName, mimeType, bytes, waveform -> onSendVoice(conversation.id, fileName, mimeType, bytes, waveform) },
             onLoadBlob = onLoadBlob,
+            onLoadBlobFile = onLoadBlobFile,
             shareContacts = messagingState.contacts,
             onSendContact = { contact -> onSendContact(conversation.id, contact) },
             onSendPoll = { question, options, multiple -> onSendPoll(conversation.id, question, options, multiple) },
@@ -485,6 +488,7 @@ internal fun ConversationDetail(
     onSendAttachment: (String, String, ByteArray) -> Unit,
     onSendVoice: (String, String, ByteArray, List<Int>) -> Unit,
     onLoadBlob: (String, Int, (Result<ByteArray>) -> Unit) -> Unit,
+    onLoadBlobFile: (String, Int, (Result<File>) -> Unit) -> Unit,
     shareContacts: List<MessagingContact>,
     onSendContact: (MessagingContact) -> Unit,
     onSendPoll: (String, List<String>, Boolean) -> Unit,
@@ -617,6 +621,7 @@ internal fun ConversationDetail(
             messages = messages,
             startMessageId = mediaMessageId,
             onLoadBlob = onLoadBlob,
+            onLoadBlobFile = onLoadBlobFile,
             onClose = { mediaViewerMessageId = null },
         )
         return
