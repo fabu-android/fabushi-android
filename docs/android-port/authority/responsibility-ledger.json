@@ -10981,6 +10981,15 @@
             "VOICE_MIN_RECORDING_MS",
             "useVoiceSession"
           ]
+        },
+        {
+          "path": "source/electron-main/account/cursor-transcribe.ts",
+          "blob_sha": "374ac5658035a3c1231fb5d006522d68740daf5f",
+          "symbols": [
+            "SandTranscriptionManager",
+            "transcribe",
+            "SandTranscribeEmptyAudioError"
+          ]
         }
       ],
       "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
@@ -11029,15 +11038,15 @@
       "android_owner": "Native offline speech transcriber + composer draft control",
       "platform_delta": "Desktop records MediaRecorder bytes then calls a transcriber. Android uses the platform on-device SpeechRecognizer directly, preserving user-facing stop/processing/draft semantics and timing fences while avoiding any cloud fallback or second audio-byte owner.",
       "implementation_status": "implemented",
-      "production_wiring": "OfflineAsrDraftControl ships in both Grok Bot and Mahayana assistant composers; 9e8678ec8c7504c602cb4c7a7d55f11790084fd9 changes stop from cancel to stopListening, adds 300s automatic stop and 500ms too-short suppression.",
-      "unit_test": "OfflineAsrContractTest checks unique microphone ownership and exact timing constants; OfflineAsrGenerationFenceTest checks newer-session/dispose late-result rejection.",
+      "production_wiring": "OfflineAsrDraftControl ships in both Grok Bot and Mahayana assistant composers and uses NativeOfflineSpeechTranscriber, which only constructs SpeechRecognizer.createOnDeviceSpeechRecognizer after checking on-device availability and shares the process-wide MicrophoneLease. Existing stop semantics preserve stopListening, 300s ceiling and sub-500ms suppression. f8439df0a11d4e36af7963be80be3d245dc81fc8 additionally snapshots the editable draft at transcription start and rejects a late ASR result when the current draft changed, so user edits are never overwritten and no recognition result auto-sends.",
+      "unit_test": "OfflineAsrContractTest checks unique microphone ownership and exact timing constants; OfflineAsrGenerationFenceTest checks newer-session/dispose late-result rejection; OfflineAsrDraftControlTest@5ed1da09d7ce2c8faa9f117bb7c64954835f3bfa checks append semantics, draft-edit rejection, and generation supersession.",
       "contract_test": "NativeOfflineSpeechTranscriber uses createOnDeviceSpeechRecognizer and EXTRA_PREFER_OFFLINE; no ordinary SpeechRecognizer constructor/network fallback exists.",
       "integration_test": "Production composer controls are wired; exact-head CI/device recognition evidence is pending.",
       "packaged_test": "required on final githubRelease with RECORD_AUDIO permission and no network fallback path",
       "device_test": "required offline: permission, start, stop→draft, <500ms no-op, ceiling behavior, unavailable model, account/session switch and process death",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Implemented in source but intentionally not verified until exact-head Actions and offline device acceptance pass.",
+      "notes": "Android intentionally replaces Desktop cursor-transcribe.ts cloud AiService with on-device-only SpeechRecognizer to satisfy the Android offline-ASR requirement. The implementation is source-complete for the mapped voice-input responsibility but intentionally not verified until a new exact HEAD passes Actions and physical-device offline acceptance covers permission, true no-network transcription, model-unavailable state, draft-edit race, session/account switch and process death.",
       "android_head_at_update": "9e8678ec8c7504c602cb4c7a7d55f11790084fd9"
     },
     {
