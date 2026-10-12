@@ -36,6 +36,7 @@ const AGENTS_UNREACHABLE_PHASES: [&str; 3] = ["entered", "retry", "recovered"];
 pub enum TelemetryLevel {
     Info,
     Warn,
+    Error,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -311,6 +312,74 @@ pub fn client_resource_event(
     Ok(StructuredTelemetryEvent {
         level: if state == "failed" { TelemetryLevel::Warn } else { TelemetryLevel::Info },
         metadata,
+    })
+}
+
+pub fn renderer_unhandled_event(
+    handler: &str,
+    error_class: &str,
+    occurrence: u64,
+) -> Result<StructuredTelemetryEvent, String> {
+    if !matches!(handler, "error" | "unhandledrejection") {
+        return Err("renderer-unhandled handler is invalid".into());
+    }
+    if !bounded_token(error_class) || occurrence == 0 {
+        return Err("renderer-unhandled metadata is invalid".into());
+    }
+    Ok(StructuredTelemetryEvent {
+        level: TelemetryLevel::Error,
+        metadata: BTreeMap::from([
+            ("kind".into(), handler.into()),
+            ("error_class".into(), error_class.into()),
+            ("occurrence".into(), occurrence.to_string()),
+        ]),
+    })
+}
+
+pub fn renderer_boundary_caught_event(
+    boundary: &str,
+    error_class: &str,
+    occurrence: u64,
+) -> Result<StructuredTelemetryEvent, String> {
+    if !matches!(
+        boundary,
+        "app" | "chat_screen" | "info_pane" | "transcript_row" | "mermaid" | "other"
+    ) || !bounded_token(error_class)
+        || occurrence == 0
+    {
+        return Err("renderer-boundary metadata is invalid".into());
+    }
+    Ok(StructuredTelemetryEvent {
+        level: TelemetryLevel::Warn,
+        metadata: BTreeMap::from([
+            ("boundary".into(), boundary.into()),
+            ("error_class".into(), error_class.into()),
+            ("occurrence".into(), occurrence.to_string()),
+        ]),
+    })
+}
+
+pub fn entrypoint_error_event(
+    entrypoint: &str,
+    surface: &str,
+    phase: &str,
+    error_class: &str,
+) -> Result<StructuredTelemetryEvent, String> {
+    if !bounded_token(entrypoint)
+        || !matches!(surface, "workspace" | "overlay" | "critical")
+        || !matches!(phase, "chunk_load" | "render")
+        || !bounded_token(error_class)
+    {
+        return Err("entrypoint-error metadata is invalid".into());
+    }
+    Ok(StructuredTelemetryEvent {
+        level: TelemetryLevel::Warn,
+        metadata: BTreeMap::from([
+            ("entrypoint".into(), entrypoint.into()),
+            ("surface".into(), surface.into()),
+            ("phase".into(), phase.into()),
+            ("error_class".into(), error_class.into()),
+        ]),
     })
 }
 
@@ -820,6 +889,31 @@ mod tests {
         assert_eq!(client_resource_event("host", "open", "recovered", "SAND-E0605", "android-host-jni", None, None, None).unwrap().level, TelemetryLevel::Info);
         assert!(client_resource_event("bad value", "open", "failed", "SAND-E0605", "android-host-jni", None, None, None).is_err());
         assert!(client_resource_event("host", "open", "unknown", "SAND-E0605", "android-host-jni", None, None, None).is_err());
+    }
+
+    #[test]
+    fn renderer_and_entrypoint_failure_contracts_preserve_desktop_severity() {
+        let unhandled =
+            renderer_unhandled_event("unhandledrejection", "IllegalStateException", 2).unwrap();
+        assert_eq!(unhandled.level, TelemetryLevel::Error);
+        assert_eq!(
+            unhandled.metadata.get("occurrence").map(String::as_str),
+            Some("2"),
+        );
+        assert!(renderer_unhandled_event("other", "Error", 1).is_err());
+        assert!(renderer_unhandled_event("error", "bad value", 1).is_err());
+
+        let boundary =
+            renderer_boundary_caught_event("chat_screen", "IllegalStateException", 1).unwrap();
+        assert_eq!(boundary.level, TelemetryLevel::Warn);
+        assert!(renderer_boundary_caught_event("unknown", "Error", 1).is_err());
+        assert!(renderer_boundary_caught_event("app", "Error", 0).is_err());
+
+        let entrypoint =
+            entrypoint_error_event("agent", "workspace", "render", "IllegalStateException").unwrap();
+        assert_eq!(entrypoint.level, TelemetryLevel::Warn);
+        assert!(entrypoint_error_event("agent", "workspace", "mount", "Error").is_err());
+        assert!(entrypoint_error_event("agent", "unknown", "render", "Error").is_err());
     }
 
     #[test]
