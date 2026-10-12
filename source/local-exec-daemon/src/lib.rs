@@ -3,6 +3,7 @@
 //! This layer advertises and validates capabilities. It intentionally does not expose an
 //! unrestricted shell; concrete Android actions must be individually registered.
 
+pub mod bounded_fs;
 pub mod invariant_violation_log;
 #[allow(special_module_name)]
 pub mod main;
