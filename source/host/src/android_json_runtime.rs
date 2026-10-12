@@ -2556,6 +2556,7 @@ impl AndroidJsonHost {
             "feature.sendAcknowledgement.retry" => self.send_acknowledgement_retry(params),
             "feature.sendAcknowledgement.clearApprovals" => self.send_acknowledgement_clear_approvals(params),
             "feature.sendAcknowledgement.snapshot" => self.send_acknowledgement_snapshot(params),
+            "feature.sendAcknowledgement.restoredSnapshot" => self.send_acknowledgement_restored_snapshot(),
             "feature.composerDraft.read" => self.composer_draft_read(params),
             "feature.composerDraft.write" => self.composer_draft_write(params),
             "feature.composerDraft.clearIfCurrent" => self.composer_draft_clear_if_current(params),
@@ -6109,6 +6110,14 @@ impl AndroidJsonHost {
         )?;
         Ok(owner.projection(account_slot.as_deref(), &account_fence, &agent_id))
     }
+    fn send_acknowledgement_restored_snapshot(&self) -> Result<Value, String> {
+        let owner = self
+            .send_acknowledgements
+            .lock()
+            .map_err(|_| "send acknowledgement owner lock poisoned".to_string())?;
+        Ok(json!({ "records": owner.restored_on_open() }))
+    }
+
 
     fn widget_respond(&mut self, params: &Value) -> Result<Value, String> {
         let account_fence = self.current_turn_account_fence()?;
