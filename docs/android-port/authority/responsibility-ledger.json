@@ -13556,7 +13556,7 @@
       "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
       "source_owner": "Desktop production account edge",
       "android_disposition": "android-adapted",
-      "implementation_status": "mapped",
+      "implementation_status": "implemented",
       "contract_test": "required",
       "integration_test": "required",
       "packaged_test": "required",
@@ -13581,13 +13581,19 @@
       "visible_effect": "Usage, limits, trial state and supported upgrade actions remain available.",
       "android_target": [
         "source/host/src/mcp_auth/dashboard_mcp_auth_backend.rs",
-        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/production/FabushiSettingsSurface.kt"
+        "source/host/src/android_json_runtime.rs",
+        "source/android-preload/src/main/kotlin/com/ombhrum/fabushi/androidpreload/runtime/AndroidCoordinatorPort.kt",
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/coordinator/AndroidCoordinatorRuntime.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/presentation/MarketplaceViewModel.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/production/FabushiSettingsSurface.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/production/ProductionRenderer_view.kt",
+        "mobile/android/app/src/test/java/com/ombhrum/fabushi/AccountUsageReconciliationTest.kt"
       ],
       "android_owner": "Rust Host Dashboard backend plus native Settings projection",
       "platform_delta": "Native Settings replaces Electron IPC while Host owns authenticated reads and actions.",
-      "production_wiring": "ClientAction primitive exists but usage/trial projection and cancellation flow are incomplete.",
-      "unit_test": "required",
-      "notes": "Generic ClientAction is not parity for usage/trial state."
+      "production_wiring": "Rust Host Dashboard backend now owns bounded authenticated GetSandUsageStatus/GetCurrentPeriodUsage/GetSandTrialClaimStatus and CancelSandTrial calls with exact Desktop RPC paths and a 15s deadline, then projects a canonical usage summary through feature.account.usageSummary and feature.account.cancelSandTrial. AndroidCoordinatorPort/Runtime converts the Host JSON into AndroidAccountUsageSummary/AndroidOnDemandUsage. MarketplaceViewModel account-fences usage refreshes by generation+authId and native Settings shows percentage, on-demand spend, trial state and cancel affordance. Trial cancellation executes the side effect at most once; regardless of mutation transport success/failure it performs a read-only usage summary reconciliation and never automatically retries an outcome-unknown side effect.",
+      "unit_test": "Rust usage_paths_and_decoder_match_desktop_dashboard_contract covers exact RPC paths, timeout and usage/trial/on-demand protobuf decoding. AccountUsageReconciliationTest@c613de36057b47877fd8de9ab66b6e2ace52d1d8 covers failed-mutation/read-back-confirmed, submitted-unconfirmed and outcome-unknown semantics.",
+      "notes": "Source/runtime/presentation implementation is present. Keep verification_status not-verified until same-final-head Rust/Kotlin/packaged/device evidence includes a real authenticated usage response and real trial cancellation/read-back behavior."
     },
     {
       "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
