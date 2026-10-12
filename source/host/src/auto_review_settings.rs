@@ -70,6 +70,7 @@ pub struct AutoReviewInstructionsSnapshot {
     pub instructions: AutoReviewInstructions,
 }
 
+#[derive(Debug)]
 pub struct DurableAutoReviewSettings {
     path: PathBuf,
     state: AutoReviewSettingsFile,
