@@ -325,6 +325,88 @@ fn atomic_replace(path: &Path, encoded: &[u8]) -> io::Result<()> {
     result
 }
 
+
+#[derive(Clone, Debug)]
+pub struct AndroidStructuredLogSpool {
+    spill: FileAndroidStructuredLogSpill,
+    state: AndroidStructuredLogSpillState,
+}
+
+impl AndroidStructuredLogSpool {
+    pub fn open(
+        path: impl Into<PathBuf>,
+        account_slot: &str,
+        counter_id: &str,
+        now_ms: u64,
+    ) -> io::Result<Self> {
+        let spill = FileAndroidStructuredLogSpill::new(path);
+        let state = match spill.load(account_slot, now_ms)? {
+            SpillLoad::Loaded(state) => state,
+            SpillLoad::Empty
+            | SpillLoad::AccountRotated
+            | SpillLoad::InvalidDiscarded
+            | SpillLoad::OversizeDiscarded => {
+                AndroidStructuredLogSpillState::empty(account_slot, counter_id)
+            }
+        };
+        Ok(Self { spill, state })
+    }
+
+    pub fn account_slot(&self) -> &str {
+        &self.state.account_slot
+    }
+
+    pub fn rotate_account(
+        &mut self,
+        account_slot: &str,
+        counter_id: &str,
+    ) -> io::Result<bool> {
+        if self.state.account_slot == account_slot {
+            return Ok(false);
+        }
+        self.spill.clear()?;
+        self.state = AndroidStructuredLogSpillState::empty(account_slot, counter_id);
+        Ok(true)
+    }
+
+    pub fn record(
+        &mut self,
+        level: &str,
+        message: &str,
+        metadata: BTreeMap<String, String>,
+        timestamp_ms: u64,
+    ) -> io::Result<()> {
+        if !matches!(level, "debug" | "info" | "warn" | "error")
+            || !ALLOWED_EVENTS.contains(&message)
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "structured telemetry record is outside the allowed schema",
+            ));
+        }
+        self.state.checkpoint.records.push(StructuredLogRecord {
+            level: level.into(),
+            message: message.into(),
+            metadata,
+            timestamp: timestamp_ms,
+        });
+        self.state = self
+            .spill
+            .replace(&self.state, timestamp_ms)?
+            .unwrap_or_else(|| {
+                AndroidStructuredLogSpillState::empty(
+                    self.state.account_slot.clone(),
+                    self.state.checkpoint.counter_id.clone(),
+                )
+            });
+        Ok(())
+    }
+
+    pub fn snapshot(&self) -> AndroidStructuredLogSpillState {
+        self.state.clone()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -427,6 +509,37 @@ mod tests {
             .read_dir()
             .unwrap()
             .all(|entry| !entry.unwrap().file_name().to_string_lossy().contains("tmp-")));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn spool_rotates_account_and_reopens_durable_record() {
+        let root = root("spool");
+        let path = root.join("spill.json");
+        let mut spool =
+            AndroidStructuredLogSpool::open(&path, "account-a", "counter-a", 1_000).unwrap();
+        spool
+            .record(
+                "error",
+                "sand.desktop.edge_failed",
+                BTreeMap::from([("error_class".into(), "HostError".into())]),
+                1_001,
+            )
+            .unwrap();
+        let reopened =
+            AndroidStructuredLogSpool::open(&path, "account-a", "ignored", 1_002).unwrap();
+        assert_eq!(reopened.snapshot().checkpoint.records.len(), 1);
+
+        let mut reopened = reopened;
+        assert!(reopened.rotate_account("account-b", "counter-b").unwrap());
+        assert!(reopened.snapshot().checkpoint.records.is_empty());
+        assert_eq!(reopened.account_slot(), "account-b");
+        assert_eq!(
+            FileAndroidStructuredLogSpill::new(&path)
+                .load("account-b", 1_003)
+                .unwrap(),
+            SpillLoad::Empty
+        );
         let _ = fs::remove_dir_all(root);
     }
 
