@@ -6,7 +6,7 @@ pub const CONSECUTIVE_FAILURES_CAP: u64 = 10_000;
 pub const DEGRADED_MS_BUCKET_CAP: u64 = 86_400_000;
 pub const DEGRADED_MS_BUCKET_CEILINGS_MS: [u64; 7] =
     [5_000, 30_000, 60_000, 300_000, 1_800_000, 21_600_000, DEGRADED_MS_BUCKET_CAP];
-pub const ACCOUNT_TELEMETRY_BUFFER_CAP: usize = 32;
+pub const ACCOUNT_TELEMETRY_BUFFER_CAP: usize = 16;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SessionRefreshFailure {
@@ -285,6 +285,7 @@ mod tests {
 
     #[test]
     fn bounded_buffer_drops_oldest_without_collecting_credentials() {
+        assert_eq!(ACCOUNT_TELEMETRY_BUFFER_CAP, 16);
         let mut buffer = AccountTelemetryBuffer::default();
         for _ in 0..(ACCOUNT_TELEMETRY_BUFFER_CAP + 5) {
             buffer.report_signin(SigninLoginReport::LoginStarted);
