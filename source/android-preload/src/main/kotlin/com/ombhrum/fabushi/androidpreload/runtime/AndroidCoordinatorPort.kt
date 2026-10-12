@@ -436,6 +436,8 @@ interface AndroidCoordinatorPort {
     fun refreshEntrypointAvailability(): AndroidEntrypointAvailabilitySnapshot =
         error("Entrypoint availability is unavailable on this Coordinator port")
     fun isUpdateHostIdle(): Boolean = false
+    fun mcpServerCatalog(): JSONArray =
+        error("MCP server catalog is unavailable on this Coordinator port")
     fun mcpOAuthRegister(state: String, provider: String): Boolean
     fun mcpOAuthRegisterBound(
         state: String,
