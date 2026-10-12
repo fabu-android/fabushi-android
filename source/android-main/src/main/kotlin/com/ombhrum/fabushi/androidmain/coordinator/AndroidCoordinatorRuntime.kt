@@ -646,6 +646,31 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
                 .put("uptimeMs", uptimeMs),
         )
 
+    override fun reportAgentLoad(
+        durationMs: Long,
+        openRpcMs: Long?,
+        queueMs: Long?,
+        renderMs: Long?,
+        cold: Boolean,
+        stale: Boolean?,
+        boxState: String,
+        outcome: String,
+    ): JSONObject =
+        host.request(
+            "feature.telemetry.agentLoad",
+            JSONObject()
+                .put("durationMs", durationMs.coerceAtLeast(0L))
+                .put("cold", cold)
+                .put("boxState", boxState.ifBlank { "unknown" })
+                .put("outcome", outcome)
+                .apply {
+                    openRpcMs?.let { put("openRpcMs", it.coerceAtLeast(0L)) }
+                    queueMs?.let { put("queueMs", it.coerceAtLeast(0L)) }
+                    renderMs?.let { put("renderMs", it.coerceAtLeast(0L)) }
+                    stale?.let { put("stale", it) }
+                },
+        )
+
     override fun timeZoneSettings(): AndroidTimeZoneSettings {
         val detected = ZoneId.systemDefault().id
         host.request(
