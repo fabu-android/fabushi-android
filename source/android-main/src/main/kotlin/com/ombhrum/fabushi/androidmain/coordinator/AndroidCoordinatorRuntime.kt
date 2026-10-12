@@ -10,6 +10,8 @@ import android.provider.OpenableColumns
 import android.util.Base64
 import android.view.View
 import android.os.StatFs
+import com.ombhrum.fabushi.androidpreload.runtime.AndroidOnDemandUsage
+import com.ombhrum.fabushi.androidpreload.runtime.AndroidAccountUsageSummary
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidPrReviewPreferences
 import com.ombhrum.fabushi.androidpreload.runtime.AccountAccessBlockReason
 import com.ombhrum.fabushi.androidpreload.runtime.AccountAccessProjection
@@ -428,6 +430,40 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
             team = destination("team"),
         )
     }
+
+    override fun accountUsageSummary(): AndroidAccountUsageSummary {
+        val projection = host.request("feature.account.usageSummary")
+        fun optionalLong(source: JSONObject, key: String): Long? =
+            source.takeIf { it.has(key) && !it.isNull(key) }?.optLong(key)
+        fun optionalDouble(source: JSONObject, key: String): Double? =
+            source.takeIf { it.has(key) && !it.isNull(key) }
+                ?.optDouble(key, Double.NaN)
+                ?.takeIf(Double::isFinite)
+        val onDemand = projection.optJSONObject("onDemand")?.let { value ->
+            val used = optionalLong(value, "usedCents") ?: return@let null
+            val limit = optionalLong(value, "limitCents") ?: return@let null
+            AndroidOnDemandUsage(
+                usedCents = used,
+                limitCents = limit,
+                resetTimestampMs = optionalLong(value, "resetTimestampMs"),
+            )
+        }
+        return AndroidAccountUsageSummary(
+            sandUsagePercent = optionalDouble(projection, "sandUsagePercent"),
+            sandUsageResetTimestampMs = optionalLong(projection, "sandUsageResetTimestampMs"),
+            hasAvailableUsage = projection.optBoolean("hasAvailableUsage", false),
+            hasNonZeroIncludedLimit = projection.optBoolean("hasNonZeroIncludedLimit", false),
+            usesPooledEnterpriseAllowance = projection.optBoolean("usesPooledEnterpriseAllowance", false),
+            isSandTrial = projection.optBoolean("isSandTrial", false),
+            hasEndedSandTrial = projection.optBoolean("hasEndedSandTrial", false),
+            canCancelSandTrial = projection.optBoolean("canCancelSandTrial", false),
+            onDemand = onDemand,
+        )
+    }
+
+    override fun cancelSandTrial(): Boolean =
+        host.request("feature.account.cancelSandTrial").optBoolean("ok", false)
+            .also { require(it) { "Sand trial cancellation did not settle successfully" } }
 
     override fun rootConnectionResilienceProjection(): RootConnectionResilienceProjection =
         rootConnectionOwner.currentProjection()
