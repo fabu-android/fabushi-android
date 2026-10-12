@@ -42,3 +42,4 @@ pub mod update;
 pub mod feedback;
 pub mod retry_after;
 pub mod model_catalog;
+pub mod cloud_agent_model_catalog_wire;
