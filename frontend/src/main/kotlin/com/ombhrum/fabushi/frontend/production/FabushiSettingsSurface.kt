@@ -1,5 +1,7 @@
 package com.ombhrum.fabushi
 
+import com.ombhrum.fabushi.androidpreload.runtime.AndroidAccountUsageSummary
+
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import androidx.compose.foundation.Image
@@ -196,6 +198,9 @@ internal fun FabushiSettingsSurface(
     accountProfileBusy: Boolean,
     accountProfileError: String?,
     accountPrivacyMode: String?,
+    accountUsageSummary: AndroidAccountUsageSummary?,
+    accountUsageBusy: Boolean,
+    accountUsageError: String?,
     onUpdateAccountDisplayName: (String) -> Unit,
     updateState: AndroidUpdateUiState,
     updateTrackPolicy: AndroidUpdateTrackPolicy,
@@ -203,6 +208,8 @@ internal fun FabushiSettingsSurface(
     autoUpdateWhenIdleGateEnabled: Boolean,
     onSetAutoUpdateWhenIdleOptIn: (Boolean) -> Unit,
     onRefreshAccountPrivacyMode: () -> Unit,
+    onRefreshAccountUsage: () -> Unit,
+    onCancelSandTrial: () -> Unit,
     onCheckUpdate: () -> Unit,
     onInstallUpdate: () -> Unit,
     onClose: () -> Unit,
@@ -211,7 +218,10 @@ internal fun FabushiSettingsSurface(
     var accountNameDraft by remember(accountName) { mutableStateOf(accountName) }
     val theme = LocalFabushiThemeController.current
     LaunchedEffect(accountLoggedIn) {
-        if (accountLoggedIn) onRefreshAccountPrivacyMode()
+        if (accountLoggedIn) {
+            onRefreshAccountPrivacyMode()
+            onRefreshAccountUsage()
+        }
     }
     AlertDialog(
         onDismissRequest = onClose,
@@ -253,6 +263,37 @@ internal fun FabushiSettingsSurface(
                                 "Privacy mode: ${accountPrivacyModeLabel(accountPrivacyMode)}",
                                 modifier = Modifier.testTag("settings-account-privacy-mode"),
                             )
+                            accountUsageSummary?.let { usage ->
+                                val percent = usage.sandUsagePercent?.let { "%.1f%%".format(it) } ?: "Unavailable"
+                                Text(
+                                    "Usage: $percent",
+                                    modifier = Modifier.testTag("settings-account-usage"),
+                                )
+                                usage.onDemand?.let { onDemand ->
+                                    Text(
+                                        "On-demand: ${onDemand.usedCents} / ${onDemand.limitCents} cents",
+                                        modifier = Modifier.testTag("settings-account-on-demand"),
+                                    )
+                                }
+                                if (usage.isSandTrial) {
+                                    Text("Trial active", modifier = Modifier.testTag("settings-account-trial"))
+                                } else if (usage.hasEndedSandTrial) {
+                                    Text("Trial ended", modifier = Modifier.testTag("settings-account-trial"))
+                                }
+                                if (usage.canCancelSandTrial) {
+                                    Button(
+                                        onClick = onCancelSandTrial,
+                                        enabled = !accountUsageBusy,
+                                        modifier = Modifier.testTag("settings-account-cancel-trial"),
+                                    ) { Text(if (accountUsageBusy) "Cancelling…" else "Cancel trial") }
+                                }
+                            }
+                            accountUsageError?.takeIf(String::isNotBlank)?.let { error ->
+                                Text(
+                                    "Usage unavailable: $error",
+                                    modifier = Modifier.testTag("settings-account-usage-error"),
+                                )
+                            }
                             OutlinedTextField(
                                 value = accountNameDraft,
                                 onValueChange = { value -> accountNameDraft = value.take(200) },

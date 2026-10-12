@@ -7,6 +7,7 @@ import com.ombhrum.fabushi.androidpreload.deeplink.AndroidDeepLink
 import com.ombhrum.fabushi.androidpreload.deeplink.AndroidPresentationDeepLink
 import com.ombhrum.fabushi.androidpreload.deeplink.AuthCompletionStatus
 import com.ombhrum.fabushi.androidpreload.runtime.AccountAccessProjection
+import com.ombhrum.fabushi.androidpreload.runtime.AndroidAccountUsageSummary
 import com.ombhrum.fabushi.androidpreload.runtime.RootConnectionResilienceProjection
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidCoordinatorPort
 import kotlinx.coroutines.Dispatchers
@@ -162,6 +163,9 @@ data class MarketplaceUiState(
     val accountProfileBusy: Boolean = false,
     val accountProfileError: String? = null,
     val accountPrivacyMode: String? = null,
+    val accountUsageSummary: AndroidAccountUsageSummary? = null,
+    val accountUsageBusy: Boolean = false,
+    val accountUsageError: String? = null,
     val onboardingStep: Int = 0,
     val browserLoginAttemptId: String? = null,
     val browserLoginUrl: String? = null,
@@ -187,6 +191,7 @@ class MarketplaceViewModel(application: Application) : AndroidViewModel(applicat
     private var featureEventSubscription: AutoCloseable? = null
     private var rootConnectionSubscription: AutoCloseable? = null
     private var accountPrivacyRefreshGeneration: Long = 0L
+    private var accountUsageRefreshGeneration: Long = 0L
 
     init {
         featureEventSubscription = coordinator.addFeatureEventListener { event ->
@@ -386,6 +391,7 @@ class MarketplaceViewModel(application: Application) : AndroidViewModel(applicat
                 .onSuccess { result ->
                     val user = result.optJSONObject("user")
                     accountPrivacyRefreshGeneration += 1
+                    accountUsageRefreshGeneration += 1
                     mutableState.value = mutableState.value.copy(
                         authResolved = true,
                         loggedIn = result.optBoolean("loggedIn", false),
@@ -394,6 +400,9 @@ class MarketplaceViewModel(application: Application) : AndroidViewModel(applicat
                         accountAuthId = "",
                         accountAvatarUrl = "",
                         accountPrivacyMode = null,
+                        accountUsageSummary = null,
+                        accountUsageBusy = false,
+                        accountUsageError = null,
                         chatMessages = emptyList(),
                         activeOperationId = null,
                         chatBusy = false,
@@ -650,6 +659,101 @@ class MarketplaceViewModel(application: Application) : AndroidViewModel(applicat
                     )
                 ) {
                     mutableState.value = current.copy(accountPrivacyMode = null)
+                }
+            }
+        }
+    }
+
+    fun refreshAccountUsageSummary() {
+        val snapshot = mutableState.value
+        val generation = ++accountUsageRefreshGeneration
+        if (!snapshot.loggedIn || snapshot.accountAuthId.isBlank()) {
+            mutableState.value = snapshot.copy(
+                accountUsageSummary = null,
+                accountUsageBusy = false,
+                accountUsageError = null,
+            )
+            return
+        }
+        val expectedAuthId = snapshot.accountAuthId
+        mutableState.value = snapshot.copy(accountUsageBusy = true, accountUsageError = null)
+        viewModelScope.launch {
+            runCatching {
+                withContext(Dispatchers.IO) { coordinator.accountUsageSummary() }
+            }.onSuccess { summary ->
+                val current = mutableState.value
+                if (!shouldApplyAccountPrivacyModeResult(
+                        requestGeneration = generation,
+                        currentGeneration = accountUsageRefreshGeneration,
+                        expectedAuthId = expectedAuthId,
+                        currentLoggedIn = current.loggedIn,
+                        currentAuthId = current.accountAuthId,
+                    )) return@onSuccess
+                mutableState.value = current.copy(
+                    accountUsageSummary = summary,
+                    accountUsageBusy = false,
+                    accountUsageError = null,
+                )
+            }.onFailure { error ->
+                val current = mutableState.value
+                if (shouldApplyAccountPrivacyModeResult(
+                        requestGeneration = generation,
+                        currentGeneration = accountUsageRefreshGeneration,
+                        expectedAuthId = expectedAuthId,
+                        currentLoggedIn = current.loggedIn,
+                        currentAuthId = current.accountAuthId,
+                    )) {
+                    mutableState.value = current.copy(
+                        accountUsageBusy = false,
+                        accountUsageError = error.message ?: error::class.java.simpleName,
+                    )
+                }
+            }
+        }
+    }
+
+    fun cancelSandTrial() {
+        val snapshot = mutableState.value
+        if (!snapshot.loggedIn || snapshot.accountAuthId.isBlank() ||
+            snapshot.accountUsageBusy || snapshot.accountUsageSummary?.canCancelSandTrial != true
+        ) return
+        val generation = ++accountUsageRefreshGeneration
+        val expectedAuthId = snapshot.accountAuthId
+        mutableState.value = snapshot.copy(accountUsageBusy = true, accountUsageError = null)
+        viewModelScope.launch {
+            runCatching {
+                withContext(Dispatchers.IO) {
+                    coordinator.accountCancelSandTrial()
+                    coordinator.accountUsageSummary()
+                }
+            }.onSuccess { summary ->
+                val current = mutableState.value
+                if (!shouldApplyAccountPrivacyModeResult(
+                        requestGeneration = generation,
+                        currentGeneration = accountUsageRefreshGeneration,
+                        expectedAuthId = expectedAuthId,
+                        currentLoggedIn = current.loggedIn,
+                        currentAuthId = current.accountAuthId,
+                    )) return@onSuccess
+                mutableState.value = current.copy(
+                    accountUsageSummary = summary,
+                    accountUsageBusy = false,
+                    accountUsageError = null,
+                    message = "Trial cancelled",
+                )
+            }.onFailure { error ->
+                val current = mutableState.value
+                if (shouldApplyAccountPrivacyModeResult(
+                        requestGeneration = generation,
+                        currentGeneration = accountUsageRefreshGeneration,
+                        expectedAuthId = expectedAuthId,
+                        currentLoggedIn = current.loggedIn,
+                        currentAuthId = current.accountAuthId,
+                    )) {
+                    mutableState.value = current.copy(
+                        accountUsageBusy = false,
+                        accountUsageError = error.message ?: error::class.java.simpleName,
+                    )
                 }
             }
         }
