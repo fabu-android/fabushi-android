@@ -707,6 +707,7 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
         )
 
     override fun reportOnboardingStep(
+        expectedAccountScope: String,
         step: String,
         stepIndex: Int,
         direction: String,
@@ -714,6 +715,7 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
         host.request(
             "feature.telemetry.onboardingStep",
             JSONObject()
+                .put("expectedAccountScope", expectedAccountScope)
                 .put("step", step)
                 .put("stepIndex", stepIndex)
                 .put("direction", direction),
