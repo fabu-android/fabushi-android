@@ -11019,51 +11019,93 @@ mod process_metrics_settings_dispatch_tests {
     use super::*;
 
     #[test]
-    fn process_metrics_settings_default_disabled_and_durable() {
+    fn process_metrics_settings_are_durable_and_disable_resets_process_local_state() {
         let root = tempfile::tempdir().unwrap();
         let mut host = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
-        let initial = host
-            .dispatch("feature.settings.processMetrics", &json!({}))
-            .unwrap();
+        let initial = host.dispatch("feature.settings.processMetrics", &json!({})).unwrap();
         assert_eq!(initial["localEnabled"], false);
         assert_eq!(initial["backendReportingEnabled"], false);
         assert!(host
             .dispatch(
                 "feature.telemetry.processMetrics.observe",
-                &json!({
-                    "observedAtMs":1,
-                    "cpuTimeMsCumulative":1,
-                    "memoryBytes":1024,
-                }),
+                &json!({"observedAtMs":1,"cpuTimeMsCumulative":1,"memoryBytes":1024}),
             )
             .unwrap_err()
             .contains("disabled"));
 
-        let enabled = host
-            .dispatch(
-                "feature.settings.processMetrics.set",
-                &json!({"localEnabled":true}),
-            )
-            .unwrap();
-        assert_eq!(enabled["localEnabled"], true);
-        assert_eq!(enabled["backendReportingEnabled"], false);
-        let observed = host
+        host.dispatch(
+            "feature.settings.processMetrics.set",
+            &json!({"localEnabled":true}),
+        )
+        .unwrap();
+        assert!(host
             .dispatch(
                 "feature.telemetry.processMetrics.observe",
-                &json!({
-                    "observedAtMs":1,
-                    "cpuTimeMsCumulative":1,
-                    "memoryBytes":1024,
-                }),
+                &json!({"observedAtMs":1_000,"cpuTimeMsCumulative":1_000,"memoryBytes":64 * 1024 * 1024}),
+            )
+            .unwrap()
+            .is_null());
+        let first = host
+            .dispatch(
+                "feature.telemetry.processMetrics.observe",
+                &json!({"observedAtMs":301_000,"cpuTimeMsCumulative":2_000,"memoryBytes":96 * 1024 * 1024}),
             )
             .unwrap();
-        assert_eq!(observed["sampleSeqno"], 0);
-        drop(host);
+        assert_eq!(first["sampleSeqno"], 0);
+        assert_eq!(first["cpuTimeMsSample"], 1_000);
+        assert_eq!(
+            host.dispatch("feature.telemetry.processMetrics.recent", &json!({}))
+                .unwrap()
+                .as_array()
+                .unwrap()
+                .len(),
+            1,
+        );
 
+        host.dispatch(
+            "feature.settings.processMetrics.set",
+            &json!({"localEnabled":false}),
+        )
+        .unwrap();
+        assert_eq!(
+            host.dispatch("feature.telemetry.processMetrics.recent", &json!({}))
+                .unwrap(),
+            json!([]),
+        );
+        assert!(host
+            .dispatch(
+                "feature.telemetry.processMetrics.observe",
+                &json!({"observedAtMs":600_000,"cpuTimeMsCumulative":8_000,"memoryBytes":128 * 1024 * 1024}),
+            )
+            .unwrap_err()
+            .contains("disabled"));
+
+        host.dispatch(
+            "feature.settings.processMetrics.set",
+            &json!({"localEnabled":true}),
+        )
+        .unwrap();
+        assert!(host
+            .dispatch(
+                "feature.telemetry.processMetrics.observe",
+                &json!({"observedAtMs":900_000,"cpuTimeMsCumulative":9_000,"memoryBytes":32 * 1024 * 1024}),
+            )
+            .unwrap()
+            .is_null());
+        let restarted = host
+            .dispatch(
+                "feature.telemetry.processMetrics.observe",
+                &json!({"observedAtMs":1_200_000,"cpuTimeMsCumulative":9_250,"memoryBytes":48 * 1024 * 1024}),
+            )
+            .unwrap();
+        assert_eq!(restarted["sampleSeqno"], 0);
+        assert_eq!(restarted["cpuTimeMsSample"], 250);
+        assert_eq!(restarted["sessionPeakMemoryMb"], 48.0);
+
+        drop(host);
         let mut reopened = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
         assert_eq!(
-            reopened
-                .dispatch("feature.settings.processMetrics", &json!({}))
+            reopened.dispatch("feature.settings.processMetrics", &json!({}))
                 .unwrap()["localEnabled"],
             true,
         );
