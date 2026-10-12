@@ -207,6 +207,73 @@ impl AndroidAccountService {
         Ok((value, mutation))
     }
 
+    pub fn update_display_name(
+        &mut self,
+        display_name: &str,
+    ) -> Result<(Value, Option<AccountSessionMutation>), String> {
+        let display_name = display_name.trim();
+        if display_name.is_empty() || display_name.len() > 200 {
+            return Err("Fabushi account display name must contain 1-200 characters.".into());
+        }
+
+        let (token, refresh_mutation) = self.valid_access_token()?;
+        let response = match self.request_json(
+            "/api/auth/update-profile",
+            "POST",
+            Some(json!({"displayName":display_name})),
+            Some(&token),
+        ) {
+            Ok(response) => response,
+            Err(error) => {
+                return Ok((
+                    json!({"ok":false,"errorMessage":error}),
+                    refresh_mutation,
+                ));
+            }
+        };
+
+        let Some(user) = response.get("user").and_then(Value::as_object).cloned() else {
+            return Ok((
+                json!({"ok":false,"errorMessage":"Fabushi profile update returned an invalid user."}),
+                refresh_mutation,
+            ));
+        };
+        let Some(session) = self.session.as_mut() else {
+            return Ok((
+                json!({"ok":false,"errorMessage":"Fabushi account session disappeared during profile update."}),
+                refresh_mutation,
+            ));
+        };
+        let remote_id = user
+            .get("id")
+            .or_else(|| user.get("userId"))
+            .filter(|value| value.is_string() || value.is_number())
+            .cloned()
+            .unwrap_or_else(|| session.user_id.clone());
+        if remote_id != session.user_id {
+            return Ok((
+                json!({"ok":false,"errorMessage":"Fabushi profile update changed account identity."}),
+                refresh_mutation,
+            ));
+        }
+        if let Some(username) = bounded_text(
+            user.get("username")
+                .or_else(|| user.get("email"))
+                .unwrap_or(&Value::Null),
+            320,
+        ) {
+            session.username = username;
+        }
+        session.user = Some(Value::Object(user));
+        let serialized = serde_json::to_string(session)
+            .map_err(|_| "failed to serialize updated Fabushi account session")?;
+        let mutation = Some(AccountSessionMutation::Save(serialized));
+        Ok((
+            json!({"ok":true,"auth":self.status_projection()}),
+            mutation,
+        ))
+    }
+
     pub(crate) fn api_request_with_bearer(
         &self,
         method: &str,
@@ -763,6 +830,14 @@ mod tests {
     }
 
 
+
+    #[test]
+    fn profile_display_name_validation_is_bounded_before_network_dispatch() {
+        let raw = durable_session().to_string();
+        let mut service = AndroidAccountService::new("device-1", Some(&raw)).unwrap();
+        assert!(service.update_display_name("").is_err());
+        assert!(service.update_display_name(&"x".repeat(201)).is_err());
+    }
 
     #[test]
     fn oauth_provider_allowlist_rejects_untrusted_provider_names() {
