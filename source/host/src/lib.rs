@@ -3,6 +3,7 @@
 //! No Compose/Activity/ViewModel dependency is permitted here.
 #![allow(special_module_name)]
 
+pub mod agent_isolation;
 pub mod android_agent_roster;
 pub mod agent_attachment;
 pub mod android_sidebar_sections;
@@ -63,9 +64,11 @@ pub mod sand_multitask;
 pub mod sand_quiet_work_origin;
 pub mod sand_user_identity;
 pub mod selected_image_inputs;
+pub mod storage;
 pub mod send_trace_host;
 pub mod send_acknowledgement;
 pub mod sha256;
+pub mod transcript_mirror;
 pub mod transcript_mutation_events;
 pub mod watched_directory;
 
