@@ -128,6 +128,7 @@ internal fun ConversationHome(
     messagingState: MessagingUiState,
     messagingActorId: String,
     onMessagingRefresh: () -> Unit,
+    onHumanCallsRefresh: () -> Unit,
     onCreateDirect: (MessagingContact) -> Unit,
     onCreateConversation: (ConversationKind, String, String, List<String>) -> Unit,
     onSendText: (String, String, String?, Boolean, Long?) -> Unit,
@@ -175,6 +176,12 @@ internal fun ConversationHome(
 
     LaunchedEffect(activeSection, selectedConversation) {
         onSemanticContextChanged(activeSection, selectedConversation != null)
+    }
+
+    LaunchedEffect(activeSection) {
+        if (activeSection == AndroidMobileSection.CALLS) {
+            onHumanCallsRefresh()
+        }
     }
 
     val conversations = messagingState.conversations
