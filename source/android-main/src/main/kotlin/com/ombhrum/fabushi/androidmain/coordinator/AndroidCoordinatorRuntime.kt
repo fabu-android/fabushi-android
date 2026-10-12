@@ -197,23 +197,20 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
     private val computerRebuildTelemetryExecutor = Executors.newSingleThreadScheduledExecutor { runnable ->
         Thread(runnable, "fabushi-computer-rebuild-telemetry").apply { isDaemon = true }
     }
-    private val mainThreadPressureSampler = AndroidMainThreadPressureSampler {
-            p50Ms,
-            p95Ms,
-            maxMs,
-            windowMs,
-        ->
-        runCatching {
-            host.request(
-                "feature.telemetry.eventLoopPressure",
-                JSONObject()
-                    .put("p50Ms", p50Ms)
-                    .put("p95Ms", p95Ms)
-                    .put("maxMs", maxMs)
-                    .put("windowMs", windowMs),
-            )
-        }
-    }
+    private val mainThreadPressureSampler = AndroidMainThreadPressureSampler(
+        onWindow = { p50Ms, p95Ms, maxMs, windowMs ->
+            runCatching {
+                host.request(
+                    "feature.telemetry.eventLoopPressure",
+                    JSONObject()
+                        .put("p50Ms", p50Ms)
+                        .put("p95Ms", p95Ms)
+                        .put("maxMs", maxMs)
+                        .put("windowMs", windowMs),
+                )
+            }
+        },
+    )
     private val sendSubmissionExecutor = Executors.newSingleThreadExecutor { runnable ->
         Thread(runnable, "fabushi-send-submission-queue").apply { isDaemon = true }
     }
