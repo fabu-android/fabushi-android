@@ -226,6 +226,24 @@
           "symbols": [
             "SignOutDialog"
           ]
+        },
+        {
+          "path": "frontend/src/recovered/ui/overlay-primitives.tsx",
+          "blob_sha": "84881097e54a3b6daa9e32942ec66988718e7676",
+          "symbols": [
+            "OverlayDialog",
+            "DismissableLayerOwnerContext"
+          ]
+        },
+        {
+          "path": "frontend/src/recovered/ui/sand-floating-primitives.tsx",
+          "blob_sha": "c4515218e59f1fab364200b223e3bf9c13e7385f",
+          "symbols": [
+            "SandMenuRoot",
+            "SandMenuContent",
+            "SandSelect",
+            "FloatingSurface"
+          ]
         }
       ],
       "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
@@ -1638,6 +1656,24 @@
           "symbols": [
             "SettingsModalShell",
             "SETTINGS_SECTIONS"
+          ]
+        },
+        {
+          "path": "frontend/src/recovered/ui/overlay-primitives.tsx",
+          "blob_sha": "84881097e54a3b6daa9e32942ec66988718e7676",
+          "symbols": [
+            "OverlayDialog",
+            "DismissableLayerOwnerContext"
+          ]
+        },
+        {
+          "path": "frontend/src/recovered/ui/sand-floating-primitives.tsx",
+          "blob_sha": "c4515218e59f1fab364200b223e3bf9c13e7385f",
+          "symbols": [
+            "SandMenuRoot",
+            "SandMenuContent",
+            "SandSelect",
+            "FloatingSurface"
           ]
         }
       ],
@@ -4413,7 +4449,7 @@
         "account-scoped settings persistence",
         "cross-device synchronization"
       ],
-      "state_owner": "Host AndroidSidebarSections owns account-fenced named sections, membership and collapsed flags; roster owns Agent identity/pin facts; Compose owns only ephemeral selection/search/focus. Cross-device CAS/merge remains pending.",
+      "state_owner": "Host AndroidSidebarSections owns account-fenced versioned named-section state and revision/CAS truth; roster owns Agent identity/pin facts; Compose/ViewModel consume immutable snapshots and own only ephemeral selection/search/focus. Durable recents/adaptive layout remain pending.",
       "persistent_state": [
         "pinned order",
         "named Agent sections",
@@ -4451,10 +4487,10 @@
       "android_owner": "Host AndroidSidebarSections for durable account-fenced section/collapse truth; canonical Agent roster for pin facts; Presentation only projects/mutates through typed Coordinator routes.",
       "platform_delta": "Android replaces Desktop Electron client slices and hover/collapsed desktop rail with native Compose. Named sections/membership are durable in Host and section collapse now survives reopen. Desktop expandedWidth/infoPane sizing, modifier bulk selection, section rename/delete/reorder UI, and cross-device CAS merge remain open.",
       "implementation_status": "mapped",
-      "production_wiring": "Existing Host agent.sidebarSections.get/set and typed Coordinator routes own named sections/membership with replay-safe operationId semantics. 56d629e31889fe98ba06907bb4d1526b23ae6abf stops normalization from erasing isCollapsed, restores collapse after process reopen, and wires native section headers through ViewModel back to the same Host owner. Pin facts remain canonical roster fields. Full Desktop section lifecycle/CAS/adaptive layout is still incomplete.",
-      "unit_test": "source/host/src/android_sidebar_sections.rs covers normalization, synthetic Unassigned, account isolation, operation replay and now collapse process-reopen; AgentSidebarSectionsModelTest covers membership mutations and collapse preservation. Exact-head Kotlin job still pending.",
-      "contract_test": "Typed agent.sidebarSections get/set route is production-wired. Cross-device revision/CAS merge and Desktop full ui-layout slice are not yet implemented.",
-      "integration_test": "Native Compose renders canonical sections and collapse state; section rename/delete/reorder/bulk selection and adaptive width/info-pane parity remain pending.",
+      "production_wiring": "Current working tree upgrades Host AndroidSidebarSections to schema v2 snapshots with accountFence+revision, v1 migration, atomic persistence, replay-safe operation identity and stale-revision three-way merge that merges independent field edits while failing closed on same-field/delete/order conflicts. Typed Coordinator carries the immutable snapshot; MobileBotViewModel submits base revision/snapshot and production GrokHomeSurface wires collapse/rename/delete/reorder/membership back to the Host owner. Pin facts remain canonical roster fields. Durable ui-agent-refs recents and full adaptive layout are still incomplete.",
+      "unit_test": "source/host/src/android_sidebar_sections.rs covers account isolation, synthetic Unassigned, operation replay, process-reopen revision/collapse, v1 migration, stale independent merge and conflicting stale edit rejection. AgentSidebarSectionsModelTest covers membership/rename/delete/reorder/collapse helpers. Same-exact-HEAD GitHub Actions required after commit.",
+      "contract_test": "Typed agent.sidebarSections snapshot carries accountFence+revision and mutation requires accountFence, expectedRevision, baseSections and desired sections; Host rejects stale-account mutations. Cross-device independent merge is implemented; broader ui-layout/recents closure remains open.",
+      "integration_test": "Production Compose now exposes section collapse, rename dialog, destructive delete confirmation, reorder menu and per-Agent section assignment through ViewModel -> typed Coordinator -> Host. Same-head compile/unit/lint and packaged/device focus/back/TalkBack acceptance remain required.",
       "packaged_test": "required on final exact-head APK/AAB",
       "device_test": "required across account restart and simulated concurrent revision conflict",
       "artifact": null,
@@ -4655,6 +4691,16 @@
           "blob_sha": "d616a34c02c0f3160998c528071eb73eee444897",
           "symbols": [
             "Settings localization, accessibility, bidirectional text, and IME stay on shipping Electron surfaces"
+          ]
+        },
+        {
+          "path": "frontend/src/recovered/ui/sand-floating-primitives.tsx",
+          "blob_sha": "c4515218e59f1fab364200b223e3bf9c13e7385f",
+          "symbols": [
+            "SandMenuRoot",
+            "SandMenuContent",
+            "SandSelect",
+            "FloatingSurface"
           ]
         }
       ],
@@ -5549,6 +5595,24 @@
             "context-menu actions",
             "move/pin/unread/duplicate/hide/delete callbacks"
           ]
+        },
+        {
+          "path": "frontend/src/recovered/ui/overlay-primitives.tsx",
+          "blob_sha": "84881097e54a3b6daa9e32942ec66988718e7676",
+          "symbols": [
+            "OverlayDialog",
+            "DismissableLayerOwnerContext"
+          ]
+        },
+        {
+          "path": "frontend/src/recovered/ui/sand-floating-primitives.tsx",
+          "blob_sha": "c4515218e59f1fab364200b223e3bf9c13e7385f",
+          "symbols": [
+            "SandMenuRoot",
+            "SandMenuContent",
+            "SandSelect",
+            "FloatingSurface"
+          ]
         }
       ],
       "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
@@ -5639,6 +5703,14 @@
           "blob_sha": "5cf2f33c394f885a37709a01361dc516b0fb4240",
           "symbols": [
             "ConversationTranscript"
+          ]
+        },
+        {
+          "path": "frontend/src/recovered/ui/overlay-primitives.tsx",
+          "blob_sha": "84881097e54a3b6daa9e32942ec66988718e7676",
+          "symbols": [
+            "OverlayDialog",
+            "DismissableLayerOwnerContext"
           ]
         }
       ],
@@ -5737,6 +5809,14 @@
           "blob_sha": "2390a247c3df88473d758e8fbbdad697e034e526",
           "symbols": [
             "createStrictModeDisposalGuard"
+          ]
+        },
+        {
+          "path": "frontend/src/recovered/ui/overlay-primitives.tsx",
+          "blob_sha": "84881097e54a3b6daa9e32942ec66988718e7676",
+          "symbols": [
+            "OverlayDialog",
+            "DismissableLayerOwnerContext"
           ]
         }
       ],
@@ -6409,6 +6489,13 @@
             "RunnerCloudAgentWatches",
             "RunnerBackgroundShellWatches",
             "BackgroundAsyncTaskSnapshot"
+          ]
+        },
+        {
+          "path": "frontend/src/recovered/ui/movable-panel.ts",
+          "blob_sha": "ae1a770e1e973005731f090fbd507a210a272acd",
+          "symbols": [
+            "useMovablePanel"
           ]
         }
       ],
@@ -9155,6 +9242,13 @@
             "OutlineTabs",
             "OutlineItemRow"
           ]
+        },
+        {
+          "path": "frontend/src/recovered/ui/movable-panel.ts",
+          "blob_sha": "ae1a770e1e973005731f090fbd507a210a272acd",
+          "symbols": [
+            "useMovablePanel"
+          ]
         }
       ],
       "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
@@ -10139,6 +10233,16 @@
             "SnapshotStore",
             "createSnapshotStore"
           ]
+        },
+        {
+          "path": "frontend/src/recovered/ui/sand-floating-primitives.tsx",
+          "blob_sha": "c4515218e59f1fab364200b223e3bf9c13e7385f",
+          "symbols": [
+            "SandMenuRoot",
+            "SandMenuContent",
+            "SandSelect",
+            "FloatingSurface"
+          ]
         }
       ],
       "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
@@ -10175,10 +10279,10 @@
       "android_owner": "Host AndroidSidebarSections",
       "platform_delta": "Android uses a typed Host owner instead of Desktop host-box/client-persistence fallback. Membership/create and collapse are wired; rename/delete/reorder section UI, destructive confirmation/focus restoration and host-settings conflict/retry semantics remain open.",
       "implementation_status": "mapped",
-      "production_wiring": "Host get/set normalizes sections, prunes unknown ids, synthesizes Unassigned without persisting it, fences account state and operation replay. Compose currently moves Agents/create-new-section and 56d629e3 wires collapse. Full section rename/delete/reorder actions are not exposed in production UI.",
-      "unit_test": "Host and AgentSidebarSectionsModel tests cover normalization, account isolation, operation replay, move/new section and collapse preservation; rename/delete/reorder UI tests remain pending.",
-      "contract_test": "Typed get/set route exists; Desktop host-settings event/CAS retry semantics remain pending.",
-      "integration_test": "pending full native integration acceptance",
+      "production_wiring": "Host AndroidSidebarSections is the canonical account-fenced durable owner. Current working tree adds revisioned schema-v2 persistence with legacy-v1 migration, atomic commits, replay identity, stale-revision merge/fail-closed conflict handling and stale accountFence rejection. Production GrokHomeSurface now exposes native section rename/delete/reorder/collapse plus Agent assignment; delete uses a destructive AlertDialog and synthetic Unassigned remains immutable. Bulk modifier selection/assignment, explicit focus-restoration acceptance and same-head device evidence remain open.",
+      "unit_test": "Rust owner tests cover account isolation, process reopen, legacy migration, operation replay, stale independent merge and conflict rejection; AgentSidebarSectionsModelTest covers rename/delete/reorder/membership/collapse rules. Exact-head Actions pending.",
+      "contract_test": "Typed Coordinator snapshot/mutation contract carries accountFence/revision/base/desired state into the same Host owner; no presentation second owner is introduced.",
+      "integration_test": "ProductionRenderer_view -> GrokHomeSurface -> MobileBotViewModel -> AndroidCoordinatorPort/Runtime -> AndroidJsonHost -> AndroidSidebarSections is wired for section collapse/rename/delete/reorder and per-Agent assignment. Bulk selection/focus restoration/device accessibility remain pending.",
       "packaged_test": "required on final exact-head APK/AAB",
       "device_test": "required on supported Android devices",
       "artifact": null,
@@ -11004,6 +11108,14 @@
           "symbols": [
             "DeepLinkInfoDialog"
           ]
+        },
+        {
+          "path": "frontend/src/recovered/ui/overlay-primitives.tsx",
+          "blob_sha": "84881097e54a3b6daa9e32942ec66988718e7676",
+          "symbols": [
+            "OverlayDialog",
+            "DismissableLayerOwnerContext"
+          ]
         }
       ],
       "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
@@ -11127,6 +11239,14 @@
             "FeedbackDialog",
             "feedbackCode",
             "FeedbackState"
+          ]
+        },
+        {
+          "path": "frontend/src/recovered/ui/overlay-primitives.tsx",
+          "blob_sha": "84881097e54a3b6daa9e32942ec66988718e7676",
+          "symbols": [
+            "OverlayDialog",
+            "DismissableLayerOwnerContext"
           ]
         }
       ],
@@ -11973,6 +12093,16 @@
           "symbols": [
             "GeneralSettingsPanel",
             "ThemePreferencePicker"
+          ]
+        },
+        {
+          "path": "frontend/src/recovered/ui/sand-floating-primitives.tsx",
+          "blob_sha": "c4515218e59f1fab364200b223e3bf9c13e7385f",
+          "symbols": [
+            "SandMenuRoot",
+            "SandMenuContent",
+            "SandSelect",
+            "FloatingSurface"
           ]
         }
       ],
@@ -12854,6 +12984,14 @@
           "blob_sha": "fb5b005125e1f87060634261c1e331adaa7d459e",
           "symbols": [
             "AppAlertHost"
+          ]
+        },
+        {
+          "path": "frontend/src/recovered/ui/overlay-primitives.tsx",
+          "blob_sha": "84881097e54a3b6daa9e32942ec66988718e7676",
+          "symbols": [
+            "OverlayDialog",
+            "DismissableLayerOwnerContext"
           ]
         }
       ],

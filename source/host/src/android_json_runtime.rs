@@ -2138,6 +2138,20 @@ impl AndroidJsonHost {
                 .map(serde_json::from_value::<AndroidSidebarSection>)
                 .collect::<Result<Vec<_>, _>>()
                 .map_err(|error| format!("invalid sidebar section payload: {error}"))?;
+            let base_sections = mutation
+                .get("baseSections")
+                .and_then(Value::as_array)
+                .ok_or("sidebar base sections array is required")?
+                .iter()
+                .cloned()
+                .map(serde_json::from_value::<AndroidSidebarSection>)
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|error| format!("invalid sidebar base section payload: {error}"))?;
+            let requested_account_fence = required_string(mutation, "accountFence")?;
+            let expected_revision = mutation
+                .get("expectedRevision")
+                .and_then(Value::as_u64)
+                .ok_or("sidebar expected revision is required")?;
             let known_agent_ids = self
                 .agents
                 .lock()
@@ -2147,6 +2161,9 @@ impl AndroidJsonHost {
                 .map(|agent| agent.id)
                 .collect::<BTreeSet<_>>();
             let account_scope = self.current_sidebar_account_scope()?;
+            if requested_account_fence != account_scope {
+                return Err("stale sidebar section mutation account fence".into());
+            }
             return self
                 .sidebar_sections
                 .lock()
@@ -2154,6 +2171,8 @@ impl AndroidJsonHost {
                 .set(
                     &account_scope,
                     operation_id,
+                    expected_revision,
+                    &base_sections,
                     &sections,
                     &known_agent_ids,
                 );
@@ -2179,12 +2198,12 @@ impl AndroidJsonHost {
             .into_iter()
             .map(|agent| agent.id)
             .collect::<BTreeSet<_>>();
-        let sections = self
+        let snapshot = self
             .sidebar_sections
             .lock()
             .map_err(|_| "canonical Android sidebar sections lock poisoned".to_string())?
-            .get(&account_scope, &known_agent_ids);
-        Ok(json!({"sections":sections}))
+            .get_snapshot(&account_scope, &known_agent_ids);
+        Ok(json!({"accountFence":snapshot.account_fence,"revision":snapshot.revision,"sections":snapshot.sections}))
     }
 
     fn agent_disk_pressure_observe(&mut self, params: &Value) -> Result<Value, String> {

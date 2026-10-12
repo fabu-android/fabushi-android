@@ -43,6 +43,7 @@ import com.ombhrum.fabushi.androidpreload.runtime.AndroidSendAcknowledgementDisp
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidSendAcknowledgementEntry
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidSendAcknowledgementPhase
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidSidebarSection
+import com.ombhrum.fabushi.androidpreload.runtime.AndroidSidebarSectionsSnapshot
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidWidgetActionResult
 import com.ombhrum.fabushi.androidmain.security.AndroidRemoteControlSessionStore
 import com.ombhrum.fabushi.androidmain.security.AndroidRemotePairingStore
@@ -1540,30 +1541,45 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
         }
     }
 
-    override fun agentSidebarSections(): List<AndroidSidebarSection> =
-        parseSidebarSections(host.request("feature.agent.sidebarSections").optJSONArray("sections"))
+    override fun agentSidebarSections(): AndroidSidebarSectionsSnapshot {
+        val result = host.request("feature.agent.sidebarSections")
+        return AndroidSidebarSectionsSnapshot(
+            accountFence = result.optString("accountFence"),
+            revision = result.optLong("revision", 0L),
+            sections = parseSidebarSections(result.optJSONArray("sections")),
+        )
+    }
 
     override fun agentSetSidebarSections(
+        base: AndroidSidebarSectionsSnapshot,
         sections: List<AndroidSidebarSection>,
-    ): List<AndroidSidebarSection> {
-        val values = JSONArray()
-        sections.forEach { section ->
-            val agentIds = JSONArray()
-            section.agentIds.forEach(agentIds::put)
-            values.put(
-                JSONObject()
-                    .put("id", section.id)
-                    .put("name", section.name)
-                    .put("agentIds", agentIds)
-                    .put("isCollapsed", section.isCollapsed),
-            )
+    ): AndroidSidebarSectionsSnapshot {
+        fun encode(values: List<AndroidSidebarSection>): JSONArray = JSONArray().also { array ->
+            values.forEach { section ->
+                val agentIds = JSONArray()
+                section.agentIds.forEach(agentIds::put)
+                array.put(
+                    JSONObject()
+                        .put("id", section.id)
+                        .put("name", section.name)
+                        .put("agentIds", agentIds)
+                        .put("isCollapsed", section.isCollapsed),
+                )
+            }
         }
         val result = durableAgentRosterMutation(
             JSONObject()
                 .put("kind", "sidebar-sections")
-                .put("sections", values),
+                .put("accountFence", base.accountFence)
+                .put("expectedRevision", base.revision)
+                .put("baseSections", encode(base.sections))
+                .put("sections", encode(sections)),
         ) as? JSONObject ?: JSONObject()
-        return parseSidebarSections(result.optJSONArray("sections"))
+        return AndroidSidebarSectionsSnapshot(
+            accountFence = result.optString("accountFence", base.accountFence),
+            revision = result.optLong("revision", base.revision),
+            sections = parseSidebarSections(result.optJSONArray("sections")),
+        )
     }
 
     private fun parseSidebarSections(values: JSONArray?): List<AndroidSidebarSection> {

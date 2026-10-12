@@ -10,6 +10,7 @@ import com.ombhrum.fabushi.androidpreload.runtime.AndroidFindInChatEntry
 import com.ombhrum.fabushi.androidpreload.runtime.parseAndroidFindInChatEntries
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidSendAcknowledgementEntry
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidSidebarSection
+import com.ombhrum.fabushi.androidpreload.runtime.AndroidSidebarSectionsSnapshot
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -190,7 +191,11 @@ data class MobileApprovalCleanupState(
 
 data class MobileBotUiState(
     val bots: List<MobileBotSummaryAndroid> = emptyList(),
-    val sidebarSections: List<AndroidSidebarSection> = emptyList(),
+    val sidebarSnapshot: AndroidSidebarSectionsSnapshot = AndroidSidebarSectionsSnapshot(
+        accountFence = "",
+        revision = 0L,
+        sections = emptyList(),
+    ),
     val activeBot: MobileBotSummaryAndroid? = null,
     val draft: String = "",
     val draftAttachments: List<AndroidAgentAttachment> = emptyList(),
@@ -544,7 +549,7 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
             }
             mutableState.value = mutableState.value.copy(
                 bots = bots,
-                sidebarSections = sectionsResult.getOrElse { mutableState.value.sidebarSections },
+                sidebarSnapshot = sectionsResult.getOrElse { mutableState.value.sidebarSnapshot },
                 error = diagnostics.takeIf { it.isNotEmpty() }?.joinToString(" | "),
                 rosterLoading = false,
             )
@@ -956,7 +961,7 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     fun toggleSidebarSection(sectionId: String) {
-        val current = mutableState.value.sidebarSections
+        val current = mutableState.value.sidebarSnapshot.sections
         val section = current.firstOrNull { it.id == sectionId } ?: return
         val next = current.map { row ->
             if (row.id == sectionId) row.copy(isCollapsed = !section.isCollapsed) else row
@@ -968,7 +973,7 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
         val bot = mutableState.value.bots.firstOrNull { it.id == botId } ?: return
         if (bot.isPinned || bot.isHidden) return
         val next = moveAgentToSidebarSection(
-            mutableState.value.sidebarSections,
+            mutableState.value.sidebarSnapshot.sections,
             botId,
             sectionId,
         ) ?: return
@@ -979,23 +984,55 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
         val bot = mutableState.value.bots.firstOrNull { it.id == botId } ?: return
         if (bot.isPinned || bot.isHidden) return
         val next = createSidebarSectionForAgent(
-            mutableState.value.sidebarSections,
+            mutableState.value.sidebarSnapshot.sections,
             botId,
             "section-${UUID.randomUUID()}",
         ) ?: return
         commitSidebarSections(next, "Create Agent section failed")
     }
 
+    fun renameSidebarSection(sectionId: String, name: String) {
+        val next = renameAgentSidebarSection(
+            mutableState.value.sidebarSnapshot.sections,
+            sectionId,
+            name,
+        ) ?: return
+        commitSidebarSections(next, "Rename Agent section failed")
+    }
+
+    fun deleteSidebarSection(sectionId: String) {
+        val next = deleteAgentSidebarSection(
+            mutableState.value.sidebarSnapshot.sections,
+            sectionId,
+        ) ?: return
+        commitSidebarSections(next, "Delete Agent section failed")
+    }
+
+    fun moveSidebarSection(
+        sectionId: String,
+        targetId: String,
+        position: AgentSidebarSectionMovePosition,
+    ) {
+        val next = moveAgentSidebarSection(
+            mutableState.value.sidebarSnapshot.sections,
+            sectionId,
+            targetId,
+            position,
+        ) ?: return
+        commitSidebarSections(next, "Reorder Agent section failed")
+    }
+
     private fun commitSidebarSections(
         sections: List<AndroidSidebarSection>,
         fallbackMessage: String,
     ) {
+        val base = mutableState.value.sidebarSnapshot
         viewModelScope.launch {
             runCatching {
-                withContext(Dispatchers.IO) { coordinator.agentSetSidebarSections(sections) }
+                withContext(Dispatchers.IO) { coordinator.agentSetSidebarSections(base, sections) }
             }.onSuccess { settled ->
                 mutableState.value = mutableState.value.copy(
-                    sidebarSections = settled,
+                    sidebarSnapshot = settled,
                     error = null,
                 )
             }.onFailure { error ->

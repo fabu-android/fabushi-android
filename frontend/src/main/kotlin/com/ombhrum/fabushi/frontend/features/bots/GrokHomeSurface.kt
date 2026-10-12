@@ -99,6 +99,9 @@ internal fun GrokHomeSurface(
     onDeleteBot: suspend (String) -> Unit,
     onSetBotPinned: (String, Boolean) -> Unit,
     onToggleSidebarSection: (String) -> Unit,
+    onRenameSidebarSection: (String, String) -> Unit,
+    onDeleteSidebarSection: (String) -> Unit,
+    onMoveSidebarSection: (String, String, AgentSidebarSectionMovePosition) -> Unit,
     onMoveBotToSection: (String, String) -> Unit,
     onMoveBotToNewSection: (String) -> Unit,
     onCloseBot: () -> Unit,
@@ -202,6 +205,10 @@ internal fun GrokHomeSurface(
     var botDescription by remember { mutableStateOf("") }
     var editingBotId by remember { mutableStateOf<String?>(null) }
     var deleteTarget by remember { mutableStateOf<AgentDeleteTarget?>(null) }
+    var sectionMenuId by remember { mutableStateOf<String?>(null) }
+    var renameSectionId by remember { mutableStateOf<String?>(null) }
+    var renameSectionName by remember { mutableStateOf("") }
+    var deleteSectionId by remember { mutableStateOf<String?>(null) }
     var showHiddenBots by remember { mutableStateOf(false) }
 
     LaunchedEffect(shortcutNewAgentNonce) {
@@ -532,6 +539,56 @@ internal fun GrokHomeSurface(
         )
     }
 
+    renameSectionId?.let { sectionId ->
+        AlertDialog(
+            onDismissRequest = { renameSectionId = null },
+            title = { Text("Rename section") },
+            text = {
+                OutlinedTextField(
+                    value = renameSectionName,
+                    onValueChange = { renameSectionName = it },
+                    label = { Text("Section name") },
+                    singleLine = true,
+                    modifier = Modifier.testTag("agent-section-rename-input"),
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    enabled = renameSectionName.trim().isNotEmpty(),
+                    onClick = {
+                        onRenameSidebarSection(sectionId, renameSectionName)
+                        renameSectionId = null
+                    },
+                ) { Text("Save") }
+            },
+            dismissButton = { TextButton(onClick = { renameSectionId = null }) { Text("Cancel") } },
+        )
+    }
+
+    deleteSectionId?.let { sectionId ->
+        val section = botState.sidebarSnapshot.sections.firstOrNull { it.id == sectionId }
+        if (section != null) {
+            val copy = agentSidebarSectionDeleteCopy(section.name)
+            AlertDialog(
+                onDismissRequest = { deleteSectionId = null },
+                title = { Text(copy.title) },
+                text = { Text(copy.description) },
+                confirmButton = {
+                    TextButton(
+                        onClick = {
+                            onDeleteSidebarSection(sectionId)
+                            deleteSectionId = null
+                        },
+                        modifier = Modifier.testTag("agent-section-delete-confirm"),
+                    ) { Text(copy.confirmLabel) }
+                },
+                dismissButton = { TextButton(onClick = { deleteSectionId = null }) { Text(copy.cancelLabel) } },
+            )
+        } else {
+            LaunchedEffect(sectionId) { deleteSectionId = null }
+        }
+    }
+
     Box(Modifier.fillMaxSize().background(GrokMobileBackground).testTag("grok-mobile-home")) {
         LazyColumn(Modifier.fillMaxSize()) {
             item {
@@ -715,10 +772,10 @@ internal fun GrokHomeSurface(
 
             if (visibleBots.isNotEmpty()) {
                 val visibleById = visibleBots.associateBy { it.id }
-                val renderedSections = if (botState.sidebarSections.isEmpty()) {
+                val renderedSections = if (botState.sidebarSnapshot.sections.isEmpty()) {
                     listOf(null to visibleBots)
                 } else {
-                    botState.sidebarSections.map { section ->
+                    botState.sidebarSnapshot.sections.map { section ->
                         section to section.agentIds.mapNotNull(visibleById::get)
                     }
                 }
@@ -733,19 +790,76 @@ internal fun GrokHomeSurface(
                             if (section == null) {
                                 SectionLabelAndroid(sectionName + "  " + sectionBots.size)
                             } else {
-                                TextButton(
-                                    onClick = { onToggleSidebarSection(section.id) },
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .testTag("agent-section-header-" + section.id),
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    verticalAlignment = Alignment.CenterVertically,
                                 ) {
-                                    Text(
-                                        text = (if (isCollapsed) "▸ " else "▾ ") + sectionName + "  " + sectionBots.size,
-                                        color = GrokMobileMuted,
-                                        fontSize = 12.sp,
-                                        fontWeight = FontWeight.SemiBold,
-                                        modifier = Modifier.fillMaxWidth(),
-                                    )
+                                    TextButton(
+                                        onClick = { onToggleSidebarSection(section.id) },
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .testTag("agent-section-header-" + section.id),
+                                    ) {
+                                        Text(
+                                            text = (if (isCollapsed) "▸ " else "▾ ") + sectionName + "  " + sectionBots.size,
+                                            color = GrokMobileMuted,
+                                            fontSize = 12.sp,
+                                            fontWeight = FontWeight.SemiBold,
+                                            modifier = Modifier.fillMaxWidth(),
+                                        )
+                                    }
+                                    if (section.id != AGENT_UNASSIGNED_SECTION_ID) {
+                                        Box {
+                                            TextButton(
+                                                onClick = { sectionMenuId = section.id },
+                                                modifier = Modifier.testTag("agent-section-menu-" + section.id),
+                                            ) { Text("⋮") }
+                                            DropdownMenu(
+                                                expanded = sectionMenuId == section.id,
+                                                onDismissRequest = { sectionMenuId = null },
+                                            ) {
+                                                DropdownMenuItem(
+                                                    text = { Text("Rename") },
+                                                    onClick = {
+                                                        sectionMenuId = null
+                                                        renameSectionName = section.name
+                                                        renameSectionId = section.id
+                                                    },
+                                                )
+                                                val editable = botState.sidebarSnapshot.sections.filterNot { it.id == AGENT_UNASSIGNED_SECTION_ID }
+                                                val index = editable.indexOfFirst { it.id == section.id }
+                                                DropdownMenuItem(
+                                                    text = { Text("Move up") },
+                                                    enabled = index > 0,
+                                                    onClick = {
+                                                        val target = editable.getOrNull(index - 1)
+                                                        if (target != null) {
+                                                            sectionMenuId = null
+                                                            onMoveSidebarSection(section.id, target.id, AgentSidebarSectionMovePosition.BEFORE)
+                                                        }
+                                                    },
+                                                )
+                                                DropdownMenuItem(
+                                                    text = { Text("Move down") },
+                                                    enabled = index >= 0 && index < editable.lastIndex,
+                                                    onClick = {
+                                                        val target = editable.getOrNull(index + 1)
+                                                        if (target != null) {
+                                                            sectionMenuId = null
+                                                            onMoveSidebarSection(section.id, target.id, AgentSidebarSectionMovePosition.AFTER)
+                                                        }
+                                                    },
+                                                )
+                                                DropdownMenuItem(
+                                                    text = { Text("Delete") },
+                                                    onClick = {
+                                                        sectionMenuId = null
+                                                        deleteSectionId = section.id
+                                                    },
+                                                )
+                                            }
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -774,7 +888,7 @@ internal fun GrokHomeSurface(
                                             ) { Text("Members", fontSize = 11.sp) }
                                         }
                                         val currentSectionId = currentAgentSidebarSectionId(
-                                            botState.sidebarSections,
+                                            botState.sidebarSnapshot.sections,
                                             bot.id,
                                         )
                                         AgentRowActions(
@@ -791,7 +905,7 @@ internal fun GrokHomeSurface(
                                             },
                                             onShowFullConversation = { onOpenBot(bot) },
                                             onShowAsyncTasks = { onShowBotAsyncTasks(bot) },
-                                            sections = botState.sidebarSections,
+                                            sections = botState.sidebarSnapshot.sections,
                                             currentSectionId = currentSectionId,
                                             onMoveToSection = onMoveBotToSection,
                                             onMoveToNewSection = onMoveBotToNewSection,

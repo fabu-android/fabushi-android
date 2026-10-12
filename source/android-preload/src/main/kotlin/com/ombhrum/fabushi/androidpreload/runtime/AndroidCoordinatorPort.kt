@@ -13,6 +13,12 @@ data class AndroidSidebarSection(
     val isCollapsed: Boolean = false,
 )
 
+data class AndroidSidebarSectionsSnapshot(
+    val accountFence: String,
+    val revision: Long,
+    val sections: List<AndroidSidebarSection>,
+)
+
 data class AndroidMcpOAuthCompletion(
     val provider: String,
     val state: String,
@@ -518,8 +524,11 @@ interface AndroidCoordinatorPort {
     fun agentDuplicate(id: String): JSONObject
     fun agentDelete(id: String): JSONObject
     fun agentSetPinned(ids: List<String>): List<String>
-    fun agentSidebarSections(): List<AndroidSidebarSection>
-    fun agentSetSidebarSections(sections: List<AndroidSidebarSection>): List<AndroidSidebarSection>
+    fun agentSidebarSections(): AndroidSidebarSectionsSnapshot
+    fun agentSetSidebarSections(
+        base: AndroidSidebarSectionsSnapshot,
+        sections: List<AndroidSidebarSection>,
+    ): AndroidSidebarSectionsSnapshot
 
     fun marketplaceBrowse(params: JSONObject): JSONObject
     fun marketplaceRelease(params: JSONObject): JSONObject
