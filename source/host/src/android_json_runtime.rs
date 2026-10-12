@@ -3613,9 +3613,17 @@ impl AndroidJsonHost {
         }
         let occurred_at_ms = required_u64(params, "occurredAtMs")?;
         let uptime_ms = required_u64(params, "uptimeMs")?;
-        self.unclean_exit
-            .mark_crash_seen(occurred_at_ms)
-            .map_err(|error| format!("failed to persist Android crash marker: {error}"))?;
+
+        // The Android platform crash handoff is replayed only after process restart. Attribute
+        // that recovered crash to the prior unclean session instead of tainting the newly armed
+        // current session marker, which would otherwise create a false crash on the next launch.
+        if let Some(previous_unclean) = self.process_crash_recent.iter_mut().rev().find(|entry| {
+            entry.get("kind").and_then(Value::as_str) == Some("unclean_exit")
+        }) {
+            if let Some(record) = previous_unclean.as_object_mut() {
+                record.insert("crashSeen".to_string(), Value::Bool(true));
+            }
+        }
 
         let bounded_uptime_ms = uptime_ms.min(30 * 24 * 60 * 60 * 1_000_u64);
         let record = json!({
@@ -11571,6 +11579,48 @@ mod event_loop_pressure_dispatch_tests {
 #[cfg(test)]
 mod process_crash_telemetry_dispatch_tests {
     use super::*;
+
+    #[test]
+    fn recovered_crash_marks_prior_session_without_contaminating_current_marker() {
+        let root = tempfile::tempdir().unwrap();
+        let marker_path = root.path().join("host-session-marker.json");
+        let (mut prior, previous) =
+            crate::process_crash_guard::AndroidUncleanExitMarker::open(&marker_path, 1_000)
+                .unwrap();
+        assert!(previous.is_none());
+        prior.heartbeat(1_250).unwrap();
+        // Simulate process death: Drop would be a clean shutdown and intentionally remove marker.
+        std::mem::forget(prior);
+
+        let mut host = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+        host.dispatch(
+            "feature.telemetry.processCrash.record",
+            &json!({
+                "kind":"uncaught_exception",
+                "errorClass":"IllegalStateException",
+                "occurredAtMs":1_250,
+                "uptimeMs":250
+            }),
+        )
+        .unwrap();
+
+        let recent = host
+            .dispatch("feature.telemetry.processCrash.recent", &json!({}))
+            .unwrap();
+        let previous_unclean = recent
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|entry| entry["kind"] == "unclean_exit")
+            .expect("prior unclean session must remain projected");
+        assert_eq!(previous_unclean["crashSeen"], true);
+
+        let current_marker = std::fs::read_to_string(&marker_path).unwrap();
+        assert!(
+            current_marker.contains("\"crashSeen\":false"),
+            "replayed previous-process crash must not taint current marker: {current_marker}"
+        );
+    }
 
     #[test]
     fn process_crash_projection_is_bounded_and_excludes_error_content() {
