@@ -10725,6 +10725,22 @@ mod onboarding_settings_dispatch_tests {
                 }),
             )
             .is_err());
+        assert!(reopened
+            .dispatch(
+                "feature.settings.onboardingSeen.set",
+                &json!({
+                    "hasSeenOnboarding":false,
+                    "expectedAccountScope":"account-device:stale-account"
+                }),
+            )
+            .unwrap_err()
+            .contains("account scope changed"));
+        assert_eq!(
+            reopened.dispatch("feature.settings.onboardingSeen", &json!({}))
+                .unwrap()["hasSeenOnboarding"],
+            true,
+            "a stale account-scoped completion must not mutate the canonical setting",
+        );
     }
 }
 
