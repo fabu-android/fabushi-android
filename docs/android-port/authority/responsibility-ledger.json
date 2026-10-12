@@ -15655,22 +15655,23 @@
       "visible_effect": "Authenticated browser automation stays associated with the correct account and can have UA token injection revoked by policy without restarting the product.",
       "android_disposition": "android-adapted",
       "android_target": [
+        "source/host/src/remote_browser_ua.rs",
         "source/host/src/remote_execution.rs",
         "source/host/src/runner/remote_routed_tools.rs",
         "source/box-exec-daemon/src/transport.rs"
       ],
-      "android_owner": "Authenticated Remote Runner browser-control protocol (required); Host remains account/policy owner",
+      "android_owner": "Rust Host RemoteBrowserUaJournal + future dedicated Remote Runner browser.ua.reconcile handler",
       "platform_delta": "Desktop writes local /tmp markers consumed by a co-resident Sand browser. Android must send the equivalent owner-stamp/kill-switch state over a typed, authorized remote browser-control capability; Android WebView is not a replacement owner for Remote Computer browser automation.",
       "implementation_status": "mapped",
-      "production_wiring": "Generic account/device-fenced Remote Runner exists, but browser-UA owner/kill-switch reconciliation is not yet a shipping command.",
-      "unit_test": "required for owner-stamp derivation, renewal update, kill-switch idempotence and stale-account fencing",
-      "contract_test": "required for typed Remote Runner browser-UA command and authorization scope",
+      "production_wiring": "9a39d5083028ea6633106b83900d220e78586071 adds the dedicated typed/durable browser.ua.reconcile owner and request builder with derived ownerStamp, tokenDisabled, monotonic generation, account/device/epoch fencing and no-blind-replay recovery. The Remote Runner server handler that applies these values to the real remote browser process is still missing, so shipping end-to-end UA identity/kill-switch reconciliation remains open.",
+      "unit_test": "remote_browser_ua tests cover Desktop-equivalent subject-hash stamp shape, no-bearer payload, process-reopen outcome-unknown, generation serialization and stale account/device fencing; exact-head GitHub Actions pending",
+      "contract_test": "pending: Remote Runner browser.ua.reconcile schema/application tests",
       "integration_test": "required against authorized Remote Runner browser process",
       "packaged_test": "required on final exact-head APK/AAB",
       "device_test": "required with paired remote device and policy toggle",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Do not mark implemented until production Remote Runner carries both owner stamp and kill-switch state; generic shell execution is not an acceptable substitute."
+      "notes": "Desktop browser_ua rows 930-933 are mapped to the Android-safe Remote Runner replacement. Do not mark implemented until the dedicated remote handler applies owner stamp and kill-switch state to the actual remote browser; generic Shell remains insufficient."
     }
   ],
   "traceability": {
