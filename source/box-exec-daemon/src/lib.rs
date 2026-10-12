@@ -1,6 +1,7 @@
 //! Remote/Box Runner boundary for work that should not execute in the Android app process.
 
 pub mod box_store_sync_backend;
+pub mod box_store_backend;
 pub mod cli;
 #[allow(special_module_name)]
 pub mod main;
