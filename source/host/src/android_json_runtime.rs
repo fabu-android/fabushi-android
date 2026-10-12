@@ -2704,6 +2704,7 @@ impl AndroidJsonHost {
 
 
     fn agent_content_search(&self, params: &Value) -> Result<Value, String> {
+        let _account_fence = self.current_turn_account_fence()?;
         use crate::extensions::content_search::agent_content_search::{
             find_agent_content_matches, AgentContentRole, SearchableTranscriptEntry,
             SearchableTranscriptEntryKind, AGENT_CONTENT_SEARCH_MAX_MATCHES_PER_AGENT,
@@ -2838,6 +2839,7 @@ impl AndroidJsonHost {
     }
 
     fn content_search_messages(&self, params: &Value) -> Result<Value, String> {
+        let _account_fence = self.current_turn_account_fence()?;
         let query = required_string(params, "query")?;
         let limit = params
             .get("limit")
@@ -9688,6 +9690,25 @@ mod tests {
 
         host.logged_in = false;
         assert!(host.dispatch("feature.messaging.execute", &valid).is_err());
+    }
+
+    #[test]
+    fn content_search_rejects_reads_without_current_account_fence() {
+        let root = tempfile::tempdir().unwrap();
+        let mut host = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+        host.logged_in = false;
+        assert!(host
+            .dispatch(
+                "feature.contentSearch.messages",
+                &json!({"query":"alpha","limit":50}),
+            )
+            .is_err());
+        assert!(host
+            .dispatch(
+                "feature.search.agentContent",
+                &json!({"agentId":"agent-a","query":"alpha","limit":5}),
+            )
+            .is_err());
     }
 
     #[test]
