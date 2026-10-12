@@ -33,6 +33,62 @@ data class AndroidGeneratedAvatarImage(
         get() = "data:$mimeType;base64,$imageData"
 }
 
+const val ANDROID_AGENT_AVATAR_SOURCE_MAX_BYTES: Int = 25 * 1024 * 1024
+const val ANDROID_AGENT_AVATAR_MIN_ZOOM: Float = 1f
+const val ANDROID_AGENT_AVATAR_MAX_ZOOM: Float = 5f
+
+data class AndroidAvatarImageSource(
+    val dataUrl: String,
+    val width: Int,
+    val height: Int,
+)
+
+data class AndroidAvatarCrop(
+    val zoom: Float,
+    val centerX: Float,
+    val centerY: Float,
+)
+
+fun initialAndroidAvatarCrop(source: AndroidAvatarImageSource): AndroidAvatarCrop =
+    AndroidAvatarCrop(
+        zoom = ANDROID_AGENT_AVATAR_MIN_ZOOM,
+        centerX = source.width / 2f,
+        centerY = source.height / 2f,
+    )
+
+fun clampAndroidAvatarCrop(
+    source: AndroidAvatarImageSource,
+    crop: AndroidAvatarCrop,
+): AndroidAvatarCrop {
+    val zoom = crop.zoom.coerceIn(ANDROID_AGENT_AVATAR_MIN_ZOOM, ANDROID_AGENT_AVATAR_MAX_ZOOM)
+    val side = minOf(source.width, source.height) / zoom
+    val half = side / 2f
+    return AndroidAvatarCrop(
+        zoom = zoom,
+        centerX = crop.centerX.coerceIn(half, source.width - half),
+        centerY = crop.centerY.coerceIn(half, source.height - half),
+    )
+}
+
+fun panAndroidAvatarCrop(
+    source: AndroidAvatarImageSource,
+    crop: AndroidAvatarCrop,
+    deltaStageX: Float,
+    deltaStageY: Float,
+    stageSizePx: Float,
+): AndroidAvatarCrop {
+    require(stageSizePx > 0f)
+    val bounded = clampAndroidAvatarCrop(source, crop)
+    val scale = (stageSizePx / minOf(source.width, source.height)) * bounded.zoom
+    return clampAndroidAvatarCrop(
+        source,
+        bounded.copy(
+            centerX = bounded.centerX - deltaStageX / scale,
+            centerY = bounded.centerY - deltaStageY / scale,
+        ),
+    )
+}
+
 enum class AndroidHumanCallState(val wireName: String) {
     INVITED("invited"),
     RINGING("ringing"),
@@ -898,6 +954,17 @@ interface AndroidCoordinatorPort {
         error("Agent avatar image updates are unavailable on this Coordinator port")
     fun agentGenerateAvatarImage(description: String): AndroidGeneratedAvatarImage =
         error("Agent avatar generation is unavailable on this Coordinator port")
+    fun stagePickedAgentAvatarImage(rawUri: String): AndroidAvatarImageSource =
+        error("Agent avatar image staging is unavailable on this Coordinator port")
+    fun stageGeneratedAgentAvatarImage(
+        imageData: String,
+        mimeType: String,
+    ): AndroidAvatarImageSource =
+        error("Generated Agent avatar staging is unavailable on this Coordinator port")
+    fun encodeAgentAvatarCrop(
+        source: AndroidAvatarImageSource,
+        crop: AndroidAvatarCrop,
+    ): String = error("Agent avatar crop encoding is unavailable on this Coordinator port")
     fun agentSetNotifyOnUpdates(id: String, isEnabled: Boolean): JSONObject =
         error("Agent notification settings are unavailable on this Coordinator port")
     fun agentSetWorkflowEnabled(id: String, workflowId: String, isEnabled: Boolean): JSONObject =
