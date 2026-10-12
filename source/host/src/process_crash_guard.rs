@@ -99,7 +99,12 @@ impl AndroidUncleanExitMarker {
 
 impl Drop for AndroidUncleanExitMarker {
     fn drop(&mut self) {
-        let _ = self.settle_clean();
+        // A panic/unwind is an unclean termination signal, not a clean Host shutdown.
+        // Preserve the durable marker so the next process can reconcile the crash instead of
+        // silently deleting the only process-death evidence while unwinding.
+        if !std::thread::panicking() {
+            let _ = self.settle_clean();
+        }
     }
 }
 
@@ -195,6 +200,35 @@ mod tests {
         }
         let (marker, prior) = AndroidUncleanExitMarker::open(&path, 200).unwrap();
         assert!(prior.is_none());
+        drop(marker);
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn panic_unwind_preserves_marker_for_next_process_reconciliation() {
+        let dir = marker_root("panic");
+        let path = dir.join("session.json");
+        let _ = fs::remove_dir_all(&dir);
+
+        let result = std::panic::catch_unwind({
+            let path = path.clone();
+            move || {
+                let (mut marker, prior) = AndroidUncleanExitMarker::open(&path, 100).unwrap();
+                assert!(prior.is_none());
+                marker.mark_crash_seen(125).unwrap();
+                panic!("simulated host panic");
+            }
+        });
+        assert!(result.is_err());
+        assert!(
+            path.exists(),
+            "panic unwinding must preserve the session marker for cold-start reconciliation"
+        );
+
+        let (marker, prior) = AndroidUncleanExitMarker::open(&path, 200).unwrap();
+        let prior = prior.expect("next process should observe the panicked Host session");
+        assert!(prior.crash_seen);
+        assert_eq!(prior.last_alive_at_ms, 125);
         drop(marker);
         let _ = fs::remove_dir_all(dir);
     }
