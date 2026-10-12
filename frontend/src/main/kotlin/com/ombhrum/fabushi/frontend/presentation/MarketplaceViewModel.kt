@@ -721,41 +721,42 @@ class MarketplaceViewModel(application: Application) : AndroidViewModel(applicat
         val expectedAuthId = snapshot.accountAuthId
         mutableState.value = snapshot.copy(accountUsageBusy = true, accountUsageError = null)
         viewModelScope.launch {
-            runCatching {
-                withContext(Dispatchers.IO) {
-                    coordinator.accountCancelSandTrial()
-                    coordinator.accountUsageSummary()
-                }
-            }.onSuccess { summary ->
-                val current = mutableState.value
-                if (!shouldApplyAccountPrivacyModeResult(
-                        requestGeneration = generation,
-                        currentGeneration = accountUsageRefreshGeneration,
-                        expectedAuthId = expectedAuthId,
-                        currentLoggedIn = current.loggedIn,
-                        currentAuthId = current.accountAuthId,
-                    )) return@onSuccess
-                mutableState.value = current.copy(
-                    accountUsageSummary = summary,
-                    accountUsageBusy = false,
-                    accountUsageError = null,
-                    message = "Trial cancelled",
-                )
-            }.onFailure { error ->
-                val current = mutableState.value
-                if (shouldApplyAccountPrivacyModeResult(
-                        requestGeneration = generation,
-                        currentGeneration = accountUsageRefreshGeneration,
-                        expectedAuthId = expectedAuthId,
-                        currentLoggedIn = current.loggedIn,
-                        currentAuthId = current.accountAuthId,
-                    )) {
-                    mutableState.value = current.copy(
-                        accountUsageBusy = false,
-                        accountUsageError = error.message ?: error::class.java.simpleName,
-                    )
-                }
+            val (cancelResult, reconcileResult) = withContext(Dispatchers.IO) {
+                val cancel = runCatching { coordinator.accountCancelSandTrial() }
+                val reconcile = runCatching { coordinator.accountUsageSummary() }
+                cancel to reconcile
             }
+            val current = mutableState.value
+            if (!shouldApplyAccountPrivacyModeResult(
+                    requestGeneration = generation,
+                    currentGeneration = accountUsageRefreshGeneration,
+                    expectedAuthId = expectedAuthId,
+                    currentLoggedIn = current.loggedIn,
+                    currentAuthId = current.accountAuthId,
+                )) return@launch
+
+            val summary = reconcileResult.getOrNull()
+            val cancellationObserved =
+                summary != null && (!summary.isSandTrial || !summary.canCancelSandTrial)
+            val error = when {
+                cancellationObserved -> null
+                cancelResult.isSuccess && summary != null ->
+                    "Cancellation was submitted, but the latest account state still reports an active trial. No automatic retry was performed."
+                cancelResult.isSuccess ->
+                    "Cancellation was submitted, but the latest account state could not be read. No automatic retry was performed."
+                else ->
+                    "Cancellation outcome is unknown. The app did not retry the side effect automatically."
+            }
+            mutableState.value = current.copy(
+                accountUsageSummary = summary ?: current.accountUsageSummary,
+                accountUsageBusy = false,
+                accountUsageError = error,
+                message = when {
+                    cancellationObserved -> "Trial cancellation confirmed from account state"
+                    cancelResult.isSuccess -> "Trial cancellation submitted; awaiting canonical account state"
+                    else -> "Trial cancellation outcome unknown; not retried"
+                },
+            )
         }
     }
 
