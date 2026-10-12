@@ -144,6 +144,33 @@ internal data class ComputerRebuildVisibilityTelemetry(
     val stage: ComputerRebuildMigrationPhase?,
 )
 
+internal data class ComputerRebuildPendingStallTelemetry(
+    val episodeKey: String,
+    val rebuildKind: String,
+    val elapsedMs: Long,
+    val hasAck: Boolean,
+    val streamAttached: Boolean,
+)
+
+internal fun projectComputerRebuildPendingStallTelemetry(
+    snapshot: ComputerRebuildSnapshot,
+    visibility: ComputerRebuildVisibilityTelemetry?,
+): ComputerRebuildPendingStallTelemetry? {
+    val kind = snapshot.kind ?: return null
+    if (visibility == null || !visibility.isStalled) return null
+    val rebuildKind = kind.name.lowercase()
+    val episodeIdentity = snapshot.operationId ?: snapshot.requestId ?: rebuildKind
+    return ComputerRebuildPendingStallTelemetry(
+        episodeKey = "${snapshot.accountEpoch}:${snapshot.episodeStartedAtMs ?: 0L}:$episodeIdentity",
+        rebuildKind = rebuildKind,
+        elapsedMs = visibility.elapsedMs,
+        hasAck = snapshot.acknowledged,
+        // Desktop calls this streamAttached. Android has no renderer stream owner: the durable
+        // rebuild transport connection is the platform replacement for that liveness fact.
+        streamAttached = snapshot.connected,
+    )
+}
+
 internal data class ComputerRebuildStallTelemetryProjection(
     val dedupeKey: String,
     val rebuildKind: String,
