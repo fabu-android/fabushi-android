@@ -4510,18 +4510,18 @@
         "source/android-main/src/main/kotlin/com/ombhrum/fabushi/core/MahayanaHost.kt",
         "mobile/android/app/src/androidTest/java/com/ombhrum/fabushi/AndroidCredentialVaultStoreInstrumentedTest.kt"
       ],
-      "android_owner": "AndroidCredentialVaultStore (Keystore secret owner) + MahayanaHost live-account-fenced command boundary; user surface/consumer wiring still open",
+      "android_owner": "AndroidCredentialVaultStore (Keystore secret owner) + MahayanaHost live-account-fenced command boundary + typed Coordinator + metadata-only Marketplace/Settings projection",
       "platform_delta": "Electron safeStorage becomes Android Keystore. Existing AndroidPluginVariableSecretStore proves an AES-GCM/Keystore primitive but is not the Credential Vault product contract and therefore is only a dependency candidate.",
       "implementation_status": "mapped",
-      "production_wiring": "Partial production core is wired: MahayanaHost resolves the canonical live Rust account fence and exposes metadata-only list plus upsert/rotate/revoke commands. AndroidCredentialVaultStore encrypts the account-scoped document with Android Keystore AES-GCM, bounds HTTPS origins, preserves stable refs/timestamps and exposes plaintext only through an internal exact-origin resolver. No reveal command exists. Shipping user Vault surface and a real authorized connector/tool consumer remain open, so status stays mapped.",
-      "unit_test": "Instrumentation source covers plaintext-canary opacity, metadata revealable=false, stable rotate identity/timestamps, cross-account isolation, origin denial, revoke and corrupt-ciphertext fail-closed. Exact-head execution pending.",
+      "production_wiring": "Production core and user surface are wired: MahayanaHost resolves the canonical live Rust account fence and exposes metadata-only list plus upsert/rotate/revoke; AndroidCredentialVaultStore encrypts account-scoped state with Android Keystore AES-GCM and keeps plaintext behind an internal exact-origin resolver; AndroidCoordinatorPort/Runtime provide typed CRUD with no reveal method; MarketplaceViewModel stores metadata only and fences stale account generations; FabushiSettingsSurface provides a native no-reveal Vault whose secret draft is transient and cleared after submit/discard. A real authorized shipping connector/tool consumer of credentialForOrigin is still missing, so status stays mapped.",
+      "unit_test": "CredentialVaultProjectionTest fences old generation/account callbacks. AndroidCredentialVaultStoreInstrumentedTest covers plaintext canary opacity, metadata revealable=false, stable rotate identity/timestamps, cross-account isolation, origin denial, revoke and corrupt-ciphertext fail-closed. Exact-head execution pending.",
       "contract_test": "required against Desktop Credential Vault no-reveal semantics",
-      "integration_test": "Core command boundary wired through MahayanaHost at 5f4d0f385d81984824671028215984c56a1267d5; still required: shipping Vault UI and real authorized connector/tool consumption through credentialForOrigin.",
+      "integration_test": "Typed UI-to-Coordinator-to-MahayanaHost CRUD path is production-wired. Remaining integration gap: a real authorized connector/tool consumer must resolve by secretRef+origin internally; no UI reveal route may be added.",
       "packaged_test": "required on final minified APK/AAB, including plaintext canary absence",
       "device_test": "required on real/protected Android Keystore device path",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Production security core advanced without status inflation. f7264a259052a52bbce174a72356c36bef5df772 adds the no-reveal Keystore owner; 5e3bc6d35683d2f0c4b95b1048e36a221d3096be adds focused instrumentation; 5f4d0f385d81984824671028215984c56a1267d5 wires live-account-fenced list/upsert/rotate/revoke and keeps plaintext resolution internal+origin-fenced. Keep mapped/not-verified until UI, actual consumer, exact-head Actions, package canary scan and device acceptance close."
+      "notes": "User-visible Vault surface is now implemented without status inflation. Core/UI commits: f7264a259052a52bbce174a72356c36bef5df772, 5e3bc6d35683d2f0c4b95b1048e36a221d3096be, 5f4d0f385d81984824671028215984c56a1267d5, aae09bd2f24b8c760da0a0b2e2d17015fd249400, 01cd5438c02f7cff52cdb6c86fd5bdfc8a49e341, d232b0d4512cc3f9394c0a132f79e29aff98ac19, 38ff8207998c56b5d013ae7c1c18534db01ddb66, e95a344a728df0c27daccc7fbcbeba97b306b45d, ab24ee33f285ce9dd241ecc781067f2cbc430178. Keep mapped/not-verified until actual consumer plus current exact-head Actions/package/device evidence close."
     },
     {
       "responsibility_id": "UI-AVATAR-MOTION-ANDROID-001",
