@@ -23,6 +23,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -1121,24 +1122,6 @@ internal fun ProductionRenderer(
 }
 
 
-internal const val FEEDBACK_MESSAGE_MAX_CHARS = 10_000
-
-private enum class FeedbackPhase {
-    IDLE,
-    SENDING,
-    SENT,
-    FAILED,
-}
-
-internal fun feedbackErrorMessage(code: String?): String = when (code) {
-    "access-denied" -> "Feedback is not available for this account."
-    "invalid-feedback" -> "Feedback could not be sent because the message is invalid."
-    "not-signed-in" -> "Sign in again before sending feedback."
-    "rate-limited" -> "Too many feedback requests. Try again later."
-    "subscription-required" -> "Feedback requires an active subscription."
-    else -> "Feedback could not be sent. Try again when the service is available."
-}
-
 @Composable
 internal fun FabushiFeedbackSurface(
     accountScopeKey: String,
@@ -1146,26 +1129,36 @@ internal fun FabushiFeedbackSurface(
     submit: suspend (message: String, submissionId: String, conversationId: String?) -> JSONObject,
     onClose: () -> Unit,
 ) {
-    var message by remember(accountScopeKey) { mutableStateOf("") }
-    var includeConversation by remember(accountScopeKey, conversationId) {
-        mutableStateOf(conversationId != null)
+    var message by rememberSaveable(accountScopeKey) { mutableStateOf("") }
+    var includeConversation by rememberSaveable(accountScopeKey, conversationId) {
+        // Desktop defaults this opt-in off unless an explicit caller override says otherwise.
+        mutableStateOf(false)
     }
-    var phase by remember(accountScopeKey) { mutableStateOf(FeedbackPhase.IDLE) }
-    var failureCode by remember(accountScopeKey) { mutableStateOf<String?>(null) }
-    var submissionId by remember(accountScopeKey) { mutableStateOf<String?>(null) }
+    var phaseName by rememberSaveable(accountScopeKey) { mutableStateOf(FeedbackPhase.IDLE.name) }
+    var failureCode by rememberSaveable(accountScopeKey) { mutableStateOf<String?>(null) }
+    var submissionId by rememberSaveable(accountScopeKey) { mutableStateOf<String?>(null) }
+    var restorationChecked by remember(accountScopeKey) { mutableStateOf(false) }
     val latestAccountScopeKey by rememberUpdatedState(accountScopeKey)
     val scope = rememberCoroutineScope()
+    val phase = feedbackPhaseFromSaved(phaseName)
     val sending = phase == FeedbackPhase.SENDING
     val sent = phase == FeedbackPhase.SENT
     val cleanMessage = message.trim()
-    val canSend =
-        !sending &&
-            !sent &&
-            cleanMessage.isNotEmpty() &&
-            message.length <= FEEDBACK_MESSAGE_MAX_CHARS
+    val canSend = feedbackCanSend(message, phase)
+
+    LaunchedEffect(accountScopeKey) {
+        if (!restorationChecked) {
+            phaseName = feedbackPhaseAfterProcessRestore(phaseName).name
+            restorationChecked = true
+        }
+    }
+
+    fun setPhase(next: FeedbackPhase) {
+        phaseName = next.name
+    }
 
     fun closeIfAllowed() {
-        if (!sending) onClose()
+        if (feedbackCanDismiss(phase)) onClose()
     }
 
     fun sendExplicitly() {
@@ -1176,7 +1169,7 @@ internal fun FabushiFeedbackSurface(
         val stableSubmissionId = submissionId ?: UUID.randomUUID().toString().also {
             submissionId = it
         }
-        phase = FeedbackPhase.SENDING
+        setPhase(FeedbackPhase.SENDING)
         failureCode = null
         scope.launch {
             val outcome = withContext(Dispatchers.IO) {
@@ -1188,15 +1181,15 @@ internal fun FabushiFeedbackSurface(
             outcome.fold(
                 onSuccess = { response ->
                     if (response.optBoolean("ok", false)) {
-                        phase = FeedbackPhase.SENT
+                        setPhase(FeedbackPhase.SENT)
                         failureCode = null
                     } else {
-                        phase = FeedbackPhase.FAILED
+                        setPhase(FeedbackPhase.FAILED)
                         failureCode = response.optString("code").ifBlank { "unavailable" }
                     }
                 },
                 onFailure = {
-                    phase = FeedbackPhase.FAILED
+                    setPhase(FeedbackPhase.FAILED)
                     failureCode = "unavailable"
                 },
             )
@@ -1221,11 +1214,11 @@ internal fun FabushiFeedbackSurface(
                         onValueChange = { value ->
                             if (!sending) {
                                 message = value.take(FEEDBACK_MESSAGE_MAX_CHARS + 1)
-                                if (phase == FeedbackPhase.FAILED) {
-                                    phase = FeedbackPhase.IDLE
+                                if (feedbackRetryKeepsSubmissionIdentity(phase)) {
+                                    setPhase(FeedbackPhase.IDLE)
                                     failureCode = null
+                                    submissionId = null
                                 }
-                                submissionId = null
                             }
                         },
                         enabled = !sending,
@@ -1261,6 +1254,13 @@ internal fun FabushiFeedbackSurface(
                             modifier = Modifier.testTag("feedback-error"),
                         )
                     }
+                    if (phase == FeedbackPhase.OUTCOME_UNKNOWN) {
+                        Text(
+                            feedbackOutcomeUnknownMessage(),
+                            color = MaterialTheme.colorScheme.error,
+                            modifier = Modifier.testTag("feedback-outcome-unknown"),
+                        )
+                    }
                 }
             }
         },
@@ -1279,7 +1279,7 @@ internal fun FabushiFeedbackSurface(
                     Text(
                         when {
                             sending -> "Sending…"
-                            phase == FeedbackPhase.FAILED -> "Retry"
+                            feedbackRetryKeepsSubmissionIdentity(phase) -> "Retry"
                             else -> "Send"
                         },
                     )
@@ -1290,7 +1290,7 @@ internal fun FabushiFeedbackSurface(
             if (!sent) {
                 TextButton(
                     onClick = ::closeIfAllowed,
-                    enabled = !sending,
+                    enabled = feedbackCanDismiss(phase),
                     modifier = Modifier.testTag("feedback-close"),
                 ) { Text("Close") }
             }
