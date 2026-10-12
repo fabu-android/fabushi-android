@@ -29,6 +29,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidUpdateTrackPolicy
 import java.io.ByteArrayOutputStream
@@ -136,10 +137,12 @@ private suspend fun loadAccountAvatar(
 }
 
 @Composable
-private fun AccountAvatar(
+internal fun AccountAvatar(
     authId: String,
     preferredUrl: String,
     accountName: String,
+    size: Dp = 48.dp,
+    testTagPrefix: String = "settings-account-avatar",
 ) {
     val bitmap by produceState<Bitmap?>(
         initialValue = null,
@@ -155,16 +158,16 @@ private fun AccountAvatar(
             contentDescription = "Account avatar",
             contentScale = ContentScale.Crop,
             modifier = Modifier
-                .size(48.dp)
+                .size(size)
                 .clip(CircleShape)
-                .testTag("settings-account-avatar"),
+                .testTag(testTagPrefix),
         )
     } else {
         Box(
             modifier = Modifier
-                .size(48.dp)
+                .size(size)
                 .background(MaterialTheme.colorScheme.surfaceVariant, CircleShape)
-                .testTag("settings-account-avatar-fallback"),
+                .testTag("$testTagPrefix-fallback"),
             contentAlignment = Alignment.Center,
         ) {
             Text(accountName.trim().firstOrNull()?.uppercaseChar()?.toString() ?: "F")
