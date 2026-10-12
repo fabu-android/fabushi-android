@@ -197,6 +197,7 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
         Thread(runnable, "fabushi-computer-rebuild-telemetry").apply { isDaemon = true }
     }
     @Volatile private var lastComputerRebuildPendingStallKey: String? = null
+    @Volatile private var lastComputerRebuildEscalationShownKey: String? = null
     private val mainThreadPressureSampler = AndroidMainThreadPressureSampler {
             p50Ms,
             p95Ms,
@@ -3184,6 +3185,21 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
         val accountEpoch = accountAccessOwner.currentProjection().accountEpoch
         val snapshot = computerRebuildOwner.snapshot(accountEpoch)
         val visibility = computerRebuildOwner.visibilityTelemetry(accountEpoch)
+        val escalation = projectComputerRebuildEscalationTelemetry(snapshot, visibility)
+        if (escalation == null) {
+            lastComputerRebuildEscalationShownKey = null
+        } else if (lastComputerRebuildEscalationShownKey != escalation.episodeKey) {
+            host.request(
+                "feature.telemetry.recovery",
+                JSONObject()
+                    .put("kind", "rebuild_escalation")
+                    .put("rebuildKind", escalation.rebuildKind)
+                    .put("elapsedMs", escalation.elapsedMs)
+                    .put("action", "shown")
+                    .put("escalation", escalation.escalation),
+            )
+            lastComputerRebuildEscalationShownKey = escalation.episodeKey
+        }
         return JSONObject()
             .put("accountEpoch", snapshot.accountEpoch)
             .put("processGeneration", snapshot.processGeneration)
