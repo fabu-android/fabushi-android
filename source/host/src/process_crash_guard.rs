@@ -27,10 +27,28 @@ struct DurableSessionMarker {
     crash_seen: bool,
 }
 
+pub const ANDROID_SESSION_MARKER_ORPHAN_BOUND_MS: u64 = 30 * 24 * 60 * 60 * 1_000;
+const ANDROID_SESSION_UPTIME_BUCKET_CEILINGS_MS: [u64; 6] = [
+    60_000,
+    300_000,
+    1_800_000,
+    21_600_000,
+    86_400_000,
+    ANDROID_SESSION_MARKER_ORPHAN_BOUND_MS,
+];
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AndroidUncleanExitKind {
+    UncleanExit,
+    MarkerOrphaned,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AndroidUncleanExitRecord {
+    pub kind: AndroidUncleanExitKind,
     pub started_at_ms: u64,
     pub last_alive_at_ms: u64,
+    pub previous_uptime_bucket_ms: u64,
     pub crash_seen: bool,
 }
 
@@ -55,10 +73,22 @@ impl AndroidUncleanExitMarker {
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)?;
         }
-        let prior = read_marker(&path).ok().map(|marker| AndroidUncleanExitRecord {
-            started_at_ms: marker.started_at_ms,
-            last_alive_at_ms: marker.last_alive_at_ms.max(marker.started_at_ms),
-            crash_seen: marker.crash_seen,
+        let prior = read_marker(&path).ok().map(|marker| {
+            let last_alive_at_ms = marker.last_alive_at_ms.max(marker.started_at_ms);
+            let age_ms = now_ms.saturating_sub(last_alive_at_ms);
+            AndroidUncleanExitRecord {
+                kind: if age_ms > ANDROID_SESSION_MARKER_ORPHAN_BOUND_MS {
+                    AndroidUncleanExitKind::MarkerOrphaned
+                } else {
+                    AndroidUncleanExitKind::UncleanExit
+                },
+                started_at_ms: marker.started_at_ms,
+                last_alive_at_ms,
+                previous_uptime_bucket_ms: session_uptime_bucket_ms(
+                    last_alive_at_ms.saturating_sub(marker.started_at_ms),
+                ),
+                crash_seen: marker.crash_seen,
+            }
         });
         let marker = DurableSessionMarker {
             started_at_ms: now_ms,
@@ -125,6 +155,14 @@ pub fn handle_process_crash(
     }
 }
 
+fn session_uptime_bucket_ms(uptime_ms: u64) -> u64 {
+    ANDROID_SESSION_UPTIME_BUCKET_CEILINGS_MS
+        .iter()
+        .copied()
+        .find(|ceiling| uptime_ms < *ceiling)
+        .unwrap_or(ANDROID_SESSION_MARKER_ORPHAN_BOUND_MS)
+}
+
 fn read_marker(path: &Path) -> io::Result<DurableSessionMarker> {
     let raw = fs::read_to_string(path)?;
     serde_json::from_str(&raw)
@@ -181,8 +219,10 @@ mod tests {
 
         let (mut reopened, prior) = AndroidUncleanExitMarker::open(&path, 200).unwrap();
         let prior = prior.unwrap();
+        assert_eq!(prior.kind, AndroidUncleanExitKind::UncleanExit);
         assert_eq!(prior.started_at_ms, 100);
         assert_eq!(prior.last_alive_at_ms, 170);
+        assert_eq!(prior.previous_uptime_bucket_ms, 60_000);
         assert!(prior.crash_seen);
         reopened.settle_clean().unwrap();
         assert!(!path.exists());
@@ -229,6 +269,25 @@ mod tests {
         let prior = prior.expect("next process should observe the panicked Host session");
         assert!(prior.crash_seen);
         assert_eq!(prior.last_alive_at_ms, 125);
+        drop(marker);
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn stale_prior_marker_is_classified_as_orphaned_and_uptime_is_bucketed() {
+        let dir = marker_root("orphan");
+        let path = dir.join("session.json");
+        let _ = fs::remove_dir_all(&dir);
+        let (mut first, prior) = AndroidUncleanExitMarker::open(&path, 100).unwrap();
+        assert!(prior.is_none());
+        first.heartbeat(86_500).unwrap();
+        std::mem::forget(first);
+
+        let observed_at = 86_500 + ANDROID_SESSION_MARKER_ORPHAN_BOUND_MS + 1;
+        let (marker, prior) = AndroidUncleanExitMarker::open(&path, observed_at).unwrap();
+        let prior = prior.expect("stale marker should be reconciled on reopen");
+        assert_eq!(prior.kind, AndroidUncleanExitKind::MarkerOrphaned);
+        assert_eq!(prior.previous_uptime_bucket_ms, 86_400_000);
         drop(marker);
         let _ = fs::remove_dir_all(dir);
     }
