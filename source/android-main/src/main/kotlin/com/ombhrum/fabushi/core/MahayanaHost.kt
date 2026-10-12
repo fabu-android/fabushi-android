@@ -3,6 +3,7 @@ package com.ombhrum.fabushi.core
 import android.content.Context
 import com.ombhrum.fabushi.androidmain.security.AndroidAccountSessionStore
 import com.ombhrum.fabushi.androidmain.security.AndroidMachineIdStore
+import com.ombhrum.fabushi.androidmain.security.AndroidCredentialVaultStore
 import com.ombhrum.fabushi.androidmain.security.AndroidPluginVariableSecretStore
 import com.ombhrum.fabushi.androidmain.security.AndroidRemoteBindingStore
 import org.json.JSONObject
@@ -28,6 +29,7 @@ class MahayanaHost(
     private val accountSessionStore = AndroidAccountSessionStore(context)
     private val machineIdStore = AndroidMachineIdStore(context)
     private val pluginSecretStore = AndroidPluginVariableSecretStore(context)
+    private val credentialVaultStore = AndroidCredentialVaultStore(context)
     private val remoteBindingStore = AndroidRemoteBindingStore(context)
     private val consumerId = UUID.randomUUID().toString()
     private val ownedListenerIds = mutableSetOf<String>()
@@ -132,6 +134,9 @@ class MahayanaHost(
         check(!closed) { "Mahayana host is closed" }
         if (!featureHostTest && method == "feature.receive") {
             return receiveShared(params)
+        }
+        if (!featureHostTest && method.startsWith("feature.credentialVault.")) {
+            return credentialVaultRequest(method, params)
         }
         if (!featureHostTest && method == "feature.plugin.variables.configure") {
             return configurePluginVariables(params)
@@ -300,6 +305,66 @@ class MahayanaHost(
         }
     }
 
+
+    private fun credentialVaultRequest(method: String, params: JSONObject): JSONObject {
+        val accountFence = currentCredentialAccountFence()
+        return when (method) {
+            "feature.credentialVault.list" -> JSONObject().put(
+                "credentials",
+                credentialVaultStore.listMetadata(accountFence),
+            )
+            "feature.credentialVault.upsert", "feature.credentialVault.rotate" -> {
+                val name = params.optString("name").takeIf(String::isNotBlank)
+                    ?: error("Credential Vault requires a secret reference")
+                val secretValue = params.optString("secretValue").takeIf(String::isNotEmpty)
+                    ?: error("Credential Vault requires a secret value")
+                val originsJson = params.optJSONArray("allowedOrigins")
+                    ?: error("Credential Vault requires allowedOrigins")
+                val origins = buildList {
+                    for (index in 0 until originsJson.length()) add(originsJson.getString(index))
+                }
+                val metadata = if (method.endsWith("rotate")) {
+                    credentialVaultStore.rotate(
+                        accountFence,
+                        name,
+                        params.optString("label"),
+                        secretValue,
+                        origins,
+                    )
+                } else {
+                    credentialVaultStore.upsert(
+                        accountFence,
+                        name,
+                        params.optString("label"),
+                        secretValue,
+                        origins,
+                    )
+                }
+                JSONObject().put("credential", metadata)
+            }
+            "feature.credentialVault.revoke" -> {
+                val name = params.optString("name").takeIf(String::isNotBlank)
+                    ?: error("Credential Vault requires a secret reference")
+                JSONObject().put("revoked", credentialVaultStore.revoke(accountFence, name))
+            }
+            else -> error("Unsupported Credential Vault operation")
+        }
+    }
+
+    /** Internal execution-boundary consumption; Presentation has no secret reveal route. */
+    internal fun credentialForOrigin(secretRef: String, origin: String): String {
+        check(!featureHostTest && !closed) { "Credential resolution requires production Host" }
+        return credentialVaultStore.resolveForOrigin(currentCredentialAccountFence(), secretRef, origin)
+    }
+
+    private fun currentCredentialAccountFence(): String {
+        val response = dispatch("feature.account.fence", JSONObject())
+        return response.optJSONObject("result")
+            ?.optString("accountFence")
+            ?.trim()
+            ?.takeIf(String::isNotEmpty)
+            ?: error("Credential Vault requires a signed-in account")
+    }
 
     private fun configurePluginVariables(params: JSONObject): JSONObject {
         val preparedResponse = dispatch("feature.plugin.variables.prepare", JSONObject(params.toString()))
