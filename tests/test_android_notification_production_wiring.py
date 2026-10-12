@@ -12,10 +12,13 @@ class AndroidNotificationProductionWiringTest(unittest.TestCase):
         application = APPLICATION.read_text(encoding="utf-8")
         self.assertIn("runCatching { coordinator.agentList() }", application)
         self.assertIn('.put("kind", "agents-roster-seed")', application)
-        self.assertIn("coordinator.addFeatureEventListener(notificationRuntime.feed::handleFeatureEvent)", application)
+        self.assertIn("coordinator.addFeatureEventListener(::handleNotificationFeatureEvent)", application)
+        self.assertIn("private fun handleNotificationFeatureEvent", application)
+        self.assertIn('kind == "agents" && eventPayload.optJSONArray("agents") == null', application)
+        self.assertGreaterEqual(application.count("coordinator.agentList()"), 2)
         self.assertLess(
             application.index("runCatching { coordinator.agentList() }"),
-            application.index("coordinator.addFeatureEventListener(notificationRuntime.feed::handleFeatureEvent)"),
+            application.index("coordinator.addFeatureEventListener(::handleNotificationFeatureEvent)"),
         )
 
     def test_native_agent_projection_shape_is_accepted_by_notification_feed(self):
