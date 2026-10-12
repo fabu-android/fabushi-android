@@ -13,6 +13,10 @@ import android.os.StatFs
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidOnDemandUsage
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidAccountUsageSummary
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidPrReviewPreferences
+import com.ombhrum.fabushi.androidpreload.runtime.AndroidHumanCallSession
+import com.ombhrum.fabushi.androidpreload.runtime.AndroidHumanCallLease
+import com.ombhrum.fabushi.androidpreload.runtime.AndroidHumanCallSignal
+import com.ombhrum.fabushi.androidpreload.runtime.AndroidHumanCallState
 import com.ombhrum.fabushi.androidpreload.runtime.AccountAccessBlockReason
 import com.ombhrum.fabushi.androidpreload.runtime.AccountAccessProjection
 import com.ombhrum.fabushi.androidpreload.runtime.AccountAccessState
@@ -818,6 +822,184 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
             }
         }
     }
+
+    override fun humanCallCreate(
+        callId: String,
+        requestId: String,
+        scopeId: String,
+        participantIds: List<String>,
+    ): AndroidHumanCallSession =
+        parseHumanCallSession(
+            host.request(
+                "feature.call.create",
+                JSONObject()
+                    .put("callId", callId)
+                    .put("requestId", requestId)
+                    .put("scopeId", scopeId)
+                    .put("participantIds", JSONArray(participantIds)),
+            ),
+        )
+
+    override fun humanCallList(scopeId: String, limit: Int): List<AndroidHumanCallSession> {
+        val value = host.requestValue(
+            "feature.call.list",
+            JSONObject().put("scopeId", scopeId).put("limit", limit.coerceIn(1, 100)),
+        ) as? JSONArray ?: JSONArray()
+        return buildList(value.length()) {
+            for (index in 0 until value.length()) {
+                add(parseHumanCallSession(value.getJSONObject(index)))
+            }
+        }
+    }
+
+    override fun humanCallLease(
+        callId: String,
+        generation: Long,
+        deviceId: String,
+        allowClaim: Boolean,
+    ): AndroidHumanCallLease =
+        parseHumanCallLease(
+            host.request(
+                "feature.call.lease",
+                JSONObject()
+                    .put("callId", callId)
+                    .put("generation", generation)
+                    .put("deviceId", deviceId)
+                    .put("allowClaim", allowClaim),
+            ),
+        )
+
+    override fun humanCallTransition(
+        callId: String,
+        generation: Long,
+        action: String,
+        terminalReason: String?,
+    ): AndroidHumanCallSession =
+        parseHumanCallSession(
+            host.request(
+                "feature.call.transition",
+                JSONObject()
+                    .put("callId", callId)
+                    .put("generation", generation)
+                    .put("action", action)
+                    .putNullable("terminalReason", terminalReason),
+            ),
+        )
+
+    override fun humanCallUpdateMedia(
+        callId: String,
+        generation: Long,
+        mediaCapabilities: JSONObject,
+        deviceSelection: JSONObject,
+    ): AndroidHumanCallSession =
+        parseHumanCallSession(
+            host.request(
+                "feature.call.media.update",
+                JSONObject()
+                    .put("callId", callId)
+                    .put("generation", generation)
+                    .put("mediaCapabilities", JSONObject(mediaCapabilities.toString()))
+                    .put("deviceSelection", JSONObject(deviceSelection.toString())),
+            ),
+        )
+
+    override fun humanCallSendSignal(
+        callId: String,
+        generation: Long,
+        senderDeviceId: String,
+        kind: String,
+        payload: JSONObject,
+    ): AndroidHumanCallSignal =
+        parseHumanCallSignal(
+            host.request(
+                "feature.call.signal.send",
+                JSONObject()
+                    .put("callId", callId)
+                    .put("generation", generation)
+                    .put("senderDeviceId", senderDeviceId)
+                    .put("kind", kind)
+                    .put("payload", JSONObject(payload.toString())),
+            ),
+        )
+
+    override fun humanCallSignalsSince(
+        callId: String,
+        generation: Long,
+        afterSeq: Long,
+    ): List<AndroidHumanCallSignal> {
+        val value = host.requestValue(
+            "feature.call.signal.list",
+            JSONObject()
+                .put("callId", callId)
+                .put("generation", generation)
+                .put("afterSeq", afterSeq),
+        ) as? JSONArray ?: JSONArray()
+        return buildList(value.length()) {
+            for (index in 0 until value.length()) {
+                add(parseHumanCallSignal(value.getJSONObject(index)))
+            }
+        }
+    }
+
+    override fun humanCallReconcile(
+        callId: String,
+        generation: Long,
+        terminalState: String,
+        reason: String?,
+    ): AndroidHumanCallSession =
+        parseHumanCallSession(
+            host.request(
+                "feature.call.reconcile",
+                JSONObject()
+                    .put("callId", callId)
+                    .put("generation", generation)
+                    .put("terminalState", terminalState)
+                    .putNullable("reason", reason),
+            ),
+        )
+
+    private fun parseHumanCallSession(value: JSONObject): AndroidHumanCallSession {
+        val participants = value.optJSONArray("participantIds") ?: JSONArray()
+        return AndroidHumanCallSession(
+            id = value.getString("id"),
+            requestId = value.getString("requestId"),
+            scopeId = value.getString("scopeId"),
+            creatorId = value.getString("creatorId"),
+            participantIds = buildList(participants.length()) {
+                for (index in 0 until participants.length()) add(participants.getString(index))
+            },
+            state = AndroidHumanCallState.fromWire(value.getString("state")),
+            generation = value.getLong("generation"),
+            signalSeq = value.optLong("signalSeq", 0L),
+            mediaCapabilities = value.optJSONObject("mediaCapabilities") ?: JSONObject(),
+            deviceSelection = value.optJSONObject("deviceSelection") ?: JSONObject(),
+            createdAtMs = value.getLong("createdAtMs"),
+            updatedAtMs = value.getLong("updatedAtMs"),
+            terminalReason = value.optString("terminalReason").takeIf(String::isNotBlank),
+        )
+    }
+
+    private fun parseHumanCallLease(value: JSONObject): AndroidHumanCallLease =
+        AndroidHumanCallLease(
+            callId = value.getString("callId"),
+            userId = value.getString("userId"),
+            deviceId = value.getString("deviceId"),
+            role = value.getString("role"),
+            isOwner = value.optBoolean("isOwner", false),
+            claimAvailable = value.optBoolean("claimAvailable", false),
+            generation = value.getLong("generation"),
+        )
+
+    private fun parseHumanCallSignal(value: JSONObject): AndroidHumanCallSignal =
+        AndroidHumanCallSignal(
+            callId = value.getString("callId"),
+            generation = value.getLong("generation"),
+            seq = value.getLong("seq"),
+            senderDeviceId = value.getString("senderDeviceId"),
+            kind = value.getString("kind"),
+            payload = value.optJSONObject("payload") ?: JSONObject(),
+            createdAtMs = value.getLong("createdAtMs"),
+        )
 
     override fun automationUpsert(params: JSONObject) = host.request("feature.automation.upsert", params)
     override fun automationList(): JSONArray = host.requestValue("feature.automation.list") as? JSONArray ?: JSONArray()
