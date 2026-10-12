@@ -27,18 +27,23 @@ struct CoordinatorHost {
 
 impl HostPort for CoordinatorHost {
     fn execute(&mut self, request: &CoordinatorRequest) -> Result<String, CoordinatorFailure> {
-        let params: Value = serde_json::from_str(&request.params_json).map_err(|error| {
-            CoordinatorFailure::new(
-                CoordinatorFailureCode::MalformedRequest,
-                format!("invalid Host params JSON: {error}"),
-            )
-        })?;
-        self.runtime
-            .dispatch(&request.method, &params)
-            .map(|value| value.to_string())
-            .map_err(|message| {
-                CoordinatorFailure::new(CoordinatorFailureCode::HostUnavailable, message)
-            })
+        let params: Value = match serde_json::from_str(&request.params_json) {
+            Ok(params) => params,
+            Err(error) => {
+                self.runtime.report_edge_failure("android-host-jni", &request.method, "MalformedRequest");
+                return Err(CoordinatorFailure::new(
+                    CoordinatorFailureCode::MalformedRequest,
+                    format!("invalid Host params JSON: {error}"),
+                ));
+            }
+        };
+        match self.runtime.dispatch(&request.method, &params) {
+            Ok(value) => Ok(value.to_string()),
+            Err(message) => {
+                self.runtime.report_edge_failure("android-host-jni", &request.method, "HostError");
+                Err(CoordinatorFailure::new(CoordinatorFailureCode::HostUnavailable, message))
+            }
+        }
     }
 
     fn cancel(

@@ -1,3 +1,4 @@
+use crate::edge_failures::EdgeFailureBuffer;
 use crate::account_service::{AccountSessionMutation, AndroidAccountService};
 use crate::account_telemetry::{
     AccountTelemetryBuffer, SigninLoginReport, SigninSignoutCause,
@@ -643,6 +644,7 @@ pub struct AndroidJsonHost {
     preexisting_account_durable_data: bool,
     account_binding_refusal: Option<String>,
     account_telemetry: AccountTelemetryBuffer,
+    edge_failures: EdgeFailureBuffer,
     agents: Arc<Mutex<AndroidAgentRoster>>,
     sidebar_sections: Arc<Mutex<AndroidSidebarSections>>,
     transcript: Arc<Mutex<TranscriptStore>>,
@@ -906,6 +908,7 @@ impl AndroidJsonHost {
             preexisting_account_durable_data,
             account_binding_refusal,
             account_telemetry: AccountTelemetryBuffer::default(),
+            edge_failures: EdgeFailureBuffer::default(),
             agents,
             sidebar_sections,
             transcript,
@@ -1118,6 +1121,10 @@ impl AndroidJsonHost {
         Arc::clone(&self.runtime_call_cancellations)
     }
 
+    pub fn report_edge_failure(&mut self, area: &str, leg: &str, error_class: &str) {
+        self.edge_failures.report(area, leg, error_class);
+    }
+
     pub fn dispatch(&mut self, method: &str, params: &Value) -> Result<Value, String> {
         match method {
             "host.platform" => Ok(json!({"platform":"android"})),
@@ -1136,6 +1143,7 @@ impl AndroidJsonHost {
                 serde_json::to_value(snapshot)
                     .map_err(|error| format!("failed to serialize account telemetry snapshot: {error}"))
             },
+            "feature.diagnostics.edgeFailures.snapshot" => serde_json::to_value(self.edge_failures.snapshot()).map_err(|error| format!("failed to serialize edge failure snapshot: {error}")),
             "feature.account.fence" => Ok(json!({"accountFence":self.current_turn_account_fence()?})),
             "feature.account.sandAccess" => self.account_sand_access(),
             "feature.account.privacyMode" => Ok(self.account_privacy_mode()),

@@ -16,6 +16,7 @@ pub mod account_telemetry;
 
 pub mod attachment_paths;
 pub mod durable_file_policy;
+pub mod edge_failures;
 pub mod env_descriptor_account_binding;
 pub mod extensions;
 pub mod gateway_command_error;
