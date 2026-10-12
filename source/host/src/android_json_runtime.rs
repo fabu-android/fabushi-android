@@ -777,6 +777,22 @@ impl AndroidJsonHost {
         initial_account_session_json: Option<&str>,
         device_id: impl Into<String>,
     ) -> Self {
+        Self::new_with_account_session_and_device_id_and_app_version(
+            app_data_dir,
+            mode,
+            initial_account_session_json,
+            device_id,
+            "unknown",
+        )
+    }
+
+    pub fn new_with_account_session_and_device_id_and_app_version(
+        app_data_dir: impl Into<PathBuf>,
+        mode: AndroidHostMode,
+        initial_account_session_json: Option<&str>,
+        device_id: impl Into<String>,
+        app_version: &str,
+    ) -> Self {
         let app_data_dir = app_data_dir.into();
         let preexisting_account_durable_data = has_existing_account_durable_data(&app_data_dir);
         let startup_has_protected_session = mode == AndroidHostMode::Production
@@ -979,9 +995,10 @@ impl AndroidJsonHost {
                 }
             }
         }));
-        let (unclean_exit, prior_unclean_exit) = AndroidUncleanExitMarker::open(
+        let (unclean_exit, prior_unclean_exit) = AndroidUncleanExitMarker::open_with_version(
             app_data_dir.join("host-session-marker.json"),
             now_ms(),
+            app_version,
         )
         .unwrap_or_else(|error| panic!("failed to arm Android Host session marker: {error}"));
         let mut process_crash_recent = VecDeque::new();
@@ -994,6 +1011,8 @@ impl AndroidJsonHost {
                 "kind":kind,
                 "occurredAtMs":prior.last_alive_at_ms,
                 "uptimeMs":prior.previous_uptime_bucket_ms,
+                "previousVersion":prior.previous_version,
+                "sameVersion":prior.same_version,
                 "crashSeen":prior.crash_seen,
                 "errorCode":if matches!(prior.kind, AndroidUncleanExitKind::UncleanExit) {
                     Value::String("SAND-E0610".into())
