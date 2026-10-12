@@ -571,6 +571,19 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
             JSONObject().put("localEnabled", enabled),
         )
 
+    override fun reportRecoveredProcessCrash(
+        kind: String,
+        occurredAtMs: Long,
+        uptimeMs: Long,
+    ): JSONObject =
+        host.request(
+            "feature.telemetry.processCrash.record",
+            JSONObject()
+                .put("kind", kind)
+                .put("occurredAtMs", occurredAtMs)
+                .put("uptimeMs", uptimeMs),
+        )
+
     override fun timeZoneSettings(): AndroidTimeZoneSettings {
         val detected = ZoneId.systemDefault().id
         host.request(
