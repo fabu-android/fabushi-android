@@ -77,7 +77,19 @@ internal class FabushiProcessRuntime(
     private val notificationRuntime = AndroidNotificationRuntime(
         context = application,
         isAppForeground = { appForeground },
-    )
+    ).also { runtime ->
+        // Desktop seeds notification/badge state from the canonical roster before applying
+        // incremental agent-upserted events. Do the same at process startup so a cold-start delta
+        // cannot remain buffered indefinitely while waiting for a later full-roster event.
+        runCatching { coordinator.agentList() }
+            .onSuccess { agents ->
+                runtime.feed.handleFeatureEvent(
+                    org.json.JSONObject()
+                        .put("kind", "agents-roster-seed")
+                        .put("agents", org.json.JSONArray(agents.toString())),
+                )
+            }
+    }
     private val webAuthnRuntime = AndroidCredentialManagerWebAuthn(
         application = application,
         coordinator = coordinator,
