@@ -9,6 +9,7 @@ internal enum class ComputerRebuildKind { UPDATE, RESET, RECOVER, RECONNECTING }
 internal enum class ComputerRebuildSource { AUTO, REQUEST, MIGRATION }
 internal enum class ComputerRebuildTeardown { NONE, TRANSPORT, BOX }
 internal enum class ComputerRebuildResolution { SETTLED, FAILED, CANCELLED }
+internal const val COMPUTER_REBUILD_STALLED_AFTER_MS = 600_000L
 internal enum class ComputerRebuildMigrationPhase {
     BACKING_UP, CREATING, MOVING, CLEANING_UP, WIPING, DONE, FAILED
 }
@@ -38,6 +39,8 @@ internal data class ComputerRebuildSnapshot(
     val terminalMigration: Boolean = false,
     val outcomeUnknown: Boolean = false,
     val lastResolution: ComputerRebuildResolution? = null,
+    val episodeStartedAtMs: Long? = null,
+    val stageStartedAtMs: Long? = null,
 )
 
 internal interface ComputerRebuildStateStore {
@@ -86,6 +89,8 @@ internal class SharedPreferencesComputerRebuildStateStore(context: Context) : Co
                 lastResolution = value.optString("lastResolution")
                     .takeIf(String::isNotBlank)
                     ?.let { ComputerRebuildResolution.valueOf(it) },
+                episodeStartedAtMs = value.optLong("episodeStartedAtMs", 0L).takeIf { it > 0L },
+                stageStartedAtMs = value.optLong("stageStartedAtMs", 0L).takeIf { it > 0L },
             )
         }.getOrNull()
     }
@@ -120,6 +125,8 @@ internal class SharedPreferencesComputerRebuildStateStore(context: Context) : Co
             .put("terminalMigration", snapshot.terminalMigration)
             .put("outcomeUnknown", snapshot.outcomeUnknown)
             .put("lastResolution", snapshot.lastResolution?.name ?: "")
+            .put("episodeStartedAtMs", snapshot.episodeStartedAtMs ?: JSONObject.NULL)
+            .put("stageStartedAtMs", snapshot.stageStartedAtMs ?: JSONObject.NULL)
         preferences.edit().putString("snapshot", value.toString()).apply()
     }
 }
@@ -130,9 +137,17 @@ internal class SharedPreferencesComputerRebuildStateStore(context: Context) : Co
  * This mirrors the Desktop reducer contract without inventing a backend endpoint. Callers may feed
  * only facts received from canonical request, transport, Forever Box, and migration owners.
  */
+internal data class ComputerRebuildVisibilityTelemetry(
+    val elapsedMs: Long,
+    val stageElapsedMs: Long,
+    val isStalled: Boolean,
+    val stage: ComputerRebuildMigrationPhase?,
+)
+
 internal class ComputerRebuildStateOwner(
     private val store: ComputerRebuildStateStore,
     private val processGeneration: Long = 1L,
+    private val nowMs: () -> Long = System::currentTimeMillis,
 ) {
     private var snapshot: ComputerRebuildSnapshot? = store.read()?.let { persisted ->
         val rebound = persisted.copy(processGeneration = processGeneration)
@@ -334,6 +349,8 @@ internal class ComputerRebuildStateOwner(
                 terminalMigration = false,
                 outcomeUnknown = false,
                 lastResolution = null,
+                episodeStartedAtMs = nowMs(),
+                stageStartedAtMs = nowMs(),
             )
         } else if (current.kind == ComputerRebuildKind.RECONNECTING && kind != ComputerRebuildKind.RECONNECTING) {
             current.copy(
@@ -465,12 +482,18 @@ internal class ComputerRebuildStateOwner(
             current = persist(current.copy(outcomeUnknown = false))
         }
         fun appendPhase(snapshot: ComputerRebuildSnapshot): ComputerRebuildSnapshot {
-            val history = if (snapshot.migrationPhases.lastOrNull() == phase) {
+            val changed = snapshot.migrationPhases.lastOrNull() != phase
+            val history = if (!changed) {
                 snapshot.migrationPhases
             } else {
                 (snapshot.migrationPhases + phase).takeLast(16)
             }
-            return persist(snapshot.copy(migrationPhases = history))
+            return persist(
+                snapshot.copy(
+                    migrationPhases = history,
+                    stageStartedAtMs = if (changed) nowMs() else snapshot.stageStartedAtMs,
+                ),
+            )
         }
         if (phase == ComputerRebuildMigrationPhase.FAILED) {
             if (current.kind == null) return current
@@ -524,6 +547,23 @@ internal class ComputerRebuildStateOwner(
         return requireSnapshot(accountEpoch)
     }
 
+    @Synchronized
+    fun visibilityTelemetry(accountEpoch: Long): ComputerRebuildVisibilityTelemetry? {
+        requireCurrentAccount(accountEpoch)
+        val current = requireSnapshot(accountEpoch)
+        if (current.kind == null) return null
+        val now = nowMs()
+        val episodeStart = current.episodeStartedAtMs ?: now
+        val stageStart = current.stageStartedAtMs ?: episodeStart
+        val elapsed = (now - episodeStart).coerceAtLeast(0L)
+        return ComputerRebuildVisibilityTelemetry(
+            elapsedMs = elapsed,
+            stageElapsedMs = (now - stageStart).coerceAtLeast(0L),
+            isStalled = elapsed >= COMPUTER_REBUILD_STALLED_AFTER_MS,
+            stage = current.migrationPhases.lastOrNull(),
+        )
+    }
+
     /**
      * Account/access projection reads rebuild truth only from this durable owner.
      * Remote binding readiness is deliberately not an input.
@@ -561,6 +601,8 @@ internal class ComputerRebuildStateOwner(
             terminalMigration = false,
             outcomeUnknown = false,
             lastResolution = resolution,
+            episodeStartedAtMs = null,
+            stageStartedAtMs = null,
         ),
     )
 

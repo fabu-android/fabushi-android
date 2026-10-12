@@ -2246,6 +2246,7 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
     override fun computerRebuildStatus(): JSONObject {
         val accountEpoch = accountAccessOwner.currentProjection().accountEpoch
         val snapshot = computerRebuildOwner.snapshot(accountEpoch)
+        val visibility = computerRebuildOwner.visibilityTelemetry(accountEpoch)
         return JSONObject()
             .put("accountEpoch", snapshot.accountEpoch)
             .put("processGeneration", snapshot.processGeneration)
@@ -2270,6 +2271,10 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
             .put("reconnectedSinceLeft", snapshot.reconnectedSinceLeft)
             .put("terminalMigration", snapshot.terminalMigration)
             .put("lastResolution", snapshot.lastResolution?.name?.lowercase() ?: JSONObject.NULL)
+            .put("elapsedMs", visibility?.elapsedMs ?: JSONObject.NULL)
+            .put("stageElapsedMs", visibility?.stageElapsedMs ?: JSONObject.NULL)
+            .put("isStalled", visibility?.isStalled ?: false)
+            .put("visibilityStage", visibility?.stage?.name?.lowercase()?.replace('_', '-') ?: JSONObject.NULL)
     }
 
     private fun remoteControlSessionRecoveryBody(

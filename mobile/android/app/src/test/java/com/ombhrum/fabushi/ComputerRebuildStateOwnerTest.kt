@@ -494,4 +494,37 @@ class ComputerRebuildStateOwnerTest {
         }
     }
 
+
+    @Test
+    fun visibilityTelemetryPersistsEpisodeStageAndStallAcrossProcessReopen() {
+        val store = MemoryStore()
+        var now = 1_000L
+        val owner = ComputerRebuildStateOwner(store, processGeneration = 7L, nowMs = { now })
+        owner.observeAccount(3L)
+        owner.begin(3L, ComputerRebuildKind.UPDATE, "op-visible", ComputerRebuildSource.REQUEST)
+
+        now += 599_999L
+        var visibility = owner.visibilityTelemetry(3L)!!
+        assertEquals(599_999L, visibility.elapsedMs)
+        assertFalse(visibility.isStalled)
+
+        now += 1L
+        visibility = owner.visibilityTelemetry(3L)!!
+        assertTrue(visibility.isStalled)
+        owner.observeMigration(3L, "op-visible", ComputerRebuildMigrationPhase.BACKING_UP)
+        now += 3_210L
+        visibility = owner.visibilityTelemetry(3L)!!
+        assertEquals(ComputerRebuildMigrationPhase.BACKING_UP, visibility.stage)
+        assertEquals(3_210L, visibility.stageElapsedMs)
+
+        val reopened = ComputerRebuildStateOwner(store, processGeneration = 8L, nowMs = { now })
+        val reopenedVisibility = reopened.visibilityTelemetry(3L)!!
+        assertTrue(reopenedVisibility.isStalled)
+        assertEquals(603_210L, reopenedVisibility.elapsedMs)
+        assertEquals(3_210L, reopenedVisibility.stageElapsedMs)
+
+        reopened.observeAccount(4L)
+        assertNull(reopened.visibilityTelemetry(4L))
+    }
+
 }
