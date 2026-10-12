@@ -26,9 +26,11 @@ internal class AndroidSendSubmissionTransportQueue(
     private val dispatch: (AndroidSendSubmissionScope) -> AndroidSendAcknowledgementDispatch,
     private val cancelQueuedPersisted: (AndroidSendSubmissionScope) -> Boolean,
     private val onFlushed: (AndroidSendSubmissionScope, AndroidSendAcknowledgementDispatch) -> Unit,
+    private val onRestoredSettled: (AndroidSendAcknowledgement, String) -> Unit = { _, _ -> },
 ) {
     private val lock = Any()
     private val queued = linkedMapOf<String, AndroidSendSubmissionScope>()
+    private val restored = linkedMapOf<String, AndroidSendAcknowledgement>()
     private val activeAgents = mutableSetOf<String>()
     private var lifecycleGeneration = 1L
     private var disposed = false
@@ -53,6 +55,7 @@ internal class AndroidSendSubmissionTransportQueue(
     }
 
     fun discover(records: List<AndroidSendAcknowledgement>) {
+        val discovered = mutableListOf<Pair<AndroidSendSubmissionScope, AndroidSendAcknowledgement>>()
         synchronized(lock) {
             if (disposed) return
             records
@@ -64,8 +67,19 @@ internal class AndroidSendSubmissionTransportQueue(
                         nonce = record.nonce,
                         generation = record.generation,
                     )
-                    queued.putIfAbsent(scope.key, scope)
+                    if (queued.putIfAbsent(scope.key, scope) == null) {
+                        restored[scope.key] = record
+                        discovered += scope to record
+                    }
                 }
+        }
+        if (discovered.isNotEmpty() && isTransportDown()) {
+            val parked = synchronized(lock) {
+                discovered.mapNotNull { (scope, _) -> restored.remove(scope.key) }
+            }
+            parked.forEach { record ->
+                runCatching { onRestoredSettled(record, "parked") }
+            }
         }
     }
 
@@ -100,6 +114,7 @@ internal class AndroidSendSubmissionTransportQueue(
             if (disposed) return
             lifecycleGeneration += 1L
             queued.clear()
+            restored.clear()
             activeAgents.clear()
         }
     }
@@ -135,13 +150,27 @@ internal class AndroidSendSubmissionTransportQueue(
                 next
             }
             val result = runCatching { dispatch(scope) }
-            synchronized(lock) {
+            val restoredRecord = synchronized(lock) {
                 activeAgents -= agentId
-                if (!disposed && token == lifecycleGeneration) queued.remove(scope.key)
+                if (!disposed && token == lifecycleGeneration) {
+                    queued.remove(scope.key)
+                    restored.remove(scope.key)
+                } else {
+                    null
+                }
             }
             result.onSuccess { dispatched ->
                 val current = synchronized(lock) { !disposed && token == lifecycleGeneration }
-                if (current) onFlushed(scope, dispatched)
+                if (current) {
+                    onFlushed(scope, dispatched)
+                    restoredRecord?.let { record ->
+                        runCatching { onRestoredSettled(record, "dispatched") }
+                    }
+                }
+            }.onFailure {
+                restoredRecord?.let { record ->
+                    runCatching { onRestoredSettled(record, "failed") }
+                }
             }
             if (result.isFailure) return
         }
