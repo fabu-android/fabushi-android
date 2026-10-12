@@ -411,6 +411,31 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
             JSONObject().put("serverId", serverId).put("toolName", toolName),
         ).optJSONArray("tools") ?: JSONArray()
 
+    override fun logoutMcpAccount(serverId: String, accountKey: String): JSONObject =
+        host.request(
+            "feature.mcp.account.logout",
+            JSONObject().put("serverId", serverId).put("accountKey", accountKey),
+        )
+
+    override fun renameMcpAccount(
+        serverId: String,
+        accountKey: String,
+        newAccountKey: String,
+    ): JSONObject =
+        host.request(
+            "feature.mcp.account.rename",
+            JSONObject()
+                .put("serverId", serverId)
+                .put("accountKey", accountKey)
+                .put("newAccountKey", newAccountKey),
+        )
+
+    override fun removeMcpAccount(serverId: String, accountKey: String): JSONObject =
+        host.request(
+            "feature.mcp.account.remove",
+            JSONObject().put("serverId", serverId).put("accountKey", accountKey),
+        )
+
     override fun mcpOAuthRegister(state: String, provider: String): Boolean =
         host.request(
             "coordinator.mcpOAuth.register",
