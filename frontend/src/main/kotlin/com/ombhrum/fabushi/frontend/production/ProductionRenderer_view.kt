@@ -76,14 +76,7 @@ internal fun ProductionRenderer(
                 var shortcutFocusPromptNonce by remember { mutableStateOf(0) }
                 var shortcutFindInChatNonce by remember { mutableStateOf(0) }
                 val rootShellNavigationOwner = remember(activity.applicationContext) {
-                    RootShellNavigationOwner(
-                        SharedPreferencesRootShellNavigationPersistence(
-                            activity.applicationContext.getSharedPreferences(
-                                "fabushi.root-shell-navigation",
-                                android.content.Context.MODE_PRIVATE,
-                            ),
-                        ),
-                    )
+                    createRootShellNavigationOwner(activity.applicationContext)
                 }
 
                 val coroutineScope = rememberCoroutineScope()

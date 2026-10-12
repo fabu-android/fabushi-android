@@ -1,5 +1,6 @@
 package com.ombhrum.fabushi
 
+import android.content.Context
 import android.content.SharedPreferences
 import org.json.JSONArray
 import org.json.JSONObject
@@ -43,12 +44,12 @@ internal class SharedPreferencesRootShellNavigationPersistence(
             RootShellNavigationState(
                 entries = entries,
                 cursor = rawCursor.coerceIn(-1, entries.lastIndex),
-                pendingTarget = objectValue.optString("pendingTarget")
-                    .trim()
-                    .takeIf(String::isNotEmpty),
-                appliedAgentId = objectValue.optString("appliedAgentId")
-                    .trim()
-                    .takeIf(String::isNotEmpty),
+                pendingTarget = (objectValue.opt("pendingTarget") as? String)
+                    ?.trim()
+                    ?.takeIf(String::isNotEmpty),
+                appliedAgentId = (objectValue.opt("appliedAgentId") as? String)
+                    ?.trim()
+                    ?.takeIf(String::isNotEmpty),
             )
         }.getOrNull()
     }
@@ -80,6 +81,16 @@ internal class SharedPreferencesRootShellNavigationPersistence(
         const val KEY_STATE = "state"
     }
 }
+
+internal fun createRootShellNavigationOwner(context: Context): RootShellNavigationOwner =
+    RootShellNavigationOwner(
+        SharedPreferencesRootShellNavigationPersistence(
+            context.applicationContext.getSharedPreferences(
+                "fabushi.root-shell-navigation",
+                Context.MODE_PRIVATE,
+            ),
+        ),
+    )
 
 /**
  * Presentation-only owner matching Desktop root-shell-state Agent history semantics.

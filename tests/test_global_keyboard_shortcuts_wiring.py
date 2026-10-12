@@ -37,7 +37,7 @@ class GlobalKeyboardShortcutWiringTest(unittest.TestCase):
         s = RENDERER.read_text(encoding="utf-8")
         owner = (ROOT / "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/recovered/features/window-chrome/RootShellNavigationHistory.kt").read_text(encoding="utf-8")
         self.assertNotIn("KeyboardForwardTarget", s)
-        self.assertIn("RootShellNavigationOwner(", s)
+        self.assertIn("createRootShellNavigationOwner(activity.applicationContext)", s)
         self.assertIn("rootShellNavigationOwner.observeAccount(", s)
         self.assertIn("rootShellNavigationOwner.observeAppliedAgent(botState.activeBot?.id)", s)
         self.assertIn("RootShellNavigationDirection.BACK", s)
@@ -66,7 +66,8 @@ class GlobalKeyboardShortcutWiringTest(unittest.TestCase):
         self.assertIn("CommandPaletteTab.ACTIONS", s)
         self.assertIn("botState.bots.getOrNull(index - 1)", s)
         self.assertIn("agentCount = botState.bots.size", s)
-        self.assertIn("keyboardForwardTarget", s)
+        self.assertNotIn("keyboardForwardTarget", s)
+        self.assertIn("rootShellNavigationOwner.navigate(", s)
         self.assertIn("onPromptEditableFocusChanged = keyboardBinding::setEditableFocused", s)
 
     def test_native_new_agent_focus_and_find_triggers_exist(self):
