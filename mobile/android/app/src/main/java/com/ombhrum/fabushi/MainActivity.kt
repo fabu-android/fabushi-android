@@ -5,6 +5,7 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
+import android.view.KeyEvent
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -22,6 +23,7 @@ import kotlinx.coroutines.flow.MutableSharedFlow
  * out of the Activity so process recreation and renderer replacement can be tested independently.
  */
 class MainActivity : ComponentActivity() {
+    internal val globalKeyboardShortcutController = GlobalKeyboardShortcutController()
     private val deepLinks = MutableSharedFlow<AndroidPresentationDeepLink>(replay = 1, extraBufferCapacity = 31)
     private lateinit var runtimePort: AndroidPresentationRuntimePort
     private val deepLinkController = AndroidDeepLinkController(
@@ -63,6 +65,23 @@ class MainActivity : ComponentActivity() {
         super.onStop()
     }
 
+    override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        if (event.action != KeyEvent.ACTION_DOWN) return super.dispatchKeyEvent(event)
+        val childHandled = super.dispatchKeyEvent(event)
+        val shortcutHandled = globalKeyboardShortcutController.dispatch(
+            GlobalShortcutKeyEvent(
+                key = shortcutKeyName(event),
+                ctrl = event.isCtrlPressed,
+                meta = event.isMetaPressed,
+                alt = event.isAltPressed,
+                shift = event.isShiftPressed,
+                defaultPrevented = childHandled,
+                repeat = event.repeatCount > 0,
+            ),
+        )
+        return childHandled || shortcutHandled
+    }
+
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
@@ -71,6 +90,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onDestroy() {
         deepLinkController.markNotReady()
+        globalKeyboardShortcutController.clearPresentationBinding()
         super.onDestroy()
     }
 
@@ -91,6 +111,25 @@ class MainActivity : ComponentActivity() {
         if (preferences.getBoolean("notification-permission-requested", false)) return
         preferences.edit().putBoolean("notification-permission-requested", true).apply()
         requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 4107)
+    }
+
+    private fun shortcutKeyName(event: KeyEvent): String = when (event.keyCode) {
+        KeyEvent.KEYCODE_ESCAPE -> "escape"
+        KeyEvent.KEYCODE_DPAD_UP -> "up"
+        KeyEvent.KEYCODE_DPAD_DOWN -> "down"
+        KeyEvent.KEYCODE_LEFT_BRACKET -> "bracketleft"
+        KeyEvent.KEYCODE_RIGHT_BRACKET -> "bracketright"
+        KeyEvent.KEYCODE_COMMA -> "comma"
+        KeyEvent.KEYCODE_N -> "n"
+        KeyEvent.KEYCODE_K -> "k"
+        KeyEvent.KEYCODE_M -> "m"
+        KeyEvent.KEYCODE_I -> "i"
+        KeyEvent.KEYCODE_L -> "l"
+        KeyEvent.KEYCODE_F -> "f"
+        KeyEvent.KEYCODE_B -> "b"
+        in KeyEvent.KEYCODE_1..KeyEvent.KEYCODE_9 ->
+            (event.keyCode - KeyEvent.KEYCODE_0).toString()
+        else -> KeyEvent.keyCodeToString(event.keyCode).removePrefix("KEYCODE_").lowercase()
     }
 
     private fun enqueueDeepLink(uri: android.net.Uri) {

@@ -112,6 +112,10 @@ internal fun GrokHomeSurface(
     onStop: () -> Unit,
     onResolveApproval: (Boolean) -> Unit,
     onMessageTargetConsumed: (String) -> Unit,
+    shortcutNewAgentNonce: Int = 0,
+    shortcutFocusPromptNonce: Int = 0,
+    shortcutFindInChatNonce: Int = 0,
+    onPromptEditableFocusChanged: (Boolean) -> Unit = {},
 ) {
     LaunchedEffect(Unit) { onRefreshBots() }
     var profileTarget by remember { mutableStateOf<MobileBotSummaryAndroid?>(null) }
@@ -158,6 +162,9 @@ internal fun GrokHomeSurface(
             onStop = onStop,
             onResolveApproval = onResolveApproval,
             onMessageTargetConsumed = onMessageTargetConsumed,
+            shortcutFocusPromptNonce = shortcutFocusPromptNonce,
+            shortcutFindInChatNonce = shortcutFindInChatNonce,
+            onPromptEditableFocusChanged = onPromptEditableFocusChanged,
         )
         if (botState.conversationOutline.isOpen) {
             ConversationOutlinePanelAndroid(
@@ -193,6 +200,14 @@ internal fun GrokHomeSurface(
     var editingBotId by remember { mutableStateOf<String?>(null) }
     var deleteTarget by remember { mutableStateOf<AgentDeleteTarget?>(null) }
     var showHiddenBots by remember { mutableStateOf(false) }
+
+    LaunchedEffect(shortcutNewAgentNonce) {
+        if (shortcutNewAgentNonce > 0) {
+            addOpen = false
+            createGroupOpen = false
+            createOpen = true
+        }
+    }
 
     HiddenBotsDialog(
         open = showHiddenBots,

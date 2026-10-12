@@ -12464,6 +12464,15 @@
           "symbols": [
             "global shortcut registry/controller contract"
           ]
+        },
+        {
+          "path": "frontend/src/recovered/features/window-chrome/global-keyboard-shortcuts.ts",
+          "blob_sha": "f36271ee5d4de95526474d7f7cf7fa5e94740d69",
+          "symbols": [
+            "createRootShellShortcutActions",
+            "resolveGlobalShortcutAction",
+            "createGlobalKeyboardShortcutController"
+          ]
         }
       ],
       "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
@@ -12497,21 +12506,26 @@
       "security_boundary": "shortcut dispatch cannot bypass approval/capability gates.",
       "android_disposition": "android-adapted",
       "android_target": [
-        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/production/ProductionRenderer_view.kt"
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/recovered/features/window-chrome/GlobalKeyboardShortcuts.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/production/ProductionRenderer_view.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/features/bots/GrokHomeSurface.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/features/bots/GrokBotComponents.kt",
+        "mobile/android/app/src/main/java/com/ombhrum/fabushi/MainActivity.kt",
+        "mobile/android/app/src/test/java/com/ombhrum/fabushi/GlobalKeyboardShortcutsTest.kt",
+        "tests/test_global_keyboard_shortcuts_wiring.py"
       ],
-      "android_owner": "Android root key/back dispatcher",
-      "platform_delta": "Desktop window keydown listener must become Compose/Activity hardware keyboard and back ownership.",
-      "implementation_status": "mapped",
-      "production_wiring": "No complete Android global shortcut registry/controller equivalent was established in this audit.",
-      "unit_test": "missing Android shortcut parity tests",
-      "contract_test": "recovered-shell-models contract audited",
-      "integration_test": "missing",
-      "packaged_test": "required",
-      "device_test": "required hardware keyboard",
+      "android_owner": "MainActivity lifecycle dispatcher + typed GlobalKeyboardShortcutController; current Compose projections supply actions/overlay/editable context.",
+      "platform_delta": "Android hardware KeyEvents bubble through child Compose handling before the root Activity controller; native command-palette Agents/Actions tabs replace Desktop search/customize surfaces and Agent Network is the compact-roster replacement.",
+      "implementation_status": "implemented",
+      "production_wiring": "Shipping MainActivity owns one controller and clears it on destruction. ProductionRenderer updates ordered actions/root-overlay state from current projections without duplicate listeners; GrokHome/GrokBot expose explicit New Bot, prompt-focus and find triggers. Canonical account/roster/transcript owners remain unchanged.",
+      "unit_test": "GlobalKeyboardShortcutsTest.kt covers ordered chords, editable/defaultPrevented/repeat policy, optional find, Agent 1-9 bounds, Escape stacking and recreation clearing; exact-head GitHub Actions pending.",
+      "contract_test": "Desktop recovered-shell contract plus tests/test_global_keyboard_shortcuts_wiring.py; exact-head GitHub Actions pending.",
+      "integration_test": "Shipping Activity -> controller -> ProductionRenderer/GrokHome/GrokBot wiring authored; exact-head GitHub Actions pending.",
+      "packaged_test": "required; not yet available on this implementation head",
+      "device_test": "required: packaged external keyboard, editable focus, stacked overlays, Activity recreation",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Underlying Desktop source row will receive the reverse link when deterministic cursor reaches it; this responsibility currently cites the contract authority only to avoid false source closure.",
-      "android_head_at_update": "2e6f7598ab3a73fcec2ab5be857e55ae52bad2ac"
+      "notes": "Implemented against f36271ee source semantics; do not upgrade to verified until same exact HEAD CI plus packaged/device external-keyboard evidence succeeds."
     },
     {
       "responsibility_id": "SETTINGS-APP-UPDATE-ANDROID-001",

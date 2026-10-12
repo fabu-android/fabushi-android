@@ -16,6 +16,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -29,6 +30,11 @@ import kotlinx.coroutines.flow.SharedFlow
 import org.json.JSONObject
 
 private enum class RendererRoute { GROK_HOME, AGENT_NETWORK, MESSAGING }
+
+private data class KeyboardForwardTarget(
+    val route: RendererRoute,
+    val agentId: String?,
+)
 
 /**
  * Shipping production renderer corresponding to Grok ProductionRenderer.
@@ -63,12 +69,17 @@ internal fun ProductionRenderer(
                 var rendererRoute by remember { mutableStateOf(RendererRoute.GROK_HOME) }
                 var commandPaletteOpen by remember { mutableStateOf(false) }
                 var commandPaletteAgentFilter by remember { mutableStateOf<String?>(null) }
+                var commandPaletteInitialTab by remember { mutableStateOf(CommandPaletteTab.ALL) }
                 var showAbout by remember { mutableStateOf(false) }
                 var showSettings by remember { mutableStateOf(false) }
                 var computerUpdateConfirmAction by remember {
                     mutableStateOf<CommandPaletteComputerUpdateAction?>(null)
                 }
                 var deepLinkInfo by remember { mutableStateOf<DeepLinkInfo?>(null) }
+                var shortcutNewAgentNonce by remember { mutableStateOf(0) }
+                var shortcutFocusPromptNonce by remember { mutableStateOf(0) }
+                var shortcutFindInChatNonce by remember { mutableStateOf(0) }
+                var keyboardForwardTarget by remember { mutableStateOf<KeyboardForwardTarget?>(null) }
 
                 val coroutineScope = rememberCoroutineScope()
                 val appAlertController = remember(coroutineScope) {
@@ -78,6 +89,11 @@ internal fun ProductionRenderer(
                     onDispose(appAlertController::dispose)
                 }
                 AppAlertHost(controller = appAlertController)
+
+                val keyboardController = activity.globalKeyboardShortcutController
+                DisposableEffect(keyboardController) {
+                    onDispose(keyboardController::clearPresentationBinding)
+                }
 
                 BackHandler(enabled = rendererRoute != RendererRoute.GROK_HOME && state.loggedIn) {
                     rendererRoute = RendererRoute.GROK_HOME
@@ -220,6 +236,97 @@ internal fun ProductionRenderer(
                     agentIds = botState.bots.map { it.id },
                     selectedAgentId = canonicalSelectedAgentId,
                 )
+
+                SideEffect {
+                    fun openPalette(tab: CommandPaletteTab) {
+                        commandPaletteAgentFilter = null
+                        commandPaletteInitialTab = tab
+                        botModel.resetPaletteMessageSearch()
+                        botModel.resetPaletteFileSearch()
+                        botModel.setPaletteFileQuery("")
+                        botModel.resetPaletteLinks()
+                        botModel.refreshPaletteLinks()
+                        botModel.resetPaletteRoutines()
+                        botModel.refreshPaletteRoutines()
+                        botModel.refreshComputerRebuildStatus()
+                        commandPaletteOpen = true
+                    }
+                    fun moveAgent(delta: Int) {
+                        val bots = botState.bots
+                        if (bots.isEmpty()) return
+                        val current = bots.indexOfFirst { it.id == botState.activeBot?.id }
+                        val base = if (current >= 0) current else if (delta > 0) -1 else bots.size
+                        val target = (base + delta).coerceIn(0, bots.lastIndex)
+                        rendererRoute = RendererRoute.GROK_HOME
+                        botModel.openBot(bots[target])
+                    }
+                    keyboardController.setActions(
+                        createRootShellShortcutActions(
+                            handlers = GlobalShortcutHandlers(
+                                newAgent = {
+                                    rendererRoute = RendererRoute.GROK_HOME
+                                    if (botState.activeBot != null) botModel.closeBot()
+                                    shortcutNewAgentNonce += 1
+                                },
+                                toggleCommandPalette = {
+                                    if (commandPaletteOpen) commandPaletteOpen = false
+                                    else openPalette(CommandPaletteTab.ALL)
+                                },
+                                openSettings = { showSettings = true },
+                                openTools = { openPalette(CommandPaletteTab.ACTIONS) },
+                                focusPrompt = { if (botState.activeBot != null) shortcutFocusPromptNonce += 1 },
+                                openSearch = { openPalette(CommandPaletteTab.AGENTS) },
+                                findInChat = if (botState.activeBot != null) {
+                                    { shortcutFindInChatNonce += 1 }
+                                } else null,
+                                previousAgent = { moveAgent(-1) },
+                                nextAgent = { moveAgent(1) },
+                                navigateBack = {
+                                    keyboardForwardTarget = KeyboardForwardTarget(rendererRoute, botState.activeBot?.id)
+                                    if (botState.activeBot != null) botModel.closeBot()
+                                    else if (rendererRoute != RendererRoute.GROK_HOME) rendererRoute = RendererRoute.GROK_HOME
+                                },
+                                navigateForward = {
+                                    keyboardForwardTarget?.let { target ->
+                                        rendererRoute = target.route
+                                        target.agentId?.let { id ->
+                                            botState.bots.firstOrNull { it.id == id }?.let(botModel::openBot)
+                                        }
+                                        keyboardForwardTarget = null
+                                    }
+                                },
+                                focusAgent = { index ->
+                                    botState.bots.getOrNull(index - 1)?.let { bot ->
+                                        rendererRoute = RendererRoute.GROK_HOME
+                                        botModel.openBot(bot)
+                                    }
+                                },
+                                toggleSidebar = {
+                                    rendererRoute = if (rendererRoute == RendererRoute.AGENT_NETWORK) {
+                                        RendererRoute.GROK_HOME
+                                    } else RendererRoute.AGENT_NETWORK
+                                },
+                            ),
+                            agentCount = botState.bots.size,
+                        ),
+                    )
+                    val rootOverlayClose: (() -> Unit)? = when {
+                        commandPaletteOpen -> ({ commandPaletteOpen = false })
+                        showSettings -> ({ showSettings = false })
+                        showAbout -> ({ showAbout = false })
+                        openedMiniApp != null -> ({ openedMiniApp = null })
+                        else -> null
+                    }
+                    keyboardController.acceptOverlayState(
+                        RootOverlayEscapeState(
+                            isArmed = rootOverlayClose != null,
+                            isOverlayStacked = appAlertController.getSnapshot() != null ||
+                                computerUpdateConfirmAction != null || deepLinkInfo != null,
+                            allowPreventedRootSearchEscape = commandPaletteOpen,
+                            close = rootOverlayClose ?: {},
+                        ),
+                    )
+                }
 
                 val active = openedMiniApp
                 if (active != null) {
@@ -515,6 +622,7 @@ internal fun ProductionRenderer(
                             onRefreshConversationOutline = botModel::refreshConversationOutline,
                             onOpenCommandPalette = {
                                 commandPaletteAgentFilter = null
+                                commandPaletteInitialTab = CommandPaletteTab.ALL
                                 botModel.resetPaletteMessageSearch()
                                 botModel.resetPaletteFileSearch()
                                 botModel.setPaletteFileQuery("")
@@ -559,6 +667,10 @@ internal fun ProductionRenderer(
                             onStop = botModel::stop,
                             onResolveApproval = botModel::resolveApproval,
                             onMessageTargetConsumed = botModel::consumeMessageTarget,
+                            shortcutNewAgentNonce = shortcutNewAgentNonce,
+                            shortcutFocusPromptNonce = shortcutFocusPromptNonce,
+                            shortcutFindInChatNonce = shortcutFindInChatNonce,
+                            onPromptEditableFocusChanged = keyboardController::setEditableFocused,
                         )
                         if (miniAppBot != null) {
                             Button(
@@ -580,7 +692,7 @@ internal fun ProductionRenderer(
                             linkSearchStatus = botState.paletteLinks.status,
                             routineStatus = botState.paletteRoutines.status,
                             initialTab = if (commandPaletteAgentFilter == null) {
-                                CommandPaletteTab.ALL
+                                commandPaletteInitialTab
                             } else {
                                 CommandPaletteTab.ROUTINES
                             },

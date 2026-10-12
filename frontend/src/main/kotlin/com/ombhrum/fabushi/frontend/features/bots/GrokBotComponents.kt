@@ -44,6 +44,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -365,8 +368,12 @@ internal fun GrokBotChatAndroid(
     onStop: () -> Unit,
     onResolveApproval: (Boolean) -> Unit,
     onMessageTargetConsumed: (String) -> Unit,
+    shortcutFocusPromptNonce: Int = 0,
+    shortcutFindInChatNonce: Int = 0,
+    onPromptEditableFocusChanged: (Boolean) -> Unit = {},
 ) {
     val messageListState = rememberLazyListState()
+    val promptFocusRequester = remember { FocusRequester() }
     val reducedTranscriptMotion = rememberTranscriptReducedMotion()
     val transcriptUrlCards = remember(bot.id) { TranscriptUrlCardMetadataProvider() }
     var findOpen by remember(bot.id) { mutableStateOf(false) }
@@ -387,6 +394,17 @@ internal fun GrokBotChatAndroid(
             messages = state.messages,
             assistantAuthor = bot.name,
         )
+    }
+
+    DisposableEffect(bot.id) {
+        onDispose { onPromptEditableFocusChanged(false) }
+    }
+
+    LaunchedEffect(bot.id, shortcutFocusPromptNonce) {
+        if (shortcutFocusPromptNonce > 0) runCatching { promptFocusRequester.requestFocus() }
+    }
+    LaunchedEffect(bot.id, shortcutFindInChatNonce) {
+        if (shortcutFindInChatNonce > 0) findOpen = true
     }
 
     LaunchedEffect(bot.id, findQuery, findMatches.size) {
@@ -788,7 +806,11 @@ internal fun GrokBotChatAndroid(
                     onDraftChange,
                     placeholder = { Text("Message") },
                     maxLines = 5,
-                    modifier = Modifier.fillMaxWidth().testTag("mobile-bot-draft"),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .focusRequester(promptFocusRequester)
+                        .onFocusChanged { onPromptEditableFocusChanged(it.isFocused) }
+                        .testTag("mobile-bot-draft"),
                     shape = RoundedCornerShape(19.dp),
                 )
                 if (bot.miniAppId == null) {
