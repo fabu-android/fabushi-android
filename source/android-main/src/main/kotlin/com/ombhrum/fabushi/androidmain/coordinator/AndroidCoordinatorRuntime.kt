@@ -197,6 +197,11 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
     private val computerRebuildTelemetryExecutor = Executors.newSingleThreadScheduledExecutor { runnable ->
         Thread(runnable, "fabushi-computer-rebuild-telemetry").apply { isDaemon = true }
     }
+    private val computerRebuildTelemetryLock = Any()
+    private var computerRebuildTelemetryEpisodeKey: String? = null
+    private var computerRebuildPendingStallReported = false
+    private var computerRebuildTakingLongerReported = false
+    private var computerRebuildUnreachableReported = false
     private val mainThreadPressureSampler = AndroidMainThreadPressureSampler(
         onWindow = { p50Ms, p95Ms, maxMs, windowMs ->
             runCatching {
