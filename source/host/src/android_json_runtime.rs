@@ -1078,6 +1078,21 @@ impl AndroidJsonHost {
     }
 
 
+    fn mcp_team_popularity(&self) -> Result<Value, String> {
+        // Desktop exposes this as best-effort account-scoped ranking metadata. Keep the account
+        // fence in the projection so Presentation can discard a late result after account switch.
+        let account_fence = self.current_turn_account_fence()?;
+        let counts = self
+            .mcp_dashboard_backend
+            .as_ref()
+            .map(|backend| backend.resolve_team_plugin_popularity())
+            .unwrap_or_default();
+        Ok(json!({
+            "accountFence": account_fence,
+            "counts": counts,
+        }))
+    }
+
     fn mcp_server_catalog(&self) -> Result<Value, String> {
         // A catalog projection is account-scoped backend state. Resolve the current fence first so
         // a stale/logged-out process cannot reuse a previously initialized backend owner.
@@ -1409,6 +1424,7 @@ impl AndroidJsonHost {
             "feature.auth.oauthPoll" => self.oauth_poll(params),
             "feature.auth.oauthCancel" => self.oauth_cancel(params),
             "feature.mcp.serverCatalog" => self.mcp_server_catalog(),
+            "feature.mcp.teamPopularity" => self.mcp_team_popularity(),
             "feature.mcp.serverInstructions.get" => self.mcp_server_custom_instructions(params),
             "feature.mcp.serverInstructions.set" => self.mcp_server_custom_instructions_set(params),
             "feature.mcp.serverTools.list" => self.mcp_server_tools_list(params),
