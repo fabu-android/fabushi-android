@@ -33,9 +33,12 @@ internal data class AccessBlockedTelemetryEdge(
     val msBlocked: Long?,
 )
 
+private const val ACCESS_BLOCKED_MAX_DURATION_MS = 7L * 24L * 60L * 60L * 1_000L
+
 internal class AccessBlockedTelemetryOwner {
     private var accountEpoch: Long? = null
     private var blockedSinceMs: Long? = null
+    private var blockedAccessReason = "unspecified"
     private var blocked = false
 
     @Synchronized
@@ -45,13 +48,15 @@ internal class AccessBlockedTelemetryOwner {
             accountEpoch = projection.accountEpoch
             blocked = false
             blockedSinceMs = null
+            blockedAccessReason = "unspecified"
         }
         val nextBlocked = projection.loggedIn && projection.explicitlyBlocked
         if (nextBlocked == blocked) return null
-        val reason = projection.blockReason.toTelemetryReason()
         return if (nextBlocked) {
+            val reason = projection.blockReason.toTelemetryReason()
             blocked = true
             blockedSinceMs = safeNow
+            blockedAccessReason = reason
             AccessBlockedTelemetryEdge(
                 edge = "entered",
                 cause = "unknown",
@@ -60,13 +65,17 @@ internal class AccessBlockedTelemetryOwner {
             )
         } else {
             val startedAt = blockedSinceMs
+            val reason = blockedAccessReason
             blocked = false
             blockedSinceMs = null
+            blockedAccessReason = "unspecified"
             AccessBlockedTelemetryEdge(
                 edge = "recovered",
                 cause = "unknown",
                 accessReason = reason,
-                msBlocked = startedAt?.let { (safeNow - it).coerceAtLeast(0L) },
+                msBlocked = startedAt?.let {
+                    (safeNow - it).coerceIn(0L, ACCESS_BLOCKED_MAX_DURATION_MS)
+                },
             )
         }
     }
