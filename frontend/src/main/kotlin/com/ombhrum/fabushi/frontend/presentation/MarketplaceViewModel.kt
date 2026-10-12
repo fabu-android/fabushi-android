@@ -147,6 +147,7 @@ data class MarketplaceUiState(
     val accountEmail: String = "",
     val accountAuthId: String = "",
     val accountAvatarUrl: String = "",
+    val accountPrivacyMode: String? = null,
     val onboardingStep: Int = 0,
     val browserLoginAttemptId: String? = null,
     val browserLoginUrl: String? = null,
@@ -202,6 +203,7 @@ class MarketplaceViewModel(application: Application) : AndroidViewModel(applicat
                     accountAvatarUrl = user?.optString("profilePictureUrl").orEmpty(),
                 )
                 refreshAccountAccess()
+                refreshAccountPrivacyMode()
                 if (mutableState.value.loggedIn) {
                     restoreChatTranscript()
                     refresh()
@@ -340,6 +342,7 @@ class MarketplaceViewModel(application: Application) : AndroidViewModel(applicat
                             message = "登录成功，账号状态已同步",
                         )
                         refreshAccountAccess()
+                        refreshAccountPrivacyMode()
                         restoreChatTranscript()
                         refresh()
                     }
@@ -374,6 +377,7 @@ class MarketplaceViewModel(application: Application) : AndroidViewModel(applicat
                         accountEmail = user?.optString("email").orEmpty(),
                         accountAuthId = "",
                         accountAvatarUrl = "",
+                        accountPrivacyMode = null,
                         chatMessages = emptyList(),
                         activeOperationId = null,
                         chatBusy = false,
@@ -544,6 +548,23 @@ class MarketplaceViewModel(application: Application) : AndroidViewModel(applicat
             current.toMutableList().also { list -> list[index] = list[index].copy(text = if (append) list[index].text + text else text) }
         } else current + MobileChatMessage("assistant:$operationId", MobileChatRole.ASSISTANT, text, operationId = operationId)
         mutableState.value = mutableState.value.copy(chatMessages = next)
+    }
+
+    fun refreshAccountPrivacyMode() {
+        if (!mutableState.value.loggedIn) {
+            mutableState.value = mutableState.value.copy(accountPrivacyMode = null)
+            return
+        }
+        viewModelScope.launch {
+            runCatching {
+                withContext(Dispatchers.IO) { coordinator.accountPrivacyMode() }
+            }.onSuccess { result ->
+                val mode = result.optString("mode").trim().takeIf { it.isNotEmpty() }
+                mutableState.value = mutableState.value.copy(accountPrivacyMode = mode)
+            }.onFailure {
+                mutableState.value = mutableState.value.copy(accountPrivacyMode = null)
+            }
+        }
     }
 
     fun refreshAccountAccess() {
