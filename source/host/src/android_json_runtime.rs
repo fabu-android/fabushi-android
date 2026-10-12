@@ -6,6 +6,7 @@ use crate::account_telemetry::{
 };
 use crate::capability_broker::{CapabilityDecision, PendingCapabilityCall, SharedCapabilityBroker};
 use crate::automation_runtime::{run_json as automation_run_json, AutomationRuntime, AutomationSpec};
+use crate::auto_review_settings::{AutoReviewInstructions, DurableAutoReviewSettings};
 use crate::android_agent_roster::AndroidAgentRoster;
 use crate::agent_attachment::{
     prompt_with_agent_attachments, with_agent_attachment_tools, AgentAttachment,
@@ -652,6 +653,7 @@ pub struct AndroidJsonHost {
     edge_failures: EdgeFailureBuffer,
     agents: Arc<Mutex<AndroidAgentRoster>>,
     sidebar_sections: Arc<Mutex<AndroidSidebarSections>>,
+    auto_review_settings: Arc<Mutex<DurableAutoReviewSettings>>,
     transcript: Arc<Mutex<TranscriptStore>>,
     send_acknowledgements: Arc<Mutex<DurableSendAcknowledgementOwner>>,
     composer_drafts: Arc<Mutex<DurableComposerDraftOwner>>,
@@ -805,6 +807,10 @@ impl AndroidJsonHost {
             AndroidSidebarSections::open(app_data_dir.join("sidebar-sections.json"))
                 .unwrap_or_else(|error| panic!("failed to open canonical Android sidebar sections: {error}")),
         ));
+        let auto_review_settings = Arc::new(Mutex::new(
+            DurableAutoReviewSettings::open(app_data_dir.join("auto-review-settings.json"))
+                .unwrap_or_else(|error| panic!("failed to open durable Android Auto Review settings: {error}")),
+        ));
         let transcript = Arc::new(Mutex::new(
             TranscriptStore::open(app_data_dir.join("transcript.json"))
                 .unwrap_or_else(|error| panic!("failed to open canonical Android transcript: {error}")),
@@ -919,6 +925,7 @@ impl AndroidJsonHost {
             edge_failures: EdgeFailureBuffer::default(),
             agents,
             sidebar_sections,
+            auto_review_settings,
             transcript,
             send_acknowledgements,
             composer_drafts,
@@ -1233,6 +1240,8 @@ impl AndroidJsonHost {
             "feature.account.dashboardAction" => self.account_dashboard_action(params),
             "feature.account.usageSummary" => self.account_usage_summary(),
             "feature.account.cancelSandTrial" => self.account_cancel_sand_trial(),
+            "feature.settings.autoReviewInstructions" => self.auto_review_instructions(),
+            "feature.settings.autoReviewInstructions.set" => self.set_auto_review_instructions(params),
             "feature.remote.binding.status" => Ok(self.remote_binding_status()),
             "feature.teachRecording.status" => self.teach_recording_status(),
             "feature.auth.deviceAgentSession" => Ok(self.device_agent_session()),
@@ -2108,6 +2117,37 @@ impl AndroidJsonHost {
             object.insert("_accountSessionMutation".into(), mutation);
         }
         Ok(preferences)
+    }
+
+    fn auto_review_instructions(&mut self) -> Result<Value, String> {
+        let account_fence = self.current_turn_account_fence()?;
+        let snapshot = self
+            .auto_review_settings
+            .lock()
+            .map_err(|_| "auto-review settings lock poisoned".to_string())?
+            .snapshot(&account_fence)?;
+        serde_json::to_value(snapshot)
+            .map_err(|error| format!("failed to serialize auto-review settings: {error}"))
+    }
+
+    fn set_auto_review_instructions(&mut self, params: &Value) -> Result<Value, String> {
+        let account_fence = self.current_turn_account_fence()?;
+        let expected_revision = required_u64(params, "expectedRevision")?;
+        let instructions = params
+            .get("instructions")
+            .cloned()
+            .ok_or("auto-review instructions are required")
+            .and_then(|value| {
+                serde_json::from_value::<AutoReviewInstructions>(value)
+                    .map_err(|error| format!("auto-review instructions are invalid: {error}"))
+            })?;
+        let snapshot = self
+            .auto_review_settings
+            .lock()
+            .map_err(|_| "auto-review settings lock poisoned".to_string())?
+            .set(&account_fence, expected_revision, instructions)?;
+        serde_json::to_value(snapshot)
+            .map_err(|error| format!("failed to serialize auto-review settings: {error}"))
     }
 
     fn account_team_rules(&self) -> Result<Value, String> {
@@ -9826,3 +9866,57 @@ mod transcript_page_contract_tests {
     }
 }
 
+
+
+#[cfg(test)]
+mod auto_review_settings_dispatch_tests {
+    use super::*;
+
+    #[test]
+    fn auto_review_settings_dispatch_is_account_scoped_revision_fenced_and_durable() {
+        let root = tempfile::tempdir().unwrap();
+        let mut host = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+        let initial = host
+            .dispatch("feature.settings.autoReviewInstructions", &json!({}))
+            .unwrap();
+        assert_eq!(initial["revision"], 0);
+        assert_eq!(initial["instructions"]["isEnabled"], true);
+
+        let saved = host
+            .dispatch(
+                "feature.settings.autoReviewInstructions.set",
+                &json!({
+                    "expectedRevision":0,
+                    "instructions":{
+                        "isEnabled":false,
+                        "allowInstructions":["  run tests  ","run tests"],
+                        "blockInstructions":["delete files"]
+                    }
+                }),
+            )
+            .unwrap();
+        assert_eq!(saved["revision"], 1);
+        assert_eq!(saved["instructions"]["isEnabled"], false);
+        assert_eq!(saved["instructions"]["allowInstructions"], json!(["run tests"]));
+
+        assert!(host
+            .dispatch(
+                "feature.settings.autoReviewInstructions.set",
+                &json!({
+                    "expectedRevision":0,
+                    "instructions":{"isEnabled":true,"allowInstructions":[],"blockInstructions":[]}
+                }),
+            )
+            .unwrap_err()
+            .contains("revision conflict"));
+
+        drop(host);
+        let mut reopened = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+        let restored = reopened
+            .dispatch("feature.settings.autoReviewInstructions", &json!({}))
+            .unwrap();
+        assert_eq!(restored["revision"], 1);
+        assert_eq!(restored["instructions"]["allowInstructions"], json!(["run tests"]));
+        assert_eq!(restored["instructions"]["blockInstructions"], json!(["delete files"]));
+    }
+}
