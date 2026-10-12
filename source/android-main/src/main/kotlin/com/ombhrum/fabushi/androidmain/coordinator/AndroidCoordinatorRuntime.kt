@@ -363,6 +363,9 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
         )
     }
 
+    override fun mcpServerCatalog(): JSONArray =
+        host.request("feature.mcp.serverCatalog").optJSONArray("servers") ?: JSONArray()
+
     override fun mcpOAuthRegister(state: String, provider: String): Boolean =
         host.request(
             "coordinator.mcpOAuth.register",
