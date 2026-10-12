@@ -1612,6 +1612,13 @@ impl AndroidJsonHost {
                 Ok(json!({"recorded":true}))
             },
             "feature.diagnostics.edgeFailures.snapshot" => serde_json::to_value(self.edge_failures.snapshot()).map_err(|error| format!("failed to serialize edge failure snapshot: {error}")),
+            "feature.diagnostics.edgeFailures.report" => {
+                let area = required_string(params, "area")?;
+                let leg = required_string(params, "leg")?;
+                let error_class = required_string(params, "errorClass")?;
+                self.edge_failures.report(&area, &leg, &error_class);
+                Ok(json!({"recorded":true}))
+            },
             "feature.account.fence" => Ok(json!({"accountFence":self.current_turn_account_fence()?})),
             "feature.account.sandAccess" => self.account_sand_access(),
             "feature.account.privacyMode" => Ok(self.account_privacy_mode()),
