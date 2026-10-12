@@ -213,4 +213,59 @@ class AndroidDeepLinkRouterTest {
         assertEquals(AndroidDeepLinkSource.HTTPS, (delivered.single() as AndroidDeepLink.Info).source)
     }
 
+    @Test
+    fun desktopProtocolAndHttpsRoutesMapToTypedAndroidLinks() {
+        assertEquals(
+            AndroidDeepLink.Info(AndroidDeepLinkSource.PROTOCOL, "deep-links"),
+            AndroidDeepLinkRouter.parse("sand://app/v1/info?topic=deep-links"),
+        )
+        assertEquals(
+            AndroidDeepLink.Info(AndroidDeepLinkSource.HTTPS, "deep-links"),
+            AndroidDeepLinkRouter.parse("https://cursor.com/sand/link/v1/info?topic=deep-links"),
+        )
+        assertEquals(
+            AndroidDeepLink.PluginAdd("123456789", AndroidDeepLinkSource.PROTOCOL),
+            AndroidDeepLinkRouter.parse("sand://app/v1/plugin/add?id=123456789"),
+        )
+        assertEquals(
+            AndroidDeepLink.PluginAdd("123456789", AndroidDeepLinkSource.HTTPS),
+            AndroidDeepLinkRouter.parse("https://cursor.com/sand/link/v1/plugin/add?id=123456789"),
+        )
+        assertEquals(
+            AndroidDeepLink.Open(AndroidDeepLinkSource.PROTOCOL),
+            AndroidDeepLinkRouter.parse("sand://app/v1/open"),
+        )
+        assertEquals(
+            AndroidDeepLink.Open(AndroidDeepLinkSource.HTTPS),
+            AndroidDeepLinkRouter.parse("https://cursor.com/sand/link/v1/open"),
+        )
+    }
+
+    @Test
+    fun desktopDeepLinksRejectForeignHostsInvalidPluginIdsAndExtraParameters() {
+        assertNull(AndroidDeepLinkRouter.parse("https://example.com/sand/link/v1/open"))
+        assertNull(AndroidDeepLinkRouter.parse("https://cursor.com:443/sand/link/v1/open"))
+        assertNull(AndroidDeepLinkRouter.parse("sand://other/v1/open"))
+        assertNull(AndroidDeepLinkRouter.parse("sand://app/v1/plugin/add?id=not-numeric"))
+        assertNull(AndroidDeepLinkRouter.parse("sand://app/v1/plugin/add?id=123&id=456"))
+        assertNull(AndroidDeepLinkRouter.parse("sand://app/v1/open?extra=1"))
+        assertNull(AndroidDeepLinkRouter.parse("https://cursor.com/sand/link/v1/info?topic=deep-links&extra=1"))
+    }
+
+    @Test
+    fun controllerDedupesEquivalentProtocolAndHttpsDesktopLinks() {
+        val delivered = mutableListOf<AndroidDeepLink>()
+        val controller = AndroidDeepLinkController(dispatch = delivered::add)
+        assertTrue(controller.handleCandidate("sand://app/v1/info?topic=deep-links", "protocol"))
+        assertTrue(
+            !controller.handleCandidate(
+                "https://cursor.com/sand/link/v1/info?topic=deep-links",
+                "https",
+            ),
+        )
+        controller.markReady()
+        assertEquals(1, delivered.size)
+        assertTrue(delivered.single() is AndroidDeepLink.Info)
+    }
+
 }
