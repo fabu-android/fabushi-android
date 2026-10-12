@@ -2859,6 +2859,7 @@ impl AndroidJsonHost {
     }
 
     fn content_search_media(&self, params: &Value) -> Result<Value, String> {
+        let _account_fence = self.current_turn_account_fence()?;
         let query = params
             .get("query")
             .and_then(Value::as_str)
@@ -9729,6 +9730,12 @@ mod tests {
             .dispatch(
                 "feature.search.agentContent",
                 &json!({"agentId":"agent-a","query":"alpha","limit":5}),
+            )
+            .is_err());
+        assert!(host
+            .dispatch(
+                "feature.contentSearch.media",
+                &json!({"query":"alpha","limit":50}),
             )
             .is_err());
     }
