@@ -670,6 +670,43 @@ impl AndroidMessagingAccessGrant {
     }
 }
 
+fn restored_send_journal_telemetry(
+    records: &[SendAcknowledgementRecord],
+    observed_at_ms: u64,
+) -> Vec<StructuredTelemetryEvent> {
+    let mut groups = BTreeMap::<&'static str, (u64, u64)>::new();
+    for record in records {
+        let phase = match record.phase {
+            SendAcknowledgementPhase::Pending => Some("prepared"),
+            SendAcknowledgementPhase::Queued => Some("queued"),
+            SendAcknowledgementPhase::Dispatching => Some("dispatching"),
+            SendAcknowledgementPhase::AcceptedAwaitingEcho => Some("accepted-awaiting-echo"),
+            SendAcknowledgementPhase::Failed | SendAcknowledgementPhase::OutcomeUnknown => None,
+        };
+        let Some(phase) = phase else { continue };
+        let age_ms = if record.entered_at_ms == 0 {
+            0
+        } else {
+            observed_at_ms.saturating_sub(record.entered_at_ms)
+        };
+        let group = groups.entry(phase).or_insert((0, 0));
+        group.0 = group.0.saturating_add(1);
+        group.1 = group.1.max(age_ms);
+    }
+    groups
+        .into_iter()
+        .filter_map(|(phase, (record_count, age_ms))| {
+            send_journal_restore_event(
+                "parked",
+                phase,
+                age_ms as f64,
+                record_count as f64,
+            )
+            .ok()
+        })
+        .collect()
+}
+
 pub struct AndroidJsonHost {
     mode: AndroidHostMode,
     device_id: String,
@@ -895,15 +932,33 @@ impl AndroidJsonHost {
             TranscriptStore::open(app_data_dir.join("transcript.json"))
                 .unwrap_or_else(|error| panic!("failed to open canonical Android transcript: {error}")),
         ));
-        let send_acknowledgements = Arc::new(Mutex::new(
-            DurableSendAcknowledgementOwner::open(
-                app_data_dir.join("send-acknowledgements.json"),
-                now_ms(),
-            )
-            .unwrap_or_else(|error| {
-                panic!("failed to open durable Android send acknowledgement owner: {error}")
-            }),
-        ));
+        let send_acknowledgement_observed_at_ms = now_ms();
+        let send_acknowledgement_owner = DurableSendAcknowledgementOwner::open(
+            app_data_dir.join("send-acknowledgements.json"),
+            send_acknowledgement_observed_at_ms,
+        )
+        .unwrap_or_else(|error| {
+            panic!("failed to open durable Android send acknowledgement owner: {error}")
+        });
+        for event in restored_send_journal_telemetry(
+            &send_acknowledgement_owner.restored_on_open(),
+            send_acknowledgement_observed_at_ms,
+        ) {
+            let level = match event.level {
+                TelemetryLevel::Info => "info",
+                TelemetryLevel::Warn => "warn",
+                TelemetryLevel::Error => "error",
+            };
+            // Restore telemetry is observational only. Failure to persist a log record must never
+            // change send-journal recovery truth or trigger a retry.
+            let _ = structured_log_spool.record(
+                level,
+                "sand.send_journal.restore",
+                event.metadata,
+                send_acknowledgement_observed_at_ms,
+            );
+        }
+        let send_acknowledgements = Arc::new(Mutex::new(send_acknowledgement_owner));
         let composer_drafts = Arc::new(Mutex::new(
             DurableComposerDraftOwner::open(app_data_dir.join("composer-drafts.json"), now_ms())
                 .unwrap_or_else(|error| panic!("failed to open durable Android composer draft owner: {error}")),
@@ -1980,7 +2035,7 @@ impl AndroidJsonHost {
                 )?,
             ),
             "replica_resync" => (
-                "sand.reconciliation.replica_resync",
+                "sand.replica.resync",
                 replica_resync_event(
                     required_string(params, "replica")?,
                     required_string(params, "outcome")?,
@@ -2003,7 +2058,7 @@ impl AndroidJsonHost {
                 )?,
             ),
             "send_journal_restore" => (
-                "sand.reconciliation.send_journal_restore",
+                "sand.send_journal.restore",
                 send_journal_restore_event(
                     required_string(params, "outcome")?,
                     required_string(params, "phase")?,
@@ -20998,6 +21053,89 @@ mod reaction_ack_runtime_tests {
         assert!(raw.contains("conversation:send-telemetry"));
         assert!(raw.contains("client:send-success"));
         assert!(raw.contains("client:send-failure"));
+    }
+
+
+    #[test]
+    fn send_journal_restore_telemetry_groups_pre_reopen_phases_without_retrying() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("send-acknowledgements.json");
+        {
+            let mut owner = DurableSendAcknowledgementOwner::open(&path, 1).unwrap();
+            let prepared = owner
+                .begin(None, "session:a", "agent-a", "prepared-a", "prepared", vec![
+                    SendAcknowledgementEntry {
+                        id: "prepared-a".into(),
+                        kind: crate::send_acknowledgement::SendAcknowledgementEntryKind::Message,
+                        client_nonce: "prepared-a".into(),
+                    },
+                ])
+                .unwrap();
+            assert_eq!(prepared.phase, SendAcknowledgementPhase::Pending);
+
+            let queued = owner
+                .begin(None, "session:a", "agent-a", "queued-a", "queued", vec![
+                    SendAcknowledgementEntry {
+                        id: "queued-a".into(),
+                        kind: crate::send_acknowledgement::SendAcknowledgementEntryKind::Message,
+                        client_nonce: "queued-a".into(),
+                    },
+                ])
+                .unwrap();
+            owner
+                .mark_queued(None, "session:a", "agent-a", "queued-a", queued.generation)
+                .unwrap();
+
+            let dispatching = owner
+                .begin(None, "session:a", "agent-a", "dispatching-a", "dispatching", vec![
+                    SendAcknowledgementEntry {
+                        id: "dispatching-a".into(),
+                        kind: crate::send_acknowledgement::SendAcknowledgementEntryKind::Message,
+                        client_nonce: "dispatching-a".into(),
+                    },
+                ])
+                .unwrap();
+            owner
+                .mark_dispatching(
+                    None,
+                    "session:a",
+                    "agent-a",
+                    "dispatching-a",
+                    dispatching.generation,
+                )
+                .unwrap();
+        }
+
+        let observed_at_ms = now_ms().saturating_add(1_000);
+        let reopened = DurableSendAcknowledgementOwner::open(&path, observed_at_ms).unwrap();
+        let events = restored_send_journal_telemetry(
+            &reopened.restored_on_open(),
+            observed_at_ms,
+        );
+        assert_eq!(events.len(), 3);
+        let phases = events
+            .iter()
+            .map(|event| event.metadata.get("phase").cloned().unwrap())
+            .collect::<BTreeSet<_>>();
+        assert_eq!(
+            phases,
+            BTreeSet::from([
+                "prepared".to_string(),
+                "queued".to_string(),
+                "dispatching".to_string(),
+            ])
+        );
+        assert!(events.iter().all(|event| {
+            event.metadata.get("outcome").map(String::as_str) == Some("parked")
+                && event.metadata.get("record_count").map(String::as_str) == Some("1")
+        }));
+        assert_eq!(
+            reopened
+                .record(None, "session:a", "agent-a", "dispatching-a")
+                .unwrap()
+                .phase,
+            SendAcknowledgementPhase::OutcomeUnknown,
+        );
     }
 
 }
