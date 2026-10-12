@@ -18,6 +18,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
@@ -175,6 +176,15 @@ internal fun AccountAvatar(
     }
 }
 
+internal fun accountPrivacyModeLabel(mode: String?): String = when (mode?.trim()) {
+    "no-storage" -> "No storage"
+    "no-training" -> "No training"
+    "usage-data-training-allowed" -> "Usage data training allowed"
+    "usage-codebase-training-allowed" -> "Codebase training allowed"
+    "unspecified" -> "Unspecified"
+    else -> "Unavailable"
+}
+
 @Composable
 internal fun FabushiSettingsSurface(
     accountLoggedIn: Boolean,
@@ -182,17 +192,22 @@ internal fun FabushiSettingsSurface(
     accountEmail: String,
     accountAuthId: String,
     accountAvatarUrl: String,
+    accountPrivacyMode: String?,
     updateState: AndroidUpdateUiState,
     updateTrackPolicy: AndroidUpdateTrackPolicy,
     autoUpdateWhenIdleOptIn: Boolean,
     autoUpdateWhenIdleGateEnabled: Boolean,
     onSetAutoUpdateWhenIdleOptIn: (Boolean) -> Unit,
+    onRefreshAccountPrivacyMode: () -> Unit,
     onCheckUpdate: () -> Unit,
     onInstallUpdate: () -> Unit,
     onClose: () -> Unit,
 ) {
     var section by remember { mutableStateOf(FabushiSettingsSection.GENERAL) }
     val theme = LocalFabushiThemeController.current
+    LaunchedEffect(accountLoggedIn) {
+        if (accountLoggedIn) onRefreshAccountPrivacyMode()
+    }
     AlertDialog(
         onDismissRequest = onClose,
         modifier = Modifier.testTag("fabushi-settings-dialog"),
@@ -230,7 +245,11 @@ internal fun FabushiSettingsSurface(
                                 }
                             }
                             Text(
-                                "Account identity is read-only here and remains owned by the canonical Host session.",
+                                "Privacy mode: ${accountPrivacyModeLabel(accountPrivacyMode)}",
+                                modifier = Modifier.testTag("settings-account-privacy-mode"),
+                            )
+                            Text(
+                                "Account identity and privacy policy are read-only here and remain owned by the canonical Host session.",
                             )
                         }
                         Text("Appearance")
