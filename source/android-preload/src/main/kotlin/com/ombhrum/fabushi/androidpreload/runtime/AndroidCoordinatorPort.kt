@@ -159,6 +159,8 @@ data class AndroidSendAcknowledgement(
     val messageRichText: JSONObject? = null,
     val phase: AndroidSendAcknowledgementPhase,
     val generation: Long,
+    val enteredAtMs: Long = 0L,
+    val dispatchStartedAtMs: Long? = null,
     val failedAtMs: Long?,
     val reason: String?,
     val attachments: List<AndroidAgentAttachment> = emptyList(),
