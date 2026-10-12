@@ -54,6 +54,23 @@ class McpServerCatalogProjectionTest {
     }
 
     @Test
+    fun serverToolsUiProjectionIsDisplayOnlyAndAccountFenced() {
+        val projector = PluginServerToolsProjector()
+        val token = projector.open()!!
+        projector.settleLoad(
+            token.first,
+            token.second,
+            listOf(PluginOverlayTool("read", "Read", "Reads data", true)),
+        )
+        val ui = projectMcpServerToolsUi(projector.snapshot())
+        assertEquals(McpServerToolsUiStatus.READY, ui.status)
+        assertEquals(listOf(McpServerToolUiItem("read", "Read", "Reads data", true)), ui.tools)
+        assertTrue(shouldApplyMcpServerToolsResult("account-a", true, "account-a"))
+        assertFalse(shouldApplyMcpServerToolsResult("account-a", true, "account-b"))
+        assertFalse(shouldApplyMcpServerToolsResult("account-a", false, "account-a"))
+    }
+
+    @Test
     fun staleAccountOrGenerationCannotApplyCatalogResult() {
         assertTrue(shouldApplyMcpServerCatalogResult(7, 7, "account-a", true, "account-a"))
         assertFalse(shouldApplyMcpServerCatalogResult(7, 8, "account-a", true, "account-a"))
