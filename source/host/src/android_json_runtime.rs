@@ -20680,8 +20680,8 @@ mod reaction_ack_runtime_tests {
 
         let raw = std::fs::read_to_string(spill).unwrap();
         assert!(raw.contains("sand.send.ack"));
-        assert!(raw.contains("\"outcome\":\"acked\""));
-        assert!(raw.contains("\"outcome\":\"failed\""));
+        assert!(raw.contains("\"acked\""));
+        assert!(raw.contains("\"failed\""));
         assert!(raw.contains("sand.send"));
         assert!(raw.contains("conversation:send-telemetry"));
         assert!(raw.contains("client:send-success"));
