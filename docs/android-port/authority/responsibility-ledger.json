@@ -15216,12 +15216,14 @@
         "source/host/src/runner/background_work.rs",
         "source/host/src/runner/subagent_runtime.rs",
         "source/host/src/android_json_runtime.rs",
-        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/production/AgentAsyncTasksPanel_view.kt"
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/production/AgentAsyncTasksPanel_view.kt",
+        "source/host/src/runner/remote_routed_tools.rs",
+        "source/host/src/remote_execution.rs"
       ],
       "android_owner": "Rust Host must own the future Cloud Agent producer; native UI may only project durable state",
       "platform_delta": "Android may reuse the platform-neutral cloud protocol/runtime but must replace Desktop Box file access with scoped Host media roots or an authorized Runner and keep credentials out of Presentation.",
       "implementation_status": "mapped",
-      "production_wiring": "Only background-work/subagent projection exists today. No real Cloud Agent producer/model catalog/launch-reply/poll loop/image loader/trace schema/transcript dump is registered in the shipping Android Host, so UI cards are not runtime parity.",
+      "production_wiring": "Android now has a production CloudAgent client route through the explicit cloud-agent Authorized Remote Runner executor (3bb780f37f581e263872d6e3c5a1966ece962bc8, contract aligned by 7040e1d403c488fb5240f318447b7378e4261740). The route preserves Desktop action names and destructive confirmation behavior and reuses durable account/device-fenced Remote approval/reconciliation. Real executor acceptance, model catalog/selection, scoped image ingestion, generated trace decoding and transcript dump formatting remain open, so this aggregate responsibility stays mapped.",
       "unit_test": "required for image allowlist/limits, model selection, trace decode and dump formatting",
       "contract_test": "required for stable backend id, launch/reply/poll/recovery and credential boundaries",
       "integration_test": "required against the real cloud-agent backend through Android Host",
@@ -15229,7 +15231,35 @@
       "device_test": "required for launch/reply/background recovery/image attachment on supported Android device",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Do not collapse this into generated local subagents or async-task UI. Real Cloud Agent production wiring is a distinct open responsibility."
+      "notes": "Do not collapse this into generated local subagents or async-task UI. The Remote CloudAgent tool client is implemented as a distinct sub-responsibility, but end-to-end Cloud Agent runtime parity still requires a real authorized remote executor plus model/image/trace/transcript contracts and packaged/device evidence."
+    },
+    {
+      "responsibility_id": "CLOUD-AGENT-REMOTE-TOOL-ANDROID-001",
+      "domain": "agent-cloud-remote-tool",
+      "desktop_path": "source/host/src/cloud_agents/cloud_agent_tool.rs",
+      "desktop_symbol": "CLOUD_AGENT_TOOL_NAME / cloud_agent_tool_definition / run_cloud_agent_action",
+      "source_sha": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "responsibility": "Expose the Desktop CloudAgent action contract through an explicitly authorized Android execution boundary without duplicating the Remote lifecycle owner or blindly retrying uncertain side effects.",
+      "source_owner": "Desktop CloudAgentToolBridge",
+      "visible_effect": "Agent turns on Android can discover CloudAgent and request launch/list/inspect/watch/reply/lifecycle actions when a trusted enrolled Remote Runner explicitly supports cloud-agent.",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "source/host/src/runner/remote_routed_tools.rs",
+        "source/host/src/remote_execution.rs",
+        "source/box-exec-daemon/src/transport.rs"
+      ],
+      "android_owner": "Rust Host RemoteRoutedTools + Capability Broker + AuthenticatedRemoteHostRunner",
+      "platform_delta": "Android does not run the Desktop cloud-agent/Box implementation locally. It sends the same typed action contract only to an explicitly enrolled cloud-agent Remote executor, with one-time approval and durable reconciliation.",
+      "implementation_status": "implemented",
+      "production_wiring": "RemoteRoutedTools advertises CloudAgent only when the protected enrollment contains cloud-agent; call_tool maps it to cloud.agent and cloud-agent executor, validates Desktop action/environment/input shape, returns Desktop-style confirmation guidance locally for destructive unconfirmed actions, then reuses the canonical Remote approval/journal/reconcile path.",
+      "unit_test": "remote_routed_tools::tests::cloud_agent_executor_requires_explicit_enrollment_and_destructive_confirmation plus binding executor tests; exact-head Actions pending",
+      "contract_test": "Desktop action/schema contract manually re-read at blob 6a5a1aacbe87bd302e99e730211d2d464eb56046; real executor response contract still required by parent responsibility",
+      "integration_test": "required against an enrolled Remote Runner advertising cloud-agent",
+      "packaged_test": "required on final APK/AAB",
+      "device_test": "required for protected launch/reply/lifecycle flow",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Client-side production routing implemented; does not claim model/image/trace/transcript or server executor closure."
     },
     {
       "responsibility_id": "CONNECTOR-CHANNEL-DELIVERY-ANDROID-001",
