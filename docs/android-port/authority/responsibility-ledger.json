@@ -15344,6 +15344,35 @@
       "artifact": null,
       "verification_status": "not-verified",
       "notes": "Do not infer audit parity from permission enforcement alone; execution authorization and action audit are distinct responsibilities."
+    },
+    {
+      "responsibility_id": "MEDIA-ADVANCED-ATTACHMENTS-ANDROID-001",
+      "domain": "media-advanced-attachments",
+      "desktop_path": "source/host/src/extensions/attachments/**",
+      "desktop_symbol": "AttachmentsService / SafeLinkPreview / SandGenerateImageService / VideoPlaybackResolver / Box staging",
+      "source_sha": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "responsibility": "Own advanced attachment processing beyond picker persistence: bounded chunk/text/media reads, SSRF-safe link previews and bounded images, generated-image backend/resource lifecycle, execution-Runner staging, and bounded video playback renditions.",
+      "source_owner": "Desktop Host attachments extension",
+      "visible_effect": "Users can safely preview links/media, use generated images, stage attachments for Agent execution, and play difficult video formats without exposing private-network fetches or unbounded decoding/transcoding.",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "source/host/src/attachment_paths.rs",
+        "source/host/src/agent_attachment.rs",
+        "source/host/src/android_json_runtime.rs",
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/coordinator/AndroidCoordinatorRuntime.kt"
+      ],
+      "android_owner": "Rust Host media services + Android platform media adapters; Compose owns only projection/selection",
+      "platform_delta": "Android file access must use scoped/private storage or ContentResolver; Desktop Box staging maps to bounded Local/Authorized Remote Runner; playback should use Android media APIs where they preserve the same user effect, while SSRF/link/image limits remain Host security contracts.",
+      "implementation_status": "mapped",
+      "production_wiring": "Basic attachment storage is present, but safe link-preview, generate-image resource/backend, Runner staging and video rendition services are not shipping on Android.",
+      "unit_test": "required per child service for byte/pixel/url/redirect/transcode limits",
+      "contract_test": "required for Host/Runner resource fencing, generated request ids, SSRF protection and no cloud fallback where offline is promised",
+      "integration_test": "required with real Host conversation/tools and Android media adapters",
+      "packaged_test": "required on final APK/AAB",
+      "device_test": "required for link preview, generated image, execution attachment, video playback and process-death recovery",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Basic attachment parity remains tracked separately; this responsibility prevents broad source rows from being falsely closed by the picker/staging slice."
     }
   ],
   "traceability": {
