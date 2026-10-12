@@ -83,6 +83,13 @@ data class AndroidPrReviewPreferences(
     val team: String?,
 )
 
+data class AndroidTimeZoneSettings(
+    val detectedTimeZone: String,
+    val overrideTimeZone: String?,
+) {
+    val effectiveTimeZone: String get() = overrideTimeZone ?: detectedTimeZone
+}
+
 data class AndroidAutoReviewInstructions(
     val isEnabled: Boolean = true,
     val allowInstructions: List<String> = emptyList(),
@@ -456,6 +463,10 @@ interface AndroidCoordinatorPort {
     fun accountPrivacyMode(): JSONObject
     fun accountPrReviewPreferences(): AndroidPrReviewPreferences =
         AndroidPrReviewPreferences(user = null, team = null)
+    fun timeZoneSettings(): AndroidTimeZoneSettings =
+        error("Time zone settings are unavailable on this Coordinator port")
+    fun setTimeZoneOverride(value: String?): AndroidTimeZoneSettings =
+        error("Time zone mutation is unavailable on this Coordinator port")
     fun autoReviewInstructions(): AndroidAutoReviewInstructionsSnapshot =
         error("Auto Review instructions are unavailable on this Coordinator port")
     fun setAutoReviewInstructions(
