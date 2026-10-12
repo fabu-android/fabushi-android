@@ -5650,6 +5650,88 @@
       "notes": "Implemented in commits fcdb0229b881f285681beb36e307ecc1877081f5, 9c8d19d3e04b28aa2c27fa965e4d8752792229c0, 7b7cd2521b1b939d971377ff1b09693cb669cb08, 8e6025c83fc7ce4cf4fa533724251c31ba43a531, 9084add3ed6f2ac9b273893e4890954737ab67af, 5facc5f649aceba74ed7b1347c1fef9e5315bbc3 and 3e85f9b3a8d8d90df2832113b8aa85a6234dd6e5. Same-final-head CI/package/device evidence is still required."
     },
     {
+      "responsibility_id": "TELEMETRY-RECOVERY-ANDROID-001",
+      "domain": "observability-recovery",
+      "desktop_sources": [
+        {
+          "path": "source/electron-main/telemetry/rebuild-lifecycle-telemetry.ts",
+          "blob_sha": "6ae66fa342873666f36d8d57439a82deb46062fd",
+          "symbols": [
+            "isValidRebuildLifecycleReport",
+            "rebuildLifecycleToTelemetry"
+          ]
+        },
+        {
+          "path": "source/electron-main/telemetry/reconciliation-telemetry.ts",
+          "blob_sha": "fe1f28582ea68038a3a54a8338693c4699c87535",
+          "symbols": [
+            "isValidReconciliationReport",
+            "reconciliationReportToTelemetry",
+            "resyncCompletedTelemetry"
+          ]
+        },
+        {
+          "path": "source/electron-main/telemetry/recovery-action-telemetry.ts",
+          "blob_sha": "4497214eb650e236fba8331fcb193408f1397f58",
+          "symbols": [
+            "isValidRecoveryActionReport",
+            "recoveryActionReportToTelemetry"
+          ]
+        }
+      ],
+      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "responsibility": "Validate and project bounded rebuild escalation/pending-stall, replica/send-journal reconciliation, resync completion and recovery-action telemetry with Desktop-equivalent warning thresholds while keeping telemetry outside canonical recovery truth.",
+      "source_owner": "Desktop telemetry report pipes; product recovery/reconciliation owners produce reports",
+      "direct_callers": [
+        "Desktop telemetry-report-pipes",
+        "Android Coordinator telemetry port"
+      ],
+      "downstream_dependencies": [
+        "Host structured telemetry spill",
+        "rebuild/reconciliation/recovery product owners"
+      ],
+      "state_owner": "No canonical product state; Rust Host owns telemetry validation/projection and durable spill only",
+      "persistent_state": [
+        "bounded structured-log spill records; no recovery state ownership"
+      ],
+      "protocol_wire_contract": [
+        "rebuild kind update/reset/recover/reconnecting",
+        "escalation taking-longer/unreachable and action shown/keep_waiting/retry",
+        "replica roster/transcript and outcomes covered/superseded/abandoned",
+        "send-journal outcomes dispatched/retired/parked/failed",
+        "recovery action retry/recover/reset/relaunch with futility warn at 3"
+      ],
+      "visible_effect": "Recovery/rebuild/reconciliation failures and repeated futile actions remain diagnosable without changing product retry or settlement behavior.",
+      "failure_behavior": [
+        "invalid telemetry is rejected",
+        "telemetry failure must not mutate or retry canonical recovery state"
+      ],
+      "cancellation_behavior": "telemetry is observational and may be dropped independently of canonical recovery cancellation",
+      "retry_semantics": "telemetry delivery uses structured-log spill policy; product recovery retry owner remains separate",
+      "idempotency_semantics": "event projection is side-effect free except bounded telemetry enqueue; no product operation replay",
+      "process_death_recovery": "pending telemetry uses durable Host structured-log spill; canonical recovery/process state is owned elsewhere",
+      "account_fencing": "structured telemetry uses current account-scoped spill; recovery producer must not reuse stale account epochs",
+      "security_boundary": "bounded enum/numeric metadata only; no credentials or unrestricted error payloads",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "source/host/src/extensions/telemetry/recovery_events.rs",
+        "source/host/src/android_json_runtime.rs",
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/coordinator/AndroidCoordinatorRuntime.kt"
+      ],
+      "android_owner": "Rust Host recovery telemetry mapper + Android Coordinator telemetry facade",
+      "platform_delta": "Electron IPC report pipes are replaced by typed Android Coordinator -> Host requests; telemetry stays non-authoritative.",
+      "implementation_status": "mapped",
+      "production_wiring": "Rust validators/mappers and Host feature.telemetry.recovery route are production-reachable through AndroidCoordinatorRuntime methods. Independent audit did not yet find real rebuild/reconciliation/recovery product call sites for these methods, so producer closure remains open and status is intentionally mapped.",
+      "unit_test": "source/host/src/extensions/telemetry/recovery_events.rs covers rebuild severity/bounds, reconciliation 60000ms threshold, parked/failed warning, resync completion and futility warn at 3",
+      "contract_test": "Host feature.telemetry.recovery dispatch parses bounded typed fields; exact-head CI pending",
+      "integration_test": "required: real rebuild/reconciliation/recovery owners emit through AndroidCoordinatorRuntime and stale/account-switched producers are fenced",
+      "packaged_test": "required on final exact-head package",
+      "device_test": "required in recovery/reconnect/device acceptance",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Mapper/sink exists, but no product producer caller was found in the current audit. Do not mark implemented until at least one shipping owner for each applicable event family is wired and same-head tests prove it."
+    },
+    {
       "responsibility_id": "PRODUCT-SHARED-EXPERIENCE-ANDROID-001",
       "domain": "product-experience",
       "desktop_sources": [
