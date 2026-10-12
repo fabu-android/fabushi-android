@@ -15,6 +15,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -37,6 +38,18 @@ internal class OfflineAsrGenerationFence {
     }
 }
 
+internal fun applyOfflineAsrDraftResult(
+    draftAtStart: String,
+    currentDraft: String,
+    recognizedText: String,
+): String? {
+    if (currentDraft != draftAtStart) return null
+    val clean = recognizedText.trim()
+    if (clean.isEmpty()) return currentDraft
+    val prefix = currentDraft.trimEnd()
+    return if (prefix.isEmpty()) clean else "$prefix $clean"
+}
+
 @Composable
 internal fun OfflineAsrDraftControl(
     currentDraft: String,
@@ -46,6 +59,7 @@ internal fun OfflineAsrDraftControl(
     testTag: String,
 ) {
     val context = LocalContext.current
+    val latestDraft = rememberUpdatedState(currentDraft)
     val transcriber = remember(sessionKey) { NativeOfflineSpeechTranscriber(context.applicationContext) }
     val generationFence = remember(sessionKey) { OfflineAsrGenerationFence() }
     val available = remember { transcriber.isAvailable() }
@@ -59,15 +73,21 @@ internal fun OfflineAsrDraftControl(
             return
         }
         val generation = generationFence.begin()
+        val draftAtStart = latestDraft.value
         transcriber.start { result ->
             if (!generationFence.accepts(generation)) return@start
             listening = false
             processing = false
             result.onSuccess { text ->
-                val clean = text.trim()
-                if (clean.isNotEmpty()) {
-                    val prefix = currentDraft.trimEnd()
-                    onDraftChange(if (prefix.isEmpty()) clean else "$prefix $clean")
+                val nextDraft = applyOfflineAsrDraftResult(
+                    draftAtStart = draftAtStart,
+                    currentDraft = latestDraft.value,
+                    recognizedText = text,
+                )
+                if (nextDraft == null) {
+                    error = "草稿已更改，未应用离线转写结果"
+                } else if (nextDraft != latestDraft.value) {
+                    onDraftChange(nextDraft)
                     error = null
                 }
             }.onFailure { failure ->
