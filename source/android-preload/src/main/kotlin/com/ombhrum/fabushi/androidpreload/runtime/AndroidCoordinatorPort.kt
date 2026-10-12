@@ -179,6 +179,17 @@ data class AndroidAgentAttachment(
     val mimeType: String?,
 )
 
+data class AndroidAgentAttachmentReadChunk(
+    val attachmentId: String,
+    val name: String,
+    val mimeType: String?,
+    val offset: Long,
+    val nextOffset: Long,
+    val sizeBytes: Long,
+    val eof: Boolean,
+    val bytes: ByteArray,
+)
+
 data class AndroidComposerDraft(
     val draftId: String,
     val prompt: String,
@@ -820,6 +831,14 @@ interface AndroidCoordinatorPort {
         attachmentId: String,
     ): AndroidComposerDraft? =
         error("Durable composer attachment removal is unavailable on this Coordinator port")
+    fun composerDraftAttachmentReadRange(
+        accountSlot: String?,
+        agentId: String,
+        attachmentId: String,
+        offset: Long,
+        length: Int,
+    ): AndroidAgentAttachmentReadChunk =
+        error("Durable composer attachment range read is unavailable on this Coordinator port")
     fun acceptClientSideToolV2(event: JSONObject): AndroidClientSideToolV2Event =
         error("Client-side tool v2 ingress is unavailable on this Coordinator port")
     fun replayClientSideToolV2(): List<AndroidClientSideToolV2Event> = emptyList()
