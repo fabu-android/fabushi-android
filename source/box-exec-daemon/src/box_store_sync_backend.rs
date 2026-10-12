@@ -3,7 +3,7 @@ use serde::Deserialize;
 
 use crate::server::{
     RemoteBackendCancelOutcome, RemoteBackendReconcileOutcome, RemoteBackendStartOutcome,
-    RemoteExecutionBackend, RemoteRequestIdentity,
+    RemoteExecutionAuthorizer, RemoteExecutionBackend, RemoteExecutionService, RemoteRequestIdentity,
 };
 
 pub const BOX_STORE_SYNC_CAPABILITY: &str = "box.store.sync";
@@ -89,6 +89,24 @@ impl<E: BoxStoreSyncExecutor> BoxStoreSyncBackend<E> {
     pub fn into_executor(self) -> E {
         self.executor
     }
+}
+
+pub fn open_box_store_sync_service<A, E>(
+    store_path: impl Into<std::path::PathBuf>,
+    authorizer: A,
+    executor: E,
+    now_ms: u64,
+) -> Result<RemoteExecutionService<A, BoxStoreSyncBackend<E>>, ExecutionError>
+where
+    A: RemoteExecutionAuthorizer,
+    E: BoxStoreSyncExecutor,
+{
+    RemoteExecutionService::open(
+        store_path,
+        authorizer,
+        BoxStoreSyncBackend::new(executor),
+        now_ms,
+    )
 }
 
 impl<E: BoxStoreSyncExecutor> RemoteExecutionBackend for BoxStoreSyncBackend<E> {
