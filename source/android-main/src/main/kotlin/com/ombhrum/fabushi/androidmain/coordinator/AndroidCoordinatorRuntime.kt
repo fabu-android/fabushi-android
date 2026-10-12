@@ -368,6 +368,18 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
     override fun mcpServerCatalog(): JSONArray =
         host.request("feature.mcp.serverCatalog").optJSONArray("servers") ?: JSONArray()
 
+    override fun mcpServerTools(serverId: String): JSONArray =
+        host.request(
+            "feature.mcp.serverTools.list",
+            JSONObject().put("serverId", serverId),
+        ).optJSONArray("tools") ?: JSONArray()
+
+    override fun toggleMcpServerTool(serverId: String, toolName: String): JSONArray =
+        host.request(
+            "feature.mcp.serverTools.toggle",
+            JSONObject().put("serverId", serverId).put("toolName", toolName),
+        ).optJSONArray("tools") ?: JSONArray()
+
     override fun mcpOAuthRegister(state: String, provider: String): Boolean =
         host.request(
             "coordinator.mcpOAuth.register",
