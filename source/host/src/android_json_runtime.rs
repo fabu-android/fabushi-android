@@ -1672,6 +1672,8 @@ impl AndroidJsonHost {
             .lock()
             .map_err(|_| "canonical Android messaging owner lock poisoned".to_string())?
             .execute(params, &actor_id, i64::try_from(now_ms()).unwrap_or(i64::MAX))?;
+        self.report_signin_poll_result(&result);
+        self.report_signin_poll_result(&result);
         Ok(with_account_session_mutation(result, mutation))
     }
 
@@ -2825,6 +2827,24 @@ impl AndroidJsonHost {
         }
     }
 
+    fn report_signin_poll_result(&mut self, result: &Value) {
+        match result.get("status").and_then(Value::as_str) {
+            Some("completed") => self
+                .account_telemetry
+                .report_signin(SigninLoginReport::LoginCompleted),
+            Some("failed") => self
+                .account_telemetry
+                .report_signin(SigninLoginReport::LoginFailed("error")),
+            Some("expired") => self
+                .account_telemetry
+                .report_signin(SigninLoginReport::LoginFailed("timeout")),
+            Some("cancelled") => self.account_telemetry.report_signin(
+                SigninLoginReport::SignedOut(SigninSignoutCause::Forced),
+            ),
+            _ => {}
+        }
+    }
+
     fn auth_browser_start(&mut self) -> Result<Value, String> {
         let result = if self.mode == AndroidHostMode::Test {
             self.browser_start()?
@@ -2843,15 +2863,22 @@ impl AndroidJsonHost {
     }
 
     fn auth_browser_cancel(&mut self, params: &Value) -> Result<Value, String> {
-        if self.mode == AndroidHostMode::Test {
-            return self.browser_cancel(params);
-        }
-        self.account.browser_cancel(required_string(params, "attemptId")?)
+        let result = if self.mode == AndroidHostMode::Test {
+            self.browser_cancel(params)?
+        } else {
+            self.account.browser_cancel(required_string(params, "attemptId")?)?
+        };
+        self.account_telemetry.report_signin(SigninLoginReport::SignedOut(
+            SigninSignoutCause::Forced,
+        ));
+        Ok(result)
     }
 
     fn auth_browser_poll(&mut self, params: &Value) -> Result<Value, String> {
         if self.mode == AndroidHostMode::Test {
-            return self.browser_poll(params);
+            let result = self.browser_poll(params)?;
+            self.report_signin_poll_result(&result);
+            return Ok(result);
         }
         let previous_fence = self.account.session_fence();
         let (result, mutation) = self
@@ -2865,6 +2892,10 @@ impl AndroidJsonHost {
                     .live_account_fence
                     .lock()
                     .map_err(|_| "live account fence lock poisoned".to_string())? = None;
+                self.account_telemetry
+                    .report_signin(SigninLoginReport::LoginFailed("policy_refused"));
+                self.account_telemetry
+                    .report_signin(SigninLoginReport::LoginFailed("policy_refused"));
                 return Ok(with_account_session_mutation(
                     json!({
                         "attemptId":required_string(params, "attemptId")?,
@@ -3440,7 +3471,9 @@ impl AndroidJsonHost {
                 return Err("OAuth attempt is unknown or already consumed".into());
             }
             self.logged_in = true;
-            return Ok(json!({"attemptId":attempt_id,"status":"completed","auth":self.auth_status()}));
+            let result = json!({"attemptId":attempt_id,"status":"completed","auth":self.auth_status()});
+            self.report_signin_poll_result(&result);
+            return Ok(result);
         }
         let previous_fence = self.account.session_fence();
         let (result, mutation) = self.account.browser_poll(attempt_id)?;
@@ -3480,13 +3513,18 @@ impl AndroidJsonHost {
 
     fn oauth_cancel(&mut self, params: &Value) -> Result<Value, String> {
         let attempt_id = required_string(params, "attemptId")?;
-        if self.mode == AndroidHostMode::Test {
+        let result = if self.mode == AndroidHostMode::Test {
             if !self.oauth_attempts.remove(attempt_id) {
                 return Err("OAuth attempt is unknown or already consumed".into());
             }
-            return Ok(json!({"attemptId":attempt_id,"status":"cancelled"}));
-        }
-        self.account.browser_cancel(attempt_id)
+            json!({"attemptId":attempt_id,"status":"cancelled"})
+        } else {
+            self.account.browser_cancel(attempt_id)?
+        };
+        self.account_telemetry.report_signin(SigninLoginReport::SignedOut(
+            SigninSignoutCause::Forced,
+        ));
+        Ok(result)
     }
 
     fn send_acknowledgement_scope(
