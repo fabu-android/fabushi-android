@@ -11848,20 +11848,22 @@
         "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/deep-link/deep-link-controller.kt",
         "mobile/android/app/src/main/java/com/ombhrum/fabushi/MainActivity.kt",
         "mobile/android/app/src/main/AndroidManifest.xml",
-        "mobile/android/app/src/test/java/com/ombhrum/fabushi/AndroidDeepLinkRouterTest.kt"
+        "mobile/android/app/src/test/java/com/ombhrum/fabushi/AndroidDeepLinkRouterTest.kt",
+        "mobile/android/app/src/test/java/com/ombhrum/fabushi/DeepLinkInfoModelTest.kt"
       ],
       "android_owner": "Strict AndroidDeepLinkRouter/Controller + transient ProductionRenderer Compose dialog",
-      "platform_delta": "Android uses the app-owned fabushi:// custom scheme and native AlertDialog instead of Desktop sand:// + Electron overlay primitives. Desktop also accepts the exact HTTPS cursor.com/sand/link route; current Android manifest/router does not yet expose an HTTPS app-link activation, although the typed model/source label can represent HTTPS.",
-      "implementation_status": "mapped",
-      "production_wiring": "Protocol path is production-wired: MainActivity Intent -> AndroidDeepLinkController -> typed AndroidDeepLink.Info -> ProductionRenderer -> DeepLinkInfoDialog. Router bounds input to 2048 printable ASCII bytes, rejects malformed percent/path/credentials/fragments, dedupes and caps pre-render pending activation. HTTPS source activation is still absent from Android Manifest/router, so full source responsibility is not implemented.",
-      "unit_test": "AndroidDeepLinkRouterTest covers typed info activation, extra/topic rejection, bounded controller queue and dedupe. Focused overlay route/source-label tests plus HTTPS activation tests remain required.",
-      "contract_test": "Required: protocol and HTTPS source mapping must preserve strict allowlist and canonical route semantics without accepting arbitrary hosts/paths.",
-      "integration_test": "Required: cold start + onNewIntent activation through MainActivity for both supported sources.",
-      "packaged_test": "Required on final package with manifest intent filters and no overbroad URL capture.",
-      "device_test": "Required for cold/warm activation, duplicate activation, back/dismiss, process recreation and HTTPS chooser/app-link behavior.",
+      "platform_delta": "Android preserves Desktop sand:// and exact https://cursor.com/sand/link entry semantics through strict native Intent parsing, while also supporting the app-owned fabushi:// scheme for Android-specific routes. The info surface is a native Compose AlertDialog; no Electron overlay/DOM owner is carried forward.",
+      "implementation_status": "implemented",
+      "production_wiring": "MainActivity exports allowlisted fabushi://, sand://app, and exact HTTPS cursor.com/sand/link VIEW filters. AndroidDeepLinkRouter bounds/parses/fail-closes credentials, ports, traversal, fragments and extra parameters; protocol/HTTPS Desktop routes project typed source identity into AndroidDeepLinkController, which queues/dedupes before ProductionRenderer converts Info into the native DeepLinkInfoDialog.",
+      "unit_test": "AndroidDeepLinkRouterTest covers protocol and HTTPS info/open/plugin routes, strict foreign host/port/extra rejection, pending queue/dedupe, and equivalent protocol/HTTPS canonical identity. DeepLinkInfoModelTest covers canonical native route text and protocol/HTTPS source labels. Same exact-head GitHub Actions pending.",
+      "contract_test": "Strict source=protocol|https typed mapping and exact host/path allowlist are implemented; current exact-head Architecture/Full CI result pending.",
+      "integration_test": "Production MainActivity Intent -> controller -> renderer -> native dialog is wired for cold/warm candidate handling; packaged/device activation still required.",
+      "packaged_test": "required on final package to verify manifest filter and no overbroad URL capture",
+      "device_test": "required for cold/warm protocol + HTTPS activation, chooser/app-link behavior and dismiss/back on final exact head",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Fresh deterministic audit. Existing native protocol implementation is real but insufficient to close Desktop overlay source because Desktop current shared parser/controller also carries source=https. Keep mapped/not-verified until that platform delta is resolved and same-head/package/device evidence exists."
+      "notes": "Implementation/source wiring closed without verification inflation. HTTPS activation previously recorded as absent is now present in both Manifest and strict router. Keep not-verified until same-head CI/package/device evidence passes.",
+      "android_head_at_update": "e0b66a06f1a6b5f0ed829caa10db81b2804a1dff"
     },
     {
       "responsibility_id": "APP-ERROR-BOUNDARY-ANDROID-001",
