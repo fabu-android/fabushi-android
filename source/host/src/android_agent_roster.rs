@@ -35,6 +35,8 @@ pub struct AndroidAgentRecord {
     pub avatar_shape: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub avatar_color: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub avatar_data_url: Option<String>,
     pub updated_at: u64,
 }
 
@@ -53,6 +55,7 @@ impl AndroidAgentRecord {
             "isPinned": self.is_pinned,
             "avatarShape": self.avatar_shape,
             "avatarColor": self.avatar_color,
+            "avatarDataUrl": self.avatar_data_url,
             "updatedAt": self.updated_at,
         }))
     }
@@ -168,6 +171,7 @@ impl AndroidAgentRoster {
             is_pinned: false,
             avatar_shape,
             avatar_color,
+            avatar_data_url: None,
             updated_at: now_ms(),
         };
         next.agents.push(record.clone());
@@ -199,6 +203,7 @@ impl AndroidAgentRoster {
             is_pinned: false,
             avatar_shape: None,
             avatar_color: None,
+            avatar_data_url: None,
             updated_at: now_ms(),
         };
         next.agents.push(record.clone());
@@ -269,6 +274,7 @@ impl AndroidAgentRoster {
             is_pinned: false,
             avatar_shape: None,
             avatar_color: None,
+            avatar_data_url: None,
             updated_at: now_ms(),
         };
         next.agents.push(created.clone());
@@ -412,11 +418,17 @@ impl AndroidAgentRoster {
                 } else {
                     current.avatar_color
                 };
+                let avatar_data_url = if mutation.get("avatarDataUrl").is_some() {
+                    parse_avatar_data_url(mutation.get("avatarDataUrl"))?
+                } else {
+                    current.avatar_data_url
+                };
                 next.agents[index].name = name;
                 next.agents[index].description = description;
                 next.agents[index].title = title;
                 next.agents[index].avatar_shape = avatar_shape;
                 next.agents[index].avatar_color = avatar_color;
+                next.agents[index].avatar_data_url = avatar_data_url;
                 next.agents[index].updated_at = now_ms();
                 Ok(next.agents[index].as_json())
             }
@@ -476,6 +488,7 @@ impl AndroidAgentRoster {
                     is_pinned: false,
                     avatar_shape: source.avatar_shape,
                     avatar_color: source.avatar_color,
+                    avatar_data_url: source.avatar_data_url,
                     updated_at: now_ms(),
                 };
                 next.agents.push(duplicate.clone());
@@ -635,6 +648,7 @@ impl AndroidAgentRoster {
             is_pinned: false,
             avatar_shape: source.avatar_shape,
             avatar_color: source.avatar_color,
+            avatar_data_url: source.avatar_data_url,
             updated_at: now_ms(),
         };
         next.agents.push(duplicate.clone());
@@ -892,6 +906,50 @@ fn parse_avatar_color(value: Option<&Value>) -> Result<Option<String>, String> {
             Ok(Some(color.to_ascii_uppercase()))
         }
         Some(_) => Err("avatarColor must be a string or null".into()),
+    }
+}
+
+fn parse_avatar_data_url(value: Option<&Value>) -> Result<Option<String>, String> {
+    // Desktop refuses avatar source files larger than 25 MiB. Base64 expands by roughly 4/3,
+    // so bound the canonical roster value as well instead of accepting an unbounded data URL.
+    const MAX_ENCODED_BYTES: usize = 35_000_000;
+    match value {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::String(raw)) => {
+            let data_url = raw.trim();
+            if data_url.is_empty() {
+                return Ok(None);
+            }
+            if data_url.len() > MAX_ENCODED_BYTES {
+                return Err("avatarDataUrl exceeds the 25 MB Desktop avatar source boundary".into());
+            }
+            let comma = data_url
+                .find(',')
+                .ok_or_else(|| "avatarDataUrl must be an image data URL".to_string())?;
+            let header = data_url[..comma].to_ascii_lowercase();
+            if !matches!(
+                header.as_str(),
+                "data:image/png;base64"
+                    | "data:image/jpeg;base64"
+                    | "data:image/jpg;base64"
+                    | "data:image/webp;base64"
+                    | "data:image/gif;base64"
+                    | "data:image/bmp;base64"
+                    | "data:image/avif;base64"
+            ) {
+                return Err("avatarDataUrl must use a supported base64 image MIME type".into());
+            }
+            let payload = &data_url[comma + 1..];
+            if payload.is_empty()
+                || !payload
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'+' | b'/' | b'='))
+            {
+                return Err("avatarDataUrl contains invalid base64 image data".into());
+            }
+            Ok(Some(data_url.to_string()))
+        }
+        Some(_) => Err("avatarDataUrl must be a string or null".into()),
     }
 }
 
@@ -1240,6 +1298,66 @@ mod tests {
         let reopened = AndroidAgentRoster::open(&path).unwrap();
         assert_eq!(reopened.get(&agent_id).unwrap().avatar_shape, None);
         assert_eq!(reopened.get(&agent_id).unwrap().avatar_color, None);
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn avatar_image_data_url_is_durable_replayable_clearable_and_validated() {
+        let path = temp_path("avatar-image-data-url");
+        let agent_id = {
+            let mut roster = AndroidAgentRoster::open(&path).unwrap();
+            roster.create("Agent", "").unwrap().id
+        };
+        let data_url = "data:image/png;base64,iVBORw0KGgo=";
+        let first = {
+            let mut roster = AndroidAgentRoster::open(&path).unwrap();
+            roster
+                .apply_presentation_operation(
+                    "session:account-a",
+                    "avatar-image-1",
+                    &json!({"kind":"update","id":agent_id,"avatarDataUrl":data_url}),
+                )
+                .unwrap()
+        };
+        assert_eq!(first["status"], "completed");
+        assert_eq!(first["result"]["avatarDataUrl"], data_url);
+
+        let mut reopened = AndroidAgentRoster::open(&path).unwrap();
+        assert_eq!(reopened.get(&agent_id).unwrap().avatar_data_url.as_deref(), Some(data_url));
+        let replay = reopened
+            .apply_presentation_operation(
+                "session:account-a",
+                "avatar-image-1",
+                &json!({"kind":"update","id":agent_id,"avatarDataUrl":data_url}),
+            )
+            .unwrap();
+        assert_eq!(replay, first);
+        assert_eq!(reopened.duplicate(&agent_id).unwrap().avatar_data_url.as_deref(), Some(data_url));
+
+        let rejected = reopened
+            .apply_presentation_operation(
+                "session:account-a",
+                "avatar-image-invalid",
+                &json!({"kind":"update","id":agent_id,"avatarDataUrl":"data:text/plain;base64,SGk="}),
+            )
+            .unwrap();
+        assert_eq!(rejected["status"], "rejected");
+        assert_eq!(reopened.get(&agent_id).unwrap().avatar_data_url.as_deref(), Some(data_url));
+
+        let cleared = reopened
+            .apply_presentation_operation(
+                "session:account-a",
+                "avatar-image-clear",
+                &json!({"kind":"update","id":agent_id,"avatarDataUrl":Value::Null}),
+            )
+            .unwrap();
+        assert_eq!(cleared["status"], "completed");
+        assert!(cleared["result"].get("avatarDataUrl").is_none());
+        drop(reopened);
+        assert_eq!(
+            AndroidAgentRoster::open(&path).unwrap().get(&agent_id).unwrap().avatar_data_url,
+            None
+        );
         let _ = fs::remove_file(path);
     }
 
