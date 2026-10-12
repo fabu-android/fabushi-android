@@ -113,6 +113,9 @@ internal fun ConversationHome(
     onInstallUpdate: () -> Unit,
     onOpenMarketplace: () -> Unit,
     onOpenRemoteComputer: () -> Unit,
+    marketplaceEntrypointOpenable: Boolean,
+    computerEntrypointOpenable: Boolean,
+    settingsEntrypointOpenable: Boolean,
     showAddMenu: Boolean,
     onShowAddMenuChange: (Boolean) -> Unit,
     showComposeMenu: Boolean,
@@ -385,9 +388,32 @@ internal fun ConversationHome(
                             DropdownMenuItem(text = { Text("收藏", color = homePrimaryText) }, onClick = { onShowAddMenuChange(false); activeSection = AndroidMobileSection.SAVED })
                             DropdownMenuItem(text = { Text("归档", color = homePrimaryText) }, onClick = { onShowAddMenuChange(false); activeSection = AndroidMobileSection.ARCHIVE })
                             DropdownMenuItem(text = { Text("文件夹", color = homePrimaryText) }, onClick = { onShowAddMenuChange(false); activeSection = AndroidMobileSection.FOLDERS })
-                            DropdownMenuItem(text = { Text("设置", color = homePrimaryText) }, onClick = { onShowAddMenuChange(false); activeSection = AndroidMobileSection.SETTINGS })
-                            DropdownMenuItem(modifier = Modifier.testTag(TestTags.MarketplaceEntry), text = { Text("Mini Apps / 插件市场", color = homePrimaryText) }, onClick = { onShowAddMenuChange(false); onOpenMarketplace() })
-                            DropdownMenuItem(modifier = Modifier.testTag(TestTags.RemoteComputerEntry), text = { Text("我的电脑", color = homePrimaryText) }, onClick = { onShowAddMenuChange(false); onOpenRemoteComputer() })
+                            DropdownMenuItem(
+                                text = { Text("设置", color = homePrimaryText) },
+                                enabled = settingsEntrypointOpenable,
+                                onClick = {
+                                    onShowAddMenuChange(false)
+                                    if (settingsEntrypointOpenable) activeSection = AndroidMobileSection.SETTINGS
+                                },
+                            )
+                            DropdownMenuItem(
+                                modifier = Modifier.testTag(TestTags.MarketplaceEntry),
+                                text = { Text("Mini Apps / 插件市场", color = homePrimaryText) },
+                                enabled = marketplaceEntrypointOpenable,
+                                onClick = {
+                                    onShowAddMenuChange(false)
+                                    if (marketplaceEntrypointOpenable) onOpenMarketplace()
+                                },
+                            )
+                            DropdownMenuItem(
+                                modifier = Modifier.testTag(TestTags.RemoteComputerEntry),
+                                text = { Text("我的电脑", color = homePrimaryText) },
+                                enabled = computerEntrypointOpenable,
+                                onClick = {
+                                    onShowAddMenuChange(false)
+                                    if (computerEntrypointOpenable) onOpenRemoteComputer()
+                                },
+                            )
                             DropdownMenuItem(modifier = Modifier.testTag(TestTags.MobileLogout), text = { Text("退出登录", color = Color(0xFFFF6B6B)) }, onClick = { onShowAddMenuChange(false); showLogoutConfirmation = true })
                             if (updateState.phase != AndroidUpdatePhase.DISABLED) DropdownMenuItem(text = { Text("检查更新", color = homePrimaryText) }, onClick = { onShowAddMenuChange(false); onCheckUpdate() })
                         }
