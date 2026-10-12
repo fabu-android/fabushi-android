@@ -92,7 +92,7 @@ use std::sync::{
     Arc, Condvar, Mutex,
 };
 use std::thread;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 const ASSISTANT_READ_MARKER_ID: &str = "projection:mahayana-assistant:last-read";
 const ACCOUNT_TELEMETRY_OUTBOX_CAP: usize = 16;
@@ -2597,16 +2597,56 @@ impl AndroidJsonHost {
                 Some(context_session),
                 required_scope,
             )?;
+
+        // Measure the canonical reaction mutation at the Host boundary. Compose may project an
+        // optimistic reaction, but it is never a second acknowledgement/retry owner.
+        let reaction_telemetry = envelope
+            .get("command")
+            .and_then(Value::as_object)
+            .filter(|command| command.get("type").and_then(Value::as_str) == Some("setReaction"))
+            .and_then(|command| {
+                Some((
+                    command.get("conversationId")?.as_str()?.to_string(),
+                    command
+                        .get("reaction")?
+                        .get("reaction")?
+                        .as_str()?
+                        .to_string(),
+                ))
+            });
+        let started_at = Instant::now();
         let result = self
             .messaging
             .lock()
             .map_err(|_| "canonical Android messaging owner lock poisoned".to_string())?
             .execute(params, &actor_id, i64::try_from(now_ms()).unwrap_or(i64::MAX))?;
+
+        if let Some((conversation_id, emoji)) = reaction_telemetry {
+            let telemetry_result = reaction_ack_event(
+                started_at.elapsed().as_secs_f64() * 1_000.0,
+                "landed",
+                &conversation_id,
+                &emoji,
+            )
+            .and_then(|event| {
+                self.record_product_telemetry("sand.reaction.ack", event)
+                    .map(|_| ())
+            });
+            if telemetry_result.is_err() {
+                // Observability must not turn an already committed canonical reaction into a
+                // product failure or cause the UI to retry a side effect.
+                self.edge_failures.report(
+                    "structured-log-spill",
+                    "reaction-ack-record",
+                    "TelemetryError",
+                );
+            }
+        }
+
         self.report_signin_poll_result(&result);
         self.report_signin_poll_result(&result);
         Ok(with_account_session_mutation(result, mutation))
     }
-
     fn messaging_blob_read(&mut self, params: &Value) -> Result<Value, String> {
         let (actor_id, mutation) = self.current_messaging_identity()?;
         let account_fence = self.current_turn_account_fence()?;
