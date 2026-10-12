@@ -2681,7 +2681,6 @@ impl AndroidJsonHost {
         }
 
         self.report_signin_poll_result(&result);
-        self.report_signin_poll_result(&result);
         Ok(with_account_session_mutation(result, mutation))
     }
     fn messaging_blob_read(&mut self, params: &Value) -> Result<Value, String> {
