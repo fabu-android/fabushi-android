@@ -54,6 +54,7 @@ import androidx.compose.ui.unit.sp
 import com.ombhrum.fabushi.androidpreload.runtime.AccountAccessBlockReason
 import com.ombhrum.fabushi.androidpreload.runtime.AccountAccessProjection
 import com.ombhrum.fabushi.androidpreload.runtime.AccountAccessState
+import com.ombhrum.fabushi.androidpreload.runtime.AndroidEntrypointAvailability
 import kotlin.math.absoluteValue
 import kotlin.math.sin
 
@@ -69,6 +70,7 @@ internal fun GrokHomeSurface(
     messagingState: MessagingUiState,
     botState: MobileBotUiState,
     appAgentSurface: FabushiAppAgentSurface,
+    agentNetworkAvailability: AndroidEntrypointAvailability,
     onOpenMessaging: () -> Unit,
     onRefreshAccess: () -> Unit,
     onOpenAccessOnboarding: () -> Unit,
@@ -239,6 +241,7 @@ internal fun GrokHomeSurface(
         botState.rosterLoading,
         showHiddenBots,
         messagingState.conversations,
+        agentNetworkAvailability,
         appAgentSurface,
     ) {
         val elements = mutableListOf<FabushiAppAgentSurface.Element>()
@@ -312,11 +315,9 @@ internal fun GrokHomeSurface(
                     "grok-mobile-agent-network",
                     "button",
                     "Agent network",
-                    enabled = botState.bots.isNotEmpty() && rosterAccessReadiness.isLoaded && rosterAccessReadiness.isConnected,
+                    enabled = agentNetworkAvailability.isOpenable,
                     action = FabushiAppAgentSurface.Action(setOf("invoke")) {
-                        if (botState.bots.isNotEmpty() && rosterAccessReadiness.isLoaded && rosterAccessReadiness.isConnected) {
-                            onOpenAgentNetwork()
-                        }
+                        if (agentNetworkAvailability.isOpenable) onOpenAgentNetwork()
                     },
                 )
                 element(
@@ -540,7 +541,7 @@ internal fun GrokHomeSurface(
                     Text(
                         "◇",
                         fontSize = 22.sp,
-                        color = if (botState.bots.isNotEmpty() && rosterAccessReadiness.isLoaded && rosterAccessReadiness.isConnected) {
+                        color = if (agentNetworkAvailability.isOpenable) {
                             GrokMobileInk
                         } else {
                             GrokMobileMuted.copy(alpha = 0.35f)
@@ -548,7 +549,7 @@ internal fun GrokHomeSurface(
                         modifier = Modifier
                             .padding(horizontal = 8.dp)
                             .clickable(
-                                enabled = botState.bots.isNotEmpty() && rosterAccessReadiness.isLoaded && rosterAccessReadiness.isConnected,
+                                enabled = agentNetworkAvailability.isOpenable,
                                 onClick = onOpenAgentNetwork,
                             )
                             .testTag("agent-network-open"),
