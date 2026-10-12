@@ -466,6 +466,46 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
         require(settled) { "Sand trial cancellation did not settle successfully" }
     }
 
+
+    override fun credentialVaultList(): JSONArray =
+        host.request("feature.credentialVault.list").optJSONArray("credentials") ?: JSONArray()
+
+    override fun credentialVaultUpsert(
+        name: String,
+        label: String,
+        secretValue: String,
+        allowedOrigins: List<String>,
+    ): JSONObject =
+        host.request(
+            "feature.credentialVault.upsert",
+            JSONObject()
+                .put("name", name)
+                .put("label", label)
+                .put("secretValue", secretValue)
+                .put("allowedOrigins", JSONArray(allowedOrigins)),
+        ).getJSONObject("credential")
+
+    override fun credentialVaultRotate(
+        name: String,
+        label: String,
+        secretValue: String,
+        allowedOrigins: List<String>,
+    ): JSONObject =
+        host.request(
+            "feature.credentialVault.rotate",
+            JSONObject()
+                .put("name", name)
+                .put("label", label)
+                .put("secretValue", secretValue)
+                .put("allowedOrigins", JSONArray(allowedOrigins)),
+        ).getJSONObject("credential")
+
+    override fun credentialVaultRevoke(name: String): Boolean =
+        host.request(
+            "feature.credentialVault.revoke",
+            JSONObject().put("name", name),
+        ).optBoolean("revoked", false)
+
     override fun rootConnectionResilienceProjection(): RootConnectionResilienceProjection =
         rootConnectionOwner.currentProjection()
 
