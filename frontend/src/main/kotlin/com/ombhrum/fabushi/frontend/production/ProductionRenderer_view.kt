@@ -86,7 +86,7 @@ internal fun ProductionRenderer(
                 var commandPaletteInitialTab by remember { mutableStateOf(CommandPaletteTab.ALL) }
                 var showAbout by remember { mutableStateOf(false) }
                 var showSettings by remember { mutableStateOf(false) }
-                var showFeedback by remember { mutableStateOf(false) }
+                var showFeedback by rememberSaveable { mutableStateOf(false) }
                 var autoReviewSnapshot by remember {
                     mutableStateOf<AndroidAutoReviewInstructionsSnapshot?>(null)
                 }
