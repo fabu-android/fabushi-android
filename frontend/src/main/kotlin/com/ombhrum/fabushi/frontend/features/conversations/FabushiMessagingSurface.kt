@@ -520,6 +520,10 @@ fun FabushiMessagingSurface(
             onOpenRemoteComputer = {
                 if (computerAvailability.isOpenable) destination = MobileDestination.REMOTE_COMPUTER
             },
+            marketplaceEntrypointOpenable = pluginsAvailability.isOpenable,
+            computerEntrypointOpenable = computerAvailability.isOpenable,
+            settingsEntrypointOpenable =
+                entrypointAvailability.availability(AndroidEntrypointId.SETTINGS).isOpenable,
             showAddMenu = showAddMenu,
             onShowAddMenuChange = { showAddMenu = it },
             showComposeMenu = showComposeMenu,
