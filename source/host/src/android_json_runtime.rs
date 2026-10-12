@@ -85,6 +85,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 const ASSISTANT_READ_MARKER_ID: &str = "projection:mahayana-assistant:last-read";
 const ACCOUNT_TELEMETRY_OUTBOX_CAP: usize = 16;
+const PROCESS_CRASH_EVENT_CAP: usize = 20;
 
 const SUBAGENT_REVIEW_APPROVAL_TTL_MS: u64 = 10 * 60 * 1_000;
 const SUBAGENT_REVIEW_MAX_PENDING_PER_AGENT: usize = 4;
@@ -658,6 +659,7 @@ pub struct AndroidJsonHost {
     edge_failures: EdgeFailureBuffer,
     process_metrics: AndroidProcessMetricsCollector,
     process_metrics_recent: VecDeque<Value>,
+    process_crash_recent: VecDeque<Value>,
     agents: Arc<Mutex<AndroidAgentRoster>>,
     sidebar_sections: Arc<Mutex<AndroidSidebarSections>>,
     user_settings: Arc<Mutex<AndroidUserSettings>>,
@@ -957,6 +959,7 @@ impl AndroidJsonHost {
             edge_failures: EdgeFailureBuffer::default(),
             process_metrics: AndroidProcessMetricsCollector::default(),
             process_metrics_recent: VecDeque::new(),
+            process_crash_recent: VecDeque::new(),
             agents,
             sidebar_sections,
             user_settings,
@@ -1661,6 +1664,8 @@ impl AndroidJsonHost {
             "feature.auth.logout" => self.account_logout(),
             "feature.telemetry.processMetrics.observe" => self.process_metrics_observe(params),
             "feature.telemetry.processMetrics.recent" => Ok(Value::Array(self.process_metrics_recent.iter().cloned().collect())),
+            "feature.telemetry.processCrash.record" => self.process_crash_record(params),
+            "feature.telemetry.processCrash.recent" => Ok(Value::Array(self.process_crash_recent.iter().cloned().collect())),
             "feature.agent.diskPressure.observe" => self.agent_disk_pressure_observe(params),
             "feature.agent.diskPressure.record" => self.agent_disk_pressure_record(params),
             "feature.agent.turn.reconcile" => self.agent_turn_reconcile(params),
@@ -3227,6 +3232,28 @@ impl AndroidJsonHost {
             .map_err(|_| "canonical Android sidebar sections lock poisoned".to_string())?
             .get_snapshot(&account_scope, &known_agent_ids);
         Ok(json!({"accountFence":snapshot.account_fence,"revision":snapshot.revision,"sections":snapshot.sections}))
+    }
+
+    fn process_crash_record(&mut self, params: &Value) -> Result<Value, String> {
+        let kind = required_string(params, "kind")?;
+        if kind != "uncaught_exception" {
+            return Err("unsupported Android process crash kind".into());
+        }
+        let occurred_at_ms = required_u64(params, "occurredAtMs")?;
+        let uptime_ms = required_u64(params, "uptimeMs")?;
+        let record = json!({
+            "kind": kind,
+            "occurredAtMs": occurred_at_ms,
+            "uptimeMs": uptime_ms.min(30 * 24 * 60 * 60 * 1_000_u64),
+            "errorCode": "SAND-E0603",
+            "errorDomain": "android-process",
+            "errorRetryable": false,
+        });
+        if self.process_crash_recent.len() >= PROCESS_CRASH_EVENT_CAP {
+            self.process_crash_recent.pop_front();
+        }
+        self.process_crash_recent.push_back(record.clone());
+        Ok(record)
     }
 
     fn process_metrics_observe(&mut self, params: &Value) -> Result<Value, String> {
@@ -10928,6 +10955,46 @@ mod process_metrics_recent_dispatch_tests {
             json!([]),
             "diagnostic samples are process-local and must not replay after process death",
         );
+    }
+}
+
+#[cfg(test)]
+mod process_crash_telemetry_dispatch_tests {
+    use super::*;
+
+    #[test]
+    fn process_crash_projection_is_bounded_and_excludes_error_content() {
+        let root = tempfile::tempdir().unwrap();
+        let mut host = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+        for index in 0..(PROCESS_CRASH_EVENT_CAP + 5) {
+            host.dispatch(
+                "feature.telemetry.processCrash.record",
+                &json!({
+                    "kind":"uncaught_exception",
+                    "occurredAtMs":1_000 + index as u64,
+                    "uptimeMs":u64::MAX,
+                    "message":"secret-token-must-not-be-accepted",
+                    "stack":"sensitive-stack"
+                }),
+            )
+            .unwrap();
+        }
+        let recent = host
+            .dispatch("feature.telemetry.processCrash.recent", &json!({}))
+            .unwrap();
+        let rows = recent.as_array().unwrap();
+        assert_eq!(rows.len(), PROCESS_CRASH_EVENT_CAP);
+        assert_eq!(rows.first().unwrap()["occurredAtMs"], 1_005);
+        assert_eq!(rows.last().unwrap()["errorCode"], "SAND-E0603");
+        let serialized = recent.to_string();
+        assert!(!serialized.contains("secret-token"));
+        assert!(!serialized.contains("sensitive-stack"));
+        assert!(host
+            .dispatch(
+                "feature.telemetry.processCrash.record",
+                &json!({"kind":"signal","occurredAtMs":1,"uptimeMs":1}),
+            )
+            .is_err());
     }
 }
 
