@@ -1617,10 +1617,10 @@
         "source/mahayana-agent-coordinator/src/lib.rs",
         "source/host/src/android_agent_roster.rs"
       ],
-      "android_owner": "Rust AutomationRuntime under Android Host; typed Coordinator bridge only exposes commands/projections",
+      "android_owner": "Rust AutomationRuntime under Android Host; typed Coordinator bridge delegates enablement to Host and never stores a second workflow truth",
       "platform_delta": "Android uses native Compose/platform adapters + typed JNI while preserving canonical Rust owners where platform-independent.",
       "implementation_status": "mapped",
-      "production_wiring": "Partial: durable workflow spec/run owner and typed Host/Coordinator API are implemented, including stable request/run/generation/account/step-mutation identity, approval persistence, cancellation, process-death outcome-unknown fencing and command-palette routine projection. Fresh Desktop 92fcc2b0 Routines audit shows the shipping native-equivalent surface is still open: full Agent routines list/create/edit/delete/enable/test-run UI, timezone-aware run-history provider/clock, schedule normalization/editor, up-to-8 trigger drafts, Slack/GitHub/Teams/Linear/Sentry/PagerDuty listener schema, cron/event listener execution, WorkManager/OS scheduling adapter and actual workflow step/multi-Agent execution are not closed. Per-Agent workflow enablement is now Host-owned in AndroidAgentRoster: disabledWorkflowIds persists across reopen, uses the existing account-fenced durable roster mutation journal, rejects groups, and is inherited by Agent duplicate (86b8407806ee5094410e644eef81c19cf84a10a8).",
+      "production_wiring": "Partial: durable workflow spec/run owner and typed Host/Coordinator API are implemented, including stable request/run/generation/account/step-mutation identity, approval persistence, cancellation, process-death outcome-unknown fencing and command-palette routine projection. Fresh Desktop 92fcc2b0 Routines audit shows the shipping native-equivalent surface is still open: full Agent routines list/create/edit/delete/enable/test-run UI, timezone-aware run-history provider/clock, schedule normalization/editor, up-to-8 trigger drafts, Slack/GitHub/Teams/Linear/Sentry/PagerDuty listener schema, cron/event listener execution, WorkManager/OS scheduling adapter and actual workflow step/multi-Agent execution are not closed. Per-Agent workflow enablement is single-owned by AutomationRuntime::set_agent_workflow_enabled, persisted in the automation store, account+Agent fenced, exposed by feature.automation.setAgentEnabled, and delegated through the typed Coordinator API (29c93710406f48be26bc3af5dac96fb4a4de0c1e).",
       "unit_test": "required",
       "contract_test": "required on same exact HEAD",
       "integration_test": "required on same exact HEAD",
@@ -1628,7 +1628,7 @@
       "device_test": "required on emulator/physical device as applicable",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "AUTOMATION-DURABLE-RUN-001 closes only the platform-independent durable run/approval/idempotency slice. Ten recovered Routines source rows are now semantically mapped to this umbrella without claiming implementation. Full native routines presentation, trigger/listener breadth, schedule semantics, actual executor/background scheduling and packaged/device evidence remain open; keep mapped/not-verified. Per-Agent enablement persistence/duplicate inheritance is implemented but does not close the larger Routines/workflow executor responsibility."
+      "notes": "AUTOMATION-DURABLE-RUN-001 closes only the platform-independent durable run/approval/idempotency slice. Ten recovered Routines source rows are now semantically mapped to this umbrella without claiming implementation. Full native routines presentation, trigger/listener breadth, schedule semantics, actual executor/background scheduling and packaged/device evidence remain open; keep mapped/not-verified. Per-Agent enablement persistence is implemented with AutomationRuntime as the only owner; clone-time automation/enablement copy and the larger Routines/workflow product remain open."
     },
     {
       "responsibility_id": "SETTINGS-SCOPE-001",
