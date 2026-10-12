@@ -15010,6 +15010,78 @@
       "artifact": null,
       "verification_status": "not-verified",
       "notes": "Source and production wiring are implemented. Do not mark verified until same exact HEAD CI/package/device evidence succeeds."
+    },
+    {
+      "responsibility_id": "LOCAL-RUNNER-FILESYSTEM-ANDROID-001",
+      "domain": "local-runner",
+      "desktop_sources": [
+        {
+          "path": "source/host/local-exec/local-exec-machine.ts",
+          "blob_sha": "2879fb5070695c0334f5dc31b6c01aea256d05b6",
+          "symbols": [
+            "LocalExecMachine",
+            "root containment"
+          ]
+        },
+        {
+          "path": "source/host/local-exec/local-exec-provider.ts",
+          "blob_sha": "59e86ee759ba9e365c6108cc566011a0fe2cf0ec",
+          "symbols": [
+            "bounded upload/download"
+          ]
+        }
+      ],
+      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "responsibility": "Bound already-authorized AndroidLocal filesystem access to one app-owned root with traversal/symlink escape rejection, bounded regular-file I/O, atomic writes and cwd fallback.",
+      "source_owner": "Desktop local-exec machine/provider filesystem boundary",
+      "direct_callers": [
+        "authorized local capability handlers"
+      ],
+      "downstream_dependencies": [
+        "HostRunnerComposition AndroidLocal target",
+        "Host Capability Broker"
+      ],
+      "state_owner": "AndroidLocalRunner filesystem adapter; approval state stays Host-owned",
+      "persistent_state": [
+        "explicit files under configured local-runner root"
+      ],
+      "protocol_wire_contract": [
+        "ExecutionTarget::AndroidLocal",
+        "no local-to-remote fallback"
+      ],
+      "visible_effect": "Authorized local file tools can safely operate inside an explicit Android app-owned root.",
+      "failure_behavior": [
+        "reject path escape",
+        "reject symlink escape",
+        "reject non-regular/oversized reads",
+        "reject oversized writes",
+        "atomic replace on write"
+      ],
+      "cancellation_behavior": "operation identity is fenced to its original capability handler",
+      "retry_semantics": "reads repeat safely; broader side-effect retry remains caller/Capability Broker owned",
+      "idempotency_semantics": "path resolution is pure; writes atomically replace target; no approval state is duplicated",
+      "process_death_recovery": "settled files remain durable; pending approval/execution is not resurrected by this adapter",
+      "account_fencing": "owned by Host before dispatch; filesystem adapter owns no account truth",
+      "security_boundary": "canonical-root containment, nearest-existing-ancestor symlink fencing, bounded bytes, no arbitrary shell",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "source/local-exec-daemon/src/bounded_fs.rs",
+        "source/local-exec-daemon/src/lib.rs",
+        "source/host/src/host_runner_composition.rs",
+        "source/host/Cargo.toml"
+      ],
+      "android_owner": "Rust AndroidLocalRunner behind HostRunnerComposition",
+      "platform_delta": "Desktop general local-exec daemon is narrowed on Android; arbitrary shell/computer-use goes to Authorized Remote Runner.",
+      "implementation_status": "implemented",
+      "production_wiring": "Host links local-exec crate and AndroidLocalRunner implements HostRunnerSession; real-runner Host composition test exists. Concrete AndroidJsonHost file-capability registration remains open.",
+      "unit_test": "bounded_fs containment/symlink/size/atomic/cwd tests; duplicate capability owner preservation; unknown cancellation fail-closed",
+      "contract_test": "real AndroidLocalRunner routed by Host composition without Remote journal",
+      "integration_test": "partial; concrete shipping local file capability registration remains required",
+      "packaged_test": "required",
+      "device_test": "required",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Implemented by aa6c3056, 980478b5, 785be088, e4dd06b8, 7ed8720f, 367dc893, 44c1a7d4. This does not claim full local-exec parity."
     }
   ],
   "traceability": {
