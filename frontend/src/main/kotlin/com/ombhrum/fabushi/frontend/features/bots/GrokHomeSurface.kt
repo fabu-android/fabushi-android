@@ -99,6 +99,7 @@ internal fun GrokHomeSurface(
     onBeginAgentSettings: (String) -> Unit,
     onEndAgentSettings: (String) -> Unit,
     onUpdateBotProfile: (String, String, String?, String, String?, String?) -> Unit,
+    onSetBotAvatarImage: (String, String?) -> Unit,
     onSetBotNotifyOnUpdates: (String, Boolean) -> Unit,
     onHideBot: (String) -> Unit,
     onUnhideBot: (String) -> Unit,
@@ -197,6 +198,7 @@ internal fun GrokHomeSurface(
                 onUpdateBotProfile(id, name, title, description, avatarShape, avatarColor)
                 profileTarget = null
             },
+            onSetAvatarImage = onSetBotAvatarImage,
             onSetNotifications = onSetBotNotifyOnUpdates,
         )
         return
