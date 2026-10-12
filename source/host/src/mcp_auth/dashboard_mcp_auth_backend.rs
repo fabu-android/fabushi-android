@@ -134,6 +134,12 @@ pub struct McpServerToolSummary {
     pub description: Option<String>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct McpServerAccountSummary {
+    pub account_key: String,
+    pub row_server_identifier: String,
+}
+
 pub trait SandMcpCredentialProvider: Send + Sync {
     fn credentials(&self) -> Result<SandMcpBackendCredentials, String>;
 }
@@ -531,6 +537,43 @@ impl CursorDashboardMcpAuthBackend {
 
     pub fn reload_server_tools(&self, server_id: &str) -> Result<usize, String> {
         Ok(self.list_server_tools(server_id)?.len())
+    }
+
+    pub fn list_server_accounts(
+        &self,
+        server_id: &str,
+    ) -> Result<Vec<McpServerAccountSummary>, String> {
+        let requested_id = parse_mcp_server_id(server_id)?;
+        let credentials = self.credentials.credentials()?;
+        let ghost_mode = self.resolve_ghost_mode(&credentials);
+        let available = self.send_unary(
+            &credentials,
+            DASHBOARD_GET_AVAILABLE_MCP_SERVERS_PATH,
+            &[],
+            CONTROL_RPC_TIMEOUT_MS,
+            ghost_mode,
+        )?;
+        let server = decode_available_mcp_servers_response(&available)?
+            .into_iter()
+            .find(|server| server.id == requested_id)
+            .ok_or("MCP server disappeared during account discovery")?;
+        if server.disabled_by_team_admin_policy {
+            return Err("MCP server is blocked by current team admin policy".into());
+        }
+        let identifier = server
+            .server_identifier
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .ok_or("MCP server has no backend server identifier")?;
+        let response = self.send_unary(
+            &credentials,
+            DASHBOARD_LIST_SAND_MCP_TOOLS_PATH,
+            &encode_list_sand_mcp_tools_request(&[identifier]),
+            LIST_TOOLS_TIMEOUT_MS,
+            ghost_mode,
+        )?;
+        decode_list_sand_mcp_accounts(&response, identifier)
     }
 
     pub fn fresh_server_snapshot(
@@ -1084,6 +1127,69 @@ fn decode_list_sand_mcp_tools_count(
     requested_identifier: &str,
 ) -> Result<usize, String> {
     Ok(decode_list_sand_mcp_tools(input, requested_identifier)?.len())
+}
+
+fn decode_list_sand_mcp_accounts(
+    input: &[u8],
+    requested_identifier: &str,
+) -> Result<Vec<McpServerAccountSummary>, String> {
+    let mut cursor = 0usize;
+    let mut accounts = Vec::new();
+    let mut seen = std::collections::BTreeSet::new();
+    while cursor < input.len() {
+        let key = read_varint(input, &mut cursor)?;
+        let field = (key >> 3) as u32;
+        let wire = (key & 0x07) as u8;
+        if field == 1 && wire == 2 {
+            let bytes = read_len_delimited(input, &mut cursor)?;
+            let (server_identifier, account_label, row_server_identifier) =
+                decode_list_sand_mcp_account_row(bytes)?;
+            let row_owner = row_server_identifier
+                .as_deref()
+                .filter(|value| !value.trim().is_empty())
+                .unwrap_or(server_identifier.as_str());
+            if row_owner == requested_identifier {
+                if let Some(account_key) = account_label
+                    .map(|value| value.trim().to_string())
+                    .filter(|value| !value.is_empty())
+                {
+                    if account_key.len() > 320 || account_key.chars().any(char::is_control) {
+                        return Err("MCP account label exceeds bounded metadata limits".into());
+                    }
+                    if seen.insert(account_key.clone()) {
+                        accounts.push(McpServerAccountSummary {
+                            account_key,
+                            row_server_identifier: row_owner.to_string(),
+                        });
+                    }
+                }
+            }
+        } else {
+            skip_field(input, &mut cursor, wire)?;
+        }
+    }
+    Ok(accounts)
+}
+
+fn decode_list_sand_mcp_account_row(
+    input: &[u8],
+) -> Result<(String, Option<String>, Option<String>), String> {
+    let mut cursor = 0usize;
+    let mut identifier = String::new();
+    let mut account_label = None;
+    let mut row_server_identifier = None;
+    while cursor < input.len() {
+        let key = read_varint(input, &mut cursor)?;
+        let field = (key >> 3) as u32;
+        let wire = (key & 0x07) as u8;
+        match (field, wire) {
+            (1, 2) => identifier = read_string(input, &mut cursor)?,
+            (4, 2) => account_label = Some(read_string(input, &mut cursor)?),
+            (5, 2) => row_server_identifier = Some(read_string(input, &mut cursor)?),
+            _ => skip_field(input, &mut cursor, wire)?,
+        }
+    }
+    Ok((identifier, account_label, row_server_identifier))
 }
 
 fn decode_list_sand_mcp_server(
@@ -2642,6 +2748,43 @@ mod tests {
         .unwrap();
         assert_eq!(stdio.transport, McpAuthTransport::Stdio);
         assert!(stdio.server_url.is_none());
+    }
+
+    #[test]
+    fn list_tools_accounts_preserve_account_label_and_display_row_owner() {
+        let mut primary = Vec::new();
+        encode_string(1, "calendar/work", &mut primary);
+        encode_string(4, "work", &mut primary);
+        encode_string(5, "calendar/default", &mut primary);
+
+        let mut personal = Vec::new();
+        encode_string(1, "calendar/personal", &mut personal);
+        encode_string(4, "personal", &mut personal);
+        encode_string(5, "calendar/default", &mut personal);
+
+        let mut unrelated = Vec::new();
+        encode_string(1, "drive/work", &mut unrelated);
+        encode_string(4, "work", &mut unrelated);
+        encode_string(5, "drive/default", &mut unrelated);
+
+        let mut response = Vec::new();
+        encode_len_delimited(1, &primary, &mut response);
+        encode_len_delimited(1, &personal, &mut response);
+        encode_len_delimited(1, &unrelated, &mut response);
+
+        assert_eq!(
+            decode_list_sand_mcp_accounts(&response, "calendar/default").unwrap(),
+            vec![
+                McpServerAccountSummary {
+                    account_key: "work".into(),
+                    row_server_identifier: "calendar/default".into(),
+                },
+                McpServerAccountSummary {
+                    account_key: "personal".into(),
+                    row_server_identifier: "calendar/default".into(),
+                },
+            ]
+        );
     }
 
     #[test]
