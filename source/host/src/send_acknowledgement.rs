@@ -5,6 +5,7 @@ use std::{
     collections::BTreeMap,
     fs,
     path::{Path, PathBuf},
+    time::{SystemTime, UNIX_EPOCH},
 };
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -79,6 +80,10 @@ pub struct SendAcknowledgementRecord {
     pub attachments: Vec<AgentAttachment>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub selected_model: Option<String>,
+    #[serde(default)]
+    pub entered_at_ms: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dispatch_started_at_ms: Option<u64>,
     pub phase: SendAcknowledgementPhase,
     pub generation: u64,
     pub failed_at_ms: Option<u64>,
@@ -263,6 +268,8 @@ impl DurableSendAcknowledgementOwner {
             message_rich_text,
             attachments,
             selected_model,
+            entered_at_ms: current_time_ms(),
+            dispatch_started_at_ms: None,
             phase: SendAcknowledgementPhase::Pending,
             generation: self.state.owner_generation,
             failed_at_ms: None,
@@ -453,6 +460,8 @@ impl DurableSendAcknowledgementOwner {
             message_rich_text: old.message_rich_text,
             attachments: old.attachments,
             selected_model: old.selected_model,
+            entered_at_ms: current_time_ms(),
+            dispatch_started_at_ms: None,
             phase: SendAcknowledgementPhase::Pending,
             generation: self.state.owner_generation,
             failed_at_ms: None,
@@ -635,6 +644,9 @@ impl DurableSendAcknowledgementOwner {
             ));
         }
         record.phase = next;
+        if next == SendAcknowledgementPhase::Dispatching && record.dispatch_started_at_ms.is_none() {
+            record.dispatch_started_at_ms = Some(current_time_ms());
+        }
         record.failed_at_ms = None;
         record.reason = None;
         self.persist()?;
@@ -684,6 +696,14 @@ impl DurableSendAcknowledgementOwner {
     pub fn path(&self) -> &Path {
         &self.path
     }
+}
+
+fn current_time_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis()
+        .min(u64::MAX as u128) as u64
 }
 
 fn message_echo_matches_attachments(entry: &Value, expected: &[AgentAttachment]) -> bool {
@@ -822,6 +842,79 @@ mod tests {
                 client_nonce: nonce.into(),
             },
         ]
+    }
+
+    #[test]
+    fn durable_attempt_timing_is_owned_by_the_send_journal_and_retry_resets_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("send-acks.json");
+        let mut owner = DurableSendAcknowledgementOwner::open(&path, 1).unwrap();
+        let first = owner
+            .begin(
+                Some("slot-a"),
+                "session:a",
+                "agent-a",
+                "timed-a",
+                "hello",
+                message("timed-a"),
+            )
+            .unwrap();
+        assert!(first.entered_at_ms > 0);
+        assert_eq!(first.dispatch_started_at_ms, None);
+        owner
+            .mark_queued(
+                Some("slot-a"),
+                "session:a",
+                "agent-a",
+                "timed-a",
+                first.generation,
+            )
+            .unwrap();
+        let dispatching = owner
+            .mark_dispatching(
+                Some("slot-a"),
+                "session:a",
+                "agent-a",
+                "timed-a",
+                first.generation,
+            )
+            .unwrap();
+        let dispatch_started_at_ms = dispatching
+            .dispatch_started_at_ms
+            .expect("dispatch start is durable");
+        assert!(dispatch_started_at_ms >= first.entered_at_ms);
+        owner
+            .mark_failed(
+                Some("slot-a"),
+                "session:a",
+                "agent-a",
+                "timed-a",
+                first.generation,
+                dispatch_started_at_ms.saturating_add(1),
+                "proven failure",
+            )
+            .unwrap();
+
+        let retried = owner
+            .retry_failed(
+                Some("slot-a"),
+                "session:a",
+                "agent-a",
+                "timed-a",
+                first.generation,
+                "timed-b",
+                message("timed-b"),
+            )
+            .unwrap();
+        assert!(retried.entered_at_ms >= first.entered_at_ms);
+        assert_eq!(retried.dispatch_started_at_ms, None);
+
+        let reopened = DurableSendAcknowledgementOwner::open(&path, dispatch_started_at_ms + 10).unwrap();
+        let durable = reopened
+            .record(Some("slot-a"), "session:a", "agent-a", "timed-b")
+            .expect("retry remains durable");
+        assert_eq!(durable.entered_at_ms, retried.entered_at_ms);
+        assert_eq!(durable.dispatch_started_at_ms, None);
     }
 
     #[test]
