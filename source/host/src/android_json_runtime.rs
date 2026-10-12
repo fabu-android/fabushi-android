@@ -1629,6 +1629,7 @@ impl AndroidJsonHost {
             "feature.composerDraft.attachment.finish" => self.composer_draft_attachment_finish(params),
             "feature.composerDraft.attachment.abort" => self.composer_draft_attachment_abort(params),
             "feature.composerDraft.attachment.remove" => self.composer_draft_attachment_remove(params),
+            "feature.composerDraft.attachment.readRange" => self.composer_draft_attachment_read_range(params),
             "feature.widget.respond" => self.widget_respond(params),
             "feature.widget.dismiss" => self.widget_dismiss(params),
             "feature.receive" => self.feature_receive(),
@@ -4233,6 +4234,36 @@ impl AndroidJsonHost {
                 Err(error)
             }
         }
+    }
+
+    fn composer_draft_attachment_read_range(&mut self, params: &Value) -> Result<Value, String> {
+        let (account_slot, account_fence, agent_id) = self.send_acknowledgement_scope(params)?;
+        let attachment_id = required_string(params, "attachmentId")?;
+        let offset = params.get("offset").and_then(Value::as_u64).unwrap_or(0);
+        let length = params.get("length").and_then(Value::as_u64).unwrap_or(4 * 1024 * 1024);
+        let (attachment, bytes) = self
+            .agent_attachments
+            .lock()
+            .map_err(|_| "Agent attachment owner lock poisoned".to_string())?
+            .read_completed_media_chunk(
+                account_slot.as_deref(),
+                &account_fence,
+                &agent_id,
+                attachment_id,
+                offset,
+                length,
+            )?;
+        let next_offset = offset.saturating_add(bytes.len() as u64);
+        Ok(json!({
+            "attachmentId": attachment.id,
+            "name": attachment.name,
+            "mimeType": attachment.mime_type,
+            "offset": offset,
+            "nextOffset": next_offset,
+            "size": attachment.size_bytes,
+            "eof": next_offset >= attachment.size_bytes,
+            "dataBase64": BASE64_STANDARD.encode(bytes),
+        }))
     }
 
     fn composer_draft_attachment_abort(&mut self, params: &Value) -> Result<Value, String> {

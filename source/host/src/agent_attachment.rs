@@ -16,6 +16,7 @@ use std::{
 const SCHEMA_VERSION: u8 = 1;
 pub const COMPOSER_ATTACHMENT_LIMIT: usize = 6;
 const TOOL_READ_LIMIT_BYTES: u64 = 1024 * 1024;
+pub const MEDIA_READ_CHUNK_LIMIT_BYTES: u64 = 4 * 1024 * 1024;
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -268,6 +269,54 @@ impl DurableAgentAttachmentOwner {
         record.received_bytes = end;
         self.persist()?;
         Ok(end)
+    }
+
+    pub fn read_completed_media_chunk(
+        &self,
+        account_slot: Option<&str>,
+        account_fence: &str,
+        agent_id: &str,
+        attachment_id: &str,
+        offset: u64,
+        requested_length: u64,
+    ) -> Result<(AgentAttachment, Vec<u8>), String> {
+        validate_scope(account_slot, account_fence, agent_id)?;
+        validate_identity(attachment_id, "attachment id")?;
+        if requested_length > MEDIA_READ_CHUNK_LIMIT_BYTES {
+            return Err("media attachment read exceeds the four MiB bridge limit".into());
+        }
+        let completed = self
+            .state
+            .completed
+            .get(attachment_id)
+            .ok_or("completed media attachment is missing")?;
+        if completed.account_slot.as_deref() != account_slot
+            || completed.account_fence != account_fence
+            || completed.agent_id != agent_id
+        {
+            return Err("completed media attachment is fenced to another scope".into());
+        }
+        let attachment = completed.attachment.clone();
+        if offset > attachment.size_bytes {
+            return Err("media attachment range starts beyond file length".into());
+        }
+        if requested_length == 0 {
+            return Ok((attachment, Vec::new()));
+        }
+        if offset == attachment.size_bytes {
+            return Err("media attachment range is not satisfiable".into());
+        }
+        let read_len = attachment
+            .size_bytes
+            .saturating_sub(offset)
+            .min(requested_length) as usize;
+        let mut file = fs::File::open(self.completed_path(attachment_id))
+            .map_err(|error| error.to_string())?;
+        file.seek(SeekFrom::Start(offset))
+            .map_err(|error| error.to_string())?;
+        let mut bytes = vec![0u8; read_len];
+        file.read_exact(&mut bytes).map_err(|error| error.to_string())?;
+        Ok((attachment, bytes))
     }
 
     pub fn finish(
@@ -648,6 +697,79 @@ mod tests {
         let value = tools.call_tool("FabushiAttachmentRead", json!({"attachmentId":attachment.id,"offset":1,"limit":3}), "tool-1").unwrap();
         assert_eq!(value["text"], "ell");
         assert_eq!(value["eof"], false);
+    }
+
+    #[test]
+    fn media_range_read_is_bounded_scoped_and_reopen_safe() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("attachments");
+        let attachment = {
+            let mut owner = DurableAgentAttachmentOwner::open(&root).unwrap();
+            let id = owner
+                .begin(Some("slot-a"), "session:a", "agent-a", "voice.m4a", Some("audio/mp4"), Some(8))
+                .unwrap();
+            owner
+                .append(Some("slot-a"), "session:a", "agent-a", &id, 0, b"abcdefgh")
+                .unwrap();
+            owner.finish(Some("slot-a"), "session:a", "agent-a", &id).unwrap()
+        };
+        let reopened = DurableAgentAttachmentOwner::open(&root).unwrap();
+        let (meta, bytes) = reopened
+            .read_completed_media_chunk(
+                Some("slot-a"),
+                "session:a",
+                "agent-a",
+                &attachment.id,
+                2,
+                4,
+            )
+            .unwrap();
+        assert_eq!(meta, attachment);
+        assert_eq!(bytes, b"cdef");
+        let (_, probe) = reopened
+            .read_completed_media_chunk(
+                Some("slot-a"),
+                "session:a",
+                "agent-a",
+                &attachment.id,
+                0,
+                0,
+            )
+            .unwrap();
+        assert!(probe.is_empty());
+        assert!(reopened
+            .read_completed_media_chunk(
+                Some("slot-b"),
+                "session:a",
+                "agent-a",
+                &attachment.id,
+                0,
+                1,
+            )
+            .unwrap_err()
+            .contains("fenced"));
+        assert!(reopened
+            .read_completed_media_chunk(
+                Some("slot-a"),
+                "session:a",
+                "agent-a",
+                &attachment.id,
+                attachment.size_bytes,
+                1,
+            )
+            .unwrap_err()
+            .contains("not satisfiable"));
+        assert!(reopened
+            .read_completed_media_chunk(
+                Some("slot-a"),
+                "session:a",
+                "agent-a",
+                &attachment.id,
+                0,
+                MEDIA_READ_CHUNK_LIMIT_BYTES + 1,
+            )
+            .unwrap_err()
+            .contains("four MiB"));
     }
 
     #[test]
