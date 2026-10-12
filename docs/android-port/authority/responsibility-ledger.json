@@ -1100,7 +1100,8 @@
         "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/media/NativeVoiceRecorder.kt",
         "source/shared/src/media/attachments.rs",
         "source/host/src/agent_attachment.rs",
-        "source/host/src/android_json_runtime.rs"
+        "source/host/src/android_json_runtime.rs",
+        "source/host/src/attachment_paths.rs"
       ],
       "android_owner": "Rust attachment contracts + Android MicrophoneLease/NativeVoiceRecorder/NativeOfflineSpeechTranscriber platform adapters",
       "platform_delta": "Android uses native Compose/platform adapters + typed JNI while preserving canonical Rust owners where platform-independent.",
@@ -1113,7 +1114,7 @@
       "device_test": "Required on physical Android device because emulator speech service availability is device-image dependent.",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Production implementation added but remains not-verified until same exact-head Android build plus offline device evidence. Human voice-message semantics remain unchanged; ASR is only an editable-draft input for Agent/Bot. FBCP Revision 7 is a cross-cutting source authority for this responsibility; this mapping does not upgrade implementation_status or verification_status. 1b03f86d1db39814c0c480a07ea75dfd64ebf803 adds reopen-safe range/probe/unsatisfiable/oversize Rust tests; exact descendant-head CI/package/device evidence is still required."
+      "notes": "Production implementation added but remains not-verified until same exact-head Android build plus offline device evidence. Human voice-message semantics remain unchanged; ASR is only an editable-draft input for Agent/Bot. FBCP Revision 7 is a cross-cutting source authority for this responsibility; this mapping does not upgrade implementation_status or verification_status. 1b03f86d1db39814c0c480a07ea75dfd64ebf803 adds reopen-safe range/probe/unsatisfiable/oversize Rust tests; exact descendant-head CI/package/device evidence is still required. Android attachment_paths adds Host-root/agent-id traversal fencing plus fsync+atomic rename for durable media placement."
     },
     {
       "responsibility_id": "REMOTE-COMPUTER-001",
@@ -10043,7 +10044,8 @@
         "source/android-preload/src/main/kotlin/com/ombhrum/fabushi/androidpreload/runtime/AndroidCoordinatorPort.kt",
         "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/coordinator/AndroidCoordinatorRuntime.kt",
         "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/presentation/MobileBotViewModel.kt",
-        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/features/bots/GrokBotComponents.kt"
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/features/bots/GrokBotComponents.kt",
+        "source/host/src/attachment_paths.rs"
       ],
       "android_owner": "Host DurableAgentAttachmentOwner owns staged/completed bytes and durable scope; DurableComposerDraftOwner owns selected attachment metadata; AndroidCoordinatorRuntime is the ContentResolver adapter; Compose/ViewModel consume typed projections only.",
       "platform_delta": "Android OpenMultipleDocuments + ContentResolver streaming replaces browser File/DesktopBridge staging. Selected URIs are consumed immediately into Host private durable storage; canonical public identities are fabushi-attachment:// ids, never raw content:// or arbitrary filesystem authority.",
@@ -10056,7 +10058,7 @@
       "device_test": "required picker/scoped-storage acceptance",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Implemented but not verified. a6ae49b3dedca5d424615d715c4491e70df82516 closes the durable staging crash window; final same-head Rust/package/device evidence and Agent attachment open/media-viewer routing remain separate responsibilities.",
+      "notes": "Implemented but not verified. a6ae49b3dedca5d424615d715c4491e70df82516 closes the durable staging crash window; final same-head Rust/package/device evidence and Agent attachment open/media-viewer routing remain separate responsibilities. Android attachment_paths adds Host-root/agent-id traversal fencing plus fsync+atomic rename for durable media placement.",
       "android_head_at_update": "a6ae49b3dedca5d424615d715c4491e70df82516",
       "process_death_recovery": "Incomplete ContentResolver streams are outcome-unknown and discarded after process death; untracked staging/completed files are pruned, stale completed metadata is removed, and durable chunk offsets never advance ahead of synced bytes."
     },
