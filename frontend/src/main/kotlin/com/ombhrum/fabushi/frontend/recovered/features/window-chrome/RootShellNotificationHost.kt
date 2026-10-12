@@ -47,6 +47,12 @@ internal sealed interface RootShellNotificationAction {
     ) : RootShellNotificationAction
 }
 
+internal data class RootShellNotificationAccountScope(
+    val accountGeneration: Long,
+    val accountEpoch: Long,
+    val accountIdentity: String,
+)
+
 internal data class RootShellNotificationTray(
     val id: String,
     val title: String,
@@ -159,7 +165,7 @@ internal class RootShellNotificationController(
     private val queuedEvents = CopyOnWriteArrayList<JSONObject>()
     private var eventSubscription: AutoCloseable? = null
     private var active = false
-    private var loggedIn = false
+    private var accountScope: RootShellNotificationAccountScope? = null
     private var connected = false
     private var fetching = false
     private var generation = 0L
@@ -172,16 +178,46 @@ internal class RootShellNotificationController(
     }
 
     @Synchronized
-    fun observeAccount(isLoggedIn: Boolean) {
-        if (loggedIn == isLoggedIn) return
-        loggedIn = isLoggedIn
+    fun observeAccount(
+        isLoggedIn: Boolean,
+        accountGeneration: Long,
+        accountEpoch: Long,
+        accountIdentity: String?,
+    ) {
+        val identity = accountIdentity?.trim().orEmpty()
+        val nextScope = if (
+            isLoggedIn &&
+            accountEpoch > 0L &&
+            identity.isNotEmpty()
+        ) {
+            RootShellNotificationAccountScope(
+                accountGeneration = accountGeneration,
+                accountEpoch = accountEpoch,
+                accountIdentity = identity,
+            )
+        } else {
+            null
+        }
+        val current = accountScope
+        if (current != null && nextScope != null) {
+            if (nextScope.accountEpoch < current.accountEpoch) return
+            if (
+                nextScope.accountEpoch == current.accountEpoch &&
+                nextScope.accountIdentity == current.accountIdentity &&
+                nextScope.accountGeneration < current.accountGeneration
+            ) {
+                return
+            }
+        }
+        if (current == nextScope) return
+        accountScope = nextScope
         generation += 1
         fetching = false
         queuedEvents.clear()
         _trays.value = emptyList()
         _pendingActions.value = emptySet()
         _actionNotices.value = emptyMap()
-        if (loggedIn) refreshLocked()
+        if (nextScope != null) refreshLocked()
     }
 
     @Synchronized
@@ -216,7 +252,7 @@ internal class RootShellNotificationController(
                     }
                     is RootShellNotificationAction.DashboardAction -> {
                         val args = JSONObject()
-                        action.args.forEach(args::put)
+                        action.args.forEach { (key, value) -> args.put(key, value) }
                         val result = runtimePort.invokeRootNotificationDashboardAction(action.action, args)
                         if (result.optBoolean("ok", false)) {
                             result.optString("message").trim().takeIf(String::isNotEmpty)
@@ -237,7 +273,7 @@ internal class RootShellNotificationController(
 
     private fun acceptEvent(event: JSONObject) {
         synchronized(this) {
-            if (!active || !loggedIn) return
+            if (!active || accountScope == null) return
             val copy = JSONObject(event.toString())
             if (fetching) queuedEvents += copy
             else _trays.value = reduceRootShellNotificationEvent(_trays.value, copy)
@@ -246,7 +282,7 @@ internal class RootShellNotificationController(
 
     @Synchronized
     private fun refreshLocked() {
-        if (!active || !loggedIn || fetching) return
+        if (!active || accountScope == null || fetching) return
         val requestGeneration = ++generation
         fetching = true
         queuedEvents.clear()
@@ -293,6 +329,9 @@ internal class RootShellNotificationController(
 internal fun RootShellNotificationHost(
     runtimePort: AndroidPresentationRuntimePort,
     loggedIn: Boolean,
+    accountGeneration: Long,
+    accountEpoch: Long,
+    accountIdentity: String?,
     transport: RootConnectionTransportState,
 ) {
     val controller = remember(runtimePort) { RootShellNotificationController(runtimePort) }
@@ -305,7 +344,14 @@ internal fun RootShellNotificationHost(
         controller.start()
         onDispose(controller::close)
     }
-    LaunchedEffect(loggedIn) { controller.observeAccount(loggedIn) }
+    LaunchedEffect(loggedIn, accountGeneration, accountEpoch, accountIdentity) {
+        controller.observeAccount(
+            isLoggedIn = loggedIn,
+            accountGeneration = accountGeneration,
+            accountEpoch = accountEpoch,
+            accountIdentity = accountIdentity,
+        )
+    }
     LaunchedEffect(transport) { controller.observeTransport(transport) }
 
     if (trays.isEmpty()) return

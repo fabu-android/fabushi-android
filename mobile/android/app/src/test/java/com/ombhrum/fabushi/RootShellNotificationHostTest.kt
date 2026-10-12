@@ -49,6 +49,15 @@ class RootShellNotificationHostTest {
         )
     }
 
+    @Test fun accountScopeRequiresSettledIdentityAndFencesStaleEpoch() {
+        val first = RootShellNotificationAccountScope(7L, 4L, "account-a")
+        val sameAccountNewGeneration = RootShellNotificationAccountScope(8L, 4L, "account-a")
+        val switched = RootShellNotificationAccountScope(1L, 5L, "account-b")
+        assertTrue(first != sameAccountNewGeneration)
+        assertTrue(switched.accountEpoch > first.accountEpoch)
+        assertEquals("account-b", switched.accountIdentity)
+    }
+
     @Test fun dashboardArgsFailClosedWhenAnyValueIsNotString() {
         assertNull(
             projectRootShellNotificationAction(

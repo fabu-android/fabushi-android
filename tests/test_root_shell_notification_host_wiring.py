@@ -16,6 +16,8 @@ class RootShellNotificationHostWiringTest(unittest.TestCase):
         rust = HOST_RUST.read_text(encoding="utf-8")
         trays = TRAYS.read_text(encoding="utf-8")
         self.assertIn("RootShellNotificationHost(", renderer)
+        self.assertIn("accountEpoch = state.rootConnectionProjection.accountEpoch", renderer)
+        self.assertIn("accountIdentity = state.rootConnectionProjection.accountIdentity", renderer)
         self.assertIn("runtimePort.rootNotificationTrays()", host)
         self.assertIn("addRootNotificationEventListener", host)
         self.assertIn("fun rootNotificationTrays(): JSONArray", port)
@@ -32,6 +34,10 @@ class RootShellNotificationHostWiringTest(unittest.TestCase):
             "requestGeneration != generation",
             "queuedEvents",
             "observeAccount",
+            "RootShellNotificationAccountScope",
+            "nextScope.accountEpoch < current.accountEpoch",
+            "nextScope.accountGeneration < current.accountGeneration",
+            "accountScope == null",
             "observeTransport",
             "RootConnectionTransportState.CONNECTED",
             "if (!active || !loggedIn) return",

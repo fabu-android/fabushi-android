@@ -136,6 +136,9 @@ internal fun ProductionRenderer(
                 RootShellNotificationHost(
                     runtimePort = runtimePort,
                     loggedIn = state.loggedIn,
+                    accountGeneration = state.rootConnectionProjection.accountGeneration,
+                    accountEpoch = state.rootConnectionProjection.accountEpoch,
+                    accountIdentity = state.rootConnectionProjection.accountIdentity,
                     transport = state.rootConnectionProjection.transport,
                 )
                 RootShellStatusBadge(
