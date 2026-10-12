@@ -8,6 +8,7 @@ pub mod agent_attachment;
 pub mod android_sidebar_sections;
 pub mod android_json_runtime;
 pub mod automation_runtime;
+pub mod auto_review_settings;
 pub mod box_rebuild_backend;
 pub mod capability_broker;
 pub mod composer_draft;
