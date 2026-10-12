@@ -1,3 +1,7 @@
+use crate::box_store_hydration::{
+    remove_hydration_handoff_marker, write_hydration_handoff_marker,
+    BOX_STORE_HYDRATION_HANDOFF_FILE_NAME,
+};
 use crate::server::{
     RemoteBackendCancelOutcome, RemoteBackendReconcileOutcome, RemoteBackendStartOutcome,
     RemoteExecutionBackend, RemoteRequestIdentity,
@@ -405,6 +409,14 @@ impl RemoteBoxStoreBackend {
             }
         }
 
+        let handoff_marker = self
+            .config
+            .sand_data_root
+            .join(BOX_STORE_HYDRATION_HANDOFF_FILE_NAME);
+        remove_hydration_handoff_marker(&handoff_marker).map_err(|error| {
+            ActionError::SafeReject(format!("clear hydration handoff marker: {error}"))
+        })?;
+
         let mut restored = 0usize;
         let mut restored_bytes = 0u64;
         for entry in &manifest.entries {
@@ -429,6 +441,10 @@ impl RemoteBoxStoreBackend {
             restored += 1;
             restored_bytes = restored_bytes.saturating_add(entry.size_bytes);
         }
+
+        write_hydration_handoff_marker(&handoff_marker).map_err(|error| {
+            ActionError::OutcomeUnknown(format!("commit hydration handoff marker: {error}"))
+        })?;
 
         let marker = self
             .store_dir(&input.store_id)
@@ -964,6 +980,15 @@ mod tests {
                 .unwrap(),
         );
         assert_eq!(fs::read(config.workspace_root.join("note.txt")).unwrap(), b"two");
+        assert_eq!(
+            fs::read_to_string(
+                config
+                    .sand_data_root
+                    .join(BOX_STORE_HYDRATION_HANDOFF_FILE_NAME)
+            )
+            .unwrap(),
+            "complete\n"
+        );
         let _ = fs::remove_dir_all(root);
     }
 
