@@ -101,7 +101,9 @@ internal class SignedInOnboardingViewModel(application: Application) : AndroidVi
     fun next() {
         val current = mutableState.value
         if (!current.active || current.creating || current.step == SignedInOnboardingStep.HAND_OFF) return
-        mutableState.value = current.copy(step = nextSignedInOnboardingStep(current.step), error = null)
+        val next = nextSignedInOnboardingStep(current.step)
+        mutableState.value = current.copy(step = next, error = null)
+        reportOnboardingStep(next, "forward")
     }
 
     fun back() {
@@ -109,6 +111,20 @@ internal class SignedInOnboardingViewModel(application: Application) : AndroidVi
         if (!current.active || current.creating) return
         val previous = previousSignedInOnboardingStep(current.step) ?: return
         mutableState.value = current.copy(step = previous, error = null)
+        reportOnboardingStep(previous, "back")
+    }
+
+    private fun reportOnboardingStep(step: SignedInOnboardingStep, direction: String) {
+        val telemetry = signedInOnboardingTelemetryStep(step)
+        viewModelScope.launch(Dispatchers.IO) {
+            runCatching {
+                coordinator.reportOnboardingStep(
+                    step = telemetry.name,
+                    stepIndex = telemetry.index,
+                    direction = direction,
+                )
+            }
+        }
     }
 
     fun updateDraft(name: String? = null, description: String? = null) {
@@ -158,6 +174,7 @@ internal class SignedInOnboardingViewModel(application: Application) : AndroidVi
             step = SignedInOnboardingStep.CREATE,
             error = null,
         )
+        reportOnboardingStep(SignedInOnboardingStep.CREATE, "forward")
     }
 
     fun createFirstAgent() {
@@ -213,6 +230,7 @@ internal class SignedInOnboardingViewModel(application: Application) : AndroidVi
                         "Your Agent was created, but onboarding completion could not be saved."
                     },
                 )
+                reportOnboardingStep(SignedInOnboardingStep.HAND_OFF, "forward")
                 delay(SIGNED_IN_ONBOARDING_HAND_OFF_DWELL_MS)
                 if (operationFence.accepts(token, mutableState.value.accountSlot)) {
                     mutableState.value = mutableState.value.copy(active = false)
