@@ -13,6 +13,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.File
 import java.util.UUID
 
 enum class ConversationKind(val wire: String, val label: String) {
@@ -161,6 +162,38 @@ data class MessagingUiState(
     val error: String? = null,
 )
 
+private const val ANDROID_BLOB_STREAM_CHUNK_BYTES = 4 * 1024 * 1024
+
+internal fun streamAndroidBlobToTemporaryFile(
+    sizeBytes: Int,
+    directory: File,
+    readChunk: (offset: Int, length: Int) -> ByteArray,
+): File {
+    require(sizeBytes > 0) { "Blob size must be positive" }
+    check(directory.exists() || directory.mkdirs()) { "Unable to create media cache directory" }
+    val target = File.createTempFile("fabushi-media-", ".blob", directory)
+    try {
+        target.outputStream().buffered().use { output ->
+            var offset = 0
+            while (offset < sizeBytes) {
+                val requested = minOf(ANDROID_BLOB_STREAM_CHUNK_BYTES, sizeBytes - offset)
+                val chunk = readChunk(offset, requested)
+                check(chunk.isNotEmpty()) { "Blob read returned empty data" }
+                check(chunk.size <= requested) { "Blob read exceeded requested range" }
+                check(offset + chunk.size <= sizeBytes) { "Blob read exceeded declared size" }
+                output.write(chunk)
+                offset += chunk.size
+            }
+            check(offset == sizeBytes) { "Blob read ended before declared size" }
+            output.flush()
+        }
+        return target
+    } catch (failure: Throwable) {
+        runCatching { target.delete() }
+        throw failure
+    }
+}
+
 internal class MessagingViewModel(application: Application) : AndroidViewModel(application) {
     private val coordinator: AndroidCoordinatorPort = CoordinatorClient.presentation()
     private val mutableState = MutableStateFlow(MessagingUiState())
@@ -285,6 +318,27 @@ internal class MessagingViewModel(application: Application) : AndroidViewModel(a
                 }
                 output.toByteArray()
             }}
+            onResult(result)
+        }
+    }
+
+    fun loadBlobToFile(blobId: String, sizeBytes: Int, onResult: (Result<File>) -> Unit) {
+        viewModelScope.launch {
+            val result = runCatching {
+                withContext(Dispatchers.IO) {
+                    val directory = File(getApplication<Application>().cacheDir, "fabushi-media")
+                    streamAndroidBlobToTemporaryFile(sizeBytes, directory) { offset, requested ->
+                        val response = coordinator.messagingBlobRead(
+                            JSONObject()
+                                .put("blobId", blobId)
+                                .put("offset", offset)
+                                .put("length", requested),
+                        )
+                        val encoded = response.optString("dataBase64")
+                        Base64.decode(encoded, Base64.DEFAULT)
+                    }
+                }
+            }
             onResult(result)
         }
     }
