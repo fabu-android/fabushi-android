@@ -1,7 +1,7 @@
 use crate::edge_failures::EdgeFailureBuffer;
 use crate::account_service::{AccountSessionMutation, AndroidAccountService};
 use crate::account_telemetry::{
-    AccountTelemetryBuffer, SigninLoginReport, SigninSignoutCause,
+    AccountTelemetryBuffer, AccountTelemetryProjection, SigninLoginReport, SigninSignoutCause,
 };
 use crate::capability_broker::{CapabilityDecision, PendingCapabilityCall, SharedCapabilityBroker};
 use crate::automation_runtime::{run_json as automation_run_json, AutomationRuntime, AutomationSpec};
@@ -77,6 +77,7 @@ use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 const ASSISTANT_READ_MARKER_ID: &str = "projection:mahayana-assistant:last-read";
+const ACCOUNT_TELEMETRY_OUTBOX_CAP: usize = 16;
 
 const SUBAGENT_REVIEW_APPROVAL_TTL_MS: u64 = 10 * 60 * 1_000;
 const SUBAGENT_REVIEW_MAX_PENDING_PER_AGENT: usize = 4;
@@ -644,6 +645,8 @@ pub struct AndroidJsonHost {
     preexisting_account_durable_data: bool,
     account_binding_refusal: Option<String>,
     account_telemetry: AccountTelemetryBuffer,
+    account_telemetry_outbox: Arc<Mutex<VecDeque<AccountTelemetryProjection>>>,
+    account_telemetry_shipping: Arc<AtomicBool>,
     edge_failures: EdgeFailureBuffer,
     agents: Arc<Mutex<AndroidAgentRoster>>,
     sidebar_sections: Arc<Mutex<AndroidSidebarSections>>,
@@ -908,6 +911,8 @@ impl AndroidJsonHost {
             preexisting_account_durable_data,
             account_binding_refusal,
             account_telemetry: AccountTelemetryBuffer::default(),
+            account_telemetry_outbox: Arc::new(Mutex::new(VecDeque::new())),
+            account_telemetry_shipping: Arc::new(AtomicBool::new(false)),
             edge_failures: EdgeFailureBuffer::default(),
             agents,
             sidebar_sections,
@@ -1125,8 +1130,74 @@ impl AndroidJsonHost {
         self.edge_failures.report(area, leg, error_class);
     }
 
+    fn schedule_account_telemetry_ship(&mut self) {
+        let Some(backend) = self.mcp_dashboard_backend.clone() else {
+            return;
+        };
+        let mut entries = self.account_telemetry.drain();
+        entries.extend(self.account.drain_session_telemetry());
+        if entries.is_empty() {
+            return;
+        }
+        let outbox = Arc::clone(&self.account_telemetry_outbox);
+        if let Ok(mut queue) = outbox.lock() {
+            for entry in entries {
+                if queue.len() >= ACCOUNT_TELEMETRY_OUTBOX_CAP {
+                    queue.pop_front();
+                }
+                queue.push_back(entry);
+            }
+        } else {
+            return;
+        }
+
+        let shipping = Arc::clone(&self.account_telemetry_shipping);
+        if shipping
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_err()
+        {
+            return;
+        }
+        thread::spawn(move || loop {
+            let batch = match outbox.lock() {
+                Ok(queue) => queue.iter().cloned().collect::<Vec<_>>(),
+                Err(_) => {
+                    shipping.store(false, Ordering::Release);
+                    return;
+                }
+            };
+            if batch.is_empty() {
+                shipping.store(false, Ordering::Release);
+                let should_resume = outbox
+                    .lock()
+                    .map(|queue| !queue.is_empty())
+                    .unwrap_or(false)
+                    && shipping
+                        .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+                        .is_ok();
+                if should_resume {
+                    continue;
+                }
+                return;
+            }
+            if backend.submit_account_telemetry(&batch).is_err() {
+                // Keep the bounded outbox intact. A later account dispatch retries without making
+                // telemetry transport success part of the authentication/session state machine.
+                shipping.store(false, Ordering::Release);
+                return;
+            }
+            let Ok(mut queue) = outbox.lock() else {
+                shipping.store(false, Ordering::Release);
+                return;
+            };
+            for _ in 0..batch.len().min(queue.len()) {
+                queue.pop_front();
+            }
+        });
+    }
+
     pub fn dispatch(&mut self, method: &str, params: &Value) -> Result<Value, String> {
-        match method {
+        let result = match method {
             "host.platform" => Ok(json!({"platform":"android"})),
             "feature.info" => Ok(json!({
                 "platform": "android",
@@ -1376,7 +1447,9 @@ impl AndroidJsonHost {
             "feature.webauthn.requestCeremony" => self.webauthn_request_ceremony(params),
             "platform.request" => self.platform_request(params),
             other => Err(format!("unknown host method {other}")),
-        }
+        };
+        self.schedule_account_telemetry_ship();
+        result
     }
 
 
@@ -9533,6 +9606,11 @@ mod widget_action_tests {
 #[cfg(test)]
 mod transcript_page_contract_tests {
     use super::*;
+
+    #[test]
+    fn account_telemetry_outbox_cap_matches_desktop_preinstall_buffer() {
+        assert_eq!(ACCOUNT_TELEMETRY_OUTBOX_CAP, 16);
+    }
 
     #[test]
     fn host_transcript_page_is_agent_scoped_exclusive_and_reopens() {
