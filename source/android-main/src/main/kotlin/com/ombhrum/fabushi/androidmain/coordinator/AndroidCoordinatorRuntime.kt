@@ -64,7 +64,6 @@ import com.ombhrum.fabushi.androidmain.security.AndroidRemotePairingStore
 import com.ombhrum.fabushi.androidmain.security.RemoteControlSessionCredential
 import com.ombhrum.fabushi.androidmain.security.RemoteControlSessionLifecycle
 import com.ombhrum.fabushi.androidmain.security.RemotePairingCredential
-import com.ombhrum.fabushi.androidmain.telemetry.SharedPreferencesAndroidProcessSessionMarkerStore
 import com.ombhrum.fabushi.androidmain.remote.AndroidRemoteComputerDataPlane
 import com.ombhrum.fabushi.androidmain.remote.RemoteComputerDataPlaneFence
 import com.ombhrum.fabushi.core.MahayanaHost
@@ -100,8 +99,6 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
     private val remoteCreateIntentPreferences =
         application.getSharedPreferences("fabushi-remote-create-intent-v1", 0)
     private val applicationContext = application.applicationContext
-    private val processSessionMarkerStore =
-        SharedPreferencesAndroidProcessSessionMarkerStore(application)
     private val remoteComputerDataPlane by lazy {
         AndroidRemoteComputerDataPlane(
             context = applicationContext,
@@ -188,6 +185,10 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
     private val processMetricsExecutor = Executors.newSingleThreadScheduledExecutor { runnable ->
         Thread(runnable, "fabushi-process-metrics").apply { isDaemon = true }
     }
+    private val processSessionHeartbeatExecutor =
+        Executors.newSingleThreadScheduledExecutor { runnable ->
+            Thread(runnable, "fabushi-process-session-heartbeat").apply { isDaemon = true }
+        }
     private val sendSubmissionExecutor = Executors.newSingleThreadExecutor { runnable ->
         Thread(runnable, "fabushi-send-submission-queue").apply { isDaemon = true }
     }
@@ -217,6 +218,19 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
         resumeComputerRebuildMigrationIfNeeded()
         resumeQueuedComputerUpdateIfNeeded()
         runCatching { reconcileAgentRosterMutations() }
+        processSessionHeartbeatExecutor.scheduleWithFixedDelay(
+            {
+                runCatching {
+                    host.request(
+                        "feature.telemetry.session.heartbeat",
+                        JSONObject().put("observedAtMs", System.currentTimeMillis()),
+                    )
+                }
+            },
+            PROCESS_SESSION_HEARTBEAT_SECONDS,
+            PROCESS_SESSION_HEARTBEAT_SECONDS,
+            TimeUnit.SECONDS,
+        )
         processMetricsExecutor.scheduleWithFixedDelay(
             {
                 runCatching {
@@ -264,16 +278,28 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
 
     override fun coordinatorStatus(): JSONObject {
         val status = host.request("coordinator.status")
-        val unclean = processSessionMarkerStore.readLastUnclean()
-        return status.put(
-            "lastUncleanProcessSession",
-            unclean?.let { settlement ->
-                JSONObject()
-                    .put("previousProcessId", settlement.previousProcessId)
-                    .put("previousStartedAtMs", settlement.previousStartedAtMs)
-                    .put("observedAtMs", settlement.observedAtMs)
-            } ?: JSONObject.NULL,
-        )
+        val recent = host.request(
+            "feature.telemetry.processCrash.recent",
+            JSONObject().put("limit", 20),
+        ).optJSONArray("value") ?: JSONArray()
+        var unclean: JSONObject? = null
+        for (index in recent.length() - 1 downTo 0) {
+            val entry = recent.optJSONObject(index) ?: continue
+            if (entry.optString("kind") == "unclean_exit") {
+                unclean = entry
+                break
+            }
+        }
+        val projected = unclean?.let { entry ->
+            val observedAtMs = entry.optLong("occurredAtMs", 0L).coerceAtLeast(0L)
+            val uptimeMs = entry.optLong("uptimeMs", 0L).coerceAtLeast(0L)
+            JSONObject()
+                .put("previousProcessId", JSONObject.NULL)
+                .put("previousStartedAtMs", (observedAtMs - uptimeMs).coerceAtLeast(0L))
+                .put("observedAtMs", observedAtMs)
+                .put("crashSeen", entry.optBoolean("crashSeen", false))
+        }
+        return status.put("lastUncleanProcessSession", projected ?: JSONObject.NULL)
     }
 
     override fun coordinatorResync(generation: Long, afterSequence: Long) =
@@ -3446,6 +3472,7 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
         remoteComputerReconnectExecutor.shutdownNow()
         storagePressureExecutor.shutdownNow()
         processMetricsExecutor.shutdownNow()
+        processSessionHeartbeatExecutor.shutdownNow()
         sendSubmissionExecutor.shutdownNow()
         rootConnectionRetryExecutor.shutdownNow()
         computerRebuildEventHost.close()
@@ -3469,6 +3496,7 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
         private const val STORAGE_PRESSURE_SAMPLE_SECONDS = 60L
         private const val PROCESS_METRICS_INITIAL_DELAY_SECONDS = 10L
         private const val PROCESS_METRICS_SAMPLE_SECONDS = 10L
+        private const val PROCESS_SESSION_HEARTBEAT_SECONDS = 60L
         private const val COMPUTER_REBUILD_RECONNECT_MS = 3_000L
         @Volatile private var instance: AndroidCoordinatorRuntime? = null
 
