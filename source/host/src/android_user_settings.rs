@@ -52,6 +52,21 @@ impl LocalToolPermission {
             )),
         }
     }
+
+    fn rank(self) -> u8 {
+        match self {
+            Self::Never => 0,
+            Self::Ask => 1,
+            Self::Always => 2,
+        }
+    }
+
+    pub fn clamp_to_ceiling(self, ceiling: Option<Self>) -> Self {
+        match ceiling {
+            Some(ceiling) if self.rank() > ceiling.rank() => ceiling,
+            _ => self,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -293,6 +308,26 @@ mod tests {
                 .unwrap_or_default()
                 .as_nanos(),
         ))
+    }
+
+    #[test]
+    fn local_tool_permission_clamps_to_managed_ceiling() {
+        assert_eq!(
+            LocalToolPermission::Always.clamp_to_ceiling(Some(LocalToolPermission::Ask)),
+            LocalToolPermission::Ask,
+        );
+        assert_eq!(
+            LocalToolPermission::Always.clamp_to_ceiling(Some(LocalToolPermission::Never)),
+            LocalToolPermission::Never,
+        );
+        assert_eq!(
+            LocalToolPermission::Ask.clamp_to_ceiling(Some(LocalToolPermission::Always)),
+            LocalToolPermission::Ask,
+        );
+        assert_eq!(
+            LocalToolPermission::Never.clamp_to_ceiling(None),
+            LocalToolPermission::Never,
+        );
     }
 
     #[test]
