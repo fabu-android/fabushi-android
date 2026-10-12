@@ -707,6 +707,8 @@ internal fun ProductionRenderer(
                             botState = botState,
                             appAgentSurface = appAgentSurface,
                             agentNetworkAvailability = agentNetworkAvailability,
+                            hiddenChatsAvailability =
+                                entrypointAvailability.availability(AndroidEntrypointId.HIDDEN_CHATS),
                             onOpenMessaging = { rendererRoute = RendererRoute.MESSAGING },
                             onRefreshAccess = model::refreshAccountAccess,
                             onOpenAccessOnboarding = {
@@ -857,6 +859,7 @@ internal fun ProductionRenderer(
                         onUpsertFolder = messagingModel::upsertFolder,
                         onDeleteFolder = messagingModel::deleteFolder,
                         appAgentSurface = appAgentSurface,
+                        entrypointAvailability = entrypointAvailability,
                         authGateEnabled = true,
                         onAdvanceOnboarding = model::advanceOnboarding,
                         onSkipOnboarding = model::skipOnboarding,
