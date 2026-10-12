@@ -28,6 +28,24 @@ class SignedInOnboardingModelTest {
     }
 
     @Test
+    fun telemetryStepNamesMatchDesktopAnalyticsContract() {
+        val expected = listOf(
+            "meet" to 0,
+            "computer-demo" to 1,
+            "jobs" to 2,
+            "tools" to 3,
+            "create" to 4,
+            "hand-off" to 5,
+        )
+        assertEquals(
+            expected,
+            SignedInOnboardingStep.entries.map { step ->
+                signedInOnboardingTelemetryStep(step).let { it.name to it.index }
+            },
+        )
+    }
+
+    @Test
     fun invalidPersonaDefaultsToDesktopBlueBlob() {
         val normalized = normalizeSignedInOnboardingDraft(
             SignedInOnboardingDraft(name = "Agent", color = "purple-ish", shape = "triangle"),
