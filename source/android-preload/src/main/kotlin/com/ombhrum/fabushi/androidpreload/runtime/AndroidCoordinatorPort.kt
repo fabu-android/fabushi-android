@@ -503,6 +503,10 @@ interface AndroidCoordinatorPort {
         error("Time zone settings are unavailable on this Coordinator port")
     fun setTimeZoneOverride(value: String?): AndroidTimeZoneSettings =
         error("Time zone mutation is unavailable on this Coordinator port")
+    fun processMetricsSettings(): JSONObject =
+        error("Process metrics settings are unavailable on this Coordinator port")
+    fun setProcessMetricsLocalEnabled(enabled: Boolean): JSONObject =
+        error("Process metrics setting mutation is unavailable on this Coordinator port")
     fun autoReviewInstructions(): AndroidAutoReviewInstructionsSnapshot =
         error("Auto Review instructions are unavailable on this Coordinator port")
     fun setAutoReviewInstructions(
