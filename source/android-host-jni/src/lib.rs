@@ -115,12 +115,31 @@ impl AndroidNativeRuntime {
         initial_account_session_json: Option<&str>,
         machine_id: &str,
     ) -> Self {
+        Self::new_with_account_session_machine_id_and_app_version(
+            app_data_dir,
+            mode,
+            generation,
+            initial_account_session_json,
+            machine_id,
+            "unknown",
+        )
+    }
+
+    pub fn new_with_account_session_machine_id_and_app_version(
+        app_data_dir: impl Into<PathBuf>,
+        mode: AndroidHostMode,
+        generation: u64,
+        initial_account_session_json: Option<&str>,
+        machine_id: &str,
+        app_version: &str,
+    ) -> Self {
         let app_data_dir = app_data_dir.into();
-        let runtime = AndroidJsonHost::new_with_account_session_and_device_id(
+        let runtime = AndroidJsonHost::new_with_account_session_and_device_id_and_app_version(
             app_data_dir.clone(),
             mode,
             initial_account_session_json,
             machine_id.to_string(),
+            app_version,
         );
         let runtime_call_control = runtime.runtime_call_control();
         let coordinator_host = CoordinatorHost { runtime };
@@ -741,6 +760,7 @@ mod android_jni {
         process_generation: jlong,
         initial_account_session_json: JString,
         machine_id: JString,
+        app_version: JString,
     ) -> jlong {
         let path = match env.get_string(&app_data_dir) {
             Ok(value) => PathBuf::from(value.to_string_lossy().into_owned()),
@@ -754,9 +774,18 @@ mod android_jni {
             Ok(value) => value.to_string_lossy().trim().to_owned(),
             Err(_) => return 0,
         };
+        let app_version = match env.get_string(&app_version) {
+            Ok(value) => value.to_string_lossy().trim().to_owned(),
+            Err(_) => return 0,
+        };
         if machine_id.is_empty()
             || machine_id.len() > 200
             || machine_id.chars().any(|value| value.is_whitespace() || value.is_control())
+            || app_version.is_empty()
+            || app_version.len() > 64
+            || !app_version
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'+' | b'-'))
         {
             return 0;
         }
@@ -766,12 +795,13 @@ mod android_jni {
             Err(_) => return 0,
         };
         register_runtime(
-            AndroidNativeRuntime::new_with_account_session_and_machine_id(
+            AndroidNativeRuntime::new_with_account_session_machine_id_and_app_version(
                 path,
                 AndroidHostMode::Production,
                 generation,
                 (!initial_session.trim().is_empty()).then_some(initial_session.as_str()),
                 &machine_id,
+                &app_version,
             ),
             Some(rebuild_backend),
         )
