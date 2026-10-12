@@ -1,6 +1,7 @@
 package com.ombhrum.fabushi
 
 import android.app.Application
+import android.os.SystemClock
 import android.util.Base64
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -120,6 +121,24 @@ internal fun optimisticReactionMessages(
         projected
     }
     return if (changed) next else messages
+}
+
+internal fun isExplicitReactionAckTimeout(error: Throwable): Boolean {
+    var current: Throwable? = error
+    repeat(8) {
+        val candidate = current ?: return false
+        val className = candidate::class.java.simpleName.lowercase()
+        val message = candidate.message.orEmpty().lowercase()
+        if (
+            className.contains("timeout") ||
+            message.contains("timed out") ||
+            message.contains("timeout")
+        ) {
+            return true
+        }
+        current = candidate.cause
+    }
+    return false
 }
 
 data class ChatPollOption(val id: String, val text: String, val voterCount: Int, val chosen: Boolean)
@@ -424,12 +443,13 @@ internal class MessagingViewModel(application: Application) : AndroidViewModel(a
     fun deleteMessage(conversationId: String, messageId: String, forEveryone: Boolean = true) =
         executeAsync(JSONObject().put("type", "deleteMessages").put("conversationId", conversationId).put("messageIds", JSONArray().put(messageId)).put("forEveryone", forEveryone))
     fun setReaction(conversationId: String, messageId: String, reaction: String, enabled: Boolean) {
+        val normalizedReaction = reaction.trim()
         val snapshot = mutableState.value
         val currentMessages = snapshot.messagesByConversation[conversationId].orEmpty()
         val optimisticMessages = optimisticReactionMessages(
             messages = currentMessages,
             messageId = messageId,
-            reaction = reaction,
+            reaction = normalizedReaction,
             enabled = enabled,
         )
         if (optimisticMessages !== currentMessages) {
@@ -439,8 +459,9 @@ internal class MessagingViewModel(application: Application) : AndroidViewModel(a
         }
 
         viewModelScope.launch {
-            runCatching {
-                withContext(Dispatchers.IO) {
+            val startedAtMs = SystemClock.elapsedRealtime()
+            val result = withContext(Dispatchers.IO) {
+                runCatching {
                     ensureIdentity()
                     execute(
                         JSONObject()
@@ -450,17 +471,44 @@ internal class MessagingViewModel(application: Application) : AndroidViewModel(a
                             .put(
                                 "reaction",
                                 JSONObject()
-                                    .put("reaction", reaction.trim())
+                                    .put("reaction", normalizedReaction)
                                     .put("count", if (enabled) 1 else 0)
                                     .put("chosenByMe", enabled)
                                     .put("recentActorIds", if (enabled) JSONArray().put(actorId) else JSONArray()),
                             ),
                     )
                 }
-            }.onFailure {
-                mutableState.value = mutableState.value.copy(error = it.message)
-                refresh()
             }
+            val ackMs = (SystemClock.elapsedRealtime() - startedAtMs).coerceAtLeast(0L)
+            if (result.isSuccess) {
+                withContext(Dispatchers.IO) {
+                    runCatching {
+                        coordinator.reportReactionAck(
+                            ackMs = ackMs,
+                            outcome = "landed",
+                            conversationId = conversationId,
+                            emoji = normalizedReaction,
+                        )
+                    }
+                }
+                return@launch
+            }
+
+            val failure = result.exceptionOrNull() ?: return@launch
+            if (isExplicitReactionAckTimeout(failure)) {
+                withContext(Dispatchers.IO) {
+                    runCatching {
+                        coordinator.reportReactionAck(
+                            ackMs = ackMs,
+                            outcome = "timeout",
+                            conversationId = conversationId,
+                            emoji = normalizedReaction,
+                        )
+                    }
+                }
+            }
+            mutableState.value = mutableState.value.copy(error = failure.message)
+            refresh()
         }
     }
     fun forwardMessage(
