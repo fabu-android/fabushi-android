@@ -706,6 +706,28 @@ impl AndroidJsonHost {
         initial_account_session_json: Option<&str>,
     ) -> Self {
         let app_data_dir = app_data_dir.into();
+        // Non-production and isolated Rust tests do not have Android Keystore access, so they
+        // retain a local durable identifier. Production JNI injects the platform-protected
+        // identifier through new_with_account_session_and_device_id instead.
+        std::fs::create_dir_all(&app_data_dir)
+            .unwrap_or_else(|error| panic!("failed to create Android Host data directory: {error}"));
+        let device_id = get_or_create_host_machine_id(&app_data_dir.join("machine-id"))
+            .unwrap_or_else(|error| panic!("failed to open test Android machine id: {error}"));
+        Self::new_with_account_session_and_device_id(
+            app_data_dir,
+            mode,
+            initial_account_session_json,
+            device_id,
+        )
+    }
+
+    pub fn new_with_account_session_and_device_id(
+        app_data_dir: impl Into<PathBuf>,
+        mode: AndroidHostMode,
+        initial_account_session_json: Option<&str>,
+        device_id: impl Into<String>,
+    ) -> Self {
+        let app_data_dir = app_data_dir.into();
         // Every durable Host store shares this root. Create it explicitly before opening any
         // store instead of depending on whichever store happens to create the parent first.
         // This is required for deterministic process-reopen recovery and removes a parallel-test
@@ -713,8 +735,13 @@ impl AndroidJsonHost {
         std::fs::create_dir_all(&app_data_dir)
             .unwrap_or_else(|error| panic!("failed to create Android Host data directory: {error}"));
         let _legacy_mcp_auth_cleanup = cleanup_legacy_mcp_auth_credentials(&app_data_dir);
-        let device_id = get_or_create_host_machine_id(&app_data_dir.join("machine-id"))
-            .unwrap_or_else(|error| panic!("failed to open canonical Android machine id: {error}"));
+        let device_id = device_id.into();
+        assert!(
+            !device_id.is_empty()
+                && device_id.len() <= 200
+                && !device_id.chars().any(|value| value.is_whitespace() || value.is_control()),
+            "invalid canonical Android machine id",
+        );
         let account = AndroidAccountService::with_persistent_browser_attempts(
             device_id.clone(),
             (mode == AndroidHostMode::Production)
