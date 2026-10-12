@@ -1,4 +1,6 @@
+use serde::Serialize;
 use serde_json::Value;
+use std::collections::HashMap;
 use std::{
     fs,
     io::{self, Write},
@@ -16,6 +18,19 @@ pub enum TranscriptRecoveryOutcome {
 pub struct TranscriptRecoveryInfo {
     pub outcome: TranscriptRecoveryOutcome,
     pub quarantine_path: Option<PathBuf>,
+}
+
+pub const CONTENT_SEARCH_MAX_MATCHES_PER_AGENT: usize = 5;
+pub const CONTENT_SEARCH_MAX_RESULTS: usize = 50;
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TranscriptContentMatch {
+    pub agent_id: String,
+    pub entry_id: String,
+    pub role: String,
+    pub timestamp_ms: f64,
+    pub snippet: String,
 }
 
 #[derive(Clone, Debug)]
@@ -124,6 +139,81 @@ impl TranscriptStore {
             .collect::<Vec<_>>();
         let next_before_seq = (start > 0).then_some(start);
         Ok((page, next_before_seq))
+    }
+
+    pub fn search_content(
+        &self,
+        query: &str,
+        limit: usize,
+    ) -> io::Result<Vec<TranscriptContentMatch>> {
+        let normalized_query = flatten_search_whitespace(query).to_lowercase();
+        if normalized_query.is_empty() {
+            return Ok(Vec::new());
+        }
+        if limit == 0 || limit > CONTENT_SEARCH_MAX_RESULTS {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "content search limit must be between 1 and 50",
+            ));
+        }
+
+        let mut per_agent = HashMap::<String, usize>::new();
+        let mut matches = Vec::new();
+        for entry in self.entries.iter().rev() {
+            if matches.len() >= limit {
+                break;
+            }
+            let Some(agent_id) = entry
+                .get("agentId")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+            else {
+                continue;
+            };
+            if entry
+                .get("hiddenOutboundAgentPeerMessage")
+                .and_then(Value::as_bool)
+                .unwrap_or(false)
+                || entry
+                    .get("toAgent")
+                    .and_then(|value| value.get("kind"))
+                    .and_then(Value::as_str)
+                    == Some("agent")
+            {
+                continue;
+            }
+            let count = per_agent.get(agent_id).copied().unwrap_or_default();
+            if count >= CONTENT_SEARCH_MAX_MATCHES_PER_AGENT {
+                continue;
+            }
+            let text = searchable_entry_text(entry);
+            let Some(snippet) = build_content_search_snippet(text, &normalized_query) else {
+                continue;
+            };
+            let Some(entry_id) = entry.get("id").and_then(Value::as_str) else {
+                continue;
+            };
+            let role = if entry.get("kind").and_then(Value::as_str) == Some("message")
+                && entry.get("role").and_then(Value::as_str) == Some("user")
+            {
+                "user"
+            } else {
+                "assistant"
+            };
+            matches.push(TranscriptContentMatch {
+                agent_id: agent_id.to_string(),
+                entry_id: entry_id.to_string(),
+                role: role.to_string(),
+                timestamp_ms: entry
+                    .get("timestampMs")
+                    .and_then(Value::as_f64)
+                    .unwrap_or(0.0),
+                snippet,
+            });
+            per_agent.insert(agent_id.to_string(), count + 1);
+        }
+        Ok(matches)
     }
 
     pub fn contains_id(&self, id: &str) -> bool {
@@ -299,6 +389,66 @@ fn entry_id(entry: &Value) -> io::Result<&str> {
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "transcript entry id is required"))
 }
 
+fn searchable_entry_text(entry: &Value) -> &str {
+    match entry.get("kind").and_then(Value::as_str) {
+        Some("message") => entry.get("content").and_then(Value::as_str).unwrap_or(""),
+        Some("send-message")
+            if entry
+                .get("message")
+                .and_then(|message| message.get("type"))
+                .and_then(Value::as_str)
+                == Some("text") =>
+        {
+            entry
+                .get("message")
+                .and_then(|message| message.get("content"))
+                .and_then(Value::as_str)
+                .unwrap_or("")
+        }
+        Some("notice") => entry.get("text").and_then(Value::as_str).unwrap_or(""),
+        _ => "",
+    }
+}
+
+fn flatten_search_whitespace(text: &str) -> String {
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn build_content_search_snippet(text: &str, normalized_query: &str) -> Option<String> {
+    if normalized_query.is_empty() {
+        return None;
+    }
+    let flat = flatten_search_whitespace(text);
+    let original = flat.chars().collect::<Vec<_>>();
+    let mut lowered = Vec::<char>::new();
+    let mut source_index = Vec::<usize>::new();
+    for (index, ch) in original.iter().copied().enumerate() {
+        for lower in ch.to_lowercase() {
+            lowered.push(lower);
+            source_index.push(index);
+        }
+    }
+    let query = normalized_query.chars().collect::<Vec<_>>();
+    if query.is_empty() || query.len() > lowered.len() {
+        return None;
+    }
+    let start_lower = (0..=lowered.len() - query.len())
+        .find(|start| lowered[*start..*start + query.len()] == query[..])?;
+    let match_start = source_index[start_lower];
+    let match_end = source_index[start_lower + query.len() - 1] + 1;
+    let start = match_start.saturating_sub(30);
+    let end = original.len().min(match_end.saturating_add(60));
+    let mut snippet = String::new();
+    if start > 0 {
+        snippet.push('…');
+    }
+    snippet.extend(original[start..end].iter());
+    if end < original.len() {
+        snippet.push('…');
+    }
+    Some(snippet)
+}
+
 fn validate_entries(entries: &[Value]) -> io::Result<()> {
     for entry in entries {
         entry_id(entry)?;
@@ -369,6 +519,61 @@ mod tests {
         assert!(reopened.page_for_agent("agent-b", None, 0).is_err());
         assert!(reopened.page_for_agent("", None, 2).is_err());
 
+        let _ = fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
+    fn content_search_is_canonical_agent_scoped_bounded_and_peer_safe() {
+        let path = temp_path();
+        let mut store = TranscriptStore::open(&path).unwrap();
+        for index in 0..7 {
+            store
+                .append_entry(json!({
+                    "id": format!("a-{index}"),
+                    "agentId": "agent-a",
+                    "kind": "message",
+                    "role": if index % 2 == 0 { "user" } else { "assistant" },
+                    "content": format!("  Need\nProject Alpha result {index}  "),
+                    "timestampMs": index as f64,
+                }))
+                .unwrap();
+        }
+        store
+            .append_entry(json!({
+                "id":"peer-hidden",
+                "agentId":"agent-b",
+                "kind":"message",
+                "role":"assistant",
+                "content":"Project Alpha secret peer copy",
+                "toAgent":{"kind":"agent","id":"agent-a"},
+            }))
+            .unwrap();
+        store
+            .append_entry(json!({
+                "id":"notice",
+                "agentId":"agent-b",
+                "kind":"notice",
+                "text":"Project Alpha deployment ready",
+                "timestampMs":99,
+            }))
+            .unwrap();
+
+        let matches = store.search_content("project   alpha", 50).unwrap();
+        assert_eq!(matches.len(), 6, "per-agent cap plus one notice");
+        assert_eq!(matches[0].entry_id, "notice");
+        assert!(!matches.iter().any(|entry| entry.entry_id == "peer-hidden"));
+        assert_eq!(
+            matches.iter().filter(|entry| entry.agent_id == "agent-a").count(),
+            CONTENT_SEARCH_MAX_MATCHES_PER_AGENT,
+        );
+        assert!(matches.iter().all(|entry| entry.snippet.contains("Project Alpha")));
+        assert!(store.search_content("", 50).unwrap().is_empty());
+        assert!(store.search_content("alpha", 0).is_err());
+        assert!(store.search_content("alpha", 51).is_err());
+
+        drop(store);
+        let reopened = TranscriptStore::open(&path).unwrap();
+        assert_eq!(reopened.search_content("project alpha", 50).unwrap().len(), 6);
         let _ = fs::remove_dir_all(path.parent().unwrap());
     }
 
