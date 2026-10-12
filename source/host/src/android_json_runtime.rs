@@ -1356,6 +1356,8 @@ impl AndroidJsonHost {
             "feature.settings.timeZone" => self.time_zone_settings(),
             "feature.settings.timeZone.detected" => self.set_detected_time_zone(params),
             "feature.settings.timeZone.set" => self.set_time_zone_settings(params),
+            "feature.settings.localToolPermission" => self.local_tool_permission(),
+            "feature.settings.localToolPermission.set" => self.set_local_tool_permission(params),
             "feature.settings.autoReviewInstructions" => self.auto_review_instructions(),
             "feature.settings.autoReviewInstructions.set" => self.set_auto_review_instructions(params),
             "feature.remote.binding.status" => Ok(self.remote_binding_status()),
@@ -2294,6 +2296,25 @@ impl AndroidJsonHost {
             .set_time_zone_override(value)
             .map_err(|error| format!("failed to persist Android time zone override: {error}"))?;
         Ok(json!({"overrideTimeZone": saved}))
+    }
+
+    fn local_tool_permission(&self) -> Result<Value, String> {
+        let settings = self
+            .user_settings
+            .lock()
+            .map_err(|_| "Android user settings lock poisoned".to_string())?;
+        Ok(json!({"permission": settings.local_tool_permission().as_str()}))
+    }
+
+    fn set_local_tool_permission(&mut self, params: &Value) -> Result<Value, String> {
+        let requested = required_string(params, "permission")?;
+        let value = self
+            .user_settings
+            .lock()
+            .map_err(|_| "Android user settings lock poisoned".to_string())?
+            .set_local_tool_permission(requested)
+            .map_err(|error| format!("failed to persist Android local tool permission: {error}"))?;
+        Ok(json!({"permission": value.as_str()}))
     }
 
     fn auto_review_instructions(&mut self) -> Result<Value, String> {
@@ -10116,6 +10137,47 @@ mod time_zone_settings_dispatch_tests {
     }
 }
 
+
+#[cfg(test)]
+mod local_tool_permission_dispatch_tests {
+    use super::*;
+
+    #[test]
+    fn local_tool_permission_is_durable_and_invalid_values_do_not_mutate() {
+        let root = tempfile::tempdir().unwrap();
+        let mut host = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+        assert_eq!(
+            host.dispatch("feature.settings.localToolPermission", &json!({}))
+                .unwrap()["permission"],
+            "ask",
+        );
+        assert_eq!(
+            host.dispatch(
+                "feature.settings.localToolPermission.set",
+                &json!({"permission":"always"}),
+            )
+            .unwrap()["permission"],
+            "always",
+        );
+        assert!(host.dispatch(
+            "feature.settings.localToolPermission.set",
+            &json!({"permission":"sometimes"}),
+        ).is_err());
+        assert_eq!(
+            host.dispatch("feature.settings.localToolPermission", &json!({}))
+                .unwrap()["permission"],
+            "always",
+        );
+
+        drop(host);
+        let mut reopened = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+        assert_eq!(
+            reopened.dispatch("feature.settings.localToolPermission", &json!({}))
+                .unwrap()["permission"],
+            "always",
+        );
+    }
+}
 
 #[cfg(test)]
 mod auto_review_settings_dispatch_tests {
