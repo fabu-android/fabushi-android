@@ -12,4 +12,11 @@ import com.ombhrum.fabushi.androidpreload.runtime.AndroidCoordinatorPort
 object AndroidCoordinatorPorts {
     fun presentation(application: Application): AndroidCoordinatorPort =
         AndroidCoordinatorRuntime.get(application)
+
+    /**
+     * Process-owner shutdown only. Screens/ViewModels intentionally never receive this capability.
+     */
+    fun closeProcessRuntime() {
+        AndroidCoordinatorRuntime.closeProcessRuntime()
+    }
 }
