@@ -25,6 +25,8 @@ struct DurableSessionMarker {
     started_at_ms: u64,
     last_alive_at_ms: u64,
     crash_seen: bool,
+    #[serde(default = "unknown_session_version")]
+    app_version: String,
 }
 
 pub const ANDROID_SESSION_MARKER_ORPHAN_BOUND_MS: u64 = 30 * 24 * 60 * 60 * 1_000;
@@ -49,6 +51,8 @@ pub struct AndroidUncleanExitRecord {
     pub started_at_ms: u64,
     pub last_alive_at_ms: u64,
     pub previous_uptime_bucket_ms: u64,
+    pub previous_version: String,
+    pub same_version: bool,
     pub crash_seen: bool,
 }
 
@@ -63,12 +67,21 @@ impl AndroidUncleanExitMarker {
         path: impl Into<PathBuf>,
         now_ms: u64,
     ) -> io::Result<(Self, Option<AndroidUncleanExitRecord>)> {
+        Self::open_with_version(path, now_ms, "unknown")
+    }
+
+    pub fn open_with_version(
+        path: impl Into<PathBuf>,
+        now_ms: u64,
+        app_version: &str,
+    ) -> io::Result<(Self, Option<AndroidUncleanExitRecord>)> {
         if now_ms == 0 {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
                 "session marker time must be positive",
             ));
         }
+        let current_version = normalize_session_version(app_version);
         let path = path.into();
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)?;
@@ -76,6 +89,7 @@ impl AndroidUncleanExitMarker {
         let prior = read_marker(&path).ok().map(|marker| {
             let last_alive_at_ms = marker.last_alive_at_ms.max(marker.started_at_ms);
             let age_ms = now_ms.saturating_sub(last_alive_at_ms);
+            let previous_version = normalize_session_version(&marker.app_version);
             AndroidUncleanExitRecord {
                 kind: if age_ms > ANDROID_SESSION_MARKER_ORPHAN_BOUND_MS {
                     AndroidUncleanExitKind::MarkerOrphaned
@@ -87,6 +101,8 @@ impl AndroidUncleanExitMarker {
                 previous_uptime_bucket_ms: session_uptime_bucket_ms(
                     last_alive_at_ms.saturating_sub(marker.started_at_ms),
                 ),
+                same_version: previous_version == current_version,
+                previous_version,
                 crash_seen: marker.crash_seen,
             }
         });
@@ -94,6 +110,7 @@ impl AndroidUncleanExitMarker {
             started_at_ms: now_ms,
             last_alive_at_ms: now_ms,
             crash_seen: false,
+            app_version: current_version,
         };
         persist_marker(&path, &marker)?;
         Ok((Self { path, marker, armed: true }, prior))
@@ -152,6 +169,24 @@ pub fn handle_process_crash(
         kind,
         message: to_error_message(value),
         kept_alive: true,
+    }
+}
+
+fn unknown_session_version() -> String {
+    "unknown".into()
+}
+
+fn normalize_session_version(value: &str) -> String {
+    let value = value.trim();
+    if value.len() <= 64
+        && !value.is_empty()
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'+' | b'-'))
+    {
+        value.to_string()
+    } else {
+        unknown_session_version()
     }
 }
 
@@ -223,9 +258,30 @@ mod tests {
         assert_eq!(prior.started_at_ms, 100);
         assert_eq!(prior.last_alive_at_ms, 170);
         assert_eq!(prior.previous_uptime_bucket_ms, 60_000);
+        assert_eq!(prior.previous_version, "unknown");
+        assert!(prior.same_version);
         assert!(prior.crash_seen);
         reopened.settle_clean().unwrap();
         assert!(!path.exists());
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn reopen_preserves_previous_version_and_compares_current_version() {
+        let dir = marker_root("version");
+        let path = dir.join("session.json");
+        let _ = fs::remove_dir_all(&dir);
+        let (first, prior) =
+            AndroidUncleanExitMarker::open_with_version(&path, 100, "1.2.3").unwrap();
+        assert!(prior.is_none());
+        std::mem::forget(first);
+
+        let (second, prior) =
+            AndroidUncleanExitMarker::open_with_version(&path, 200, "1.2.4").unwrap();
+        let prior = prior.expect("prior version should survive process death");
+        assert_eq!(prior.previous_version, "1.2.3");
+        assert!(!prior.same_version);
+        drop(second);
         let _ = fs::remove_dir_all(dir);
     }
 
