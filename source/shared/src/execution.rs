@@ -111,6 +111,6 @@ mod tests {
 
     #[test]
     fn execution_request_accepts_bounded_valid_json() {
-        assert!(request(r#"{\"path\":\"notes.txt\"}"#.into()).validate().is_ok());
+        assert!(request(r#"{"path":"notes.txt"}"#.into()).validate().is_ok());
     }
 }
