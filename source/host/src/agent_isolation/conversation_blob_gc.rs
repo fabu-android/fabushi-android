@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 
-include!(concat!(env!("OUT_DIR"), "/conversation_blob_gc_metadata.rs"));
+include!("conversation_blob_gc_metadata.rs");
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReachableBlobWalk {
