@@ -1120,6 +1120,9 @@ fn validate_browser_cdp_method(method: &str) -> Result<(), String> {
         "Input.",
         "Tethering.",
         "Cast.",
+        // Fetch interception can rewrite Authorization/cookie headers after the
+        // Remote Browser transport has applied its account/device fence.
+        "Fetch.",
     ];
     const DENIED_METHODS: &[&str] = &[
         "Network.setCookie",
@@ -1129,6 +1132,13 @@ fn validate_browser_cdp_method(method: &str) -> Result<(), String> {
         "Network.deleteCookies",
         "Network.clearBrowserCookies",
         "Network.clearBrowserCache",
+        // Desktop's BrowserUa extension has an explicit UA-token kill switch.
+        // Android's Remote Browser replacement never exposes bearer material to
+        // the browser tool payload, so fail closed on CDP methods that could
+        // re-introduce credential or UA injection inside the remote page.
+        "Network.setExtraHTTPHeaders",
+        "Network.setUserAgentOverride",
+        "Emulation.setUserAgentOverride",
     ];
     if DENIED_PREFIXES.iter().any(|prefix| method.starts_with(prefix))
         || DENIED_METHODS.contains(&method)
@@ -1138,10 +1148,43 @@ fn validate_browser_cdp_method(method: &str) -> Result<(), String> {
     Ok(())
 }
 
+fn validate_remote_browser_allowed_keys(
+    name: &str,
+    object: &serde_json::Map<String, Value>,
+) -> Result<(), String> {
+    const COMMON: &[&str] = &["viewId", "element"];
+    let tool_keys: &[&str] = match name {
+        "browser_navigate" => &["url", "newTab"],
+        "browser_snapshot" => &["interactive", "maxDepth", "selector"],
+        "browser_click" => &["ref", "offsetX", "offsetY", "holdDurationMs", "doubleClick", "button", "modifiers"],
+        "browser_mouse_click_xy" => &["x", "y", "button"],
+        "browser_type" => &["ref", "text", "clear", "slowly", "submit"],
+        "browser_fill" => &["ref", "value"],
+        "browser_select_option" => &["ref", "values"],
+        "browser_press_key" => &["key"],
+        "browser_scroll" => &["ref", "amount", "deltaX", "deltaY", "direction"],
+        "browser_drag" => &["sourceRef", "targetRef", "targetX", "targetY"],
+        "browser_get_bounding_box" => &["ref"],
+        "browser_highlight" => &["ref", "durationMs"],
+        "browser_cdp" => &["method", "params"],
+        "browser_tabs" => &["action", "index"],
+        "browser_take_screenshot" => &["fullPage"],
+        _ => return Err("unsupported Remote Browser tool".into()),
+    };
+    if let Some(key) = object
+        .keys()
+        .find(|key| !COMMON.contains(&key.as_str()) && !tool_keys.contains(&key.as_str()))
+    {
+        return Err(format!("Remote Browser {name} argument is unsupported: {key}"));
+    }
+    Ok(())
+}
+
 fn validate_remote_browser_tool_input(name: &str, args: &Value) -> Result<u64, String> {
     let object = args
         .as_object()
         .ok_or("Remote Browser arguments must be an object")?;
+    validate_remote_browser_allowed_keys(name, object)?;
     let spec = remote_browser_specs()
         .into_iter()
         .find(|spec| spec.name == name)
@@ -1912,6 +1955,26 @@ mod tests {
             &json!({"fullPage":"yes"}),
         )
         .is_err());
+
+        // Remote Browser credentials belong to the authenticated transport,
+        // never to tool input or browser UA/header mutation.
+        assert!(validate_remote_tool_input(
+            "browser_navigate",
+            &json!({"url":"https://example.com","accessToken":"secret"}),
+        )
+        .is_err());
+        for method in [
+            "Network.setExtraHTTPHeaders",
+            "Network.setUserAgentOverride",
+            "Emulation.setUserAgentOverride",
+            "Fetch.continueRequest",
+        ] {
+            assert!(validate_remote_tool_input(
+                "browser_cdp",
+                &json!({"method":method,"params":{}}),
+            )
+            .is_err(), "{method} must not bypass Remote Browser credential/UA fencing");
+        }
     }
 
     #[test]
