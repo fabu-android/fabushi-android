@@ -684,6 +684,8 @@ interface AndroidCoordinatorPort {
         avatarShape: String?,
         avatarColor: String?,
     ): JSONObject = agentUpdate(id, name, description)
+    fun agentUpdateAvatarImage(id: String, avatarDataUrl: String?): JSONObject =
+        error("Agent avatar image updates are unavailable on this Coordinator port")
     fun agentSetNotifyOnUpdates(id: String, isEnabled: Boolean): JSONObject =
         error("Agent notification settings are unavailable on this Coordinator port")
     fun agentSetHidden(id: String, isHidden: Boolean): JSONObject
