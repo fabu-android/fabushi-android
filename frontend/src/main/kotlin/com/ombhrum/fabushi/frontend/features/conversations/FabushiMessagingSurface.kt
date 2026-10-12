@@ -75,6 +75,8 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
+import com.ombhrum.fabushi.androidpreload.runtime.AndroidEntrypointAvailabilitySnapshot
+import com.ombhrum.fabushi.androidpreload.runtime.AndroidEntrypointId
 import kotlinx.coroutines.delay
 
 object TestTags {
@@ -213,6 +215,8 @@ fun FabushiMessagingSurface(
     onUpsertFolder: (MessagingFolder) -> Unit = {},
     onDeleteFolder: (String) -> Unit = {},
     appAgentSurface: FabushiAppAgentSurface? = null,
+    entrypointAvailability: AndroidEntrypointAvailabilitySnapshot =
+        AndroidEntrypointAvailabilitySnapshot.initial(),
     authGateEnabled: Boolean = false,
     onAdvanceOnboarding: () -> Unit = {},
     onSkipOnboarding: () -> Unit = {},
@@ -235,6 +239,16 @@ fun FabushiMessagingSurface(
     var showComposeMenu by remember { mutableStateOf(false) }
     var semanticSection by remember { mutableStateOf<AndroidMobileSection?>(null) }
     var semanticConversationOpen by remember { mutableStateOf(false) }
+    val pluginsAvailability = entrypointAvailability.availability(AndroidEntrypointId.PLUGINS)
+    val computerAvailability = entrypointAvailability.availability(AndroidEntrypointId.COMPUTER)
+    LaunchedEffect(destination, pluginsAvailability, computerAvailability) {
+        if (
+            (destination == MobileDestination.MARKETPLACE && !pluginsAvailability.isOpenable) ||
+            (destination == MobileDestination.REMOTE_COMPUTER && !computerAvailability.isOpenable)
+        ) {
+            destination = MobileDestination.HOME
+        }
+    }
     val latestAssistantMessageId = state.chatMessages
         .lastOrNull { it.kind == MobileChatEntryKind.MESSAGE && it.role == MobileChatRole.ASSISTANT }
         ?.id
@@ -361,18 +375,24 @@ fun FabushiMessagingSurface(
                         TestTags.MarketplaceEntry,
                         "menuitem",
                         "插件市场",
+                        enabled = pluginsAvailability.isOpenable,
                         action = FabushiAppAgentSurface.Action(setOf("invoke")) {
                             showAddMenu = false
-                            destination = MobileDestination.MARKETPLACE
+                            if (pluginsAvailability.isOpenable) {
+                                destination = MobileDestination.MARKETPLACE
+                            }
                         },
                     )
                     element(
                         TestTags.RemoteComputerEntry,
                         "menuitem",
                         "我的电脑",
+                        enabled = computerAvailability.isOpenable,
                         action = FabushiAppAgentSurface.Action(setOf("invoke")) {
                             showAddMenu = false
-                            destination = MobileDestination.REMOTE_COMPUTER
+                            if (computerAvailability.isOpenable) {
+                                destination = MobileDestination.REMOTE_COMPUTER
+                            }
                         },
                     )
                 }
@@ -494,8 +514,12 @@ fun FabushiMessagingSurface(
             updateState = updateState,
             onCheckUpdate = onCheckUpdate,
             onInstallUpdate = onInstallUpdate,
-            onOpenMarketplace = { destination = MobileDestination.MARKETPLACE },
-            onOpenRemoteComputer = { destination = MobileDestination.REMOTE_COMPUTER },
+            onOpenMarketplace = {
+                if (pluginsAvailability.isOpenable) destination = MobileDestination.MARKETPLACE
+            },
+            onOpenRemoteComputer = {
+                if (computerAvailability.isOpenable) destination = MobileDestination.REMOTE_COMPUTER
+            },
             showAddMenu = showAddMenu,
             onShowAddMenuChange = { showAddMenu = it },
             showComposeMenu = showComposeMenu,
