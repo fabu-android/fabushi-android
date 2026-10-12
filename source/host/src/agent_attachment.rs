@@ -49,7 +49,7 @@ impl AgentAttachment {
 
     pub fn validate_public(&self) -> Result<(), String> {
         validate_identity(&self.id, "attachment id")?;
-        validate_identity(&self.name, "attachment name")?;
+        validate_attachment_name(&self.name)?;
         if self.path != format!("fabushi-attachment://{}", self.id) {
             return Err("attachment path is not a canonical Fabushi attachment identity".into());
         }
@@ -184,7 +184,7 @@ impl DurableAgentAttachmentOwner {
         declared_size_bytes: Option<u64>,
     ) -> Result<String, String> {
         validate_scope(account_slot, account_fence, agent_id)?;
-        validate_identity(name, "attachment name")?;
+        validate_attachment_name(name)?;
         let limit = attachment_byte_limit_for_name(name);
         if declared_size_bytes == Some(0) {
             return Err(format!("\"{name}\" is empty, so it wasn't attached."));
@@ -591,6 +591,18 @@ fn validate_scope(
     validate_identity(agent_id, "agent id")
 }
 
+fn validate_attachment_name(value: &str) -> Result<(), String> {
+    if value.is_empty()
+        || value.len() > 255
+        || value.contains('/')
+        || value.contains('\\')
+        || value.contains('\0')
+    {
+        return Err("attachment name is invalid".into());
+    }
+    Ok(())
+}
+
 fn validate_identity(value: &str, label: &str) -> Result<(), String> {
     if value.trim().is_empty()
         || value.len() > 1024
@@ -656,6 +668,35 @@ mod tests {
         assert_eq!(
             oversized.unwrap_err(),
             "\"movie.mp4\" is too large to attach (max 200 MB for video)."
+        );
+    }
+
+    #[test]
+    fn unsafe_desktop_attachment_filenames_fail_closed() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("attachments");
+        let mut owner = DurableAgentAttachmentOwner::open(&root).unwrap();
+
+        for name in ["../secret.txt", "folder/file.txt", "folder\\file.txt", "bad\0name.txt"] {
+            assert_eq!(
+                owner
+                    .begin(None, "session:a", "agent-a", name, Some("text/plain"), Some(1))
+                    .unwrap_err(),
+                "attachment name is invalid",
+            );
+        }
+        assert_eq!(
+            owner
+                .begin(
+                    None,
+                    "session:a",
+                    "agent-a",
+                    &"a".repeat(256),
+                    Some("text/plain"),
+                    Some(1),
+                )
+                .unwrap_err(),
+            "attachment name is invalid",
         );
     }
 
