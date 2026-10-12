@@ -290,7 +290,7 @@ internal fun ProductionRenderer(
                                     keyboardForwardTarget?.let { target ->
                                         rendererRoute = target.route
                                         target.agentId?.let { id ->
-                                            botState.bots.firstOrNull { it.id == id }?.let(botModel::openBot)
+                                            botState.bots.firstOrNull { it.id == id }?.let { bot -> botModel.openBot(bot) }
                                         }
                                         keyboardForwardTarget = null
                                     }
