@@ -14213,6 +14213,40 @@
       "artifact": null,
       "verification_status": "not-verified",
       "notes": "Consolidated the concurrent duplicate SETTINGS-TIMEZONE-ANDROID-001 into this single responsibility. Do not promote from mapped until canonical downstream Host/Agent execution consumes the effective time zone and same-head CI/package/device evidence succeeds."
+    },
+    {
+      "responsibility_id": "MCP-TEAM-PLUGIN-POPULARITY-ANDROID-001",
+      "domain": "mcp-marketplace",
+      "desktop_sources": [
+        {
+          "path": "source/electron-main/mcp/mcp-team-popularity.ts",
+          "blob_sha": "3bdf28b2f979e101610abf7dafe6a24591e26914",
+          "symbols": [
+            "fetchTeamPluginPopularity"
+          ]
+        }
+      ],
+      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "responsibility": "Project bounded team plugin popularity without making popularity a catalog/install authority; failures degrade to no popularity signal and never block browsing/install.",
+      "source_owner": "Desktop MCP team-popularity read-only backend edge",
+      "visible_effect": "Marketplace may show/use how many team members installed a plugin while remaining usable if popularity is unavailable.",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "source/host/src/mcp_auth/dashboard_mcp_auth_backend.rs",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/presentation/MarketplaceViewModel.kt"
+      ],
+      "android_owner": "planned Cursor Dashboard read-only backend projection; Marketplace consumes immutable optional counts",
+      "platform_delta": "Current Android Fabushi marketplace uses string plugin IDs while Desktop popularity uses numeric Cursor plugin IDs; authoritative identity mapping is required before joining counts.",
+      "implementation_status": "mapped",
+      "production_wiring": "not yet wired; intentionally fail-closed against guessed plugin-id joins",
+      "unit_test": "required: protobuf decode, 12s deadline/failure-empty, duplicate plugin count last-write semantics",
+      "contract_test": "required: authoritative catalog identity maps popularity to the same plugin entity",
+      "integration_test": "required through Host -> Coordinator -> Marketplace with account/generation stale fencing",
+      "packaged_test": "required",
+      "device_test": "required",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Proto field numbers re-read from current Desktop generated dashboard protobuf. No Android code claims completion until identity mapping is authoritative."
     }
   ],
   "traceability": {
