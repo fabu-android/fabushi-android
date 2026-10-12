@@ -44,6 +44,10 @@ use crate::extensions::telemetry::product_events::{
     renderer_unhandled_event, send_queued_flush_event, startup_lifecycle_event,
     StructuredTelemetryEvent, TelemetryLevel,
 };
+use crate::extensions::telemetry::recovery_events::{
+    rebuild_escalation_event, rebuild_pending_stall_event, recovery_action_event,
+    replica_resync_event, resync_completed_event, send_journal_restore_event,
+};
 use crate::extensions::teach_recording::{DurableTeachRecordingOwner, TeachRecordingPhase};
 use crate::extensions::trays::extension::{start_trays_extension, HostTraysExtension};
 use crate::extensions::trays::trays_service::{TrayEvent, TraySubscription};
@@ -1740,6 +1744,112 @@ impl AndroidJsonHost {
         Ok(json!({"recorded":true}))
     }
 
+    fn recovery_telemetry(&mut self, params: &Value) -> Result<Value, String> {
+        let kind = required_string(params, "kind")?;
+        let (message, event) = match kind {
+            "rebuild_escalation" => (
+                "sand.rebuild.escalation",
+                rebuild_escalation_event(
+                    required_string(params, "rebuildKind")?,
+                    params
+                        .get("elapsedMs")
+                        .and_then(Value::as_f64)
+                        .ok_or("elapsedMs is required")?,
+                    required_string(params, "action")?,
+                    required_string(params, "escalation")?,
+                )?,
+            ),
+            "rebuild_pending_stall" => (
+                "sand.rebuild.pending_stall",
+                rebuild_pending_stall_event(
+                    required_string(params, "rebuildKind")?,
+                    params
+                        .get("elapsedMs")
+                        .and_then(Value::as_f64)
+                        .ok_or("elapsedMs is required")?,
+                    params
+                        .get("hasAck")
+                        .and_then(Value::as_bool)
+                        .ok_or("hasAck is required")?,
+                    params
+                        .get("streamAttached")
+                        .and_then(Value::as_bool)
+                        .ok_or("streamAttached is required")?,
+                )?,
+            ),
+            "replica_resync" => (
+                "sand.reconciliation.replica_resync",
+                replica_resync_event(
+                    required_string(params, "replica")?,
+                    required_string(params, "outcome")?,
+                    params
+                        .get("attempts")
+                        .and_then(Value::as_f64)
+                        .ok_or("attempts is required")?,
+                    params
+                        .get("durationMs")
+                        .and_then(Value::as_f64)
+                        .ok_or("durationMs is required")?,
+                    params
+                        .get("bufferOverflowed")
+                        .and_then(Value::as_bool)
+                        .ok_or("bufferOverflowed is required")?,
+                    params
+                        .get("epochChanged")
+                        .and_then(Value::as_bool)
+                        .ok_or("epochChanged is required")?,
+                )?,
+            ),
+            "send_journal_restore" => (
+                "sand.reconciliation.send_journal_restore",
+                send_journal_restore_event(
+                    required_string(params, "outcome")?,
+                    required_string(params, "phase")?,
+                    params
+                        .get("ageMs")
+                        .and_then(Value::as_f64)
+                        .ok_or("ageMs is required")?,
+                    params
+                        .get("recordCount")
+                        .and_then(Value::as_f64)
+                        .ok_or("recordCount is required")?,
+                )?,
+            ),
+            "resync_completed" => {
+                let failed_steps = params
+                    .get("failedSteps")
+                    .and_then(Value::as_array)
+                    .ok_or("failedSteps is required")?
+                    .iter()
+                    .map(|value| value.as_str().map(str::to_string).ok_or("failedSteps must contain strings"))
+                    .collect::<Result<Vec<_>, _>>()?;
+                (
+                    "sand.resync.completed",
+                    resync_completed_event(
+                        &failed_steps,
+                        params
+                            .get("durationMs")
+                            .and_then(Value::as_f64)
+                            .ok_or("durationMs is required")?,
+                    )?,
+                )
+            }
+            "recovery_action" => (
+                "sand.recovery_action",
+                recovery_action_event(
+                    required_string(params, "action")?,
+                    required_string(params, "failureClass")?,
+                    params
+                        .get("consecutiveIdentical")
+                        .and_then(Value::as_u64)
+                        .ok_or("consecutiveIdentical is required")?,
+                )?,
+            ),
+            _ => return Err("unsupported recovery telemetry kind".into()),
+        };
+        self.record_product_telemetry(message, event)
+    }
+
     fn client_failure_telemetry(&mut self, params: &Value) -> Result<Value, String> {
         let kind = required_string(params, "kind")?;
         let (message, event) = match kind {
@@ -2000,6 +2110,7 @@ impl AndroidJsonHost {
             "feature.telemetry.agentsUnreachable" => self.agents_unreachable_telemetry(params),
             "feature.telemetry.eventLoopPressure" => self.event_loop_pressure_telemetry(params),
             "feature.telemetry.clientFailure" => self.client_failure_telemetry(params),
+            "feature.telemetry.recovery" => self.recovery_telemetry(params),
             "feature.diagnostics.edgeFailures.snapshot" => serde_json::to_value(self.edge_failures.snapshot()).map_err(|error| format!("failed to serialize edge failure snapshot: {error}")),
             "feature.diagnostics.edgeFailures.report" => {
                 let area = required_string(params, "area")?;
