@@ -491,9 +491,10 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
         )
     }
 
-    override fun cancelSandTrial(): Boolean =
-        host.request("feature.account.cancelSandTrial").optBoolean("ok", false)
-            .also { require(it) { "Sand trial cancellation did not settle successfully" } }
+    override fun accountCancelSandTrial() {
+        val settled = host.request("feature.account.cancelSandTrial").optBoolean("ok", false)
+        require(settled) { "Sand trial cancellation did not settle successfully" }
+    }
 
     override fun rootConnectionResilienceProjection(): RootConnectionResilienceProjection =
         rootConnectionOwner.currentProjection()
