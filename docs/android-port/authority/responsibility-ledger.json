@@ -15373,6 +15373,36 @@
       "artifact": null,
       "verification_status": "not-verified",
       "notes": "Basic attachment parity remains tracked separately; this responsibility prevents broad source rows from being falsely closed by the picker/staging slice."
+    },
+    {
+      "responsibility_id": "AUTH-INFERENCE-CREDENTIAL-ANDROID-001",
+      "domain": "account-inference-credential",
+      "desktop_path": "source/host/src/extensions/auth/**",
+      "desktop_symbol": "HostAuthService / SandInferenceCredentialRenewer / SandUserFullNameResolver",
+      "source_sha": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "responsibility": "Separate canonical product-account truth from short-lived inference/backend credentials; renew bounded inference credentials with waiting/retry semantics, machine-id/account fencing and safe error redaction, and resolve authenticated user display identity without exposing tokens to Presentation.",
+      "source_owner": "Desktop Host auth extension",
+      "visible_effect": "Agent inference/backend features keep working across short credential expiry and display the settled user identity without forcing re-login or leaking credentials.",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "source/host/src/account_service.rs",
+        "source/host/src/mcp_auth/dashboard_mcp_auth_backend.rs",
+        "source/host/src/android_json_runtime.rs",
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/security/AndroidAccountSessionStore.kt",
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/security/AndroidMachineIdStore.kt"
+      ],
+      "android_owner": "Fabushi account remains Rust Host + Android Keystore; any distinct inference credential must be a Host-only child credential owner",
+      "platform_delta": "Android product account uses Fabushi access/refresh sessions, not the Desktop dev-file/Electron auth mechanism. If a short-lived backend inference credential is still required by shipping providers, it must be derived/renewed inside Host and never become a Compose/session-store second truth.",
+      "implementation_status": "mapped",
+      "production_wiring": "Fabushi account session lifecycle is implemented, but there is no separate SandInferenceCredentialRenewer/waiting state/full-name resolver equivalent in current Android Host.",
+      "unit_test": "required for credential expiry parsing, leeway/retry/backoff/waiting and display-name fallback if this backend credential remains applicable",
+      "contract_test": "required to prove Host inference obtains valid credentials without exposing renewal tokens through JNI/UI",
+      "integration_test": "required with shipping provider/backend under expiry/recovery/account switch",
+      "packaged_test": "required on final APK/AAB",
+      "device_test": "required for long-lived Agent session across credential rotation and account switch",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Do not downgrade ACCOUNT-SESSION-001: canonical Fabushi account lifecycle is separately implemented. This responsibility tracks Desktop inference/backend auth semantics not yet proven equivalent."
     }
   ],
   "traceability": {
