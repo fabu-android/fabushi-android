@@ -2940,6 +2940,7 @@ impl AndroidJsonHost {
                 self.prepare_account_transition_cleanup(previous_fence, "account-switch")?;
             }
         }
+        self.report_signin_poll_result(&result);
         Ok(with_account_session_mutation(result, mutation))
     }
 
@@ -3506,6 +3507,8 @@ impl AndroidJsonHost {
                     .live_account_fence
                     .lock()
                     .map_err(|_| "live account fence lock poisoned".to_string())? = None;
+                self.account_telemetry
+                    .report_signin(SigninLoginReport::LoginFailed("policy_refused"));
                 return Ok(with_account_session_mutation(
                     json!({
                         "attemptId":required_string(params, "attemptId")?,
@@ -3528,6 +3531,7 @@ impl AndroidJsonHost {
                 self.prepare_account_transition_cleanup(previous_fence, "account-switch")?;
             }
         }
+        self.report_signin_poll_result(&result);
         Ok(with_account_session_mutation(result, mutation))
     }
 
