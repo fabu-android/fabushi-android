@@ -25,6 +25,59 @@ data class AndroidMcpOAuthCompletion(
     val outcome: String,
 )
 
+enum class AndroidHumanCallState(val wireName: String) {
+    INVITED("invited"),
+    RINGING("ringing"),
+    NEGOTIATING("negotiating"),
+    CONNECTED("connected"),
+    RECONNECTING("reconnecting"),
+    ENDED("ended"),
+    FAILED("failed"),
+    OUTCOME_UNKNOWN("outcome_unknown");
+
+    companion object {
+        fun fromWire(value: String): AndroidHumanCallState =
+            entries.firstOrNull { it.wireName == value }
+                ?: error("Unsupported Human call state: $value")
+    }
+}
+
+data class AndroidHumanCallSession(
+    val id: String,
+    val requestId: String,
+    val scopeId: String,
+    val creatorId: String,
+    val participantIds: List<String>,
+    val state: AndroidHumanCallState,
+    val generation: Long,
+    val signalSeq: Long,
+    val mediaCapabilities: JSONObject,
+    val deviceSelection: JSONObject,
+    val createdAtMs: Long,
+    val updatedAtMs: Long,
+    val terminalReason: String?,
+)
+
+data class AndroidHumanCallLease(
+    val callId: String,
+    val userId: String,
+    val deviceId: String,
+    val role: String,
+    val isOwner: Boolean,
+    val claimAvailable: Boolean,
+    val generation: Long,
+)
+
+data class AndroidHumanCallSignal(
+    val callId: String,
+    val generation: Long,
+    val seq: Long,
+    val senderDeviceId: String,
+    val kind: String,
+    val payload: JSONObject,
+    val createdAtMs: Long,
+)
+
 data class AndroidPrReviewPreferences(
     val user: String?,
     val team: String?,
@@ -425,6 +478,51 @@ interface AndroidCoordinatorPort {
     fun authProfileUpdate(displayName: String): JSONObject =
         error("Account profile mutation is unavailable on this Coordinator port")
     fun authLogout(): JSONObject
+    fun humanCallCreate(
+        callId: String,
+        requestId: String,
+        scopeId: String,
+        participantIds: List<String>,
+    ): AndroidHumanCallSession = error("Human call runtime is unavailable on this Coordinator port")
+    fun humanCallList(scopeId: String, limit: Int = 20): List<AndroidHumanCallSession> =
+        error("Human call runtime is unavailable on this Coordinator port")
+    fun humanCallLease(
+        callId: String,
+        generation: Long,
+        deviceId: String,
+        allowClaim: Boolean,
+    ): AndroidHumanCallLease = error("Human call transport lease is unavailable on this Coordinator port")
+    fun humanCallTransition(
+        callId: String,
+        generation: Long,
+        action: String,
+        terminalReason: String? = null,
+    ): AndroidHumanCallSession = error("Human call transition is unavailable on this Coordinator port")
+    fun humanCallUpdateMedia(
+        callId: String,
+        generation: Long,
+        mediaCapabilities: JSONObject,
+        deviceSelection: JSONObject,
+    ): AndroidHumanCallSession = error("Human call media projection is unavailable on this Coordinator port")
+    fun humanCallSendSignal(
+        callId: String,
+        generation: Long,
+        senderDeviceId: String,
+        kind: String,
+        payload: JSONObject,
+    ): AndroidHumanCallSignal = error("Human call signaling is unavailable on this Coordinator port")
+    fun humanCallSignalsSince(
+        callId: String,
+        generation: Long,
+        afterSeq: Long,
+    ): List<AndroidHumanCallSignal> = error("Human call signaling is unavailable on this Coordinator port")
+    fun humanCallReconcile(
+        callId: String,
+        generation: Long,
+        terminalState: String,
+        reason: String? = null,
+    ): AndroidHumanCallSession = error("Human call reconciliation is unavailable on this Coordinator port")
+
     fun automationUpsert(params: JSONObject): JSONObject
     fun automationList(): org.json.JSONArray
     fun automationStart(params: JSONObject): JSONObject
