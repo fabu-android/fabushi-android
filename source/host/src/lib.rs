@@ -44,6 +44,7 @@ pub mod human_call_runtime;
 #[allow(special_module_name)]
 pub mod main;
 pub mod mcp_auth;
+pub mod mcp_server_tool_settings;
 pub mod notify_drain_gate;
 pub mod process_crash_guard;
 pub mod production_binding_providers;
