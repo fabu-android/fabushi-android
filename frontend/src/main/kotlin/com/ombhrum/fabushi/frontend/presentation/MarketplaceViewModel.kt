@@ -61,6 +61,40 @@ data class McpServerCatalogItem(
     val disabledByTeamAdminPolicy: Boolean,
 )
 
+data class McpServerToolUiItem(
+    val name: String,
+    val title: String?,
+    val description: String?,
+    val isDisabled: Boolean,
+)
+
+enum class McpServerToolsUiStatus { LOADING, READY, FAILED }
+
+data class McpServerToolsUiState(
+    val status: McpServerToolsUiStatus,
+    val tools: List<McpServerToolUiItem> = emptyList(),
+    val failure: String? = null,
+    val pendingTool: String? = null,
+)
+
+internal fun projectMcpServerToolsUi(projection: PluginServerToolsProjection): McpServerToolsUiState =
+    McpServerToolsUiState(
+        status = when (projection.status) {
+            PluginServerToolsStatus.LOADING -> McpServerToolsUiStatus.LOADING
+            PluginServerToolsStatus.READY -> McpServerToolsUiStatus.READY
+            PluginServerToolsStatus.FAILED, PluginServerToolsStatus.DISPOSED -> McpServerToolsUiStatus.FAILED
+        },
+        tools = projection.tools.map { McpServerToolUiItem(it.name, it.title, it.description, it.isDisabled) },
+        failure = projection.failure,
+        pendingTool = projection.pendingTool,
+    )
+
+internal fun shouldApplyMcpServerToolsResult(
+    expectedAuthId: String,
+    currentLoggedIn: Boolean,
+    currentAuthId: String,
+): Boolean = currentLoggedIn && expectedAuthId.isNotBlank() && currentAuthId == expectedAuthId
+
 internal fun parseMcpServerCatalog(values: JSONArray): List<McpServerCatalogItem> =
     buildList {
         for (index in 0 until values.length()) {
@@ -318,6 +352,7 @@ data class MarketplaceUiState(
     val mcpServers: List<McpServerCatalogItem> = emptyList(),
     val mcpServersBusy: Boolean = false,
     val mcpServersError: String? = null,
+    val mcpServerTools: Map<String, McpServerToolsUiState> = emptyMap(),
     val mcpServerInstructions: Map<String, String> = emptyMap(),
     val mcpServerInstructionsBusy: Set<String> = emptySet(),
     val mcpServerInstructionsError: Map<String, String> = emptyMap(),
@@ -371,6 +406,7 @@ class MarketplaceViewModel(application: Application) : AndroidViewModel(applicat
     private var credentialVaultGeneration: Long = 0L
     private var timeZoneSettingsGeneration: Long = 0L
     private var mcpServerCatalogGeneration: Long = 0L
+    private val mcpServerToolsProjectors = linkedMapOf<String, PluginServerToolsProjector>()
     private var mcpTeamPopularityGeneration: Long = 0L
 
     init {
@@ -1259,6 +1295,7 @@ class MarketplaceViewModel(application: Application) : AndroidViewModel(applicat
     }
 
     fun refreshMcpServerCatalog() {
+        resetMcpServerTools()
         val current = mutableState.value
         if (!current.loggedIn || current.accountAuthId.isBlank()) {
             mcpServerCatalogGeneration += 1
@@ -1352,6 +1389,79 @@ class MarketplaceViewModel(application: Application) : AndroidViewModel(applicat
                         (serverId to (error.message ?: error::class.java.simpleName)),
                 )
             }
+        }
+    }
+
+    private fun resetMcpServerTools() {
+        mcpServerToolsProjectors.values.forEach(PluginServerToolsProjector::dispose)
+        mcpServerToolsProjectors.clear()
+        if (mutableState.value.mcpServerTools.isNotEmpty()) {
+            mutableState.value = mutableState.value.copy(mcpServerTools = emptyMap())
+        }
+    }
+
+    private fun publishMcpServerTools(serverId: String, projector: PluginServerToolsProjector) {
+        mutableState.value = mutableState.value.copy(
+            mcpServerTools = mutableState.value.mcpServerTools +
+                (serverId to projectMcpServerToolsUi(projector.snapshot())),
+        )
+    }
+
+    fun openMcpServerTools(serverId: String) {
+        val current = mutableState.value
+        val normalized = serverId.trim()
+        if (!current.loggedIn || current.accountAuthId.isBlank()) return
+        if (current.mcpServers.none { it.id == normalized }) return
+        val projector = mcpServerToolsProjectors.getOrPut(normalized, ::PluginServerToolsProjector)
+        val token = projector.open() ?: projector.retry() ?: return
+        val expectedAuthId = current.accountAuthId
+        publishMcpServerTools(normalized, projector)
+        viewModelScope.launch {
+            runCatching { withContext(Dispatchers.IO) { coordinator.mcpServerTools(normalized) } }
+                .onSuccess { values ->
+                    val latest = mutableState.value
+                    if (!shouldApplyMcpServerToolsResult(expectedAuthId, latest.loggedIn, latest.accountAuthId)) return@onSuccess
+                    if (projector.settleLoad(token.first, token.second, parsePluginServerTools(values))) {
+                        publishMcpServerTools(normalized, projector)
+                    }
+                }
+                .onFailure { error ->
+                    val latest = mutableState.value
+                    if (!shouldApplyMcpServerToolsResult(expectedAuthId, latest.loggedIn, latest.accountAuthId)) return@onFailure
+                    if (projector.settleLoad(token.first, token.second, null, error.message ?: error::class.java.simpleName)) {
+                        publishMcpServerTools(normalized, projector)
+                    }
+                }
+        }
+    }
+
+    fun retryMcpServerTools(serverId: String) = openMcpServerTools(serverId)
+
+    fun toggleMcpServerTool(serverId: String, toolName: String) {
+        val current = mutableState.value
+        val normalizedServer = serverId.trim()
+        val normalizedTool = toolName.trim()
+        if (!current.loggedIn || current.accountAuthId.isBlank() || normalizedTool.isBlank()) return
+        val projector = mcpServerToolsProjectors[normalizedServer] ?: return
+        val token = projector.beginToggle(normalizedTool) ?: return
+        val expectedAuthId = current.accountAuthId
+        publishMcpServerTools(normalizedServer, projector)
+        viewModelScope.launch {
+            runCatching { withContext(Dispatchers.IO) { coordinator.toggleMcpServerTool(normalizedServer, normalizedTool) } }
+                .onSuccess { values ->
+                    val latest = mutableState.value
+                    if (!shouldApplyMcpServerToolsResult(expectedAuthId, latest.loggedIn, latest.accountAuthId)) return@onSuccess
+                    if (projector.settleToggle(token.first, token.second, parsePluginServerTools(values))) {
+                        publishMcpServerTools(normalizedServer, projector)
+                    }
+                }
+                .onFailure { error ->
+                    val latest = mutableState.value
+                    if (!shouldApplyMcpServerToolsResult(expectedAuthId, latest.loggedIn, latest.accountAuthId)) return@onFailure
+                    if (projector.settleToggle(token.first, token.second, null, error.message ?: error::class.java.simpleName)) {
+                        publishMcpServerTools(normalizedServer, projector)
+                    }
+                }
         }
     }
 
@@ -1642,6 +1752,7 @@ class MarketplaceViewModel(application: Application) : AndroidViewModel(applicat
     }
 
     override fun onCleared() {
+        resetMcpServerTools()
         rootConnectionSubscription?.close()
         rootConnectionSubscription = null
         featureEventSubscription?.close()
