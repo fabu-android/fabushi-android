@@ -32,6 +32,6 @@
   "truncation_fallback_used": false,
   "initial_status": "unreviewed",
   "ledger_sha256": null,
-  "closure_review": "incremental-rebaseline-to-371b72f1-semantic-review-continuing-through-fbcp-visual-acceptance",
+  "closure_review": "incremental-rebaseline-to-371b72f1-semantic-review-continuing-through-tdrp-build-provenance-row-545",
   "product_acceptance": "not-claimed"
 }

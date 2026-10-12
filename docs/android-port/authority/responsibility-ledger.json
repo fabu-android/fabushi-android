@@ -5,9 +5,9 @@
     "desktop_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
     "android_repository": "fabu-android/fabushi-android",
     "android_pr": 3,
-    "android_head_at_update": "1539107caea517fcaa0cef2d5d3e2391e6f2d418",
+    "android_head_at_update": "11890f2d313e557f8f9a41a9f1b22b42da254bd7",
     "status": "incomplete",
-    "note": "Desktop main authority remains 371b72f1cd20de03dc4dff9a15ed761054968093. Source closure now continues through fabushi-communication-platform quality performance/security/temporal/UI plans, release/RTM/test-strategy governance, source/status/capability graph and UI component/IA/visual contracts (rows 512-526). These are mapped obligations, not verified implementation. Full source closure, packaged/device matrix, adaptive focus/TalkBack and protected/signing evidence remain open."
+    "note": "Desktop main authority remains 371b72f1cd20de03dc4dff9a15ed761054968093. Source closure has advanced through rows 527-545: historical Grok architecture/parity evidence, TDRP schema/dossiers for accepted-auth URL, forwarding, scheduling, Search/ShareBox and Story sibling semantics, plus recursive inventory/build provenance/module-map/ledger governance. These are Android-mapped responsibility and provenance inputs, not inherited implementation verification. Full source closure, complete Story/scheduled-send/share destination composition, adaptive/focus/TalkBack and protected/signing/device evidence remain open."
   },
   "responsibilities": [
     {
