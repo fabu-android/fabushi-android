@@ -743,6 +743,66 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
                 .put("emoji", emoji),
         )
 
+    override fun reportRenderTtfr(
+        ttfrMs: Long,
+        outcome: String,
+        chunkType: String?,
+        enterEpochMs: Long,
+        isFork: Boolean,
+        traceId: String?,
+        spanId: String?,
+        clientNonce: String?,
+        conversationId: String?,
+    ): JSONObject =
+        host.request(
+            "feature.telemetry.render",
+            JSONObject()
+                .put("kind", "ttfr")
+                .put("ttfrMs", ttfrMs.coerceAtLeast(0L))
+                .put("outcome", outcome)
+                .put("enterEpochMs", enterEpochMs.coerceAtLeast(0L))
+                .put("isFork", isFork)
+                .apply {
+                    chunkType?.let { put("chunkType", it) }
+                    traceId?.let { put("traceId", it) }
+                    spanId?.let { put("spanId", it) }
+                    clientNonce?.let { put("clientNonce", it) }
+                    conversationId?.let { put("conversationId", it) }
+                },
+        )
+
+    override fun reportRenderStream(
+        outcome: String,
+        chunkCount: Int,
+        maxGapMs: Long,
+        stalledMs: Long,
+        stallCount: Int,
+        streamMs: Long,
+        isFork: Boolean,
+        traceId: String?,
+        spanId: String?,
+        clientNonce: String?,
+        conversationId: String?,
+    ): JSONObject =
+        host.request(
+            "feature.telemetry.render",
+            JSONObject()
+                .put("kind", "stream")
+                .put("outcome", outcome)
+                .put("chunkCount", chunkCount.coerceAtLeast(0))
+                .put("maxGapMs", maxGapMs.coerceAtLeast(0L))
+                .put("stalledMs", stalledMs.coerceAtLeast(0L))
+                .put("stallCount", stallCount.coerceAtLeast(0))
+                .put("streamMs", streamMs.coerceAtLeast(0L))
+                .put("isFork", isFork)
+                .apply {
+                    traceId?.let { put("traceId", it) }
+                    spanId?.let { put("spanId", it) }
+                    clientNonce?.let { put("clientNonce", it) }
+                    conversationId?.let { put("conversationId", it) }
+                },
+        )
+
 
     override fun reportRebuildEscalation(
         rebuildKind: String,
