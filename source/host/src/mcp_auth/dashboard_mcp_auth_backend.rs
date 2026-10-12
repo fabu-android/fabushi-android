@@ -25,7 +25,12 @@ pub const DASHBOARD_GET_TEAMS_PATH: &str =
     "/aiserver.v1.DashboardService/GetTeams";
 pub const DASHBOARD_GET_TEAM_RULES_PATH: &str =
     "/aiserver.v1.DashboardService/GetTeamRules";
+pub const DASHBOARD_GET_ME_PATH: &str =
+    "/aiserver.v1.DashboardService/GetMe";
+pub const DASHBOARD_GET_TEAM_PLUGIN_POPULARITY_PATH: &str =
+    "/aiserver.v1.DashboardService/GetTeamPluginPopularity";
 pub const TEAM_RULES_REQUEST_TIMEOUT_MS: u64 = 10_000;
+pub const TEAM_PLUGIN_POPULARITY_REQUEST_TIMEOUT_MS: u64 = 12_000;
 pub const TEAM_RULE_AGENT_TYPE_ALL: u64 = 1;
 pub const TEAM_RULE_AGENT_TYPE_SAND: u64 = 2;
 pub const DASHBOARD_GET_AVAILABLE_MCP_SERVERS_PATH: &str =
@@ -513,6 +518,44 @@ impl CursorDashboardMcpAuthBackend {
             }
         }
         Ok(merged)
+    }
+
+    /// Desktop marketplace parity: resolve team-wide plugin install popularity.
+    ///
+    /// The shipped Desktop surface treats this ranking metadata as best-effort: no team or any
+    /// Dashboard failure yields an empty map rather than failing the marketplace itself.
+    pub fn resolve_team_plugin_popularity(
+        &self,
+    ) -> std::collections::BTreeMap<String, u64> {
+        self.try_resolve_team_plugin_popularity().unwrap_or_default()
+    }
+
+    fn try_resolve_team_plugin_popularity(
+        &self,
+    ) -> Result<std::collections::BTreeMap<String, u64>, String> {
+        let credentials = self.credentials.credentials()?;
+        let ghost_mode = self.resolve_ghost_mode(&credentials);
+        let me = self.send_unary(
+            &credentials,
+            DASHBOARD_GET_ME_PATH,
+            &[],
+            TEAM_PLUGIN_POPULARITY_REQUEST_TIMEOUT_MS,
+            ghost_mode,
+        )?;
+        let Some(team_id) = decode_optional_varint_field(&me, 7)? else {
+            return Ok(std::collections::BTreeMap::new());
+        };
+        if team_id > i32::MAX as u64 {
+            return Err("Dashboard team id is outside signed int32 range".into());
+        }
+        let popularity = self.send_unary(
+            &credentials,
+            DASHBOARD_GET_TEAM_PLUGIN_POPULARITY_PATH,
+            &encode_get_team_plugin_popularity_request(team_id as i32),
+            TEAM_PLUGIN_POPULARITY_REQUEST_TIMEOUT_MS,
+            ghost_mode,
+        )?;
+        decode_team_plugin_popularity_response(&popularity)
     }
 
     pub fn resolve_sand_pr_review_preferences(&self) -> Result<Value, String> {
@@ -1477,6 +1520,31 @@ fn decode_client_action_response(input: &[u8]) -> Result<Value, String> {
     Ok(json!({"ok":success,"message":message}))
 }
 
+fn encode_get_team_plugin_popularity_request(team_id: i32) -> Vec<u8> {
+    let mut body = Vec::new();
+    if team_id != 0 {
+        encode_key(1, 0, &mut body);
+        encode_varint(team_id as u64, &mut body);
+    }
+    body
+}
+
+fn decode_team_plugin_popularity_response(
+    response: &[u8],
+) -> Result<std::collections::BTreeMap<String, u64>, String> {
+    let mut counts = std::collections::BTreeMap::new();
+    for entry in repeated_message_fields(response, 1)? {
+        let plugin_id = decode_optional_varint_field(entry, 1)?
+            .ok_or("team plugin popularity row is missing plugin id")?;
+        let member_install_count = decode_optional_varint_field(entry, 2)?.unwrap_or_default();
+        if member_install_count > i32::MAX as u64 {
+            return Err("team plugin popularity count is outside signed int32 range".into());
+        }
+        counts.insert(plugin_id.to_string(), member_install_count);
+    }
+    Ok(counts)
+}
+
 fn encode_get_team_rules_request(team_id: u64) -> Vec<u8> {
     let mut body = vec![0x08, 0x01];
     encode_key(2, 0, &mut body);
@@ -1798,6 +1866,47 @@ mod tests {
         assert_eq!(
             decode_client_action_response(&failed).unwrap(),
             json!({"ok":false,"message":"Not allowed"})
+        );
+    }
+
+    #[test]
+    fn team_plugin_popularity_wire_matches_desktop_generated_schema() {
+        assert_eq!(
+            DASHBOARD_GET_ME_PATH,
+            "/aiserver.v1.DashboardService/GetMe"
+        );
+        assert_eq!(
+            DASHBOARD_GET_TEAM_PLUGIN_POPULARITY_PATH,
+            "/aiserver.v1.DashboardService/GetTeamPluginPopularity"
+        );
+        assert_eq!(TEAM_PLUGIN_POPULARITY_REQUEST_TIMEOUT_MS, 12_000);
+
+        let mut me = Vec::new();
+        encode_key(7, 0, &mut me);
+        encode_varint(42, &mut me);
+        assert_eq!(decode_optional_varint_field(&me, 7).unwrap(), Some(42));
+        assert_eq!(encode_get_team_plugin_popularity_request(42), vec![0x08, 0x2a]);
+        assert!(encode_get_team_plugin_popularity_request(0).is_empty());
+
+        let mut first = Vec::new();
+        encode_key(1, 0, &mut first);
+        encode_varint(123, &mut first);
+        encode_key(2, 0, &mut first);
+        encode_varint(7, &mut first);
+        let mut second = Vec::new();
+        encode_key(1, 0, &mut second);
+        encode_varint(456, &mut second);
+        encode_key(2, 0, &mut second);
+        encode_varint(11, &mut second);
+        let mut response = Vec::new();
+        encode_len_delimited(1, &first, &mut response);
+        encode_len_delimited(1, &second, &mut response);
+        assert_eq!(
+            decode_team_plugin_popularity_response(&response).unwrap(),
+            std::collections::BTreeMap::from([
+                ("123".to_string(), 7),
+                ("456".to_string(), 11),
+            ])
         );
     }
 
