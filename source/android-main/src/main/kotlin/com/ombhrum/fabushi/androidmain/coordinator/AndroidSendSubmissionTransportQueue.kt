@@ -54,7 +54,10 @@ internal class AndroidSendSubmissionTransportQueue(
         }
     }
 
-    fun discover(records: List<AndroidSendAcknowledgement>) {
+    fun discover(
+        records: List<AndroidSendAcknowledgement>,
+        trackRestoreOutcome: Boolean = false,
+    ) {
         val discovered = mutableListOf<Pair<AndroidSendSubmissionScope, AndroidSendAcknowledgement>>()
         synchronized(lock) {
             if (disposed) return
@@ -67,7 +70,7 @@ internal class AndroidSendSubmissionTransportQueue(
                         nonce = record.nonce,
                         generation = record.generation,
                     )
-                    if (queued.putIfAbsent(scope.key, scope) == null) {
+                    if (queued.putIfAbsent(scope.key, scope) == null && trackRestoreOutcome) {
                         restored[scope.key] = record
                         discovered += scope to record
                     }
