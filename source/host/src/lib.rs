@@ -6,6 +6,7 @@
 pub mod android_agent_roster;
 pub mod agent_attachment;
 pub mod android_sidebar_sections;
+pub mod android_user_settings;
 pub mod android_json_runtime;
 pub mod automation_runtime;
 pub mod auto_review_settings;
