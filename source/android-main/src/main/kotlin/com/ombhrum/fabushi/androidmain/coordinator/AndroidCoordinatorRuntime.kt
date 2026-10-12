@@ -10,6 +10,7 @@ import android.provider.OpenableColumns
 import android.util.Base64
 import android.view.View
 import android.os.StatFs
+import com.ombhrum.fabushi.androidpreload.runtime.AndroidPrReviewPreferences
 import com.ombhrum.fabushi.androidpreload.runtime.AccountAccessBlockReason
 import com.ombhrum.fabushi.androidpreload.runtime.AccountAccessProjection
 import com.ombhrum.fabushi.androidpreload.runtime.AccountAccessState
@@ -417,8 +418,16 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
     override fun accountPrivacyMode(): JSONObject =
         host.request("feature.account.privacyMode")
 
-    override fun accountPrReviewPreferences(): JSONObject =
-        host.request("feature.account.prReviewPreferences")
+    override fun accountPrReviewPreferences(): AndroidPrReviewPreferences {
+        val projection = host.request("feature.account.prReviewPreferences")
+        fun destination(key: String): String? =
+            projection.optString(key)
+                .takeIf { it == "github" || it == "graphite" || it == "reviewCursor" }
+        return AndroidPrReviewPreferences(
+            user = destination("user"),
+            team = destination("team"),
+        )
+    }
 
     override fun rootConnectionResilienceProjection(): RootConnectionResilienceProjection =
         rootConnectionOwner.currentProjection()
