@@ -38,6 +38,20 @@ pub struct TranscriptContentMatch {
     pub snippet: String,
 }
 
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TranscriptMediaMatch {
+    pub agent_id: String,
+    pub entry_id: String,
+    pub file_name: String,
+    pub ext: String,
+    pub mime: Option<String>,
+    pub kind: String,
+    pub timestamp_ms: f64,
+    pub width: Option<i64>,
+    pub height: Option<i64>,
+}
+
 #[derive(Clone, Debug)]
 pub struct TranscriptStore {
     path: PathBuf,
@@ -218,6 +232,40 @@ impl TranscriptStore {
         Ok(matches)
     }
 
+    pub fn search_media(
+        &self,
+        query: &str,
+        limit: usize,
+    ) -> io::Result<Vec<TranscriptMediaMatch>> {
+        if limit == 0 || limit > CONTENT_SEARCH_MAX_RESULTS {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "media search limit must be between 1 and 50",
+            ));
+        }
+        let terms = query
+            .split_whitespace()
+            .map(str::to_lowercase)
+            .filter(|term| !term.is_empty())
+            .take(8)
+            .collect::<Vec<_>>();
+        let mut matches = self
+            .entries
+            .iter()
+            .filter_map(project_media_search_entry)
+            .filter(|item| media_name_matches_terms(&item.file_name, &terms))
+            .collect::<Vec<_>>();
+        matches.sort_by(|left, right| {
+            right
+                .timestamp_ms
+                .partial_cmp(&left.timestamp_ms)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| right.entry_id.cmp(&left.entry_id))
+        });
+        matches.truncate(limit);
+        Ok(matches)
+    }
+
     pub fn contains_id(&self, id: &str) -> bool {
         self.entries
             .iter()
@@ -389,6 +437,140 @@ fn entry_id(entry: &Value) -> io::Result<&str> {
         .and_then(Value::as_str)
         .filter(|id| !id.trim().is_empty())
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "transcript entry id is required"))
+}
+
+fn project_media_search_entry(entry: &Value) -> Option<TranscriptMediaMatch> {
+    let agent_id = entry.get("agentId").and_then(Value::as_str)?.trim();
+    let entry_id = entry.get("id").and_then(Value::as_str)?.trim();
+    if agent_id.is_empty() || entry_id.is_empty() {
+        return None;
+    }
+    let kind = entry.get("kind").and_then(Value::as_str).unwrap_or_default();
+    let (raw_path, explicit_name, width, height) = match kind {
+        "user-attachment" | "userAttachment" => (
+            entry.get("filePath").and_then(Value::as_str)?,
+            entry.get("fileName").and_then(Value::as_str),
+            whole_media_dimension(entry.get("width")),
+            whole_media_dimension(entry.get("height")),
+        ),
+        "send-message" | "sendMessage" => {
+            let message = entry.get("message")?;
+            if message.get("type").and_then(Value::as_str) != Some("attachment")
+                && message.get("messageType").and_then(Value::as_str) != Some("attachment")
+            {
+                return None;
+            }
+            (
+                message.get("url").or_else(|| message.get("filePath")).and_then(Value::as_str)?,
+                message.get("fileName").and_then(Value::as_str),
+                None,
+                None,
+            )
+        }
+        _ => return None,
+    };
+    let file_name = explicit_name
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| media_basename(raw_path));
+    if file_name.is_empty() {
+        return None;
+    }
+    let extension = media_extension(&file_name).unwrap_or_default();
+    Some(TranscriptMediaMatch {
+        agent_id: agent_id.to_string(),
+        entry_id: entry_id.to_string(),
+        ext: if extension.is_empty() { String::new() } else { format!(".{extension}") },
+        mime: media_mime(&extension).map(str::to_string),
+        kind: media_kind(&extension).to_string(),
+        timestamp_ms: entry.get("timestampMs").and_then(Value::as_f64).unwrap_or(0.0),
+        width,
+        height,
+        file_name,
+    })
+}
+
+fn whole_media_dimension(value: Option<&Value>) -> Option<i64> {
+    let value = value?.as_f64()?;
+    (value.is_finite() && value >= 0.0 && value.fract() == 0.0).then_some(value as i64)
+}
+
+fn media_basename(value: &str) -> String {
+    let without_query = value.split(['?', '#']).next().unwrap_or(value);
+    let base = without_query.rsplit(['/', '\\']).next().unwrap_or_default();
+    percent_decode_utf8(base).unwrap_or_else(|| base.to_string())
+}
+
+fn percent_decode_utf8(value: &str) -> Option<String> {
+    let bytes = value.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut index = 0usize;
+    while index < bytes.len() {
+        if bytes[index] == b'%' {
+            if index + 2 >= bytes.len() { return None; }
+            let hi = hex_value(bytes[index + 1])?;
+            let lo = hex_value(bytes[index + 2])?;
+            out.push((hi << 4) | lo);
+            index += 3;
+        } else {
+            out.push(bytes[index]);
+            index += 1;
+        }
+    }
+    String::from_utf8(out).ok()
+}
+
+fn hex_value(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        b'A'..=b'F' => Some(byte - b'A' + 10),
+        _ => None,
+    }
+}
+
+fn media_extension(file_name: &str) -> Option<String> {
+    let base = file_name.rsplit(['/', '\\']).next().unwrap_or_default();
+    let dot = base.rfind('.')?;
+    if dot == 0 || dot + 1 >= base.len() { return None; }
+    Some(base[dot + 1..].to_ascii_lowercase())
+}
+
+fn media_mime(extension: &str) -> Option<&'static str> {
+    match extension {
+        "avif" => Some("image/avif"), "bmp" => Some("image/bmp"), "gif" => Some("image/gif"),
+        "jpeg" | "jpg" => Some("image/jpeg"), "png" => Some("image/png"), "svg" => Some("image/svg+xml"),
+        "webp" => Some("image/webp"), "m4v" | "mp4" => Some("video/mp4"), "mov" => Some("video/quicktime"),
+        "webm" => Some("video/webm"), "aac" => Some("audio/aac"), "flac" => Some("audio/flac"),
+        "m4a" => Some("audio/mp4"), "mp3" => Some("audio/mpeg"), "ogg" | "opus" => Some("audio/ogg"),
+        "wav" => Some("audio/wav"), _ => None,
+    }
+}
+
+fn media_kind(extension: &str) -> &'static str {
+    match extension {
+        "avif" | "bmp" | "gif" | "ico" | "jpeg" | "jpg" | "png" | "svg" | "webp" => "image",
+        "m4v" | "mov" | "mp4" | "ogv" | "webm" => "video",
+        "aac" | "flac" | "m4a" | "mp3" | "oga" | "ogg" | "opus" | "wav" | "weba" => "audio",
+        "pdf" => "pdf", "md" | "markdown" | "mdx" => "markdown",
+        "csv" | "tsv" | "xlsx" | "xls" => "table", "json" | "jsonc" | "json5" | "ndjson" => "json",
+        "docx" => "document", "zip" | "tar" | "gz" | "tgz" | "bz2" | "tbz2" | "xz" | "txz" | "zst" | "7z" | "rar" => "archive",
+        "txt" | "text" | "log" | "rst" | "xml" | "yaml" | "yml" | "toml" | "ini" | "cfg" | "conf" | "env"
+        | "properties" | "html" | "css" | "js" | "jsx" | "ts" | "tsx" | "py" | "rb" | "go" | "rs" | "java"
+        | "kt" | "kts" | "c" | "h" | "cpp" | "hpp" | "cs" | "php" | "swift" | "sql" | "proto" | "sh" => "text",
+        _ => "file",
+    }
+}
+
+fn media_name_matches_terms(file_name: &str, terms: &[String]) -> bool {
+    if terms.is_empty() { return true; }
+    let lowered = file_name.to_lowercase();
+    let tokens = lowered
+        .split(|ch: char| !ch.is_alphanumeric())
+        .filter(|token| !token.is_empty())
+        .collect::<Vec<_>>();
+    terms.iter().all(|term| tokens.iter().any(|token| token.starts_with(term)))
 }
 
 fn project_content_search_entry(entry: &Value) -> Option<SearchableTranscriptEntry> {
@@ -573,6 +755,44 @@ mod tests {
         drop(store);
         let reopened = TranscriptStore::open(&path).unwrap();
         assert_eq!(reopened.search_content("project alpha", 50).unwrap().len(), 6);
+        let _ = fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
+    fn media_search_projects_canonical_attachments_and_survives_reopen() {
+        let path = temp_path();
+        let mut store = TranscriptStore::open(&path).unwrap();
+        store.append_entry(json!({
+            "id":"old-image","agentId":"agent-a","kind":"user-attachment",
+            "filePath":"content://files/Project%20Alpha.png","timestampMs":5,
+            "width":640,"height":480
+        })).unwrap();
+        store.append_entry(json!({
+            "id":"new-doc","agentId":"agent-b","kind":"send-message",
+            "message":{"type":"attachment","url":"https://example.invalid/reports/Project-Alpha.pdf?download=1"},
+            "timestampMs":9
+        })).unwrap();
+        store.append_entry(json!({
+            "id":"not-media","agentId":"agent-a","kind":"message","content":"Project Alpha","timestampMs":10
+        })).unwrap();
+
+        let all = store.search_media("", 50).unwrap();
+        assert_eq!(all.len(), 2);
+        assert_eq!(all[0].entry_id, "new-doc");
+        assert_eq!(all[0].file_name, "Project-Alpha.pdf");
+        assert_eq!(all[0].kind, "pdf");
+        assert_eq!(all[1].file_name, "Project Alpha.png");
+        assert_eq!(all[1].mime.as_deref(), Some("image/png"));
+        assert_eq!(all[1].width, Some(640));
+        assert_eq!(all[1].height, Some(480));
+        assert_eq!(store.search_media("proj alp", 50).unwrap().len(), 2);
+        assert!(store.search_media("missing", 50).unwrap().is_empty());
+        assert!(store.search_media("", 0).is_err());
+        assert!(store.search_media("", 51).is_err());
+
+        drop(store);
+        let reopened = TranscriptStore::open(&path).unwrap();
+        assert_eq!(reopened.search_media("project alpha", 50).unwrap().len(), 2);
         let _ = fs::remove_dir_all(path.parent().unwrap());
     }
 
