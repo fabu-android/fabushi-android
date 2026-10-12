@@ -87,6 +87,10 @@ internal fun ProductionRenderer(
                 var timeZoneBusy by remember { mutableStateOf(false) }
                 var timeZoneError by remember { mutableStateOf<String?>(null) }
                 var timeZoneRequestGeneration by remember { mutableStateOf(0L) }
+                var processMetricsLocalEnabled by remember { mutableStateOf(false) }
+                var processMetricsBusy by remember { mutableStateOf(false) }
+                var processMetricsError by remember { mutableStateOf<String?>(null) }
+                var processMetricsRequestGeneration by remember { mutableStateOf(0L) }
                 var computerUpdateConfirmAction by remember {
                     mutableStateOf<CommandPaletteComputerUpdateAction?>(null)
                 }
@@ -208,6 +212,44 @@ internal fun ProductionRenderer(
                     }
                 }
 
+                fun refreshProcessMetricsSettings() {
+                    val generation = processMetricsRequestGeneration + 1L
+                    processMetricsRequestGeneration = generation
+                    processMetricsBusy = true
+                    processMetricsError = null
+                    coroutineScope.launch {
+                        val result = withContext(Dispatchers.IO) {
+                            runCatching { coordinator.processMetricsSettings() }
+                        }
+                        if (generation != processMetricsRequestGeneration) return@launch
+                        processMetricsBusy = false
+                        result.onSuccess {
+                            processMetricsLocalEnabled = it.optBoolean("localEnabled", false)
+                        }.onFailure {
+                            processMetricsError = it.message ?: "Performance diagnostics settings unavailable"
+                        }
+                    }
+                }
+
+                fun saveProcessMetricsLocalEnabled(value: Boolean) {
+                    val generation = processMetricsRequestGeneration + 1L
+                    processMetricsRequestGeneration = generation
+                    processMetricsBusy = true
+                    processMetricsError = null
+                    coroutineScope.launch {
+                        val result = withContext(Dispatchers.IO) {
+                            runCatching { coordinator.setProcessMetricsLocalEnabled(value) }
+                        }
+                        if (generation != processMetricsRequestGeneration) return@launch
+                        processMetricsBusy = false
+                        result.onSuccess {
+                            processMetricsLocalEnabled = it.optBoolean("localEnabled", false)
+                        }.onFailure {
+                            processMetricsError = it.message ?: "Performance diagnostics setting was not saved"
+                        }
+                    }
+                }
+
                 fun refreshAutoReviewInstructions() {
                     val generation = autoReviewRequestGeneration + 1L
                     autoReviewRequestGeneration = generation
@@ -268,8 +310,13 @@ internal fun ProductionRenderer(
                     timeZoneSettings = null
                     timeZoneError = null
                     timeZoneBusy = false
+                    processMetricsRequestGeneration += 1L
+                    processMetricsLocalEnabled = false
+                    processMetricsError = null
+                    processMetricsBusy = false
                     if (showSettings) {
                         refreshTimeZoneSettings()
+                        refreshProcessMetricsSettings()
                     }
                     if (showSettings && state.loggedIn) {
                         refreshAutoReviewInstructions()
@@ -293,6 +340,10 @@ internal fun ProductionRenderer(
                         timeZoneBusy = timeZoneBusy,
                         timeZoneError = timeZoneError,
                         onSaveTimeZoneOverride = ::saveTimeZoneOverride,
+                        processMetricsLocalEnabled = processMetricsLocalEnabled,
+                        processMetricsBusy = processMetricsBusy,
+                        processMetricsError = processMetricsError,
+                        onSetProcessMetricsLocalEnabled = ::saveProcessMetricsLocalEnabled,
                         autoReviewSnapshot = autoReviewSnapshot,
                         autoReviewBusy = autoReviewBusy,
                         autoReviewError = autoReviewError,
