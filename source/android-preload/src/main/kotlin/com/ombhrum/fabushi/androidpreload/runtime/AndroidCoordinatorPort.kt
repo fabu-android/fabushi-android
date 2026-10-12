@@ -30,6 +30,24 @@ data class AndroidPrReviewPreferences(
     val team: String?,
 )
 
+data class AndroidOnDemandUsage(
+    val usedCents: Long,
+    val limitCents: Long,
+    val resetTimestampMs: Long?,
+)
+
+data class AndroidAccountUsageSummary(
+    val sandUsagePercent: Double?,
+    val sandUsageResetTimestampMs: Long?,
+    val hasAvailableUsage: Boolean,
+    val hasNonZeroIncludedLimit: Boolean,
+    val usesPooledEnterpriseAllowance: Boolean,
+    val isSandTrial: Boolean,
+    val hasEndedSandTrial: Boolean,
+    val canCancelSandTrial: Boolean,
+    val onDemand: AndroidOnDemandUsage?,
+)
+
 enum class AndroidSendAcknowledgementPhase(val wireName: String) {
     PENDING("pending"),
     QUEUED("queued"),
@@ -371,6 +389,10 @@ interface AndroidCoordinatorPort {
     fun accountPrivacyMode(): JSONObject
     fun accountPrReviewPreferences(): AndroidPrReviewPreferences =
         AndroidPrReviewPreferences(user = null, team = null)
+    fun accountUsageSummary(): AndroidAccountUsageSummary =
+        error("Account usage summary is unavailable on this Coordinator port")
+    fun accountCancelSandTrial(): Unit =
+        error("Sand trial cancellation is unavailable on this Coordinator port")
     fun accountAccessProjection(): AccountAccessProjection
     fun rootConnectionResilienceProjection(): RootConnectionResilienceProjection =
         RootConnectionResilienceProjection.initial()
