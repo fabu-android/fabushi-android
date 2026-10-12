@@ -1,6 +1,7 @@
 package com.ombhrum.fabushi.core
 
 import android.content.Context
+import com.ombhrum.fabushi.androidmain.coordinator.AndroidEdgeFailures
 import com.ombhrum.fabushi.androidmain.security.AndroidAccountSessionStore
 import com.ombhrum.fabushi.androidmain.security.AndroidMachineIdStore
 import com.ombhrum.fabushi.androidmain.security.AndroidCredentialVaultStore
@@ -62,6 +63,13 @@ class MahayanaHost(
                         accountSessionStore.readSessionJson().orEmpty(),
                         machineIdStore.getOrCreate(),
                     )
+                    if (value == 0L) {
+                        AndroidEdgeFailures.reportClass(
+                            area = "host",
+                            leg = "native-create",
+                            errorClass = "NativeInitializationFailure",
+                        )
+                    }
                     check(value != 0L) { "Failed to initialize Mahayana Rust host" }
                     SharedHost(handle = value, generation = processGeneration).also { created ->
                         created.refCount = 1
