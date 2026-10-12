@@ -414,6 +414,9 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
             throw error
         }
 
+    override fun accountPrivacyMode(): JSONObject =
+        host.request("feature.account.privacyMode")
+
     override fun rootConnectionResilienceProjection(): RootConnectionResilienceProjection =
         rootConnectionOwner.currentProjection()
 
