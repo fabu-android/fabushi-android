@@ -5,6 +5,12 @@
 //! desktop-OS work to an explicitly authorized external Remote Runner. Keeping this placement
 //! explicit prevents a second hidden execution boundary from being introduced into the APK.
 
+use crate::box_store_backend::{RemoteBoxStoreBackend, RemoteBoxStoreBackendConfig};
+use crate::server::{RemoteExecutionAuthorizer, RemoteExecutionService};
+use fabushi_android_shared::ExecutionError;
+use std::path::PathBuf;
+
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AndroidRemoteExecutionPlacement {
     AuthorizedExternalRunner,
@@ -25,6 +31,17 @@ pub const USER_CAPABILITY_REPLACEMENT: &str =
 
 pub const SECURITY_BOUNDARY: &str =
     "Android Host dispatch requires a protected account/device/executor binding and one-time capability approval; the external runner independently authenticates every operation and owns side-effect execution.";
+
+/// Compose the dedicated, durable Box Store execution service for an authorized external Runner.
+pub fn open_remote_box_store_execution_service<A: RemoteExecutionAuthorizer>(
+    journal_path: impl Into<PathBuf>,
+    authorizer: A,
+    config: RemoteBoxStoreBackendConfig,
+    now_ms: u64,
+) -> Result<RemoteExecutionService<A, RemoteBoxStoreBackend>, ExecutionError> {
+    let backend = RemoteBoxStoreBackend::open(config)?;
+    RemoteExecutionService::open(journal_path, authorizer, backend, now_ms)
+}
 
 #[cfg(test)]
 mod tests {
