@@ -80,13 +80,14 @@ import java.util.UUID
  * constructed or closed by screens/ViewModels. The process runtime becomes the single lifecycle
  * owner and is the insertion point for reconnect/resync and process-death recovery.
  */
-class AndroidCoordinatorRuntime private constructor(application: Application) : AndroidCoordinatorPort {
+class AndroidCoordinatorRuntime private constructor(application: Application) : AndroidCoordinatorPort, AutoCloseable {
     private val epochStore = object : CoordinatorEpochStore {
         private val preferences = application.getSharedPreferences("fabushi-coordinator-runtime", 0)
         override fun read(): Long = preferences.getLong("generation", 0L)
         override fun write(value: Long) { preferences.edit().putLong("generation", value).apply() }
     }
     private val processRuntime = CoordinatorProcessRuntime(epochStore)
+    private val closed = AtomicBoolean(false)
     val processGeneration: Long = processRuntime.start()
     private val host = MahayanaHost(application, processGeneration = processGeneration)
     private val remotePairingStore = AndroidRemotePairingStore(application)
@@ -2903,7 +2904,7 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
                         observeRootConnectionTransport(RootConnectionTransportState.DOWN)
                         Thread.sleep(20)
                     }
-                while (featureEventListeners.isNotEmpty()) {
+                while (!closed.get() && featureEventListeners.isNotEmpty()) {
                     val event = try {
                         host.request(
                             "feature.receive",
@@ -2926,7 +2927,7 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
                 }
             } finally {
                 eventPumpRunning.set(false)
-                if (featureEventListeners.isNotEmpty()) ensureFeatureEventPump()
+                if (!closed.get() && featureEventListeners.isNotEmpty()) ensureFeatureEventPump()
             }
         }
     }
@@ -2980,7 +2981,7 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
 
     private fun startComputerRebuildEventPump() {
         computerRebuildEventExecutor.execute {
-            while (true) {
+            while (!closed.get()) {
                 val event = try {
                     computerRebuildEventHost.request(
                         "feature.receive",
@@ -3184,6 +3185,29 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
         }
     }
 
+    override fun close() {
+        if (!closed.compareAndSet(false, true)) return
+
+        // Android may tear the process down without callbacks, but whenever the process runtime
+        // is explicitly disposed we must mirror Desktop's coordinator-first quiesce semantics.
+        // Stop producers before closing the two shared Host consumers so no background task can
+        // race a destroyed JNI handle or recreate process-owned work after disposal.
+        runCatching { connectivityManager.unregisterNetworkCallback(sendNetworkCallback) }
+        featureEventListeners.clear()
+        rootConnectionListeners.clear()
+        eventPumpExecutor.shutdownNow()
+        computerRebuildEventExecutor.shutdownNow()
+        computerRebuildMigrationExecutor.shutdownNow()
+        computerRebuildQueueExecutor.shutdownNow()
+        remoteComputerReconnectExecutor.shutdownNow()
+        storagePressureExecutor.shutdownNow()
+        sendSubmissionExecutor.shutdownNow()
+        rootConnectionRetryExecutor.shutdownNow()
+        computerRebuildEventHost.close()
+        host.close()
+        clearInstance(this)
+    }
+
     private fun parseComputerRebuildMigrationPhase(value: String): ComputerRebuildMigrationPhase? =
         when (value) {
             "backing-up" -> ComputerRebuildMigrationPhase.BACKING_UP
@@ -3205,5 +3229,15 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
             instance ?: synchronized(this) {
                 instance ?: AndroidCoordinatorRuntime(application).also { instance = it }
             }
+
+        fun closeProcessRuntime() {
+            instance?.close()
+        }
+
+        private fun clearInstance(expected: AndroidCoordinatorRuntime) {
+            synchronized(this) {
+                if (instance === expected) instance = null
+            }
+        }
     }
 }
