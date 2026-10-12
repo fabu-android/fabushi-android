@@ -837,6 +837,107 @@ pub fn send_latency_event(
     Ok(StructuredTelemetryEvent { level: TelemetryLevel::Info, metadata })
 }
 
+pub fn render_ttfr_event(
+    ttfr_ms: f64,
+    outcome: &str,
+    chunk_type: Option<&str>,
+    enter_epoch_ms: f64,
+    is_fork: bool,
+    trace_id: Option<&str>,
+    span_id: Option<&str>,
+    client_nonce: Option<&str>,
+    conversation_id: Option<&str>,
+) -> Result<StructuredTelemetryEvent, String> {
+    for (name, value) in [("ttfrMs", ttfr_ms), ("enterEpochMs", enter_epoch_ms)] {
+        if !value.is_finite() || value < 0.0 {
+            return Err(format!("{name} must be finite and nonnegative"));
+        }
+    }
+    if !matches!(outcome, "rendered" | "timeout" | "switched") {
+        return Err("render ttfr outcome is invalid".into());
+    }
+    if let Some(chunk_type) = chunk_type {
+        if !matches!(chunk_type, "assistant_text" | "send_message" | "tool_call") {
+            return Err("render ttfr chunk type is invalid".into());
+        }
+    }
+    let mut metadata = BTreeMap::from([
+        ("render_ttfr_ms".into(), ttfr_ms.round().to_string()),
+        ("outcome".into(), outcome.into()),
+        ("is_fork".into(), is_fork.to_string()),
+    ]);
+    if let Some(value) = chunk_type {
+        metadata.insert("chunk_type".into(), value.into());
+    }
+    for (key, value) in [
+        ("trace_id", trace_id),
+        ("span_id", span_id),
+        ("client_nonce", client_nonce),
+        ("conversation_id", conversation_id),
+    ] {
+        if let Some(value) = value {
+            metadata.insert(key.into(), value.into());
+        }
+    }
+    Ok(StructuredTelemetryEvent {
+        level: if outcome == "timeout" { TelemetryLevel::Warn } else { TelemetryLevel::Info },
+        metadata,
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn render_stream_event(
+    outcome: &str,
+    chunk_count: f64,
+    max_gap_ms: f64,
+    stalled_ms: f64,
+    stall_count: f64,
+    stream_ms: f64,
+    is_fork: bool,
+    trace_id: Option<&str>,
+    span_id: Option<&str>,
+    client_nonce: Option<&str>,
+    conversation_id: Option<&str>,
+) -> Result<StructuredTelemetryEvent, String> {
+    if !matches!(outcome, "turn_ended" | "switched" | "superseded" | "timeout") {
+        return Err("render stream outcome is invalid".into());
+    }
+    for (name, value) in [
+        ("chunkCount", chunk_count),
+        ("maxGapMs", max_gap_ms),
+        ("stalledMs", stalled_ms),
+        ("stallCount", stall_count),
+        ("streamMs", stream_ms),
+    ] {
+        if !value.is_finite() || value < 0.0 {
+            return Err(format!("{name} must be finite and nonnegative"));
+        }
+    }
+    let mut metadata = BTreeMap::from([
+        ("outcome".into(), outcome.into()),
+        ("chunk_count".into(), chunk_count.round().to_string()),
+        ("stream_gap_max_ms".into(), max_gap_ms.round().to_string()),
+        ("stream_stalled_ms".into(), stalled_ms.round().to_string()),
+        ("stall_count".into(), stall_count.round().to_string()),
+        ("stream_ms".into(), stream_ms.round().to_string()),
+        ("is_fork".into(), is_fork.to_string()),
+    ]);
+    for (key, value) in [
+        ("trace_id", trace_id),
+        ("span_id", span_id),
+        ("client_nonce", client_nonce),
+        ("conversation_id", conversation_id),
+    ] {
+        if let Some(value) = value {
+            metadata.insert(key.into(), value.into());
+        }
+    }
+    Ok(StructuredTelemetryEvent {
+        level: if outcome == "timeout" { TelemetryLevel::Warn } else { TelemetryLevel::Info },
+        metadata,
+    })
+}
+
 pub fn event_loop_pressure_event(
     p50_ms: f64,
     p95_ms: f64,
@@ -1103,6 +1204,46 @@ mod tests {
         assert_eq!(ack.level, TelemetryLevel::Info);
         assert_eq!(ack.metadata.get("attachment_count").map(String::as_str), Some("2"));
         assert!(send_ack_event(1.0, "bad", 1.0, false, 0.0, None, None, None, None, None, None).is_err());
+    }
+
+    #[test]
+    fn render_events_preserve_desktop_allowlists_and_timeout_severity() {
+        let ttfr = render_ttfr_event(
+            12.6,
+            "rendered",
+            Some("assistant_text"),
+            1_000.0,
+            false,
+            Some("trace"),
+            Some("span"),
+            Some("nonce"),
+            Some("conversation-1"),
+        )
+        .unwrap();
+        assert_eq!(ttfr.level, TelemetryLevel::Info);
+        assert_eq!(ttfr.metadata.get("render_ttfr_ms").map(String::as_str), Some("13"));
+        assert_eq!(ttfr.metadata.get("chunk_type").map(String::as_str), Some("assistant_text"));
+        assert!(render_ttfr_event(1.0, "bad", None, 1.0, false, None, None, None, None).is_err());
+        assert!(render_ttfr_event(1.0, "rendered", Some("future"), 1.0, false, None, None, None, None).is_err());
+
+        let stream = render_stream_event(
+            "timeout",
+            4.0,
+            125.4,
+            400.6,
+            2.0,
+            2_000.2,
+            true,
+            Some("trace"),
+            Some("span"),
+            Some("nonce"),
+            Some("conversation-1"),
+        )
+        .unwrap();
+        assert_eq!(stream.level, TelemetryLevel::Warn);
+        assert_eq!(stream.metadata.get("stream_gap_max_ms").map(String::as_str), Some("125"));
+        assert_eq!(stream.metadata.get("stream_stalled_ms").map(String::as_str), Some("401"));
+        assert!(render_stream_event("turn_ended", -1.0, 0.0, 0.0, 0.0, 0.0, false, None, None, None, None).is_err());
     }
 
     #[test]
