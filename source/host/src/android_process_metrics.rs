@@ -2,6 +2,7 @@ use crate::process_metrics::{ProcessMetricsSampler, ProcessScanRow};
 use serde::Serialize;
 
 const MAX_MEMORY_BYTES: u64 = 16 * 1024 * 1024 * 1024 * 1024;
+const ANDROID_PROCESS_METRICS_WINDOW_MS: u64 = 5 * 60 * 1_000;
 
 #[derive(Clone, Debug, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -19,6 +20,7 @@ pub struct AndroidProcessMetricsCollector {
     sampler: Option<ProcessMetricsSampler>,
     previous_cpu_time_ms: Option<u64>,
     last_observed_at_ms: Option<u64>,
+    window_started_at_ms: Option<u64>,
 }
 
 impl AndroidProcessMetricsCollector {
@@ -27,7 +29,7 @@ impl AndroidProcessMetricsCollector {
         observed_at_ms: u64,
         cpu_time_ms_cumulative: u64,
         memory_bytes: u64,
-    ) -> Result<AndroidProcessMetricsSample, String> {
+    ) -> Result<Option<AndroidProcessMetricsSample>, String> {
         if observed_at_ms == 0 {
             return Err("process metrics observedAtMs must be positive".into());
         }
@@ -63,6 +65,13 @@ impl AndroidProcessMetricsCollector {
                 memory_mb,
             }],
         );
+        let window_started_at_ms = *self.window_started_at_ms.get_or_insert(observed_at_ms);
+        self.previous_cpu_time_ms = Some(cpu_time_ms_cumulative);
+        self.last_observed_at_ms = Some(observed_at_ms);
+        if observed_at_ms.saturating_sub(window_started_at_ms) < ANDROID_PROCESS_METRICS_WINDOW_MS {
+            return Ok(None);
+        }
+
         let sample = sampler
             .create_sample()
             .ok_or("process metrics sampler did not produce a sample")?;
@@ -71,18 +80,16 @@ impl AndroidProcessMetricsCollector {
             .into_iter()
             .next()
             .ok_or("process metrics sampler omitted the Android app process")?;
+        self.window_started_at_ms = Some(observed_at_ms);
 
-        self.previous_cpu_time_ms = Some(cpu_time_ms_cumulative);
-        self.last_observed_at_ms = Some(observed_at_ms);
-
-        Ok(AndroidProcessMetricsSample {
+        Ok(Some(AndroidProcessMetricsSample {
             session_id: sample.session_id,
             sample_seqno: sample.sample_seqno,
             observed_at_ms,
             cpu_time_ms_sample: row.cpu_time_ms_sample.round().max(0.0) as u64,
             memory_mb: row.sample_avg_mem_mb,
             session_peak_memory_mb: row.session_peak_mem_mb,
-        })
+        }))
     }
 }
 
@@ -95,34 +102,47 @@ mod tests {
     use super::*;
 
     #[test]
-    fn process_metrics_reuse_canonical_sampler_sequence_and_peak() {
+    fn process_metrics_reuse_canonical_sampler_window_sequence_and_peak() {
         let mut collector = AndroidProcessMetricsCollector::default();
-        let first = collector.observe(1_000, 250, 64 * 1024 * 1024).unwrap();
-        let second = collector.observe(11_000, 1_250, 96 * 1024 * 1024).unwrap();
-        let third = collector.observe(21_000, 1_750, 80 * 1024 * 1024).unwrap();
+        assert!(collector.observe(1_000, 250, 64 * 1024 * 1024).unwrap().is_none());
+        assert!(collector.observe(101_000, 1_250, 96 * 1024 * 1024).unwrap().is_none());
+        let first = collector
+            .observe(301_000, 1_750, 80 * 1024 * 1024)
+            .unwrap()
+            .unwrap();
 
         assert_eq!(first.sample_seqno, 0);
+        assert_eq!(first.cpu_time_ms_sample, 1_500);
+        assert_eq!(first.memory_mb, 80.0);
+        assert_eq!(first.session_peak_memory_mb, 96.0);
+
+        let second = collector
+            .observe(601_000, 2_250, 40 * 1024 * 1024)
+            .unwrap()
+            .unwrap();
         assert_eq!(second.sample_seqno, 1);
-        assert_eq!(third.sample_seqno, 2);
-        assert_eq!(first.session_id, second.session_id);
-        assert_eq!(second.cpu_time_ms_sample, 1_000);
-        assert_eq!(third.cpu_time_ms_sample, 500);
-        assert_eq!(third.memory_mb, 80.0);
-        assert_eq!(third.session_peak_memory_mb, 96.0);
+        assert_eq!(second.session_id, first.session_id);
+        assert_eq!(second.cpu_time_ms_sample, 500);
+        assert_eq!(second.memory_mb, 40.0);
+        assert_eq!(second.session_peak_memory_mb, 96.0);
     }
 
     #[test]
     fn process_metrics_reject_invalid_without_advancing_canonical_sampler() {
         let mut collector = AndroidProcessMetricsCollector::default();
-        collector.observe(10, 100, 1).unwrap();
+        assert!(collector.observe(10, 100, 1).unwrap().is_none());
         assert!(collector.observe(10, 101, 1).is_err());
         assert!(collector.observe(11, 99, 1).is_err());
         assert!(collector
             .observe(12, 101, MAX_MEMORY_BYTES + 1)
             .is_err());
 
-        let next = collector.observe(20, 150, 2).unwrap();
-        assert_eq!(next.sample_seqno, 1);
-        assert_eq!(next.cpu_time_ms_sample, 50);
+        assert!(collector.observe(20, 150, 2).unwrap().is_none());
+        let sample = collector
+            .observe(300_010, 200, 3)
+            .unwrap()
+            .unwrap();
+        assert_eq!(sample.sample_seqno, 0);
+        assert_eq!(sample.cpu_time_ms_sample, 100);
     }
 }
