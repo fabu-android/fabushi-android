@@ -530,6 +530,11 @@ interface AndroidCoordinatorPort {
         boxState: String = "unknown",
         outcome: String,
     ): JSONObject = error("Agent load telemetry is unavailable on this Coordinator port")
+    fun reportOnboardingStep(
+        step: String,
+        stepIndex: Int,
+        direction: String,
+    ): JSONObject = error("Onboarding telemetry is unavailable on this Coordinator port")
     fun autoReviewInstructions(): AndroidAutoReviewInstructionsSnapshot =
         error("Auto Review instructions are unavailable on this Coordinator port")
     fun setAutoReviewInstructions(
