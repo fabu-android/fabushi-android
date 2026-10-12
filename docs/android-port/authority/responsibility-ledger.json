@@ -7422,6 +7422,97 @@
       "notes": "Do not inherit REMOTE-COMPUTER-001 implementation status wholesale. This row isolates Desktop shell product effects still missing above the already-implemented native transport/session foundation. CSS/font rows are platform-mechanism replacements only and do not close this responsibility."
     },
     {
+      "responsibility_id": "BOX-EGRESS-TUNNEL-ANDROID-001",
+      "domain": "remote-network-egress",
+      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "desktop_sources": [
+        {
+          "path": "source/electron-main/box/egress-tunnel-wiring.ts",
+          "blob_sha": "2b9971d51efe307821dd140db454f756b7b2beab",
+          "symbols": [
+            "createProductionEgressTunnelClient",
+            "createEgressTunnelWiring"
+          ]
+        },
+        {
+          "path": "source/shared/node/egress-tunnel/egress-tunnel-controller.ts",
+          "symbols": [
+            "EgressTunnelController",
+            "EgressTunnelStatus"
+          ]
+        },
+        {
+          "path": "source/shared/node/egress-tunnel/exit-client.ts",
+          "symbols": [
+            "EgressTunnelExitClient"
+          ]
+        }
+      ],
+      "responsibility": "Provide the remote Box with a bounded outbound TCP egress path through an authenticated websocket exit, including enable/reconcile, stream status, retry, target filtering and stale-connection fencing.",
+      "source_owner": "Desktop EgressTunnelController + ExitClient",
+      "visible_effect": "Remote Box workloads can reach allowed network targets through the product-managed egress path while private/reserved targets remain blocked by default.",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "source/host/src/remote_execution.rs",
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/remote/AndroidRemoteComputerDataPlane.kt"
+      ],
+      "android_owner": "missing dedicated egress owner; existing Remote Runner/DataPlane are adjacent but not semantically equivalent",
+      "platform_delta": "Android cannot reuse Electron/Node socket wiring, but native Rust/Android networking could still host the bounded client-side exit. Authorized Remote Runner only replaces remote tool execution; it does not replace general Box TCP egress.",
+      "implementation_status": "mapped",
+      "production_wiring": "Not closed. Existing Remote execution and WebRTC data-plane do not expose Desktop-equivalent websocket egress enable/status/stream forwarding semantics.",
+      "unit_test": "required",
+      "contract_test": "required",
+      "integration_test": "required",
+      "packaged_test": "required",
+      "device_test": "required",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Do not mark not-applicable merely because Android lacks Electron. The core user capability is network egress, distinct from Remote Runner execution. Implement a bounded native replacement or prove an external service replacement with equal product effect and security constraints."
+    },
+    {
+      "responsibility_id": "REMOTE-GATEWAY-DESCRIPTOR-FASTPATH-ANDROID-001",
+      "domain": "remote-gateway-cache",
+      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "desktop_sources": [
+        {
+          "path": "source/electron-main/box/gateway-descriptor-cache.ts",
+          "blob_sha": "5720b185a80b1313e6ab4a42646dfe435d7f8b6",
+          "symbols": [
+            "createPersistedGatewayDescriptorStore",
+            "createGatewayConnectFastPath"
+          ]
+        },
+        {
+          "path": "source/electron-main/box/gateway-descriptor-store.ts",
+          "blob_sha": "aa7eea31390a6276f0b181a6a1831c82c6b32f0b",
+          "symbols": [
+            "createDesktopGatewayDescriptorFastPath"
+          ]
+        }
+      ],
+      "responsibility": "Persist an account-fenced encrypted gateway descriptor, reject stale/corrupt/denied state, and allow a cached descriptor to serve as a fast path while one account-scoped live refresh converges in the background.",
+      "source_owner": "Desktop gateway descriptor store/fast-path",
+      "visible_effect": "Remote Computer can reconnect quickly after process restart without crossing accounts or indefinitely trusting a stale gateway descriptor.",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/security/AndroidRemoteBindingStore.kt",
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/security/AndroidRemoteControlSessionStore.kt",
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/remote/FabushiRemoteDeviceGateway.kt"
+      ],
+      "android_owner": "protected Remote binding/session stores plus Remote gateway; stale-while-refresh convergence is not yet an explicit owner",
+      "platform_delta": "Android Keystore/noBackup storage replaces Electron safeStorage/files. Current Android stores have stronger explicit credential expiry/account fencing, but the Desktop cached-first singleflight refresh behavior is not yet independently implemented/proven.",
+      "implementation_status": "mapped",
+      "production_wiring": "Protected binding/session storage is production-wired; gateway descriptor cached-first/live-refresh convergence remains open.",
+      "unit_test": "existing protected-store policy tests cover fencing/expiry/atomic storage; fast-path refresh tests required",
+      "contract_test": "required",
+      "integration_test": "required",
+      "packaged_test": "required",
+      "device_test": "required",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Keep source row 617 mapped until cached-first singleflight refresh/denial invalidation semantics are either implemented or proven unnecessary with an equivalent Android reconnect contract."
+    },
+    {
       "responsibility_id": "COMPUTER-UPDATE-CONFIRMATION-ANDROID-001",
       "domain": "remote-computer",
       "desktop_sources": [
