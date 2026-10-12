@@ -942,6 +942,7 @@ internal fun ProductionRenderer(
                         onSendAttachment = messagingModel::sendAttachment,
                         onSendVoice = messagingModel::sendVoice,
                         onLoadBlob = messagingModel::loadBlob,
+                        onLoadBlobFile = messagingModel::loadBlobToFile,
                         onSendContact = messagingModel::sendContact,
                         onSendPoll = messagingModel::sendPoll,
                         onVotePoll = messagingModel::votePoll,
