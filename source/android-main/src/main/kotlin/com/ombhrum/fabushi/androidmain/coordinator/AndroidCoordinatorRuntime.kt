@@ -22,6 +22,7 @@ import com.ombhrum.fabushi.androidpreload.runtime.AccountTruthState
 import com.ombhrum.fabushi.androidpreload.runtime.RootConnectionResilienceProjection
 import com.ombhrum.fabushi.androidpreload.runtime.RootConnectionTransportState
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidCoordinatorPort
+import com.ombhrum.fabushi.androidpreload.runtime.AndroidEntrypointAvailabilitySnapshot
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidMandatoryUpdatePolicy
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidUpdateTrackPolicy
 import com.ombhrum.fabushi.AndroidBackendUpdateSignal
@@ -131,6 +132,8 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
         SharedPreferencesMandatoryUpdateStateStore(application),
         processGeneration = processGeneration,
     )
+    private val entrypointAvailabilityOwner =
+        AndroidEntrypointAvailabilityOwner(processGeneration)
     private val computerRebuildOwner = ComputerRebuildStateOwner(
         SharedPreferencesComputerRebuildStateStore(application),
         processGeneration = processGeneration,
@@ -320,6 +323,33 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
             autoUpdateWhenIdleGateObserved = settled.autoUpdateWhenIdleGateObserved,
             autoUpdateWhenIdleGateEnabled =
                 settled.autoUpdateWhenIdleGateObserved && settled.autoUpdateWhenIdleGateEnabled,
+        )
+    }
+
+    override fun refreshEntrypointAvailability(): AndroidEntrypointAvailabilitySnapshot {
+        val auth = authStatus()
+        val accountEpoch = accountAccessOwner.currentProjection().accountEpoch
+        if (!auth.optBoolean("loggedIn", false)) {
+            return entrypointAvailabilityOwner.clearForLoggedOutAccount(accountEpoch)
+        }
+
+        val token = entrypointAvailabilityOwner.begin(accountEpoch)
+        val policy = runCatching {
+            host.probeUpdatePolicy("android-entrypoints-" + UUID.randomUUID())
+        }.getOrNull()
+        val roster = runCatching {
+            host.requestValue("listAgents") as? JSONArray
+        }.getOrNull()
+        val currentEpoch = accountAccessOwner.currentProjection().accountEpoch
+        return entrypointAvailabilityOwner.settle(
+            token = token,
+            currentAccountEpoch = currentEpoch,
+            sandAgentNetworkGateObserved =
+                policy?.optBoolean("sandAgentNetworkGateObserved", false) == true,
+            sandAgentNetworkGateEnabled =
+                policy?.optBoolean("sandAgentNetworkGateEnabled", false) == true,
+            rosterObserved = roster != null,
+            canonicalAgentCount = roster?.length() ?: 0,
         )
     }
 
