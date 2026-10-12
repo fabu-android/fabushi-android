@@ -496,6 +496,50 @@ class ComputerRebuildStateOwnerTest {
 
 
     @Test
+    fun pendingStallTelemetryProjectsCanonicalEpisodeAckAndAndroidTransportLiveness() {
+        val snapshot = ComputerRebuildSnapshot(
+            accountEpoch = 17L,
+            kind = ComputerRebuildKind.RECONNECTING,
+            operationId = "operation-17",
+            acknowledged = true,
+            connected = false,
+            episodeStartedAtMs = 1_000L,
+        )
+        assertNull(
+            projectComputerRebuildPendingStallTelemetry(
+                snapshot,
+                ComputerRebuildVisibilityTelemetry(
+                    elapsedMs = 599_999L,
+                    stageElapsedMs = 1L,
+                    isStalled = false,
+                    stage = null,
+                ),
+            ),
+        )
+
+        val projected = projectComputerRebuildPendingStallTelemetry(
+            snapshot,
+            ComputerRebuildVisibilityTelemetry(
+                elapsedMs = 600_000L,
+                stageElapsedMs = 42L,
+                isStalled = true,
+                stage = ComputerRebuildMigrationPhase.CREATING,
+            ),
+        )!!
+        assertEquals("17:1000:operation-17", projected.episodeKey)
+        assertEquals("reconnecting", projected.rebuildKind)
+        assertEquals(600_000L, projected.elapsedMs)
+        assertTrue(projected.hasAck)
+        assertFalse(projected.streamAttached)
+        assertNull(
+            projectComputerRebuildPendingStallTelemetry(
+                ComputerRebuildSnapshot(accountEpoch = 17L),
+                ComputerRebuildVisibilityTelemetry(600_000L, 0L, true, null),
+            ),
+        )
+    }
+
+    @Test
     fun visibilityTelemetryPersistsEpisodeStageAndStallAcrossProcessReopen() {
         val store = MemoryStore()
         var now = 1_000L
