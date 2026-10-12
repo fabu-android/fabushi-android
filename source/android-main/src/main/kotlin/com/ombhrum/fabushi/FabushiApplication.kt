@@ -60,6 +60,12 @@ internal class FabushiProcessRuntime(
     private var interactiveActivityRef: WeakReference<ComponentActivity>? = null
     private val coordinator = AndroidCoordinatorPorts.presentation(application).also {
         AndroidCoordinatorBridge.installTrustedRuntime(it)
+        if (ciBootstrapActive) {
+            val settled = it.setOnboardingSeen(true)
+            check(settled.optBoolean("hasSeenOnboarding", false)) {
+                "CI authenticated session could not settle canonical onboarding state"
+            }
+        }
     }
     private val rootShellFocusRefreshOwner = RootShellFocusRefreshOwner()
     private val rootShellFocusRefreshExecutor = Executors.newSingleThreadExecutor { runnable ->
