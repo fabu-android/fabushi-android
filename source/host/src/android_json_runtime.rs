@@ -8,6 +8,7 @@ use crate::agent_attachment::{
 };
 use crate::android_sidebar_sections::{AndroidSidebarSection, AndroidSidebarSections};
 use crate::host_secret_store::get_or_create_host_machine_id;
+use crate::env_descriptor_account_binding::EnvDescriptorAccountBinding;
 use crate::host_runner_composition::AuthenticatedRemoteHostRunner;
 use crate::messaging_service::AndroidMessagingService;
 use crate::composer_draft::DurableComposerDraftOwner;
@@ -635,6 +636,9 @@ impl AndroidMessagingAccessGrant {
 pub struct AndroidJsonHost {
     mode: AndroidHostMode,
     account: AndroidAccountService,
+    account_binding: EnvDescriptorAccountBinding,
+    preexisting_account_durable_data: bool,
+    account_binding_refusal: Option<String>,
     agents: Arc<Mutex<AndroidAgentRoster>>,
     sidebar_sections: Arc<Mutex<AndroidSidebarSections>>,
     transcript: Arc<Mutex<TranscriptStore>>,
@@ -728,6 +732,9 @@ impl AndroidJsonHost {
         device_id: impl Into<String>,
     ) -> Self {
         let app_data_dir = app_data_dir.into();
+        let preexisting_account_durable_data = has_existing_account_durable_data(&app_data_dir);
+        let startup_has_protected_session = mode == AndroidHostMode::Production
+            && initial_account_session_json.is_some_and(|raw| !raw.trim().is_empty());
         // Every durable Host store shares this root. Create it explicitly before opening any
         // store instead of depending on whichever store happens to create the parent first.
         // This is required for deterministic process-reopen recovery and removes a parallel-test
@@ -742,7 +749,7 @@ impl AndroidJsonHost {
                 && !device_id.chars().any(|value| value.is_whitespace() || value.is_control()),
             "invalid canonical Android machine id",
         );
-        let account = AndroidAccountService::with_persistent_browser_attempts(
+        let mut account = AndroidAccountService::with_persistent_browser_attempts(
             device_id.clone(),
             (mode == AndroidHostMode::Production)
                 .then_some(initial_account_session_json)
@@ -750,6 +757,34 @@ impl AndroidJsonHost {
             app_data_dir.join("account-oauth-attempt.json"),
         )
         .unwrap_or_else(|error| panic!("failed to initialize Android account service: {error}"));
+        let account_binding = EnvDescriptorAccountBinding::new(
+            app_data_dir.join("account-environment-bindings.json"),
+        );
+        let mut account_binding_refusal = None;
+        if let Some(account_slot) = account.account_storage_scope() {
+            let descriptor = account.environment_descriptor_url();
+            match account_binding.authorize(
+                &account_slot,
+                &descriptor,
+                startup_has_protected_session,
+                preexisting_account_durable_data,
+            ) {
+                Ok(true) => {}
+                Ok(false) => {
+                    account.clear_local_session();
+                    account_binding_refusal = Some(
+                        "Existing Android durable data is bound to a different account environment."
+                            .to_string(),
+                    );
+                }
+                Err(error) => {
+                    account.clear_local_session();
+                    account_binding_refusal = Some(format!(
+                        "Android account environment binding is invalid: {error}"
+                    ));
+                }
+            }
+        }
         let agents = Arc::new(Mutex::new(
             AndroidAgentRoster::open(app_data_dir.join("agents.json"))
                 .unwrap_or_else(|error| panic!("failed to open canonical Android agent roster: {error}")),
@@ -863,6 +898,9 @@ impl AndroidJsonHost {
         Self {
             mode,
             account,
+            account_binding,
+            preexisting_account_durable_data,
+            account_binding_refusal,
             agents,
             sidebar_sections,
             transcript,
@@ -1877,6 +1915,12 @@ impl AndroidJsonHost {
     }
 
     fn account_status(&mut self) -> Result<Value, String> {
+        if let Some(message) = self.account_binding_refusal.clone() {
+            return Ok(with_account_session_mutation(
+                json!({"loggedIn":false,"user":Value::Null,"errorMessage":message}),
+                Some(AccountSessionMutation::Clear),
+            ));
+        }
         if self.mode == AndroidHostMode::Test {
             return Ok(self.auth_status());
         }
@@ -2654,6 +2698,7 @@ impl AndroidJsonHost {
             .live_account_fence
             .lock()
             .map_err(|_| "live account fence lock poisoned".to_string())? = None;
+        self.account_binding_refusal = None;
         if self.mode == AndroidHostMode::Test {
             self.logged_in = false;
             return Ok(self.auth_status());
@@ -2669,6 +2714,39 @@ impl AndroidJsonHost {
         }
         let (status, mutation) = self.account.logout()?;
         Ok(with_account_session_mutation(status, Some(mutation)))
+    }
+
+    fn authorize_current_account_binding(&mut self) -> Result<(), String> {
+        let account_slot = self
+            .account
+            .account_storage_scope()
+            .ok_or("account environment binding requires a settled account scope")?;
+        let descriptor = self.account.environment_descriptor_url();
+        match self.account_binding.authorize(
+            &account_slot,
+            &descriptor,
+            false,
+            self.preexisting_account_durable_data,
+        ) {
+            Ok(true) => {
+                self.account_binding_refusal = None;
+                Ok(())
+            }
+            Ok(false) => {
+                self.account.clear_local_session();
+                let message =
+                    "Existing Android durable data belongs to another account environment."
+                        .to_string();
+                self.account_binding_refusal = Some(message.clone());
+                Err(message)
+            }
+            Err(error) => {
+                self.account.clear_local_session();
+                let message = format!("Android account environment binding failed: {error}");
+                self.account_binding_refusal = Some(message.clone());
+                Err(message)
+            }
+        }
     }
 
     fn auth_browser_start(&mut self) -> Result<Value, String> {
@@ -2700,7 +2778,24 @@ impl AndroidJsonHost {
         let (result, mutation) = self
             .account
             .browser_poll(required_string(params, "attemptId")?)?;
-        let current_fence = self.account.session_fence();
+        let mut current_fence = self.account.session_fence();
+        if current_fence.is_some() && previous_fence != current_fence {
+            if let Err(error) = self.authorize_current_account_binding() {
+                current_fence = None;
+                *self
+                    .live_account_fence
+                    .lock()
+                    .map_err(|_| "live account fence lock poisoned".to_string())? = None;
+                return Ok(with_account_session_mutation(
+                    json!({
+                        "attemptId":required_string(params, "attemptId")?,
+                        "status":"failed",
+                        "errorMessage":error,
+                    }),
+                    Some(AccountSessionMutation::Clear),
+                ));
+            }
+        }
         *self
             .live_account_fence
             .lock()
@@ -3267,7 +3362,24 @@ impl AndroidJsonHost {
         }
         let previous_fence = self.account.session_fence();
         let (result, mutation) = self.account.browser_poll(attempt_id)?;
-        let current_fence = self.account.session_fence();
+        let mut current_fence = self.account.session_fence();
+        if current_fence.is_some() && previous_fence != current_fence {
+            if let Err(error) = self.authorize_current_account_binding() {
+                current_fence = None;
+                *self
+                    .live_account_fence
+                    .lock()
+                    .map_err(|_| "live account fence lock poisoned".to_string())? = None;
+                return Ok(with_account_session_mutation(
+                    json!({
+                        "attemptId":required_string(params, "attemptId")?,
+                        "status":"failed",
+                        "errorMessage":error,
+                    }),
+                    Some(AccountSessionMutation::Clear),
+                ));
+            }
+        }
         *self
             .live_account_fence
             .lock()
@@ -6440,6 +6552,20 @@ impl Drop for AndroidJsonHost {
         }
         self.turn_cancellations.clear();
     }
+}
+
+fn has_existing_account_durable_data(app_data_dir: &std::path::Path) -> bool {
+    [
+        "messaging-repository.json",
+        "transcript.json",
+        "agents.json",
+        "composer-drafts.json",
+        "agent-turn-journal.json",
+        "automation-runtime.json",
+        "plugin-variables.json",
+    ]
+    .iter()
+    .any(|name| app_data_dir.join(name).metadata().is_ok())
 }
 
 fn required_u64(value: &Value, key: &str) -> Result<u64, String> {
