@@ -475,7 +475,10 @@ interface AndroidCoordinatorPort {
         AndroidPrReviewPreferences(user = null, team = null)
     fun onboardingSeen(): JSONObject =
         error("Onboarding setting is unavailable on this Coordinator port")
-    fun setOnboardingSeen(hasSeenOnboarding: Boolean): JSONObject =
+    fun setOnboardingSeen(
+        expectedAccountScope: String,
+        hasSeenOnboarding: Boolean,
+    ): JSONObject =
         error("Onboarding setting mutation is unavailable on this Coordinator port")
 
     fun timeZoneSettings(): AndroidTimeZoneSettings =
