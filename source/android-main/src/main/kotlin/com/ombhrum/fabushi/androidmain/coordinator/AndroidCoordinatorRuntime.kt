@@ -702,6 +702,101 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
                 .put("direction", direction),
         )
 
+
+    override fun reportRebuildEscalation(
+        rebuildKind: String,
+        elapsedMs: Long,
+        action: String,
+        escalation: String,
+    ): JSONObject =
+        host.request(
+            "feature.telemetry.recovery",
+            JSONObject()
+                .put("kind", "rebuild_escalation")
+                .put("rebuildKind", rebuildKind)
+                .put("elapsedMs", elapsedMs.coerceAtLeast(0L))
+                .put("action", action)
+                .put("escalation", escalation),
+        )
+
+    override fun reportRebuildPendingStall(
+        rebuildKind: String,
+        elapsedMs: Long,
+        hasAck: Boolean,
+        streamAttached: Boolean,
+    ): JSONObject =
+        host.request(
+            "feature.telemetry.recovery",
+            JSONObject()
+                .put("kind", "rebuild_pending_stall")
+                .put("rebuildKind", rebuildKind)
+                .put("elapsedMs", elapsedMs.coerceAtLeast(0L))
+                .put("hasAck", hasAck)
+                .put("streamAttached", streamAttached),
+        )
+
+    override fun reportReplicaResync(
+        replica: String,
+        outcome: String,
+        attempts: Int,
+        durationMs: Long,
+        bufferOverflowed: Boolean,
+        epochChanged: Boolean,
+    ): JSONObject =
+        host.request(
+            "feature.telemetry.recovery",
+            JSONObject()
+                .put("kind", "replica_resync")
+                .put("replica", replica)
+                .put("outcome", outcome)
+                .put("attempts", attempts.coerceAtLeast(0))
+                .put("durationMs", durationMs.coerceAtLeast(0L))
+                .put("bufferOverflowed", bufferOverflowed)
+                .put("epochChanged", epochChanged),
+        )
+
+    override fun reportSendJournalRestore(
+        outcome: String,
+        phase: String,
+        ageMs: Long,
+        recordCount: Int,
+    ): JSONObject =
+        host.request(
+            "feature.telemetry.recovery",
+            JSONObject()
+                .put("kind", "send_journal_restore")
+                .put("outcome", outcome)
+                .put("phase", phase)
+                .put("ageMs", ageMs.coerceAtLeast(0L))
+                .put("recordCount", recordCount.coerceAtLeast(0)),
+        )
+
+    override fun reportResyncCompleted(
+        failedSteps: List<String>,
+        durationMs: Long,
+    ): JSONObject =
+        host.request(
+            "feature.telemetry.recovery",
+            JSONObject()
+                .put("kind", "resync_completed")
+                .put("failedSteps", JSONArray(failedSteps))
+                .put("durationMs", durationMs.coerceAtLeast(0L)),
+        )
+
+    override fun reportRecoveryAction(
+        action: String,
+        failureClass: String,
+        consecutiveIdentical: Int,
+    ): JSONObject =
+        host.request(
+            "feature.telemetry.recovery",
+            JSONObject()
+                .put("kind", "recovery_action")
+                .put("action", action)
+                .put("failureClass", failureClass)
+                .put("consecutiveIdentical", consecutiveIdentical.coerceAtLeast(1)),
+        )
+
     override fun timeZoneSettings(): AndroidTimeZoneSettings {
         val detected = ZoneId.systemDefault().id
         host.request(
