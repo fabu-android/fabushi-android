@@ -1109,6 +1109,40 @@ impl AndroidJsonHost {
         }))
     }
 
+    fn mcp_server_custom_instructions(&self, params: &Value) -> Result<Value, String> {
+        let server_id = required_string(params, "serverId")?;
+        let account_fence = self.current_turn_account_fence()?;
+        let instructions = self
+            .mcp_server_tool_settings
+            .lock()
+            .map_err(|_| "MCP server tool settings lock poisoned".to_string())?
+            .custom_instructions_for(&account_fence, server_id)?;
+        Ok(json!({
+            "accountFence": account_fence,
+            "serverId": server_id,
+            "instructions": instructions,
+        }))
+    }
+
+    fn mcp_server_custom_instructions_set(&mut self, params: &Value) -> Result<Value, String> {
+        let server_id = required_string(params, "serverId")?;
+        let instructions = params
+            .get("instructions")
+            .and_then(Value::as_str)
+            .ok_or("MCP custom instructions string is required")?;
+        let account_fence = self.current_turn_account_fence()?;
+        let saved = self
+            .mcp_server_tool_settings
+            .lock()
+            .map_err(|_| "MCP server tool settings lock poisoned".to_string())?
+            .set_custom_instructions(&account_fence, server_id, instructions)?;
+        Ok(json!({
+            "accountFence": account_fence,
+            "serverId": server_id,
+            "instructions": saved,
+        }))
+    }
+
     fn mcp_server_tools_list(&self, params: &Value) -> Result<Value, String> {
         let server_id = required_string(params, "serverId")?;
         let account_fence = self.current_turn_account_fence()?;
@@ -1375,6 +1409,8 @@ impl AndroidJsonHost {
             "feature.auth.oauthPoll" => self.oauth_poll(params),
             "feature.auth.oauthCancel" => self.oauth_cancel(params),
             "feature.mcp.serverCatalog" => self.mcp_server_catalog(),
+            "feature.mcp.serverInstructions.get" => self.mcp_server_custom_instructions(params),
+            "feature.mcp.serverInstructions.set" => self.mcp_server_custom_instructions_set(params),
             "feature.mcp.serverTools.list" => self.mcp_server_tools_list(params),
             "feature.mcp.serverTools.toggle" => self.mcp_server_tools_toggle(params),
             "feature.mcp.oauthComplete" => self.mcp_oauth_complete(params),
