@@ -55,3 +55,28 @@ internal fun movePinnedAgent(
         addAll(withoutMoved.subList(insertionIndex, withoutMoved.size))
     }
 }
+
+
+internal data class SidebarAgentProjection<T : SidebarOrderAgent>(
+    val pinned: List<T>,
+    val recent: List<T>,
+)
+
+/**
+ * Presentation projection over Host-owned durable ordering facts.
+ * Pinned order follows the canonical Host list; unpinned recents follow canonical updatedAt.
+ */
+internal fun <T : SidebarOrderAgent> projectSidebarAgents(
+    agents: List<T>,
+    pinnedAgentIds: List<String>,
+    updatedAt: (T) -> Long,
+): SidebarAgentProjection<T> {
+    val recentFirst = agents.sortedWith(
+        compareByDescending<T> { updatedAt(it) }.thenBy { it.id },
+    )
+    val partitioned = partitionSidebarAgents(recentFirst, pinnedAgentIds)
+    return SidebarAgentProjection(
+        pinned = partitioned.pinned,
+        recent = partitioned.unpinned,
+    )
+}
