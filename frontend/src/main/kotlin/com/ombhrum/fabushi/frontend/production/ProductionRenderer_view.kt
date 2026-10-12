@@ -133,6 +133,11 @@ internal fun ProductionRenderer(
                     projection = state.rootConnectionProjection,
                     onRetry = model::retryRootConnection,
                 )
+                RootShellNotificationHost(
+                    runtimePort = runtimePort,
+                    loggedIn = state.loggedIn,
+                    transport = state.rootConnectionProjection.transport,
+                )
                 if (showAbout) {
                     AndroidAboutDialog(
                         updateState = updateState,
