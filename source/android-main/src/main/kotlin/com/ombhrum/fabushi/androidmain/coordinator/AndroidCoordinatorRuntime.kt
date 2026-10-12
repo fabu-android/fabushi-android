@@ -185,6 +185,9 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
     private val processMetricsExecutor = Executors.newSingleThreadScheduledExecutor { runnable ->
         Thread(runnable, "fabushi-process-metrics").apply { isDaemon = true }
     }
+    private val processSessionHeartbeatExecutor = Executors.newSingleThreadScheduledExecutor { runnable ->
+        Thread(runnable, "fabushi-process-session-heartbeat").apply { isDaemon = true }
+    }
     private val mainThreadPressureSampler = AndroidMainThreadPressureSampler {
             p50Ms,
             p95Ms,
@@ -253,6 +256,19 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
             },
             PROCESS_METRICS_INITIAL_DELAY_SECONDS,
             PROCESS_METRICS_SAMPLE_SECONDS,
+            TimeUnit.SECONDS,
+        )
+        processSessionHeartbeatExecutor.scheduleWithFixedDelay(
+            {
+                runCatching {
+                    host.request(
+                        "feature.telemetry.session.heartbeat",
+                        JSONObject().put("observedAtMs", System.currentTimeMillis()),
+                    )
+                }
+            },
+            PROCESS_SESSION_HEARTBEAT_SECONDS,
+            PROCESS_SESSION_HEARTBEAT_SECONDS,
             TimeUnit.SECONDS,
         )
         storagePressureExecutor.scheduleWithFixedDelay(
@@ -3530,6 +3546,7 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
         remoteComputerReconnectExecutor.shutdownNow()
         storagePressureExecutor.shutdownNow()
         processMetricsExecutor.shutdownNow()
+        processSessionHeartbeatExecutor.shutdownNow()
         mainThreadPressureSampler.close()
         sendSubmissionExecutor.shutdownNow()
         rootConnectionRetryExecutor.shutdownNow()
@@ -3554,6 +3571,7 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
         private const val STORAGE_PRESSURE_SAMPLE_SECONDS = 60L
         private const val PROCESS_METRICS_INITIAL_DELAY_SECONDS = 10L
         private const val PROCESS_METRICS_SAMPLE_SECONDS = 10L
+        private const val PROCESS_SESSION_HEARTBEAT_SECONDS = 60L
         private const val COMPUTER_REBUILD_RECONNECT_MS = 3_000L
         @Volatile private var instance: AndroidCoordinatorRuntime? = null
 
