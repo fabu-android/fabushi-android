@@ -2368,8 +2368,8 @@ mod tests {
         let logout =
             encode_delete_mcp_oauth_token_request("https://mcp.example.test", "work");
         assert_eq!(logout.first().copied(), Some(0x0a));
-        assert!(logout.windows(5).any(|window| window == b"work\x00".get(..5).unwrap_or(b"")));
         assert!(logout.windows(4).any(|window| window == b"sand"));
+        assert!(logout.ends_with(b"work"));
 
         let rename = encode_rename_mcp_oauth_account_request(17, "work", "personal");
         assert_eq!(rename[..2], [0x08, 0x11]);
