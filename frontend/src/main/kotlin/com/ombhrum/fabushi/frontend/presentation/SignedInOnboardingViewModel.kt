@@ -4,7 +4,6 @@ import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidCoordinatorPort
-import java.security.MessageDigest
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -13,26 +12,8 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-private class SignedInOnboardingSeenStore(application: Application) {
-    private val preferences = application.getSharedPreferences("fabushi.signed-in-onboarding.v1", 0)
-
-    fun read(accountSlot: String): Boolean = preferences.getBoolean(key(accountSlot), false)
-
-    fun markSeen(accountSlot: String) {
-        preferences.edit().putBoolean(key(accountSlot), true).apply()
-    }
-
-    private fun key(accountSlot: String): String {
-        val digest = MessageDigest.getInstance("SHA-256")
-            .digest(accountSlot.toByteArray(Charsets.UTF_8))
-            .joinToString("") { byte -> "%02x".format(byte) }
-        return "seen:" + digest
-    }
-}
-
 internal class SignedInOnboardingViewModel(application: Application) : AndroidViewModel(application) {
     private val coordinator: AndroidCoordinatorPort = CoordinatorClient.presentation()
-    private val seenStore = SignedInOnboardingSeenStore(application)
     private val operationFence = SignedInOnboardingOperationFence()
     private val mutableState = MutableStateFlow(SignedInOnboardingUiState())
     val state: StateFlow<SignedInOnboardingUiState> = mutableState.asStateFlow()
@@ -53,7 +34,8 @@ internal class SignedInOnboardingViewModel(application: Application) : AndroidVi
                         .ifBlank { user?.optString("email").orEmpty().trim() }
                         .takeIf(String::isNotEmpty)
                         ?: error("Signed-in onboarding requires an account identity")
-                    val hasSeen = seenStore.read(accountSlot)
+                    val hasSeen = coordinator.onboardingSeen()
+                        .optBoolean("hasSeenOnboarding", false)
                     val count = runCatching { coordinator.agentList().length() }.getOrNull()
                     Triple(accountSlot, hasSeen, count)
                 }
@@ -182,12 +164,19 @@ internal class SignedInOnboardingViewModel(application: Application) : AndroidVi
                     operationFence.finish(token)
                     return@onSuccess
                 }
-                seenStore.markSeen(accountSlot)
+                val onboardingSeenPersisted = runCatching {
+                    coordinator.setOnboardingSeen(true)
+                        .optBoolean("hasSeenOnboarding", false)
+                }.getOrDefault(false)
                 mutableState.value = mutableState.value.copy(
                     creating = false,
                     step = SignedInOnboardingStep.HAND_OFF,
                     createdAgentId = id,
-                    error = null,
+                    error = if (onboardingSeenPersisted) {
+                        null
+                    } else {
+                        "Your Agent was created, but onboarding completion could not be saved."
+                    },
                 )
                 delay(SIGNED_IN_ONBOARDING_HAND_OFF_DWELL_MS)
                 if (operationFence.accepts(token, mutableState.value.accountSlot)) {
