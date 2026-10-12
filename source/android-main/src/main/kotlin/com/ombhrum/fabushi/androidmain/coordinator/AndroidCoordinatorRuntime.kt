@@ -646,6 +646,25 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
                 .put("uptimeMs", uptimeMs),
         )
 
+    override fun reportAgentLoadTelemetry(
+        durationMs: Long,
+        cold: Boolean,
+        stale: Boolean?,
+        boxState: String,
+        outcome: String,
+    ): JSONObject =
+        host.request(
+            "feature.telemetry.agentLoad",
+            JSONObject()
+                .put("durationMs", durationMs.coerceAtLeast(0L))
+                .put("cold", cold)
+                .put("boxState", boxState)
+                .put("outcome", outcome)
+                .apply {
+                    stale?.let { put("stale", it) }
+                },
+        )
+
     override fun reportAgentLoad(
         durationMs: Long,
         openRpcMs: Long?,
