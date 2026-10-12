@@ -373,6 +373,9 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
     override fun mcpServerCatalog(): JSONArray =
         host.request("feature.mcp.serverCatalog").optJSONArray("servers") ?: JSONArray()
 
+    override fun mcpTeamPopularity(): JSONObject =
+        host.request("feature.mcp.teamPopularity")
+
     override fun mcpServerTools(serverId: String): JSONArray =
         host.request(
             "feature.mcp.serverTools.list",
