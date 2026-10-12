@@ -171,12 +171,46 @@ class AndroidDeepLinkRouterTest {
                 "fabushi://app/v1/info?topic=deep-links",
             ),
         )
+        assertEquals(
+            AndroidDeepLink.Info(
+                source = AndroidDeepLinkSource.HTTPS,
+                topic = "deep-links",
+            ),
+            AndroidDeepLinkRouter.parse(
+                "https://cursor.com/sand/link/v1/info?topic=deep-links",
+            ),
+        )
         assertNull(AndroidDeepLinkRouter.parse("fabushi://app/v1/info?topic=other"))
+        assertNull(AndroidDeepLinkRouter.parse("https://cursor.com/sand/link/v1/info?topic=other"))
+        assertNull(AndroidDeepLinkRouter.parse("https://evil.example/sand/link/v1/info?topic=deep-links"))
+        assertNull(AndroidDeepLinkRouter.parse("https://cursor.com:444/sand/link/v1/info?topic=deep-links"))
         assertNull(
             AndroidDeepLinkRouter.parse(
                 "fabushi://app/v1/info?topic=deep-links&extra=1",
             ),
         )
+    }
+
+    @Test
+    fun protocolAndHttpsInfoRoutesShareCanonicalDedupeIdentity() {
+        val delivered = mutableListOf<AndroidDeepLink>()
+        val controller = AndroidDeepLinkController(dispatch = { delivered.add(it) })
+        controller.markReady()
+
+        assertTrue(
+            controller.handleCandidate(
+                "https://cursor.com/sand/link/v1/info?topic=deep-links",
+                "https",
+            ),
+        )
+        assertTrue(
+            !controller.handleCandidate(
+                "fabushi://app/v1/info?topic=deep-links",
+                "protocol",
+            ),
+        )
+        assertEquals(1, delivered.size)
+        assertEquals(AndroidDeepLinkSource.HTTPS, (delivered.single() as AndroidDeepLink.Info).source)
     }
 
 }
