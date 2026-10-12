@@ -10024,7 +10024,11 @@
       "android_disposition": "android-adapted",
       "android_target": [
         "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/recovered/features/conversation/workspace/media-viewer_view.kt",
-        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/features/conversations/ConversationSurfaces.kt"
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/features/conversations/ConversationSurfaces.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/presentation/MessagingViewModel.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/features/conversations/FabushiMessagingSurface.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/production/ProductionRenderer_view.kt",
+        "mobile/android/app/src/test/java/com/ombhrum/fabushi/AndroidMediaViewerProjectionTest.kt"
       ],
       "android_owner": "Native Compose viewer owns ephemeral gallery index and transform only; Messaging Host/blob loader owns bytes and canonical messages.",
       "platform_delta": "Compose/AndroidView replace DOM portal/video elements. a3ceee97 adds native image/video gallery navigation, filmstrip, 1x-5x pinch zoom/pan/fit and load-generation fencing. f2459b2a adds native in-app PDF rendering through Android PdfRenderer with bounded page rasterization, previous/next controls and stale-render fencing. Android still lacks Desktop-equivalent Agent attachment gallery wiring, focus restoration/keyboard navigation and audio-in-strip semantics.",
@@ -10037,7 +10041,7 @@
       "device_test": "required image/video gesture, rotation/process recreation and accessibility acceptance",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Do not mark verified until Agent attachment wiring, audio gallery semantics and keyboard/focus/accessibility behavior have exact-head evidence; PDF handoff is now implemented but still requires exact-head CI/device evidence."
+      "notes": "Do not mark verified until Agent attachment wiring, audio gallery semantics and keyboard/focus/accessibility behavior have exact-head evidence; PDF handoff is now implemented but still requires exact-head CI/device evidence. Large media now preserves Desktop ranged-read semantics without buffering the whole payload in Kotlin: Host remains the canonical blob owner, MessagingViewModel reads bounded 4 MiB ranges directly into an app-private temporary file, rejects empty/oversized/out-of-declared-size chunks, deletes partial files on failure, and AndroidMediaViewer routes video/PDF/generic files to that file path with stale-generation cleanup. Commits e4132f4eb592cbfea6b9047540fc8e2ea5fbdab8, 44f45ba22ad5f12cc215201bbbb7b01ad65d10fa, 37d8e39b0420a81da92268386afa750bf21ad1fa, 511d3a8c4ad7347aba010aba2c124458f8a6d528, 23f268261f20d934bb6964e8c245b84f490c82bc and 763405f0485a73e7ffb4cc99966e28ce75f591c2. Exact-descendant-head Actions/package/device verification remains required."
     },
     {
       "responsibility_id": "CONVERSATION-PDF-VIEWER-ANDROID-001",
@@ -10071,7 +10075,11 @@
       "android_disposition": "android-adapted",
       "android_target": [
         "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/recovered/features/conversation/workspace/media-viewer_view.kt",
-        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/features/conversations/ConversationSurfaces.kt"
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/features/conversations/ConversationSurfaces.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/presentation/MessagingViewModel.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/features/conversations/FabushiMessagingSurface.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/production/ProductionRenderer_view.kt",
+        "mobile/android/app/src/test/java/com/ombhrum/fabushi/AndroidMediaViewerProjectionTest.kt"
       ],
       "android_owner": "Native Compose/PdfRenderer viewer owns ephemeral page/render state; Messaging Host/blob loader owns attachment bytes and canonical messages.",
       "platform_delta": "Android PdfRenderer replaces shipped PDF.js/worker and does not expose Desktop's selectable PDF.js text layer. f2459b2a06568e88a1f2bdde86bec0612e16c438 implements in-app PDF detection, bounded raster dimensions, page navigation, loading/error projection and generation fencing. Remaining gaps are the explicit 25 MiB preview cap/download fallback, 0.5-4x PDF zoom, selectable text/accessibility parity, keyboard/focus restoration and Agent attachment wiring.",
@@ -10084,7 +10092,7 @@
       "device_test": "required PDF page/zoom/rotation/process-recreation/accessibility acceptance",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Do not mark verified until byte-cap/download behavior, zoom/text/accessibility/focus semantics, Agent wiring and same-exact-head CI/device evidence are complete."
+      "notes": "Do not mark verified until byte-cap/download behavior, zoom/text/accessibility/focus semantics, Agent wiring and same-exact-head CI/device evidence are complete. Large media now preserves Desktop ranged-read semantics without buffering the whole payload in Kotlin: Host remains the canonical blob owner, MessagingViewModel reads bounded 4 MiB ranges directly into an app-private temporary file, rejects empty/oversized/out-of-declared-size chunks, deletes partial files on failure, and AndroidMediaViewer routes video/PDF/generic files to that file path with stale-generation cleanup. Commits e4132f4eb592cbfea6b9047540fc8e2ea5fbdab8, 44f45ba22ad5f12cc215201bbbb7b01ad65d10fa, 37d8e39b0420a81da92268386afa750bf21ad1fa, 511d3a8c4ad7347aba010aba2c124458f8a6d528, 23f268261f20d934bb6964e8c245b84f490c82bc and 763405f0485a73e7ffb4cc99966e28ce75f591c2. Exact-descendant-head Actions/package/device verification remains required."
     },
     {
       "responsibility_id": "CONVERSATION-REPLY-REFERENCE-ANDROID-001",
@@ -14052,7 +14060,10 @@
         "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/recovered/features/conversation/workspace/media-viewer_view.kt",
         "source/host/src/agent_attachment.rs",
         "source/shared/src/media/attachment_open_policy.rs",
-        "mobile/android/app/src/test/java/com/ombhrum/fabushi/AndroidMediaViewerProjectionTest.kt"
+        "mobile/android/app/src/test/java/com/ombhrum/fabushi/AndroidMediaViewerProjectionTest.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/presentation/MessagingViewModel.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/features/conversations/FabushiMessagingSurface.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/production/ProductionRenderer_view.kt"
       ],
       "android_owner": "Host/Messaging remains canonical source-byte owner; Android media viewer owns only the ephemeral user-authorized SAF destination transaction.",
       "platform_delta": "Android ActivityResultContracts.CreateDocument + ContentResolver replaces Electron save dialog/raw filesystem writes. FileProvider share/open remains separate from explicit save.",
@@ -14065,7 +14076,7 @@
       "device_test": "required scoped-storage/SAF acceptance across supported API levels",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Implemented in production, not verified. Do not upgrade until same exact HEAD compile/unit plus packaged/device SAF evidence succeeds.",
+      "notes": "Implemented in production, not verified. Do not upgrade until same exact HEAD compile/unit plus packaged/device SAF evidence succeeds. Large media now preserves Desktop ranged-read semantics without buffering the whole payload in Kotlin: Host remains the canonical blob owner, MessagingViewModel reads bounded 4 MiB ranges directly into an app-private temporary file, rejects empty/oversized/out-of-declared-size chunks, deletes partial files on failure, and AndroidMediaViewer routes video/PDF/generic files to that file path with stale-generation cleanup. Commits e4132f4eb592cbfea6b9047540fc8e2ea5fbdab8, 44f45ba22ad5f12cc215201bbbb7b01ad65d10fa, 37d8e39b0420a81da92268386afa750bf21ad1fa, 511d3a8c4ad7347aba010aba2c124458f8a6d528, 23f268261f20d934bb6964e8c245b84f490c82bc and 763405f0485a73e7ffb4cc99966e28ce75f591c2. Exact-descendant-head Actions/package/device verification remains required.",
       "android_head_at_update": "162d76b9183721632a7975a2791abcb6ea108d55"
     },
     {
