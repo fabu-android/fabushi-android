@@ -53,6 +53,52 @@ data class PluginVariableRequest(
     val fields: List<PluginVariableField>,
 )
 
+data class McpServerCatalogItem(
+    val id: String,
+    val name: String,
+    val url: String?,
+    val transport: String,
+    val disabledByTeamAdminPolicy: Boolean,
+)
+
+internal fun parseMcpServerCatalog(values: JSONArray): List<McpServerCatalogItem> =
+    buildList {
+        for (index in 0 until values.length()) {
+            val value = values.optJSONObject(index) ?: continue
+            val id = value.optString("id").trim()
+            val name = value.optString("name").trim()
+            val transport = value.optString("transport").trim().lowercase()
+            if (id.isEmpty() || name.isEmpty() || transport !in setOf("http", "sse", "stdio")) continue
+            val url = value.optString("url").trim().takeIf(String::isNotEmpty)
+            if (transport != "stdio" && url == null) continue
+            add(
+                McpServerCatalogItem(
+                    id = id,
+                    name = name,
+                    url = url,
+                    transport = transport,
+                    disabledByTeamAdminPolicy = value.optBoolean("disabledByTeamAdminPolicy", false),
+                ),
+            )
+        }
+    }
+
+internal fun shouldApplyMcpServerCatalogResult(
+    requestGeneration: Long,
+    currentGeneration: Long,
+    expectedAuthId: String,
+    currentLoggedIn: Boolean,
+    currentAuthId: String,
+): Boolean =
+    shouldApplyAccountPrivacyModeResult(
+        requestGeneration = requestGeneration,
+        currentGeneration = currentGeneration,
+        expectedAuthId = expectedAuthId,
+        currentLoggedIn = currentLoggedIn,
+        currentAuthId = currentAuthId,
+    )
+
+
 data class PermissionRequest(
     val pluginId: String,
     val runtime: String,
@@ -238,6 +284,9 @@ data class MarketplaceUiState(
     val query: String = "",
     val message: String = "Mahayana Rust Host 已启动",
     val plugins: List<MarketplacePlugin> = emptyList(),
+    val mcpServers: List<McpServerCatalogItem> = emptyList(),
+    val mcpServersBusy: Boolean = false,
+    val mcpServersError: String? = null,
     val permissionRequest: PermissionRequest? = null,
     val variableRequest: PluginVariableRequest? = null,
     val authResolved: Boolean = false,
@@ -282,6 +331,7 @@ class MarketplaceViewModel(application: Application) : AndroidViewModel(applicat
     private var accountPrivacyRefreshGeneration: Long = 0L
     private var accountUsageRefreshGeneration: Long = 0L
     private var credentialVaultGeneration: Long = 0L
+    private var mcpServerCatalogGeneration: Long = 0L
 
     init {
         featureEventSubscription = coordinator.addFeatureEventListener { event ->
@@ -317,6 +367,7 @@ class MarketplaceViewModel(application: Application) : AndroidViewModel(applicat
                 if (mutableState.value.loggedIn) {
                     restoreChatTranscript()
                     refresh()
+                    refreshMcpServerCatalog()
                 }
             }.onFailure { error ->
                 mutableState.value = mutableState.value.copy(authResolved = true, message = "账号状态加载失败：${error.message ?: error::class.java.simpleName}")
@@ -467,6 +518,7 @@ class MarketplaceViewModel(application: Application) : AndroidViewModel(applicat
                         refreshAccountPrivacyMode()
                         restoreChatTranscript()
                         refresh()
+                        refreshMcpServerCatalog()
                     }
                     "cancelled" -> mutableState.value = mutableState.value.copy(message = "登录授权已取消")
                     "failed" -> mutableState.value = mutableState.value.copy(message = "登录授权失败")
@@ -494,6 +546,7 @@ class MarketplaceViewModel(application: Application) : AndroidViewModel(applicat
                     val user = result.optJSONObject("user")
                     accountPrivacyRefreshGeneration += 1
                     accountUsageRefreshGeneration += 1
+                    mcpServerCatalogGeneration += 1
                     mutableState.value = mutableState.value.copy(
                         authResolved = true,
                         loggedIn = result.optBoolean("loggedIn", false),
@@ -508,6 +561,9 @@ class MarketplaceViewModel(application: Application) : AndroidViewModel(applicat
                         credentialVaultItems = emptyList(),
                         credentialVaultBusy = false,
                         credentialVaultError = null,
+                        mcpServers = emptyList(),
+                        mcpServersBusy = false,
+                        mcpServersError = null,
                         chatMessages = emptyList(),
                         activeOperationId = null,
                         chatBusy = false,
@@ -1065,6 +1121,56 @@ class MarketplaceViewModel(application: Application) : AndroidViewModel(applicat
             }.onFailure { error ->
                 mutableState.value = mutableState.value.copy(
                     message = "连接重试失败：" + (error.message ?: error::class.java.simpleName),
+                )
+            }
+        }
+    }
+
+    fun refreshMcpServerCatalog() {
+        val current = mutableState.value
+        if (!current.loggedIn || current.accountAuthId.isBlank()) {
+            mcpServerCatalogGeneration += 1
+            mutableState.value = current.copy(
+                mcpServers = emptyList(),
+                mcpServersBusy = false,
+                mcpServersError = null,
+            )
+            return
+        }
+        val generation = ++mcpServerCatalogGeneration
+        val expectedAuthId = current.accountAuthId
+        mutableState.value = current.copy(mcpServersBusy = true, mcpServersError = null)
+        viewModelScope.launch {
+            runCatching {
+                withContext(Dispatchers.IO) { coordinator.mcpServerCatalog() }
+            }.onSuccess { values ->
+                val latest = mutableState.value
+                if (!shouldApplyMcpServerCatalogResult(
+                        requestGeneration = generation,
+                        currentGeneration = mcpServerCatalogGeneration,
+                        expectedAuthId = expectedAuthId,
+                        currentLoggedIn = latest.loggedIn,
+                        currentAuthId = latest.accountAuthId,
+                    )
+                ) return@onSuccess
+                mutableState.value = latest.copy(
+                    mcpServers = parseMcpServerCatalog(values),
+                    mcpServersBusy = false,
+                    mcpServersError = null,
+                )
+            }.onFailure { error ->
+                val latest = mutableState.value
+                if (!shouldApplyMcpServerCatalogResult(
+                        requestGeneration = generation,
+                        currentGeneration = mcpServerCatalogGeneration,
+                        expectedAuthId = expectedAuthId,
+                        currentLoggedIn = latest.loggedIn,
+                        currentAuthId = latest.accountAuthId,
+                    )
+                ) return@onFailure
+                mutableState.value = latest.copy(
+                    mcpServersBusy = false,
+                    mcpServersError = error.message ?: error::class.java.simpleName,
                 )
             }
         }
