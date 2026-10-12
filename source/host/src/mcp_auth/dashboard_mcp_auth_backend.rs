@@ -50,6 +50,8 @@ pub const DASHBOARD_CLIENT_ACTION_PATH: &str =
 pub const ANALYTICS_SUBMIT_LOGS_PATH: &str =
     "/aiserver.v1.AnalyticsService/SubmitLogs";
 pub const ACCOUNT_TELEMETRY_SUBMIT_TIMEOUT_MS: u64 = 15_000;
+pub const FEEDBACK_SUBMIT_PATH: &str = "/sand/feedback";
+pub const FEEDBACK_SUBMIT_TIMEOUT_MS: u64 = 15_000;
 pub const DESKTOP_SESSION_EVENT: &str = "sand.desktop.session";
 pub const DESKTOP_SIGNIN_EVENT: &str = "sand.desktop.signin";
 pub const ACCESS_BLOCKED_EVENT: &str = "sand.access_blocked";
@@ -340,6 +342,39 @@ pub enum GenerateImageBackendError {
     ModelRestricted(String),
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FeedbackSubmitBackendError {
+    NotSignedIn,
+    InvalidFeedback,
+    SubscriptionRequired,
+    AccessDenied,
+    RateLimited,
+    Unavailable,
+}
+
+impl FeedbackSubmitBackendError {
+    pub fn code(self) -> &'static str {
+        match self {
+            Self::NotSignedIn => "not-signed-in",
+            Self::InvalidFeedback => "invalid-feedback",
+            Self::SubscriptionRequired => "subscription-required",
+            Self::AccessDenied => "access-denied",
+            Self::RateLimited => "rate-limited",
+            Self::Unavailable => "unavailable",
+        }
+    }
+}
+
+fn feedback_error_for_status(status: u16) -> FeedbackSubmitBackendError {
+    match status {
+        400 => FeedbackSubmitBackendError::InvalidFeedback,
+        402 => FeedbackSubmitBackendError::SubscriptionRequired,
+        403 => FeedbackSubmitBackendError::AccessDenied,
+        429 => FeedbackSubmitBackendError::RateLimited,
+        _ => FeedbackSubmitBackendError::Unavailable,
+    }
+}
+
 pub struct CursorDashboardMcpAuthBackend {
     credentials: Box<dyn SandMcpCredentialProvider>,
     privacy_cache: Mutex<Option<PrivacyCacheEntry>>,
@@ -456,6 +491,50 @@ impl CursorDashboardMcpAuthBackend {
             ghost_mode,
         )?;
         decode_available_models_response(&response)
+    }
+
+    pub fn submit_feedback_report(
+        &self,
+        payload: &Value,
+    ) -> Result<(), FeedbackSubmitBackendError> {
+        let credentials = self
+            .credentials
+            .credentials()
+            .map_err(|_| FeedbackSubmitBackendError::NotSignedIn)?;
+        let base = Url::parse(&credentials.backend_url)
+            .map_err(|_| FeedbackSubmitBackendError::Unavailable)?;
+        let url = base
+            .join(FEEDBACK_SUBMIT_PATH)
+            .map_err(|_| FeedbackSubmitBackendError::Unavailable)?;
+        if url.origin() != base.origin() {
+            return Err(FeedbackSubmitBackendError::Unavailable);
+        }
+        let timeout = Duration::from_millis(FEEDBACK_SUBMIT_TIMEOUT_MS);
+        let agent = ureq::AgentBuilder::new()
+            .timeout_connect(timeout.min(Duration::from_secs(10)))
+            .timeout_read(timeout)
+            .timeout_write(timeout)
+            .redirects(0)
+            .build();
+        let authorization = format!("Bearer {}", credentials.access_token);
+        let checksum = create_cursor_checksum(&credentials.machine_id, system_now_ms());
+        let request_id = next_request_id();
+        match agent
+            .post(url.as_str())
+            .set("content-type", "application/json")
+            .set("accept", "application/json")
+            .set("authorization", &authorization)
+            .set("x-cursor-checksum", &checksum)
+            .set("x-cursor-client-type", SAND_CLIENT_TYPE)
+            .set("x-cursor-client-version", &credentials.client_version)
+            .set("x-sand-box-namespace", &credentials.box_namespace)
+            .set("x-request-id", &request_id)
+            .send_json(payload.clone())
+        {
+            Ok(_) => Ok(()),
+            Err(ureq::Error::Status(status, _)) => Err(feedback_error_for_status(status)),
+            Err(ureq::Error::Transport(_)) => Err(FeedbackSubmitBackendError::Unavailable),
+        }
     }
 
     pub fn submit_account_telemetry(
@@ -3424,5 +3503,19 @@ mod access_blocked_submit_logs_tests {
         let logs = repeated_message_fields(&request, 1).unwrap();
         assert_eq!(decode_optional_varint_field(logs[0], 1).unwrap(), Some(3));
         assert_eq!(string_fields(logs[0], 2).unwrap(), vec![ACCESS_BLOCKED_EVENT.to_string()]);
+    }
+}
+
+#[cfg(test)]
+mod feedback_submit_contract_tests {
+    use super::*;
+
+    #[test]
+    fn feedback_http_statuses_preserve_desktop_error_contract() {
+        assert_eq!(feedback_error_for_status(400).code(), "invalid-feedback");
+        assert_eq!(feedback_error_for_status(402).code(), "subscription-required");
+        assert_eq!(feedback_error_for_status(403).code(), "access-denied");
+        assert_eq!(feedback_error_for_status(429).code(), "rate-limited");
+        assert_eq!(feedback_error_for_status(500).code(), "unavailable");
     }
 }
