@@ -77,6 +77,8 @@ pub struct SendAcknowledgementRecord {
     pub message_rich_text: Option<Value>,
     #[serde(default)]
     pub attachments: Vec<AgentAttachment>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub selected_model: Option<String>,
     pub phase: SendAcknowledgementPhase,
     pub generation: u64,
     pub failed_at_ms: Option<u64>,
@@ -180,6 +182,31 @@ impl DurableSendAcknowledgementOwner {
         attachments: Vec<AgentAttachment>,
         entries: Vec<SendAcknowledgementEntry>,
     ) -> Result<SendAcknowledgementRecord, String> {
+        self.begin_with_attachments_rich_text_and_model(
+            account_slot,
+            account_fence,
+            agent_id,
+            nonce,
+            message_text,
+            message_rich_text,
+            None,
+            attachments,
+            entries,
+        )
+    }
+
+    pub fn begin_with_attachments_rich_text_and_model(
+        &mut self,
+        account_slot: Option<&str>,
+        account_fence: &str,
+        agent_id: &str,
+        nonce: &str,
+        message_text: &str,
+        message_rich_text: Option<Value>,
+        selected_model: Option<String>,
+        attachments: Vec<AgentAttachment>,
+        entries: Vec<SendAcknowledgementEntry>,
+    ) -> Result<SendAcknowledgementRecord, String> {
         validate_identity(account_fence, "account fence")?;
         validate_optional_identity(account_slot, "account slot")?;
         validate_identity(agent_id, "agent id")?;
@@ -203,6 +230,12 @@ impl DurableSendAcknowledgementOwner {
         for attachment in &attachments {
             attachment.validate_public()?;
         }
+        let selected_model = selected_model
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty());
+        if selected_model.as_ref().is_some_and(|value| value.len() > 256) {
+            return Err("send acknowledgement selected model is too large".into());
+        }
         validate_entries(nonce, &entries)?;
 
         if let Some(key) = self.find_key(account_slot, account_fence, agent_id, nonce) {
@@ -211,6 +244,7 @@ impl DurableSendAcknowledgementOwner {
                 && existing.message_text == message_text
                 && existing.message_rich_text == message_rich_text
                 && existing.attachments == attachments
+                && existing.selected_model == selected_model
                 && existing.entries == entries
             {
                 return Ok(existing.clone());
@@ -228,6 +262,7 @@ impl DurableSendAcknowledgementOwner {
             message_text: message_text.to_string(),
             message_rich_text,
             attachments,
+            selected_model,
             phase: SendAcknowledgementPhase::Pending,
             generation: self.state.owner_generation,
             failed_at_ms: None,
@@ -417,6 +452,7 @@ impl DurableSendAcknowledgementOwner {
             message_text: old.message_text,
             message_rich_text: old.message_rich_text,
             attachments: old.attachments,
+            selected_model: old.selected_model,
             phase: SendAcknowledgementPhase::Pending,
             generation: self.state.owner_generation,
             failed_at_ms: None,
