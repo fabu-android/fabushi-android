@@ -3563,23 +3563,50 @@ impl AndroidJsonHost {
         }))
     }
 
+    fn sync_local_tool_permission_ceiling(&self) -> Result<(), String> {
+        let ceiling = match self.mode {
+            AndroidHostMode::Test => None,
+            AndroidHostMode::Production => self
+                .mcp_dashboard_backend
+                .as_ref()
+                .and_then(|backend| backend.resolve_local_tool_permission_ceiling()),
+        };
+        self.user_settings
+            .lock()
+            .map_err(|_| "Android user settings lock poisoned".to_string())?
+            .set_local_tool_permission_ceiling(ceiling)
+            .map_err(|error| format!("failed to persist Android local tool permission ceiling: {error}"))?;
+        Ok(())
+    }
+
     fn local_tool_permission(&self) -> Result<Value, String> {
+        self.sync_local_tool_permission_ceiling()?;
         let settings = self
             .user_settings
             .lock()
             .map_err(|_| "Android user settings lock poisoned".to_string())?;
-        Ok(json!({"permission": settings.local_tool_permission().as_str()}))
+        Ok(json!({
+            "permission": settings.local_tool_permission().as_str(),
+            "preference": settings.local_tool_permission_preference().as_str(),
+            "ceiling": settings.local_tool_permission_ceiling().map(|value| value.as_str()),
+        }))
     }
 
     fn set_local_tool_permission(&mut self, params: &Value) -> Result<Value, String> {
+        self.sync_local_tool_permission_ceiling()?;
         let requested = required_string(params, "permission")?;
-        let value = self
+        let mut settings = self
             .user_settings
             .lock()
-            .map_err(|_| "Android user settings lock poisoned".to_string())?
+            .map_err(|_| "Android user settings lock poisoned".to_string())?;
+        settings
             .set_local_tool_permission(requested)
             .map_err(|error| format!("failed to persist Android local tool permission: {error}"))?;
-        Ok(json!({"permission": value.as_str()}))
+        Ok(json!({
+            "permission": settings.local_tool_permission().as_str(),
+            "preference": settings.local_tool_permission_preference().as_str(),
+            "ceiling": settings.local_tool_permission_ceiling().map(|value| value.as_str()),
+        }))
     }
 
     fn process_metrics_settings(&self) -> Result<Value, String> {
@@ -4034,6 +4061,11 @@ impl AndroidJsonHost {
         // the old account's uncommitted secret material must not survive the transition in memory.
         self.pending_plugin_variable_writes.clear();
         self.cancel_mcp_auth_watches_for_account_change(reason)?;
+        self.user_settings
+            .lock()
+            .map_err(|_| "Android user settings lock poisoned".to_string())?
+            .set_local_tool_permission_ceiling(None)
+            .map_err(|error| format!("failed to clear stale local tool permission ceiling: {error}"))?;
         Ok(())
     }
 
@@ -12567,14 +12599,13 @@ mod local_tool_permission_dispatch_tests {
                 .unwrap()["permission"],
             "ask",
         );
-        assert_eq!(
-            host.dispatch(
-                "feature.settings.localToolPermission.set",
-                &json!({"permission":"always"}),
-            )
-            .unwrap()["permission"],
-            "always",
-        );
+        let saved = host.dispatch(
+            "feature.settings.localToolPermission.set",
+            &json!({"permission":"always"}),
+        ).unwrap();
+        assert_eq!(saved["permission"], "always");
+        assert_eq!(saved["preference"], "always");
+        assert!(saved["ceiling"].is_null());
         assert!(host.dispatch(
             "feature.settings.localToolPermission.set",
             &json!({"permission":"sometimes"}),
