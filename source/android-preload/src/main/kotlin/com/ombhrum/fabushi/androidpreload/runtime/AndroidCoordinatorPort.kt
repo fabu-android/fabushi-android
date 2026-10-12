@@ -393,6 +393,22 @@ interface AndroidCoordinatorPort {
         error("Account usage summary is unavailable on this Coordinator port")
     fun accountCancelSandTrial(): Unit =
         error("Sand trial cancellation is unavailable on this Coordinator port")
+    fun credentialVaultList(): org.json.JSONArray =
+        error("Credential Vault metadata is unavailable on this Coordinator port")
+    fun credentialVaultUpsert(
+        name: String,
+        label: String,
+        secretValue: String,
+        allowedOrigins: List<String>,
+    ): JSONObject = error("Credential Vault mutation is unavailable on this Coordinator port")
+    fun credentialVaultRotate(
+        name: String,
+        label: String,
+        secretValue: String,
+        allowedOrigins: List<String>,
+    ): JSONObject = error("Credential Vault rotation is unavailable on this Coordinator port")
+    fun credentialVaultRevoke(name: String): Boolean =
+        error("Credential Vault revocation is unavailable on this Coordinator port")
     fun accountAccessProjection(): AccountAccessProjection
     fun rootConnectionResilienceProjection(): RootConnectionResilienceProjection =
         RootConnectionResilienceProjection.initial()
