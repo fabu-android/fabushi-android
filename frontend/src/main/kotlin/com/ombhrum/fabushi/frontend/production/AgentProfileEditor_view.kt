@@ -1,5 +1,7 @@
 package com.ombhrum.fabushi
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -13,9 +15,14 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import androidx.compose.ui.unit.dp
 
 @Composable
@@ -23,6 +30,7 @@ internal fun AgentProfileEditor(
     agent: MobileBotSummaryAndroid?,
     onClose: () -> Unit,
     onConfirm: (String, String, String?, String, String?, String?) -> Unit,
+    onSetAvatarImage: (String, String?) -> Unit,
     onSetNotifications: (String, Boolean) -> Unit,
 ) {
     val target = agent ?: return
@@ -31,6 +39,28 @@ internal fun AgentProfileEditor(
     var description by remember(target.id, target.description) { mutableStateOf(target.description) }
     var avatarShape by remember(target.id, target.avatarShape) { mutableStateOf(target.avatarShape) }
     var avatarColor by remember(target.id, target.avatarColor) { mutableStateOf(target.avatarColor) }
+    var avatarDataUrl by remember(target.id, target.avatarDataUrl) { mutableStateOf(target.avatarDataUrl) }
+    var avatarImageError by remember(target.id) { mutableStateOf<String?>(null) }
+    var avatarImageBusy by remember(target.id) { mutableStateOf(false) }
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val avatarImagePicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        if (uri == null || avatarImageBusy) return@rememberLauncherForActivityResult
+        avatarImageBusy = true
+        avatarImageError = null
+        scope.launch {
+            val result = withContext(Dispatchers.IO) {
+                importAgentAvatarImageDataUrl(context, uri)
+            }
+            result.onSuccess { dataUrl ->
+                avatarDataUrl = dataUrl
+                onSetAvatarImage(target.id, dataUrl)
+            }.onFailure { error ->
+                avatarImageError = error.message ?: "Avatar image import failed"
+            }
+            avatarImageBusy = false
+        }
+    }
 
     AlertDialog(
         onDismissRequest = onClose,
@@ -67,13 +97,41 @@ internal fun AgentProfileEditor(
                         .fillMaxWidth()
                         .testTag("agent-profile-description-${target.id}"),
                 )
-                ClothGhostAvatarAndroid(
-                    botId = target.id,
+                AgentAvatarAndroid(
+                    bot = target.copy(
+                        avatarShape = avatarShape,
+                        avatarColor = avatarColor,
+                        avatarDataUrl = avatarDataUrl,
+                    ),
                     size = 72.dp,
-                    avatarShape = avatarShape,
-                    avatarColor = avatarColor,
                     modifier = Modifier.testTag("agent-profile-avatar-preview-${target.id}"),
                 )
+                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    TextButton(
+                        enabled = !avatarImageBusy,
+                        onClick = { avatarImagePicker.launch("image/*") },
+                        modifier = Modifier.testTag("agent-profile-avatar-image-pick-${target.id}"),
+                    ) {
+                        Text(if (avatarImageBusy) "Importing…" else if (avatarDataUrl.isNullOrBlank()) "Choose image" else "Replace image")
+                    }
+                    if (!avatarDataUrl.isNullOrBlank()) {
+                        TextButton(
+                            enabled = !avatarImageBusy,
+                            onClick = {
+                                avatarDataUrl = null
+                                avatarImageError = null
+                                onSetAvatarImage(target.id, null)
+                            },
+                            modifier = Modifier.testTag("agent-profile-avatar-image-clear-${target.id}"),
+                        ) { Text("Remove image") }
+                    }
+                }
+                avatarImageError?.let { error ->
+                    Text(
+                        error,
+                        modifier = Modifier.testTag("agent-profile-avatar-image-error-${target.id}"),
+                    )
+                }
                 Text("Avatar shape")
                 Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                     listOf("circle", "square", "squircle").forEach { shape ->
