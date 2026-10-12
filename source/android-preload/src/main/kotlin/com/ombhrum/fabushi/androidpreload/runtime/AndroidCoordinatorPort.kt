@@ -364,6 +364,8 @@ interface AndroidCoordinatorPort {
 
     fun authStatus(): JSONObject
     fun accountPrivacyMode(): JSONObject
+    fun accountPrReviewPreferences(): JSONObject =
+        error("PR review preferences are unavailable on this Coordinator port")
     fun accountAccessProjection(): AccountAccessProjection
     fun rootConnectionResilienceProjection(): RootConnectionResilienceProjection =
         RootConnectionResilienceProjection.initial()
