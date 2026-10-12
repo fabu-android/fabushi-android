@@ -122,6 +122,14 @@ mod tests {
     }
 
     #[test]
+    fn local_runner_does_not_own_user_approval_state() {
+        let source = include_str!("lib.rs");
+        assert!(!source.contains("PendingCapabilityApproval"));
+        assert!(!source.contains("allowed_once"));
+        assert!(!source.contains("account_fence"));
+    }
+
+    #[test]
     fn non_android_local_capability_registration_fails_closed() {
         let mut runner = AndroidLocalRunner::new();
         let mut wrong = capability("remote.echo");
