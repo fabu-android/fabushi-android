@@ -1031,12 +1031,14 @@
         "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/media/NativeOfflineSpeechTranscriber.kt",
         "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/media/NativeVoicePlayer.kt",
         "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/media/NativeVoiceRecorder.kt",
-        "source/shared/src/media/attachments.rs"
+        "source/shared/src/media/attachments.rs",
+        "source/host/src/agent_attachment.rs",
+        "source/host/src/android_json_runtime.rs"
       ],
       "android_owner": "Rust attachment contracts + Android MicrophoneLease/NativeVoiceRecorder/NativeOfflineSpeechTranscriber platform adapters",
       "platform_delta": "Android uses native Compose/platform adapters + typed JNI while preserving canonical Rust owners where platform-independent.",
       "implementation_status": "implemented",
-      "production_wiring": "Human conversation keeps native MediaRecorder voice-message capture; recorder and on-device ASR now share one process-wide MicrophoneLease. Agent and Bot composers expose on-device-only SpeechRecognizer input, require Android on-device recognition availability, never instantiate ordinary/cloud SpeechRecognizer, fence late results by generation/cancel, and write successful transcription only into the editable draft without auto-send.",
+      "production_wiring": "Human conversation keeps native MediaRecorder voice-message capture; recorder and on-device ASR now share one process-wide MicrophoneLease. Agent and Bot composers expose on-device-only SpeechRecognizer input, require Android on-device recognition availability, never instantiate ordinary/cloud SpeechRecognizer, fence late results by generation/cancel, and write successful transcription only into the editable draft without auto-send. Canonical completed Agent attachments now also expose a Host-owned scope-fenced 4 MiB range-read facade for future native media playback; this does not yet claim NativeVoicePlayer/video ranged consumption.",
       "unit_test": "Same exact-head Android compile/unit/lint gate must compile Android SpeechRecognizer API use and shared microphone owner; dedicated JVM unit test is still required for the pure microphone lease owner.",
       "contract_test": "Source contract requires createOnDeviceSpeechRecognizer + isOnDeviceRecognitionAvailable, no createSpeechRecognizer fallback, EXTRA_PARTIAL_RESULTS=false and result-to-draft only.",
       "integration_test": "Still required: real emulator/device offline-network-disabled transcription, recorder-vs-ASR mutual exclusion, permission denial, unavailable language/model, cancel/late-result fencing.",
@@ -1044,7 +1046,7 @@
       "device_test": "Required on physical Android device because emulator speech service availability is device-image dependent.",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Production implementation added but remains not-verified until same exact-head Android build plus offline device evidence. Human voice-message semantics remain unchanged; ASR is only an editable-draft input for Agent/Bot. FBCP Revision 7 is a cross-cutting source authority for this responsibility; this mapping does not upgrade implementation_status or verification_status."
+      "notes": "Production implementation added but remains not-verified until same exact-head Android build plus offline device evidence. Human voice-message semantics remain unchanged; ASR is only an editable-draft input for Agent/Bot. FBCP Revision 7 is a cross-cutting source authority for this responsibility; this mapping does not upgrade implementation_status or verification_status. 1b03f86d1db39814c0c480a07ea75dfd64ebf803 adds reopen-safe range/probe/unsatisfiable/oversize Rust tests; exact descendant-head CI/package/device evidence is still required."
     },
     {
       "responsibility_id": "REMOTE-COMPUTER-001",
