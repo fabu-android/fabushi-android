@@ -57,7 +57,7 @@ use crate::runner::{
 use fabushi_constants::composer::text_size_allowed;
 use fabushi_android_shared::node::mcp::mcp_auth_watch_lifecycle::{
     McpAuthPollOutcome, McpAuthPollRequest, McpAuthPollSettlement, McpAuthPollTick,
-    McpAuthWatchCompletion,
+    McpAuthTransport, McpAuthWatchCompletion,
 };
 use fabushi_android_shared::webauthn_gateway::{
     WebAuthnCeremony, WebAuthnRequestFrame, WebAuthnResponseFrame, WebAuthnStage,
@@ -1056,6 +1056,37 @@ impl AndroidJsonHost {
     }
 
 
+    fn mcp_server_catalog(&self) -> Result<Value, String> {
+        // A catalog projection is account-scoped backend state. Resolve the current fence first so
+        // a stale/logged-out process cannot reuse a previously initialized backend owner.
+        let account_fence = self.current_turn_account_fence()?;
+        let backend = self
+            .mcp_dashboard_backend
+            .as_ref()
+            .ok_or("MCP server catalog backend is unavailable")?;
+        let servers = backend
+            .list_server_snapshots()?
+            .into_iter()
+            .map(|server| {
+                json!({
+                    "id": server.server_id,
+                    "name": server.server_name,
+                    "url": server.server_url,
+                    "transport": match server.transport {
+                        McpAuthTransport::Http => "http",
+                        McpAuthTransport::Sse => "sse",
+                        McpAuthTransport::Stdio => "stdio",
+                    },
+                    "disabledByTeamAdminPolicy": server.disabled_by_team_admin_policy,
+                })
+            })
+            .collect::<Vec<_>>();
+        Ok(json!({
+            "accountFence": account_fence,
+            "servers": servers,
+        }))
+    }
+
     fn account_usage_summary(&self) -> Result<Value, String> {
         self.mcp_dashboard_backend
             .as_ref()
@@ -1256,6 +1287,7 @@ impl AndroidJsonHost {
             "feature.auth.oauthStart" => self.oauth_start(params),
             "feature.auth.oauthPoll" => self.oauth_poll(params),
             "feature.auth.oauthCancel" => self.oauth_cancel(params),
+            "feature.mcp.serverCatalog" => self.mcp_server_catalog(),
             "feature.mcp.oauthComplete" => self.mcp_oauth_complete(params),
             "feature.mcp.authenticate" => self.mcp_authenticate(params),
             "feature.mcp.authWatch.register" => self.mcp_auth_watch_register(params),
