@@ -50,7 +50,7 @@ class GlobalKeyboardShortcutWiringTest(unittest.TestCase):
         self.assertIn("botState.bots.getOrNull(index - 1)", s)
         self.assertIn("agentCount = botState.bots.size", s)
         self.assertIn("keyboardForwardTarget", s)
-        self.assertIn("onPromptEditableFocusChanged = keyboardController::setEditableFocused", s)
+        self.assertIn("onPromptEditableFocusChanged = keyboardBinding::setEditableFocused", s)
 
     def test_native_new_agent_focus_and_find_triggers_exist(self):
         home = HOME.read_text(encoding="utf-8")
