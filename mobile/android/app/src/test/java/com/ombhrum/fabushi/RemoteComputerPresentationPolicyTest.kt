@@ -234,6 +234,35 @@ class RemoteComputerPresentationPolicyTest {
     }
 
     @Test
+    fun rebuildProgressProjectsStableEpisodeIdentityAndTakingLongerState() {
+        val status = JSONObject()
+            .put("accountEpoch", 7)
+            .put("processGeneration", 11)
+            .put("episodeStartedAtMs", 1_700_000_000_000L)
+            .put("requestId", "rebuild-request-1")
+            .put("operationId", "operation-1")
+            .put("kind", "reset")
+            .put("elapsedMs", 95_000L)
+            .put("isStalled", true)
+            .put("migrationPhases", JSONArray().put("creating"))
+
+        val first = requireNotNull(ComputerRebuildProgressPolicy.project(status))
+        val repeated = requireNotNull(ComputerRebuildProgressPolicy.project(JSONObject(status.toString())))
+
+        assertEquals("7:11:1700000000000:rebuild-request-1:operation-1:reset", first.episodeKey)
+        assertEquals(first.episodeKey, repeated.episodeKey)
+        assertEquals(95_000L, first.elapsedMs)
+        assertTrue(first.isStalled)
+
+        val nextEpisode = requireNotNull(
+            ComputerRebuildProgressPolicy.project(
+                JSONObject(status.toString()).put("episodeStartedAtMs", 1_700_000_100_000L),
+            ),
+        )
+        assertFalse(first.episodeKey == nextEpisode.episodeKey)
+    }
+
+    @Test
     fun rebuildProgressFailsClosedForIdleAndInvalidPullPercent() {
         assertNull(ComputerRebuildProgressPolicy.project(JSONObject()))
 
