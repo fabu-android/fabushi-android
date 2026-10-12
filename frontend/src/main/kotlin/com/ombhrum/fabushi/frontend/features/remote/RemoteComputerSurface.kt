@@ -226,7 +226,6 @@ fun RemoteComputerSurface(onClose: () -> Unit) {
     var nativeError by remember { mutableStateOf<String?>(null) }
     var rebuildMessage by remember { mutableStateOf<String?>(null) }
     var rebuildProgress by remember { mutableStateOf<ComputerRebuildProgressProjection?>(null) }
-    var rebuildEscalationShownFor by remember { mutableStateOf<String?>(null) }
     var pairingCode by remember { mutableStateOf("") }
     var pairingLabel by remember { mutableStateOf("Fabushi Android") }
 
@@ -286,29 +285,7 @@ fun RemoteComputerSurface(onClose: () -> Unit) {
                 withContext(Dispatchers.IO) {
                     ComputerRebuildProgressPolicy.project(coordinator.computerRebuildStatus())
                 }
-            }.onSuccess { projection ->
-                rebuildProgress = projection
-                if (projection == null) {
-                    rebuildEscalationShownFor = null
-                } else if (
-                    projection.isStalled &&
-                    rebuildEscalationShownFor != projection.episodeKey
-                ) {
-                    // Mark first so a temporary telemetry outage cannot create an analytics storm.
-                    // The rebuild owner remains canonical; this key only deduplicates this UI event.
-                    rebuildEscalationShownFor = projection.episodeKey
-                    runCatching {
-                        withContext(Dispatchers.IO) {
-                            coordinator.reportRebuildEscalation(
-                                rebuildKind = projection.kind,
-                                elapsedMs = projection.elapsedMs,
-                                action = "shown",
-                                escalation = "taking-longer",
-                            )
-                        }
-                    }
-                }
-            }
+            }.onSuccess { rebuildProgress = it }
             delay(1_500)
         }
     }
