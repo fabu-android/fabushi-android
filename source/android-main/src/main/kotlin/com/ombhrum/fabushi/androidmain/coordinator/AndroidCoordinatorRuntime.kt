@@ -1726,6 +1726,23 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
 
     override fun automationUpsert(params: JSONObject) = host.request("feature.automation.upsert", params)
     override fun automationList(): JSONArray = host.requestValue("feature.automation.list") as? JSONArray ?: JSONArray()
+    override fun automationListForAgent(agentId: String): JSONArray =
+        host.requestValue(
+            "feature.automation.listForAgent",
+            JSONObject().put("agentId", agentId),
+        ) as? JSONArray ?: JSONArray()
+    override fun automationSetAgentEnabled(
+        agentId: String,
+        automationId: String,
+        enabled: Boolean,
+    ): JSONObject =
+        host.request(
+            "feature.automation.setAgentEnabled",
+            JSONObject()
+                .put("agentId", agentId)
+                .put("automationId", automationId)
+                .put("enabled", enabled),
+        )
     override fun automationStart(params: JSONObject) = host.request("feature.automation.start", params)
     override fun automationAdvanceStep(params: JSONObject) = host.request("feature.automation.advanceStep", params)
     override fun automationAwaitApproval(params: JSONObject) = host.request("feature.automation.awaitApproval", params)
