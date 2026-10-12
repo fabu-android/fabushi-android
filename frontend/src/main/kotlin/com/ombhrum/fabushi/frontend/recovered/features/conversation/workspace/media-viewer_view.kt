@@ -134,8 +134,8 @@ internal fun androidAttachmentSuggestedSaveName(fileName: String?, messageId: St
     val fallback = "fabushi-" + messageId.take(64).ifBlank { "attachment" }
     val candidate = fileName
         ?.trim()
-        ?.replace('/', '-')
-        ?.replace('\\', '-')
+        ?.split('/', '\\')
+        ?.lastOrNull()
         ?.filterNot(Char::isISOControl)
         ?.take(255)
         ?.takeIf(String::isNotBlank)
