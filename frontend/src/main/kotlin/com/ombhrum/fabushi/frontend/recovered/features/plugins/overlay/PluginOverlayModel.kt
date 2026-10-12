@@ -1,5 +1,7 @@
 package com.ombhrum.fabushi
 
+import org.json.JSONArray
+
 internal const val PLUGIN_DEFAULT_ACCOUNT_KEY = "default"
 
 internal enum class PluginOverlayInstallMode {
@@ -26,6 +28,27 @@ internal data class PluginOverlayTool(
     val description: String? = null,
     val isDisabled: Boolean,
 )
+
+internal fun parsePluginServerTools(values: JSONArray): List<PluginOverlayTool> =
+    buildList {
+        val seen = linkedSetOf<String>()
+        for (index in 0 until values.length()) {
+            val value = values.optJSONObject(index) ?: continue
+            val name = value.optString("name").trim()
+            if (name.isEmpty() || name.length > 512 || !seen.add(name)) continue
+            val title = value.optString("title").trim().takeIf { it.isNotEmpty() && it.length <= 1_024 }
+            val description = value.optString("description").trim().takeIf { it.isNotEmpty() && it.length <= 16_384 }
+            add(
+                PluginOverlayTool(
+                    name = name,
+                    title = title,
+                    description = description,
+                    isDisabled = value.optBoolean("isDisabled", false),
+                ),
+            )
+        }
+    }
+
 
 internal data class PluginOverlayNotice(
     val isError: Boolean,
