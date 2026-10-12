@@ -5,6 +5,7 @@ use crate::extensions::content_search::agent_content_search::{
 };
 use serde::Serialize;
 use serde_json::Value;
+use unicode_normalization::{char::is_combining_mark, UnicodeNormalization};
 use std::collections::HashMap;
 use std::{
     fs,
@@ -247,11 +248,11 @@ impl TranscriptStore {
                 "media search limit must be between 1 and 50",
             ));
         }
-        let terms = query
+        let terms = normalize_media_search_text(query)
             .split_whitespace()
-            .map(str::to_lowercase)
             .filter(|term| !term.is_empty())
             .take(8)
+            .map(str::to_string)
             .collect::<Vec<_>>();
         let mut matches = self
             .entries
@@ -548,39 +549,52 @@ fn media_extension(file_name: &str) -> Option<String> {
 fn media_mime(extension: &str) -> Option<&'static str> {
     match extension {
         "avif" => Some("image/avif"), "bmp" => Some("image/bmp"), "gif" => Some("image/gif"),
-        "jpeg" | "jpg" => Some("image/jpeg"), "png" => Some("image/png"), "svg" => Some("image/svg+xml"),
-        "webp" => Some("image/webp"), "m4v" | "mp4" => Some("video/mp4"), "mov" => Some("video/quicktime"),
-        "webm" => Some("video/webm"), "aac" => Some("audio/aac"), "flac" => Some("audio/flac"),
-        "m4a" => Some("audio/mp4"), "mp3" => Some("audio/mpeg"), "ogg" | "opus" => Some("audio/ogg"),
-        "wav" => Some("audio/wav"), _ => None,
+        "ico" => Some("image/x-icon"), "jpeg" | "jpg" => Some("image/jpeg"), "png" => Some("image/png"),
+        "svg" => Some("image/svg+xml"), "webp" => Some("image/webp"), "m4v" | "mp4" => Some("video/mp4"),
+        "mov" => Some("video/quicktime"), "ogv" => Some("video/ogg"), "webm" => Some("video/webm"),
+        "aac" => Some("audio/aac"), "flac" => Some("audio/flac"), "m4a" => Some("audio/mp4"),
+        "mp3" => Some("audio/mpeg"), "oga" | "ogg" | "opus" => Some("audio/ogg"),
+        "wav" => Some("audio/wav"), "weba" => Some("audio/webm"), _ => None,
     }
 }
 
 fn media_kind(extension: &str) -> &'static str {
-    match extension {
-        "avif" | "bmp" | "gif" | "ico" | "jpeg" | "jpg" | "png" | "svg" | "webp" => "image",
-        "m4v" | "mov" | "mp4" | "ogv" | "webm" => "video",
-        "aac" | "flac" | "m4a" | "mp3" | "oga" | "ogg" | "opus" | "wav" | "weba" => "audio",
-        "pdf" => "pdf", "md" | "markdown" | "mdx" => "markdown",
-        "csv" | "tsv" | "xlsx" | "xls" => "table", "json" | "jsonc" | "json5" | "ndjson" => "json",
-        "docx" => "document", "zip" | "tar" | "gz" | "tgz" | "bz2" | "tbz2" | "xz" | "txz" | "zst" | "7z" | "rar" => "archive",
-        "txt" | "text" | "log" | "rst" | "xml" | "yaml" | "yml" | "toml" | "ini" | "cfg" | "conf" | "env"
-        | "properties" | "html" | "css" | "js" | "jsx" | "ts" | "tsx" | "py" | "rb" | "go" | "rs" | "java"
-        | "kt" | "kts" | "c" | "h" | "cpp" | "hpp" | "cs" | "php" | "swift" | "sql" | "proto" | "sh" => "text",
-        _ => "file",
-    }
+    const IMAGES: &[&str] = &["avif", "bmp", "gif", "ico", "jpeg", "jpg", "png", "svg", "webp"];
+    const VIDEOS: &[&str] = &["m4v", "mov", "mp4", "ogv", "webm"];
+    const AUDIO: &[&str] = &["aac", "flac", "m4a", "mp3", "oga", "ogg", "opus", "wav", "weba"];
+    const MARKDOWN: &[&str] = &["md", "markdown", "mdx"];
+    const TABLES: &[&str] = &["csv", "tsv", "xlsx", "xls"];
+    const JSON: &[&str] = &["json", "jsonc", "json5", "ndjson"];
+    const ARCHIVES: &[&str] = &["zip", "tar", "gz", "tgz", "bz2", "tbz2", "xz", "txz", "zst", "7z", "rar"];
+    const TEXT: &[&str] = &[
+        "txt", "text", "log", "rst", "adoc", "tex", "xml", "yaml", "yml", "toml", "ini", "cfg", "conf", "env",
+        "properties", "plist", "gradle", "html", "htm", "css", "scss", "sass", "less", "js", "jsx", "mjs", "cjs",
+        "ts", "tsx", "mts", "cts", "py", "pyi", "rb", "go", "rs", "java", "kt", "kts", "c", "h", "cc", "cpp",
+        "cxx", "hpp", "hh", "cs", "php", "swift", "scala", "dart", "lua", "pl", "pm", "r", "sql", "graphql", "gql",
+        "proto", "vue", "svelte", "astro", "sh", "bash", "zsh", "fish", "bat", "ps1", "tf", "tfvars", "dockerfile", "diff", "patch",
+    ];
+    if IMAGES.contains(&extension) { "image" }
+    else if VIDEOS.contains(&extension) { "video" }
+    else if AUDIO.contains(&extension) { "audio" }
+    else if extension == "pdf" { "pdf" }
+    else if TABLES.contains(&extension) { "table" }
+    else if JSON.contains(&extension) { "json" }
+    else if MARKDOWN.contains(&extension) { "markdown" }
+    else if extension == "docx" { "document" }
+    else if TEXT.contains(&extension) { "text" }
+    else if ARCHIVES.contains(&extension) { "archive" }
+    else { "file" }
+}
+fn normalize_media_search_text(value: &str) -> String {
+    value.nfkd().filter(|ch| !is_combining_mark(*ch)).flat_map(char::to_lowercase).collect()
 }
 
 fn media_name_matches_terms(file_name: &str, terms: &[String]) -> bool {
     if terms.is_empty() { return true; }
-    let lowered = file_name.to_lowercase();
-    let tokens = lowered
-        .split(|ch: char| !ch.is_alphanumeric())
-        .filter(|token| !token.is_empty())
-        .collect::<Vec<_>>();
+    let normalized = normalize_media_search_text(file_name);
+    let tokens = normalized.split(|ch: char| !ch.is_alphanumeric()).filter(|token| !token.is_empty()).collect::<Vec<_>>();
     terms.iter().all(|term| tokens.iter().any(|token| token.starts_with(term)))
 }
-
 fn project_content_search_entry(entry: &Value) -> Option<SearchableTranscriptEntry> {
     let id = entry.get("id")?.as_str()?.trim();
     if id.is_empty() {
@@ -772,7 +786,7 @@ mod tests {
         let mut store = TranscriptStore::open(&path).unwrap();
         store.append_entry(json!({
             "id":"old-image","agentId":"agent-a","kind":"user-attachment",
-            "filePath":"content://files/Project%20Alpha.png","timestampMs":5,
+            "filePath":"content://files/Próject%20Alpha.png","timestampMs":5,
             "width":640.4,"height":480.6
         })).unwrap();
         store.append_entry(json!({
@@ -783,19 +797,28 @@ mod tests {
         store.append_entry(json!({
             "id":"not-media","agentId":"agent-a","kind":"message","content":"Project Alpha","timestampMs":10
         })).unwrap();
+        store.append_entry(json!({"id":"icon","agentId":"agent-c","kind":"user-attachment","filePath":"content://files/favicon.ico","timestampMs":3})).unwrap();
+        store.append_entry(json!({"id":"audio","agentId":"agent-c","kind":"user-attachment","filePath":"content://files/voice.weba","timestampMs":2})).unwrap();
 
         let all = store.search_media("", 50).unwrap();
-        assert_eq!(all.len(), 2);
+        assert_eq!(all.len(), 4);
         assert_eq!(all[0].entry_id, "new-doc");
         assert_eq!(all[0].file_name, "Project-Alpha.pdf");
         assert_eq!(all[0].path, "https://example.invalid/reports/Project-Alpha.pdf?download=1");
         assert_eq!(all[0].kind, "pdf");
-        assert_eq!(all[1].file_name, "Project Alpha.png");
+        assert_eq!(all[1].file_name, "Próject Alpha.png");
         assert_eq!(all[1].path, "content://files/Project%20Alpha.png");
         assert_eq!(all[1].mime.as_deref(), Some("image/png"));
         assert_eq!(all[1].width, Some(640));
         assert_eq!(all[1].height, Some(481));
+        let icon = all.iter().find(|item| item.entry_id == "icon").unwrap();
+        assert_eq!(icon.mime.as_deref(), Some("image/x-icon"));
+        assert_eq!(icon.kind, "image");
+        let audio = all.iter().find(|item| item.entry_id == "audio").unwrap();
+        assert_eq!(audio.mime.as_deref(), Some("audio/webm"));
+        assert_eq!(audio.kind, "audio");
         assert_eq!(store.search_media("proj alp", 50).unwrap().len(), 2);
+        assert_eq!(store.search_media("project alpha", 50).unwrap().len(), 2, "Desktop FTS removes diacritics for media filename matching");
         assert!(store.search_media("missing", 50).unwrap().is_empty());
         assert!(store.search_media("", 0).is_err());
         assert!(store.search_media("", 51).is_err());
