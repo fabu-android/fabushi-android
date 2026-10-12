@@ -14436,17 +14436,17 @@
       ],
       "android_owner": "Rust Host process-metrics collector owns canonical sampling/session state; AndroidCoordinatorRuntime is the platform-only self-process CPU/PSS source.",
       "platform_delta": "Desktop cursor-proclist scans Electron/local-daemon process trees and can report to Cursor backend. Android sandboxing forbids equivalent arbitrary process-tree enumeration; replacement is app/Host-owned resource sampling plus official Android benchmark/tracing on Actions devices. Cursor-specific backend upload is not assumed to be an Android product-account contract.",
-      "implementation_status": "mapped",
-      "production_wiring": "Production sampling is now wired: AndroidCoordinatorRuntime runs a process-scoped bounded scheduler, reads durable feature.settings.processMetrics localEnabled before each sample, samples only the current app process via Process.getElapsedCpuTime()/Debug.MemoryInfo.totalPss, and sends feature.telemetry.processMetrics.observe through the typed Host path. Rust AndroidProcessMetricsCollector owns monotonic time/CPU checks, sequence/session/peak state and bounded memory validation. bf825ae21c9bbf744c717523b0b005b7440344e0 removed a stale nonexistent AndroidProcessMetricsRuntime second owner. Remaining gap: observed samples are not yet retained/projected into a bounded diagnostic sink or authenticated report sink, so this stays mapped/not-verified.",
-      "unit_test": "Rust AndroidProcessMetricsCollector covers stable session/sequence/peak and invalid/stale/backwards input without state advance; ProcessMetricsSampler covers Desktop-equivalent window/redaction semantics. Exact-head GitHub Actions are pending.",
+      "implementation_status": "implemented",
+      "production_wiring": "Production sampling is wired end-to-end: AndroidCoordinatorRuntime uses one process-scoped scheduled executor, checks durable feature.settings.processMetrics localEnabled before each 10-second sample, samples only the current app via Process.getElapsedCpuTime()/Debug.MemoryInfo.totalPss, and sends feature.telemetry.processMetrics.observe through the typed Host path. Rust AndroidProcessMetricsCollector owns monotonic time/CPU validation and canonical session/sequence/peak aggregation; Host rejects observation while disabled and keeps a bounded process-local recent diagnostic sink that is cleared by process death. AndroidCoordinatorRuntime.close() shutdownNow() stops the producer before Host disposal.",
+      "unit_test": "Rust AndroidProcessMetricsCollector covers stable session/sequence/peak plus stale/duplicate/backwards/bounded-memory rejection without state advance. AndroidJsonHost tests cover default-disabled durable opt-in, disabled observation rejection, bounded ordered recent sink, and no replay after process death. Exact-head GitHub Actions are pending.",
       "contract_test": "Desktop process-metrics sources read at current Desktop main; Android telemetry/privacy contract is docs/android-port/features/12-settings.md + verification/performance.md",
-      "integration_test": "required at FabushiProcessRuntime lifecycle boundary",
+      "integration_test": "Shipping typed path is present from Android platform sampler -> AndroidCoordinatorRuntime -> feature.telemetry.processMetrics.observe -> Rust Host collector/recent sink; exact-head runtime/packaged execution still required.",
       "packaged_test": "required on release variant",
       "device_test": "required on Actions-driven reference Android devices using official tracing/benchmark methods",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Do not treat Desktop cursor-proclist or Cursor numeric-metrics backend as directly portable Android mechanisms. Self-process collection is implemented and single-owned by Rust Host; source closure still requires a bounded diagnostic/report sink plus exact-head package/device performance evidence. Concurrent duplicate OBSERVABILITY-PROCESS-METRICS-ANDROID-001 was consolidated here.",
-      "android_head_at_update": "700f7dc5c017b3cea8222b00ce4be9cb5f3362b8"
+      "notes": "Implemented at the current source level with self-process-only privacy boundary and no Cursor backend upload. Keep verification_status=not-verified until an exact descendant HEAD passes Rust/Android/package/device performance gates.",
+      "android_head_at_update": "8507b3f059e1c8721a52ab5f803d3820def1b4ef"
     },
     {
       "responsibility_id": "STORAGE-MIGRATION-ANDROID-001",
