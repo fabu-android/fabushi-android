@@ -15201,6 +15201,35 @@
       "artifact": null,
       "verification_status": "not-verified",
       "notes": "Do not mark these Desktop Box rows not-applicable just because Android cannot host an Electron/VNC sandbox. The user capability requires a formal Local/Remote Runner replacement. One external Remote Runner enrollment blocker must not stop other source closure."
+    },
+    {
+      "responsibility_id": "CLOUD-AGENT-RUNTIME-ANDROID-001",
+      "domain": "agent-cloud-runtime",
+      "desktop_path": "source/host/src/cloud_agents/**",
+      "desktop_symbol": "CloudAgentToolAdapter / load_cloud_agent_images / cloud trace decoder / transcript dump",
+      "source_sha": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "responsibility": "Own the real Cloud Agent product runtime: routed launch/reply tool, model selection, safe image ingestion, polling/recovery, trace decoding and transcript dump while preserving stable backend identity and background-task projection.",
+      "source_owner": "Desktop Host Cloud Agent tool + cloud_agents extension services",
+      "visible_effect": "Users can launch and continue true cloud agents, attach permitted images, observe their background state, inspect trace/transcript output and recover the same backend work instead of a simulated local subagent.",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "source/host/src/runner/background_work.rs",
+        "source/host/src/runner/subagent_runtime.rs",
+        "source/host/src/android_json_runtime.rs",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/production/AgentAsyncTasksPanel_view.kt"
+      ],
+      "android_owner": "Rust Host must own the future Cloud Agent producer; native UI may only project durable state",
+      "platform_delta": "Android may reuse the platform-neutral cloud protocol/runtime but must replace Desktop Box file access with scoped Host media roots or an authorized Runner and keep credentials out of Presentation.",
+      "implementation_status": "mapped",
+      "production_wiring": "Only background-work/subagent projection exists today. No real Cloud Agent producer/model catalog/launch-reply/poll loop/image loader/trace schema/transcript dump is registered in the shipping Android Host, so UI cards are not runtime parity.",
+      "unit_test": "required for image allowlist/limits, model selection, trace decode and dump formatting",
+      "contract_test": "required for stable backend id, launch/reply/poll/recovery and credential boundaries",
+      "integration_test": "required against the real cloud-agent backend through Android Host",
+      "packaged_test": "required on final APK/AAB",
+      "device_test": "required for launch/reply/background recovery/image attachment on supported Android device",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Do not collapse this into generated local subagents or async-task UI. Real Cloud Agent production wiring is a distinct open responsibility."
     }
   ],
   "traceability": {
