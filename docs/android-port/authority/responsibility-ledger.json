@@ -14283,6 +14283,53 @@
       "artifact": null,
       "verification_status": "not-verified",
       "notes": "Do not infer catalog parity from CursorModelProviderOptions or arbitrary requested model support."
+    },
+    {
+      "responsibility_id": "ONEPASSWORD-REMOTE-PROVISIONING-ANDROID-001",
+      "domain": "credentials-remote-provisioning",
+      "desktop_sources": [
+        {
+          "path": "source/electron-main/onepassword/onepassword-cli-dev-controls.ts",
+          "blob_sha": "dab2aac19a74c67dffca4f31f6a5d218aa7f48e2"
+        },
+        {
+          "path": "source/electron-main/onepassword/onepassword-cli-runtime.ts",
+          "blob_sha": "e090789c8188d38d4adfef0d7b6fba91aacbf471"
+        },
+        {
+          "path": "source/electron-main/onepassword/onepassword-op-executor.ts"
+        },
+        {
+          "path": "source/electron-main/onepassword/onepassword-provisioning-bridge.ts",
+          "blob_sha": "6e1dfb56b3856546d0bbfe568d959274a5ef382b"
+        },
+        {
+          "path": "source/electron-main/onepassword/onepassword-provisioning-contract.ts",
+          "blob_sha": "7d4b1c923ba59285ec6b671fed60c5a9ab7ac3d2"
+        }
+      ],
+      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "responsibility": "Preserve safe 1Password-backed credential provisioning without executing the macOS-only op runtime inside Android: select an authorized provider, create/find vaults, mint bounded expiring credentials, deliver to the intended consumer exactly once, classify cancellation/timeout/denial, and reconcile indeterminate delivery.",
+      "source_owner": "Desktop OnePasswordDesktopProvisioningBridge + verified macOS CLI runtime/executor",
+      "visible_effect": "A user can provision a short-lived read-scoped 1Password service credential to the intended Fabushi consumer without exposing the token to UI/logs or accidentally minting/delivering it twice.",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "source/host/src/host_runner_composition.rs",
+        "source/host/src/capability_broker.rs",
+        "source/box-exec-daemon/src/lib.rs"
+      ],
+      "android_owner": "Authorized Remote Runner + Capability Broker; no Android-local op CLI owner",
+      "platform_delta": "Desktop executes a signed macOS op binary through a verified launcher. Android must delegate this desktop-OS-specific action only to an explicitly paired/authorized RemoteBox executor while retaining token containment, bounded inputs/outputs, cancellation and outcome-unknown reconciliation.",
+      "implementation_status": "mapped",
+      "production_wiring": "Generic authenticated RemoteBox transport/journal exists, but no 1Password-specific executor/enrollment/consumer wiring is currently proven. Fail closed.",
+      "unit_test": "Existing remote runner tests prove device/account/grant fencing, cancellation-before-send and outcome-unknown no-replay; 1Password-specific tests required.",
+      "contract_test": "Required: typed onepassword.provision capability and credential-consumer receipt contract.",
+      "integration_test": "Required with authorized desktop Remote Runner and real/sandbox 1Password account.",
+      "packaged_test": "Required on final APK/AAB.",
+      "device_test": "Required: Android initiates provisioning; denial/cancel/timeout are visible; process death never replays mint/delivery; indeterminate delivery reconciles original operation.",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Mapped platform replacement only. Do not mark implemented until a specific authorized remote executor and credential sink are shipping and exact-head CI/device evidence passes."
     }
   ],
   "traceability": {
