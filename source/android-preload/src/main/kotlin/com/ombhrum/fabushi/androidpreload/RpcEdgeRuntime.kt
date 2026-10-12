@@ -57,6 +57,4 @@ class RpcEdgeRuntime {
         for (listener in listeners) listener(payload)
     }
 
-    @Synchronized
-    internal fun listenerCount(event: String): Int = eventListeners[event]?.size ?: 0
 }
