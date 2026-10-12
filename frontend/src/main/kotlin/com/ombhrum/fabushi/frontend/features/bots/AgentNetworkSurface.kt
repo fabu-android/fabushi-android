@@ -200,6 +200,7 @@ private fun AgentNetworkGraph(
                     Text(node.name, color = GrokMobileInk, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     val caption = when (activity) {
                         AgentNetworkActivity.WAITING -> "Waiting for you"
+                        AgentNetworkActivity.TYPING -> "Typing…"
                         AgentNetworkActivity.WORKING -> "Working…"
                         AgentNetworkActivity.IDLE -> if (node.isGroup) "${node.memberIds.size} members" else ""
                     }
@@ -230,6 +231,7 @@ private fun AgentNetworkInspector(
         Text(
             when (agentNetworkActivity(node)) {
                 AgentNetworkActivity.WAITING -> "Waiting for you"
+                AgentNetworkActivity.TYPING -> "Typing…"
                 AgentNetworkActivity.WORKING -> "Working…"
                 AgentNetworkActivity.IDLE -> "Idle"
             },
