@@ -523,6 +523,7 @@ interface AndroidCoordinatorPort {
     fun agentSetUnread(id: String, isUnread: Boolean): JSONObject
     fun agentDuplicate(id: String): JSONObject
     fun agentDelete(id: String): JSONObject
+    fun agentPinnedIds(): List<String>
     fun agentSetPinned(ids: List<String>): List<String>
     fun agentSidebarSections(): AndroidSidebarSectionsSnapshot
     fun agentSetSidebarSections(
