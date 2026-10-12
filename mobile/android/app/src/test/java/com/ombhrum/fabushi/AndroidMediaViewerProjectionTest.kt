@@ -29,8 +29,12 @@ class AndroidMediaViewerProjectionTest {
     @Test
     fun attachmentSaveNameSanitizesPathAuthorityAndFallsBack() {
         assertEquals(
-            "report-2026.csv",
+            "2026.csv",
             androidAttachmentSuggestedSaveName("report/2026.csv", "message"),
+        )
+        assertEquals(
+            "final.PDF",
+            androidAttachmentSuggestedSaveName("C:\\exports\\final.PDF", "message"),
         )
         assertEquals(
             "fabushi-message",
