@@ -15508,6 +15508,125 @@
       "artifact": null,
       "verification_status": "not-verified",
       "notes": "Implemented source/wiring; current exact-head package/device evidence still required."
+    },
+    {
+      "responsibility_id": "REMOTE-BOX-STORE-SYNC-ANDROID-001",
+      "domain": "remote-storage-persistence",
+      "desktop_sources": [
+        {
+          "path": "source/host/src/extensions/box_store_sync/extension.rs",
+          "blob_sha": "4903a08d408290e70520a55c16bc29739d6e2a5c",
+          "symbols": [
+            "BoxStoreSyncExtension",
+            "BoxStoreScheduling",
+            "start_box_store_sync_extension"
+          ]
+        },
+        {
+          "path": "source/host/src/extensions/box_store_sync/box_store_sync.rs",
+          "blob_sha": "1e4568af72e58e4f69d7ca3266b3b2efa70327ad",
+          "symbols": [
+            "BoxStoreWriterLock",
+            "evaluate_box_store_flush",
+            "BoxStoreCycleSummary"
+          ]
+        },
+        {
+          "path": "source/host/src/extensions/box_store_sync/box_store_hydration.rs",
+          "blob_sha": "16b657949d713c59332c56cb0c2a5090e2965f41",
+          "symbols": [
+            "HydrationEvidence",
+            "is_box_store_fully_hydrated",
+            "write_hydration_handoff_marker"
+          ]
+        },
+        {
+          "path": "source/host/src/extensions/box_store_sync/box_store_transfer.rs",
+          "blob_sha": "0aeb9c28c00716b02014e9a2cf3ed9be1f2c6379",
+          "symbols": [
+            "BoxStoreTransfer",
+            "sync_tree_category",
+            "sync_staged_files"
+          ]
+        },
+        {
+          "path": "source/host/src/extensions/box_store_sync/chrome_session_watcher.rs",
+          "blob_sha": "439bea0d0bc1c30bdf12a5268e1ca881834c37f8",
+          "symbols": [
+            "ChromeSessionWatcher"
+          ]
+        },
+        {
+          "path": "source/host/src/extensions/box_store_sync/production.rs",
+          "blob_sha": "d37ec70db1d2690ef63ec2081e7ef17af723be57",
+          "symbols": [
+            "ProductionBoxStoreSyncService"
+          ]
+        }
+      ],
+      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "responsibility": "Preserve Sand/Box durable workspace state across recreation and process loss using conflict-safe manifest/object storage, verified hydration, staged database and browser-session capture, bounded scheduling, diagnostics and vacuum; never blind-replay an ambiguous remote storage side effect.",
+      "source_owner": "Desktop BoxStoreSync extension and Agent Store/CAS clients",
+      "direct_callers": [
+        "Host extension startup",
+        "periodic/idle sync scheduler",
+        "store DB/chrome-session change watchers",
+        "Box lifecycle hydration/recreation flows"
+      ],
+      "downstream_dependencies": [
+        "Agent Store object service",
+        "remote Sand /home/box state",
+        "Chrome session persistence",
+        "Agent/store databases",
+        "Box recreation/recovery"
+      ],
+      "state_owner": "Android Rust Host RemoteBoxStoreSyncJournal owns operation identity/recovery; final remote filesystem/object mutation must be owned by one authorized Remote Runner box.store.sync capability.",
+      "persistent_state": [
+        "operation/request identity",
+        "account fence and epoch",
+        "device id",
+        "store id",
+        "base manifest ETag",
+        "action",
+        "terminal/reconciliation state"
+      ],
+      "protocol_wire_contract": [
+        "dedicated box.store.sync ExecutionRequest; hydrate/snapshot/chrome_session_stage/vacuum actions; no generic Shell substitute",
+        "Remote Runner Execute/Reconcile identity headers and outcome-unknown rules"
+      ],
+      "visible_effect": "A user remote Computer/Sand keeps intended files, Agent state and browser session continuity across restart/rebuild without stale-account writes or silent conflict loss.",
+      "failure_behavior": [
+        "invalid/corrupt journal fails closed",
+        "duplicate operation/request ids rejected",
+        "stale account/device callback rejected",
+        "post-dispatch uncertainty becomes outcome-unknown",
+        "CAS conflict must be preserved rather than overwritten"
+      ],
+      "cancellation_behavior": "prepared work may cancel locally; dispatched storage mutation is never assumed cancelled without remote confirmation/reconciliation",
+      "retry_semantics": "never replay a dispatched storage mutation; only idempotent reconciliation may repeat after outcome-unknown",
+      "idempotency_semantics": "operation_id/request_id are durable unique identities; future remote implementation must bind manifest base ETag and conflict semantics",
+      "process_death_recovery": "Prepared becomes Cancelled because no dispatch was recorded; Sent becomes OutcomeUnknown and requires reconcile before any new equivalent mutation.",
+      "account_fencing": "every record binds account_fence + account_epoch + device_id; old-account/device completions fail closed",
+      "security_boundary": "Android app must not access arbitrary remote filesystem directly or emulate this with generic Shell; only a dedicated authorized Remote Runner capability may perform Box storage mutation.",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "source/host/src/remote_box_store_sync.rs",
+        "source/host/src/remote_execution.rs",
+        "source/host/src/host_runner_composition.rs",
+        "source/box-exec-daemon/src/transport.rs"
+      ],
+      "android_owner": "Rust Host durable operation journal + future dedicated Remote Runner box.store.sync capability",
+      "platform_delta": "Desktop Host directly watches/snapshots /home/box and browser DB files. Android has no authority to mount that filesystem, so the filesystem/object-store mutation must execute on an authorized Remote Runner while Android keeps only typed durable orchestration/reconciliation state.",
+      "implementation_status": "mapped",
+      "production_wiring": "807b87b0e86dae7048c5ce9ddca17fb4a4bfd795 provides the durable typed operation owner and request builder. No Remote Runner server handler is registered for box.store.sync yet, so production hydrate/snapshot/CAS/Chrome/vacuum wiring remains open.",
+      "unit_test": "remote_box_store_sync unit tests cover dedicated capability encoding, duplicate identities, account/device fencing and process-reopen no-blind-replay semantics; exact-head Actions pending",
+      "contract_test": "pending: Remote Runner server box.store.sync schema/CAS conflict/reconcile tests",
+      "integration_test": "pending: real authorized runner hydrate -> mutate -> snapshot -> rebuild -> hydrate continuity",
+      "packaged_test": "pending final exact-head APK/AAB Remote Computer journey",
+      "device_test": "pending protected account/Remote Runner device acceptance",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Registered from Desktop rows 900-929. Do not promote to implemented until the dedicated Remote Runner storage backend is in production composition; generic remote Shell/Read is intentionally insufficient."
     }
   ],
   "traceability": {
