@@ -185,6 +185,23 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
     private val processMetricsExecutor = Executors.newSingleThreadScheduledExecutor { runnable ->
         Thread(runnable, "fabushi-process-metrics").apply { isDaemon = true }
     }
+    private val mainThreadPressureSampler = AndroidMainThreadPressureSampler {
+            p50Ms,
+            p95Ms,
+            maxMs,
+            windowMs,
+        ->
+        runCatching {
+            host.request(
+                "feature.telemetry.eventLoopPressure",
+                JSONObject()
+                    .put("p50Ms", p50Ms)
+                    .put("p95Ms", p95Ms)
+                    .put("maxMs", maxMs)
+                    .put("windowMs", windowMs),
+            )
+        }
+    }
     private val processSessionHeartbeatExecutor =
         Executors.newSingleThreadScheduledExecutor { runnable ->
             Thread(runnable, "fabushi-process-session-heartbeat").apply { isDaemon = true }
@@ -218,6 +235,7 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
         resumeComputerRebuildMigrationIfNeeded()
         resumeQueuedComputerUpdateIfNeeded()
         runCatching { reconcileAgentRosterMutations() }
+        mainThreadPressureSampler.start()
         processSessionHeartbeatExecutor.scheduleWithFixedDelay(
             {
                 runCatching {
@@ -3472,6 +3490,7 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
         remoteComputerReconnectExecutor.shutdownNow()
         storagePressureExecutor.shutdownNow()
         processMetricsExecutor.shutdownNow()
+        mainThreadPressureSampler.close()
         processSessionHeartbeatExecutor.shutdownNow()
         sendSubmissionExecutor.shutdownNow()
         rootConnectionRetryExecutor.shutdownNow()
