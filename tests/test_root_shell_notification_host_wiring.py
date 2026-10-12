@@ -40,7 +40,6 @@ class RootShellNotificationHostWiringTest(unittest.TestCase):
             "accountScope == null",
             "observeTransport",
             "RootConnectionTransportState.CONNECTED",
-            "if (!active || !loggedIn) return",
         ):
             self.assertIn(token, host)
 
