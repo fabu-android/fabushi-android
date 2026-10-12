@@ -45,12 +45,17 @@ class VncLivenessDetector(
     private val deltas = ArrayDeque<Delta>()
     private var coveredSinceMs: Long? = null
     private var episodeFired = false
+    private var stalled = false
 
     /**
      * Compatibility surface for the existing preload call sites: true means the session is not
-     * currently classified as stalled.
+     * currently classified as stalled. A stall remains false until actual remote progress or a
+     * counter reset/reconnect rearms the detector.
      */
-    fun observe(next: VncLivenessCounters): Boolean = sample(next) == null
+    fun observe(next: VncLivenessCounters): Boolean {
+        sample(next)
+        return !stalled
+    }
 
     fun sample(next: VncLivenessCounters): VncLivenessStall? {
         require(next.frames >= 0L) { "VNC frame counter must be non-negative" }
@@ -96,6 +101,7 @@ class VncLivenessDetector(
 
         if (frameDelta > 0L || inboundByteDelta > 0L) {
             episodeFired = false
+            stalled = false
         }
         if (episodeFired) return null
 
@@ -110,6 +116,7 @@ class VncLivenessDetector(
         if (frameProgress > 0L || inboundBytes > 0L) return null
 
         episodeFired = true
+        stalled = true
         val oldestInputAtMs = deltas.firstOrNull { it.inputDelta > 0L }?.atMs ?: next.observedAtMs
         return VncLivenessStall(
             stallMs = (next.observedAtMs - oldestInputAtMs).coerceAtLeast(0L),
@@ -123,6 +130,7 @@ class VncLivenessDetector(
         deltas.clear()
         coveredSinceMs = null
         episodeFired = false
+        stalled = false
     }
 
     private fun rebaseline(next: VncLivenessCounters) {
