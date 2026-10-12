@@ -104,6 +104,8 @@ pub struct AndroidUpdatePolicyProbe {
     pub minimum_version: Option<String>,
     pub auto_update_when_idle_gate_observed: bool,
     pub auto_update_when_idle_gate_enabled: bool,
+    pub sand_agent_network_gate_observed: bool,
+    pub sand_agent_network_gate_enabled: bool,
     pub backend_requirement: BackendUpdateRequirement,
     pub minimum_version_error: Option<String>,
     pub auto_update_when_idle_gate_error: Option<String>,
@@ -206,20 +208,26 @@ impl AndroidBoxRebuildBackend {
             minimum_version,
             auto_update_when_idle_gate_observed,
             auto_update_when_idle_gate_enabled,
+            sand_agent_network_gate_observed,
+            sand_agent_network_gate_enabled,
             minimum_version_error,
             auto_update_when_idle_gate_error,
         ) = match statsig {
-            Ok((minimum_version, gate_enabled)) => (
+            Ok((minimum_version, auto_update_gate_enabled, agent_network_gate_enabled)) => (
                 true,
                 minimum_version,
                 true,
-                gate_enabled,
+                auto_update_gate_enabled,
+                true,
+                agent_network_gate_enabled,
                 None,
                 None,
             ),
             Err(error) => (
                 false,
                 None,
+                false,
+                false,
                 false,
                 false,
                 Some(error.clone()),
@@ -235,6 +243,8 @@ impl AndroidBoxRebuildBackend {
             minimum_version,
             auto_update_when_idle_gate_observed,
             auto_update_when_idle_gate_enabled,
+            sand_agent_network_gate_observed,
+            sand_agent_network_gate_enabled,
             backend_requirement,
             minimum_version_error,
             auto_update_when_idle_gate_error,
@@ -242,7 +252,7 @@ impl AndroidBoxRebuildBackend {
         })
     }
 
-    fn fetch_statsig_update_policy(&self, request_id: &str) -> Result<(Option<String>, bool), String> {
+    fn fetch_statsig_update_policy(&self, request_id: &str) -> Result<(Option<String>, bool, bool), String> {
         let credentials = self.credentials.credentials()?;
         let response = self
             .request(
@@ -379,7 +389,7 @@ impl AndroidBoxRebuildBackend {
     }
 }
 
-fn parse_statsig_update_policy(input: &str) -> Result<(Option<String>, bool), String> {
+fn parse_statsig_update_policy(input: &str) -> Result<(Option<String>, bool, bool), String> {
     let envelope: Value =
         serde_json::from_str(input).map_err(|error| format!("Statsig bootstrap JSON invalid: {error}"))?;
     let config = envelope
@@ -400,22 +410,29 @@ fn parse_statsig_update_policy(input: &str) -> Result<(Option<String>, bool), St
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(str::to_string);
-    let auto_update_when_idle = document
+    let feature_gates = document
         .get("feature_gates")
-        .and_then(Value::as_object)
-        .and_then(|gates| gates.get("sand_auto_update_when_idle"))
-        .and_then(|entry| {
-            entry
-                .get("value")
-                .and_then(Value::as_bool)
-                .or_else(|| entry.as_bool())
-        })
-        .unwrap_or(false);
-    Ok((minimum_version, auto_update_when_idle))
+        .and_then(Value::as_object);
+    let gate = |name: &str| {
+        feature_gates
+            .and_then(|gates| gates.get(name))
+            .and_then(|entry| {
+                entry
+                    .get("value")
+                    .and_then(Value::as_bool)
+                    .or_else(|| entry.as_bool())
+            })
+            .unwrap_or(false)
+    };
+    Ok((
+        minimum_version,
+        gate("sand_auto_update_when_idle"),
+        gate("sand_agent_network"),
+    ))
 }
 
 fn parse_statsig_minimum_version(input: &str) -> Result<Option<String>, String> {
-    parse_statsig_update_policy(input).map(|(minimum_version, _)| minimum_version)
+    parse_statsig_update_policy(input).map(|(minimum_version, _, _)| minimum_version)
 }
 
 fn validate_request_id(value: &str) -> Result<(), String> {
@@ -734,12 +751,22 @@ mod tests {
                 "dynamic_configs": {}
             }).to_string()
         }).to_string();
-        assert_eq!(parse_statsig_update_policy(&enabled).unwrap(), (None, true));
+        assert_eq!(parse_statsig_update_policy(&enabled).unwrap(), (None, true, false));
+
+        let agent_network = serde_json::json!({
+            "config": serde_json::json!({
+                "feature_gates": {
+                    "sand_agent_network": {"value": true}
+                },
+                "dynamic_configs": {}
+            }).to_string()
+        }).to_string();
+        assert_eq!(parse_statsig_update_policy(&agent_network).unwrap(), (None, false, true));
 
         let missing = serde_json::json!({
             "config": serde_json::json!({"feature_gates": {}, "dynamic_configs": {}}).to_string()
         }).to_string();
-        assert_eq!(parse_statsig_update_policy(&missing).unwrap(), (None, false));
+        assert_eq!(parse_statsig_update_policy(&missing).unwrap(), (None, false, false));
     }
 
     #[test]
