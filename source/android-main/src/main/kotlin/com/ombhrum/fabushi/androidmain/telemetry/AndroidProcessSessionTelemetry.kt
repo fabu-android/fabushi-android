@@ -2,7 +2,6 @@ package com.ombhrum.fabushi.androidmain.telemetry
 
 import android.content.Context
 import android.os.Process
-import android.os.SystemClock
 
 data class AndroidProcessSessionMarker(
     val processId: Int,
@@ -119,7 +118,7 @@ class SharedPreferencesAndroidProcessSessionMarkerStore(
         fun production(context: Context): AndroidProcessSessionTelemetry =
             AndroidProcessSessionTelemetry(
                 store = SharedPreferencesAndroidProcessSessionMarkerStore(context),
-                nowMs = SystemClock::elapsedRealtime,
+                nowMs = System::currentTimeMillis,
                 processId = Process::myPid,
             )
     }
