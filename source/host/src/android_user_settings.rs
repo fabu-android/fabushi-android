@@ -47,6 +47,8 @@ struct PersistedAndroidUserSettings {
     local_tool_permission: LocalToolPermission,
     #[serde(default)]
     onboarding_seen_by_account: BTreeMap<String, bool>,
+    #[serde(default)]
+    process_metrics_local_enabled: bool,
 }
 
 /// Canonical Host-owned Android user settings that must survive Activity/process recreation.
@@ -114,6 +116,21 @@ impl AndroidUserSettings {
 
     pub fn local_tool_permission(&self) -> LocalToolPermission {
         self.state.local_tool_permission
+    }
+
+    pub fn process_metrics_local_enabled(&self) -> bool {
+        self.state.process_metrics_local_enabled
+    }
+
+    pub fn set_process_metrics_local_enabled(&mut self, value: bool) -> io::Result<bool> {
+        if self.state.process_metrics_local_enabled == value {
+            return Ok(value);
+        }
+        let mut next = self.state.clone();
+        next.process_metrics_local_enabled = value;
+        write_atomic_json(&self.path, &next)?;
+        self.state = next;
+        Ok(value)
     }
     pub fn onboarding_seen(&self, account_scope: &str) -> bool {
         self.state
@@ -313,6 +330,23 @@ mod tests {
         assert!(!reopened.onboarding_seen("account-device:a"));
         assert!(reopened.set_onboarding_seen("", true).is_err());
 
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn process_metrics_local_collection_is_opt_in_and_durable() {
+        let path = test_path("process-metrics");
+        let mut settings = AndroidUserSettings::open(&path).unwrap();
+        assert!(!settings.process_metrics_local_enabled());
+        assert!(settings.set_process_metrics_local_enabled(true).unwrap());
+        drop(settings);
+
+        let mut reopened = AndroidUserSettings::open(&path).unwrap();
+        assert!(reopened.process_metrics_local_enabled());
+        assert!(!reopened.set_process_metrics_local_enabled(false).unwrap());
+        drop(reopened);
+
+        assert!(!AndroidUserSettings::open(&path).unwrap().process_metrics_local_enabled());
         let _ = fs::remove_file(path);
     }
 
