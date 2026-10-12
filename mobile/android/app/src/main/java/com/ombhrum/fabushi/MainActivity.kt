@@ -66,10 +66,10 @@ class MainActivity : ComponentActivity() {
         super.onStop()
     }
 
-    override fun dispatchKeyEvent(event: KeyEvent): Boolean {
-        val childHandled = super.dispatchKeyEvent(event)
-        if (event.action != KeyEvent.ACTION_DOWN) return childHandled
-
+    override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {
+        // Activity.onKeyDown is reached only after the Window/focused child had the first
+        // opportunity to consume this key event. Keep that framework child-first ordering
+        // instead of calling ComponentActivity.dispatchKeyEvent(), which is a restricted API.
         val shortcutHandled = globalKeyboardShortcutController.dispatch(
             GlobalShortcutKeyEvent(
                 key = shortcutKeyName(event),
@@ -77,11 +77,11 @@ class MainActivity : ComponentActivity() {
                 meta = event.isMetaPressed,
                 alt = event.isAltPressed,
                 shift = event.isShiftPressed,
-                defaultPrevented = childHandled,
+                defaultPrevented = false,
                 repeat = event.repeatCount > 0,
             ),
         )
-        return childHandled || shortcutHandled
+        return shortcutHandled || super.onKeyDown(keyCode, event)
     }
 
     override fun onNewIntent(intent: Intent) {
