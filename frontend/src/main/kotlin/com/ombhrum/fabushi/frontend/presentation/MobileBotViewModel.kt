@@ -216,6 +216,7 @@ data class MobileBotUiState(
     val approvalCleanup: MobileApprovalCleanupState = MobileApprovalCleanupState(),
     val widgetPendingEntryIds: Set<String> = emptySet(),
     val editorSuggestions: MobileEditorSuggestionSnapshot = MobileEditorSuggestionSnapshot(),
+    val modelCatalog: MobileModelCatalogState = MobileModelCatalogState(),
     val messageTargetId: String? = null,
     val paletteMessageSearch: CommandPaletteMessageSnapshot = CommandPaletteMessageSnapshot(
         status = CommandPaletteMessageStatus.IDLE,
@@ -300,6 +301,7 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
     private val paletteRoutineFence = CommandPaletteRoutineRequestFence()
     private var paletteRoutineJob: Job? = null
     private var openBotGeneration = 0L
+    private var modelCatalogGeneration = 0L
     private var sendPresentationGeneration = 0L
     private var historyGeneration = 0L
     private var historyLoadJob: Job? = null
@@ -327,6 +329,73 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
         mutableState.value = next
     }
 
+
+    fun refreshAvailableModels() {
+        val expectedAccountSlot = rosterSelectionAccountSlot
+        if (expectedAccountSlot == null) {
+            modelCatalogGeneration += 1
+            commitState(mutableState.value.copy(modelCatalog = MobileModelCatalogState()))
+            return
+        }
+        val token = ++modelCatalogGeneration
+        val previous = mutableState.value.modelCatalog
+        commitState(
+            mutableState.value.copy(
+                modelCatalog = previous.copy(loading = true, error = null),
+            ),
+        )
+        viewModelScope.launch {
+            val result = withContext(Dispatchers.IO) {
+                runCatching {
+                    val projection = projectMobileAvailableModelCatalog(
+                        coordinator.availableModelCatalog(),
+                        previous.selectedModelId,
+                    )
+                    projection to canonicalRosterSelectionAccountSlot()
+                }
+            }
+            if (
+                token != modelCatalogGeneration ||
+                expectedAccountSlot != rosterSelectionAccountSlot
+            ) {
+                return@launch
+            }
+            result.onSuccess { (projection, settledAccountSlot) ->
+                if (settledAccountSlot != expectedAccountSlot) return@onSuccess
+                commitState(
+                    mutableState.value.copy(
+                        modelCatalog = projection.copy(loading = false, error = null),
+                    ),
+                )
+            }.onFailure { error ->
+                commitState(
+                    mutableState.value.copy(
+                        modelCatalog = previous.copy(
+                            loading = false,
+                            error = error.message ?: "Available models could not be loaded",
+                        ),
+                    ),
+                )
+            }
+        }
+    }
+
+    fun selectAvailableModel(modelId: String) {
+        val current = mutableState.value.modelCatalog
+        runCatching { current.selectAvailableModel(modelId) }
+            .onSuccess { selected ->
+                commitState(mutableState.value.copy(modelCatalog = selected))
+            }
+            .onFailure { error ->
+                commitState(
+                    mutableState.value.copy(
+                        modelCatalog = current.copy(
+                            error = error.message ?: "Model is unavailable",
+                        ),
+                    ),
+                )
+            }
+    }
 
     fun refreshComputerRebuildStatus() {
         val token = ++computerRebuildGeneration
@@ -492,6 +561,7 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
                     hiddenChatsMutationController.setScope(nextSlot, mutableState.value.activeBot?.id)
                     resetPaletteLinks()
                     sendPresentationGeneration += 1
+                    modelCatalogGeneration += 1
                     closeConversationOutline()
                     cancelEditorSuggestionRequest()
                     agentSettingsFence.accountChanged(nextSlot)
@@ -500,6 +570,7 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
                             widgetPendingEntryIds = emptySet(),
                             approvalCleanup = MobileApprovalCleanupState(),
                             editorSuggestions = MobileEditorSuggestionSnapshot(),
+                            modelCatalog = MobileModelCatalogState(),
                         ),
                     )
                 }
@@ -1228,6 +1299,8 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
             rosterSelection.settle(bot.id)
             return
         }
+
+        refreshAvailableModels()
 
         viewModelScope.launch {
             try {
@@ -2168,12 +2241,13 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
                 }
                 if (!isCurrentSendScope(bot.id, accountSlot, scopeGeneration)) return@launch
                 val acknowledgement = withContext(Dispatchers.IO) {
-                    coordinator.sendAcknowledgementBeginWithAttachments(
+                    coordinator.sendAcknowledgementBeginWithModelAndAttachments(
                         accountSlot = accountSlot,
                         agentId = bot.id,
                         nonce = nonce,
                         text = text,
                         richText = plainTipTapRichText(text),
+                        model = snapshot.modelCatalog.selectedModelId,
                         attachments = sentDraft.attachments,
                         entries = listOf(messageAcknowledgementEntry(nonce)),
                     )
