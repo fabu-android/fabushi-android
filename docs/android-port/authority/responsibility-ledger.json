@@ -7945,7 +7945,7 @@
       "desktop_sources": [
         {
           "path": "source/electron-main/box/gateway-descriptor-cache.ts",
-          "blob_sha": "5720b185a80b1313e6ab4a42646dfe435d7f8b6",
+          "blob_sha": "5720b185a80b1313e6ab4a42646dfe435d7f8b6f",
           "symbols": [
             "createPersistedGatewayDescriptorStore",
             "createGatewayConnectFastPath"
@@ -15460,6 +15460,54 @@
       "artifact": null,
       "verification_status": "not-verified",
       "notes": "Separate from AUTOMATION-WORKFLOW-001 local durable run lifecycle. Local success does not prove cloud/listener automation parity."
+    },
+    {
+      "responsibility_id": "WEBAUTHN-PROXY-ANDROID-001",
+      "domain": "security-webauthn",
+      "desktop_sources": [
+        {
+          "path": "source/electron-preload/passkey-stall.ts",
+          "blob_sha": "688e9fc555a795a1bde57add4d6b13bafb53cf76"
+        },
+        {
+          "path": "source/electron-preload/preload-boundaries.test.ts",
+          "blob_sha": "588755d6b85866656fb47aec7ef9c548627b4678"
+        },
+        {
+          "path": "source/electron-preload/preload-browser-base.ts",
+          "blob_sha": "6c9b84263938f9fbaba31c69205fca7179e42fae"
+        },
+        {
+          "path": "source/electron-preload/preload-webview.ts",
+          "blob_sha": "2cb24a7442cabc5f68b54e7ae7f41ab4f266ec0c"
+        },
+        {
+          "path": "source/electron-preload/runtime/webview.ts",
+          "blob_sha": "73e6602ce8e8b8f251daaec4055bc9ae9514bc46"
+        }
+      ],
+      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "responsibility": "Own WebAuthn/passkey ceremonies behind a bounded platform proxy with origin/rpId validation, canonical pending lifecycle, cancellation/stall timeout and stale-provider fencing.",
+      "source_owner": "Desktop preload WebAuthn boundary",
+      "visible_effect": "Allowed passkey requests complete or fail deterministically without hanging or leaking credentials.",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/webauthn/AndroidCredentialManagerWebAuthn.kt",
+        "source/host/src/extensions/webauthn_proxy/webauthn_proxy_bridge.rs",
+        "mobile/android/app/src/test/java/com/ombhrum/fabushi/AndroidWebAuthnContractTest.kt"
+      ],
+      "android_owner": "Android CredentialManager adapter plus Rust Host WebAuthn proxy",
+      "platform_delta": "Electron navigator.credentials interception is replaced by Android CredentialManager while Host retains canonical request lifecycle and the 60-second fail-closed stall boundary.",
+      "implementation_status": "implemented",
+      "production_wiring": "Typed Android WebAuthn provider routes approved ceremonies to CredentialManager and settles Host proxy requests; arbitrary web content is not a credential owner.",
+      "unit_test": "AndroidWebAuthnContractTest; exact-head Actions pending",
+      "contract_test": "Host WebAuthn proxy plus Android contract tests; exact-head Actions pending",
+      "integration_test": "required on packaged CredentialManager flow",
+      "packaged_test": "required on final APK/AAB",
+      "device_test": "required on passkey-capable Android device/provider",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Implemented source/wiring; current exact-head package/device evidence still required."
     }
   ],
   "traceability": {
