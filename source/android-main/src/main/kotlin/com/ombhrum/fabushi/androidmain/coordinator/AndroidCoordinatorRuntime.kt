@@ -562,6 +562,15 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
                 .put("hasSeenOnboarding", hasSeenOnboarding),
         )
 
+    override fun processMetricsSettings(): JSONObject =
+        host.request("feature.settings.processMetrics")
+
+    override fun setProcessMetricsLocalEnabled(enabled: Boolean): JSONObject =
+        host.request(
+            "feature.settings.processMetrics.set",
+            JSONObject().put("localEnabled", enabled),
+        )
+
     override fun timeZoneSettings(): AndroidTimeZoneSettings {
         val detected = ZoneId.systemDefault().id
         host.request(
