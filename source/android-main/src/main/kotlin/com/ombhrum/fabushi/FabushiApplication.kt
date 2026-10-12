@@ -11,6 +11,7 @@ import java.util.concurrent.Executors
 import com.ombhrum.fabushi.androidmain.coordinator.AndroidCoordinatorPorts
 import com.ombhrum.fabushi.androidmain.coordinator.RootShellFocusRefreshOwner
 import com.ombhrum.fabushi.androidmain.coordinator.RootShellFocusRefreshToken
+import com.ombhrum.fabushi.androidmain.diagnostics.AndroidProcessCrashRecovery
 import com.ombhrum.fabushi.androidmain.notifications.AndroidNotificationRuntime
 import com.ombhrum.fabushi.androidmain.webauthn.AndroidCredentialManagerWebAuthn
 import com.ombhrum.fabushi.androidpreload.deeplink.AndroidDeepLink
@@ -26,6 +27,14 @@ import com.ombhrum.fabushi.androidpreload.runtime.AndroidPresentationRuntimePort
 class FabushiApplication : Application() {
     @Volatile
     private var processRuntime: FabushiProcessRuntime? = null
+    private val processCrashRecovery by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
+        AndroidProcessCrashRecovery(this)
+    }
+
+    override fun onCreate() {
+        super.onCreate()
+        processCrashRecovery.install()
+    }
 
     internal fun ensurePresentationRuntime(intent: Intent?): AndroidPresentationRuntimePort =
         processRuntime ?: synchronized(this) {
@@ -35,7 +44,10 @@ class FabushiApplication : Application() {
                     application = this,
                     intent = intent,
                     ciBootstrapActive = ciBootstrapActive,
-                ).also { processRuntime = it }
+                ).also { runtime ->
+                    processRuntime = runtime
+                    runtime.recoverPreviousProcessCrash(processCrashRecovery)
+                }
             }
         }
 
@@ -129,6 +141,19 @@ internal class FabushiProcessRuntime(
         metadata = FabushiCiBootstrap.gatewayMetadata(intent, ciBootstrapActive),
         configuredDeviceName = FabushiCiBootstrap.configuredDeviceName(intent, ciBootstrapActive),
     )
+
+    fun recoverPreviousProcessCrash(recovery: AndroidProcessCrashRecovery) {
+        val marker = recovery.pending() ?: return
+        runCatching {
+            coordinator.reportRecoveredProcessCrash(
+                kind = marker.kind,
+                occurredAtMs = marker.occurredAtMs,
+                uptimeMs = marker.uptimeMs,
+            )
+        }.onSuccess {
+            recovery.acknowledge(marker)
+        }
+    }
 
     override fun handlePlatformDeepLink(link: AndroidDeepLink): Boolean =
         when (link) {
