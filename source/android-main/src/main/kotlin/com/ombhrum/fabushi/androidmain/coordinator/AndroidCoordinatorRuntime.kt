@@ -3107,6 +3107,16 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
             .put("processGeneration", processGeneration)
     }
 
+    override fun remoteComputerClipboardPaste(text: String): JSONObject {
+        require(text.isNotEmpty()) { "Remote clipboard text is empty" }
+        val sent = remoteComputerDataPlane.sendClipboardText(text)
+        check(sent) { "Remote clipboard input is unavailable or stale" }
+        return JSONObject()
+            .put("sent", true)
+            .put("bytes", text.toByteArray(Charsets.UTF_8).size)
+            .put("processGeneration", processGeneration)
+    }
+
     override fun remoteComputerHumanTakeover(
         deviceId: String,
         sessionId: String,
