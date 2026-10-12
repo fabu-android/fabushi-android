@@ -538,6 +538,7 @@ interface AndroidCoordinatorPort {
     fun humanCallSendSignal(
         callId: String,
         generation: Long,
+        seq: Long,
         kind: String,
         payload: JSONObject,
     ): AndroidHumanCallSignal = error("Human call signaling is unavailable on this Coordinator port")
