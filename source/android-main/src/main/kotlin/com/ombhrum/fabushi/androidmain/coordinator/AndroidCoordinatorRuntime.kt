@@ -564,29 +564,6 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
         require(settled) { "Sand trial cancellation did not settle successfully" }
     }
 
-    override fun settingsTimeZone(): AndroidTimeZoneSettings =
-        AndroidTimeZoneSettings(
-            detectedTimeZone = ZoneId.systemDefault().id,
-            overrideTimeZone = host.request("feature.settings.timeZoneOverride")
-                .optString("overrideTimeZone")
-                .trim()
-                .takeIf(String::isNotEmpty),
-        )
-
-    override fun settingsSetTimeZoneOverride(timeZone: String?): AndroidTimeZoneSettings {
-        val normalized = timeZone?.trim()?.takeIf(String::isNotEmpty)?.also(ZoneId::of)
-        val response = host.request(
-            "feature.settings.timeZoneOverride.set",
-            JSONObject().put("timeZone", normalized ?: JSONObject.NULL),
-        )
-        return AndroidTimeZoneSettings(
-            detectedTimeZone = ZoneId.systemDefault().id,
-            overrideTimeZone = response.optString("overrideTimeZone")
-                .trim()
-                .takeIf(String::isNotEmpty),
-        )
-    }
-
 
     override fun credentialVaultList(): JSONArray =
         host.request("feature.credentialVault.list").optJSONArray("credentials") ?: JSONArray()
