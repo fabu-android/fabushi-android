@@ -46,7 +46,6 @@ pub struct TranscriptMediaMatch {
     pub entry_id: String,
     pub path: String,
     pub file_name: String,
-    pub path: String,
     pub ext: String,
     pub mime: Option<String>,
     pub kind: String,
@@ -54,7 +53,6 @@ pub struct TranscriptMediaMatch {
     pub size_bytes: Option<i64>,
     pub width: Option<i64>,
     pub height: Option<i64>,
-    pub size_bytes: Option<i64>,
 }
 
 #[derive(Clone, Debug)]
