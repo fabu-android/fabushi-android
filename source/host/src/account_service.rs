@@ -1,3 +1,7 @@
+use crate::account_telemetry::{
+    AccountTelemetryBuffer, AccountTelemetryProjection, SessionRefreshFailure, SessionReport,
+    SessionSignoutCause,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 use std::fs;
@@ -68,6 +72,9 @@ pub struct AndroidAccountService {
     browser_attempt: Option<BrowserAttempt>,
     agent: ureq::Agent,
     browser_attempt_store: Option<PathBuf>,
+    session_telemetry: AccountTelemetryBuffer,
+    refresh_consecutive_failures: u64,
+    refresh_degraded_since_ms: Option<u64>,
 }
 
 impl AndroidAccountService {
@@ -101,6 +108,9 @@ impl AndroidAccountService {
                 .redirects(0)
                 .build(),
             browser_attempt_store: None,
+            session_telemetry: AccountTelemetryBuffer::default(),
+            refresh_consecutive_failures: 0,
+            refresh_degraded_since_ms: None,
         })
     }
 
@@ -194,6 +204,39 @@ impl AndroidAccountService {
     pub fn clear_local_session(&mut self) -> AccountSessionMutation {
         self.session = None;
         AccountSessionMutation::Clear
+    }
+
+    pub fn session_telemetry_snapshot(&self) -> Vec<AccountTelemetryProjection> {
+        self.session_telemetry.snapshot()
+    }
+
+    pub fn drain_session_telemetry(&mut self) -> Vec<AccountTelemetryProjection> {
+        self.session_telemetry.drain()
+    }
+
+    fn record_refresh_failure(&mut self, failure: SessionRefreshFailure, observed_at_ms: u64) {
+        self.refresh_consecutive_failures = self.refresh_consecutive_failures.saturating_add(1);
+        self.refresh_degraded_since_ms
+            .get_or_insert(observed_at_ms);
+        self.session_telemetry
+            .report_session(SessionReport::RefreshFailed(failure));
+    }
+
+    fn record_refresh_recovered(&mut self, observed_at_ms: u64) {
+        if self.refresh_consecutive_failures == 0 {
+            return;
+        }
+        let degraded_ms = self
+            .refresh_degraded_since_ms
+            .map(|started_at| observed_at_ms.saturating_sub(started_at))
+            .unwrap_or_default();
+        self.session_telemetry
+            .report_session(SessionReport::RefreshRecovered {
+                consecutive_failures: self.refresh_consecutive_failures,
+                degraded_ms,
+            });
+        self.refresh_consecutive_failures = 0;
+        self.refresh_degraded_since_ms = None;
     }
 
     pub(crate) fn authenticated_api_request(
@@ -479,9 +522,14 @@ impl AndroidAccountService {
         }
         let Some(refresh_token) = current.refresh_token.clone() else {
             self.session = None;
+            self.session_telemetry
+                .report_session(SessionReport::SignedOut {
+                    cause: SessionSignoutCause::SessionRevoked,
+                    durable: false,
+                });
             return Ok(Some(AccountSessionMutation::Clear));
         };
-        let raw = self.request_json(
+        let raw = match self.request_json(
             "/api/auth/refresh",
             "POST",
             Some(json!({
@@ -489,14 +537,41 @@ impl AndroidAccountService {
                 "deviceId":current.device_id,
             })),
             None,
-        )?;
-        let next = normalize_session(&raw, false)
-            .ok_or("Fabushi refreshed account session failed validation.")?;
+        ) {
+            Ok(raw) => raw,
+            Err(error) => {
+                self.record_refresh_failure(classify_refresh_failure(&error), now_ms);
+                return Err(error);
+            }
+        };
+        let (next, rotation_rescued) = match merge_refresh_rotation(&current, &raw) {
+            Ok(value) => value,
+            Err(error) => {
+                self.record_refresh_failure(SessionRefreshFailure::BadPayload, now_ms);
+                return Err(error);
+            }
+        };
         if next.device_id != current.device_id || next.user_id != current.user_id {
             self.session = None;
+            self.session_telemetry
+                .report_session(SessionReport::SignedOut {
+                    cause: SessionSignoutCause::Unparseable,
+                    durable: false,
+                });
             return Err("Fabushi refreshed account session changed identity.".into());
         }
-        let verified = self.resolve_identity(next)?;
+        let verified = match self.resolve_identity(next) {
+            Ok(verified) => verified,
+            Err(error) => {
+                self.record_refresh_failure(classify_refresh_failure(&error), now_ms);
+                return Err(error);
+            }
+        };
+        if rotation_rescued {
+            self.session_telemetry
+                .report_session(SessionReport::RotationRescued);
+        }
+        self.record_refresh_recovered(now_ms);
         let serialized = serde_json::to_string(&verified)
             .map_err(|_| "failed to serialize refreshed Fabushi account session")?;
         self.session = Some(verified);
@@ -615,6 +690,44 @@ impl AndroidAccountService {
             }
         }
     }
+}
+
+fn merge_refresh_rotation(
+    current: &FabushiAccountSession,
+    raw: &Value,
+) -> Result<(FabushiAccountSession, bool), String> {
+    let mut next = normalize_session(raw, true)
+        .ok_or("Fabushi refreshed account session failed validation.")?;
+    let rotation_rescued = next.refresh_token.is_none();
+    if rotation_rescued {
+        next.refresh_token = current.refresh_token.clone();
+        next.refresh_token_expires_at = current.refresh_token_expires_at;
+    } else if next.refresh_token_expires_at.is_none() {
+        return Err("Fabushi refreshed account session omitted refresh expiry.".into());
+    }
+    if next.refresh_token.is_none() || next.refresh_token_expires_at.is_none() {
+        return Err("Fabushi refreshed account session has no durable refresh credential.".into());
+    }
+    Ok((next, rotation_rescued))
+}
+
+fn classify_refresh_failure(error: &str) -> SessionRefreshFailure {
+    if let Some(status) = error
+        .strip_prefix("Fabushi account request failed (")
+        .and_then(|value| value.strip_suffix(")."))
+        .and_then(|value| value.parse::<u16>().ok())
+    {
+        return SessionRefreshFailure::HttpStatus(status);
+    }
+    if error.starts_with("Fabushi account request unavailable (") {
+        return SessionRefreshFailure::Network(
+            error
+                .trim_start_matches("Fabushi account request unavailable (")
+                .trim_end_matches(").")
+                .to_string(),
+        );
+    }
+    SessionRefreshFailure::BadPayload
 }
 
 pub fn normalize_session(value: &Value, allow_refreshless: bool) -> Option<FabushiAccountSession> {
@@ -901,6 +1014,62 @@ mod tests {
         assert!(service.browser_attempt.is_none());
         assert!(!path.exists());
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn refresh_rotation_rescue_preserves_existing_refresh_credential() {
+        let current = normalize_session(&durable_session(), false).unwrap();
+        let mut raw = durable_session();
+        raw["accessToken"] = Value::String("refreshed-abcdefghijklmnopqrstuvwxyz0123456789".into());
+        raw.as_object_mut().unwrap().remove("refreshToken");
+        raw.as_object_mut().unwrap().remove("refreshTokenExpiresAt");
+
+        let (next, rescued) = merge_refresh_rotation(&current, &raw).unwrap();
+        assert!(rescued);
+        assert_eq!(next.refresh_token, current.refresh_token);
+        assert_eq!(next.refresh_token_expires_at, current.refresh_token_expires_at);
+    }
+
+    #[test]
+    fn refresh_telemetry_tracks_failure_recovery_and_missing_refresh_signout() {
+        let raw = durable_session().to_string();
+        let mut service = AndroidAccountService::new("device-1", Some(&raw)).unwrap();
+        service.record_refresh_failure(SessionRefreshFailure::HttpStatus(503), 1_000);
+        service.record_refresh_recovered(7_000);
+        let snapshot = service.session_telemetry_snapshot();
+        assert_eq!(snapshot.len(), 2);
+        assert_eq!(snapshot[0].metadata["phase"], "refresh_failed");
+        assert_eq!(snapshot[0].metadata["http_status"], "503");
+        assert_eq!(snapshot[1].metadata["phase"], "refresh_recovered");
+        assert_eq!(snapshot[1].metadata["consecutive_failures"], "1");
+        assert_eq!(snapshot[1].metadata["degraded_ms"], "30000");
+
+        let session = service.session.as_mut().unwrap();
+        session.access_token_expires_at = 1;
+        session.refresh_token = None;
+        session.refresh_token_expires_at = None;
+        let mutation = service.refresh_if_needed(100_000).unwrap();
+        assert_eq!(mutation, Some(AccountSessionMutation::Clear));
+        let snapshot = service.session_telemetry_snapshot();
+        assert_eq!(snapshot.last().unwrap().metadata["phase"], "signed_out");
+        assert_eq!(snapshot.last().unwrap().metadata["cause"], "session_revoked");
+        assert_eq!(snapshot.last().unwrap().metadata["durable"], "false");
+    }
+
+    #[test]
+    fn refresh_failure_classifier_preserves_http_network_and_bad_payload_taxonomy() {
+        assert_eq!(
+            classify_refresh_failure("Fabushi account request failed (429)."),
+            SessionRefreshFailure::HttpStatus(429)
+        );
+        assert!(matches!(
+            classify_refresh_failure("Fabushi account request unavailable (ConnectionFailed)."),
+            SessionRefreshFailure::Network(_)
+        ));
+        assert_eq!(
+            classify_refresh_failure("Fabushi account response is invalid JSON."),
+            SessionRefreshFailure::BadPayload
+        );
     }
 
     #[test]
