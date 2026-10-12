@@ -27,6 +27,33 @@ class McpServerCatalogProjectionTest {
     }
 
     @Test
+    fun teamPopularityParserKeepsNonNegativeCounts() {
+        val projection = JSONObject()
+            .put(
+                "counts",
+                JSONObject()
+                    .put("42", 7)
+                    .put("9001", 0)
+                    .put("negative", -1)
+                    .put("   ", 3),
+            )
+
+        assertEquals(
+            mapOf("42" to 7L, "9001" to 0L),
+            parseMcpTeamPopularity(projection),
+        )
+        assertEquals(emptyMap<String, Long>(), parseMcpTeamPopularity(JSONObject()))
+    }
+
+    @Test
+    fun staleAccountOrGenerationCannotApplyTeamPopularityResult() {
+        assertTrue(shouldApplyMcpTeamPopularityResult(7, 7, "account-a", true, "account-a"))
+        assertFalse(shouldApplyMcpTeamPopularityResult(7, 8, "account-a", true, "account-a"))
+        assertFalse(shouldApplyMcpTeamPopularityResult(7, 7, "account-a", true, "account-b"))
+        assertFalse(shouldApplyMcpTeamPopularityResult(7, 7, "account-a", false, "account-a"))
+    }
+
+    @Test
     fun staleAccountOrGenerationCannotApplyCatalogResult() {
         assertTrue(shouldApplyMcpServerCatalogResult(7, 7, "account-a", true, "account-a"))
         assertFalse(shouldApplyMcpServerCatalogResult(7, 8, "account-a", true, "account-a"))
