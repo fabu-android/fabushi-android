@@ -644,6 +644,7 @@ impl AndroidMessagingAccessGrant {
 
 pub struct AndroidJsonHost {
     mode: AndroidHostMode,
+    device_id: String,
     account: AndroidAccountService,
     account_binding: EnvDescriptorAccountBinding,
     preexisting_account_durable_data: bool,
@@ -925,6 +926,7 @@ impl AndroidJsonHost {
         }));
         Self {
             mode,
+            device_id: device_id.clone(),
             account,
             account_binding,
             preexisting_account_durable_data,
@@ -2289,7 +2291,7 @@ impl AndroidJsonHost {
             &account_fence,
             required_u64(params, "generation")?,
             &user_id,
-            required_string(params, "deviceId")?,
+            &self.device_id,
             params.get("allowClaim").and_then(Value::as_bool).unwrap_or(false),
         )?;
         serde_json::to_value(lease).map_err(|error| error.to_string())
@@ -2327,7 +2329,7 @@ impl AndroidJsonHost {
             required_string(params, "callId")?,
             &account_fence,
             required_u64(params, "generation")?,
-            required_string(params, "senderDeviceId")?,
+            &self.device_id,
             required_string(params, "kind")?,
             params.get("payload").cloned().ok_or("signal payload is required")?,
             now_ms(),
