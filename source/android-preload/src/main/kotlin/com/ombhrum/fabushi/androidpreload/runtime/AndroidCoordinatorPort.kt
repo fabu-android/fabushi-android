@@ -530,28 +530,6 @@ interface AndroidCoordinatorPort {
         boxState: String = "unknown",
         outcome: String,
     ): JSONObject = error("Agent load telemetry is unavailable on this Coordinator port")
-    fun reportGatewayReachability(
-        outcome: String,
-        method: String,
-        latencyMs: Long,
-        baseUrlKind: String,
-        httpStatus: Int? = null,
-        causeSummary: String? = null,
-    ): JSONObject = error("Gateway reachability telemetry is unavailable on this Coordinator port")
-    fun reportDnsDiagnostic(
-        cluster: String,
-        trigger: String,
-        diagnosis: String,
-        systemExact: String? = null,
-        independentExact: String? = null,
-        independentWildcard: String? = null,
-        independentGeneral: String? = null,
-    ): JSONObject = error("DNS diagnostic telemetry is unavailable on this Coordinator port")
-    fun reportOnboardingStep(
-        step: String,
-        stepIndex: Int,
-        direction: String,
-    ): JSONObject = error("Onboarding telemetry is unavailable on this Coordinator port")
     fun autoReviewInstructions(): AndroidAutoReviewInstructionsSnapshot =
         error("Auto Review instructions are unavailable on this Coordinator port")
     fun setAutoReviewInstructions(
