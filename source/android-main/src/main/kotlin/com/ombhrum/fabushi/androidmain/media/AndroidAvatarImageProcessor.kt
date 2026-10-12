@@ -71,7 +71,8 @@ internal fun panAndroidAvatarCrop(
 }
 
 internal fun avatarDimensionsAllowed(width: Int, height: Int): Boolean =
-    width > 0 && height > 0
+    width in 1..MAX_AGENT_AVATAR_SOURCE_DIMENSION &&
+        height in 1..MAX_AGENT_AVATAR_SOURCE_DIMENSION
 
 internal fun avatarDecodeSampleSize(width: Int, height: Int): Int {
     var sample = 1
