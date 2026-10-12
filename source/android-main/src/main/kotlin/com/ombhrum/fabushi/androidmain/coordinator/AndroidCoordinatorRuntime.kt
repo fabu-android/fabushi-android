@@ -3533,30 +3533,47 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
     }
 
     private fun replayCoordinatorEvents() {
-        val status = coordinatorStatus()
-        val generation = status.optLong("generation", -1L)
-        check(generation == processGeneration) {
-            "Coordinator generation mismatch: expected $processGeneration, got $generation"
+        val startedAtNs = System.nanoTime()
+        var failedStep: String? = null
+        try {
+            val status = coordinatorStatus()
+            val generation = status.optLong("generation", -1L)
+            check(generation == processGeneration) {
+                "Coordinator generation mismatch: expected $processGeneration, got $generation"
+            }
+            val snapshot = coordinatorResync(generation, lastEventSequence.get())
+            val events = snapshot.optJSONArray("events") ?: JSONArray()
+            for (index in 0 until events.length()) {
+                val envelope = events.optJSONObject(index) ?: continue
+                val sequence = envelope.optLong("sequence", -1L)
+                val payload = envelope.optJSONObject("payload") ?: continue
+                val projected = JSONObject(payload.toString()).put(
+                    "_coordinator",
+                    JSONObject()
+                        .put("generation", generation)
+                        .put("sequence", sequence)
+                        .put("eventId", envelope.optString("eventId")),
+                )
+                dispatchFeatureEvent(projected)
+            }
+            // Host-owned async task truth is reconstructed by a typed read rather than replaying
+            // UI state. A feature-stream reconnect/resync therefore invalidates any subscribed
+            // panel so it performs the Desktop-equivalent noteReconnect refresh.
+            dispatchFeatureEvent(JSONObject().put("type", "agent.async-tasks.refresh"))
+        } catch (error: Throwable) {
+            failedStep = "coordinator_replay"
+            throw error
+        } finally {
+            // Telemetry observes recovery only. It must not become a retry owner, turn a successful
+            // replay into a failure, or mask the original replay error.
+            val durationMs = ((System.nanoTime() - startedAtNs) / 1_000_000L).coerceAtLeast(0L)
+            runCatching {
+                reportResyncCompleted(
+                    failedSteps = failedStep?.let(::listOf) ?: emptyList(),
+                    durationMs = durationMs,
+                )
+            }
         }
-        val snapshot = coordinatorResync(generation, lastEventSequence.get())
-        val events = snapshot.optJSONArray("events") ?: JSONArray()
-        for (index in 0 until events.length()) {
-            val envelope = events.optJSONObject(index) ?: continue
-            val sequence = envelope.optLong("sequence", -1L)
-            val payload = envelope.optJSONObject("payload") ?: continue
-            val projected = JSONObject(payload.toString()).put(
-                "_coordinator",
-                JSONObject()
-                    .put("generation", generation)
-                    .put("sequence", sequence)
-                    .put("eventId", envelope.optString("eventId")),
-            )
-            dispatchFeatureEvent(projected)
-        }
-        // Host-owned async task truth is reconstructed by a typed read rather than replaying
-        // UI state. A feature-stream reconnect/resync therefore invalidates any subscribed
-        // panel so it performs the Desktop-equivalent noteReconnect refresh.
-        dispatchFeatureEvent(JSONObject().put("type", "agent.async-tasks.refresh"))
     }
 
     private fun acceptCoordinatorEvent(event: JSONObject): Boolean {
