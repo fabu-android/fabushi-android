@@ -3464,17 +3464,26 @@ impl AndroidJsonHost {
             return Err("unsupported Android process crash kind".into());
         }
         let error_class = required_string(params, "errorClass")?;
-        if error_class.chars().count() > 96
+        if error_class.is_empty()
+            || error_class.chars().count() > 96
             || !error_class
                 .chars()
-                .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '_' | '.' | '
+                .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '_' | '.' | '$'))
+        {
+            return Err("invalid Android process crash error class".into());
+        }
+        let occurred_at_ms = required_u64(params, "occurredAtMs")?;
+        let uptime_ms = required_u64(params, "uptimeMs")?;
+        self.unclean_exit
             .mark_crash_seen(occurred_at_ms)
             .map_err(|error| format!("failed to persist Android crash marker: {error}"))?;
+
+        let bounded_uptime_ms = uptime_ms.min(30 * 24 * 60 * 60 * 1_000_u64);
         let record = json!({
             "kind": kind,
             "errorClass": error_class,
             "occurredAtMs": occurred_at_ms,
-            "uptimeMs": uptime_ms.min(30 * 24 * 60 * 60 * 1_000_u64),
+            "uptimeMs": bounded_uptime_ms,
             "errorCode": "SAND-E0603",
             "errorDomain": "android-process",
             "errorRetryable": false,
@@ -3484,19 +3493,15 @@ impl AndroidJsonHost {
         }
         self.process_crash_recent.push_back(record.clone());
 
-        // Process-local crash projections disappear when Android kills the process. Preserve only
-        // the bounded, source-neutral crash metadata in the durable structured-log spool; never
-        // persist the raw exception message or stack supplied by the platform layer.
+        // Preserve only bounded source-neutral crash metadata. The Android platform handoff never
+        // forwards Throwable message/stack/request content, and Host does not read such fields.
         self.sync_structured_log_account_slot();
         let metadata = BTreeMap::from([
             ("kind".to_string(), kind.to_string()),
             ("error_class".to_string(), error_class.to_string()),
             ("error_code".to_string(), "SAND-E0603".to_string()),
             ("error_domain".to_string(), "android-process".to_string()),
-            (
-                "uptime_ms".to_string(),
-                uptime_ms.min(30 * 24 * 60 * 60 * 1_000_u64).to_string(),
-            ),
+            ("uptime_ms".to_string(), bounded_uptime_ms.to_string()),
         ]);
         if self
             .structured_log_spool
