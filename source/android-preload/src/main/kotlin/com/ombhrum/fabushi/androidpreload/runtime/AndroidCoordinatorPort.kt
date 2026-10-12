@@ -509,6 +509,7 @@ interface AndroidCoordinatorPort {
         error("Process metrics setting mutation is unavailable on this Coordinator port")
     fun reportRecoveredProcessCrash(
         kind: String,
+        errorClass: String,
         occurredAtMs: Long,
         uptimeMs: Long,
     ): JSONObject = error("Process crash telemetry is unavailable on this Coordinator port")
