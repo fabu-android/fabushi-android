@@ -513,13 +513,6 @@ interface AndroidCoordinatorPort {
         occurredAtMs: Long,
         uptimeMs: Long,
     ): JSONObject = error("Process crash telemetry is unavailable on this Coordinator port")
-    fun reportAgentLoadTelemetry(
-        durationMs: Long,
-        cold: Boolean,
-        stale: Boolean?,
-        boxState: String,
-        outcome: String,
-    ): JSONObject = error("Agent-load telemetry is unavailable on this Coordinator port")
     fun reportAgentLoad(
         durationMs: Long,
         openRpcMs: Long?,
