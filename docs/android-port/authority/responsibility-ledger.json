@@ -15092,6 +15092,33 @@
       "artifact": null,
       "verification_status": "not-verified",
       "notes": "Implemented by aa6c3056, 980478b5, 785be088, e4dd06b8, 7ed8720f, 367dc893, 44c1a7d4. This does not claim full local-exec parity."
+    },
+    {
+      "responsibility_id": "AGENT-ISOLATION-BLOB-WORKER-ANDROID-001",
+      "domain": "agent-runtime-storage",
+      "desktop_path": "source/host/src/agent_isolation/**",
+      "desktop_symbol": "ProductionAgentStoreWorkerBackend / AgentWorkerPool / ConversationBlobWorkerBackend / TranscriptMirrorOffloadPool / WorkerBlobStore",
+      "source_sha": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "responsibility": "Own per-Agent conversation blob worker isolation, bounded worker lifecycle, checkpoint blob I/O, recovery-aware SQLite storage, soft garbage collection, stale-root cleanup, legacy blob retirement and transcript-mirror offload without blocking the primary Host lane.",
+      "source_owner": "Desktop ProductionSessionWorkers + production transcript mirror composition",
+      "visible_effect": "Agent conversations keep durable isolated state across reopen while maintenance and transcript compatibility work cannot corrupt another Agent or block the main Host execution path.",
+      "android_disposition": "direct-port",
+      "android_target": [
+        "source/host/src/agent_isolation",
+        "source/host/src/transcript_mirror/legacy_transcript_mirror.rs"
+      ],
+      "android_owner": "Rust Host; production composition owner still missing",
+      "platform_delta": "The storage/worker algorithms are platform-independent Rust and are ported Rust-to-Rust. Android must still bind them beneath its canonical Host/account data root rather than introducing a Compose/Kotlin storage owner.",
+      "implementation_status": "mapped",
+      "production_wiring": "Open: Android Host does not yet have the Desktop-equivalent ProductionSessionWorkers/session materialization + transcript_mirror production_provider composition. Foundation modules alone are not product wiring.",
+      "unit_test": "Ported module tests compile/run only when the exact-head Rust gate succeeds; no local build was used.",
+      "contract_test": "Required: worker isolation, SQLite recovery, GC, legacy retirement and mirror offload contracts on exact head.",
+      "integration_test": "Required: Host materialize/reopen/process-death path uses one account-fenced worker pool and durable checkpoint owner.",
+      "packaged_test": "Required on final APK/AAB process-death/reopen acceptance.",
+      "device_test": "Required: multi-Agent isolation/reopen under Android process death and storage pressure.",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "83e5d6075e8cc6d825d05318c2b26e33ab2a5e8d ports the missing platform-independent worker/mirror foundation. Do not promote until shipping Session production composition is implemented and exact-head Actions/package/device evidence closes it."
     }
   ],
   "traceability": {
