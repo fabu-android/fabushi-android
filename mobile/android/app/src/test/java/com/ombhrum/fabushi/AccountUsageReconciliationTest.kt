@@ -47,6 +47,54 @@ class AccountUsageReconciliationTest {
     }
 
     @Test
+    fun currentAccountGenerationAcceptsUsageProjection() {
+        assertEquals(
+            true,
+            shouldApplyAccountUsageResult(
+                requestGeneration = 7,
+                currentGeneration = 7,
+                expectedAuthId = "account-a",
+                currentLoggedIn = true,
+                currentAuthId = "account-a",
+            ),
+        )
+    }
+
+    @Test
+    fun staleGenerationOrAccountSwitchRejectsUsageProjection() {
+        assertEquals(
+            false,
+            shouldApplyAccountUsageResult(
+                requestGeneration = 6,
+                currentGeneration = 7,
+                expectedAuthId = "account-a",
+                currentLoggedIn = true,
+                currentAuthId = "account-a",
+            ),
+        )
+        assertEquals(
+            false,
+            shouldApplyAccountUsageResult(
+                requestGeneration = 7,
+                currentGeneration = 7,
+                expectedAuthId = "account-a",
+                currentLoggedIn = true,
+                currentAuthId = "account-b",
+            ),
+        )
+        assertEquals(
+            false,
+            shouldApplyAccountUsageResult(
+                requestGeneration = 7,
+                currentGeneration = 7,
+                expectedAuthId = "account-a",
+                currentLoggedIn = false,
+                currentAuthId = "account-a",
+            ),
+        )
+    }
+
+    @Test
     fun failedMutationWithoutCanonicalConfirmationIsOutcomeUnknown() {
         assertEquals(
             SandTrialCancellationOutcome.OUTCOME_UNKNOWN,
