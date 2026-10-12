@@ -1,3 +1,4 @@
+pub mod codebase_telemetry;
 pub mod cross_user_sharing;
 pub mod telemetry;
 pub mod session;
