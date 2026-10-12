@@ -64,6 +64,7 @@ import com.ombhrum.fabushi.androidmain.security.AndroidRemotePairingStore
 import com.ombhrum.fabushi.androidmain.security.RemoteControlSessionCredential
 import com.ombhrum.fabushi.androidmain.security.RemoteControlSessionLifecycle
 import com.ombhrum.fabushi.androidmain.security.RemotePairingCredential
+import com.ombhrum.fabushi.androidmain.telemetry.SharedPreferencesAndroidProcessSessionMarkerStore
 import com.ombhrum.fabushi.androidmain.remote.AndroidRemoteComputerDataPlane
 import com.ombhrum.fabushi.androidmain.remote.RemoteComputerDataPlaneFence
 import com.ombhrum.fabushi.core.MahayanaHost
@@ -99,6 +100,8 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
     private val remoteCreateIntentPreferences =
         application.getSharedPreferences("fabushi-remote-create-intent-v1", 0)
     private val applicationContext = application.applicationContext
+    private val processSessionMarkerStore =
+        SharedPreferencesAndroidProcessSessionMarkerStore(application)
     private val remoteComputerDataPlane by lazy {
         AndroidRemoteComputerDataPlane(
             context = applicationContext,
@@ -259,7 +262,19 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
         )
     }
 
-    override fun coordinatorStatus() = host.request("coordinator.status")
+    override fun coordinatorStatus(): JSONObject {
+        val status = host.request("coordinator.status")
+        val unclean = processSessionMarkerStore.readLastUnclean()
+        return status.put(
+            "lastUncleanProcessSession",
+            unclean?.let { settlement ->
+                JSONObject()
+                    .put("previousProcessId", settlement.previousProcessId)
+                    .put("previousStartedAtMs", settlement.previousStartedAtMs)
+                    .put("observedAtMs", settlement.observedAtMs)
+            } ?: JSONObject.NULL,
+        )
+    }
 
     override fun coordinatorResync(generation: Long, afterSequence: Long) =
         host.request(
