@@ -955,6 +955,8 @@ interface AndroidCoordinatorPort {
         error("remote_computer_viewport_view_not_implemented")
     fun remoteComputerDataPlaneDisconnect(): JSONObject =
         error("remote_computer_data_plane_disconnect_not_implemented")
+    fun remoteComputerClipboardPaste(text: String): JSONObject =
+        error("remote_computer_clipboard_paste_not_implemented")
     fun remoteComputerSessionClose(deviceId: String, sessionId: String): JSONObject =
         error("remote_computer_session_close_not_implemented")
     fun computerRebuildRequest(
