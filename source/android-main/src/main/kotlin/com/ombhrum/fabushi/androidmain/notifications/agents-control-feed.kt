@@ -3,17 +3,20 @@ package com.ombhrum.fabushi.androidmain.notifications
 import org.json.JSONArray
 import org.json.JSONObject
 
+internal fun agentNotificationEventKind(payload: JSONObject): String {
+    val event = payload.optJSONObject("event") ?: payload
+    return payload.optString("kind").ifBlank {
+        event.optString("kind").ifBlank { event.optString("type") }
+    }
+}
+
 internal class AndroidAgentsControlFeed(
     private val osNotifications: AndroidOsNotificationManager,
     private val dockBadge: AndroidDockBadgeManager,
 ) {
     fun handleFeatureEvent(payload: JSONObject) {
         val event = payload.optJSONObject("event") ?: payload
-        val kind = payload.optString("kind").ifBlank {
-            event.optString("kind").ifBlank { event.optString("type") }
-        }
-
-        when (kind) {
+        when (agentNotificationEventKind(payload)) {
             "agents" -> {
                 val agents = parseAgents(event.optJSONArray("agents")) ?: return
                 osNotifications.handleAgents(agents.map(::notificationAgent))
