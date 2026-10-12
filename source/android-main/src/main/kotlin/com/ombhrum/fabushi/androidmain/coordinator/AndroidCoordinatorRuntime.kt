@@ -646,6 +646,25 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
                 .put("uptimeMs", uptimeMs),
         )
 
+    override fun reportStartupLifecycle(
+        outcome: String,
+        phase: String,
+        elapsedMs: Long,
+        phaseElapsedMs: Long?,
+        windowMs: Long?,
+    ): JSONObject =
+        host.request(
+            "feature.telemetry.startupLifecycle",
+            JSONObject()
+                .put("outcome", outcome)
+                .put("phase", phase)
+                .put("elapsedMs", elapsedMs.coerceAtLeast(0L))
+                .apply {
+                    phaseElapsedMs?.let { put("phaseElapsedMs", it.coerceAtLeast(0L)) }
+                    windowMs?.let { put("windowMs", it.coerceAtLeast(0L)) }
+                },
+        )
+
     override fun reportAgentLoad(
         durationMs: Long,
         openRpcMs: Long?,
