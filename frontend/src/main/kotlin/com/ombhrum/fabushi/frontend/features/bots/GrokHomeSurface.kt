@@ -57,6 +57,7 @@ import com.ombhrum.fabushi.androidpreload.runtime.AccountAccessBlockReason
 import com.ombhrum.fabushi.androidpreload.runtime.AccountAccessProjection
 import com.ombhrum.fabushi.androidpreload.runtime.AccountAccessState
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidEntrypointAvailability
+import com.ombhrum.fabushi.androidpreload.runtime.AndroidSidebarSection
 import kotlin.math.absoluteValue
 import kotlin.math.sin
 
@@ -780,10 +781,11 @@ internal fun GrokHomeSurface(
 
             if (visibleBots.isNotEmpty()) {
                 val visibleById = sidebarProjection.recent.associateBy { it.id }
-                val renderedSections = if (botState.sidebarSnapshot.sections.isEmpty()) {
-                    listOf(null to (sidebarProjection.pinned + sidebarProjection.recent))
-                } else {
-                    buildList {
+                val renderedSections: List<Pair<AndroidSidebarSection?, List<MobileBotSummaryAndroid>>> =
+                    if (botState.sidebarSnapshot.sections.isEmpty()) {
+                        listOf(null to (sidebarProjection.pinned + sidebarProjection.recent))
+                    } else {
+                        buildList {
                         if (sidebarProjection.pinned.isNotEmpty()) {
                             add(null to sidebarProjection.pinned)
                         }
