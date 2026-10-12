@@ -587,9 +587,10 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
                 // product account adapter; the Host exposes that canonical policy over JNI.
                 sandAccessState = sandAccessState,
                 blockReason = sandAccessBlockReason,
-                // Descriptor-account authorization remains a separate owner and stays unknown
-                // until its exact shipping contract is wired.
-                authorizationState = AccountTruthState.UNKNOWN,
+                // A logged-in Host projection is emitted only after durable
+                // descriptor/account authorization succeeds. Binding refusal or corruption
+                // clears the candidate session and projects logged-out before this point.
+                authorizationState = AccountTruthState.GRANTED,
                 paymentState = paymentState,
                 entitlementState = entitlementState,
                 entitlementReason = entitlementReason,
