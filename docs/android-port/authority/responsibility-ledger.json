@@ -11649,15 +11649,15 @@
       "android_owner": "Native Android presentation + existing typed Coordinator/Host ownership once completed",
       "platform_delta": "Android cannot use window.location.reload or browser clipboard. Replacement should be a native root recovery state, Activity/runtime restart/recreate path, Android ClipboardManager, and Compose semantics/role=alert equivalent without moving canonical runtime state into UI.",
       "implementation_status": "mapped",
-      "production_wiring": "Confirmed gap at this audit head: FabushiApplicationRoot directly invokes ProductionRenderer and MainActivity initializes runtime/setContent without a native app-root error state equivalent to Desktop ErrorBoundarySurface. transcript-load-error is scoped to history loading and is not an app-root replacement.",
-      "unit_test": "Missing focused title/detail/retry/copy-diagnostics/accessibility and failure-surface-survives-copy-failure tests.",
+      "production_wiring": "8218be9e853bf6844d0fd803a8085017d967cb23 now catches process-runtime/bootstrap initialization failure before ProductionRenderer mounts, keeps a native Compose root failure surface visible, gates deep-link/runtime lifecycle until a retry succeeds, and offers bounded redacted diagnostics copy. Runtime Compose/renderer failures after successful mount are not yet intercepted, so this responsibility remains mapped/not-verified.",
+      "unit_test": "RootErrorBoundaryProjectionTest covers bounded diagnostics, credential-like redaction and empty-message fallback; exact-head GitHub Actions pending.",
       "contract_test": "required on same exact HEAD",
       "integration_test": "required on same exact HEAD",
       "packaged_test": "required on final minified package",
       "device_test": "required on supported emulator/device",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Fresh deterministic source audit. This row records a confirmed Android gap/partial foundation and intentionally does not promote implementation or verification."
+      "notes": "Partial implementation advanced without status inflation: startup/runtime initialization failure is now recoverable in-app. Remaining gap is a root-safe strategy for failures thrown after Compose/ProductionRenderer has mounted, plus exact-head packaged/device accessibility and retry evidence."
     },
     {
       "responsibility_id": "FEEDBACK-OVERLAY-ANDROID-001",
