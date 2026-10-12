@@ -13,7 +13,7 @@ use std::{
 
 pub const DEFAULT_DACHENG_RESPONSES_BASE_URL: &str =
     "https://api.ombhrum.com/codex-deepseek/v1";
-pub const DEFAULT_DEEPSEEK_MODEL: &str = "deepseek-chat";
+pub const DEFAULT_SAND_MODEL_ID: &str = "grok-4.5";
 const SAND_AUTO_REVIEW_CLASSIFIER_TIMEOUT_SECS: u64 = 10;
 const SAND_SUBAGENT_CLASSIFIER_ERROR_REASON: &str =
     "An error occurred while classifying this task action. Please review manually.";
@@ -72,7 +72,7 @@ impl AndroidHostInferenceProvider {
             mode,
             bearer_token: None,
             base_url: DEFAULT_DACHENG_RESPONSES_BASE_URL.into(),
-            default_model: DEFAULT_DEEPSEEK_MODEL.into(),
+            default_model: DEFAULT_SAND_MODEL_ID.into(),
             cancelled: Arc::new(AtomicBool::new(false)),
             routed_tools: None,
             request_timeout: None,
@@ -90,7 +90,7 @@ impl AndroidHostInferenceProvider {
             mode: AndroidInferenceMode::Production,
             bearer_token: Some(bearer_token),
             base_url: DEFAULT_DACHENG_RESPONSES_BASE_URL.into(),
-            default_model: DEFAULT_DEEPSEEK_MODEL.into(),
+            default_model: DEFAULT_SAND_MODEL_ID.into(),
             cancelled,
             routed_tools: None,
             request_timeout: None,
@@ -100,7 +100,7 @@ impl AndroidHostInferenceProvider {
     pub fn resolve_model_id(requested_model: &str) -> String {
         let requested_model = requested_model.trim();
         if requested_model.is_empty() || requested_model == "default" {
-            DEFAULT_DEEPSEEK_MODEL.to_string()
+            DEFAULT_SAND_MODEL_ID.to_string()
         } else {
             requested_model.to_string()
         }
@@ -118,7 +118,7 @@ impl AndroidHostInferenceProvider {
             mode,
             bearer_token,
             cancelled,
-            DEFAULT_DEEPSEEK_MODEL,
+            DEFAULT_SAND_MODEL_ID,
             system_prompt,
             user_prompt,
             should_cancel,
@@ -277,7 +277,7 @@ impl AndroidHostInferenceProvider {
             mode: AndroidInferenceMode::Production,
             bearer_token: Some(bearer_token),
             base_url,
-            default_model: DEFAULT_DEEPSEEK_MODEL.into(),
+            default_model: DEFAULT_SAND_MODEL_ID.into(),
             cancelled,
             routed_tools: None,
             request_timeout: None,
@@ -739,6 +739,17 @@ mod tests {
             prompt: "hello".into(),
             resume_checkpoint_available: false,
         }
+    }
+
+    #[test]
+    fn default_model_matches_current_desktop_sand_authority() {
+        assert_eq!(DEFAULT_SAND_MODEL_ID, "grok-4.5");
+        assert_eq!(AndroidHostInferenceProvider::resolve_model_id("default"), "grok-4.5");
+        assert_eq!(AndroidHostInferenceProvider::resolve_model_id("   "), "grok-4.5");
+        assert_eq!(
+            AndroidHostInferenceProvider::resolve_model_id("claude-opus-4-8"),
+            "claude-opus-4-8",
+        );
     }
 
     #[test]
