@@ -1,7 +1,7 @@
 package com.ombhrum.fabushi.androidmain.media
 
-import com.ombhrum.fabushi.androidpreload.runtime.ANDROID_ANDROID_AGENT_AVATAR_MAX_ZOOM
-import com.ombhrum.fabushi.androidpreload.runtime.ANDROID_ANDROID_AGENT_AVATAR_MIN_ZOOM
+import com.ombhrum.fabushi.androidpreload.runtime.ANDROID_AGENT_AVATAR_MAX_ZOOM
+import com.ombhrum.fabushi.androidpreload.runtime.ANDROID_AGENT_AVATAR_MIN_ZOOM
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidAvatarCrop
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidAvatarImageSource
 import com.ombhrum.fabushi.androidpreload.runtime.clampAndroidAvatarCrop
