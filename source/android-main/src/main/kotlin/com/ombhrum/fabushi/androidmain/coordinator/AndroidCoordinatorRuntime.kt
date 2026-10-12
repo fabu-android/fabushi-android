@@ -690,6 +690,19 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
                 },
         )
 
+    override fun reportOnboardingStep(
+        step: String,
+        stepIndex: Int,
+        direction: String,
+    ): JSONObject =
+        host.request(
+            "feature.telemetry.onboardingStep",
+            JSONObject()
+                .put("step", step)
+                .put("stepIndex", stepIndex)
+                .put("direction", direction),
+        )
+
     override fun timeZoneSettings(): AndroidTimeZoneSettings {
         val detected = ZoneId.systemDefault().id
         host.request(
