@@ -8,6 +8,9 @@ pub enum DaemonAction { Spawn, Adopt(u32), Replace(u32) }
 pub fn decide_action(existing: Option<&DaemonDescriptor>) -> DaemonAction {
     match existing {
         None => DaemonAction::Spawn,
+        // Never adopt a discovery record until all identity fields validate. A corrupt or
+        // partial record must not let a reused PID become the canonical local Runner.
+        Some(descriptor) if !descriptor.validate() => DaemonAction::Spawn,
         Some(descriptor) if descriptor.inflight_count > 0 => DaemonAction::Adopt(descriptor.pid),
         Some(descriptor) => DaemonAction::Replace(descriptor.pid),
     }
@@ -54,5 +57,21 @@ mod tests {
     fn busy_daemon_is_adopted_idle_is_replaced() {
         assert_eq!(decide_action(Some(&descriptor(1))), DaemonAction::Adopt(1));
         assert_eq!(decide_action(Some(&descriptor(0))), DaemonAction::Replace(1));
+    }
+
+    #[test]
+    fn invalid_busy_discovery_is_never_adopted() {
+        let mut invalid = descriptor(1);
+        invalid.generation_token.clear();
+        assert_eq!(decide_action(Some(&invalid)), DaemonAction::Spawn);
+    }
+
+    #[test]
+    fn generation_identity_includes_process_start_time() {
+        let current = descriptor(1);
+        let mut reused_pid = current.clone();
+        reused_pid.started_at_ms = current.started_at_ms + 1;
+        assert!(!current.same_generation(&reused_pid));
+        assert!(current.same_generation(&current.clone()));
     }
 }
