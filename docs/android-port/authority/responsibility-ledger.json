@@ -14318,116 +14318,22 @@
       "android_target": [
         "source/host/src/host_runner_composition.rs",
         "source/host/src/capability_broker.rs",
-        "source/box-exec-daemon/src/lib.rs"
+        "source/box-exec-daemon/src/lib.rs",
+        "source/host/src/onepassword_provisioning.rs",
+        "source/host/src/remote_execution.rs"
       ],
       "android_owner": "Authorized Remote Runner + Capability Broker; no Android-local op CLI owner",
       "platform_delta": "Desktop executes a signed macOS op binary through a verified launcher. Android must delegate this desktop-OS-specific action only to an explicitly paired/authorized RemoteBox executor while retaining token containment, bounded inputs/outputs, cancellation and outcome-unknown reconciliation.",
       "implementation_status": "mapped",
-      "production_wiring": "Generic authenticated RemoteBox transport/journal exists, but no 1Password-specific executor/enrollment/consumer wiring is currently proven. Fail closed.",
-      "unit_test": "Existing remote runner tests prove device/account/grant fencing, cancellation-before-send and outcome-unknown no-replay; 1Password-specific tests required.",
+      "production_wiring": "Portable Rust onepassword_provisioning safety contract is part of the Host module graph and preserves provider/name/expiry/token bounds, sink fail-closed, single-mutation and sticky delivery-indeterminate reconciliation semantics. Generic authenticated RemoteBox transport/journal exists, but no 1Password-specific outbound executor/enrollment/credential-consumer binding is proven, so execution remains fail closed.",
+      "unit_test": "onepassword_provisioning Rust tests cover identifier/name/expiry/token validation, sink fail-closed, serialized mutation and indeterminate-delivery reconciliation; RemoteExecutionJournal tests account/grant fencing and outcome-unknown no-replay. Exact-head Actions pending.",
       "contract_test": "Required: typed onepassword.provision capability and credential-consumer receipt contract.",
       "integration_test": "Required with authorized desktop Remote Runner and real/sandbox 1Password account.",
       "packaged_test": "Required on final APK/AAB.",
       "device_test": "Required: Android initiates provisioning; denial/cancel/timeout are visible; process death never replays mint/delivery; indeterminate delivery reconciles original operation.",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Mapped platform replacement only. Do not mark implemented until a specific authorized remote executor and credential sink are shipping and exact-head CI/device evidence passes."
-    },
-    {
-      "responsibility_id": "ONEPASSWORD-PROVISIONING-ANDROID-001",
-      "domain": "security-credential-provisioning",
-      "desktop_sources": [
-        {
-          "path": "source/electron-main/onepassword/onepassword-cli-dev-controls.ts",
-          "blob_sha": "dab2aac19a74c67dffca4f31f6a5d218aa7f48e2",
-          "symbols": [
-            "runSyntheticOnePasswordProvisioningExercise",
-            "createOnePasswordCliDevController"
-          ]
-        },
-        {
-          "path": "source/electron-main/onepassword/onepassword-cli-runtime.ts",
-          "blob_sha": "e090789c8188d38d4adfef0d7b6fba91aacbf471",
-          "symbols": [
-            "SandOnePasswordCliRuntime"
-          ]
-        },
-        {
-          "path": "source/electron-main/onepassword/onepassword-op-executor.ts",
-          "blob_sha": "1992394e60faa45f46b7d03ab2d7bb80835fe407",
-          "symbols": [
-            "createOnePasswordOpExecutor"
-          ]
-        },
-        {
-          "path": "source/electron-main/onepassword/onepassword-provisioning-bridge.ts",
-          "blob_sha": "6e1dfb56b3856546d0bbfe568d959274a5ef382b",
-          "symbols": [
-            "OnePasswordDesktopProvisioningBridge"
-          ]
-        },
-        {
-          "path": "source/electron-main/onepassword/onepassword-provisioning-contract.ts",
-          "blob_sha": "7d4b1c923ba59285ec6b671fed60c5a9ab7ac3d2",
-          "symbols": [
-            "OnePasswordProvisioningError",
-            "OnePasswordProvisioningSink"
-          ]
-        }
-      ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
-      "responsibility": "Provision a bounded 1Password vault/service-account credential through a verified execution boundary, contain secret material, serialize mutations, and never replay an uncertain credential delivery before explicit reconciliation.",
-      "source_owner": "Desktop OnePassword provisioning bridge + verified macOS CLI runtime",
-      "direct_callers": [
-        "Desktop provisioning/dev controls"
-      ],
-      "downstream_dependencies": [
-        "credential consumer",
-        "Capability Broker",
-        "Authorized Remote Runner"
-      ],
-      "state_owner": "Rust Host provisioning state; RemoteExecutionJournal owns dispatched side-effect reconciliation; Compose owns no credential truth.",
-      "persistent_state": [
-        "remote operation/reconciliation journal only; plaintext service-account token must not be persisted by presentation"
-      ],
-      "protocol_wire_contract": [
-        "provider/name bounded",
-        "expiration 60s..365d",
-        "service-account token ops_* validation",
-        "single mutation",
-        "delivery-indeterminate requires reconciliation"
-      ],
-      "visible_effect": "Android can eventually offer the same secure 1Password provisioning capability through an explicitly authorized remote execution boundary rather than deleting it or spawning desktop CLI locally.",
-      "failure_behavior": [
-        "sink unavailable fails closed",
-        "invalid input/output fails closed",
-        "uncertain delivery becomes outcome-unknown and blocks retry",
-        "missing outbound Remote Runner keeps capability unavailable"
-      ],
-      "cancellation_behavior": "before dispatch may cancel; after dispatch must reconcile outcome rather than infer cancellation",
-      "retry_semantics": "read-only discovery may retry; create/mint delivery never retries while outcome is uncertain",
-      "idempotency_semantics": "stable remote operation identity plus explicit reconciliation required for side effects",
-      "process_death_recovery": "RemoteExecutionJournal converts maybe-sent work to outcome-unknown; provisioning guard contract forbids blind replay",
-      "account_fencing": "Authorized Remote Runner command must carry current account fence/epoch and permission grant",
-      "security_boundary": "Android never executes arbitrary local `op`; Capability Broker + authorized Remote Runner is the only allowed CLI boundary; secret token must be delivered directly to protected consumer and not projected to UI.",
-      "android_disposition": "android-adapted",
-      "android_target": [
-        "source/host/src/onepassword_provisioning.rs",
-        "source/host/src/remote_execution.rs",
-        "source/host/src/capability_broker.rs"
-      ],
-      "android_owner": "Rust Host portable provisioning contract + Authorized Remote Runner (execution pending)",
-      "platform_delta": "macOS codesigned CLI/launcher is replaced by explicitly authorized remote execution; Android locally owns only portable validation/mutation/reconciliation policy.",
-      "implementation_status": "mapped",
-      "production_wiring": "Portable Rust safety contract is authored and compiled through Host once CI passes. No outbound OnePassword Remote Runner executor is registered yet, so production execution remains fail-closed.",
-      "unit_test": "onepassword_provisioning Rust tests cover identifiers/names/expiry/token validation, sink fail-closed, mutation serialization and delivery-indeterminate reconciliation; exact-head Actions pending.",
-      "contract_test": "Desktop exact blobs pinned above; RemoteExecutionJournal already tests process-death outcome-unknown/account/grant fencing.",
-      "integration_test": "missing: capability-approved outbound Remote Runner + real/controlled 1Password account/vault + protected credential consumer",
-      "packaged_test": "required",
-      "device_test": "required with Authorized Remote Runner enrollment",
-      "artifact": null,
-      "verification_status": "not-verified",
-      "notes": "Do not upgrade to implemented/verified until the real outbound executor/credential binding is production-wired. The macOS CLI mechanism is N/A on Android, not the provisioning product capability."
+      "notes": "Single canonical responsibility after concurrent audit merge. Portable safety semantics are implemented, but whole responsibility remains mapped/not-verified until a 1Password-specific authorized Remote Runner executor and credential sink are shipping with exact-head integration/package/device evidence."
     }
   ],
   "traceability": {
