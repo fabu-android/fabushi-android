@@ -14,6 +14,61 @@ internal const val MAX_AGENT_AVATAR_SOURCE_BYTES = 25 * 1024 * 1024
 internal const val MAX_AGENT_AVATAR_SOURCE_DIMENSION = 4096
 internal const val MAX_AGENT_AVATAR_OUTPUT_DIMENSION = 1024
 internal const val MAX_AGENT_AVATAR_OUTPUT_BYTES = 4_000_000
+internal const val AGENT_AVATAR_CROP_OUTPUT_SIZE = 256
+internal const val AGENT_AVATAR_MIN_ZOOM = 1f
+internal const val AGENT_AVATAR_MAX_ZOOM = 5f
+
+internal data class AndroidAvatarImageSource(
+    val dataUrl: String,
+    val width: Int,
+    val height: Int,
+)
+
+internal data class AndroidAvatarCrop(
+    val zoom: Float,
+    val centerX: Float,
+    val centerY: Float,
+)
+
+internal fun initialAndroidAvatarCrop(source: AndroidAvatarImageSource): AndroidAvatarCrop =
+    AndroidAvatarCrop(
+        zoom = AGENT_AVATAR_MIN_ZOOM,
+        centerX = source.width / 2f,
+        centerY = source.height / 2f,
+    )
+
+internal fun clampAndroidAvatarCrop(
+    source: AndroidAvatarImageSource,
+    crop: AndroidAvatarCrop,
+): AndroidAvatarCrop {
+    val zoom = crop.zoom.coerceIn(AGENT_AVATAR_MIN_ZOOM, AGENT_AVATAR_MAX_ZOOM)
+    val side = minOf(source.width, source.height) / zoom
+    val half = side / 2f
+    return AndroidAvatarCrop(
+        zoom = zoom,
+        centerX = crop.centerX.coerceIn(half, source.width - half),
+        centerY = crop.centerY.coerceIn(half, source.height - half),
+    )
+}
+
+internal fun panAndroidAvatarCrop(
+    source: AndroidAvatarImageSource,
+    crop: AndroidAvatarCrop,
+    deltaStageX: Float,
+    deltaStageY: Float,
+    stageSizePx: Float,
+): AndroidAvatarCrop {
+    require(stageSizePx > 0f)
+    val bounded = clampAndroidAvatarCrop(source, crop)
+    val scale = (stageSizePx / minOf(source.width, source.height)) * bounded.zoom
+    return clampAndroidAvatarCrop(
+        source,
+        bounded.copy(
+            centerX = bounded.centerX - deltaStageX / scale,
+            centerY = bounded.centerY - deltaStageY / scale,
+        ),
+    )
+}
 
 internal fun avatarDimensionsAllowed(width: Int, height: Int): Boolean =
     width in 1..MAX_AGENT_AVATAR_SOURCE_DIMENSION &&
@@ -31,6 +86,67 @@ internal fun avatarPngDataUrl(bytes: ByteArray): String =
     "data:image/png;base64," + Base64.encodeToString(bytes, Base64.NO_WRAP)
 
 internal object AndroidAvatarImageProcessor {
+    fun stagePickedImage(context: Context, rawUri: String): AndroidAvatarImageSource {
+        val dataUrl = normalizePickedImage(context, rawUri)
+        val separator = dataUrl.indexOf(',')
+        check(separator > 0 && separator < dataUrl.lastIndex) { "Normalized avatar image is invalid" }
+        val bytes = Base64.decode(dataUrl.substring(separator + 1), Base64.DEFAULT)
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+        check(bounds.outWidth > 0 && bounds.outHeight > 0) { "Normalized avatar image is invalid" }
+        return AndroidAvatarImageSource(dataUrl, bounds.outWidth, bounds.outHeight)
+    }
+
+    fun encodeCrop(source: AndroidAvatarImageSource, crop: AndroidAvatarCrop): String {
+        val separator = source.dataUrl.indexOf(',')
+        require(separator > 0 && separator < source.dataUrl.lastIndex) { "Avatar source is invalid" }
+        val bytes = Base64.decode(source.dataUrl.substring(separator + 1), Base64.DEFAULT)
+        val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+            ?: throw IOException("Android could not decode the avatar crop source")
+        try {
+            val bounded = clampAndroidAvatarCrop(source, crop)
+            val side = (minOf(source.width, source.height) / bounded.zoom)
+                .roundToInt()
+                .coerceIn(1, minOf(bitmap.width, bitmap.height))
+            val left = (bounded.centerX - side / 2f)
+                .roundToInt()
+                .coerceIn(0, bitmap.width - side)
+            val top = (bounded.centerY - side / 2f)
+                .roundToInt()
+                .coerceIn(0, bitmap.height - side)
+            val cropped = Bitmap.createBitmap(bitmap, left, top, side, side)
+            val output = if (
+                cropped.width != AGENT_AVATAR_CROP_OUTPUT_SIZE ||
+                cropped.height != AGENT_AVATAR_CROP_OUTPUT_SIZE
+            ) {
+                Bitmap.createScaledBitmap(
+                    cropped,
+                    AGENT_AVATAR_CROP_OUTPUT_SIZE,
+                    AGENT_AVATAR_CROP_OUTPUT_SIZE,
+                    true,
+                )
+            } else {
+                cropped
+            }
+            try {
+                val encoded = ByteArrayOutputStream().also { stream ->
+                    check(output.compress(Bitmap.CompressFormat.PNG, 100, stream)) {
+                        "Android could not encode the avatar crop"
+                    }
+                }.toByteArray()
+                check(encoded.isNotEmpty() && encoded.size <= MAX_AGENT_AVATAR_OUTPUT_BYTES) {
+                    "Cropped avatar exceeds the durable avatar limit"
+                }
+                return avatarPngDataUrl(encoded)
+            } finally {
+                if (output !== cropped) output.recycle()
+                if (cropped !== bitmap) cropped.recycle()
+            }
+        } finally {
+            bitmap.recycle()
+        }
+    }
+
     fun normalizePickedImage(context: Context, rawUri: String): String {
         val uri = Uri.parse(rawUri)
         require(uri.scheme == "content") { "Avatar image must come from the Android content picker" }
