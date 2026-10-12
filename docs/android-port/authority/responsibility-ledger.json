@@ -14340,6 +14340,70 @@
       "artifact": null,
       "verification_status": "not-verified",
       "notes": "Single canonical responsibility after concurrent audit merge. Portable safety semantics are implemented, but whole responsibility remains mapped/not-verified until a 1Password-specific authorized Remote Runner executor and credential sink are shipping with exact-head integration/package/device evidence."
+    },
+    {
+      "responsibility_id": "OBSERVABILITY-PROCESS-METRICS-ANDROID-001",
+      "domain": "observability-process-metrics",
+      "desktop_sources": [
+        {
+          "path": "source/electron-main/process-metrics/collector.ts",
+          "blob_sha": "f92731766edd976c6af01de107da10c880263fe6"
+        },
+        {
+          "path": "source/electron-main/process-metrics/cursor-client-numeric-metrics.ts",
+          "blob_sha": "44f2e537b219e3ce41f9bbb7bb7fb3e33cd171bf"
+        },
+        {
+          "path": "source/electron-main/process-metrics/desktop-metrics-runtime.ts",
+          "blob_sha": "4cd7da388bc91fe8747b3bee5c09289f3156eebb"
+        },
+        {
+          "path": "source/electron-main/process-metrics/heap-metrics-ingest.ts",
+          "blob_sha": "65d2cd824e32acb84d37ada55840b41bb6013da1"
+        },
+        {
+          "path": "source/electron-main/process-metrics/native-scan.ts",
+          "blob_sha": "f92f18f1e0e10887dda51dcda1e07b76c25826bb"
+        },
+        {
+          "path": "source/electron-main/process-metrics/redaction.ts",
+          "blob_sha": "3583a7c936b2b2c366e692e7c989071a872d921b"
+        },
+        {
+          "path": "source/electron-main/process-metrics/sampler.ts",
+          "blob_sha": "919c92bef2ad8782ef23c68fc6fe68e1b282ca3d"
+        },
+        {
+          "path": "source/electron-main/process-metrics/transport.ts",
+          "blob_sha": "e53e66a2997d4ea8125cfef4e6180a879cf52e64"
+        },
+        {
+          "path": "source/electron-main/process-metrics/wiring.ts",
+          "blob_sha": "2611f9028fde2694d9ebbea6bcc771c7392f1cea"
+        }
+      ],
+      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "responsibility": "Collect bounded CPU/memory/heap/runtime metrics for the shipping app-owned process tree, redact process identity, honor telemetry disable/configuration, coalesce reporting, and fail safely under scan/report cancellation or process churn.",
+      "source_owner": "Desktop SandProcessMetricsCollector/Sampler + native cursor-proclist scan + metrics reporters",
+      "visible_effect": "No direct feature UI; diagnostics/performance telemetry can detect runaway CPU/memory and runtime pressure without exposing full command/process names.",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "source/host/src/extensions/telemetry/mod.rs",
+        "source/host/src/host_diagnostics.rs",
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/coordinator/CoordinatorTelemetry.kt"
+      ],
+      "android_owner": "Host/Android telemetry owner; dedicated bounded sampler still missing",
+      "platform_delta": "Android cannot enumerate an unrestricted desktop process tree. Replacement must restrict collection to app-owned/native/authorized child-runtime metrics available through Android/Linux process APIs and preserve hashing/redaction/kill-switch semantics.",
+      "implementation_status": "mapped",
+      "production_wiring": "Structured telemetry exists, but no production-equivalent process metrics collector/sampler/transport is wired yet.",
+      "unit_test": "required for config clamping, redaction, CPU/memory windows, process churn, cancellation and kill switch",
+      "contract_test": "required against Desktop field units/bounds/redaction semantics",
+      "integration_test": "required with Host/Coordinator process lifecycle and telemetry transport",
+      "packaged_test": "required",
+      "device_test": "required under memory/CPU pressure",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Registered from exact Desktop source audit. Do not infer implementation from generic telemetry modules."
     }
   ],
   "traceability": {
