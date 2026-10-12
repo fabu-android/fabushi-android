@@ -5,6 +5,7 @@ pub mod box_store_manifest_format;
 pub mod box_store_hydration;
 pub mod box_store_diagnostics;
 pub mod browser_ua_backend;
+pub mod cloud_agent_backend;
 pub mod box_store_backend;
 pub mod cli;
 #[allow(special_module_name)]
@@ -17,6 +18,10 @@ use fabushi_android_shared::{ExecutionError, ExecutionRequest};
 pub use browser_ua_backend::{
     BrowserUaReconcileBackend, BrowserUaReconcileExecutor, BrowserUaReconcileRequest,
     BROWSER_UA_OWNER_STAMP_LENGTH, BROWSER_UA_RECONCILE_CAPABILITY,
+};
+pub use cloud_agent_backend::{
+    open_cloud_agent_service, CloudAgentAction, CloudAgentBackend, CloudAgentExecutor,
+    CloudAgentImageRef, CloudAgentRequest, CLOUD_AGENT_CAPABILITY,
 };
 pub use box_store_sync_backend::{
     open_box_store_sync_service, BoxStoreSyncAction, BoxStoreSyncBackend, BoxStoreSyncExecutor,
