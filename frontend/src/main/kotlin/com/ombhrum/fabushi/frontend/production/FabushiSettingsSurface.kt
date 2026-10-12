@@ -1,31 +1,184 @@
 package com.ombhrum.fabushi
 
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidUpdateTrackPolicy
+import java.io.ByteArrayOutputStream
+import java.net.HttpURLConnection
+import java.net.URI
+import java.net.URL
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 private enum class FabushiSettingsSection {
     GENERAL,
     UPDATES,
 }
 
+internal const val ACCOUNT_AVATAR_TIMEOUT_MS = 10_000
+internal const val ACCOUNT_AVATAR_MAX_BYTES = 1024 * 1024
+private const val ACCOUNT_AVATAR_MAX_EDGE_PX = 4096
+private const val ACCOUNT_AVATAR_MAX_PIXELS = 16_000_000L
+
+private fun normalizedHttpsAccountAvatarUrl(raw: String?): String? {
+    val value = raw?.trim().orEmpty()
+    if (value.isEmpty()) return null
+    val uri = runCatching { URI(value) }.getOrNull() ?: return null
+    if (!uri.scheme.equals("https", ignoreCase = true) || uri.host.isNullOrBlank() || uri.userInfo != null) {
+        return null
+    }
+    return uri.toString()
+}
+
+internal fun githubAccountAvatarUrl(authId: String?): String? {
+    val raw = authId?.trim().orEmpty()
+    val separator = raw.indexOf('|')
+    if (separator <= 0 || separator >= raw.lastIndex) return null
+    if (raw.substring(0, separator) != "github") return null
+    val subject = raw.substring(separator + 1)
+    if (subject.isEmpty() || subject.any { !it.isDigit() }) return null
+    return "https://avatars.githubusercontent.com/u/$subject?v=4&s=192"
+}
+
+internal fun accountAvatarCandidateUrls(
+    authId: String?,
+    preferredUrl: String?,
+): List<String> = buildList {
+    normalizedHttpsAccountAvatarUrl(preferredUrl)?.let(::add)
+    githubAccountAvatarUrl(authId)?.takeIf { it !in this }?.let(::add)
+}
+
+private fun decodeBoundedAccountAvatar(bytes: ByteArray): Bitmap? {
+    if (bytes.isEmpty() || bytes.size > ACCOUNT_AVATAR_MAX_BYTES) return null
+    val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+    BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+    val width = bounds.outWidth
+    val height = bounds.outHeight
+    if (
+        width <= 0 ||
+        height <= 0 ||
+        width > ACCOUNT_AVATAR_MAX_EDGE_PX ||
+        height > ACCOUNT_AVATAR_MAX_EDGE_PX ||
+        width.toLong() * height.toLong() > ACCOUNT_AVATAR_MAX_PIXELS
+    ) {
+        return null
+    }
+    return BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+}
+
+private fun fetchBoundedAccountAvatar(rawUrl: String): Bitmap? {
+    val connection = (URL(rawUrl).openConnection() as? HttpURLConnection) ?: return null
+    connection.instanceFollowRedirects = false
+    connection.connectTimeout = ACCOUNT_AVATAR_TIMEOUT_MS
+    connection.readTimeout = ACCOUNT_AVATAR_TIMEOUT_MS
+    connection.requestMethod = "GET"
+    connection.setRequestProperty("Accept", "image/*")
+    return try {
+        connection.connect()
+        if (connection.responseCode !in 200..299) return null
+        val contentType = connection.contentType?.substringBefore(';')?.trim().orEmpty()
+        if (!contentType.startsWith("image/")) return null
+        val declaredLength = connection.contentLengthLong
+        if (declaredLength > ACCOUNT_AVATAR_MAX_BYTES) return null
+        val bytes = connection.inputStream.use { input ->
+            val output = ByteArrayOutputStream()
+            val buffer = ByteArray(8192)
+            while (true) {
+                val count = input.read(buffer)
+                if (count < 0) break
+                if (output.size() + count > ACCOUNT_AVATAR_MAX_BYTES) return null
+                output.write(buffer, 0, count)
+            }
+            output.toByteArray()
+        }
+        decodeBoundedAccountAvatar(bytes)
+    } catch (_: Exception) {
+        null
+    } finally {
+        connection.disconnect()
+    }
+}
+
+private suspend fun loadAccountAvatar(
+    authId: String?,
+    preferredUrl: String?,
+): Bitmap? = withContext(Dispatchers.IO) {
+    accountAvatarCandidateUrls(authId, preferredUrl)
+        .firstNotNullOfOrNull(::fetchBoundedAccountAvatar)
+}
+
+@Composable
+private fun AccountAvatar(
+    authId: String,
+    preferredUrl: String,
+    accountName: String,
+) {
+    val bitmap by produceState<Bitmap?>(
+        initialValue = null,
+        key1 = authId,
+        key2 = preferredUrl,
+    ) {
+        value = loadAccountAvatar(authId, preferredUrl)
+    }
+    val resolved = bitmap
+    if (resolved != null) {
+        Image(
+            bitmap = resolved.asImageBitmap(),
+            contentDescription = "Account avatar",
+            contentScale = ContentScale.Crop,
+            modifier = Modifier
+                .size(48.dp)
+                .clip(CircleShape)
+                .testTag("settings-account-avatar"),
+        )
+    } else {
+        Box(
+            modifier = Modifier
+                .size(48.dp)
+                .background(MaterialTheme.colorScheme.surfaceVariant, CircleShape)
+                .testTag("settings-account-avatar-fallback"),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(accountName.trim().firstOrNull()?.uppercaseChar()?.toString() ?: "F")
+        }
+    }
+}
+
 @Composable
 internal fun FabushiSettingsSurface(
+    accountLoggedIn: Boolean,
+    accountName: String,
+    accountEmail: String,
+    accountAuthId: String,
+    accountAvatarUrl: String,
     updateState: AndroidUpdateUiState,
     updateTrackPolicy: AndroidUpdateTrackPolicy,
     autoUpdateWhenIdleOptIn: Boolean,
@@ -56,6 +209,27 @@ internal fun FabushiSettingsSurface(
                 }
                 when (section) {
                     FabushiSettingsSection.GENERAL -> {
+                        if (accountLoggedIn) {
+                            Text("Account")
+                            Row(
+                                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.testTag("settings-account-profile"),
+                            ) {
+                                AccountAvatar(
+                                    authId = accountAuthId,
+                                    preferredUrl = accountAvatarUrl,
+                                    accountName = accountName,
+                                )
+                                Column {
+                                    Text(accountName.ifBlank { "Fabushi" })
+                                    accountEmail.takeIf(String::isNotBlank)?.let { Text(it) }
+                                }
+                            }
+                            Text(
+                                "Account identity is read-only here and remains owned by the canonical Host session.",
+                            )
+                        }
                         Text("Appearance")
                         Text("Theme")
                         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
