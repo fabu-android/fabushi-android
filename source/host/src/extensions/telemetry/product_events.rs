@@ -359,6 +359,197 @@ fn connector_tag(value: &str) -> String {
     }
 }
 
+pub fn gateway_reachability_event(
+    outcome: &str,
+    method: &str,
+    latency_ms: f64,
+    base_url_kind: &str,
+    http_status: Option<u16>,
+    cause_summary: Option<&str>,
+) -> Result<StructuredTelemetryEvent, String> {
+    if !latency_ms.is_finite() || latency_ms < 0.0 {
+        return Err("gateway latency must be finite and nonnegative".into());
+    }
+    let mut metadata = BTreeMap::from([
+        ("outcome".into(), outcome.into()),
+        ("method".into(), method.into()),
+        ("latency_ms".into(), latency_ms.round().to_string()),
+        ("base_url_kind".into(), base_url_kind.into()),
+    ]);
+    if let Some(status) = http_status {
+        metadata.insert("http_status".into(), status.to_string());
+    }
+    if let Some(cause) = cause_summary {
+        metadata.insert("cause".into(), cause.into());
+    }
+    Ok(StructuredTelemetryEvent {
+        level: if outcome == "ok" { TelemetryLevel::Info } else { TelemetryLevel::Warn },
+        metadata,
+    })
+}
+
+pub fn dns_diagnostic_metadata(
+    cluster: &str,
+    trigger: &str,
+    diagnosis: &str,
+    system_exact: Option<&str>,
+    independent_exact: Option<&str>,
+    independent_wildcard: Option<&str>,
+    independent_general: Option<&str>,
+) -> BTreeMap<String, String> {
+    let mut metadata = BTreeMap::from([
+        ("cluster".into(), cluster.into()),
+        ("trigger".into(), trigger.into()),
+        ("diagnosis".into(), diagnosis.into()),
+    ]);
+    for (key, value) in [
+        ("system_exact", system_exact),
+        ("independent_exact", independent_exact),
+        ("independent_wildcard", independent_wildcard),
+        ("independent_general", independent_general),
+    ] {
+        if let Some(value) = value {
+            metadata.insert(key.into(), value.into());
+        }
+    }
+    metadata
+}
+
+pub fn reaction_ack_event(
+    ack_ms: f64,
+    outcome: &str,
+    conversation_id: &str,
+    emoji: &str,
+) -> Result<StructuredTelemetryEvent, String> {
+    if !ack_ms.is_finite() || ack_ms < 0.0 {
+        return Err("reaction ack duration must be finite and nonnegative".into());
+    }
+    if !matches!(outcome, "landed" | "timeout") {
+        return Err("reaction ack outcome is invalid".into());
+    }
+    if conversation_id.is_empty() || conversation_id.len() > 256 {
+        return Err("reaction conversation id must contain 1..=256 bytes".into());
+    }
+    if emoji.is_empty() || emoji.len() > 64 {
+        return Err("reaction emoji must contain 1..=64 bytes".into());
+    }
+    let reaction_id = match emoji {
+        "👍" => "thumbs_up",
+        "👎" => "thumbs_down",
+        "❤️" => "heart",
+        "😂" => "laugh",
+        "🎉" => "celebrate",
+        "😮" => "surprise",
+        _ => "other",
+    };
+    Ok(StructuredTelemetryEvent {
+        level: if outcome == "timeout" { TelemetryLevel::Warn } else { TelemetryLevel::Info },
+        metadata: BTreeMap::from([
+            ("ack_ms".into(), ack_ms.round().to_string()),
+            ("outcome".into(), outcome.into()),
+            ("conversation_id".into(), conversation_id.into()),
+            ("reaction_id".into(), reaction_id.into()),
+        ]),
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn send_ack_event(
+    ack_ms: f64,
+    outcome: &str,
+    enter_epoch_ms: f64,
+    is_fork: bool,
+    attachment_count: f64,
+    trace_id: Option<&str>,
+    span_id: Option<&str>,
+    client_nonce: Option<&str>,
+    commit_ms: Option<f64>,
+    conversation_id: Option<&str>,
+    client_online_at_timeout: Option<bool>,
+) -> Result<StructuredTelemetryEvent, String> {
+    for (name, value) in [
+        ("ackMs", Some(ack_ms)),
+        ("enterEpochMs", Some(enter_epoch_ms)),
+        ("attachmentCount", Some(attachment_count)),
+        ("commitMs", commit_ms),
+    ] {
+        if let Some(value) = value {
+            if !value.is_finite() || value < 0.0 {
+                return Err(format!("{name} must be finite and nonnegative"));
+            }
+        }
+    }
+    if !matches!(outcome, "acked" | "failed" | "timeout" | "queued_offline") {
+        return Err("send ack outcome is invalid".into());
+    }
+    let mut metadata = BTreeMap::from([
+        ("ack_ms".into(), ack_ms.round().to_string()),
+        ("outcome".into(), outcome.into()),
+        ("attachment_count".into(), attachment_count.round().to_string()),
+        ("is_fork".into(), is_fork.to_string()),
+    ]);
+    for (key, value) in [
+        ("trace_id", trace_id),
+        ("span_id", span_id),
+        ("client_nonce", client_nonce),
+        ("conversation_id", conversation_id),
+    ] {
+        if let Some(value) = value {
+            metadata.insert(key.into(), value.into());
+        }
+    }
+    if let Some(value) = commit_ms {
+        metadata.insert("commit_ms".into(), value.round().to_string());
+    }
+    if let Some(value) = client_online_at_timeout {
+        metadata.insert("client_online_at_timeout".into(), value.to_string());
+    }
+    Ok(StructuredTelemetryEvent {
+        level: if outcome == "timeout" { TelemetryLevel::Warn } else { TelemetryLevel::Info },
+        metadata,
+    })
+}
+
+pub fn send_latency_event(
+    duration_ms: f64,
+    commit_ms: Option<f64>,
+    attachment_count: f64,
+    is_fork: bool,
+    trace_id: Option<&str>,
+    span_id: Option<&str>,
+    conversation_id: Option<&str>,
+) -> Result<StructuredTelemetryEvent, String> {
+    for (name, value) in [
+        ("durationMs", Some(duration_ms)),
+        ("commitMs", commit_ms),
+        ("attachmentCount", Some(attachment_count)),
+    ] {
+        if let Some(value) = value {
+            if !value.is_finite() || value < 0.0 {
+                return Err(format!("{name} must be finite and nonnegative"));
+            }
+        }
+    }
+    let mut metadata = BTreeMap::from([
+        ("duration_ms".into(), duration_ms.round().to_string()),
+        ("attachment_count".into(), attachment_count.round().to_string()),
+        ("is_fork".into(), is_fork.to_string()),
+    ]);
+    if let Some(value) = commit_ms {
+        metadata.insert("commit_ms".into(), value.round().to_string());
+    }
+    for (key, value) in [
+        ("trace_id", trace_id),
+        ("span_id", span_id),
+        ("conversation_id", conversation_id),
+    ] {
+        if let Some(value) = value {
+            metadata.insert(key.into(), value.into());
+        }
+    }
+    Ok(StructuredTelemetryEvent { level: TelemetryLevel::Info, metadata })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -466,6 +657,42 @@ mod tests {
         assert_eq!(event.metadata.get("surface").map(String::as_str), Some("android"));
         assert!(connector_auth_clicked_event(Some("GitHub"), Some("bad server")).is_err());
         assert!(connector_auth_clicked_event(Some(&"x".repeat(257)), None).is_err());
+    }
+
+
+    #[test]
+    fn message_ack_events_preserve_timeout_and_reaction_contracts() {
+        let reaction = reaction_ack_event(14.6, "timeout", "conversation-1", "👍").unwrap();
+        assert_eq!(reaction.level, TelemetryLevel::Warn);
+        assert_eq!(reaction.metadata.get("reaction_id").map(String::as_str), Some("thumbs_up"));
+        assert!(reaction_ack_event(-1.0, "landed", "conversation-1", "👍").is_err());
+
+        let ack = send_ack_event(
+            50.2,
+            "acked",
+            1000.0,
+            false,
+            2.0,
+            Some("trace"),
+            Some("span"),
+            Some("nonce"),
+            Some(25.0),
+            Some("conversation-1"),
+            None,
+        )
+        .unwrap();
+        assert_eq!(ack.level, TelemetryLevel::Info);
+        assert_eq!(ack.metadata.get("attachment_count").map(String::as_str), Some("2"));
+        assert!(send_ack_event(1.0, "bad", 1.0, false, 0.0, None, None, None, None, None, None).is_err());
+    }
+
+    #[test]
+    fn gateway_and_send_latency_reject_negative_durations() {
+        assert!(gateway_reachability_event("ok", "GET", -1.0, "api", None, None).is_err());
+        let gateway = gateway_reachability_event("failed", "GET", 12.0, "api", Some(503), Some("timeout")).unwrap();
+        assert_eq!(gateway.level, TelemetryLevel::Warn);
+        assert_eq!(gateway.metadata.get("http_status").map(String::as_str), Some("503"));
+        assert!(send_latency_event(-1.0, None, 0.0, false, None, None, None).is_err());
     }
 
 }
