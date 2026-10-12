@@ -1833,6 +1833,14 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
                 .put("avatarColor", avatarColor ?: JSONObject.NULL),
         ) as? JSONObject ?: JSONObject()
 
+    override fun agentUpdateAvatarImage(id: String, avatarDataUrl: String?): JSONObject =
+        durableAgentRosterMutation(
+            JSONObject()
+                .put("kind", "update")
+                .put("id", id)
+                .put("avatarDataUrl", avatarDataUrl ?: JSONObject.NULL),
+        ) as? JSONObject ?: JSONObject()
+
     override fun agentSetNotifyOnUpdates(id: String, isEnabled: Boolean): JSONObject =
         durableAgentRosterMutation(
             JSONObject()
