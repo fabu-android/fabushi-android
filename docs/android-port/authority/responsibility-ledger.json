@@ -14200,6 +14200,74 @@
       "artifact": null,
       "verification_status": "not-verified",
       "notes": "Implementation consolidated concurrent duplicate paths into one canonical store/typed contract. main-edge.ts remains an aggregate source row because its other handlers still require separate responsibility review."
+    },
+    {
+      "responsibility_id": "SETTINGS-TIME-ZONE-ANDROID-001",
+      "domain": "settings-time-zone",
+      "desktop_sources": [
+        {
+          "path": "source/electron-main/main-edge.ts",
+          "blob_sha": "34ebc09f00048d16649fb7b326b2335d85d03734",
+          "symbols": [
+            "getTimeZone",
+            "setTimeZoneOverride",
+            "detectTimeZone"
+          ]
+        }
+      ],
+      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "responsibility": "Detect the platform time zone, durably own an optional validated IANA override, restore/clear it across process death, present detected/effective values, and make the effective time-zone setting available to canonical Host execution without Presentation owning durable truth.",
+      "source_owner": "Desktop settingsStore + main-edge platform detection + Host-settings synchronization",
+      "direct_callers": [
+        "Desktop Settings surface through Main Edge getTimeZone/setTimeZoneOverride"
+      ],
+      "downstream_dependencies": [
+        "Desktop settingsStore",
+        "syncHostSettingsToBox",
+        "Agent/Host settings consumers"
+      ],
+      "state_owner": "AndroidUserSettings in Rust Host; Compose/ViewModel only hold transient projection/draft state",
+      "persistent_state": [
+        "optional IANA time-zone override"
+      ],
+      "protocol_wire_contract": [
+        "feature.settings.timeZoneOverride",
+        "feature.settings.timeZoneOverride.set",
+        "AndroidTimeZoneSettings(detectedTimeZone, overrideTimeZone, effectiveTimeZone)"
+      ],
+      "visible_effect": "Settings shows system/effective time zone; user may save a validated override or return to system time zone.",
+      "failure_behavior": [
+        "invalid/unbounded override rejected without mutation",
+        "durable write failure fails the mutation instead of pretending success"
+      ],
+      "cancellation_behavior": "settings read/write is bounded synchronous Host state mutation; stale Presentation refresh generations are discarded",
+      "retry_semantics": "reads are idempotent; writes replace one durable override and may be explicitly retried by the user after failure",
+      "idempotency_semantics": "setting the same normalized override is semantically idempotent; clear leaves no override",
+      "process_death_recovery": "Rust AndroidUserSettings reopens canonical user-settings.json and one-time predecessor migration cannot regain ownership after canonical settlement",
+      "account_fencing": "time-zone preference is installation/user-settings scoped rather than account-scoped; account session truth is not duplicated",
+      "security_boundary": "Kotlin validates IANA identifiers with ZoneId.of; Rust additionally bounds/normalizes persisted input; no arbitrary path/process execution",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "source/host/src/android_user_settings.rs",
+        "source/host/src/android_json_runtime.rs",
+        "source/android-preload/src/main/kotlin/com/ombhrum/fabushi/androidpreload/runtime/AndroidCoordinatorPort.kt",
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/coordinator/AndroidCoordinatorRuntime.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/presentation/MarketplaceViewModel.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/production/FabushiSettingsSurface.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/production/ProductionRenderer_view.kt"
+      ],
+      "android_owner": "Rust AndroidUserSettings durable owner + typed Coordinator platform detector + native Settings projection",
+      "platform_delta": "Desktop detects with Intl.DateTimeFormat and echoes detected/override values to the Box Host. Android detects with java.time.ZoneId and persists the override directly inside the Rust Host owner, eliminating Electron IPC. Downstream Agent/Host consumption of the effective setting is still being audited.",
+      "implementation_status": "mapped",
+      "production_wiring": "Durable owner, Host commands, typed Coordinator and native Settings UI are wired. Keep mapped until a canonical downstream Host/Agent consumer of the effective time zone is evidenced or implemented.",
+      "unit_test": "android_user_settings Rust tests cover durability, clear, one-time predecessor migration and invalid-input no-mutation; exact-head Actions pending",
+      "contract_test": "typed AndroidTimeZoneSettings + Host command contract present; exact-head contract execution pending",
+      "integration_test": "native Settings read/write path present; downstream Host/Agent effective-time-zone consumption not yet closed",
+      "packaged_test": "required on final exact-head package",
+      "device_test": "required: change override, process-kill/relaunch, clear to system, verify effective downstream behavior",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Do not promote solely from UI/persistence. Desktop setTimeZoneOverride synchronizes userTimeZone/userTimeZoneOverride to Host; Android downstream execution-context consumption remains an explicit semantic gap until proven."
     }
   ],
   "traceability": {
