@@ -14704,6 +14704,73 @@
       "artifact": null,
       "verification_status": "not-verified",
       "notes": "Implemented; Desktop optional msSinceLastReachedMs is not fabricated when Android has no canonical elapsed value."
+    },
+    {
+      "responsibility_id": "TELEMETRY-ERROR-TAGS-ANDROID-001",
+      "domain": "observability-error-taxonomy",
+      "desktop_sources": [
+        {
+          "path": "source/electron-main/telemetry/desktop-error-tags.ts",
+          "blob_sha": "0010384a0f651eae6f5fcf1e74f8efc9fb93f63d",
+          "symbols": [
+            "DesktopErrorCode",
+            "desktopErrorTags"
+          ]
+        }
+      ],
+      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "responsibility": "Preserve the stable SAND-E06xx error taxonomy, retryability and bounded payload-tag allowlists while adapting the platform domain from desktop to android.",
+      "source_owner": "Desktop telemetry error-tag mapper",
+      "direct_callers": [
+        "structured telemetry producers that attach bounded SAND-E06xx diagnostics"
+      ],
+      "downstream_dependencies": [
+        "structured-log metadata",
+        "diagnostics and alert grouping"
+      ],
+      "state_owner": "stateless Rust Host telemetry mapper",
+      "persistent_state": [],
+      "protocol_wire_contract": [
+        "SAND-E0601",
+        "SAND-E0602",
+        "SAND-E0603",
+        "SAND-E0604",
+        "SAND-E0605",
+        "SAND-E0606",
+        "SAND-E0607",
+        "SAND-E0610",
+        "error_code",
+        "error_domain",
+        "error_retryable",
+        "timeout_ms"
+      ],
+      "visible_effect": "Android diagnostics keep stable bounded error categories and retryability without leaking arbitrary exception payloads.",
+      "failure_behavior": [
+        "unknown/unallowed payload fields are omitted",
+        "unbounded or unsafe string values are omitted"
+      ],
+      "cancellation_behavior": "not applicable; pure mapping",
+      "retry_semantics": "retryability is declarative metadata only and never causes automatic replay",
+      "idempotency_semantics": "same code and allowed payload produce the same tag set",
+      "process_death_recovery": "stateless mapping requires no recovery state",
+      "account_fencing": "contains no account state or account identifiers",
+      "security_boundary": "only allowlisted bounded metadata is emitted; arbitrary error text is not copied into telemetry tags",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "source/host/src/extensions/telemetry/product_events.rs"
+      ],
+      "android_owner": "Rust Host structured telemetry mapper",
+      "platform_delta": "error_domain is android instead of desktop; wire error codes/retryability/payload allowlists remain equivalent.",
+      "implementation_status": "implemented",
+      "production_wiring": "Rust Host product telemetry uses the shared product_events module; this responsibility is the bounded mapping contract, not a second logging owner.",
+      "unit_test": "product_events::tests::android_error_tags_preserve_desktop_code_table_and_redact_unbounded_payload; exact-head Actions pending",
+      "contract_test": "Rust product-events contract test covers all eight Desktop codes and timeoutMs normalization",
+      "integration_test": "covered when product telemetry producers flow through Host structured-log persistence; exact-head evidence pending",
+      "packaged_test": "required on final exact-head APK/AAB observability acceptance",
+      "device_test": "required only for producer families whose device flows emit these tags",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Source responsibility implemented and platform-adapted. Do not mark verified until descendant exact-head CI/package evidence succeeds."
     }
   ],
   "traceability": {
