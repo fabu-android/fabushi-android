@@ -47,7 +47,9 @@ class RootShellNotificationHostWiringTest(unittest.TestCase):
         host = HOST.read_text(encoding="utf-8")
         self.assertIn("if (size >= 3) break", host)
         self.assertIn('scheme != "http" && scheme != "https"', host)
-        self.assertIn("rawArgs.opt(key) as? String ?: return null", host)
+        self.assertIn("JSONObject(rawArgs.toString())", host)
+        self.assertIn("JSONObject(action.args.toString())", host)
+        self.assertNotIn("rawArgs.opt(key) as? String ?: return null", host)
         self.assertIn("invokeRootNotificationDashboardAction", host)
         self.assertIn("key in _pendingActions.value", host)
 

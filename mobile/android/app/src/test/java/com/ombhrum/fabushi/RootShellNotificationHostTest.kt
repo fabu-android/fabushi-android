@@ -58,15 +58,27 @@ class RootShellNotificationHostTest {
         assertEquals("account-b", switched.accountIdentity)
     }
 
-    @Test fun dashboardArgsFailClosedWhenAnyValueIsNotString() {
-        assertNull(
-            projectRootShellNotificationAction(
-                JSONObject()
-                    .put("kind", "dashboard-action")
-                    .put("label", "Upgrade")
-                    .put("action", "upgrade")
-                    .put("args", JSONObject().put("plan", 2)),
-            ),
-        )
+    @Test fun dashboardArgsPreserveStructuredDesktopContract() {
+        val action = projectRootShellNotificationAction(
+            JSONObject()
+                .put("kind", "dashboard-action")
+                .put("label", "Upgrade")
+                .put("action", "upgrade")
+                .put(
+                    "args",
+                    JSONObject()
+                        .put("plan", "pro")
+                        .put("seatCount", 2)
+                        .put("force", true)
+                        .put("metadata", JSONObject().put("source", "tray"))
+                        .put("features", JSONArray().put("agents").put("mcp")),
+                ),
+        ) as RootShellNotificationAction.DashboardAction
+
+        assertEquals("pro", action.args.getString("plan"))
+        assertEquals(2, action.args.getInt("seatCount"))
+        assertTrue(action.args.getBoolean("force"))
+        assertEquals("tray", action.args.getJSONObject("metadata").getString("source"))
+        assertEquals("mcp", action.args.getJSONArray("features").getString(1))
     }
 }

@@ -42,7 +42,7 @@ internal sealed interface RootShellNotificationAction {
     data class DashboardAction(
         override val label: String,
         val action: String,
-        val args: Map<String, String>,
+        val args: JSONObject,
         val successMessage: String?,
     ) : RootShellNotificationAction
 }
@@ -78,13 +78,7 @@ internal fun projectRootShellNotificationAction(value: JSONObject): RootShellNot
             val action = value.optString("action").trim()
             val rawArgs = value.optJSONObject("args") ?: return null
             if (action.isEmpty()) return null
-            val args = linkedMapOf<String, String>()
-            val keys = rawArgs.keys()
-            while (keys.hasNext()) {
-                val key = keys.next()
-                val arg = rawArgs.opt(key) as? String ?: return null
-                args[key] = arg
-            }
+            val args = runCatching { JSONObject(rawArgs.toString()) }.getOrNull() ?: return null
             RootShellNotificationAction.DashboardAction(
                 label = label,
                 action = action,
@@ -251,8 +245,7 @@ internal class RootShellNotificationController(
                         else null
                     }
                     is RootShellNotificationAction.DashboardAction -> {
-                        val args = JSONObject()
-                        action.args.forEach { (key, value) -> args.put(key, value) }
+                        val args = JSONObject(action.args.toString())
                         val result = runtimePort.invokeRootNotificationDashboardAction(action.action, args)
                         if (result.optBoolean("ok", false)) {
                             result.optString("message").trim().takeIf(String::isNotEmpty)
