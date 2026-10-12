@@ -1116,6 +1116,8 @@ internal fun GrokHomeSurface(
                 onUpdateBotProfile(id, name, title, description, avatarShape, avatarColor)
                 profileTarget = null
             },
+            onSetAvatarImage = onSetBotAvatarImage,
+            onGenerateAvatarImage = onGenerateBotAvatarImage,
             onSetNotifications = onSetBotNotifyOnUpdates,
         )
 
