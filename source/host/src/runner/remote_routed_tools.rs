@@ -1,4 +1,5 @@
 use super::AndroidRoutedToolBridge;
+use crate::android_user_settings::{AndroidUserSettings, LocalToolPermission};
 use crate::capability_broker::SharedCapabilityBroker;
 use crate::host_runner_composition::AuthenticatedRemoteHostRunner;
 use crate::remote_execution::RemoteExecutionState;
@@ -346,6 +347,7 @@ pub(crate) struct RemoteRoutedTools {
     binding: Arc<Mutex<Option<RemoteDispatchBinding>>>,
     runner: Arc<Mutex<Option<AuthenticatedRemoteHostRunner<AuthenticatedRemoteHttpTransport>>>>,
     approvals: RemoteApprovalRegistry,
+    user_settings: Arc<Mutex<AndroidUserSettings>>,
     live_account_fence: Arc<Mutex<Option<String>>>,
     events: Arc<Mutex<VecDeque<Value>>>,
     parent_operation_id: String,
@@ -516,6 +518,10 @@ impl AndroidRoutedToolBridge for RemoteRoutedTools {
             _ if browser_tool => "browser.use",
             _ => unreachable!("unsupported Remote routed tool was delegated"),
         };
+        let permission_at_authorization = self.local_tool_permission()?;
+        if permission_at_authorization == LocalToolPermission::Never {
+            return Err("local computer tools are disabled by the current Host permission policy".into());
+        }
         let binding = self.current_binding()?;
         let required_executor = match name {
             "Shell" => "shell",
@@ -583,74 +589,98 @@ impl AndroidRoutedToolBridge for RemoteRoutedTools {
             now_ms(),
         )?;
 
-        let signal = Arc::new((Mutex::new(None), Condvar::new()));
-        self.approvals.register(
-            &approval_id,
-            RemoteApprovalWait {
-                parent_operation_id: self.parent_operation_id.clone(),
-                remote_operation_id: operation_id.clone(),
-                request_id: request_id.clone(),
-                capability: capability.to_string(),
-                account_fence: binding.account_fence.clone(),
-                account_epoch: binding.account_epoch,
-                device_id: binding.device_id.clone(),
-                signal: Arc::clone(&signal),
-            },
-        )?;
-        push_event(
-            &self.events,
-            json!({
-                "type":"approval.requested",
-                "approvalId":approval_id,
-                "operationId":operation_id,
-                "parentOperationId":self.parent_operation_id,
-                "requestId":request_id,
-                "capability":capability,
-                "target":{
-                    "deviceId":binding.device_id,
-                    "tool":name,
-                    "arguments":args,
+        let approved = if permission_at_authorization == LocalToolPermission::Always {
+            let resolved = self.broker.resolve_approval(
+                &approval_id,
+                true,
+                &binding.account_fence,
+                now_ms(),
+            )?;
+            if resolved.operation_id != operation_id
+                || resolved.request_id != request_id
+                || resolved.capability != capability
+                || resolved.account_epoch != Some(binding.account_epoch)
+                || resolved.device_id.as_deref() != Some(binding.device_id.as_str())
+            {
+                let _ = self.broker.cancel_approval_operation(
+                    &operation_id,
+                    "Host policy authorization identity mismatch",
+                    now_ms(),
+                );
+                return Err("Host policy authorization disagrees with durable broker state".into());
+            }
+            true
+        } else {
+            let signal = Arc::new((Mutex::new(None), Condvar::new()));
+            self.approvals.register(
+                &approval_id,
+                RemoteApprovalWait {
+                    parent_operation_id: self.parent_operation_id.clone(),
+                    remote_operation_id: operation_id.clone(),
+                    request_id: request_id.clone(),
+                    capability: capability.to_string(),
+                    account_fence: binding.account_fence.clone(),
+                    account_epoch: binding.account_epoch,
+                    device_id: binding.device_id.clone(),
+                    signal: Arc::clone(&signal),
                 },
-                "accountFence":binding.account_fence,
-                "accountEpoch":binding.account_epoch,
-                "deviceId":binding.device_id,
-                "remoteDispatch":true,
-            }),
-        )?;
+            )?;
+            push_event(
+                &self.events,
+                json!({
+                    "type":"approval.requested",
+                    "approvalId":approval_id,
+                    "operationId":operation_id,
+                    "parentOperationId":self.parent_operation_id,
+                    "requestId":request_id,
+                    "capability":capability,
+                    "target":{
+                        "deviceId":binding.device_id,
+                        "tool":name,
+                        "arguments":args,
+                    },
+                    "accountFence":binding.account_fence,
+                    "accountEpoch":binding.account_epoch,
+                    "deviceId":binding.device_id,
+                    "remoteDispatch":true,
+                }),
+            )?;
 
-        let started = Instant::now();
-        let approved = loop {
-            if self.cancelled.load(Ordering::Acquire) {
-                let _ = self.broker.cancel_approval_operation(
-                    &operation_id,
-                    "parent turn cancelled before Remote dispatch",
-                    now_ms(),
-                );
-                self.approvals.remove(&approval_id);
-                return Err("remote tool dispatch cancelled before authorization".into());
-            }
-            let (state, condvar) = &*signal;
-            let state = state
-                .lock()
-                .map_err(|_| "remote approval signal lock poisoned".to_string())?;
-            if let Some(approved) = *state {
-                break approved;
-            }
-            if started.elapsed() >= APPROVAL_WAIT_TIMEOUT {
-                drop(state);
-                let _ = self.broker.cancel_approval_operation(
-                    &operation_id,
-                    "remote approval timed out before dispatch",
-                    now_ms(),
-                );
-                self.approvals.remove(&approval_id);
-                return Err("remote approval timed out before dispatch".into());
-            }
-            let _ = condvar
-                .wait_timeout(state, APPROVAL_POLL)
-                .map_err(|_| "remote approval signal lock poisoned".to_string())?;
+            let started = Instant::now();
+            let approved = loop {
+                if self.cancelled.load(Ordering::Acquire) {
+                    let _ = self.broker.cancel_approval_operation(
+                        &operation_id,
+                        "parent turn cancelled before Remote dispatch",
+                        now_ms(),
+                    );
+                    self.approvals.remove(&approval_id);
+                    return Err("remote tool dispatch cancelled before authorization".into());
+                }
+                let (state, condvar) = &*signal;
+                let state = state
+                    .lock()
+                    .map_err(|_| "remote approval signal lock poisoned".to_string())?;
+                if let Some(approved) = *state {
+                    break approved;
+                }
+                if started.elapsed() >= APPROVAL_WAIT_TIMEOUT {
+                    drop(state);
+                    let _ = self.broker.cancel_approval_operation(
+                        &operation_id,
+                        "remote approval timed out before dispatch",
+                        now_ms(),
+                    );
+                    self.approvals.remove(&approval_id);
+                    return Err("remote approval timed out before dispatch".into());
+                }
+                let _ = condvar
+                    .wait_timeout(state, APPROVAL_POLL)
+                    .map_err(|_| "remote approval signal lock poisoned".to_string())?;
+            };
+            self.approvals.remove(&approval_id);
+            approved
         };
-        self.approvals.remove(&approval_id);
         if !approved {
             return Err("remote tool dispatch denied by user".into());
         }
@@ -674,6 +704,17 @@ impl AndroidRoutedToolBridge for RemoteRoutedTools {
                 &self.broker,
                 &operation_id,
                 "trusted Remote binding changed after approval",
+            ));
+        }
+        let permission_before_dispatch = self.local_tool_permission()?;
+        if permission_before_dispatch == LocalToolPermission::Never
+            || (permission_at_authorization == LocalToolPermission::Always
+                && permission_before_dispatch != LocalToolPermission::Always)
+        {
+            return Err(abandon_unconsumed_remote_approval(
+                &self.broker,
+                &operation_id,
+                "local computer permission policy changed before Remote dispatch",
             ));
         }
         // Persist a never-sent Remote operation before consuming the one-time grant. A process
@@ -740,6 +781,13 @@ impl AndroidRoutedToolBridge for RemoteRoutedTools {
 }
 
 impl RemoteRoutedTools {
+    fn local_tool_permission(&self) -> Result<LocalToolPermission, String> {
+        self.user_settings
+            .lock()
+            .map_err(|_| "Android user settings lock poisoned".to_string())
+            .map(|settings| settings.local_tool_permission())
+    }
+
     fn current_binding(&self) -> Result<RemoteDispatchBinding, String> {
         let binding = self
             .binding
@@ -766,6 +814,7 @@ pub(crate) fn with_remote_routed_tools(
     binding: Arc<Mutex<Option<RemoteDispatchBinding>>>,
     runner: Arc<Mutex<Option<AuthenticatedRemoteHostRunner<AuthenticatedRemoteHttpTransport>>>>,
     approvals: RemoteApprovalRegistry,
+    user_settings: Arc<Mutex<AndroidUserSettings>>,
     live_account_fence: Arc<Mutex<Option<String>>>,
     events: Arc<Mutex<VecDeque<Value>>>,
     parent_operation_id: &str,
@@ -778,6 +827,7 @@ pub(crate) fn with_remote_routed_tools(
         binding,
         runner,
         approvals,
+        user_settings,
         live_account_fence,
         events,
         parent_operation_id: parent_operation_id.to_string(),
