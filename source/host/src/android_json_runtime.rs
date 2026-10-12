@@ -2736,10 +2736,10 @@ impl AndroidJsonHost {
         let message_limit = params.get("messageLimit").and_then(Value::as_u64).unwrap_or(50).min(50) as usize;
         let media_limit = params.get("mediaLimit").and_then(Value::as_u64).unwrap_or(50).min(50) as usize;
         let account_slot = self.account.account_storage_scope();
-        let account_fence = self.current_turn_account_fence().ok();
+        let account_fence = self.current_turn_account_fence()?;
         let entries = self.transcript.lock().map_err(|_| "transcript lock poisoned".to_string())?.get_transcript().into_iter().filter(|entry| {
             let slot_ok = entry.get("accountSlot").and_then(Value::as_str).map(|slot| Some(slot) == account_slot.as_deref()).unwrap_or(true);
-            let fence_ok = entry.get("accountFence").and_then(Value::as_str).map(|fence| account_fence.as_deref() == Some(fence)).unwrap_or(true);
+            let fence_ok = entry.get("accountFence").and_then(Value::as_str).map(|fence| account_fence.as_str() == fence).unwrap_or(true);
             slot_ok && fence_ok
         }).collect::<Vec<_>>();
         let (messages, media) = self.content_search.search(&entries, query, message_limit, media_limit)?;
@@ -9800,6 +9800,12 @@ mod tests {
             .dispatch(
                 "feature.contentSearch.media",
                 &json!({"query":"alpha","limit":50}),
+            )
+            .is_err());
+        assert!(host
+            .dispatch(
+                "feature.search.global",
+                &json!({"query":"alpha"}),
             )
             .is_err());
     }
