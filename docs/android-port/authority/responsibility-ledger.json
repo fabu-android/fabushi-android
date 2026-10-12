@@ -5,9 +5,9 @@
     "desktop_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
     "android_repository": "fabu-android/fabushi-android",
     "android_pr": 3,
-    "android_head_at_update": "2e6f7598ab3a73fcec2ab5be857e55ae52bad2ac",
+    "android_head_at_update": "f684eebd3755041809f9c82f5e3ea0b290ed5f7e",
     "status": "incomplete",
-    "note": "Incrementally rebased to Desktop main 371b72f1cd20de03dc4dff9a15ed761054968093. Durable send acknowledgement, transcript widget actions and client-side tool-result projection remain Host/Coordinator-owned. At Android code head 8927278b8ec61145700abb906f226f97f6497195, Agent avatar presentation has Desktop-order photo/shared-room/group/persona dispatch and activity-state mapping; Agent composer prompt drafts are durably Host-owned with account/Agent fencing, process-reopen restore, corrupt-store quarantine and clear-if-current; conversation outline is a retained read-only projection over canonical transcript with Agent/subagent tabs and running-subagent polling; Agent find-in-chat searches canonical transcript semantic payloads and has native Enter/Shift+Enter/Escape focus navigation. Rows stay mapped/not-verified where upstream roster fields, full ComposerDraft attachments/recovery, exact occurrence-span highlighting, composed header controls or same-head packaged/device evidence are still missing. Full source closure remains incomplete. Spreadsheet preview audit now records CSV/TSV and bounded OOXML multi-sheet production wiring at 1e66eb907c46043bcb429c15abeae253b44ef443; Desktop legacy BIFF .xls remains mapped/not-verified."
+    "note": "Incrementally rebased to Desktop main 371b72f1cd20de03dc4dff9a15ed761054968093. Durable send acknowledgement, transcript widget actions and client-side tool-result projection remain Host/Coordinator-owned. At Android code head 8927278b8ec61145700abb906f226f97f6497195, Agent avatar presentation has Desktop-order photo/shared-room/group/persona dispatch and activity-state mapping; Agent composer prompt drafts are durably Host-owned with account/Agent fencing, process-reopen restore, corrupt-store quarantine and clear-if-current; conversation outline is a retained read-only projection over canonical transcript with Agent/subagent tabs and running-subagent polling; Agent find-in-chat searches canonical transcript semantic payloads and has native Enter/Shift+Enter/Escape focus navigation. Rows stay mapped/not-verified where upstream roster fields, full ComposerDraft attachments/recovery, exact occurrence-span highlighting, composed header controls or same-head packaged/device evidence are still missing. Full source closure remains incomplete. Spreadsheet preview audit now records CSV/TSV and bounded OOXML multi-sheet production wiring at 1e66eb907c46043bcb429c15abeae253b44ef443; Desktop legacy BIFF .xls remains mapped/not-verified. Audited f684eebd window-chrome focus, root notification trays, presentation-only Agent navigation history and root status badge are now explicitly responsibility-linked; none is verified until the new exact HEAD completes required CI/package/device evidence."
   },
   "responsibilities": [
     {
@@ -12879,6 +12879,192 @@
       "artifact": null,
       "verification_status": "not-verified",
       "notes": "Implementation and production wiring are present, but this responsibility must not be upgraded to verified until same exact HEAD CI plus packaged/device evidence exists."
+    },
+    {
+      "responsibility_id": "WINDOW-CHROME-MODEL-ANDROID-001",
+      "domain": "navigation-shell",
+      "desktop_sources": [
+        {
+          "path": "frontend/src/recovered/features/window-chrome/model.contract.test.ts",
+          "blob_sha": "a9b64a272656bbcb056e97e7befe3c73351abdfa",
+          "symbols": [
+            "window chrome dimensions/theme/zoom/focus refresh contracts"
+          ]
+        },
+        {
+          "path": "frontend/src/recovered/features/window-chrome/model.ts",
+          "blob_sha": "6bd46aa4ff172a29afad7926d789b66da88685ec",
+          "symbols": [
+            "setWindowChromeVariables",
+            "applyRootShellTheme",
+            "applyRootShellZoomFactor",
+            "shouldRefreshRootShellOnFocus"
+          ]
+        }
+      ],
+      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "responsibility": "Replace Desktop DOM/window-chrome mechanics with Android-native system window/theme/insets while preserving the visible+connected root focus-refresh invariant.",
+      "source_owner": "Desktop window-chrome model",
+      "visible_effect": "Android chrome remains native and root data refreshes only when the app is visible and canonical transport is connected.",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "mobile/android/app/src/main/java/com/ombhrum/fabushi/MainActivity.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/production/bootstrap_view.kt",
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/coordinator/AccountAccessProjectionOwner.kt",
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/FabushiApplication.kt",
+        "tests/test_root_connection_resilience_wiring.py",
+        "tests/test_window_chrome_android_replacement.py"
+      ],
+      "android_owner": "Android system window/theme owns chrome; process-scoped RootShellFocusRefreshOwner joins immutable Coordinator transport with Activity foreground visibility.",
+      "platform_delta": "Desktop CSS variables/browser document zoom are replaced by edge-to-edge safe drawing/native theme/density. Focus refresh is retained as a fenced process owner.",
+      "implementation_status": "implemented",
+      "production_wiring": "FabushiProcessRuntime subscribes to canonical root connection state and setForeground(); RootShellFocusRefreshOwner emits one token only for visible+CONNECTED and invalidates stale account/generation flights.",
+      "unit_test": "RootConnectionResilienceOwnerTest plus static wiring tests cover hidden/disconnected, reconnect, stale epoch and lifecycle visibility.",
+      "contract_test": "tests/test_root_connection_resilience_wiring.py; tests/test_window_chrome_android_replacement.py",
+      "integration_test": "f684eebd existing-android-regression success; exact new-head rerun pending.",
+      "packaged_test": "required",
+      "device_test": "required",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Audited at f684eebd3755041809f9c82f5e3ea0b290ed5f7e against Desktop 371b72f1cd20de03dc4dff9a15ed761054968093. Grok Android Architecture run 38193852577 existing-android-regression, rust-runtime-foundation and parity-ledger succeeded. Full Android build/package/device/release evidence remains incomplete."
+    },
+    {
+      "responsibility_id": "ROOT-NOTIFICATION-HOST-ANDROID-001",
+      "domain": "notification",
+      "desktop_sources": [
+        {
+          "path": "frontend/src/recovered/features/window-chrome/notification-host.css",
+          "blob_sha": "d6bf52a04d9e5d5d016ff714df08c99db3aebdce",
+          "symbols": [
+            "tray presentation styling"
+          ]
+        },
+        {
+          "path": "frontend/src/recovered/features/window-chrome/notification-host.tsx",
+          "blob_sha": "9b4e52d341517e46c391f7a68106c819ca6fd2db",
+          "symbols": [
+            "tray projection",
+            "dismiss/clear",
+            "bounded actions",
+            "dashboard actions"
+          ]
+        }
+      ],
+      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "responsibility": "Project canonical Host error trays into the Android root shell with bounded safe actions, snapshot/event reconciliation, dismiss/clear, action single-flight and account/transport/generation fencing.",
+      "source_owner": "Desktop notification host consuming tray service",
+      "visible_effect": "Root errors and recovery actions appear in the shipping Android shell without duplicating tray truth.",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/recovered/features/window-chrome/RootShellNotificationHost.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/production/ProductionRenderer_view.kt",
+        "source/android-preload/src/main/kotlin/com/ombhrum/fabushi/androidpreload/runtime/AndroidPresentationRuntimePort.kt",
+        "source/host/src/android_json_runtime.rs",
+        "source/host/src/extensions/trays/trays_service.rs",
+        "mobile/android/app/src/test/java/com/ombhrum/fabushi/RootShellNotificationHostTest.kt",
+        "tests/test_root_shell_notification_host_wiring.py"
+      ],
+      "android_owner": "Host tray service is canonical; RootShellNotificationController owns projection lifecycle only.",
+      "platform_delta": "DOM/CSS host becomes Compose Popup/Card; URLs are restricted to http/https and structured dashboard args are copied before dispatch.",
+      "implementation_status": "implemented",
+      "production_wiring": "ProductionRenderer mounts RootShellNotificationHost; runtime reads Host getTrays and tray.* events with account/transport/generation fencing.",
+      "unit_test": "RootShellNotificationHostTest",
+      "contract_test": "tests/test_root_shell_notification_host_wiring.py",
+      "integration_test": "f684eebd existing-android-regression success; exact new-head rerun pending.",
+      "packaged_test": "required",
+      "device_test": "required",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Audited at f684eebd3755041809f9c82f5e3ea0b290ed5f7e against Desktop 371b72f1cd20de03dc4dff9a15ed761054968093. Grok Android Architecture run 38193852577 existing-android-regression, rust-runtime-foundation and parity-ledger succeeded. Full Android build/package/device/release evidence remains incomplete."
+    },
+    {
+      "responsibility_id": "ROOT-SHELL-NAV-HISTORY-ANDROID-001",
+      "domain": "navigation",
+      "desktop_sources": [
+        {
+          "path": "frontend/src/recovered/features/window-chrome/root-shell-state.css",
+          "blob_sha": "31e70d3af5322fc70d3aee0eed853a785ef13ee4",
+          "symbols": [
+            "root shell presentation styling"
+          ]
+        },
+        {
+          "path": "frontend/src/recovered/features/window-chrome/root-shell-state.tsx",
+          "blob_sha": "88f3304cc487479cd6ac33a03fd6a99168e8d262",
+          "symbols": [
+            "RootShellNavigationState",
+            "recordRootShellAgentSelection",
+            "resolveRootShellNavigation",
+            "resolveRootShellShortcut"
+          ]
+        }
+      ],
+      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "responsibility": "Own presentation-only multi-step Agent history entries/cursor/pendingTarget/appliedAgentId with back/forward, deleted-Agent skipping, branch truncation, account fencing and same-account process recovery.",
+      "source_owner": "Desktop root-shell-state navigation reducer",
+      "visible_effect": "Back/forward traverses real prior Agent selections instead of a one-slot target, while removed Agents and stale accounts are fenced.",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/recovered/features/window-chrome/RootShellNavigationHistory.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/production/ProductionRenderer_view.kt",
+        "mobile/android/app/src/test/java/com/ombhrum/fabushi/RootShellNavigationHistoryTest.kt"
+      ],
+      "android_owner": "RootShellNavigationOwner owns presentation history only; MobileBotViewModel/Host remain canonical roster and active-Agent owners.",
+      "platform_delta": "SharedPreferences persist only history scoped by account epoch+identity; canonical Agent state is not copied.",
+      "implementation_status": "implemented",
+      "production_wiring": "ProductionRenderer observes canonical account scope and active Agent, resolves navigation targets against current roster, then opens through MobileBotViewModel.",
+      "unit_test": "RootShellNavigationHistoryTest covers multistep back/forward, deleted-Agent skipping, branch truncation, account fencing, process recovery and logout clear.",
+      "contract_test": "ProductionRenderer wiring audited; dedicated static test remains follow-up hardening.",
+      "integration_test": "f684eebd existing-android-regression success; exact new-head rerun pending.",
+      "packaged_test": "required",
+      "device_test": "required: recreation/process-death history restoration",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Audited at f684eebd3755041809f9c82f5e3ea0b290ed5f7e against Desktop 371b72f1cd20de03dc4dff9a15ed761054968093. Grok Android Architecture run 38193852577 existing-android-regression, rust-runtime-foundation and parity-ledger succeeded. Full Android build/package/device/release evidence remains incomplete."
+    },
+    {
+      "responsibility_id": "ROOT-STATUS-BADGE-ANDROID-001",
+      "domain": "navigation-shell",
+      "desktop_sources": [
+        {
+          "path": "frontend/src/recovered/features/window-chrome/status-badge.css",
+          "blob_sha": "142b69df0b7ed835e7f5bd123955565403fa3468",
+          "symbols": [
+            "status-dot styling"
+          ]
+        },
+        {
+          "path": "frontend/src/recovered/features/window-chrome/status-badge.tsx",
+          "blob_sha": "39f063c85c0ab932e618107e348b31e2a03485d5",
+          "symbols": [
+            "WindowStatusBadge",
+            "transport mapping"
+          ]
+        }
+      ],
+      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "responsibility": "Project canonical root transport state into a native Android badge with Connecting/Connected/Disconnected semantics and hide it outside an active root session.",
+      "source_owner": "Desktop WindowStatusBadge",
+      "visible_effect": "Android shows the same coarse connection status without creating a second state owner.",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/recovered/features/window-chrome/RootShellStatusBadge.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/production/ProductionRenderer_view.kt",
+        "mobile/android/app/src/test/java/com/ombhrum/fabushi/RootShellStatusBadgeTest.kt",
+        "tests/test_root_shell_status_badge_wiring.py"
+      ],
+      "android_owner": "Coordinator-owned RootConnectionResilienceProjection remains canonical; badge is pure projection.",
+      "platform_delta": "Desktop fullscreen/browser hidden condition maps to Android signed-out/RootConnectionPhase.HIDDEN; Compose owns rendering only.",
+      "implementation_status": "implemented",
+      "production_wiring": "ProductionRenderer passes state.rootConnectionProjection directly.",
+      "unit_test": "RootShellStatusBadgeTest",
+      "contract_test": "tests/test_root_shell_status_badge_wiring.py",
+      "integration_test": "f684eebd existing-android-regression success; exact new-head rerun pending.",
+      "packaged_test": "required",
+      "device_test": "required",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Audited at f684eebd3755041809f9c82f5e3ea0b290ed5f7e against Desktop 371b72f1cd20de03dc4dff9a15ed761054968093. Grok Android Architecture run 38193852577 existing-android-regression, rust-runtime-foundation and parity-ledger succeeded. Full Android build/package/device/release evidence remains incomplete."
     }
   ],
   "traceability": {
