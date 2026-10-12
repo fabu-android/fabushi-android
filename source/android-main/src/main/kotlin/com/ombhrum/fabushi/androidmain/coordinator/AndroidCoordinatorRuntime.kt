@@ -3140,33 +3140,26 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
         }
         val snapshot = runCatching { computerRebuildOwner.snapshot(accountEpoch) }.getOrNull()
             ?: return
-        val visibility = computerRebuildOwner.visibilityTelemetry(accountEpoch)
-        if (snapshot.kind == null || visibility == null || !visibility.isStalled) {
+        val projected = projectComputerRebuildPendingStallTelemetry(
+            snapshot = snapshot,
+            visibility = computerRebuildOwner.visibilityTelemetry(accountEpoch),
+        )
+        if (projected == null) {
             lastComputerRebuildPendingStallKey = null
             return
         }
-        val rebuildKind = snapshot.kind.name.lowercase()
-        val episodeKey = buildString {
-            append(accountEpoch)
-            append(':')
-            append(snapshot.episodeStartedAtMs ?: 0L)
-            append(':')
-            append(snapshot.operationId ?: snapshot.requestId ?: rebuildKind)
-        }
-        if (lastComputerRebuildPendingStallKey == episodeKey) return
+        if (lastComputerRebuildPendingStallKey == projected.episodeKey) return
 
         host.request(
             "feature.telemetry.recovery",
             JSONObject()
                 .put("kind", "rebuild_pending_stall")
-                .put("rebuildKind", rebuildKind)
-                .put("elapsedMs", visibility.elapsedMs)
-                .put("hasAck", snapshot.acknowledged)
-                // Desktop names this fact streamAttached. Android has no renderer stream owner;
-                // the canonical replacement is the durable rebuild transport connection state.
-                .put("streamAttached", snapshot.connected),
+                .put("rebuildKind", projected.rebuildKind)
+                .put("elapsedMs", projected.elapsedMs)
+                .put("hasAck", projected.hasAck)
+                .put("streamAttached", projected.streamAttached),
         )
-        lastComputerRebuildPendingStallKey = episodeKey
+        lastComputerRebuildPendingStallKey = projected.episodeKey
     }
 
     override fun computerRebuildStatus(): JSONObject {
