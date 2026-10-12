@@ -13517,7 +13517,7 @@
       "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
       "source_owner": "Desktop production account edge",
       "android_disposition": "android-adapted",
-      "implementation_status": "mapped",
+      "implementation_status": "implemented",
       "contract_test": "required",
       "integration_test": "required",
       "packaged_test": "required",
@@ -13540,13 +13540,14 @@
       "responsibility": "Read canonical user/team PR-review destinations with bounded backend calls and preserve github/graphite/reviewCursor semantics.",
       "visible_effect": "PR-review actions honor configured user/team destination.",
       "android_target": [
-        "source/host/src/mcp_auth/dashboard_mcp_auth_backend.rs"
+        "source/host/src/mcp_auth/dashboard_mcp_auth_backend.rs",
+        "source/host/src/android_json_runtime.rs"
       ],
       "android_owner": "Rust Host Dashboard backend",
       "platform_delta": "Reuse the existing Rust Connect-RPC boundary; do not create a Kotlin network or credential owner.",
-      "production_wiring": "Missing user/team preference RPC and native projection.",
-      "unit_test": "required: enum normalization, user/team merge, malformed/unknown/failure",
-      "notes": "Do not guess protobuf fields from empty generated placeholders."
+      "production_wiring": "Rust Host production dispatch now exposes feature.account.prReviewPreferences. Logged-in production sessions reuse the existing credential-bound CursorDashboardMcpAuthBackend; logged-out sessions return null user/team values and account session mutations are preserved. The backend issues bounded parallel Connect-RPC calls to BackgroundComposerService/GetBackgroundComposerUserSettings and DashboardService/GetTeamAdminSettingsOrEmptyIfNotInTeam with a 10-second deadline. User destination decodes field 6; team prefers pull_request_preferences field 37/inner 1 and falls back to background_agent_settings field 7/inner 5. Values 1/2/3 map exactly to github/graphite/reviewCursor and unknown values map to absent; no Kotlin network/credential owner was added.",
+      "unit_test": "dashboard_mcp_auth_backend::pr_review_preference_wire_matches_desktop_generated_schema covers exact RPC paths/deadline, enum normalization, user field 6, preferred team 37/1, fallback 7/5, and unknown values. Same-final-head GitHub Actions are still pending.",
+      "notes": "Do not guess protobuf fields from empty generated placeholders. Production implementation landed at 19cde62c68f92cbdaf7aea9d6ba1e1ddfbe31908; keep not-verified until exact-head Rust/architecture/package evidence and a real authenticated backend response are captured."
     },
     {
       "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
