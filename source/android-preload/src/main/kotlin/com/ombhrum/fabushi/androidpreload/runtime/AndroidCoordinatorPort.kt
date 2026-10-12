@@ -705,6 +705,14 @@ interface AndroidCoordinatorPort {
 
     fun automationUpsert(params: JSONObject): JSONObject
     fun automationList(): org.json.JSONArray
+    fun automationListForAgent(agentId: String): org.json.JSONArray =
+        error("Per-Agent automation projection is unavailable on this Coordinator port")
+    fun automationSetAgentEnabled(
+        agentId: String,
+        automationId: String,
+        enabled: Boolean,
+    ): JSONObject =
+        error("Per-Agent automation enablement is unavailable on this Coordinator port")
     fun automationStart(params: JSONObject): JSONObject
     fun automationAdvanceStep(params: JSONObject): JSONObject
     fun automationAwaitApproval(params: JSONObject): JSONObject
