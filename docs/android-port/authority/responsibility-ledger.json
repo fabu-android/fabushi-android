@@ -15988,6 +15988,36 @@
       "artifact": null,
       "verification_status": "not-verified",
       "notes": "Implemented semantic replacement; do not mark verified from code presence. Ported FTS core is not itself production evidence until explicitly wired as a derived projection."
+    },
+    {
+      "responsibility_id": "AGENT-SHARED-ROOM-DEDUPE-ANDROID-001",
+      "domain": "agent-shared-room-deduplication",
+      "desktop_sources": [
+        {
+          "path": "source/host/src/extensions/cross_user_sharing/xuser_turn_dedupe_store.rs",
+          "blob_sha": "939657ffa56c0198dba3867b72f959d2ccb371a5"
+        }
+      ],
+      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "responsibility": "Accept each cross-user remote-turn nonce at most once across process death, prune expired dedupe state after the three-day protocol TTL, and fail closed on malformed identifiers or durable-write failure.",
+      "source_owner": "Desktop SandXuserTurnDedupeStore",
+      "visible_effect": "Relay redelivery or Android restart cannot execute the same shared-room remote turn twice.",
+      "android_disposition": "direct-port",
+      "android_target": [
+        "source/host/src/extensions/cross_user_sharing/xuser_turn_dedupe_store.rs"
+      ],
+      "android_owner": "Rust Host XuserTurnDedupeStore",
+      "platform_delta": "No semantic delta; Android strengthens persistence with fsync + atomic rename.",
+      "implementation_status": "implemented",
+      "production_wiring": "Compiled in shipping Host module tree as a durable prerequisite; aggregate remote-turn/relay service is still not wired, so this is not full shared-room parity.",
+      "unit_test": "duplicate_remote_turn_is_rejected_across_reopen_until_ttl_expires; invalid_nonce_fails_closed_and_atomic_write_leaves_no_part_file; exact-head Actions pending",
+      "contract_test": "pending integration with xuser_remote_turns receiver",
+      "integration_test": "pending aggregate cross-user service wiring",
+      "packaged_test": "required on final APK/AAB",
+      "device_test": "required with authenticated relay redelivery after process restart",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Narrow durable prerequisite only. Keep AGENT-SHARED-ROOM-ANDROID-001 mapped until relay, remote turns, departures, tombstones, Coordinator transport and native room management are production-wired."
     }
   ],
   "traceability": {
