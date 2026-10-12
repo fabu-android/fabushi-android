@@ -9,6 +9,7 @@ use crate::automation_runtime::{run_json as automation_run_json, AutomationRunti
 use crate::auto_review_settings::{AutoReviewInstructions, DurableAutoReviewSettings};
 use crate::android_agent_roster::AndroidAgentRoster;
 use crate::android_process_metrics::AndroidProcessMetricsCollector;
+use crate::android_structured_log_spill::AndroidStructuredLogSpool;
 use crate::agent_attachment::{
     prompt_with_agent_attachments, with_agent_attachment_tools, AgentAttachment,
     DurableAgentAttachmentOwner, COMPOSER_ATTACHMENT_LIMIT,
@@ -657,6 +658,8 @@ pub struct AndroidJsonHost {
     account_telemetry_outbox: Arc<Mutex<VecDeque<AccountTelemetryProjection>>>,
     account_telemetry_shipping: Arc<AtomicBool>,
     edge_failures: EdgeFailureBuffer,
+    structured_log_spool: AndroidStructuredLogSpool,
+    structured_log_counter_id: String,
     process_metrics: AndroidProcessMetricsCollector,
     process_metrics_recent: VecDeque<Value>,
     process_crash_recent: VecDeque<Value>,
@@ -787,6 +790,20 @@ impl AndroidJsonHost {
         let account_binding = EnvDescriptorAccountBinding::new(
             app_data_dir.join("account-environment-bindings.json"),
         );
+        let structured_log_account_slot = account
+            .account_storage_scope()
+            .unwrap_or_else(|| "logged-out".to_string());
+        let structured_log_counter_id =
+            format!("android:{}", crate::sha256::sha256_hex(device_id.as_bytes()));
+        let structured_log_spool = AndroidStructuredLogSpool::open(
+            app_data_dir.join("android-structured-log-spill.v1.json"),
+            &structured_log_account_slot,
+            &structured_log_counter_id,
+            now_ms(),
+        )
+        .unwrap_or_else(|error| {
+            panic!("failed to open durable Android structured-log spill: {error}")
+        });
         let mut account_binding_refusal = None;
         if let Some(account_slot) = account.account_storage_scope() {
             let descriptor = account.environment_descriptor_url();
@@ -957,6 +974,8 @@ impl AndroidJsonHost {
             account_telemetry_outbox: Arc::new(Mutex::new(VecDeque::new())),
             account_telemetry_shipping: Arc::new(AtomicBool::new(false)),
             edge_failures: EdgeFailureBuffer::default(),
+            structured_log_spool,
+            structured_log_counter_id,
             process_metrics: AndroidProcessMetricsCollector::default(),
             process_metrics_recent: VecDeque::new(),
             process_crash_recent: VecDeque::new(),
@@ -1509,8 +1528,40 @@ impl AndroidJsonHost {
         Arc::clone(&self.runtime_call_cancellations)
     }
 
+    fn sync_structured_log_account_slot(&mut self) {
+        let account_slot = self
+            .account
+            .account_storage_scope()
+            .unwrap_or_else(|| "logged-out".to_string());
+        if self
+            .structured_log_spool
+            .rotate_account(&account_slot, &self.structured_log_counter_id)
+            .is_err()
+        {
+            self.edge_failures
+                .report("structured-log-spill", "account-rotate", "StorageError");
+        }
+    }
+
     pub fn report_edge_failure(&mut self, area: &str, leg: &str, error_class: &str) {
         self.edge_failures.report(area, leg, error_class);
+        self.sync_structured_log_account_slot();
+        let Some(entry) = self.edge_failures.snapshot().last().cloned() else {
+            return;
+        };
+        let metadata = BTreeMap::from([
+            ("area".to_string(), entry.area),
+            ("leg".to_string(), entry.leg),
+            ("error_class".to_string(), entry.error_class),
+        ]);
+        if self
+            .structured_log_spool
+            .record("error", "sand.desktop.edge_failed", metadata, now_ms())
+            .is_err()
+        {
+            self.edge_failures
+                .report("structured-log-spill", "record", "StorageError");
+        }
     }
 
     fn schedule_account_telemetry_ship(&mut self) {
@@ -1896,6 +1947,7 @@ impl AndroidJsonHost {
             "platform.request" => self.platform_request(params),
             other => Err(format!("unknown host method {other}")),
         };
+        self.sync_structured_log_account_slot();
         self.schedule_account_telemetry_ship();
         result
     }
