@@ -37,7 +37,7 @@ internal object AndroidDataRootBootstrap {
             return absolute
         }
 
-        val temporary = File(absolute, "$ANDROID_DATA_ROOT_MARKER.tmp-${android.os.Process.myPid()}")
+        val temporary = File(absolute, "$ANDROID_DATA_ROOT_MARKER.tmp-${Thread.currentThread().id}-${System.nanoTime()}")
         runCatching {
             FileOutputStream(temporary).use { output ->
                 output.write(ANDROID_DATA_ROOT_MARKER_BODY.toByteArray(Charsets.UTF_8))
