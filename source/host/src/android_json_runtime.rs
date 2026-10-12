@@ -3957,6 +3957,7 @@ impl AndroidJsonHost {
     fn automation_settle(&mut self, params: &Value) -> Result<Value, String> {
         let account_fence = self.current_turn_account_fence()?;
         let succeeded = params.get("succeeded").and_then(Value::as_bool).ok_or("succeeded is required")?;
+        let time_zone = self.effective_time_zone()?;
         let run = self.automation_runtime.settle(
             required_string(params, "runId")?,
             &account_fence,
@@ -3964,7 +3965,7 @@ impl AndroidJsonHost {
             succeeded,
             params.get("reason").and_then(Value::as_str).map(str::to_string),
             now_ms(),
-            self.effective_time_zone()?.as_deref(),
+            time_zone.as_deref(),
         )?;
         Ok(automation_run_json(&run))
     }
