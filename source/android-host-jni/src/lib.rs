@@ -17,7 +17,6 @@ use fabushi_mahayana_host::android_json_runtime::{
     AndroidHostMode, AndroidJsonHost, RuntimeCallCancellationRegistry,
 };
 use fabushi_mahayana_host::box_rebuild_backend::AndroidBoxRebuildBackend;
-use fabushi_mahayana_host::host_secret_store::get_or_create_host_machine_id;
 use serde_json::{json, Value};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -81,6 +80,42 @@ impl AndroidNativeRuntime {
             app_data_dir.clone(),
             mode,
             initial_account_session_json,
+        );
+        let runtime_call_control = runtime.runtime_call_control();
+        let coordinator_host = CoordinatorHost { runtime };
+        let coordinator = if mode == AndroidHostMode::Production {
+            MahayanaCoordinator::with_generation_persistent(
+                coordinator_host,
+                generation,
+                512,
+                app_data_dir.join("coordinator-state.json"),
+            )
+            .unwrap_or_else(|error| panic!("failed to open durable Android coordinator state: {}", error.message))
+        } else {
+            MahayanaCoordinator::with_generation(coordinator_host, generation, 512)
+        };
+        Self {
+            coordinator,
+            mcp_oauth: OAuthForwarder::default(),
+            mode,
+            next_request_id: 0,
+            runtime_call_control,
+        }
+    }
+
+    pub fn new_with_account_session_and_machine_id(
+        app_data_dir: impl Into<PathBuf>,
+        mode: AndroidHostMode,
+        generation: u64,
+        initial_account_session_json: Option<&str>,
+        machine_id: &str,
+    ) -> Self {
+        let app_data_dir = app_data_dir.into();
+        let runtime = AndroidJsonHost::new_with_account_session_and_device_id(
+            app_data_dir.clone(),
+            mode,
+            initial_account_session_json,
+            machine_id.to_string(),
         );
         let runtime_call_control = runtime.runtime_call_control();
         let coordinator_host = CoordinatorHost { runtime };
@@ -700,6 +735,7 @@ mod android_jni {
         app_data_dir: JString,
         process_generation: jlong,
         initial_account_session_json: JString,
+        machine_id: JString,
     ) -> jlong {
         let path = match env.get_string(&app_data_dir) {
             Ok(value) => PathBuf::from(value.to_string_lossy().into_owned()),
@@ -709,21 +745,28 @@ mod android_jni {
             Ok(value) => value.to_string_lossy().into_owned(),
             Err(_) => return 0,
         };
-        let generation = u64::try_from(process_generation).unwrap_or(1).max(1);
-        let machine_id = match get_or_create_host_machine_id(&path.join("machine-id")) {
-            Ok(value) => value,
+        let machine_id = match env.get_string(&machine_id) {
+            Ok(value) => value.to_string_lossy().trim().to_owned(),
             Err(_) => return 0,
         };
-        let rebuild_backend = match AndroidBoxRebuildBackend::from_process_environment(machine_id) {
+        if machine_id.is_empty()
+            || machine_id.len() > 200
+            || machine_id.chars().any(|value| value.is_whitespace() || value.is_control())
+        {
+            return 0;
+        }
+        let generation = u64::try_from(process_generation).unwrap_or(1).max(1);
+        let rebuild_backend = match AndroidBoxRebuildBackend::from_process_environment(machine_id.clone()) {
             Ok(value) => Arc::new(value),
             Err(_) => return 0,
         };
         register_runtime(
-            AndroidNativeRuntime::new_with_account_session(
+            AndroidNativeRuntime::new_with_account_session_and_machine_id(
                 path,
                 AndroidHostMode::Production,
                 generation,
                 (!initial_session.trim().is_empty()).then_some(initial_session.as_str()),
+                &machine_id,
             ),
             Some(rebuild_backend),
         )
