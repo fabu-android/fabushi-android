@@ -76,8 +76,8 @@ internal object AndroidAvatarImageProcessor {
         val normalized = decoded.scaleWithin(MAX_AGENT_AVATAR_OUTPUT_DIMENSION)
         if (normalized !== decoded) decoded.recycle()
 
-        return try {
-            var current = normalized
+        var current = normalized
+        try {
             while (true) {
                 val encoded = ByteArrayOutputStream().also { stream ->
                     check(current.compress(Bitmap.CompressFormat.PNG, 100, stream)) {
@@ -92,11 +92,12 @@ internal object AndroidAvatarImageProcessor {
                 check(nextWidth < current.width || nextHeight < current.height) {
                     "Normalized avatar image exceeds the durable avatar limit"
                 }
-                val next = Bitmap.createScaledBitmap(current, nextWidth, nextHeight, true)
-                if (current !== normalized) current.recycle()
-                current = next
+                val previous = current
+                current = Bitmap.createScaledBitmap(previous, nextWidth, nextHeight, true)
+                if (previous !== normalized) previous.recycle()
             }
         } finally {
+            if (current !== normalized) current.recycle()
             normalized.recycle()
         }
     }
