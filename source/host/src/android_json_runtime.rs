@@ -1602,6 +1602,15 @@ impl AndroidJsonHost {
                     .report_session(SessionReport::ProtectedStoreUnavailable);
                 Ok(json!({"recorded":true}))
             },
+            "feature.account.telemetry.accessBlocked" => {
+                let edge = required_string(params, "edge")?;
+                let cause = required_string(params, "cause")?;
+                let access_reason = required_string(params, "accessReason")?;
+                let ms_blocked = params.get("msBlocked").and_then(Value::as_u64);
+                self.account_telemetry
+                    .report_access_blocked(edge, cause, access_reason, ms_blocked)?;
+                Ok(json!({"recorded":true}))
+            },
             "feature.diagnostics.edgeFailures.snapshot" => serde_json::to_value(self.edge_failures.snapshot()).map_err(|error| format!("failed to serialize edge failure snapshot: {error}")),
             "feature.account.fence" => Ok(json!({"accountFence":self.current_turn_account_fence()?})),
             "feature.account.sandAccess" => self.account_sand_access(),
