@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::{
+    collections::BTreeMap,
     fs,
     io::{self, Write},
     path::{Path, PathBuf},
@@ -44,6 +45,8 @@ struct PersistedAndroidUserSettings {
     time_zone_override: Option<String>,
     #[serde(default)]
     local_tool_permission: LocalToolPermission,
+    #[serde(default)]
+    onboarding_seen_by_account: BTreeMap<String, bool>,
 }
 
 /// Canonical Host-owned Android user settings that must survive Activity/process recreation.
@@ -102,10 +105,8 @@ impl AndroidUserSettings {
         if self.state.time_zone_override == normalized {
             return Ok(normalized);
         }
-        let next = PersistedAndroidUserSettings {
-            time_zone_override: normalized.clone(),
-            local_tool_permission: self.state.local_tool_permission,
-        };
+        let mut next = self.state.clone();
+        next.time_zone_override = normalized.clone();
         write_atomic_json(&self.path, &next)?;
         self.state = next;
         Ok(normalized)
@@ -114,16 +115,49 @@ impl AndroidUserSettings {
     pub fn local_tool_permission(&self) -> LocalToolPermission {
         self.state.local_tool_permission
     }
+    pub fn onboarding_seen(&self, account_scope: &str) -> bool {
+        self.state
+            .onboarding_seen_by_account
+            .get(account_scope)
+            .copied()
+            .unwrap_or(false)
+    }
+
+    pub fn set_onboarding_seen(
+        &mut self,
+        account_scope: &str,
+        value: bool,
+    ) -> io::Result<bool> {
+        let account_scope = account_scope.trim();
+        if account_scope.is_empty() || account_scope.len() > 256 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "onboarding account scope must be bounded and non-empty",
+            ));
+        }
+        if self.onboarding_seen(account_scope) == value {
+            return Ok(value);
+        }
+        let mut next = self.state.clone();
+        if value {
+            next.onboarding_seen_by_account
+                .insert(account_scope.to_string(), true);
+        } else {
+            next.onboarding_seen_by_account.remove(account_scope);
+        }
+        write_atomic_json(&self.path, &next)?;
+        self.state = next;
+        Ok(value)
+    }
+
 
     pub fn set_local_tool_permission(&mut self, value: &str) -> io::Result<LocalToolPermission> {
         let normalized = LocalToolPermission::parse(value)?;
         if self.state.local_tool_permission == normalized {
             return Ok(normalized);
         }
-        let next = PersistedAndroidUserSettings {
-            time_zone_override: self.state.time_zone_override.clone(),
-            local_tool_permission: normalized,
-        };
+        let mut next = self.state.clone();
+        next.local_tool_permission = normalized;
         write_atomic_json(&self.path, &next)?;
         self.state = next;
         Ok(normalized)
@@ -254,6 +288,32 @@ mod tests {
 
         let _ = fs::remove_file(canonical);
         let _ = fs::remove_file(legacy);
+    }
+
+    #[test]
+    fn onboarding_seen_is_account_scoped_and_durable() {
+        let path = test_path("onboarding");
+        let mut settings = AndroidUserSettings::open(&path).unwrap();
+        assert!(!settings.onboarding_seen("account-device:a"));
+        assert!(!settings.onboarding_seen("account-device:b"));
+
+        assert!(settings
+            .set_onboarding_seen("account-device:a", true)
+            .unwrap());
+        assert!(settings.onboarding_seen("account-device:a"));
+        assert!(!settings.onboarding_seen("account-device:b"));
+        drop(settings);
+
+        let mut reopened = AndroidUserSettings::open(&path).unwrap();
+        assert!(reopened.onboarding_seen("account-device:a"));
+        assert!(!reopened.onboarding_seen("account-device:b"));
+        assert!(!reopened
+            .set_onboarding_seen("account-device:a", false)
+            .unwrap());
+        assert!(!reopened.onboarding_seen("account-device:a"));
+        assert!(reopened.set_onboarding_seen("", true).is_err());
+
+        let _ = fs::remove_file(path);
     }
 
     #[test]
