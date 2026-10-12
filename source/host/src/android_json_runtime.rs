@@ -76,6 +76,7 @@ use crate::runner::{
     AgentTurnInterruptionRegistry, RemoteApprovalRegistry, RemoteDispatchBinding,
     DurableMultitaskTodoStore,
 };
+use fabushi_android_shared::feedback::normalize_feedback_submit_args;
 use fabushi_constants::composer::text_size_allowed;
 use fabushi_android_shared::node::mcp::mcp_auth_watch_lifecycle::{
     McpAuthPollOutcome, McpAuthPollRequest, McpAuthPollSettlement, McpAuthPollTick,
@@ -672,6 +673,7 @@ impl AndroidMessagingAccessGrant {
 pub struct AndroidJsonHost {
     mode: AndroidHostMode,
     device_id: String,
+    app_version: String,
     account: AndroidAccountService,
     account_binding: EnvDescriptorAccountBinding,
     preexisting_account_durable_data: bool,
@@ -1063,6 +1065,7 @@ impl AndroidJsonHost {
         Self {
             mode,
             device_id: device_id.clone(),
+            app_version: app_version.to_string(),
             account,
             account_binding,
             preexisting_account_durable_data,
@@ -1414,6 +1417,56 @@ impl AndroidJsonHost {
             "serverId": server_id,
             "tools": projected,
         }))
+    }
+
+    fn feedback_submit(&self, params: &Value) -> Result<Value, String> {
+        let current_fence = match self.current_turn_account_fence() {
+            Ok(value) => value,
+            Err(_) => return Ok(json!({"ok":false,"code":"not-signed-in"})),
+        };
+        let requested_fence = match params.get("accountFence").and_then(Value::as_str) {
+            Some(value) if value == current_fence => value,
+            _ => return Ok(json!({"ok":false,"code":"not-signed-in"})),
+        };
+        let message = params.get("message").and_then(Value::as_str).unwrap_or_default();
+        let submission_id = params
+            .get("submissionId")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        let conversation_id = params.get("conversationId").and_then(Value::as_str);
+        let sentry_event_ids = params
+            .get("sentryEventIds")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+            .map(str::to_string)
+            .collect::<Vec<_>>();
+        let Some(feedback) = normalize_feedback_submit_args(
+            requested_fence,
+            message,
+            submission_id,
+            conversation_id,
+            sentry_event_ids,
+        ) else {
+            return Ok(json!({"ok":false,"code":"invalid-feedback"}));
+        };
+        let Some(backend) = self.mcp_dashboard_backend.as_ref() else {
+            return Ok(json!({"ok":false,"code":"unavailable"}));
+        };
+        let payload = json!({
+            "message": feedback.message,
+            "submissionId": feedback.submission_id,
+            "appVersion": self.app_version,
+            "platform": "android",
+            "osVersion": "android",
+            "conversationId": feedback.conversation_id,
+            "sentryEventIds": feedback.sentry_event_ids,
+        });
+        match backend.submit_feedback_report(&payload) {
+            Ok(()) => Ok(json!({"ok":true})),
+            Err(error) => Ok(json!({"ok":false,"code":error.code()})),
+        }
     }
 
     fn account_usage_summary(&self) -> Result<Value, String> {
@@ -2278,6 +2331,7 @@ impl AndroidJsonHost {
             "feature.account.dashboardAction" => self.account_dashboard_action(params),
             "feature.account.usageSummary" => self.account_usage_summary(),
             "feature.account.cancelSandTrial" => self.account_cancel_sand_trial(),
+            "feature.feedback.submit" => self.feedback_submit(params),
             "feature.settings.timeZone" => self.time_zone_settings(),
             "feature.settings.timeZone.detected" => self.set_detected_time_zone(params),
             "feature.settings.timeZone.set" => self.set_time_zone_settings(params),
@@ -12177,6 +12231,37 @@ mod process_crash_telemetry_dispatch_tests {
         assert!(durable.contains("same_version"));
         assert!(durable.contains("SAND-E0610"));
         drop(host);
+    }
+
+    #[test]
+    fn feedback_submit_rejects_stale_account_and_invalid_payload_before_backend() {
+        let root = tempfile::tempdir().unwrap();
+        let mut host = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+        let stale = host
+            .dispatch(
+                "feature.feedback.submit",
+                &json!({
+                    "accountFence":"stale-account",
+                    "message":"hello",
+                    "submissionId":"123e4567-e89b-12d3-a456-426614174000"
+                }),
+            )
+            .unwrap();
+        assert_eq!(stale, json!({"ok":false,"code":"not-signed-in"}));
+
+        // Test Host has no authenticated account; invalid feedback must never escape as a
+        // successful side effect or be auto-retried by presentation.
+        let invalid = host
+            .dispatch(
+                "feature.feedback.submit",
+                &json!({
+                    "accountFence":"stale-account",
+                    "message":"",
+                    "submissionId":"not-a-uuid"
+                }),
+            )
+            .unwrap();
+        assert_eq!(invalid, json!({"ok":false,"code":"not-signed-in"}));
     }
 
     fn process_crash_projection_is_bounded_and_excludes_error_content() {
