@@ -1,7 +1,8 @@
 use crate::edge_failures::EdgeFailureBuffer;
 use crate::account_service::{AccountSessionMutation, AndroidAccountService};
 use crate::account_telemetry::{
-    AccountTelemetryBuffer, AccountTelemetryProjection, SigninLoginReport, SigninSignoutCause,
+    AccountTelemetryBuffer, AccountTelemetryProjection, SessionReport, SigninLoginReport,
+    SigninSignoutCause,
 };
 use crate::capability_broker::{CapabilityDecision, PendingCapabilityCall, SharedCapabilityBroker};
 use crate::automation_runtime::{run_json as automation_run_json, AutomationRuntime, AutomationSpec};
@@ -1217,6 +1218,11 @@ impl AndroidJsonHost {
                 snapshot.extend(self.account.session_telemetry_snapshot());
                 serde_json::to_value(snapshot)
                     .map_err(|error| format!("failed to serialize account telemetry snapshot: {error}"))
+            },
+            "feature.account.telemetry.protectedStoreUnavailable" => {
+                self.account_telemetry
+                    .report_session(SessionReport::ProtectedStoreUnavailable);
+                Ok(json!({"recorded":true}))
             },
             "feature.diagnostics.edgeFailures.snapshot" => serde_json::to_value(self.edge_failures.snapshot()).map_err(|error| format!("failed to serialize edge failure snapshot: {error}")),
             "feature.account.fence" => Ok(json!({"accountFence":self.current_turn_account_fence()?})),
@@ -9735,6 +9741,33 @@ mod transcript_page_contract_tests {
     #[test]
     fn account_telemetry_outbox_cap_matches_desktop_preinstall_buffer() {
         assert_eq!(ACCOUNT_TELEMETRY_OUTBOX_CAP, 16);
+    }
+
+    #[test]
+    fn protected_store_unavailable_is_recorded_by_host_session_telemetry_owner() {
+        let root = tempfile::tempdir().unwrap();
+        let mut host = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+        let recorded = host
+            .dispatch(
+                "feature.account.telemetry.protectedStoreUnavailable",
+                &json!({}),
+            )
+            .unwrap();
+        assert_eq!(recorded["recorded"], true);
+
+        let snapshot = host
+            .dispatch("feature.account.telemetry.snapshot", &json!({}))
+            .unwrap();
+        let entry = snapshot
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|entry| entry["metadata"]["phase"] == "keychain_unavailable")
+            .expect("protected store failure telemetry");
+        assert_eq!(entry["stream"], "session");
+        assert_eq!(entry["level"], "warn");
+        assert_eq!(entry["metadata"]["error_code"], "SAND-E0219");
+        assert_eq!(entry["metadata"]["error_retryable"], "false");
     }
 
     #[test]
