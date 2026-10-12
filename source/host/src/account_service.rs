@@ -5,6 +5,7 @@ use crate::account_telemetry::{
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 use std::fs;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use url::Url;
@@ -793,18 +794,41 @@ fn persist_browser_attempt(path: &Path, attempt: &BrowserAttempt) -> Result<(), 
     }
     let payload = serde_json::to_vec(attempt)
         .map_err(|error| format!("failed to serialize OAuth attempt: {error}"))?;
-    let tmp = path.with_extension("tmp");
-    fs::write(&tmp, payload).map_err(|error| format!("failed to write OAuth attempt: {error}"))?;
-    fs::rename(&tmp, path).map_err(|error| format!("failed to commit OAuth attempt: {error}"))?;
-    Ok(())
+    let tmp = path.with_extension(format!("tmp-{}", std::process::id()));
+    let result = (|| -> Result<(), String> {
+        let mut file = fs::File::create(&tmp)
+            .map_err(|error| format!("failed to create OAuth attempt temporary file: {error}"))?;
+        file.write_all(&payload)
+            .map_err(|error| format!("failed to write OAuth attempt: {error}"))?;
+        file.sync_all()
+            .map_err(|error| format!("failed to sync OAuth attempt: {error}"))?;
+        drop(file);
+        fs::rename(&tmp, path)
+            .map_err(|error| format!("failed to commit OAuth attempt: {error}"))?;
+        sync_parent_directory(path)
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(&tmp);
+    }
+    result
 }
 
 fn clear_browser_attempt(path: &Path) -> Result<(), String> {
     match fs::remove_file(path) {
-        Ok(()) => Ok(()),
+        Ok(()) => sync_parent_directory(path),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
         Err(error) => Err(format!("failed to clear OAuth attempt: {error}")),
     }
+}
+
+fn sync_parent_directory(path: &Path) -> Result<(), String> {
+    #[cfg(unix)]
+    if let Some(parent) = path.parent() {
+        fs::File::open(parent)
+            .and_then(|directory| directory.sync_all())
+            .map_err(|error| format!("failed to sync OAuth attempt directory: {error}"))?;
+    }
+    Ok(())
 }
 
 fn load_browser_attempt(path: &Path, base_url: &Url) -> Result<Option<BrowserAttempt>, String> {
@@ -987,6 +1011,49 @@ mod tests {
         assert_eq!(load_browser_attempt(&path, &base).unwrap(), None);
         assert!(!path.exists());
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn clearing_browser_attempt_is_durable_and_leaves_no_temporary_identity() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("attempt.json");
+        let attempt = BrowserAttempt {
+            attempt_id: "attempt-durable-clear".into(),
+            login_url: "https://api.ombhrum.com/sign-in?attempt=durable-clear".into(),
+            poll_secret: "poll-secret-durable-clear".into(),
+            expires_at_ms: now_ms().saturating_add(60_000),
+            poll_after_ms: 750,
+        };
+
+        persist_browser_attempt(&path, &attempt).unwrap();
+        assert_eq!(
+            load_browser_attempt(
+                &path,
+                &normalize_api_base_url(DEFAULT_FABUSHI_API_BASE_URL).unwrap(),
+            )
+            .unwrap(),
+            Some(attempt),
+        );
+        assert!(root
+            .path()
+            .read_dir()
+            .unwrap()
+            .all(|entry| !entry
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .contains("tmp-")));
+
+        clear_browser_attempt(&path).unwrap();
+        assert!(!path.exists());
+        assert_eq!(
+            load_browser_attempt(
+                &path,
+                &normalize_api_base_url(DEFAULT_FABUSHI_API_BASE_URL).unwrap(),
+            )
+            .unwrap(),
+            None,
+        );
     }
 
     #[test]
