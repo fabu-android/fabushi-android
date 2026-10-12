@@ -5,6 +5,9 @@ import com.ombhrum.fabushi.androidmain.telemetry.AndroidProcessSessionMarker
 import com.ombhrum.fabushi.androidmain.telemetry.AndroidProcessSessionMarkerStore
 import com.ombhrum.fabushi.androidmain.telemetry.AndroidProcessSessionSettlementKind
 import com.ombhrum.fabushi.androidmain.telemetry.AndroidProcessSessionTelemetry
+import com.ombhrum.fabushi.androidmain.telemetry.ANDROID_STARTUP_STUCK_MS
+import com.ombhrum.fabushi.androidmain.telemetry.AndroidStartupTelemetryEvent
+import com.ombhrum.fabushi.androidmain.telemetry.AndroidStartupTelemetryTracker
 import com.ombhrum.fabushi.androidmain.telemetry.AndroidUncleanExitSettlement
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -124,4 +127,59 @@ class AndroidProcessSessionTelemetryTest {
         assertEquals("1.0", settlement.previousVersion)
         assertFalse(settlement.sameVersion)
     }
+    @Test
+    fun bufferedStartupTelemetryFlushesBeforeReady() {
+        var now = 100L
+        var delay = -1L
+        var stuckCallback: (() -> Unit)? = null
+        val tracker = AndroidStartupTelemetryTracker(
+            monotonicNowMs = { now },
+            scheduleStuck = { scheduledDelay, callback ->
+                delay = scheduledDelay
+                stuckCallback = callback
+            },
+        )
+        tracker.markPhase("coordinator")
+        tracker.armStuckWatchdog()
+        val events = mutableListOf<AndroidStartupTelemetryEvent>()
+        tracker.attach(events::add)
+        assertEquals(ANDROID_STARTUP_STUCK_MS, delay)
+        assertEquals(listOf("start"), events.map { it.outcome })
+
+        now = 120_200L
+        stuckCallback!!.invoke()
+        tracker.markPhase("window")
+        now = 120_260L
+        tracker.noteReady()
+
+        assertEquals(listOf("start", "stuck", "ready"), events.map { it.outcome })
+        assertEquals("coordinator", events[1].phase)
+        assertEquals(120_100L, events[1].elapsedMs)
+        assertEquals(120_100L, events[1].phaseElapsedMs)
+        assertEquals(60L, events[2].windowMs)
+    }
+
+    @Test
+    fun startupFailureSettlesOnceAndSuppressesLateWatchdog() {
+        var now = 5L
+        var stuckCallback: (() -> Unit)? = null
+        val tracker = AndroidStartupTelemetryTracker(
+            monotonicNowMs = { now },
+            scheduleStuck = { _, callback -> stuckCallback = callback },
+        )
+        tracker.armStuckWatchdog()
+        tracker.markPhase("services")
+        val events = mutableListOf<AndroidStartupTelemetryEvent>()
+        tracker.attach(events::add)
+        now = 25L
+        tracker.noteFailed()
+        tracker.noteReady()
+        now = 130_000L
+        stuckCallback!!.invoke()
+
+        assertEquals(listOf("start", "failed"), events.map { it.outcome })
+        assertEquals("services", events.last().phase)
+        assertEquals(20L, events.last().elapsedMs)
+    }
+
 }
