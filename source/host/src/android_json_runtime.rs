@@ -19,6 +19,7 @@ use crate::human_call_runtime::HumanCallRuntime;
 use crate::env_descriptor_account_binding::EnvDescriptorAccountBinding;
 use crate::host_runner_composition::AuthenticatedRemoteHostRunner;
 use crate::messaging_service::AndroidMessagingService;
+use crate::mcp_server_tool_settings::McpServerToolSettings;
 use crate::composer_draft::DurableComposerDraftOwner;
 use crate::send_acknowledgement::{
     DurableSendAcknowledgementOwner, SendAcknowledgementEntry, SendAcknowledgementPhase,
@@ -666,6 +667,7 @@ pub struct AndroidJsonHost {
     mcp_auth_watches: Arc<Mutex<AndroidMcpAuthWatchManager>>,
     mcp_auth_owner: Option<AndroidMcpAuthWatchOwner>,
     mcp_dashboard_backend: Option<Arc<CursorDashboardMcpAuthBackend>>,
+    mcp_server_tool_settings: Arc<Mutex<McpServerToolSettings>>,
     plugin_variables: PluginVariableStore,
     pending_plugin_variable_writes: BTreeMap<String, PreparedPluginVariableWrite>,
     #[cfg(feature = "ci-account-session-import")]
@@ -871,6 +873,10 @@ impl AndroidJsonHost {
         } else {
             (None, None)
         };
+        let mcp_server_tool_settings = Arc::new(Mutex::new(
+            McpServerToolSettings::open(app_data_dir.join("mcp-server-tool-settings.json"))
+                .unwrap_or_else(|error| panic!("failed to open durable MCP server tool settings: {error}")),
+        ));
         let plugin_variables = PluginVariableStore::open(app_data_dir.join("plugin-variables.json"))
             .unwrap_or_else(|error| panic!("failed to open account-scoped plugin variable store: {error}"));
         let plugin_installer = PluginInstaller::new(app_data_dir.join("plugins"))
@@ -948,6 +954,7 @@ impl AndroidJsonHost {
             mcp_auth_watches,
             mcp_auth_owner,
             mcp_dashboard_backend,
+            mcp_server_tool_settings,
             plugin_variables,
             pending_plugin_variable_writes: BTreeMap::new(),
             #[cfg(feature = "ci-account-session-import")]
@@ -1097,6 +1104,65 @@ impl AndroidJsonHost {
         Ok(json!({
             "accountFence": account_fence,
             "servers": servers,
+        }))
+    }
+
+    fn mcp_server_tools_list(&self, params: &Value) -> Result<Value, String> {
+        let server_id = required_string(params, "serverId")?;
+        let account_fence = self.current_turn_account_fence()?;
+        let backend = self
+            .mcp_dashboard_backend
+            .as_ref()
+            .ok_or("MCP server tool backend is unavailable")?;
+        let tools = backend.list_server_tools(server_id)?;
+        self.project_mcp_server_tools(&account_fence, server_id, tools)
+    }
+
+    fn mcp_server_tools_toggle(&mut self, params: &Value) -> Result<Value, String> {
+        let server_id = required_string(params, "serverId")?;
+        let tool_name = required_string(params, "toolName")?;
+        let account_fence = self.current_turn_account_fence()?;
+        let backend = self
+            .mcp_dashboard_backend
+            .as_ref()
+            .ok_or("MCP server tool backend is unavailable")?;
+        let tools = backend.list_server_tools(server_id)?;
+        if !tools.iter().any(|tool| tool.name == tool_name) {
+            return Err("MCP tool is not present in the current server catalog".into());
+        }
+        self.mcp_server_tool_settings
+            .lock()
+            .map_err(|_| "MCP server tool settings lock poisoned".to_string())?
+            .toggle(&account_fence, server_id, tool_name)?;
+        self.project_mcp_server_tools(&account_fence, server_id, tools)
+    }
+
+    fn project_mcp_server_tools(
+        &self,
+        account_fence: &str,
+        server_id: &str,
+        tools: Vec<crate::mcp_auth::dashboard_mcp_auth_backend::McpServerToolSummary>,
+    ) -> Result<Value, String> {
+        let disabled = self
+            .mcp_server_tool_settings
+            .lock()
+            .map_err(|_| "MCP server tool settings lock poisoned".to_string())?
+            .disabled_for(account_fence, server_id)?;
+        let projected = tools
+            .into_iter()
+            .map(|tool| {
+                json!({
+                    "name": tool.name,
+                    "title": tool.title,
+                    "description": tool.description,
+                    "isDisabled": disabled.contains(&tool.name),
+                })
+            })
+            .collect::<Vec<_>>();
+        Ok(json!({
+            "accountFence": account_fence,
+            "serverId": server_id,
+            "tools": projected,
         }))
     }
 
@@ -1303,6 +1369,8 @@ impl AndroidJsonHost {
             "feature.auth.oauthPoll" => self.oauth_poll(params),
             "feature.auth.oauthCancel" => self.oauth_cancel(params),
             "feature.mcp.serverCatalog" => self.mcp_server_catalog(),
+            "feature.mcp.serverTools.list" => self.mcp_server_tools_list(params),
+            "feature.mcp.serverTools.toggle" => self.mcp_server_tools_toggle(params),
             "feature.mcp.oauthComplete" => self.mcp_oauth_complete(params),
             "feature.mcp.authenticate" => self.mcp_authenticate(params),
             "feature.mcp.authWatch.register" => self.mcp_auth_watch_register(params),
