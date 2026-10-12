@@ -14247,6 +14247,42 @@
       "artifact": null,
       "verification_status": "not-verified",
       "notes": "Proto field numbers re-read from current Desktop generated dashboard protobuf. No Android code claims completion until identity mapping is authoritative."
+    },
+    {
+      "responsibility_id": "INFERENCE-MODEL-CATALOG-ANDROID-001",
+      "domain": "agent-inference",
+      "desktop_sources": [
+        {
+          "path": "source/electron-main/models/cursor-model-catalog.ts",
+          "blob_sha": "50cca50ceadd506016adb8e23a533fce8b6382b5",
+          "symbols": [
+            "fetchSandAvailableModels",
+            "SAND_AVAILABLE_MODELS_SCOPE"
+          ]
+        }
+      ],
+      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "responsibility": "Discover the authenticated user-available inference model catalog with provider parameters, account/generation fencing and explicit unavailable/error state, while keeping model execution ownership in Host/Coordinator.",
+      "source_owner": "Desktop Cursor model catalog edge",
+      "visible_effect": "Model selection can show only models actually available to the signed-in user instead of accepting arbitrary unverified model IDs.",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "source/host/src/runner/android_host_inference.rs",
+        "source/mahayana-agent-coordinator/src/inference_router.rs",
+        "source/packages/chat-inference-proto/src/cursorModelProviderOptions.rs"
+      ],
+      "android_owner": "planned authenticated Rust Host model-catalog owner with immutable typed Android projection",
+      "platform_delta": "Android may query the Fabushi production inference backend rather than Electron Cursor client, but must preserve USER_AVAILABLE-equivalent scope and model-parameter metadata without exposing bearer credentials to Compose.",
+      "implementation_status": "mapped",
+      "production_wiring": "not yet wired; current provider resolves requested model strings but does not fetch a user-available catalog",
+      "unit_test": "required: catalog decode/validation, empty/error, stale account generation and duplicate model IDs",
+      "contract_test": "required against authenticated production model-catalog API",
+      "integration_test": "required Host -> Coordinator -> presentation selection and selected-model execution",
+      "packaged_test": "required",
+      "device_test": "required with protected account",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Do not infer catalog parity from CursorModelProviderOptions or arbitrary requested model support."
     }
   ],
   "traceability": {
