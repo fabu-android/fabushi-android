@@ -13,6 +13,7 @@ use crate::agent_attachment::{
     DurableAgentAttachmentOwner, COMPOSER_ATTACHMENT_LIMIT,
 };
 use crate::android_sidebar_sections::{AndroidSidebarSection, AndroidSidebarSections};
+use crate::android_user_settings::AndroidUserSettings;
 use crate::host_secret_store::get_or_create_host_machine_id;
 use crate::human_call_runtime::HumanCallRuntime;
 use crate::env_descriptor_account_binding::EnvDescriptorAccountBinding;
@@ -653,6 +654,7 @@ pub struct AndroidJsonHost {
     edge_failures: EdgeFailureBuffer,
     agents: Arc<Mutex<AndroidAgentRoster>>,
     sidebar_sections: Arc<Mutex<AndroidSidebarSections>>,
+    user_settings: Arc<Mutex<AndroidUserSettings>>,
     auto_review_settings: Arc<Mutex<DurableAutoReviewSettings>>,
     transcript: Arc<Mutex<TranscriptStore>>,
     send_acknowledgements: Arc<Mutex<DurableSendAcknowledgementOwner>>,
@@ -807,6 +809,10 @@ impl AndroidJsonHost {
             AndroidSidebarSections::open(app_data_dir.join("sidebar-sections.json"))
                 .unwrap_or_else(|error| panic!("failed to open canonical Android sidebar sections: {error}")),
         ));
+        let user_settings = Arc::new(Mutex::new(
+            AndroidUserSettings::open(app_data_dir.join("android-user-settings.json"))
+                .unwrap_or_else(|error| panic!("failed to open canonical Android user settings: {error}")),
+        ));
         let auto_review_settings = Arc::new(Mutex::new(
             DurableAutoReviewSettings::open(app_data_dir.join("auto-review-settings.json"))
                 .unwrap_or_else(|error| panic!("failed to open durable Android Auto Review settings: {error}")),
@@ -925,6 +931,7 @@ impl AndroidJsonHost {
             edge_failures: EdgeFailureBuffer::default(),
             agents,
             sidebar_sections,
+            user_settings,
             auto_review_settings,
             transcript,
             send_acknowledgements,
@@ -1271,6 +1278,8 @@ impl AndroidJsonHost {
             "feature.account.dashboardAction" => self.account_dashboard_action(params),
             "feature.account.usageSummary" => self.account_usage_summary(),
             "feature.account.cancelSandTrial" => self.account_cancel_sand_trial(),
+            "feature.settings.timeZone" => self.time_zone_settings(),
+            "feature.settings.timeZone.set" => self.set_time_zone_settings(params),
             "feature.settings.autoReviewInstructions" => self.auto_review_instructions(),
             "feature.settings.autoReviewInstructions.set" => self.set_auto_review_instructions(params),
             "feature.remote.binding.status" => Ok(self.remote_binding_status()),
@@ -2149,6 +2158,30 @@ impl AndroidJsonHost {
             object.insert("_accountSessionMutation".into(), mutation);
         }
         Ok(preferences)
+    }
+
+    fn time_zone_settings(&self) -> Result<Value, String> {
+        let settings = self
+            .user_settings
+            .lock()
+            .map_err(|_| "Android user settings lock poisoned".to_string())?;
+        Ok(json!({"overrideTimeZone": settings.time_zone_override()}))
+    }
+
+    fn set_time_zone_settings(&mut self, params: &Value) -> Result<Value, String> {
+        let value = match params.get("overrideTimeZone") {
+            None | Some(Value::Null) => None,
+            Some(Value::String(value)) => Some(value.as_str()),
+            Some(_) => return Err("overrideTimeZone must be a string or null".into()),
+        };
+        let mut settings = self
+            .user_settings
+            .lock()
+            .map_err(|_| "Android user settings lock poisoned".to_string())?;
+        let saved = settings
+            .set_time_zone_override(value)
+            .map_err(|error| format!("failed to persist Android time zone override: {error}"))?;
+        Ok(json!({"overrideTimeZone": saved}))
     }
 
     fn auto_review_instructions(&mut self) -> Result<Value, String> {
@@ -9898,6 +9931,52 @@ mod transcript_page_contract_tests {
     }
 }
 
+
+
+#[cfg(test)]
+mod time_zone_settings_dispatch_tests {
+    use super::*;
+
+    #[test]
+    fn time_zone_override_is_durable_clearable_and_rejects_invalid_types() {
+        let root = tempfile::tempdir().unwrap();
+        let mut host = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+        assert!(host
+            .dispatch("feature.settings.timeZone", &json!({}))
+            .unwrap()["overrideTimeZone"]
+            .is_null());
+
+        let saved = host
+            .dispatch(
+                "feature.settings.timeZone.set",
+                &json!({"overrideTimeZone":"America/Los_Angeles"}),
+            )
+            .unwrap();
+        assert_eq!(saved["overrideTimeZone"], "America/Los_Angeles");
+        assert!(host
+            .dispatch(
+                "feature.settings.timeZone.set",
+                &json!({"overrideTimeZone":42}),
+            )
+            .is_err());
+
+        drop(host);
+        let mut reopened = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+        assert_eq!(
+            reopened
+                .dispatch("feature.settings.timeZone", &json!({}))
+                .unwrap()["overrideTimeZone"],
+            "America/Los_Angeles",
+        );
+        assert!(reopened
+            .dispatch(
+                "feature.settings.timeZone.set",
+                &json!({"overrideTimeZone":null}),
+            )
+            .unwrap()["overrideTimeZone"]
+            .is_null());
+    }
+}
 
 
 #[cfg(test)]
