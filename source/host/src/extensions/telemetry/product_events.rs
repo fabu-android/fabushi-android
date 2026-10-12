@@ -253,6 +253,112 @@ fn bounded_tag_value(value: &str) -> bool {
         })
 }
 
+const QUEUED_FLUSH_NONCE_MISMATCH: &str = "SAND-E0703";
+const QUEUED_FLUSH_CAPABILITY_UNAVAILABLE: &str = "SAND-E0704";
+const QUEUED_FLUSH_HOST_REJECTED: &str = "SAND-E0705";
+const QUEUED_FLUSH_SUPERSEDED: &str = "SAND-E0706";
+const QUEUED_FLUSH_ACK_EXPIRED: &str = "SAND-E0707";
+
+pub fn send_queued_flush_event(
+    outcome: &str,
+    queued_ms: f64,
+    queue_depth: f64,
+    cause: Option<&str>,
+) -> Result<StructuredTelemetryEvent, String> {
+    if !queued_ms.is_finite() || queued_ms < 0.0 || !queue_depth.is_finite() || queue_depth < 0.0 {
+        return Err("queued-flush durations and depth must be finite and nonnegative".into());
+    }
+    let valid = match outcome {
+        "delivered" => cause.is_none(),
+        "superseded" => cause == Some(QUEUED_FLUSH_SUPERSEDED),
+        "expired" => cause == Some(QUEUED_FLUSH_ACK_EXPIRED),
+        "flush_failed" => matches!(
+            cause,
+            Some(QUEUED_FLUSH_NONCE_MISMATCH)
+                | Some(QUEUED_FLUSH_CAPABILITY_UNAVAILABLE)
+                | Some(QUEUED_FLUSH_HOST_REJECTED)
+        ),
+        _ => false,
+    };
+    if !valid {
+        return Err("queued-flush outcome/cause combination is invalid".into());
+    }
+    let mut metadata = BTreeMap::from([
+        ("outcome".into(), outcome.into()),
+        ("queued_ms".into(), queued_ms.round().to_string()),
+        ("queue_depth".into(), queue_depth.round().to_string()),
+    ]);
+    if let Some(cause) = cause {
+        metadata.insert("cause".into(), cause.into());
+    }
+    Ok(StructuredTelemetryEvent {
+        level: if matches!(outcome, "expired" | "flush_failed") {
+            TelemetryLevel::Warn
+        } else {
+            TelemetryLevel::Info
+        },
+        metadata,
+    })
+}
+
+pub fn connector_auth_clicked_event(
+    server_name: Option<&str>,
+    server_id: Option<&str>,
+) -> Result<StructuredTelemetryEvent, String> {
+    if server_name.is_some_and(|value| value.len() > 256) {
+        return Err("connector server name exceeds 256 characters".into());
+    }
+    if server_id.is_some_and(|value| !bounded_token(value)) {
+        return Err("connector server id must be a bounded token".into());
+    }
+    let connector = connector_tag(server_name.unwrap_or_default());
+    let mut metadata = BTreeMap::from([
+        ("phase".into(), "clicked".into()),
+        ("connector".into(), connector),
+        ("outcome".into(), "ok".into()),
+        ("surface".into(), "android".into()),
+    ]);
+    if let Some(server_id) = server_id {
+        metadata.insert("server_id".into(), server_id.into());
+    }
+    Ok(StructuredTelemetryEvent {
+        level: TelemetryLevel::Info,
+        metadata,
+    })
+}
+
+fn bounded_token(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 64
+        && value.bytes().all(|byte| {
+            byte.is_ascii_alphanumeric()
+                || matches!(byte, b'.' | b'_' | b'/' | b':' | b'|' | b'-')
+        })
+}
+
+fn connector_tag(value: &str) -> String {
+    const KNOWN: [&str; 38] = [
+        "asana", "atlassian", "buildkite", "confluence", "context7", "databricks", "datadog",
+        "deepwiki", "dock", "figma", "filesystem", "github", "gmail", "google",
+        "googlecalendar", "googledocs", "googledrive", "googlesheets", "googleworkspace",
+        "huggingface", "jira", "linear", "memory", "notion", "playwright", "salesforce", "sentry",
+        "sequentialthinking", "slack", "stripe", "telegram", "todoist", "zoominfo", "dropbox",
+        "box", "onedrive", "sharepoint", "calendar",
+    ];
+    let normalized: String = value
+        .chars()
+        .filter(|character| character.is_ascii_alphanumeric())
+        .flat_map(char::to_lowercase)
+        .collect();
+    if normalized.is_empty() {
+        "unknown".into()
+    } else if KNOWN.contains(&normalized.as_str()) {
+        normalized
+    } else {
+        "other".into()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -333,6 +439,33 @@ mod tests {
         let tags = android_error_tags(AndroidErrorCode::E0601, &unsafe_payload);
         assert!(!tags.contains_key("phase"));
         assert_eq!(tags.get("error_retryable").map(String::as_str), Some("false"));
+    }
+
+
+    #[test]
+    fn queued_flush_preserves_outcome_cause_contract() {
+        let delivered = send_queued_flush_event("delivered", 12.4, 2.0, None).unwrap();
+        assert_eq!(delivered.level, TelemetryLevel::Info);
+        assert_eq!(delivered.metadata.get("queued_ms").map(String::as_str), Some("12"));
+        let failed = send_queued_flush_event(
+            "flush_failed",
+            25.0,
+            3.0,
+            Some(QUEUED_FLUSH_HOST_REJECTED),
+        )
+        .unwrap();
+        assert_eq!(failed.level, TelemetryLevel::Warn);
+        assert!(send_queued_flush_event("delivered", 1.0, 1.0, Some("unexpected")).is_err());
+        assert!(send_queued_flush_event("expired", -1.0, 1.0, Some(QUEUED_FLUSH_ACK_EXPIRED)).is_err());
+    }
+
+    #[test]
+    fn connector_auth_clicked_bounds_identity_metadata() {
+        let event = connector_auth_clicked_event(Some("GitHub"), Some("server-1")).unwrap();
+        assert_eq!(event.metadata.get("connector").map(String::as_str), Some("github"));
+        assert_eq!(event.metadata.get("surface").map(String::as_str), Some("android"));
+        assert!(connector_auth_clicked_event(Some("GitHub"), Some("bad server")).is_err());
+        assert!(connector_auth_clicked_event(Some(&"x".repeat(257)), None).is_err());
     }
 
 }
