@@ -925,6 +925,57 @@ mod tests {
     }
 
     #[test]
+    fn selected_model_is_frozen_across_reopen_and_retry() {
+        let path = temp_path("selected-model");
+        let mut owner = DurableSendAcknowledgementOwner::open(&path, 100).unwrap();
+        let first = owner
+            .begin_with_attachments_rich_text_and_model(
+                None,
+                "session:a",
+                "agent-a",
+                "nonce-a",
+                "hello",
+                None,
+                Some("grok-test".into()),
+                Vec::new(),
+                message("nonce-a"),
+            )
+            .unwrap();
+        assert_eq!(first.selected_model.as_deref(), Some("grok-test"));
+        drop(owner);
+
+        let mut reopened = DurableSendAcknowledgementOwner::open(&path, 200).unwrap();
+        let current = reopened.snapshot(None, "session:a", "agent-a");
+        assert_eq!(current.len(), 1);
+        assert_eq!(current[0].selected_model.as_deref(), Some("grok-test"));
+        let generation = reopened.generation();
+        reopened
+            .mark_failed(
+                None,
+                "session:a",
+                "agent-a",
+                "nonce-a",
+                generation,
+                201,
+                "proven failed",
+            )
+            .unwrap();
+        let retried = reopened
+            .retry_failed(
+                None,
+                "session:a",
+                "agent-a",
+                "nonce-a",
+                generation,
+                "nonce-b",
+                message("nonce-b"),
+            )
+            .unwrap();
+        assert_eq!(retried.selected_model.as_deref(), Some("grok-test"));
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
     fn failure_requires_explicit_retry_and_preserves_logical_nonce_history() {
         let dir = tempfile::tempdir().unwrap();
         let mut owner = DurableSendAcknowledgementOwner::open(dir.path().join("acks.json"), 1).unwrap();
