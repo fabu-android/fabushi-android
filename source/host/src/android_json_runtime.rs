@@ -827,7 +827,7 @@ impl AndroidJsonHost {
             .unwrap_or_else(|| "logged-out".to_string());
         let structured_log_counter_id =
             format!("android:{}", crate::sha256::sha256_hex(device_id.as_bytes()));
-        let structured_log_spool = AndroidStructuredLogSpool::open(
+        let mut structured_log_spool = AndroidStructuredLogSpool::open(
             app_data_dir.join("android-structured-log-spill.v1.json"),
             &structured_log_account_slot,
             &structured_log_counter_id,
@@ -1007,6 +1007,35 @@ impl AndroidJsonHost {
                 AndroidUncleanExitKind::UncleanExit => "unclean_exit",
                 AndroidUncleanExitKind::MarkerOrphaned => "marker_orphaned",
             };
+            let is_unclean_exit = matches!(prior.kind, AndroidUncleanExitKind::UncleanExit);
+            let mut telemetry_metadata = BTreeMap::from([
+                ("kind".to_string(), kind.to_string()),
+                (
+                    "prev_uptime_ms".to_string(),
+                    prior.previous_uptime_bucket_ms.to_string(),
+                ),
+                ("prev_version".to_string(), prior.previous_version.clone()),
+                ("same_version".to_string(), prior.same_version.to_string()),
+                ("crash_seq_seen".to_string(), prior.crash_seen.to_string()),
+                ("prev_started_at_ms".to_string(), prior.started_at_ms.to_string()),
+            ]);
+            if is_unclean_exit {
+                telemetry_metadata.insert("error_code".to_string(), "SAND-E0610".to_string());
+                telemetry_metadata.insert("error_domain".to_string(), "android-process".to_string());
+                telemetry_metadata.insert("error_retryable".to_string(), "false".to_string());
+            }
+            if structured_log_spool
+                .record(
+                    if is_unclean_exit { "warn" } else { "info" },
+                    "sand.desktop.unclean_exit",
+                    telemetry_metadata,
+                    now_ms(),
+                )
+                .is_err()
+            {
+                // Telemetry persistence must never make an otherwise recoverable cold start fail.
+                // The bounded edge-failure projection is the canonical fallback diagnostic.
+            }
             process_crash_recent.push_back(json!({
                 "kind":kind,
                 "occurredAtMs":prior.last_alive_at_ms,
@@ -1014,7 +1043,7 @@ impl AndroidJsonHost {
                 "previousVersion":prior.previous_version,
                 "sameVersion":prior.same_version,
                 "crashSeen":prior.crash_seen,
-                "errorCode":if matches!(prior.kind, AndroidUncleanExitKind::UncleanExit) {
+                "errorCode":if is_unclean_exit {
                     Value::String("SAND-E0610".into())
                 } else {
                     Value::Null
@@ -11642,6 +11671,39 @@ mod process_crash_telemetry_dispatch_tests {
     }
 
     #[test]
+    #[test]
+    fn cold_start_unclean_session_is_persisted_as_structured_telemetry() {
+        let root = tempfile::tempdir().unwrap();
+        let marker_path = root.path().join("host-session-marker.json");
+        let (mut prior, previous) =
+            crate::process_crash_guard::AndroidUncleanExitMarker::open_with_version(
+                &marker_path,
+                1_000,
+                "1.2.3",
+            )
+            .unwrap();
+        assert!(previous.is_none());
+        prior.heartbeat(1_250).unwrap();
+        std::mem::forget(prior);
+
+        let host = AndroidJsonHost::new_with_account_session_and_device_id_and_app_version(
+            root.path(),
+            AndroidHostMode::Test,
+            None,
+            "test-device",
+            "1.2.4",
+        );
+        let spill_path = root.path().join("android-structured-log-spill.v1.json");
+        let durable = std::fs::read_to_string(&spill_path).unwrap();
+        assert!(durable.contains("sand.desktop.unclean_exit"));
+        assert!(durable.contains("prev_uptime_ms"));
+        assert!(durable.contains("prev_version"));
+        assert!(durable.contains("1.2.3"));
+        assert!(durable.contains("same_version"));
+        assert!(durable.contains("SAND-E0610"));
+        drop(host);
+    }
+
     fn process_crash_projection_is_bounded_and_excludes_error_content() {
         let root = tempfile::tempdir().unwrap();
         let mut host = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
