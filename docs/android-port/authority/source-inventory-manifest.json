@@ -32,6 +32,6 @@
   "truncation_fallback_used": false,
   "initial_status": "unreviewed",
   "ledger_sha256": null,
-  "closure_review": "incremental-rebaseline-to-371b72f1-owner-inventory-skills-audited-semantic-review-continuing",
+  "closure_review": "incremental-rebaseline-to-371b72f1-owner-inventory-skills-audited-semantic-review-continuing-through-fbcp-quality-functional-plan",
   "product_acceptance": "not-claimed"
 }
