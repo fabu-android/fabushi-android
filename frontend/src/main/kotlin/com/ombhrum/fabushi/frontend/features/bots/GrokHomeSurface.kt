@@ -40,11 +40,14 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -107,6 +110,7 @@ internal fun GrokHomeSurface(
     onDeleteSidebarSection: (String) -> Unit,
     onMoveSidebarSection: (String, String, AgentSidebarSectionMovePosition) -> Unit,
     onMoveBotToSection: (String, String) -> Unit,
+    onMoveBotsToSection: (Set<String>, String) -> Unit,
     onMoveBotToNewSection: (String) -> Unit,
     onCloseBot: () -> Unit,
     onDraftChange: (String) -> Unit,
@@ -213,7 +217,25 @@ internal fun GrokHomeSurface(
     var renameSectionId by remember { mutableStateOf<String?>(null) }
     var renameSectionName by remember { mutableStateOf("") }
     var deleteSectionId by remember { mutableStateOf<String?>(null) }
+    var selectedAgentIds by remember { mutableStateOf(setOf<String>()) }
+    var bulkSectionMenuOpen by remember { mutableStateOf(false) }
     var showHiddenBots by remember { mutableStateOf(false) }
+    val screenWidthDp = LocalConfiguration.current.screenWidthDp
+    val adaptiveHorizontalPadding = agentSidebarContentPaddingDp(screenWidthDp).dp
+    val sectionFocusRequesters = remember { mutableMapOf<String, FocusRequester>() }
+    var focusRestoreSectionId by remember { mutableStateOf<String?>(null) }
+
+    LaunchedEffect(botState.sidebarSnapshot.accountFence) {
+        selectedAgentIds = emptySet()
+        bulkSectionMenuOpen = false
+    }
+
+    LaunchedEffect(focusRestoreSectionId, botState.sidebarSnapshot.sections.map { it.id }) {
+        val sectionId = focusRestoreSectionId ?: return@LaunchedEffect
+        val requester = sectionFocusRequesters[sectionId] ?: return@LaunchedEffect
+        runCatching { requester.requestFocus() }
+        focusRestoreSectionId = null
+    }
 
     LaunchedEffect(shortcutNewAgentNonce) {
         if (shortcutNewAgentNonce > 0) {
@@ -560,6 +582,7 @@ internal fun GrokHomeSurface(
                 TextButton(
                     enabled = renameSectionName.trim().isNotEmpty(),
                     onClick = {
+                        focusRestoreSectionId = sectionId
                         onRenameSidebarSection(sectionId, renameSectionName)
                         renameSectionId = null
                     },
@@ -580,6 +603,13 @@ internal fun GrokHomeSurface(
                 confirmButton = {
                     TextButton(
                         onClick = {
+                            val editableIds = botState.sidebarSnapshot.sections
+                                .filterNot { it.id == AGENT_UNASSIGNED_SECTION_ID }
+                                .map { it.id }
+                            val deletedIndex = editableIds.indexOf(sectionId)
+                            focusRestoreSectionId = editableIds.getOrNull(deletedIndex + 1)
+                                ?: editableIds.getOrNull(deletedIndex - 1)
+                                ?: botState.sidebarSnapshot.sections.firstOrNull { it.id == AGENT_UNASSIGNED_SECTION_ID }?.id
                             onDeleteSidebarSection(sectionId)
                             deleteSectionId = null
                         },
@@ -594,7 +624,7 @@ internal fun GrokHomeSurface(
     }
 
     Box(Modifier.fillMaxSize().background(GrokMobileBackground).testTag("grok-mobile-home")) {
-        LazyColumn(Modifier.fillMaxSize()) {
+        LazyColumn(Modifier.fillMaxSize().padding(horizontal = adaptiveHorizontalPadding)) {
             item {
                 Row(
                     Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 12.dp),
@@ -780,6 +810,25 @@ internal fun GrokHomeSurface(
             }
 
             if (visibleBots.isNotEmpty()) {
+                if (selectedAgentIds.isNotEmpty()) {
+                    item {
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp).semantics { contentDescription = "${selectedAgentIds.size} Agents selected for section assignment" },
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text("${selectedAgentIds.size} selected", modifier = Modifier.weight(1f), color = GrokMobileMuted, fontSize = 12.sp)
+                            Box {
+                                TextButton(onClick = { bulkSectionMenuOpen = true }, modifier = Modifier.semantics { contentDescription = "Assign selected Agents to section" }.testTag("agent-bulk-assign")) { Text("Assign") }
+                                DropdownMenu(expanded = bulkSectionMenuOpen, onDismissRequest = { bulkSectionMenuOpen = false }) {
+                                    botState.sidebarSnapshot.sections.forEach { target ->
+                                        DropdownMenuItem(text = { Text(target.name.ifBlank { "Section" }) }, onClick = { bulkSectionMenuOpen = false; onMoveBotsToSection(selectedAgentIds, target.id); selectedAgentIds = emptySet() })
+                                    }
+                                }
+                            }
+                            TextButton(onClick = { selectedAgentIds = emptySet() }, modifier = Modifier.semantics { contentDescription = "Clear selected Agents" }) { Text("Clear") }
+                        }
+                    }
+                }
                 val visibleById = sidebarProjection.recent.associateBy { it.id }
                 val renderedSections: List<Pair<AndroidSidebarSection?, List<MobileBotSummaryAndroid>>> =
                     if (botState.sidebarSnapshot.sections.isEmpty()) {
@@ -811,10 +860,23 @@ internal fun GrokHomeSurface(
                                     modifier = Modifier.fillMaxWidth(),
                                     verticalAlignment = Alignment.CenterVertically,
                                 ) {
+                                    val sectionFocusRequester = remember(section.id) { FocusRequester() }
+                                    sectionFocusRequesters[section.id] = sectionFocusRequester
                                     TextButton(
-                                        onClick = { onToggleSidebarSection(section.id) },
+                                        onClick = {
+                                            focusRestoreSectionId = section.id
+                                            onToggleSidebarSection(section.id)
+                                        },
                                         modifier = Modifier
                                             .weight(1f)
+                                            .focusRequester(sectionFocusRequester)
+                                            .semantics {
+                                                contentDescription = agentSidebarSectionSemanticsLabel(
+                                                    sectionName,
+                                                    sectionBots.size,
+                                                    isCollapsed,
+                                                )
+                                            }
                                             .testTag("agent-section-header-" + section.id),
                                     ) {
                                         Text(
@@ -829,7 +891,7 @@ internal fun GrokHomeSurface(
                                         Box {
                                             TextButton(
                                                 onClick = { sectionMenuId = section.id },
-                                                modifier = Modifier.testTag("agent-section-menu-" + section.id),
+                                                modifier = Modifier.semantics { contentDescription = "Section actions for $sectionName" }.testTag("agent-section-menu-" + section.id),
                                             ) { Text("⋮") }
                                             DropdownMenu(
                                                 expanded = sectionMenuId == section.id,
@@ -852,6 +914,7 @@ internal fun GrokHomeSurface(
                                                         val target = editable.getOrNull(index - 1)
                                                         if (target != null) {
                                                             sectionMenuId = null
+                                                            focusRestoreSectionId = section.id
                                                             onMoveSidebarSection(section.id, target.id, AgentSidebarSectionMovePosition.BEFORE)
                                                         }
                                                     },
@@ -863,6 +926,7 @@ internal fun GrokHomeSurface(
                                                         val target = editable.getOrNull(index + 1)
                                                         if (target != null) {
                                                             sectionMenuId = null
+                                                            focusRestoreSectionId = section.id
                                                             onMoveSidebarSection(section.id, target.id, AgentSidebarSectionMovePosition.AFTER)
                                                         }
                                                     },
@@ -895,6 +959,13 @@ internal fun GrokHomeSurface(
                                 },
                                 trailing = {
                                     Row(verticalAlignment = Alignment.CenterVertically) {
+                                        if (!bot.isPinned && !bot.isHidden) {
+                                            val selected = bot.id in selectedAgentIds
+                                            TextButton(
+                                                onClick = { selectedAgentIds = if (selected) selectedAgentIds - bot.id else selectedAgentIds + bot.id },
+                                                modifier = Modifier.semantics { contentDescription = if (selected) "Deselect ${bot.name} from section assignment" else "Select ${bot.name} for section assignment" }.testTag("agent-bulk-select-${bot.id}"),
+                                            ) { Text(if (selected) "Selected" else "Select", fontSize = 11.sp) }
+                                        }
                                         if (bot.isPinned) {
                                             val pinnedIndex = sidebarProjection.pinned.indexOfFirst { it.id == bot.id }
                                             val previousPinned = sidebarProjection.pinned.getOrNull(pinnedIndex - 1)

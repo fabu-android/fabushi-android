@@ -38,6 +38,22 @@ internal fun moveAgentToSidebarSection(
     return editable
 }
 
+internal fun moveAgentsToSidebarSection(
+    sections: List<AndroidSidebarSection>,
+    agentIds: Set<String>,
+    targetSectionId: String,
+): List<AndroidSidebarSection>? {
+    val cleanAgentIds = agentIds.filter(String::isNotBlank).toSet()
+    if (cleanAgentIds.isEmpty() || sections.isEmpty()) return null
+    if (targetSectionId != AGENT_UNASSIGNED_SECTION_ID && sections.none { it.id == targetSectionId && it.id != AGENT_UNASSIGNED_SECTION_ID }) return null
+    val currentTargets = cleanAgentIds.associateWith { currentAgentSidebarSectionId(sections, it) }
+    if (currentTargets.values.all { it == targetSectionId }) return null
+    return sections.filterNot { it.id == AGENT_UNASSIGNED_SECTION_ID }.map { section ->
+        val retained = section.agentIds.filterNot(cleanAgentIds::contains)
+        if (section.id == targetSectionId) section.copy(agentIds = retained + cleanAgentIds.sorted()) else section.copy(agentIds = retained)
+    }
+}
+
 internal fun createSidebarSectionForAgent(
     sections: List<AndroidSidebarSection>,
     agentId: String,
@@ -133,3 +149,16 @@ internal fun agentSidebarSectionDeleteCopy(name: String): AgentSidebarSectionDel
         title = "Delete “${name.ifBlank { "Section" }}”",
         description = "Its agents move to Unassigned. No agents are deleted.",
     )
+
+
+internal fun agentSidebarContentPaddingDp(screenWidthDp: Int): Int = when {
+    screenWidthDp >= 840 -> 72
+    screenWidthDp >= 600 -> 32
+    else -> 0
+}
+
+internal fun agentSidebarSectionSemanticsLabel(
+    name: String,
+    agentCount: Int,
+    isCollapsed: Boolean,
+): String = "${if (isCollapsed) "Collapsed" else "Expanded"} section ${name.ifBlank { "Section" }} with $agentCount Agents. Toggle section"

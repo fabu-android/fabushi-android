@@ -302,6 +302,7 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
     private var sendPresentationGeneration = 0L
     private var historyGeneration = 0L
     private var historyLoadJob: Job? = null
+    private var sidebarMutationGeneration = 0L
     private val historyOlderEntryIds = linkedSetOf<String>()
     private var asyncTasksGeneration = 0L
     private var asyncTasksJob: Job? = null
@@ -1009,6 +1010,12 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
         commitSidebarSections(next, "Move Agent to section failed")
     }
 
+    fun moveBotsToSection(botIds: Set<String>, sectionId: String) {
+        val eligible = mutableState.value.bots.asSequence().filter { it.id in botIds && !it.isPinned && !it.isHidden }.map { it.id }.toSet()
+        val next = moveAgentsToSidebarSection(mutableState.value.sidebarSnapshot.sections, eligible, sectionId) ?: return
+        commitSidebarSections(next, "Move selected Agents to section failed")
+    }
+
     fun moveBotToNewSection(botId: String) {
         val bot = mutableState.value.bots.firstOrNull { it.id == botId } ?: return
         if (bot.isPinned || bot.isHidden) return
@@ -1056,18 +1063,21 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
         fallbackMessage: String,
     ) {
         val base = mutableState.value.sidebarSnapshot
+        val accountSlot = rosterSelectionAccountSlot
+        val mutationGeneration = ++sidebarMutationGeneration
+        commitState(mutableState.value.copy(sidebarSnapshot = base.copy(sections = sections), error = null))
         viewModelScope.launch {
             runCatching {
                 withContext(Dispatchers.IO) { coordinator.agentSetSidebarSections(base, sections) }
             }.onSuccess { settled ->
-                mutableState.value = mutableState.value.copy(
-                    sidebarSnapshot = settled,
-                    error = null,
-                )
+                if (mutationGeneration == sidebarMutationGeneration && accountSlot == rosterSelectionAccountSlot && settled.accountFence == base.accountFence) {
+                    commitState(mutableState.value.copy(sidebarSnapshot = settled, error = null))
+                }
             }.onFailure { error ->
-                mutableState.value = mutableState.value.copy(
-                    error = error.message ?: fallbackMessage,
-                )
+                if (mutationGeneration == sidebarMutationGeneration && accountSlot == rosterSelectionAccountSlot && mutableState.value.sidebarSnapshot.accountFence == base.accountFence) {
+                    commitState(mutableState.value.copy(sidebarSnapshot = base, error = error.message ?: fallbackMessage))
+                    refreshBots()
+                }
             }
         }
     }

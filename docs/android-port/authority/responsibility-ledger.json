@@ -3723,7 +3723,7 @@
       "device_test": "Not applicable directly; protected device acceptance remains a downstream gate.",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Implemented replacement only. Final verification waits for zero strict source debt and same-final-head package/device acceptance."
+      "notes": "Implemented replacement only. Final verification waits for zero strict source debt and same-final-head package/device acceptance. Rows 546-553 of the current Desktop source inventory were semantically reviewed at Android predecessor head b3d6220: historical TDRP message lifecycle/provenance/governance documents are source evidence only, mapped to current Android owners without inheriting their DONE/accepted status."
     },
     {
       "responsibility_id": "AUTHORITY-CANONICAL-MIGRATION-SOURCE-001",
@@ -9017,7 +9017,7 @@
       "device_test": "required protected/device Agent send/retry/process-reopen acceptance",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Implementation exists but cannot be marked verified until same exact HEAD Rust/Kotlin/contract jobs succeed and final packaged/device acceptance closes."
+      "notes": "Implementation exists but cannot be marked verified until same exact HEAD Rust/Kotlin/contract jobs succeed and final packaged/device acceptance closes. Rows 546-553 of the current Desktop source inventory were semantically reviewed at Android predecessor head b3d6220: historical TDRP message lifecycle/provenance/governance documents are source evidence only, mapped to current Android owners without inheriting their DONE/accepted status."
     },
     {
       "responsibility_id": "AGENT-AVATAR-WORKSPACE-ANDROID-001",
@@ -10115,7 +10115,7 @@
       "device_test": "required scroll-to-top/load-older/process-reopen/account-switch viewport acceptance",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Desktop pagination.ts fully source-audited. Implementation is present but not verified until exact-head Android compile/unit/lint and final device/package acceptance succeed."
+      "notes": "Desktop pagination.ts fully source-audited. Implementation is present but not verified until exact-head Android compile/unit/lint and final device/package acceptance succeed. Rows 546-553 of the current Desktop source inventory were semantically reviewed at Android predecessor head b3d6220: historical TDRP message lifecycle/provenance/governance documents are source evidence only, mapped to current Android owners without inheriting their DONE/accepted status."
     },
     {
       "responsibility_id": "AGENT-SIDEBAR-PREVIEW-ANDROID-001",
@@ -10278,17 +10278,17 @@
         "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/features/bots/GrokHomeSurface.kt"
       ],
       "android_owner": "Host AndroidSidebarSections",
-      "platform_delta": "Android uses a typed Host owner instead of Desktop host-box/client-persistence fallback. Membership/create and collapse are wired; rename/delete/reorder section UI, destructive confirmation/focus restoration and host-settings conflict/retry semantics remain open.",
-      "implementation_status": "mapped",
-      "production_wiring": "Host AndroidSidebarSections is the canonical account-fenced durable owner. Current working tree adds revisioned schema-v2 persistence with legacy-v1 migration, atomic commits, replay identity, stale-revision merge/fail-closed conflict handling and stale accountFence rejection. Production GrokHomeSurface now exposes native section rename/delete/reorder/collapse plus Agent assignment; delete uses a destructive AlertDialog and synthetic Unassigned remains immutable. Bulk modifier selection/assignment, explicit focus-restoration acceptance and same-head device evidence remain open.",
-      "unit_test": "Rust owner tests cover account isolation, process reopen, legacy migration, operation replay, stale independent merge and conflict rejection; AgentSidebarSectionsModelTest covers rename/delete/reorder/membership/collapse rules. Exact-head Actions pending.",
+      "platform_delta": "Android uses the Host AndroidSidebarSections account-fenced durable owner and native Compose presentation. The production path now includes phone/tablet/foldable width adaptation, native section lifecycle actions, ephemeral bulk selection and deterministic header focus restoration without creating a second canonical sidebar/account store.",
+      "implementation_status": "implemented",
+      "production_wiring": "Host AndroidSidebarSections remains the only durable owner with revisioned persistence, operation-id replay, stale-revision merge/fail-closed conflicts, account fencing and process reopen. MobileBotViewModel applies optimistic immutable projections, fences late completions by account slot/accountFence/mutation generation, rolls back on failure and re-syncs canonical roster state. GrokHomeSurface wires rename/delete/reorder/collapse, per-Agent and bulk assignment, adaptive phone/tablet/foldable padding, TalkBack descriptions and deterministic section-header focus restoration after collapse/rename/reorder/delete/bulk assignment.",
+      "unit_test": "Rust owner tests cover account isolation, process reopen, legacy migration, operation replay, stale independent merge and conflict rejection. AgentSidebarSectionsModelTest covers rename/delete/reorder/membership/collapse, atomic bulk assignment/no-op/unknown-target rules, adaptive breakpoints and section semantics labels. New exact-head Actions required.",
       "contract_test": "Typed Coordinator snapshot/mutation contract carries accountFence/revision/base/desired state into the same Host owner; no presentation second owner is introduced.",
-      "integration_test": "ProductionRenderer_view -> GrokHomeSurface -> MobileBotViewModel -> AndroidCoordinatorPort/Runtime -> AndroidJsonHost -> AndroidSidebarSections is wired for section collapse/rename/delete/reorder and per-Agent assignment. Bulk selection/focus restoration/device accessibility remain pending.",
+      "integration_test": "ProductionRenderer_view -> GrokHomeSurface -> MobileBotViewModel -> typed AndroidCoordinatorPort/Runtime -> AndroidJsonHost -> AndroidSidebarSections is the single production path. Focus restoration is production-wired through FocusRequester; androidTest adds phone/tablet/foldable and TalkBack-label contract coverage, while protected real-device accessibility acceptance still depends on the existing account-secret blocker.",
       "packaged_test": "required on final exact-head APK/AAB",
       "device_test": "required on supported Android devices",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Keep mapped until section rename/delete/reorder, destructive confirmation, optimistic failure recovery and conflict semantics are production-wired. snapshot-store.ts is the shared observable primitive behind Desktop section-collapse projection; Android replacement remains Host-owned durable section state plus native immutable projection, not a second presentation owner."
+      "notes": "Production implementation now covers adaptive width, bulk assignment, optimistic failure rollback/re-sync, stale/account fencing, deterministic section focus restoration and explicit TalkBack labels without a second owner. Keep verification_status not-verified until the new exact HEAD passes GitHub Actions and protected packaged/device accessibility acceptance."
     },
     {
       "responsibility_id": "AGENT-SIDEBAR-SEARCH-ANDROID-001",

@@ -113,4 +113,38 @@ class AgentSidebarSectionsModelTest {
         )
     }
 
+    @Test
+    fun bulkMoveUsesOneCanonicalMutationAndNeverPersistsSyntheticSection() {
+        val next = requireNotNull(moveAgentsToSidebarSection(sections, setOf("agent-1", "agent-3"), "section-b"))
+        assertEquals(emptyList<String>(), next.first { it.id == "section-a" }.agentIds)
+        assertEquals(listOf("agent-2", "agent-1", "agent-3"), next.first { it.id == "section-b" }.agentIds)
+        assertEquals(false, next.any { it.id == AGENT_UNASSIGNED_SECTION_ID })
+    }
+
+    @Test
+    fun bulkMoveRejectsNoopEmptyAndUnknownTarget() {
+        assertNull(moveAgentsToSidebarSection(sections, emptySet(), "section-a"))
+        assertNull(moveAgentsToSidebarSection(sections, setOf("agent-1"), "section-a"))
+        assertNull(moveAgentsToSidebarSection(sections, setOf("agent-1"), "missing"))
+    }
+
+    @Test
+    fun adaptivePaddingCoversPhoneTabletAndFoldableWidths() {
+        assertEquals(0, agentSidebarContentPaddingDp(412))
+        assertEquals(32, agentSidebarContentPaddingDp(600))
+        assertEquals(72, agentSidebarContentPaddingDp(840))
+    }
+
+    @Test
+    fun sectionSemanticsExposeStateRoleAndAction() {
+        assertEquals(
+            "Collapsed section Team with 3 Agents. Toggle section",
+            agentSidebarSectionSemanticsLabel("Team", 3, true),
+        )
+        assertEquals(
+            "Expanded section Section with 0 Agents. Toggle section",
+            agentSidebarSectionSemanticsLabel("", 0, false),
+        )
+    }
+
 }

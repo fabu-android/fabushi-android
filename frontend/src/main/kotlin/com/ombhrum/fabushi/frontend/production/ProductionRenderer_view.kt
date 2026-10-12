@@ -759,6 +759,7 @@ internal fun ProductionRenderer(
                             onDeleteSidebarSection = botModel::deleteSidebarSection,
                             onMoveSidebarSection = botModel::moveSidebarSection,
                             onMoveBotToSection = botModel::moveBotToSection,
+                            onMoveBotsToSection = botModel::moveBotsToSection,
                             onMoveBotToNewSection = botModel::moveBotToNewSection,
                             onCloseBot = botModel::closeBot,
                             onDraftChange = botModel::setDraft,
