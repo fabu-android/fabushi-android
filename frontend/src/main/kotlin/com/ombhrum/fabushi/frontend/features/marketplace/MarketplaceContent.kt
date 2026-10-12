@@ -89,6 +89,7 @@ internal fun MarketplaceContent(
     onOpen: (MarketplacePlugin) -> Unit,
     onSubmitVariables: (Map<String, String>) -> Unit,
     onCancelVariables: () -> Unit,
+    onSaveMcpServerInstructions: (String, String) -> Unit,
     onBack: () -> Unit,
 ) {
     state.variableRequest?.let { request ->
@@ -237,6 +238,42 @@ internal fun MarketplaceContent(
                                         },
                                         style = MaterialTheme.typography.labelSmall,
                                     )
+                                    var instructionsDraft by remember(
+                                        server.id,
+                                        state.mcpServerInstructions[server.id],
+                                    ) {
+                                        mutableStateOf(state.mcpServerInstructions[server.id].orEmpty())
+                                    }
+                                    OutlinedTextField(
+                                        value = instructionsDraft,
+                                        onValueChange = { instructionsDraft = it },
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .testTag("mcp-server-instructions-${server.id}"),
+                                        label = { Text("自定义说明") },
+                                        supportingText = {
+                                            state.mcpServerInstructionsError[server.id]?.let { error ->
+                                                Text("保存失败：$error")
+                                            }
+                                        },
+                                        minLines = 2,
+                                        maxLines = 6,
+                                    )
+                                    Button(
+                                        onClick = {
+                                            onSaveMcpServerInstructions(server.id, instructionsDraft)
+                                        },
+                                        enabled = server.id !in state.mcpServerInstructionsBusy,
+                                        modifier = Modifier.testTag("mcp-server-instructions-save-${server.id}"),
+                                    ) {
+                                        Text(
+                                            if (server.id in state.mcpServerInstructionsBusy) {
+                                                "保存中…"
+                                            } else {
+                                                "保存说明"
+                                            },
+                                        )
+                                    }
                                 }
                             }
                         }
