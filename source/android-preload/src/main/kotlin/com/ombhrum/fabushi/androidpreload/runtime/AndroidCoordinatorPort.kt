@@ -25,6 +25,11 @@ data class AndroidMcpOAuthCompletion(
     val outcome: String,
 )
 
+data class AndroidPrReviewPreferences(
+    val user: String?,
+    val team: String?,
+)
+
 enum class AndroidSendAcknowledgementPhase(val wireName: String) {
     PENDING("pending"),
     QUEUED("queued"),
