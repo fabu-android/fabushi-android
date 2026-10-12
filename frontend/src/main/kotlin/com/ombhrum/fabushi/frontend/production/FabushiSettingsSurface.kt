@@ -53,8 +53,38 @@ private enum class FabushiSettingsSection {
 
 internal const val ACCOUNT_AVATAR_TIMEOUT_MS = 10_000
 internal const val ACCOUNT_AVATAR_MAX_BYTES = 1024 * 1024
+internal const val ACCOUNT_AVATAR_CACHE_MAX_ENTRIES = 32
 private const val ACCOUNT_AVATAR_MAX_EDGE_PX = 4096
 private const val ACCOUNT_AVATAR_MAX_PIXELS = 16_000_000L
+
+internal class AccountAvatarByteCache(
+    private val maxEntries: Int = ACCOUNT_AVATAR_CACHE_MAX_ENTRIES,
+) {
+    init {
+        require(maxEntries > 0) { "account avatar cache must retain at least one entry" }
+    }
+
+    private val values = object : java.util.LinkedHashMap<String, ByteArray>(maxEntries, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, ByteArray>?): Boolean =
+            size > maxEntries
+    }
+
+    @Synchronized
+    fun get(url: String): ByteArray? = values[url]?.copyOf()
+
+    @Synchronized
+    fun put(url: String, bytes: ByteArray) {
+        require(bytes.isNotEmpty() && bytes.size <= ACCOUNT_AVATAR_MAX_BYTES) {
+            "account avatar cache value is outside bounded size"
+        }
+        values[url] = bytes.copyOf()
+    }
+
+    @Synchronized
+    fun size(): Int = values.size
+}
+
+private val accountAvatarByteCache = AccountAvatarByteCache()
 
 private fun normalizedHttpsAccountAvatarUrl(raw: String?): String? {
     val value = raw?.trim().orEmpty()
@@ -103,6 +133,8 @@ private fun decodeBoundedAccountAvatar(bytes: ByteArray): Bitmap? {
 }
 
 private fun fetchBoundedAccountAvatar(rawUrl: String): Bitmap? {
+    accountAvatarByteCache.get(rawUrl)?.let(::decodeBoundedAccountAvatar)?.let { return it }
+
     val connection = (URL(rawUrl).openConnection() as? HttpURLConnection) ?: return null
     connection.instanceFollowRedirects = false
     connection.connectTimeout = ACCOUNT_AVATAR_TIMEOUT_MS
@@ -127,7 +159,9 @@ private fun fetchBoundedAccountAvatar(rawUrl: String): Bitmap? {
             }
             output.toByteArray()
         }
-        decodeBoundedAccountAvatar(bytes)
+        val decoded = decodeBoundedAccountAvatar(bytes) ?: return null
+        accountAvatarByteCache.put(rawUrl, bytes)
+        decoded
     } catch (_: Exception) {
         null
     } finally {
