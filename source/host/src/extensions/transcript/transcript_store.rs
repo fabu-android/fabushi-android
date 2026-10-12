@@ -1,3 +1,8 @@
+use crate::extensions::content_search::agent_content_search::{
+    build_content_snippet, entry_search_text, AgentContentRole, SearchableTranscriptEntry,
+    SearchableTranscriptEntryKind, AGENT_CONTENT_SEARCH_MAX_MATCHES_PER_AGENT,
+    AGENT_CONTENT_SEARCH_MAX_RESULTS,
+};
 use serde::Serialize;
 use serde_json::Value;
 use std::collections::HashMap;
@@ -20,8 +25,8 @@ pub struct TranscriptRecoveryInfo {
     pub quarantine_path: Option<PathBuf>,
 }
 
-pub const CONTENT_SEARCH_MAX_MATCHES_PER_AGENT: usize = 5;
-pub const CONTENT_SEARCH_MAX_RESULTS: usize = 50;
+pub const CONTENT_SEARCH_MAX_MATCHES_PER_AGENT: usize = AGENT_CONTENT_SEARCH_MAX_MATCHES_PER_AGENT;
+pub const CONTENT_SEARCH_MAX_RESULTS: usize = AGENT_CONTENT_SEARCH_MAX_RESULTS;
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -146,7 +151,7 @@ impl TranscriptStore {
         query: &str,
         limit: usize,
     ) -> io::Result<Vec<TranscriptContentMatch>> {
-        let normalized_query = flatten_search_whitespace(query).to_lowercase();
+        let normalized_query = query.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase();
         if normalized_query.is_empty() {
             return Ok(Vec::new());
         }
@@ -187,28 +192,25 @@ impl TranscriptStore {
             if count >= CONTENT_SEARCH_MAX_MATCHES_PER_AGENT {
                 continue;
             }
-            let text = searchable_entry_text(entry);
-            let Some(snippet) = build_content_search_snippet(text, &normalized_query) else {
+            let Some(searchable) = project_content_search_entry(entry) else {
                 continue;
             };
-            let Some(entry_id) = entry.get("id").and_then(Value::as_str) else {
+            let Some(snippet) =
+                build_content_snippet(entry_search_text(&searchable), &normalized_query)
+            else {
                 continue;
             };
-            let role = if entry.get("kind").and_then(Value::as_str) == Some("message")
-                && entry.get("role").and_then(Value::as_str) == Some("user")
-            {
-                "user"
-            } else {
-                "assistant"
+            let role = match searchable.kind {
+                SearchableTranscriptEntryKind::Message { role: AgentContentRole::User, .. } => {
+                    "user"
+                }
+                _ => "assistant",
             };
             matches.push(TranscriptContentMatch {
                 agent_id: agent_id.to_string(),
-                entry_id: entry_id.to_string(),
+                entry_id: searchable.id,
                 role: role.to_string(),
-                timestamp_ms: entry
-                    .get("timestampMs")
-                    .and_then(Value::as_f64)
-                    .unwrap_or(0.0),
+                timestamp_ms: searchable.timestamp_ms.unwrap_or(0.0),
                 snippet,
             });
             per_agent.insert(agent_id.to_string(), count + 1);
@@ -389,64 +391,61 @@ fn entry_id(entry: &Value) -> io::Result<&str> {
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "transcript entry id is required"))
 }
 
-fn searchable_entry_text(entry: &Value) -> &str {
-    match entry.get("kind").and_then(Value::as_str) {
-        Some("message") => entry.get("content").and_then(Value::as_str).unwrap_or(""),
-        Some("send-message")
-            if entry
+fn project_content_search_entry(entry: &Value) -> Option<SearchableTranscriptEntry> {
+    let id = entry.get("id")?.as_str()?.trim();
+    if id.is_empty() {
+        return None;
+    }
+    let hidden_outbound_agent_peer_message = entry
+        .get("hiddenOutboundAgentPeerMessage")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+        || entry
+            .get("toAgent")
+            .and_then(|value| value.get("kind"))
+            .and_then(Value::as_str)
+            == Some("agent");
+    let kind = match entry.get("kind").and_then(Value::as_str).unwrap_or_default() {
+        "message" => SearchableTranscriptEntryKind::Message {
+            content: entry
+                .get("content")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string(),
+            role: if entry.get("role").and_then(Value::as_str) == Some("user") {
+                AgentContentRole::User
+            } else {
+                AgentContentRole::Assistant
+            },
+        },
+        "send-message" => SearchableTranscriptEntryKind::SendMessage {
+            message_type: entry
                 .get("message")
                 .and_then(|message| message.get("type"))
                 .and_then(Value::as_str)
-                == Some("text") =>
-        {
-            entry
+                .unwrap_or_default()
+                .to_string(),
+            content: entry
                 .get("message")
                 .and_then(|message| message.get("content"))
                 .and_then(Value::as_str)
-                .unwrap_or("")
-        }
-        Some("notice") => entry.get("text").and_then(Value::as_str).unwrap_or(""),
-        _ => "",
-    }
-}
-
-fn flatten_search_whitespace(text: &str) -> String {
-    text.split_whitespace().collect::<Vec<_>>().join(" ")
-}
-
-fn build_content_search_snippet(text: &str, normalized_query: &str) -> Option<String> {
-    if normalized_query.is_empty() {
-        return None;
-    }
-    let flat = flatten_search_whitespace(text);
-    let original = flat.chars().collect::<Vec<_>>();
-    let mut lowered = Vec::<char>::new();
-    let mut source_index = Vec::<usize>::new();
-    for (index, ch) in original.iter().copied().enumerate() {
-        for lower in ch.to_lowercase() {
-            lowered.push(lower);
-            source_index.push(index);
-        }
-    }
-    let query = normalized_query.chars().collect::<Vec<_>>();
-    if query.is_empty() || query.len() > lowered.len() {
-        return None;
-    }
-    let start_lower = (0..=lowered.len() - query.len())
-        .find(|start| lowered[*start..*start + query.len()] == query[..])?;
-    let match_start = source_index[start_lower];
-    let match_end = source_index[start_lower + query.len() - 1] + 1;
-    let start = match_start.saturating_sub(30);
-    let end = original.len().min(match_end.saturating_add(60));
-    let mut snippet = String::new();
-    if start > 0 {
-        snippet.push('…');
-    }
-    snippet.extend(original[start..end].iter());
-    if end < original.len() {
-        snippet.push('…');
-    }
-    Some(snippet)
+                .map(str::to_string),
+        },
+        "notice" => SearchableTranscriptEntryKind::Notice {
+            text: entry
+                .get("text")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string(),
+        },
+        _ => SearchableTranscriptEntryKind::Other,
+    };
+    Some(SearchableTranscriptEntry {
+        id: id.to_string(),
+        kind,
+        timestamp_ms: entry.get("timestampMs").and_then(Value::as_f64),
+        hidden_outbound_agent_peer_message,
+    })
 }
 
 fn validate_entries(entries: &[Value]) -> io::Result<()> {
