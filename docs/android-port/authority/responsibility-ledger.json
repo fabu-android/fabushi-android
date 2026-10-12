@@ -2021,6 +2021,94 @@
       "notes": "Source and production wiring implemented on the current descendant chain; do not mark verified before same-exact-head CI/package/device evidence."
     },
     {
+      "responsibility_id": "ACCOUNT-SESSION-TELEMETRY-SHIPPER-ANDROID-001",
+      "domain": "account-observability",
+      "desktop_sources": [
+        {
+          "path": "source/electron-main/account/session-funnel-telemetry.ts",
+          "blob_sha": "575de72ee0180c557f8417dc0a245bab099d9f3d",
+          "symbols": [
+            "sessionReportToTelemetry",
+            "reportSessionEvent",
+            "attachSessionTelemetry"
+          ]
+        },
+        {
+          "path": "source/electron-main/account/session-settlement-shipper.ts",
+          "blob_sha": "0e11f2e395475e244608ac44e868eb369a0b4de2",
+          "symbols": [
+            "createSessionSettlementShipper",
+            "shipSettlement",
+            "STRUCTURED_LOG_SUBMIT_DEADLINE_MS"
+          ]
+        },
+        {
+          "path": "source/electron-main/account/signin-funnel-telemetry.ts",
+          "blob_sha": "31190d458b1002d51393636de81a70140dd78c83",
+          "symbols": [
+            "reportSigninFunnel",
+            "signinLoginToTelemetry",
+            "signinGateToTelemetry"
+          ]
+        }
+      ],
+      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "responsibility": "Project bounded account/session telemetry and deliver structured account settlement/sign-in records without making observability transport part of authentication truth.",
+      "source_owner": "Desktop account telemetry reporters + session settlement shipper",
+      "direct_callers": [
+        "account login/poll/cancel/logout",
+        "session refresh/recovery/rotation/sign-out"
+      ],
+      "downstream_dependencies": [
+        "AnalyticsService.SubmitLogs",
+        "stable machine id",
+        "Cursor/Sand backend credential owner"
+      ],
+      "state_owner": "Rust Host bounded account telemetry buffers/outbox; backend transport is CursorDashboardMcpAuthBackend",
+      "persistent_state": [
+        "none; bounded process outbox intentionally does not become account truth"
+      ],
+      "protocol_wire_contract": [
+        "aiserver.v1.AnalyticsService/SubmitLogs",
+        "ClientLogEntry fields level/message/metadata/timestamp/key",
+        "sand.desktop.session",
+        "sand.desktop.signin",
+        "15 second submit deadline"
+      ],
+      "visible_effect": "Account/session failures and settlement transitions are observable without delaying or changing login/refresh/logout outcomes.",
+      "failure_behavior": [
+        "transport failure retains bounded outbox for a later account dispatch",
+        "invalid backend receipt is treated as delivery failure",
+        "no credential/token fields are emitted in telemetry metadata"
+      ],
+      "cancellation_behavior": "telemetry work is detached from the auth mutation; app/process termination may abandon in-flight delivery without retrying the account side effect",
+      "retry_semantics": "failed structured-log delivery is retried only on a later account dispatch from the same bounded outbox; authentication side effects are never replayed for telemetry",
+      "idempotency_semantics": "outbox removes only a successfully acknowledged submitted prefix; backend dropped count is accepted only when processed+dropped equals batch size",
+      "process_death_recovery": "account truth remains durable independently; telemetry outbox is intentionally non-canonical process observability and may be lost on process death",
+      "account_fencing": "telemetry never mutates account/session owner; events are generated inside the current Host account operation",
+      "security_boundary": "machine id comes from the protected platform identity injected into the Rust backend; backend credential never leaves Host; metadata is bounded and contains no access/refresh token",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "source/host/src/account_telemetry.rs",
+        "source/host/src/account_service.rs",
+        "source/host/src/android_json_runtime.rs",
+        "source/host/src/mcp_auth/dashboard_mcp_auth_backend.rs",
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/security/AndroidMachineIdStore.kt"
+      ],
+      "android_owner": "Rust Host account telemetry buffer/outbox + CursorDashboardMcpAuthBackend transport",
+      "platform_delta": "Desktop fire-and-forget TypeScript shipper becomes a Rust bounded singleflight background outbox using the same protobuf AnalyticsService and the Android protected machine-id/backend credential owners.",
+      "implementation_status": "implemented",
+      "production_wiring": "Login start/completed/failure/cancel/logout and session refresh/recovery/rotation/sign-out projections feed the Host outbox; Dashboard backend encodes and submits structured logs under a 15s bounded request. Boot-gate/account-consult and protected-store-unavailable producer parity remain separate open work and keep their aggregate source rows mapped.",
+      "unit_test": "account_telemetry taxonomy/buffer tests plus dashboard SubmitLogs wire/receipt tests and Host outbox-cap test; exact-head Actions pending",
+      "contract_test": "AnalyticsService path, ClientLogEntry fields, event names, machine-id metadata and 15s deadline are source-anchored to Desktop current main; exact-head Rust gate pending",
+      "integration_test": "required: controlled backend success/failure proves retry preserves auth outcome and bounded queue semantics",
+      "packaged_test": "required on final exact-head APK/AAB with production backend configuration",
+      "device_test": "not required for protobuf unit semantics; packaged protected-account journey should confirm no auth regression",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Session settlement shipper is implemented. Do not upgrade the broad OBSERVABILITY-STRUCTURED-LOG-001 responsibility or signin/session aggregate rows whose remaining producers are explicitly open."
+    },
+    {
       "responsibility_id": "PLUGIN-IMMUTABLE-INSTALL-001",
       "domain": "mcp-plugins",
       "desktop_sources": [
