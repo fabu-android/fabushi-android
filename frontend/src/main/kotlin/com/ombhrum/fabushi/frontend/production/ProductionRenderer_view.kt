@@ -479,6 +479,24 @@ internal fun ProductionRenderer(
                         signedInOnboardingModel.refresh()
                     }
                 }
+                LaunchedEffect(
+                    state.authResolved,
+                    state.loggedIn,
+                    state.onboardingStep,
+                    signedInOnboardingState.active,
+                ) {
+                    if (!state.authResolved) return@LaunchedEffect
+                    val signinGate = when {
+                        !state.loggedIn -> "sign-in"
+                        state.onboardingStep < 3 || signedInOnboardingState.active -> "onboarding"
+                        else -> null
+                    }
+                    if (signinGate != null) {
+                        withContext(Dispatchers.IO) {
+                            runCatching { coordinator.reportSigninGate(gate = signinGate) }
+                        }
+                    }
+                }
                 LaunchedEffect(signedInOnboardingState.active, signedInOnboardingState.createdAgentId) {
                     if (!signedInOnboardingState.active && !signedInOnboardingState.createdAgentId.isNullOrBlank()) {
                         botModel.refreshBots()

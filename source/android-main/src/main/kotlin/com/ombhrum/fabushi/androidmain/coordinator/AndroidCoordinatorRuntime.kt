@@ -737,6 +737,24 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
                 },
         )
 
+    override fun reportSigninGate(
+        gate: String?,
+        consult: String?,
+    ): JSONObject {
+        val normalizedGate = gate?.trim()?.takeIf(String::isNotEmpty)
+        val normalizedConsult = consult?.trim()?.takeIf(String::isNotEmpty)
+        require((normalizedGate == null) xor (normalizedConsult == null)) {
+            "Sign-in gate telemetry requires exactly one of gate or consult"
+        }
+        return host.request(
+            "feature.account.telemetry.signinGate",
+            JSONObject().apply {
+                normalizedGate?.let { put("gate", it) }
+                normalizedConsult?.let { put("consult", it) }
+            },
+        )
+    }
+
     override fun reportOnboardingStep(
         expectedAccountScope: String,
         step: String,

@@ -1,8 +1,8 @@
 use crate::edge_failures::EdgeFailureBuffer;
 use crate::account_service::{AccountSessionMutation, AndroidAccountService};
 use crate::account_telemetry::{
-    AccountTelemetryBuffer, AccountTelemetryProjection, SessionReport, SigninLoginReport,
-    SigninSignoutCause,
+    AccountTelemetryBuffer, AccountTelemetryProjection, SessionReport, SigninGateReport,
+    SigninLoginReport, SigninSignoutCause,
 };
 use crate::account_telemetry_spill::DurableAccountTelemetryOutbox;
 use crate::capability_broker::{CapabilityDecision, PendingCapabilityCall, SharedCapabilityBroker};
@@ -1843,6 +1843,26 @@ impl AndroidJsonHost {
         }
     }
 
+    fn signin_gate_telemetry(&mut self, params: &Value) -> Result<Value, String> {
+        let gate = params.get("gate").and_then(Value::as_str).filter(|value| !value.trim().is_empty());
+        let consult = params.get("consult").and_then(Value::as_str).filter(|value| !value.trim().is_empty());
+        let report = match (gate, consult) {
+            (Some("shell"), None) => SigninGateReport::Gate("shell"),
+            (Some("onboarding"), None) => SigninGateReport::Gate("onboarding"),
+            (Some("sign-in"), None) => SigninGateReport::Gate("sign-in"),
+            (None, Some("veto-seen")) => SigninGateReport::Consult("veto-seen"),
+            (None, Some("veto-roster")) => SigninGateReport::Consult("veto-roster"),
+            (None, Some("fresh")) => SigninGateReport::Consult("fresh"),
+            (None, Some("fail-open-probes")) => SigninGateReport::Consult("fail-open-probes"),
+            (None, Some("fail-open-deadline")) => SigninGateReport::Consult("fail-open-deadline"),
+            (Some(_), None) => return Err("invalid signin telemetry gate".into()),
+            (None, Some(_)) => return Err("invalid signin telemetry consult outcome".into()),
+            _ => return Err("signin gate telemetry requires exactly one of gate or consult".into()),
+        };
+        self.account_telemetry.report_signin_gate(report);
+        Ok(json!({"recorded":true}))
+    }
+
     fn access_blocked_telemetry(&mut self, params: &Value) -> Result<Value, String> {
         let edge = required_string(params, "edge")?;
         let cause = required_string(params, "cause")?;
@@ -2390,6 +2410,7 @@ impl AndroidJsonHost {
                 Ok(json!({"recorded":true}))
             },
             "feature.account.telemetry.accessBlocked" => self.access_blocked_telemetry(params),
+            "feature.account.telemetry.signinGate" => self.signin_gate_telemetry(params),
             "feature.telemetry.agentLoad" => self.agent_load_telemetry(params),
             "feature.telemetry.startupLifecycle" => self.startup_lifecycle_telemetry(params),
             "feature.telemetry.onboardingStep" => self.onboarding_step_telemetry(params),
@@ -13201,6 +13222,26 @@ mod access_blocked_durable_dispatch_tests {
         assert_eq!(record.level, "warn");
         assert_eq!(record.metadata["ms_blocked"], (7_u64 * 24 * 60 * 60 * 1_000).to_string());
         assert!(host.dispatch("feature.account.telemetry.accessBlocked", &json!({"edge":"entered","cause":"secret free text","accessReason":"none"})).is_err());
+    }
+}
+
+
+#[cfg(test)]
+mod signin_gate_runtime_tests {
+    use super::*;
+
+    #[test]
+    fn signin_gate_dispatch_accepts_only_bounded_desktop_taxonomy() {
+        let root = tempfile::tempdir().unwrap();
+        let mut host = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+        host.dispatch("feature.account.telemetry.signinGate", &json!({"gate":"sign-in"})).unwrap();
+        host.dispatch("feature.account.telemetry.signinGate", &json!({"consult":"fresh"})).unwrap();
+        let snapshot = host.dispatch("feature.account.telemetry.snapshot", &json!({})).unwrap();
+        let entries = snapshot.as_array().unwrap();
+        assert!(entries.iter().any(|entry| entry["stream"] == "signin" && entry["metadata"]["phase"] == "boot_gate" && entry["metadata"]["gate"] == "sign-in"));
+        assert!(entries.iter().any(|entry| entry["stream"] == "signin" && entry["metadata"]["phase"] == "account_consult" && entry["metadata"]["outcome"] == "fresh"));
+        assert!(host.dispatch("feature.account.telemetry.signinGate", &json!({"gate":"secret-free-text"})).is_err());
+        assert!(host.dispatch("feature.account.telemetry.signinGate", &json!({"gate":"sign-in","consult":"fresh"})).is_err());
     }
 }
 

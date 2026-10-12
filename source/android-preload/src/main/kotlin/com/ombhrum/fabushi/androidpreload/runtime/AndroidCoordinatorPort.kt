@@ -607,6 +607,10 @@ interface AndroidCoordinatorPort {
         boxState: String = "unknown",
         outcome: String,
     ): JSONObject = error("Agent load telemetry is unavailable on this Coordinator port")
+    fun reportSigninGate(
+        gate: String? = null,
+        consult: String? = null,
+    ): JSONObject = error("Sign-in gate telemetry is unavailable on this Coordinator port")
     fun reportOnboardingStep(
         expectedAccountScope: String,
         step: String,
