@@ -348,6 +348,7 @@ pub(crate) struct RemoteRoutedTools {
     runner: Arc<Mutex<Option<AuthenticatedRemoteHostRunner<AuthenticatedRemoteHttpTransport>>>>,
     approvals: RemoteApprovalRegistry,
     user_settings: Arc<Mutex<AndroidUserSettings>>,
+    local_tool_permission_ceiling: Option<LocalToolPermission>,
     live_account_fence: Arc<Mutex<Option<String>>>,
     events: Arc<Mutex<VecDeque<Value>>>,
     parent_operation_id: String,
@@ -785,7 +786,11 @@ impl RemoteRoutedTools {
         self.user_settings
             .lock()
             .map_err(|_| "Android user settings lock poisoned".to_string())
-            .map(|settings| settings.local_tool_permission())
+            .map(|settings| {
+                settings
+                    .local_tool_permission()
+                    .clamp_to_ceiling(self.local_tool_permission_ceiling)
+            })
     }
 
     fn current_binding(&self) -> Result<RemoteDispatchBinding, String> {
@@ -815,6 +820,7 @@ pub(crate) fn with_remote_routed_tools(
     runner: Arc<Mutex<Option<AuthenticatedRemoteHostRunner<AuthenticatedRemoteHttpTransport>>>>,
     approvals: RemoteApprovalRegistry,
     user_settings: Arc<Mutex<AndroidUserSettings>>,
+    local_tool_permission_ceiling: Option<LocalToolPermission>,
     live_account_fence: Arc<Mutex<Option<String>>>,
     events: Arc<Mutex<VecDeque<Value>>>,
     parent_operation_id: &str,
@@ -828,6 +834,7 @@ pub(crate) fn with_remote_routed_tools(
         runner,
         approvals,
         user_settings,
+        local_tool_permission_ceiling,
         live_account_fence,
         events,
         parent_operation_id: parent_operation_id.to_string(),
@@ -1371,6 +1378,7 @@ mod tests {
             runner: Arc::new(Mutex::new(None)),
             approvals: RemoteApprovalRegistry::default(),
             user_settings: Arc::new(Mutex::new(settings)),
+            local_tool_permission_ceiling: None,
             live_account_fence: Arc::new(Mutex::new(None)),
             events: Arc::new(Mutex::new(VecDeque::new())),
             parent_operation_id: "parent-operation".into(),
