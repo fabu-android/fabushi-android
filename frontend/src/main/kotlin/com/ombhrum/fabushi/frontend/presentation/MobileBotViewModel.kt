@@ -2041,21 +2041,10 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
         )
         paletteFileSearchJob = viewModelScope.launch {
             try {
-                val results = withContext(Dispatchers.IO) {
-                    coordinator.contentSearchMedia(query, limit = COMMAND_PALETTE_FILE_RESULT_LIMIT).map { row ->
-                        CommandPaletteFile(
-                            agentId = row.agentId,
-                            entryId = row.entryId,
-                            fileName = row.fileName,
-                            path = row.path,
-                            ext = row.ext.removePrefix("."),
-                            mime = row.mime,
-                            kind = commandPaletteFileKind(row.fileName, row.mime),
-                            timestampMs = row.timestampMs,
-                            sizeBytes = row.sizeBytes,
-                        )
-                    }
+                val matches = withContext(Dispatchers.IO) {
+                    coordinator.contentSearchMedia(query, limit = COMMAND_PALETTE_FILE_RESULT_LIMIT)
                 }
+                val results = commandPaletteFilesFromHostMatches(matches)
                 if (!paletteFileFence.accepts(token)) return@launch
                 mutableState.value = mutableState.value.copy(
                     paletteFileSearch = CommandPaletteFileSnapshot(
