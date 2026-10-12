@@ -7268,20 +7268,24 @@
         "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/presentation/MobileBotViewModel.kt",
         "source/android-preload/src/main/kotlin/com/ombhrum/fabushi/androidpreload/runtime/AndroidCoordinatorPort.kt",
         "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/coordinator/AndroidCoordinatorRuntime.kt",
-        "source/host/src/android_json_runtime.rs"
+        "source/host/src/android_json_runtime.rs",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/features/bots/AgentChannelsModel.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/production/AgentProfileEditor_view.kt",
+        "mobile/android/app/src/test/java/com/ombhrum/fabushi/AgentChannelsModelTest.kt"
       ],
       "android_owner": "Future native Agent Channels Compose surface + MobileBotViewModel transient projection; AndroidCoordinatorRuntime typed channel bridge; Rust Host/connector channel owner for credentials and canonical connection state",
       "platform_delta": "Replace Desktop renderer tab with native Compose and Android lifecycle cancellation. Keep secrets behind typed bridge/protected storage and preserve strict reply projection/state semantics. Current Android exact parent exposes no Agent-channel APIs or UI.",
       "implementation_status": "mapped",
-      "production_wiring": "Not implemented at audit parent 2df2cb0208304e615cfe7f8a6fde490821194978. Searches of AndroidCoordinatorPort, AndroidCoordinatorRuntime and AndroidJsonHost show no getAgentChannels/connectChannel/disconnectChannel/refreshChannel production methods; current GrokHomeSurface has no Agent Channels surface.",
-      "unit_test": "No focused Android Agent Channels unit coverage exists yet.",
+      "production_wiring": "Partial production slice implemented on descendant HEAD: AgentProfileEditor renders the Desktop current-main Discord/Slack channel catalog through AgentChannelsModel; both current manifests are coming-soon, so Android deliberately exposes no credential field or fake Connect action. Secure canonical connection projection plus typed connect/disconnect/refresh Host lifecycle remain open.",
+      "unit_test": "AgentChannelsModelTest covers the exact current Desktop catalog, coming-soon precedence over legacy connection state, and connected/error/connecting/available row ordering. Same exact-head GitHub Actions evidence is pending.",
       "contract_test": "Required: typed channel list/connect/disconnect/refresh contract, malformed response rejection, secret handling, account/Agent fencing and unknown-outcome reconciliation.",
       "integration_test": "Required: Compose Agent Channels -> Coordinator -> Host connector owner with real controlled channel test backend and lifecycle/account-switch fencing.",
       "packaged_test": "Required on final production package, proving credential entry is not logged/test-injected and channel status survives restart.",
       "device_test": "Required on emulator/device for connect/error/reconnect/refresh/disconnect, process death, account switch and offline/network interruption.",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Fresh semantic audit of the three Desktop 92fcc2b0 Agent-info Channels files. This records a missing Android product responsibility; it does not claim the existing MCP/connector surfaces are equivalent because Desktop explicitly separates this Channels surface from MCP server/tool UI."
+      "notes": "Current-source product effect advanced without status inflation: native Agent profile now exposes Channels and current Discord/Slack Coming soon rows. The responsibility remains mapped/not-verified because Android still lacks canonical existing-connection projection and secure connect/disconnect/refresh lifecycle with account/Agent fencing and outcome-unknown reconciliation.",
+      "android_head_at_update": "7a15f91128fcaf1ba542525575f83d21257b3e85"
     },
     {
       "responsibility_id": "AGENT-SETTINGS-PROFILE-ANDROID-001",
