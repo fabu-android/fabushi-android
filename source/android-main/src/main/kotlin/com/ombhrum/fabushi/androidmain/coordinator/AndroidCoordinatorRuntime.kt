@@ -71,7 +71,6 @@ import com.ombhrum.fabushi.core.MahayanaHost
 import org.json.JSONArray
 import org.json.JSONObject
 import java.time.ZoneId
-import java.io.File
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
@@ -95,14 +94,6 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
     private val processRuntime = CoordinatorProcessRuntime(epochStore)
     private val closed = AtomicBoolean(false)
     val processGeneration: Long = processRuntime.start()
-    private val processSessionMarker = AndroidProcessSessionMarker(
-        markerFile = File(application.noBackupFilesDir, "fabushi-process-session.properties"),
-        appVersion = runCatching {
-            application.packageManager.getPackageInfo(application.packageName, 0).versionName
-                ?: "unknown"
-        }.getOrDefault("unknown"),
-    )
-    private val previousProcessSessionSettlement = processSessionMarker.settlePriorAndArm()
     private val host = MahayanaHost(application, processGeneration = processGeneration)
     private val remotePairingStore = AndroidRemotePairingStore(application)
     private val remoteControlSessionStore = AndroidRemoteControlSessionStore(application)
@@ -197,9 +188,6 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
     private val processMetricsExecutor = Executors.newSingleThreadScheduledExecutor { runnable ->
         Thread(runnable, "fabushi-process-metrics").apply { isDaemon = true }
     }
-    private val processSessionMarkerExecutor = Executors.newSingleThreadScheduledExecutor { runnable ->
-        Thread(runnable, "fabushi-process-session-marker").apply { isDaemon = true }
-    }
     private val sendSubmissionExecutor = Executors.newSingleThreadExecutor { runnable ->
         Thread(runnable, "fabushi-send-submission-queue").apply { isDaemon = true }
     }
@@ -222,28 +210,6 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
         host.request(
             "feature.settings.timeZone.detected",
             JSONObject().put("detectedTimeZone", ZoneId.systemDefault().id),
-        )
-        previousProcessSessionSettlement
-            ?.takeIf { it.kind == AndroidProcessSessionSettlementKind.UNCLEAN_EXIT }
-            ?.let { settlement ->
-                runCatching {
-                    host.request(
-                        "feature.diagnostics.edgeFailures.report",
-                        JSONObject()
-                            .put("area", "process-session")
-                            .put("leg", "unclean-exit")
-                            .put(
-                                "errorClass",
-                                if (settlement.crashSeen) "ProcessCrashSeen" else "ProcessExitUnclean",
-                            ),
-                    )
-                }
-            }
-        processSessionMarkerExecutor.scheduleWithFixedDelay(
-            { runCatching { processSessionMarker.heartbeat() } },
-            PROCESS_SESSION_HEARTBEAT_INTERVAL_MS,
-            PROCESS_SESSION_HEARTBEAT_INTERVAL_MS,
-            TimeUnit.MILLISECONDS,
         )
         computerRebuildOwner.observeAccount(accountAccessOwner.currentProjection().accountEpoch)
         runCatching { connectivityManager.registerDefaultNetworkCallback(sendNetworkCallback) }
@@ -3418,8 +3384,6 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
         remoteComputerReconnectExecutor.shutdownNow()
         storagePressureExecutor.shutdownNow()
         processMetricsExecutor.shutdownNow()
-        processSessionMarkerExecutor.shutdownNow()
-        runCatching { processSessionMarker.settleClean() }
         sendSubmissionExecutor.shutdownNow()
         rootConnectionRetryExecutor.shutdownNow()
         computerRebuildEventHost.close()
