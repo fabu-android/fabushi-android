@@ -39,7 +39,7 @@ internal class MobileRenderTelemetryTracker(
 
     fun begin(operationId: String) {
         val id = operationId.trim()
-        if (id.isEmpty()) return
+        if (id.isEmpty() || active?.operationId == id) return
         active = Active(
             operationId = id,
             enterMonotonicMs = monotonicNowMs(),
