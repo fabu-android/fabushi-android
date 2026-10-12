@@ -1314,7 +1314,7 @@ fn validate_remote_cloud_agent_input(object: &serde_json::Map<String, Value>) ->
     for key in ["prompt", "repo_url", "starting_ref", "model", "title", "agent_id"] {
         if let Some(value) = object.get(key) {
             let value = value.as_str().ok_or_else(|| format!("Remote CloudAgent {key} must be a string"))?;
-            if value.len() > 65_536 || value.chars().any(|c| c == '^@') {
+            if value.len() > 65_536 || value.chars().any(|c| c == '\0') {
                 return Err(format!("Remote CloudAgent {key} is invalid or too large"));
             }
         }
@@ -1367,7 +1367,7 @@ fn validate_remote_cloud_agent_input(object: &serde_json::Map<String, Value>) ->
             }
             let url = image.get("url").and_then(Value::as_str).map(str::trim).filter(|v| !v.is_empty())
                 .ok_or_else(|| format!("Remote CloudAgent images[{index}].url is required"))?;
-            if url.len() > 4096 || url.chars().any(|c| c == '^@') {
+            if url.len() > 4096 || url.chars().any(|c| c == '\0') {
                 return Err(format!("Remote CloudAgent images[{index}].url is invalid"));
             }
         }
