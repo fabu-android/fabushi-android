@@ -442,6 +442,46 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
         )
     }
 
+    override fun timeZoneSettings(): AndroidTimeZoneSettings {
+        val detected = ZoneId.systemDefault().id
+        val projection = host.request("feature.settings.timeZone")
+        val override = projection
+            .takeIf { it.has("overrideTimeZone") && !it.isNull("overrideTimeZone") }
+            ?.optString("overrideTimeZone")
+            ?.trim()
+            ?.takeIf(String::isNotEmpty)
+            ?.let(::validatedTimeZoneId)
+        return AndroidTimeZoneSettings(
+            detectedTimeZone = detected,
+            overrideTimeZone = override,
+        )
+    }
+
+    override fun setTimeZoneOverride(value: String?): AndroidTimeZoneSettings {
+        val normalized = value
+            ?.trim()
+            ?.takeIf(String::isNotEmpty)
+            ?.let(::validatedTimeZoneId)
+        val projection = host.request(
+            "feature.settings.timeZone.set",
+            JSONObject().put("overrideTimeZone", normalized ?: JSONObject.NULL),
+        )
+        val saved = projection
+            .takeIf { it.has("overrideTimeZone") && !it.isNull("overrideTimeZone") }
+            ?.optString("overrideTimeZone")
+            ?.trim()
+            ?.takeIf(String::isNotEmpty)
+            ?.let(::validatedTimeZoneId)
+        return AndroidTimeZoneSettings(
+            detectedTimeZone = ZoneId.systemDefault().id,
+            overrideTimeZone = saved,
+        )
+    }
+
+    private fun validatedTimeZoneId(value: String): String =
+        runCatching { ZoneId.of(value).id }
+            .getOrElse { throw IllegalArgumentException("Invalid time zone override", it) }
+
     override fun autoReviewInstructions(): AndroidAutoReviewInstructionsSnapshot =
         parseAutoReviewInstructionsSnapshot(
             host.request("feature.settings.autoReviewInstructions"),
