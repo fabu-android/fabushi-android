@@ -14,10 +14,12 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeout
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -173,31 +175,33 @@ internal class AndroidCredentialManagerWebAuthn(
         ceremony: AndroidWebAuthnCeremony,
     ) {
         try {
-            val credentialJson = when (ceremony.kind) {
-                "get" -> {
-                    val option = GetPublicKeyCredentialOption(
-                        requestJson = ceremony.payloadJson,
-                    )
-                    val response = credentialManager.getCredential(
-                        context = activity,
-                        request = GetCredentialRequest(listOf(option)),
-                    )
-                    val publicKey = response.credential as? PublicKeyCredential
-                        ?: error("Credential Manager returned a non-public-key credential")
-                    publicKey.authenticationResponseJson
-                }
-                "create" -> {
-                    val response = credentialManager.createCredential(
-                        context = activity,
-                        request = CreatePublicKeyCredentialRequest(
+            val credentialJson = withTimeout(PASSKEY_STALL_MS) {
+                when (ceremony.kind) {
+                    "get" -> {
+                        val option = GetPublicKeyCredentialOption(
                             requestJson = ceremony.payloadJson,
-                        ),
-                    )
-                    val publicKey = response as? CreatePublicKeyCredentialResponse
-                        ?: error("Credential Manager returned a non-public-key creation response")
-                    publicKey.registrationResponseJson
+                        )
+                        val response = credentialManager.getCredential(
+                            context = activity,
+                            request = GetCredentialRequest(listOf(option)),
+                        )
+                        val publicKey = response.credential as? PublicKeyCredential
+                            ?: error("Credential Manager returned a non-public-key credential")
+                        publicKey.authenticationResponseJson
+                    }
+                    "create" -> {
+                        val response = credentialManager.createCredential(
+                            context = activity,
+                            request = CreatePublicKeyCredentialRequest(
+                                requestJson = ceremony.payloadJson,
+                            ),
+                        )
+                        val publicKey = response as? CreatePublicKeyCredentialResponse
+                            ?: error("Credential Manager returned a non-public-key creation response")
+                        publicKey.registrationResponseJson
+                    }
+                    else -> error("Unsupported WebAuthn ceremony kind")
                 }
-                else -> error("Unsupported WebAuthn ceremony kind")
             }
 
             submitFrames(
@@ -211,6 +215,8 @@ internal class AndroidCredentialManagerWebAuthn(
                         .put("credentialJson", credentialJson),
                 ),
             )
+        } catch (_: TimeoutCancellationException) {
+            submitFrames(providerId, passkeyStallFrames(ceremony))
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (error: Throwable) {
@@ -249,6 +255,17 @@ internal class AndroidCredentialManagerWebAuthn(
     companion object {
         internal const val HEARTBEAT_INTERVAL_MS = 10_000L
         internal const val POLL_INTERVAL_MS = 250L
+        internal const val PASSKEY_STALL_MS = 60_000L
+
+        internal fun passkeyStallFrames(ceremony: AndroidWebAuthnCeremony): List<JSONObject> = listOf(
+            stageFrame(ceremony.requestId, "sign", "failed"),
+            JSONObject()
+                .put("kind", "error")
+                .put("requestId", ceremony.requestId)
+                .put("name", "NotAllowedError")
+                .put("message", "Passkey request stalled")
+                .put("code", "passkey_stall"),
+        )
 
         internal fun stageFrame(
             requestId: String,
