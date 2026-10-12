@@ -1,3 +1,4 @@
+use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::{
@@ -922,6 +923,30 @@ fn parse_avatar_color(value: Option<&Value>) -> Result<Option<String>, String> {
     }
 }
 
+fn sniff_avatar_mime_type(bytes: &[u8]) -> Option<&'static str> {
+    if bytes.len() >= 8 && bytes[..8] == [137, 80, 78, 71, 13, 10, 26, 10] {
+        return Some("image/png");
+    }
+    if bytes.len() >= 3 && bytes[..3] == [255, 216, 255] {
+        return Some("image/jpeg");
+    }
+    if bytes.len() >= 6 && (&bytes[..6] == b"GIF87a" || &bytes[..6] == b"GIF89a") {
+        return Some("image/gif");
+    }
+    if bytes.len() >= 12 && &bytes[..4] == b"RIFF" && &bytes[8..12] == b"WEBP" {
+        return Some("image/webp");
+    }
+    let head = String::from_utf8_lossy(&bytes[..bytes.len().min(1024)]);
+    let normalized = head
+        .trim_start_matches('\u{feff}')
+        .trim_start()
+        .to_ascii_lowercase();
+    if normalized.starts_with('<') && normalized.contains("<svg") {
+        return Some("image/svg+xml");
+    }
+    None
+}
+
 fn parse_avatar_data_url(value: Option<&Value>) -> Result<Option<String>, String> {
     // Desktop source/host/src/agents/agent_avatar.rs caps avatar source files at 5 MiB and
     // accepts PNG/JPEG/WEBP/GIF/SVG. Keep the canonical Android projection at the same boundary.
@@ -937,17 +962,18 @@ fn parse_avatar_data_url(value: Option<&Value>) -> Result<Option<String>, String
                 .find(',')
                 .ok_or_else(|| "avatarDataUrl must be an image data URL".to_string())?;
             let header = data_url[..comma].to_ascii_lowercase();
-            if !matches!(
-                header.as_str(),
-                "data:image/png;base64"
-                    | "data:image/jpeg;base64"
-                    | "data:image/jpg;base64"
-                    | "data:image/webp;base64"
-                    | "data:image/gif;base64"
-                    | "data:image/svg+xml;base64"
-            ) {
-                return Err("avatarDataUrl must use a Desktop-supported base64 image MIME type".into());
-            }
+            let declared_mime = match header.as_str() {
+                "data:image/png;base64" => "image/png",
+                "data:image/jpeg;base64" | "data:image/jpg;base64" => "image/jpeg",
+                "data:image/webp;base64" => "image/webp",
+                "data:image/gif;base64" => "image/gif",
+                "data:image/svg+xml;base64" => "image/svg+xml",
+                _ => {
+                    return Err(
+                        "avatarDataUrl must use a Desktop-supported base64 image MIME type".into(),
+                    )
+                }
+            };
             let payload = &data_url[comma + 1..];
             if payload.is_empty()
                 || payload.len() % 4 != 0
@@ -970,6 +996,17 @@ fn parse_avatar_data_url(value: Option<&Value>) -> Result<Option<String>, String
                 .ok_or_else(|| "avatarDataUrl size overflow".to_string())?;
             if decoded_bytes == 0 || decoded_bytes > MAX_SOURCE_BYTES {
                 return Err("avatarDataUrl exceeds the 5 MiB Desktop avatar source boundary".into());
+            }
+            let bytes = BASE64_STANDARD
+                .decode(payload.as_bytes())
+                .map_err(|_| "avatarDataUrl contains invalid base64 image data".to_string())?;
+            if bytes.len() != decoded_bytes {
+                return Err("avatarDataUrl decoded length is inconsistent".into());
+            }
+            let actual_mime = sniff_avatar_mime_type(&bytes)
+                .ok_or_else(|| "avatarDataUrl bytes are not a supported image".to_string())?;
+            if actual_mime != declared_mime {
+                return Err("avatarDataUrl MIME type does not match decoded image bytes".into());
             }
             Ok(Some(data_url.to_string()))
         }
@@ -1394,6 +1431,19 @@ mod tests {
             .unwrap();
         assert_eq!(rejected["status"], "rejected");
         assert_eq!(reopened.get(&agent_id).unwrap().avatar_data_url.as_deref(), Some(data_url));
+
+        let mime_spoof = reopened
+            .apply_presentation_operation(
+                "session:account-a",
+                "avatar-image-mime-spoof",
+                &json!({"kind":"update","id":agent_id,"avatarDataUrl":"data:image/jpeg;base64,iVBORw0KGgo="}),
+            )
+            .unwrap();
+        assert_eq!(mime_spoof["status"], "rejected");
+        assert_eq!(
+            reopened.get(&agent_id).unwrap().avatar_data_url.as_deref(),
+            Some(data_url)
+        );
 
         let cleared = reopened
             .apply_presentation_operation(
