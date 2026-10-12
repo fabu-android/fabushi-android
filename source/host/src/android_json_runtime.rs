@@ -940,16 +940,21 @@ impl AndroidJsonHost {
                     ("error", "reset_corrupt_store")
                 }
             };
+            let mut metadata = BTreeMap::from([
+                ("component".to_string(), "transcript_store".to_string()),
+                ("action".to_string(), "recover".to_string()),
+                ("outcome".to_string(), outcome.to_string()),
+            ]);
+            if let Some(quarantine_path) = recovery.quarantine_path.as_ref() {
+                metadata.insert(
+                    "quarantinePath".to_string(),
+                    quarantine_path.to_string_lossy().to_string(),
+                );
+            }
             let _ = structured_log_spool.record(
                 level,
-                "sand.transcript.recovery",
-                json!({
-                    "outcome": outcome,
-                    "quarantinePath": recovery
-                        .quarantine_path
-                        .as_ref()
-                        .map(|path| path.to_string_lossy().to_string()),
-                }),
+                "sand.recovery_action",
+                metadata,
                 now_ms(),
             );
         }
