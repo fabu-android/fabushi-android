@@ -65,7 +65,8 @@ use crate::runner::{
     ProductionTurnAgentBuildBindings, ProductionTurnAgentLifecycleBindings,
     ProductionTurnAgentOwner, ProductionTurnAgentStaticConfig, ProductionTurnEvent,
     ProductionDiskPressureLevel, ProductionTurnInput, ProductionTurnLifecycleStore,
-    ProductionTurnPrivacyMode, ProductionTurnProfileAnnouncementCommit, SAND_AGENT_TOKEN_LIMIT,
+    ProductionTurnPrivacyMode, ProductionTurnCheckpointPersist,
+    ProductionTurnProfileAnnouncementCommit, SAND_AGENT_TOKEN_LIMIT,
     shared_turn_run_shell, SharedTurnRunShell,
     build_turn_subagent_types, parse_turn_subagent_capability_projection,
     COORDINATOR_SUBAGENT_CAPABILITIES_FIELD, DurableSubagentOwner, SubagentFrozenTurnConfig,
@@ -7499,11 +7500,33 @@ impl AndroidJsonHost {
                 let release_conversation = conversation_id_owned.clone();
                 let release_operation = operation_id_owned.clone();
 
+                let checkpoint_store = Arc::clone(&turn_journal);
+                let checkpoint_request = request_id_owned.clone();
+                let checkpoint_operation = operation_id_owned.clone();
+                let checkpoint_account = account_fence_owned.clone();
+                let checkpoint_persist: ProductionTurnCheckpointPersist = Arc::new(
+                    move |attempt, emitted_chunks| {
+                        checkpoint_store
+                            .lock()
+                            .map_err(|_| "turn journal lock poisoned".to_string())?
+                            .persist_checkpoint_metadata(
+                                &checkpoint_request,
+                                &checkpoint_operation,
+                                &checkpoint_account,
+                                turn_generation,
+                                attempt,
+                                emitted_chunks,
+                                now_ms(),
+                            )
+                    },
+                );
+
                 let mut lifecycle_bindings = ProductionTurnAgentLifecycleBindings::new(
                     account_fence_owned.clone(),
                     conversation_id_owned.clone(),
                     operation_id_owned.clone(),
                 )
+                .with_checkpoint_persist(checkpoint_persist)
                 .with_disk_pressure_callbacks(
                     Arc::new(move || {
                         claim_store
@@ -7762,28 +7785,54 @@ impl AndroidJsonHost {
 
                 if let Err(error) = result {
                     if !cancelled.load(Ordering::Acquire) && !terminal_emitted {
+                        let checkpoint_outcome_unknown = error
+                            .message
+                            .starts_with("durable turn checkpoint persistence failed:");
                         let settled = turn_journal
                             .lock()
                             .map_err(|_| "turn journal lock poisoned".to_string())
-                            .and_then(|mut journal| journal.settle(
-                                &request_id_owned,
-                                &operation_id_owned,
-                                &account_fence_owned,
-                                turn_generation,
-                                DurableTurnState::Failed,
-                                Some(error.message.clone()),
-                                now_ms(),
-                            ))
+                            .and_then(|mut journal| {
+                                if checkpoint_outcome_unknown {
+                                    journal.mark_outcome_unknown(
+                                        &request_id_owned,
+                                        &operation_id_owned,
+                                        &account_fence_owned,
+                                        turn_generation,
+                                        error.message.clone(),
+                                        now_ms(),
+                                    )
+                                } else {
+                                    journal.settle(
+                                        &request_id_owned,
+                                        &operation_id_owned,
+                                        &account_fence_owned,
+                                        turn_generation,
+                                        DurableTurnState::Failed,
+                                        Some(error.message.clone()),
+                                        now_ms(),
+                                    )
+                                }
+                            })
                             .is_ok();
                         if settled {
                             push_turn_event(
                                 &turn_events,
-                                json!({
-                                    "type":"operation.failed",
-                                    "operationId":operation_id_owned,
-                                    "requestId":request_id_owned,
-                                    "message":error.message,
-                                }),
+                                if checkpoint_outcome_unknown {
+                                    json!({
+                                        "type":"operation.interrupted",
+                                        "operationId":operation_id_owned,
+                                        "requestId":request_id_owned,
+                                        "reason":"outcome-unknown",
+                                        "message":error.message,
+                                    })
+                                } else {
+                                    json!({
+                                        "type":"operation.failed",
+                                        "operationId":operation_id_owned,
+                                        "requestId":request_id_owned,
+                                        "message":error.message,
+                                    })
+                                },
                             );
                         }
                     }

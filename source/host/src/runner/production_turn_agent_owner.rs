@@ -25,6 +25,8 @@ pub type ProductionTurnDiskPressureCommit =
 pub type ProductionTurnDiskPressureRelease =
     Arc<dyn Fn() -> Result<bool, String> + Send + Sync>;
 pub type ProductionTurnProfileAnnouncementCommit = Arc<dyn Fn() + Send + Sync>;
+pub type ProductionTurnCheckpointPersist =
+    Arc<dyn Fn(usize, usize) -> Result<(), String> + Send + Sync>;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u64)]
@@ -140,6 +142,7 @@ pub struct ProductionTurnAgentLifecycleBindings {
     disk_pressure_release: Option<ProductionTurnDiskPressureRelease>,
     profile_announcement_prompt: Option<String>,
     profile_announcement_commit: Option<ProductionTurnProfileAnnouncementCommit>,
+    checkpoint_persist: Option<ProductionTurnCheckpointPersist>,
 }
 
 impl ProductionTurnAgentLifecycleBindings {
@@ -157,7 +160,16 @@ impl ProductionTurnAgentLifecycleBindings {
             disk_pressure_release: None,
             profile_announcement_prompt: None,
             profile_announcement_commit: None,
+            checkpoint_persist: None,
         }
+    }
+
+    pub fn with_checkpoint_persist(
+        mut self,
+        persist: ProductionTurnCheckpointPersist,
+    ) -> Self {
+        self.checkpoint_persist = Some(persist);
+        self
     }
 
     pub fn with_disk_pressure_callbacks(
@@ -275,6 +287,11 @@ impl<P: TurnStreamProvider> ProductionTurnAgentOwner<P> {
         mut self,
         bindings: ProductionTurnAgentLifecycleBindings,
     ) -> Result<Self, ProviderFailure> {
+        if bindings.checkpoint_persist.is_none() {
+            return Err(ProviderFailure::new(
+                "production turn durable checkpoint persistence is not bound",
+            ));
+        }
         self.release_uncommitted_disk_pressure();
         self.disk_pressure_episode_id = match bindings.disk_pressure_claim.as_ref() {
             Some(claim) => claim().map_err(ProviderFailure::new)?,
@@ -398,6 +415,16 @@ impl<P: TurnStreamProvider> ProductionTurnAgentOwner<P> {
                     result.chunks.len(),
                 )
                 .map_err(ProviderFailure::new)?;
+                let persist = self
+                    .lifecycle_bindings
+                    .as_ref()
+                    .and_then(|bindings| bindings.checkpoint_persist.as_ref())
+                    .expect("validated durable checkpoint persistence binding");
+                persist(checkpoint.attempt, checkpoint.emitted_chunks).map_err(|error| {
+                    ProviderFailure::new(format!(
+                        "durable turn checkpoint persistence failed: {error}"
+                    ))
+                })?;
                 let checkpoint = persist_checkpoint(checkpoint);
                 let settlement =
                     settle_completed_turn(checkpoint, result.finish_reason)
@@ -706,6 +733,7 @@ mod tests {
         let release_count = Arc::clone(&releases);
         let profile_count = Arc::clone(&profiles);
         let lifecycle = ProductionTurnAgentLifecycleBindings::new("acct", "agent", "op")
+            .with_checkpoint_persist(Arc::new(|_, _| Ok(())))
             .with_disk_pressure_callbacks(
                 Arc::new(|| Ok(Some("episode-1".into()))),
                 Arc::new(move || {
@@ -742,10 +770,26 @@ mod tests {
     }
 
     #[test]
+    fn checkpoint_persistence_failure_blocks_terminal_completion() {
+        let lifecycle = ProductionTurnAgentLifecycleBindings::new("acct", "agent", "op")
+            .with_checkpoint_persist(Arc::new(|_, _| Err("disk full".into())));
+        let mut owner = ProductionTurnAgentOwner::new(Provider {
+            prompts: Arc::new(Mutex::new(Vec::new())),
+            fail: false,
+        })
+        .with_build_bindings(bindings(Arc::new(AtomicUsize::new(0))))
+        .with_lifecycle_bindings(lifecycle)
+        .unwrap();
+        let error = owner.run(input()).unwrap_err();
+        assert!(error.message.contains("checkpoint persistence failed"));
+    }
+
+    #[test]
     fn completion_event_is_published_after_profile_lifecycle_commit() {
         let profiles = Arc::new(AtomicUsize::new(0));
         let profile_count = Arc::clone(&profiles);
         let lifecycle = ProductionTurnAgentLifecycleBindings::new("acct", "agent", "op")
+            .with_checkpoint_persist(Arc::new(|_, _| Ok(())))
             .with_profile_announcement(
                 Some("<agent_profile>Renamed</agent_profile>".into()),
                 Some(Arc::new(move || {
@@ -784,6 +828,7 @@ mod tests {
         let release_count = Arc::clone(&releases);
         let profile_count = Arc::clone(&profiles);
         let lifecycle = ProductionTurnAgentLifecycleBindings::new("acct", "agent", "op")
+            .with_checkpoint_persist(Arc::new(|_, _| Ok(())))
             .with_disk_pressure_callbacks(
                 Arc::new(|| Ok(Some("episode-1".into()))),
                 Arc::new(|| Ok(true)),

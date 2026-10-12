@@ -1,7 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
-use std::fs;
-use std::path::PathBuf;
+use std::{fs, io::Write, path::PathBuf};
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -23,6 +22,12 @@ pub struct DurableTurnRecord {
     pub started_at_ms: u64,
     pub updated_at_ms: u64,
     pub reason: Option<String>,
+    #[serde(default)]
+    pub checkpoint_attempt: Option<usize>,
+    #[serde(default)]
+    pub checkpoint_emitted_chunks: Option<usize>,
+    #[serde(default)]
+    pub checkpointed_at_ms: Option<u64>,
 }
 
 #[derive(Default, Deserialize, Serialize)]
@@ -104,6 +109,9 @@ impl DurableTurnJournal {
                 started_at_ms: now_ms,
                 updated_at_ms: now_ms,
                 reason: None,
+                checkpoint_attempt: None,
+                checkpoint_emitted_chunks: None,
+                checkpointed_at_ms: None,
             },
         );
         self.persist()?;
@@ -132,6 +140,25 @@ impl DurableTurnJournal {
             return Err("stale turn callback fenced by operation/account/generation".into());
         }
         Ok(())
+    }
+
+    pub fn persist_checkpoint_metadata(
+        &mut self,
+        request_id: &str,
+        operation_id: &str,
+        account_fence: &str,
+        generation: u64,
+        attempt: usize,
+        emitted_chunks: usize,
+        now_ms: u64,
+    ) -> Result<(), String> {
+        self.assert_current(request_id, operation_id, account_fence, generation)?;
+        let record = self.state.records.get_mut(request_id).expect("asserted record");
+        record.checkpoint_attempt = Some(attempt);
+        record.checkpoint_emitted_chunks = Some(emitted_chunks);
+        record.checkpointed_at_ms = Some(now_ms);
+        record.updated_at_ms = now_ms;
+        self.persist()
     }
 
     pub fn settle(
@@ -261,12 +288,18 @@ impl DurableTurnJournal {
             fs::create_dir_all(parent).map_err(|e| e.to_string())?;
         }
         let tmp = self.path.with_extension("json.tmp");
-        fs::write(
-            &tmp,
-            serde_json::to_vec_pretty(&self.state).map_err(|e| e.to_string())?,
-        )
-        .map_err(|e| e.to_string())?;
-        fs::rename(tmp, &self.path).map_err(|e| e.to_string())
+        let bytes = serde_json::to_vec_pretty(&self.state).map_err(|e| e.to_string())?;
+        let result = (|| -> Result<(), String> {
+            let mut file = fs::File::create(&tmp).map_err(|e| e.to_string())?;
+            file.write_all(&bytes).map_err(|e| e.to_string())?;
+            file.sync_all().map_err(|e| e.to_string())?;
+            fs::rename(&tmp, &self.path).map_err(|e| e.to_string())?;
+            Ok(())
+        })();
+        if result.is_err() {
+            let _ = fs::remove_file(&tmp);
+        }
+        result
     }
 }
 
@@ -304,6 +337,27 @@ mod tests {
                 5,
             )
             .is_err());
+    }
+
+    #[test]
+    fn checkpoint_metadata_is_durable_before_terminal_settlement() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("turns.json");
+        let mut journal = DurableTurnJournal::open(&path, 1).unwrap();
+        let generation = journal.begin("r1", "o1", "acct:a", 2).unwrap();
+        journal
+            .persist_checkpoint_metadata("r1", "o1", "acct:a", generation, 3, 7, 4)
+            .unwrap();
+        assert_eq!(journal.record("r1").unwrap().checkpoint_attempt, Some(3));
+        assert_eq!(journal.record("r1").unwrap().checkpoint_emitted_chunks, Some(7));
+        drop(journal);
+
+        let recovered = DurableTurnJournal::open(&path, 5).unwrap();
+        let record = recovered.record("r1").unwrap();
+        assert_eq!(record.state, DurableTurnState::OutcomeUnknown);
+        assert_eq!(record.checkpoint_attempt, Some(3));
+        assert_eq!(record.checkpoint_emitted_chunks, Some(7));
+        assert_eq!(record.checkpointed_at_ms, Some(4));
     }
 
     #[test]

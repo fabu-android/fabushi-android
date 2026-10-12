@@ -20,8 +20,8 @@ pub use production_turn_agent_owner::{
     ProductionTurnAgentBuildBindings, ProductionTurnAgentBuildInput,
     ProductionTurnAgentLifecycleBindings, ProductionTurnAgentOwner,
     ProductionTurnAgentStaticConfig, ProductionTurnAgentStaticProjection,
-    ProductionTurnEvent, ProductionTurnInput, ProductionTurnPrivacyMode,
-    ProductionTurnProfileAnnouncementCommit, ProductionTurnResult,
+    ProductionTurnCheckpointPersist, ProductionTurnEvent, ProductionTurnInput,
+    ProductionTurnPrivacyMode, ProductionTurnProfileAnnouncementCommit, ProductionTurnResult,
     ProductionTurnSummarizationPrompt, SAND_AGENT_MAX_STEPS, SAND_AGENT_TOKEN_LIMIT,
 };
 pub use production_turn_lifecycle::{

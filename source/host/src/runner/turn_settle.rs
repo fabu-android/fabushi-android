@@ -31,6 +31,8 @@ pub fn prepare_checkpoint(
     })
 }
 
+/// Mark a checkpoint durable only after the production persistence callback has
+/// committed its metadata to the durable turn journal.
 pub fn persist_checkpoint(mut checkpoint: TurnCheckpoint) -> TurnCheckpoint {
     checkpoint.durable = true;
     checkpoint
