@@ -753,6 +753,7 @@ internal fun ProductionRenderer(
                             onDuplicateBot = botModel::duplicateBot,
                             onDeleteBot = botModel::deleteBotAndAwait,
                             onSetBotPinned = botModel::setBotPinned,
+                            onReorderPinnedBot = botModel::reorderPinnedBot,
                             onToggleSidebarSection = botModel::toggleSidebarSection,
                             onRenameSidebarSection = botModel::renameSidebarSection,
                             onDeleteSidebarSection = botModel::deleteSidebarSection,
