@@ -621,6 +621,31 @@ fn connector_tag(value: &str) -> String {
     }
 }
 
+pub fn onboarding_step_event(
+    step: &str,
+    step_index: i64,
+    direction: &str,
+) -> Result<StructuredTelemetryEvent, String> {
+    const STEPS: [&str; 6] = ["meet", "computer-demo", "jobs", "tools", "create", "hand-off"];
+    if !STEPS.contains(&step) {
+        return Err("onboarding step is invalid".into());
+    }
+    if !(0..=16).contains(&step_index) {
+        return Err("onboarding step index is invalid".into());
+    }
+    if !matches!(direction, "forward" | "back") {
+        return Err("onboarding direction is invalid".into());
+    }
+    Ok(StructuredTelemetryEvent {
+        level: TelemetryLevel::Info,
+        metadata: BTreeMap::from([
+            ("step".into(), step.into()),
+            ("step_index".into(), step_index.to_string()),
+            ("direction".into(), direction.into()),
+        ]),
+    })
+}
+
 pub fn gateway_reachability_event(
     outcome: &str,
     method: &str,
@@ -1078,6 +1103,18 @@ mod tests {
         assert_eq!(ack.level, TelemetryLevel::Info);
         assert_eq!(ack.metadata.get("attachment_count").map(String::as_str), Some("2"));
         assert!(send_ack_event(1.0, "bad", 1.0, false, 0.0, None, None, None, None, None, None).is_err());
+    }
+
+    #[test]
+    fn onboarding_step_preserves_desktop_allowlist_index_and_direction() {
+        let event = onboarding_step_event("computer-demo", 1, "forward").unwrap();
+        assert_eq!(event.level, TelemetryLevel::Info);
+        assert_eq!(event.metadata.get("step").map(String::as_str), Some("computer-demo"));
+        assert_eq!(event.metadata.get("step_index").map(String::as_str), Some("1"));
+        assert_eq!(event.metadata.get("direction").map(String::as_str), Some("forward"));
+        assert!(onboarding_step_event("unknown", 1, "forward").is_err());
+        assert!(onboarding_step_event("meet", 17, "forward").is_err());
+        assert!(onboarding_step_event("meet", 0, "sideways").is_err());
     }
 
     #[test]
