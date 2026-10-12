@@ -179,6 +179,7 @@ fun FabushiMessagingSurface(
     onDenyPermissions: () -> Unit,
     onSubmitPluginVariables: (Map<String, String>) -> Unit,
     onCancelPluginVariables: () -> Unit,
+    onSaveMcpServerInstructions: (String, String) -> Unit,
     updateState: AndroidUpdateUiState = AndroidUpdateUiState(
         phase = AndroidUpdatePhase.DISABLED,
         currentVersion = BuildConfig.VERSION_NAME,
@@ -587,6 +588,7 @@ fun FabushiMessagingSurface(
             onOpen = onOpen,
             onSubmitVariables = onSubmitPluginVariables,
             onCancelVariables = onCancelPluginVariables,
+            onSaveMcpServerInstructions = onSaveMcpServerInstructions,
             onBack = { destination = MobileDestination.HOME },
         )
         MobileDestination.REMOTE_COMPUTER -> RemoteComputerSurface(
