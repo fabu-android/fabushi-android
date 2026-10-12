@@ -493,7 +493,7 @@ fn project_media_search_entry(entry: &Value) -> Option<TranscriptMediaMatch> {
 
 fn whole_media_dimension(value: Option<&Value>) -> Option<i64> {
     let value = value?.as_f64()?;
-    (value.is_finite() && value >= 0.0 && value.fract() == 0.0).then_some(value as i64)
+    value.is_finite().then_some((value + 0.5).floor() as i64)
 }
 
 fn media_basename(value: &str) -> String {
@@ -765,7 +765,7 @@ mod tests {
         store.append_entry(json!({
             "id":"old-image","agentId":"agent-a","kind":"user-attachment",
             "filePath":"content://files/Project%20Alpha.png","timestampMs":5,
-            "width":640,"height":480
+            "width":640.4,"height":480.6
         })).unwrap();
         store.append_entry(json!({
             "id":"new-doc","agentId":"agent-b","kind":"send-message",
@@ -784,7 +784,7 @@ mod tests {
         assert_eq!(all[1].file_name, "Project Alpha.png");
         assert_eq!(all[1].mime.as_deref(), Some("image/png"));
         assert_eq!(all[1].width, Some(640));
-        assert_eq!(all[1].height, Some(480));
+        assert_eq!(all[1].height, Some(481));
         assert_eq!(store.search_media("proj alp", 50).unwrap().len(), 2);
         assert!(store.search_media("missing", 50).unwrap().is_empty());
         assert!(store.search_media("", 0).is_err());
