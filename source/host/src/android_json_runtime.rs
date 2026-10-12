@@ -37,6 +37,9 @@ use crate::mcp_auth::{
     McpToolExecutionBackendResult, EXECUTE_TOOL_TIMEOUT_MS,
     SandPrivacyMode as BackendSandPrivacyMode,
 };
+use crate::extensions::telemetry::product_events::{
+    agent_load_event, agents_unreachable_event, StructuredTelemetryEvent, TelemetryLevel,
+};
 use crate::extensions::teach_recording::{DurableTeachRecordingOwner, TeachRecordingPhase};
 use crate::extensions::trays::extension::{start_trays_extension, HostTraysExtension};
 use crate::extensions::trays::trays_service::{TrayEvent, TraySubscription};
@@ -1557,6 +1560,62 @@ impl AndroidJsonHost {
         Arc::clone(&self.runtime_call_cancellations)
     }
 
+    fn record_product_telemetry(
+        &mut self,
+        message: &str,
+        event: StructuredTelemetryEvent,
+    ) -> Result<Value, String> {
+        self.sync_structured_log_account_slot();
+        let level = match event.level {
+            TelemetryLevel::Info => "info",
+            TelemetryLevel::Warn => "warn",
+        };
+        self.structured_log_spool
+            .record(level, message, event.metadata, now_ms())
+            .map_err(|error| format!("failed to persist Android product telemetry: {error}"))?;
+        Ok(json!({"recorded":true}))
+    }
+
+    fn agent_load_telemetry(&mut self, params: &Value) -> Result<Value, String> {
+        let duration_ms = params
+            .get("durationMs")
+            .and_then(Value::as_f64)
+            .ok_or("durationMs is required")?;
+        let event = agent_load_event(
+            duration_ms,
+            params.get("openRpcMs").and_then(Value::as_f64),
+            params.get("queueMs").and_then(Value::as_f64),
+            params.get("renderMs").and_then(Value::as_f64),
+            params.get("cold").and_then(Value::as_bool).ok_or("cold is required")?,
+            params.get("stale").and_then(Value::as_bool),
+            required_string(params, "boxState")?,
+            required_string(params, "outcome")?,
+        )?;
+        self.record_product_telemetry("sand.agent_load", event)
+    }
+
+    fn agents_unreachable_telemetry(&mut self, params: &Value) -> Result<Value, String> {
+        let phase = required_string(params, "phase")?;
+        let is_manual = params
+            .get("isManual")
+            .and_then(Value::as_bool)
+            .ok_or("isManual is required")?;
+        let error_class = params
+            .get("errorClass")
+            .and_then(Value::as_str)
+            .filter(|value| !value.trim().is_empty());
+        if error_class.is_some_and(|value| value.chars().count() > 128) {
+            return Err("errorClass exceeds telemetry bound".into());
+        }
+        let event = agents_unreachable_event(
+            phase,
+            is_manual,
+            error_class,
+            params.get("msSinceLastReached").and_then(Value::as_f64),
+        )?;
+        self.record_product_telemetry("sand.agents_unreachable", event)
+    }
+
     fn sync_structured_log_account_slot(&mut self) {
         let account_slot = self
             .account
@@ -1737,6 +1796,8 @@ impl AndroidJsonHost {
                     .report_access_blocked(edge, cause, access_reason, ms_blocked)?;
                 Ok(json!({"recorded":true}))
             },
+            "feature.telemetry.agentLoad" => self.agent_load_telemetry(params),
+            "feature.telemetry.agentsUnreachable" => self.agents_unreachable_telemetry(params),
             "feature.diagnostics.edgeFailures.snapshot" => serde_json::to_value(self.edge_failures.snapshot()).map_err(|error| format!("failed to serialize edge failure snapshot: {error}")),
             "feature.diagnostics.edgeFailures.report" => {
                 let area = required_string(params, "area")?;
