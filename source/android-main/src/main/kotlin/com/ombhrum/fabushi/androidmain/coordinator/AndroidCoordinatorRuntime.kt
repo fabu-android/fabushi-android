@@ -378,6 +378,28 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
             JSONObject().put("serverId", serverId),
         ).optJSONArray("tools") ?: JSONArray()
 
+    override fun mcpServerCustomInstructions(serverId: String): String? {
+        val projection = host.request(
+            "feature.mcp.serverInstructions.get",
+            JSONObject().put("serverId", serverId),
+        )
+        return projection
+            .takeIf { it.has("instructions") && !it.isNull("instructions") }
+            ?.optString("instructions")
+            ?.takeIf(String::isNotBlank)
+    }
+
+    override fun setMcpServerCustomInstructions(serverId: String, instructions: String): String? {
+        val projection = host.request(
+            "feature.mcp.serverInstructions.set",
+            JSONObject().put("serverId", serverId).put("instructions", instructions),
+        )
+        return projection
+            .takeIf { it.has("instructions") && !it.isNull("instructions") }
+            ?.optString("instructions")
+            ?.takeIf(String::isNotBlank)
+    }
+
     override fun toggleMcpServerTool(serverId: String, toolName: String): JSONArray =
         host.request(
             "feature.mcp.serverTools.toggle",
