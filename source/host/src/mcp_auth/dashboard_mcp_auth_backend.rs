@@ -57,6 +57,9 @@ pub const DASHBOARD_GET_CURRENT_PERIOD_USAGE_PATH: &str =
     "/aiserver.v1.DashboardService/GetCurrentPeriodUsage";
 pub const DASHBOARD_GET_SAND_USAGE_STATUS_PATH: &str =
     "/aiserver.v1.DashboardService/GetSandUsageStatus";
+pub const DASHBOARD_GET_SAND_ACCESS_STATUS_PATH: &str =
+    "/aiserver.v1.DashboardService/GetSandAccessStatus";
+pub const SAND_ACCESS_REQUEST_TIMEOUT_MS: u64 = 10_000;
 pub const DASHBOARD_GET_SAND_TRIAL_CLAIM_STATUS_PATH: &str =
     "/aiserver.v1.DashboardService/GetSandTrialClaimStatus";
 pub const DASHBOARD_CANCEL_SAND_TRIAL_PATH: &str =
@@ -868,6 +871,19 @@ impl CursorDashboardMcpAuthBackend {
                 "team": decode_team_pr_review_destination(&team_bytes)?,
             }))
         })
+    }
+
+    pub fn resolve_sand_access_status(&self) -> Result<Value, String> {
+        let credentials = self.credentials.credentials()?;
+        let ghost_mode = self.resolve_ghost_mode(&credentials);
+        let response = self.send_unary(
+            &credentials,
+            DASHBOARD_GET_SAND_ACCESS_STATUS_PATH,
+            &[],
+            SAND_ACCESS_REQUEST_TIMEOUT_MS,
+            ghost_mode,
+        )?;
+        decode_sand_access_status(&response)
     }
 
     pub fn resolve_sand_usage_summary(&self) -> Result<Value, String> {
@@ -2194,6 +2210,44 @@ fn decode_timestamp_ms(input: &[u8]) -> Result<u64, String> {
         .ok_or_else(|| "Dashboard timestamp exceeds supported range".to_string())
 }
 
+fn decode_sand_access_status(bytes: &[u8]) -> Result<Value, String> {
+    let state = decode_optional_varint_field(bytes, 1)?.unwrap_or(0);
+    let purchase_channel = decode_optional_varint_field(bytes, 2)?.unwrap_or(0);
+    let block_reason = decode_optional_varint_field(bytes, 3)?.unwrap_or(0);
+    let state = match state {
+        0 => "unknown",
+        1 => "granted",
+        2 => "unavailable",
+        3 => "paymentRequired",
+        other => return Err(format!("unsupported Sand access state {other}")),
+    };
+    let purchase_channel = match purchase_channel {
+        0 => "unspecified",
+        1 => "inApp",
+        2 => "manageInCursor",
+        3 => "manageOnWeb",
+        other => return Err(format!("unsupported Sand purchase channel {other}")),
+    };
+    let reason = match block_reason {
+        0 => "unspecified",
+        1 => "none",
+        2 => "teamPrivacyMode",
+        3 => "teamSetupRequired",
+        4 => "teamAccessRequired",
+        5 => "notOffered",
+        6 => "freeTrialAvailable",
+        7 => "paywallIndividual",
+        8 => "paywallTeamMember",
+        9 => "paywallTeamAdmin",
+        other => return Err(format!("unsupported Sand access block reason {other}")),
+    };
+    Ok(json!({
+        "state": state,
+        "purchaseChannel": purchase_channel,
+        "reason": reason,
+    }))
+}
+
 fn decode_sand_usage_summary(
     status: &[u8],
     current_period: &[u8],
@@ -2668,6 +2722,43 @@ mod tests {
             decode_generate_image_response(&response).unwrap_err(),
             GenerateImageBackendError::ModelRestricted("model unavailable".into())
         );
+    }
+
+    #[test]
+    fn sand_access_path_and_decoder_match_desktop_generated_contract() {
+        assert_eq!(
+            DASHBOARD_GET_SAND_ACCESS_STATUS_PATH,
+            "/aiserver.v1.DashboardService/GetSandAccessStatus"
+        );
+        assert_eq!(SAND_ACCESS_REQUEST_TIMEOUT_MS, 10_000);
+
+        let mut response = Vec::new();
+        encode_key(1, 0, &mut response);
+        encode_varint(3, &mut response);
+        encode_key(2, 0, &mut response);
+        encode_varint(1, &mut response);
+        encode_key(3, 0, &mut response);
+        encode_varint(7, &mut response);
+        assert_eq!(
+            decode_sand_access_status(&response).unwrap(),
+            json!({
+                "state":"paymentRequired",
+                "purchaseChannel":"inApp",
+                "reason":"paywallIndividual"
+            })
+        );
+        assert_eq!(
+            decode_sand_access_status(&[]).unwrap(),
+            json!({
+                "state":"unknown",
+                "purchaseChannel":"unspecified",
+                "reason":"unspecified"
+            })
+        );
+        let mut invalid = Vec::new();
+        encode_key(3, 0, &mut invalid);
+        encode_varint(10, &mut invalid);
+        assert!(decode_sand_access_status(&invalid).unwrap_err().contains("block reason"));
     }
 
     #[test]
