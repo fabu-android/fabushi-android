@@ -138,6 +138,10 @@ internal fun ProductionRenderer(
                     loggedIn = state.loggedIn,
                     transport = state.rootConnectionProjection.transport,
                 )
+                RootShellStatusBadge(
+                    loggedIn = state.loggedIn,
+                    connection = state.rootConnectionProjection,
+                )
                 if (showAbout) {
                     AndroidAboutDialog(
                         updateState = updateState,
