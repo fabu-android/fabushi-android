@@ -99,6 +99,36 @@ internal fun shouldApplyMcpServerCatalogResult(
     )
 
 
+internal fun parseMcpTeamPopularity(projection: JSONObject): Map<String, Long> {
+    val counts = projection.optJSONObject("counts") ?: return emptyMap()
+    return buildMap {
+        val keys = counts.keys()
+        while (keys.hasNext()) {
+            val pluginId = keys.next().trim()
+            val count = counts.optLong(pluginId, -1L)
+            if (pluginId.isNotEmpty() && count >= 0L) {
+                put(pluginId, count)
+            }
+        }
+    }
+}
+
+internal fun shouldApplyMcpTeamPopularityResult(
+    requestGeneration: Long,
+    currentGeneration: Long,
+    expectedAuthId: String,
+    currentLoggedIn: Boolean,
+    currentAuthId: String,
+): Boolean =
+    shouldApplyAccountPrivacyModeResult(
+        requestGeneration = requestGeneration,
+        currentGeneration = currentGeneration,
+        expectedAuthId = expectedAuthId,
+        currentLoggedIn = currentLoggedIn,
+        currentAuthId = currentAuthId,
+    )
+
+
 data class PermissionRequest(
     val pluginId: String,
     val runtime: String,
@@ -284,6 +314,7 @@ data class MarketplaceUiState(
     val query: String = "",
     val message: String = "Mahayana Rust Host 已启动",
     val plugins: List<MarketplacePlugin> = emptyList(),
+    val teamPluginPopularity: Map<String, Long> = emptyMap(),
     val mcpServers: List<McpServerCatalogItem> = emptyList(),
     val mcpServersBusy: Boolean = false,
     val mcpServersError: String? = null,
@@ -340,6 +371,7 @@ class MarketplaceViewModel(application: Application) : AndroidViewModel(applicat
     private var credentialVaultGeneration: Long = 0L
     private var timeZoneSettingsGeneration: Long = 0L
     private var mcpServerCatalogGeneration: Long = 0L
+    private var mcpTeamPopularityGeneration: Long = 0L
 
     init {
         featureEventSubscription = coordinator.addFeatureEventListener { event ->
@@ -377,6 +409,7 @@ class MarketplaceViewModel(application: Application) : AndroidViewModel(applicat
                     restoreChatTranscript()
                     refresh()
                     refreshMcpServerCatalog()
+                    refreshMcpTeamPopularity()
                 }
             }.onFailure { error ->
                 mutableState.value = mutableState.value.copy(authResolved = true, message = "账号状态加载失败：${error.message ?: error::class.java.simpleName}")
@@ -528,6 +561,7 @@ class MarketplaceViewModel(application: Application) : AndroidViewModel(applicat
                         restoreChatTranscript()
                         refresh()
                         refreshMcpServerCatalog()
+                        refreshMcpTeamPopularity()
                     }
                     "cancelled" -> mutableState.value = mutableState.value.copy(message = "登录授权已取消")
                     "failed" -> mutableState.value = mutableState.value.copy(message = "登录授权失败")
@@ -556,6 +590,7 @@ class MarketplaceViewModel(application: Application) : AndroidViewModel(applicat
                     accountPrivacyRefreshGeneration += 1
                     accountUsageRefreshGeneration += 1
                     mcpServerCatalogGeneration += 1
+                    mcpTeamPopularityGeneration += 1
                     mutableState.value = mutableState.value.copy(
                         authResolved = true,
                         loggedIn = result.optBoolean("loggedIn", false),
@@ -570,6 +605,7 @@ class MarketplaceViewModel(application: Application) : AndroidViewModel(applicat
                         credentialVaultItems = emptyList(),
                         credentialVaultBusy = false,
                         credentialVaultError = null,
+                        teamPluginPopularity = emptyMap(),
                         mcpServers = emptyList(),
                         mcpServersBusy = false,
                         mcpServersError = null,
@@ -1186,6 +1222,38 @@ class MarketplaceViewModel(application: Application) : AndroidViewModel(applicat
                 mutableState.value = mutableState.value.copy(
                     message = "连接重试失败：" + (error.message ?: error::class.java.simpleName),
                 )
+            }
+        }
+    }
+
+    fun refreshMcpTeamPopularity() {
+        val current = mutableState.value
+        if (!current.loggedIn || current.accountAuthId.isBlank()) {
+            mcpTeamPopularityGeneration += 1
+            mutableState.value = current.copy(teamPluginPopularity = emptyMap())
+            return
+        }
+        val generation = ++mcpTeamPopularityGeneration
+        val expectedAuthId = current.accountAuthId
+        viewModelScope.launch {
+            runCatching {
+                withContext(Dispatchers.IO) {
+                    parseMcpTeamPopularity(coordinator.mcpTeamPopularity())
+                }
+            }.onSuccess { counts ->
+                val latest = mutableState.value
+                if (!shouldApplyMcpTeamPopularityResult(
+                        requestGeneration = generation,
+                        currentGeneration = mcpTeamPopularityGeneration,
+                        expectedAuthId = expectedAuthId,
+                        currentLoggedIn = latest.loggedIn,
+                        currentAuthId = latest.accountAuthId,
+                    )
+                ) return@onSuccess
+                mutableState.value = latest.copy(teamPluginPopularity = counts)
+            }.onFailure {
+                // Desktop treats popularity as best-effort ranking metadata. Keep the marketplace
+                // usable and retain the latest same-account snapshot when this auxiliary RPC fails.
             }
         }
     }
