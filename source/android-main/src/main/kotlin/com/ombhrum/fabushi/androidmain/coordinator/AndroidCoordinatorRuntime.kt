@@ -13,6 +13,8 @@ import android.os.StatFs
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidOnDemandUsage
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidAccountUsageSummary
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidPrReviewPreferences
+import com.ombhrum.fabushi.androidpreload.runtime.AndroidAutoReviewInstructions
+import com.ombhrum.fabushi.androidpreload.runtime.AndroidAutoReviewInstructionsSnapshot
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidHumanCallSession
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidHumanCallLease
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidHumanCallSignal
@@ -432,6 +434,53 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
         return AndroidPrReviewPreferences(
             user = destination("user"),
             team = destination("team"),
+        )
+    }
+
+    override fun autoReviewInstructions(): AndroidAutoReviewInstructionsSnapshot =
+        parseAutoReviewInstructionsSnapshot(
+            host.request("feature.settings.autoReviewInstructions"),
+        )
+
+    override fun setAutoReviewInstructions(
+        expectedRevision: Long,
+        instructions: AndroidAutoReviewInstructions,
+    ): AndroidAutoReviewInstructionsSnapshot =
+        parseAutoReviewInstructionsSnapshot(
+            host.request(
+                "feature.settings.autoReviewInstructions.set",
+                JSONObject()
+                    .put("expectedRevision", expectedRevision)
+                    .put(
+                        "instructions",
+                        JSONObject()
+                            .put("isEnabled", instructions.isEnabled)
+                            .put("allowInstructions", JSONArray(instructions.allowInstructions))
+                            .put("blockInstructions", JSONArray(instructions.blockInstructions)),
+                    ),
+            ),
+        )
+
+    private fun parseAutoReviewInstructionsSnapshot(
+        projection: JSONObject,
+    ): AndroidAutoReviewInstructionsSnapshot {
+        val instructions = projection.getJSONObject("instructions")
+        fun stringList(key: String): List<String> {
+            val values = instructions.optJSONArray(key) ?: JSONArray()
+            return buildList(values.length()) {
+                for (index in 0 until values.length()) {
+                    values.optString(index).takeIf(String::isNotEmpty)?.let(::add)
+                }
+            }
+        }
+        return AndroidAutoReviewInstructionsSnapshot(
+            accountFence = projection.getString("accountFence"),
+            revision = projection.getLong("revision"),
+            instructions = AndroidAutoReviewInstructions(
+                isEnabled = instructions.optBoolean("isEnabled", true),
+                allowInstructions = stringList("allowInstructions"),
+                blockInstructions = stringList("blockInstructions"),
+            ),
         )
     }
 
