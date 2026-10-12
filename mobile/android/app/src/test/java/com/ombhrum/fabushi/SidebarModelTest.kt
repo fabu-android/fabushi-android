@@ -27,6 +27,29 @@ class SidebarModelTest {
     }
 
     @Test
+    fun projectionUsesHostPinnedOrderAndCanonicalRecentActivity() {
+        data class RecentAgent(
+            override val id: String,
+            override val isPinned: Boolean,
+            val updatedAt: Long,
+        ) : SidebarOrderAgent
+
+        val projection = projectSidebarAgents(
+            agents = listOf(
+                RecentAgent("old", false, 10L),
+                RecentAgent("pin-a", true, 40L),
+                RecentAgent("new", false, 30L),
+                RecentAgent("pin-b", true, 20L),
+            ),
+            pinnedAgentIds = listOf("pin-b", "pin-a"),
+            updatedAt = RecentAgent::updatedAt,
+        )
+
+        assertEquals(listOf("pin-b", "pin-a"), projection.pinned.map { it.id })
+        assertEquals(listOf("new", "old"), projection.recent.map { it.id })
+    }
+
+    @Test
     fun movePinnedAgentMatchesDesktopBeforeAfterAndNoopContracts() {
         val stored = listOf("a", "b", "c")
         assertEquals(
