@@ -3663,7 +3663,7 @@ impl AndroidJsonHost {
         let instructions = params
             .get("instructions")
             .cloned()
-            .ok_or("auto-review instructions are required")
+            .ok_or_else(|| "auto-review instructions are required".to_string())
             .and_then(|value| {
                 serde_json::from_value::<AutoReviewInstructions>(value)
                     .map_err(|error| format!("auto-review instructions are invalid: {error}"))
