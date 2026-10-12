@@ -291,15 +291,6 @@ internal fun MarketplaceContent(
                         Text(plugin.pluginId, style = MaterialTheme.typography.labelSmall)
                         Text(plugin.displayName, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
                         Text(plugin.description)
-                        state.teamPluginPopularity[plugin.pluginId]
-                            ?.takeIf { it > 0L }
-                            ?.let { memberInstallCount ->
-                                Text(
-                                    "团队 $memberInstallCount 人已安装",
-                                    modifier = Modifier.testTag("plugin-team-popularity-${plugin.pluginId}"),
-                                    style = MaterialTheme.typography.labelMedium,
-                                )
-                            }
                         plugin.latestVersion?.let { version ->
                             Text(
                                 "$version · GitHub ${plugin.sourceRef?.take(9) ?: "待确认"}",
