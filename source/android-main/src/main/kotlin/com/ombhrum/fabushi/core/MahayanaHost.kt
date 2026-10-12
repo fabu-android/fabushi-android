@@ -11,6 +11,9 @@ import org.json.JSONObject
 import java.io.Closeable
 import java.util.ArrayDeque
 import java.util.UUID
+import java.util.concurrent.Executors
+import java.util.concurrent.ScheduledExecutorService
+import java.util.concurrent.TimeUnit
 
 /**
  * Android process-owned Mahayana AppHost session.
@@ -74,9 +77,36 @@ class MahayanaHost(
                         appVersion,
                     )
                     check(value != 0L) { "Failed to initialize Mahayana Rust host" }
-                    SharedHost(handle = value, generation = processGeneration).also { created ->
+                    SharedHost(
+                        handle = value,
+                        generation = processGeneration,
+                        heartbeatExecutor = Executors.newSingleThreadScheduledExecutor { runnable ->
+                            Thread(runnable, "fabushi-host-session-heartbeat").apply { isDaemon = true }
+                        },
+                    ).also { created ->
                         created.refCount = 1
                         created.eventQueues[consumerId] = ArrayDeque()
+                        created.heartbeatExecutor.scheduleAtFixedRate(
+                            {
+                                synchronized(created.lock) {
+                                    val active = created.handle
+                                    if (active == 0L) return@synchronized
+                                    val request = JSONObject()
+                                        .put("method", "feature.telemetry.session.heartbeat")
+                                        .put(
+                                            "params",
+                                            JSONObject().put(
+                                                "observedAtMs",
+                                                System.currentTimeMillis().coerceAtLeast(1L),
+                                            ),
+                                        )
+                                    runCatching { nativeDispatch(active, request.toString()) }
+                                }
+                            },
+                            HOST_SESSION_HEARTBEAT_INTERVAL_MS,
+                            HOST_SESSION_HEARTBEAT_INTERVAL_MS,
+                            TimeUnit.MILLISECONDS,
+                        )
                         sharedHosts[appDataDir] = created
                     }
                 }
@@ -604,6 +634,7 @@ class MahayanaHost(
                 if (state.refCount <= 0) {
                     val active = state.handle
                     state.handle = 0L
+                    state.heartbeatExecutor.shutdownNow()
                     sharedHosts.remove(appDataDir)
                     if (active != 0L) nativeDestroy(active)
                 }
@@ -614,6 +645,7 @@ class MahayanaHost(
     private class SharedHost(
         @Volatile var handle: Long,
         val generation: Long,
+        val heartbeatExecutor: ScheduledExecutorService,
         var refCount: Int = 0,
         val lock: Any = Any(),
         val eventQueues: MutableMap<String, ArrayDeque<JSONObject>> = linkedMapOf(),
@@ -661,6 +693,7 @@ class MahayanaHost(
 
     private companion object {
         const val MAX_REPLAY_EVENTS = 256
+        const val HOST_SESSION_HEARTBEAT_INTERVAL_MS = 60_000L
         val registryLock = Any()
         val sharedHosts = mutableMapOf<String, SharedHost>()
     }
