@@ -626,6 +626,21 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
                 result.optJSONObject("auth")?.let(::observeAccountAccessAuth)
             }
         }
+    override fun authProfileUpdate(displayName: String): JSONObject {
+        val normalized = displayName.trim()
+        require(normalized.isNotEmpty() && normalized.length <= 200) {
+            "Account display name must contain 1-200 characters"
+        }
+        return host.request(
+            "feature.auth.profileUpdate",
+            JSONObject().put("displayName", normalized),
+        ).also { result ->
+            if (result.optBoolean("ok", false)) {
+                result.optJSONObject("auth")?.let(::observeAccountAccessAuth)
+            }
+        }
+    }
+
     override fun authLogout(): JSONObject =
         host.request("feature.auth.logout").also(::observeAccountAccessAuth)
 
