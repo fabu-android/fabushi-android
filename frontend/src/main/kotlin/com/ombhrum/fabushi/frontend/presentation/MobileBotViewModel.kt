@@ -5,6 +5,8 @@ import android.os.SystemClock
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidAgentAttachment
+import com.ombhrum.fabushi.androidpreload.runtime.AndroidAvatarCrop
+import com.ombhrum.fabushi.androidpreload.runtime.AndroidAvatarImageSource
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidCoordinatorPort
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidConversationOutlineItem
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidFindInChatEntry
@@ -958,6 +960,34 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
             agentSettingsFence.finish(token)
         }
     }
+
+    suspend fun stagePickedBotAvatarImage(rawUri: String): Result<AndroidAvatarImageSource> =
+        runCatching {
+            withContext(Dispatchers.IO) {
+                coordinator.stagePickedAgentAvatarImage(rawUri)
+            }
+        }
+
+    suspend fun stageGeneratedBotAvatarImage(
+        imageData: String,
+        mimeType: String,
+    ): Result<AndroidAvatarImageSource> =
+        runCatching {
+            withContext(Dispatchers.IO) {
+                coordinator.stageGeneratedAgentAvatarImage(imageData, mimeType)
+            }
+        }
+
+    suspend fun encodeBotAvatarCrop(
+        source: AndroidAvatarImageSource,
+        crop: AndroidAvatarCrop,
+    ): Result<String> =
+        runCatching {
+            withContext(Dispatchers.IO) {
+                coordinator.encodeAgentAvatarCrop(source, crop)
+            }
+        }
+
 
     fun updateBotAvatarImage(botId: String, avatarDataUrl: String?) {
         if (mutableState.value.bots.none { it.id == botId }) return
