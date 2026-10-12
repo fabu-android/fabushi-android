@@ -52,6 +52,10 @@ impl DurableAccountTelemetryOutbox {
         Ok(())
     }
 
+    pub fn account_slot(&self) -> &str {
+        &self.state.account_slot
+    }
+
     pub fn batch(&self) -> Vec<AccountTelemetryProjection> {
         self.state
             .checkpoint
