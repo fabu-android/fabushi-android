@@ -14536,20 +14536,26 @@
       "android_target": [
         "source/host/src/runner/android_host_inference.rs",
         "source/mahayana-agent-coordinator/src/inference_router.rs",
-        "source/packages/chat-inference-proto/src/cursorModelProviderOptions.rs"
+        "source/packages/chat-inference-proto/src/cursorModelProviderOptions.rs",
+        "source/host/src/android_json_runtime.rs",
+        "source/host/src/mcp_auth/dashboard_mcp_auth_backend.rs",
+        "source/android-preload/src/main/kotlin/com/ombhrum/fabushi/androidpreload/runtime/AndroidCoordinatorPort.kt",
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/coordinator/AndroidCoordinatorRuntime.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/presentation/MobileBotViewModel.kt"
       ],
-      "android_owner": "planned authenticated Rust Host model-catalog owner with immutable typed Android projection",
-      "platform_delta": "Android may query the Fabushi production inference backend rather than Electron Cursor client, but must preserve USER_AVAILABLE-equivalent scope and model-parameter metadata without exposing bearer credentials to Compose.",
-      "implementation_status": "mapped",
-      "production_wiring": "not yet wired; current provider resolves requested model strings but does not fetch a user-available catalog",
-      "unit_test": "required: catalog decode/validation, empty/error, stale account generation and duplicate model IDs",
-      "contract_test": "required against authenticated production model-catalog API",
-      "integration_test": "required Host -> Coordinator -> presentation selection and selected-model execution",
-      "packaged_test": "required",
-      "device_test": "required with protected account",
+      "android_owner": "Rust Host authenticated model-catalog owner backed by CursorDashboardMcpAuthBackend; typed Coordinator projects immutable account-fenced catalog; Presentation owns only transient selection UI.",
+      "platform_delta": "Android queries the authenticated Cursor/Fabushi backend directly from Rust Host using the same credential/checksum owner as other backend account services. Bearer credentials never cross JNI; Presentation receives an accountFence plus bounded catalog projection.",
+      "implementation_status": "implemented",
+      "production_wiring": "feature.models.available resolves current Host account fence then CursorDashboardMcpAuthBackend.resolve_available_models(); MobileBotViewModel refreshAvailableModels fences results by account slot + generation. Selected model is validated against a fresh authenticated catalog in validate_available_model_selection before send-acknowledgement durable mutation; arbitrary unavailable model IDs fail closed.",
+      "unit_test": "Backend codec/bounded unary helpers and Host send-acknowledgement tests cover catalog-backed model validation paths; Presentation projection has generation/account stale fencing in MobileBotViewModel. Focused exact-head CI result pending.",
+      "contract_test": "Authenticated AIService available-models backend route is wired through Host/Coordinator; credentials remain Host-only and selected IDs are revalidated before execution. Fresh exact-head Actions pending.",
+      "integration_test": "Host catalog -> typed Coordinator -> MobileBotViewModel selection -> send acknowledgement -> fresh Host validation -> Agent dispatch is production-wired. Protected-account live catalog acceptance still required.",
+      "packaged_test": "required on final exact-head APK/AAB",
+      "device_test": "required with protected authenticated account, including account switch and backend-unavailable state",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Do not infer catalog parity from CursorModelProviderOptions or arbitrary requested model support."
+      "notes": "Implementation and production wiring are present; previous note saying catalog was not wired is stale. Keep not-verified until same-head CI/package/protected-device evidence succeeds.",
+      "android_head_at_update": "90f07ff3351dcd25dc3183b2369192d648bfd361"
     },
     {
       "responsibility_id": "ONEPASSWORD-REMOTE-PROVISIONING-ANDROID-001",
