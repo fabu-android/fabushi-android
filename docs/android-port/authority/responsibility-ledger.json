@@ -13628,6 +13628,46 @@
       "production_wiring": "Rust Host remains the sole authenticated privacy-policy owner through feature.account.privacyMode and CursorDashboardMcpAuthBackend. The typed AndroidCoordinatorPort/Runtime exposes that read without creating a Kotlin network owner. MarketplaceViewModel refreshes the immutable mode after auth restore/login and when native Settings opens, clears it on logout, and maps read failures to absent rather than inventing a policy. FabushiSettingsSurface displays the canonical mode read-only beside canonical account identity; presentation never persists or enforces the policy.",
       "unit_test": "AccountPrivacyModePresentationTest@1b568c2aa8d4d460c05de2c3525bbaf33d5a3488 covers all current wire labels plus missing/unknown/future values as Unavailable. Existing Rust dashboard backend parsing/cache coverage remains applicable. Exact-head Actions and authenticated packaged/device policy refresh evidence are still required.",
       "notes": "Implemented source/runtime/presentation slice from Desktop cursor-profile.ts privacy responsibility without moving privacy truth into Compose. Keep verification_status not-verified until same-final-head Rust/Kotlin/package/device evidence exists."
+    },
+    {
+      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_owner": "Desktop production account edge",
+      "android_disposition": "android-adapted",
+      "implementation_status": "implemented",
+      "contract_test": "required",
+      "integration_test": "required",
+      "packaged_test": "required",
+      "device_test": "required",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "responsibility_id": "ACCOUNT-PROFILE-MUTATION-ANDROID-001",
+      "domain": "account-profile",
+      "desktop_sources": [
+        {
+          "path": "source/electron-main/account/cursor-profile.ts",
+          "blob_sha": "69645a4dee5b40a700fef5199c044892f46eaf3a",
+          "symbols": [
+            "fetchCursorProfile",
+            "updateCursorProfileName"
+          ]
+        }
+      ],
+      "responsibility": "Project canonical account identity and mutate the user-visible display name without exposing bearer credentials or creating a presentation-owned account truth.",
+      "visible_effect": "The signed-in Android user can view canonical account identity/avatar and edit the display name from native Settings; the change survives process death through the protected canonical session.",
+      "android_target": [
+        "source/host/src/account_service.rs",
+        "source/host/src/android_json_runtime.rs",
+        "source/android-preload/src/main/kotlin/com/ombhrum/fabushi/androidpreload/runtime/AndroidCoordinatorPort.kt",
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/coordinator/AndroidCoordinatorRuntime.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/presentation/MarketplaceViewModel.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/production/FabushiSettingsSurface.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/production/ProductionRenderer_view.kt"
+      ],
+      "android_owner": "Rust AndroidAccountService plus typed Coordinator projection",
+      "platform_delta": "Android adapts Desktop Cursor profile mutation to the Fabushi account /api/auth/update-profile endpoint. Compose only submits bounded display-name intent and consumes the returned immutable auth projection.",
+      "production_wiring": "AndroidAccountService validates 1-200 characters, refreshes the canonical session, posts same-origin authenticated profile mutation, rejects account-id changes, updates the session user, and returns a protected session mutation. If the downstream profile request fails after refresh, the refreshed session mutation is still returned for Keystore persistence. AndroidJsonHost exposes feature.auth.profileUpdate, AndroidCoordinatorRuntime owns the typed bridge and account observation, MarketplaceViewModel owns busy/error presentation state, and native Settings exposes the user action.",
+      "unit_test": "Rust account_service profile_display_name_validation_is_bounded_before_network_dispatch plus exact-head Android compile/static gates; remote success/failure integration and packaged/device evidence remain required.",
+      "notes": "Implemented source/runtime/presentation slice only. Keep verification_status not-verified until descendant exact-head Rust/Kotlin/package/device evidence proves refresh persistence, remote success/failure, process restart and protected-account behavior."
     }
   ],
   "traceability": {
