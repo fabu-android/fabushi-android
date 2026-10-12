@@ -1,5 +1,7 @@
 package com.ombhrum.fabushi
 
+import android.content.ClipboardManager
+import android.content.Context
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -529,6 +531,34 @@ fun RemoteComputerSurface(onClose: () -> Unit) {
                     nativeBusy = false
                 }
             },
+            onClipboardPaste = clipboardPaste@{ session ->
+                if (nativeBusy || !session.humanTakeover) return@clipboardPaste
+                val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                val text = clipboard.primaryClip
+                    ?.takeIf { it.itemCount > 0 }
+                    ?.getItemAt(0)
+                    ?.coerceToText(context)
+                    ?.toString()
+                    .orEmpty()
+                if (text.isEmpty()) {
+                    nativeError = "剪贴板没有可粘贴的文本。"
+                    return@clipboardPaste
+                }
+                scope.launch {
+                    nativeBusy = true
+                    runCatching {
+                        withContext(Dispatchers.IO) {
+                            coordinator.remoteComputerClipboardPaste(text)
+                        }
+                    }.onSuccess {
+                        nativeError = null
+                        status = "剪贴板文本已发送到远端电脑"
+                    }.onFailure {
+                        nativeError = "无法粘贴剪贴板；请确认人工接管仍开启且控制会话未过期。"
+                    }
+                    nativeBusy = false
+                }
+            },
             onSessionClose = sessionClose@{ session ->
                 if (nativeBusy) return@sessionClose
                 scope.launch {
@@ -595,6 +625,7 @@ private fun RemoteComputerNativePanel(
     onSessionConnect: (RemoteComputerSessionProjection) -> Unit,
     onSessionReconcile: (RemoteComputerSessionProjection) -> Unit,
     onHumanTakeover: (RemoteComputerSessionProjection, Boolean) -> Unit,
+    onClipboardPaste: (RemoteComputerSessionProjection) -> Unit,
     onSessionClose: (RemoteComputerSessionProjection) -> Unit,
 ) {
     Card(
@@ -788,6 +819,14 @@ private fun RemoteComputerNativePanel(
                                 ) {
                                     Text("结束会话")
                                 }
+                            }
+                            OutlinedButton(
+                                onClick = { onClipboardPaste(session) },
+                                enabled = !busy &&
+                                    session.humanTakeover &&
+                                    session.lifecycle !in setOf("closing", "outcome_unknown"),
+                            ) {
+                                Text("粘贴剪贴板")
                             }
                             Text(
                                 "控制凭据与 ICE/TURN 只保存在 Android Coordinator/Keystore；原生 viewport/input 由唯一 data-plane owner 持有，Presentation 不接触凭据。",
