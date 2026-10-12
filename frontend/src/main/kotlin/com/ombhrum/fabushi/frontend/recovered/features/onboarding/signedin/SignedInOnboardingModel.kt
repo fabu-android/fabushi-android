@@ -12,6 +12,23 @@ internal enum class SignedInOnboardingStep {
     HAND_OFF,
 }
 
+internal data class SignedInOnboardingTelemetryStep(
+    val name: String,
+    val index: Int,
+)
+
+internal fun signedInOnboardingTelemetryStep(
+    step: SignedInOnboardingStep,
+): SignedInOnboardingTelemetryStep =
+    when (step) {
+        SignedInOnboardingStep.MEET -> SignedInOnboardingTelemetryStep("meet", 0)
+        SignedInOnboardingStep.COMPUTER_DEMO -> SignedInOnboardingTelemetryStep("computer-demo", 1)
+        SignedInOnboardingStep.JOBS -> SignedInOnboardingTelemetryStep("jobs", 2)
+        SignedInOnboardingStep.TOOLS -> SignedInOnboardingTelemetryStep("tools", 3)
+        SignedInOnboardingStep.CREATE -> SignedInOnboardingTelemetryStep("create", 4)
+        SignedInOnboardingStep.HAND_OFF -> SignedInOnboardingTelemetryStep("hand-off", 5)
+    }
+
 internal data class SignedInOnboardingDraft(
     val name: String = "",
     val description: String = "",
