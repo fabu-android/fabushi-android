@@ -706,6 +706,8 @@ internal fun ProductionRenderer(
                     Box {
                         GrokHomeSurface(
                             accountName = state.accountName,
+                            accountAuthId = state.accountAuthId,
+                            accountAvatarUrl = state.accountAvatarUrl,
                             accessProjection = state.accountAccessProjection,
                             rosterAccessReadiness = rosterAccessReadiness,
                             messagingState = messagingState,
