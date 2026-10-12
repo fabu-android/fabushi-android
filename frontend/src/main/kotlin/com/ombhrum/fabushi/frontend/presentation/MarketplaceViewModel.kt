@@ -761,7 +761,7 @@ class MarketplaceViewModel(application: Application) : AndroidViewModel(applicat
                 cancel to reconcile
             }
             val current = mutableState.value
-            if (!shouldApplyAccountPrivacyModeResult(
+            if (!shouldApplyAccountUsageResult(
                     requestGeneration = generation,
                     currentGeneration = accountUsageRefreshGeneration,
                     expectedAuthId = expectedAuthId,
