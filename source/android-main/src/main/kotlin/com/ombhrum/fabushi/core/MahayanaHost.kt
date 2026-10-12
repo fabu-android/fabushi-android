@@ -2,6 +2,7 @@ package com.ombhrum.fabushi.core
 
 import android.content.Context
 import com.ombhrum.fabushi.androidmain.security.AndroidAccountSessionStore
+import com.ombhrum.fabushi.androidmain.security.AndroidMachineIdStore
 import com.ombhrum.fabushi.androidmain.security.AndroidPluginVariableSecretStore
 import com.ombhrum.fabushi.androidmain.security.AndroidRemoteBindingStore
 import org.json.JSONObject
@@ -25,6 +26,7 @@ class MahayanaHost(
 ) : Closeable {
     private val appDataDir = context.filesDir.absolutePath
     private val accountSessionStore = AndroidAccountSessionStore(context)
+    private val machineIdStore = AndroidMachineIdStore(context)
     private val pluginSecretStore = AndroidPluginVariableSecretStore(context)
     private val remoteBindingStore = AndroidRemoteBindingStore(context)
     private val consumerId = UUID.randomUUID().toString()
@@ -56,6 +58,7 @@ class MahayanaHost(
                         appDataDir,
                         processGeneration,
                         accountSessionStore.readSessionJson().orEmpty(),
+                        machineIdStore.getOrCreate(),
                     )
                     check(value != 0L) { "Failed to initialize Mahayana Rust host" }
                     SharedHost(handle = value, generation = processGeneration).also { created ->
@@ -521,6 +524,7 @@ class MahayanaHost(
         appDataDir: String,
         processGeneration: Long,
         initialAccountSessionJson: String,
+        machineId: String,
     ): Long
     private external fun nativeCreateTest(appDataDir: String): Long
     private external fun nativeDispatch(handle: Long, requestJson: String): String
