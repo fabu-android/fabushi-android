@@ -1,6 +1,8 @@
 package com.ombhrum.fabushi
 
 import android.content.ActivityNotFoundException
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
@@ -375,6 +377,15 @@ internal fun AndroidMediaViewer(
                     },
                     modifier = Modifier.testTag("android-media-fit"),
                 ) { Text("适应") }
+            }
+            if (message.contentType == "photo" && file != null) {
+                Button(
+                    onClick = {
+                        copyMediaImageToClipboard(context, file!!, message.mediaMimeType)
+                        saveNotice = "已复制图片"
+                    },
+                    modifier = Modifier.testTag("android-media-copy-image"),
+                ) { Text("复制图片") }
             }
             if (file != null) {
                 Button(
@@ -920,6 +931,17 @@ private fun writeMediaCache(context: Context, message: ChatMessage, bytes: ByteA
 
 private fun mediaUri(context: Context, file: File): Uri =
     FileProvider.getUriForFile(context, context.packageName + ".media", file)
+
+private fun copyMediaImageToClipboard(context: Context, file: File, mimeType: String?) {
+    val uri = mediaUri(context, file)
+    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+    val clip = ClipData.newUri(context.contentResolver, "Fabushi image", uri).apply {
+        description.extras = android.os.PersistableBundle().apply {
+            putString("fabushi_mime_type", mimeType ?: "image/*")
+        }
+    }
+    clipboard.setPrimaryClip(clip)
+}
 
 private fun openMediaFile(context: Context, file: File, mimeType: String?) {
     val intent = Intent(Intent.ACTION_VIEW).apply {
