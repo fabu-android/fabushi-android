@@ -550,6 +550,43 @@ pub fn send_latency_event(
     Ok(StructuredTelemetryEvent { level: TelemetryLevel::Info, metadata })
 }
 
+pub fn event_loop_pressure_event(
+    p50_ms: f64,
+    p95_ms: f64,
+    max_ms: f64,
+    window_ms: f64,
+) -> Result<Option<StructuredTelemetryEvent>, String> {
+    for (name, value) in [
+        ("p50Ms", p50_ms),
+        ("p95Ms", p95_ms),
+        ("maxMs", max_ms),
+        ("windowMs", window_ms),
+    ] {
+        if !value.is_finite() || value < 0.0 {
+            return Err(format!("{name} must be finite and nonnegative"));
+        }
+    }
+    let severity = if p95_ms >= 1_000.0 {
+        "severe"
+    } else if p95_ms >= 100.0 {
+        "elevated"
+    } else {
+        return Ok(None);
+    };
+    let cap = |value: f64| value.round().clamp(0.0, 60_000.0).to_string();
+    Ok(Some(StructuredTelemetryEvent {
+        level: TelemetryLevel::Warn,
+        metadata: BTreeMap::from([
+            ("trigger".into(), "pressure".into()),
+            ("severity".into(), severity.into()),
+            ("p50_ms".into(), cap(p50_ms)),
+            ("p95_ms".into(), cap(p95_ms)),
+            ("max_ms".into(), cap(max_ms)),
+            ("window_ms".into(), window_ms.round().to_string()),
+        ]),
+    }))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -693,6 +730,24 @@ mod tests {
         assert_eq!(gateway.level, TelemetryLevel::Warn);
         assert_eq!(gateway.metadata.get("http_status").map(String::as_str), Some("503"));
         assert!(send_latency_event(-1.0, None, 0.0, false, None, None, None).is_err());
+    }
+
+
+    #[test]
+    fn event_loop_pressure_matches_desktop_thresholds_and_caps() {
+        assert!(event_loop_pressure_event(20.0, 99.9, 100.0, 60_000.0)
+            .unwrap()
+            .is_none());
+        let elevated = event_loop_pressure_event(20.0, 100.0, 500.0, 60_000.0)
+            .unwrap()
+            .unwrap();
+        assert_eq!(elevated.metadata.get("severity").map(String::as_str), Some("elevated"));
+        let severe = event_loop_pressure_event(20.0, 1_000.0, 90_000.0, 60_000.0)
+            .unwrap()
+            .unwrap();
+        assert_eq!(severe.metadata.get("severity").map(String::as_str), Some("severe"));
+        assert_eq!(severe.metadata.get("max_ms").map(String::as_str), Some("60000"));
+        assert!(event_loop_pressure_event(0.0, -1.0, 0.0, 60_000.0).is_err());
     }
 
 }
