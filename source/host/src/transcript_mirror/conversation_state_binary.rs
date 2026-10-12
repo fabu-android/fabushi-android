@@ -514,6 +514,7 @@ mod tests {
         // field 13 (summary_archives), twice; field 17 (self_summary_count) = 3.
         let state = [0x6a, 0x01, 0x01, 0x6a, 0x01, 0x02, 0x88, 0x01, 0x03];
         assert_eq!(conversation_compaction_epoch(&state).expect("compaction epoch"), 5);
+    }
 
     #[test]
     fn recovery_fields_decode_token_details_and_turn_timing() {
