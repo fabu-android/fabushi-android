@@ -6,6 +6,7 @@ import android.util.Base64
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidCoordinatorPort
+import com.ombhrum.fabushi.androidpreload.runtime.AndroidHumanCallSession
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -178,6 +179,7 @@ data class MessagingUiState(
     val draftsByConversation: Map<String, MessagingDraft> = emptyMap(),
     val messagesByConversation: Map<String, List<ChatMessage>> = emptyMap(),
     val typingActorByConversation: Map<String, String> = emptyMap(),
+    val callsByConversation: Map<String, List<AndroidHumanCallSession>> = emptyMap(),
     val error: String? = null,
 )
 
@@ -243,6 +245,30 @@ internal class MessagingViewModel(application: Application) : AndroidViewModel(a
             }
                 .onSuccess { mutableState.value = mutableState.value.copy(loading = false, error = null) }
                 .onFailure { mutableState.value = mutableState.value.copy(loading = false, error = it.message) }
+        }
+    }
+
+    fun refreshHumanCalls() {
+        viewModelScope.launch {
+            runCatching {
+                withContext(Dispatchers.IO) {
+                    ensureIdentity()
+                    val calls = mutableState.value.conversations
+                        .associate { conversation ->
+                            conversation.id to coordinator.humanCallList(
+                                scopeId = conversation.id,
+                                limit = 50,
+                            )
+                        }
+                        .filterValues(List<AndroidHumanCallSession>::isNotEmpty)
+                    mutableState.value = mutableState.value.copy(
+                        callsByConversation = calls,
+                        error = null,
+                    )
+                }
+            }.onFailure { failure ->
+                mutableState.value = mutableState.value.copy(error = failure.message)
+            }
         }
     }
 
