@@ -1118,11 +1118,36 @@ mod tests {
     }
 
     #[test]
-    fn gateway_and_send_latency_reject_negative_durations() {
+    fn gateway_reachability_and_dns_diagnostics_match_desktop_projection() {
         assert!(gateway_reachability_event("ok", "GET", -1.0, "api", None, None).is_err());
-        let gateway = gateway_reachability_event("failed", "GET", 12.0, "api", Some(503), Some("timeout")).unwrap();
+        let gateway =
+            gateway_reachability_event("failed", "GET", 12.4, "api", Some(503), Some("timeout"))
+                .unwrap();
         assert_eq!(gateway.level, TelemetryLevel::Warn);
+        assert_eq!(gateway.metadata.get("outcome").map(String::as_str), Some("failed"));
+        assert_eq!(gateway.metadata.get("method").map(String::as_str), Some("GET"));
+        assert_eq!(gateway.metadata.get("latency_ms").map(String::as_str), Some("12"));
+        assert_eq!(gateway.metadata.get("base_url_kind").map(String::as_str), Some("api"));
         assert_eq!(gateway.metadata.get("http_status").map(String::as_str), Some("503"));
+        assert_eq!(gateway.metadata.get("cause").map(String::as_str), Some("timeout"));
+
+        let dns = dns_diagnostic_metadata(
+            "api",
+            "gateway_failure",
+            "resolver_mismatch",
+            Some("NXDOMAIN"),
+            Some("1.2.3.4"),
+            None,
+            Some("8.8.8.8"),
+        );
+        assert_eq!(dns.get("cluster").map(String::as_str), Some("api"));
+        assert_eq!(dns.get("trigger").map(String::as_str), Some("gateway_failure"));
+        assert_eq!(dns.get("diagnosis").map(String::as_str), Some("resolver_mismatch"));
+        assert_eq!(dns.get("system_exact").map(String::as_str), Some("NXDOMAIN"));
+        assert_eq!(dns.get("independent_exact").map(String::as_str), Some("1.2.3.4"));
+        assert!(!dns.contains_key("independent_wildcard"));
+        assert_eq!(dns.get("independent_general").map(String::as_str), Some("8.8.8.8"));
+
         assert!(send_latency_event(-1.0, None, 0.0, false, None, None, None).is_err());
     }
 
