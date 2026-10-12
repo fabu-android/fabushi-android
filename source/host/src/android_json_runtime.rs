@@ -3413,6 +3413,33 @@ impl AndroidJsonHost {
             self.process_crash_recent.pop_front();
         }
         self.process_crash_recent.push_back(record.clone());
+
+        // Process-local crash projections disappear when Android kills the process. Preserve only
+        // the bounded, source-neutral crash metadata in the durable structured-log spool; never
+        // persist the raw exception message or stack supplied by the platform layer.
+        self.sync_structured_log_account_slot();
+        let metadata = BTreeMap::from([
+            ("kind".to_string(), kind.to_string()),
+            ("error_code".to_string(), "SAND-E0603".to_string()),
+            ("error_domain".to_string(), "android-process".to_string()),
+            (
+                "uptime_ms".to_string(),
+                uptime_ms.min(30 * 24 * 60 * 60 * 1_000_u64).to_string(),
+            ),
+        ]);
+        if self
+            .structured_log_spool
+            .record(
+                "error",
+                "sand.desktop.process_crash",
+                metadata,
+                occurred_at_ms,
+            )
+            .is_err()
+        {
+            self.edge_failures
+                .report("structured-log-spill", "process-crash-record", "StorageError");
+        }
         Ok(record)
     }
 
@@ -11152,6 +11179,37 @@ mod process_crash_telemetry_dispatch_tests {
         let serialized = recent.to_string();
         assert!(!serialized.contains("secret-token"));
         assert!(!serialized.contains("sensitive-stack"));
+
+        let spill_path = root.path().join("android-structured-log-spill.v1.json");
+        let durable = std::fs::read_to_string(&spill_path).unwrap();
+        assert!(durable.contains("sand.desktop.process_crash"));
+        assert!(!durable.contains("secret-token"));
+        assert!(!durable.contains("sensitive-stack"));
+        drop(host);
+        let loaded = crate::android_structured_log_spill::FileAndroidStructuredLogSpill::new(
+            &spill_path,
+        )
+        .load("logged-out", now_ms())
+        .unwrap();
+        let state = match loaded {
+            crate::android_structured_log_spill::SpillLoad::Loaded(state) => state,
+            other => panic!("expected durable process-crash spill, got {other:?}"),
+        };
+        assert_eq!(
+            state
+                .checkpoint
+                .records
+                .iter()
+                .filter(|record| record.message == "sand.desktop.process_crash")
+                .count(),
+            PROCESS_CRASH_EVENT_CAP,
+        );
+        assert_eq!(
+            state.checkpoint.records.last().unwrap().metadata["error_code"],
+            "SAND-E0603",
+        );
+
+        let mut host = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
         assert!(host
             .dispatch(
                 "feature.telemetry.processCrash.record",
