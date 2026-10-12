@@ -90,6 +90,9 @@ internal fun MarketplaceContent(
     onSubmitVariables: (Map<String, String>) -> Unit,
     onCancelVariables: () -> Unit,
     onSaveMcpServerInstructions: (String, String) -> Unit,
+    onLogoutMcpAccount: (String, String) -> Unit,
+    onRenameMcpAccount: (String, String, String) -> Unit,
+    onRemoveMcpAccount: (String, String) -> Unit,
     onOpenMcpServerTools: (String) -> Unit,
     onRetryMcpServerTools: (String) -> Unit,
     onToggleMcpServerTool: (String, String) -> Unit,
@@ -276,6 +279,75 @@ internal fun MarketplaceContent(
                                                 "保存说明"
                                             },
                                         )
+                                    }
+                                    val serverAccounts = state.mcpServerAccounts[server.id].orEmpty()
+                                    if (serverAccounts.isNotEmpty()) {
+                                        Text("已连接账户", style = MaterialTheme.typography.labelMedium)
+                                        serverAccounts.forEach { account ->
+                                            val mutationKey = server.id + "\u0000" + account.accountKey
+                                            val accountBusy = mutationKey in state.mcpServerAccountBusy
+                                            var accountNameDraft by remember(server.id, account.accountKey) {
+                                                mutableStateOf(account.accountKey)
+                                            }
+                                            Column(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .testTag("mcp-account-${server.id}-${account.accountKey}"),
+                                                verticalArrangement = Arrangement.spacedBy(4.dp),
+                                            ) {
+                                                OutlinedTextField(
+                                                    value = accountNameDraft,
+                                                    onValueChange = { accountNameDraft = it },
+                                                    modifier = Modifier
+                                                        .fillMaxWidth()
+                                                        .testTag("mcp-account-name-${server.id}-${account.accountKey}"),
+                                                    label = { Text("账户名称") },
+                                                    singleLine = true,
+                                                    enabled = !accountBusy,
+                                                )
+                                                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                                    TextButton(
+                                                        onClick = {
+                                                            onRenameMcpAccount(
+                                                                server.id,
+                                                                account.accountKey,
+                                                                accountNameDraft,
+                                                            )
+                                                        },
+                                                        enabled = !accountBusy &&
+                                                            accountNameDraft.trim().isNotEmpty() &&
+                                                            accountNameDraft.trim() != account.accountKey,
+                                                        modifier = Modifier.testTag(
+                                                            "mcp-account-rename-${server.id}-${account.accountKey}",
+                                                        ),
+                                                    ) { Text("重命名") }
+                                                    TextButton(
+                                                        onClick = {
+                                                            onLogoutMcpAccount(server.id, account.accountKey)
+                                                        },
+                                                        enabled = !accountBusy,
+                                                        modifier = Modifier.testTag(
+                                                            "mcp-account-logout-${server.id}-${account.accountKey}",
+                                                        ),
+                                                    ) { Text("退出") }
+                                                    TextButton(
+                                                        onClick = {
+                                                            onRemoveMcpAccount(server.id, account.accountKey)
+                                                        },
+                                                        enabled = !accountBusy,
+                                                        modifier = Modifier.testTag(
+                                                            "mcp-account-remove-${server.id}-${account.accountKey}",
+                                                        ),
+                                                    ) { Text("移除") }
+                                                }
+                                                state.mcpServerAccountError[mutationKey]?.let { error ->
+                                                    Text(
+                                                        "账户操作失败：$error",
+                                                        style = MaterialTheme.typography.bodySmall,
+                                                    )
+                                                }
+                                            }
+                                        }
                                     }
                                     val toolsState = state.mcpServerTools[server.id]
                                     TextButton(
