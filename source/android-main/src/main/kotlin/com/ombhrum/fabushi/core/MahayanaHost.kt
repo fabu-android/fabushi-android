@@ -56,10 +56,11 @@ class MahayanaHost(
                     existing
                 } else {
                     require(processGeneration > 0L) { "processGeneration must be positive" }
+                    val initialAccountSessionJson = accountSessionStore.readSessionJson().orEmpty()
                     val value = nativeCreate(
                         appDataDir,
                         processGeneration,
-                        accountSessionStore.readSessionJson().orEmpty(),
+                        initialAccountSessionJson,
                         machineIdStore.getOrCreate(),
                     )
                     check(value != 0L) { "Failed to initialize Mahayana Rust host" }
@@ -72,10 +73,29 @@ class MahayanaHost(
             }
         }
         if (!featureHostTest) {
+            reportProtectedAccountStoreUnavailableIfNeeded()
             val state = checkNotNull(shared)
             synchronized(state.lock) {
                 installProtectedRemoteBindingForCurrentAccountLocked(state)
             }
+        }
+    }
+
+    /**
+     * Bridges the Android-only credential protection failure into the canonical Rust Host
+     * telemetry owner. This is intentionally internal platform plumbing: Presentation never owns
+     * or synthesizes account-store health.
+     */
+    private fun reportProtectedAccountStoreUnavailableIfNeeded() {
+        if (!accountSessionStore.consumeProtectedStoreUnavailable()) return
+        val state = shared ?: return
+        synchronized(state.lock) {
+            if (state.handle == 0L) return
+            val request = JSONObject()
+                .put("method", "feature.account.telemetry.protectedStoreUnavailable")
+                .put("params", JSONObject())
+            // Telemetry reporting must not replace the original account-store outcome.
+            runCatching { nativeDispatch(state.handle, request.toString()) }
         }
     }
 
@@ -481,7 +501,12 @@ class MahayanaHost(
         val mutation = result.optJSONObject("_accountSessionMutation") ?: return
         when (mutation.optString("action")) {
             "save" -> {
-                accountSessionStore.writeSessionJson(mutation.getString("sessionJson"))
+                try {
+                    accountSessionStore.writeSessionJson(mutation.getString("sessionJson"))
+                } catch (error: Throwable) {
+                    reportProtectedAccountStoreUnavailableIfNeeded()
+                    throw error
+                }
                 shared?.let { state ->
                     synchronized(state.lock) {
                         installProtectedRemoteBindingForCurrentAccountLocked(state)
