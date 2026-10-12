@@ -437,9 +437,6 @@ data class AndroidEntrypointAvailabilitySnapshot(
 }
 
 interface AndroidCoordinatorPort {
-    fun processMetricsSnapshot(): JSONObject =
-        error("Process metrics are unavailable on this Coordinator port")
-
     fun coordinatorStatus(): JSONObject
     fun coordinatorResync(generation: Long, afterSequence: Long): JSONObject
     fun resolveUpdateTrackPolicy(
