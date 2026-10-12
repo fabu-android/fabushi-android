@@ -918,6 +918,21 @@ impl CursorDashboardMcpAuthBackend {
         decode_team_plugin_popularity_response(&popularity)
     }
 
+    pub fn resolve_local_tool_permission_ceiling(&self) -> Option<&'static str> {
+        let credentials = self.credentials.credentials().ok()?;
+        let ghost_mode = self.resolve_ghost_mode(&credentials);
+        let response = self
+            .send_unary(
+                &credentials,
+                DASHBOARD_GET_TEAM_ADMIN_SETTINGS_PATH,
+                &[],
+                PR_REVIEW_REQUEST_TIMEOUT_MS,
+                ghost_mode,
+            )
+            .ok()?;
+        decode_local_tool_permission_ceiling(&response).ok().flatten()
+    }
+
     pub fn resolve_sand_pr_review_preferences(&self) -> Result<Value, String> {
         let credentials = self.credentials.credentials()?;
         let ghost_mode = self.resolve_ghost_mode(&credentials);
@@ -2630,6 +2645,26 @@ fn decode_nested_pr_review_destination(
     Ok(None)
 }
 
+fn decode_local_tool_permission_ceiling(
+    input: &[u8],
+) -> Result<Option<&'static str>, String> {
+    // Desktop generated schema at canonical main:
+    // GetTeamAdminSettingsResponse.local_tool_controls = field 60,
+    // LocalToolControls.permission_ceiling = field 1,
+    // enum 0=unspecified, 1=never, 2=ask, 3=always.
+    for controls in repeated_message_fields(input, 60)? {
+        if let Some(value) = decode_optional_varint_field(controls, 1)? {
+            return Ok(match value {
+                1 => Some("never"),
+                2 => Some("ask"),
+                3 => Some("always"),
+                _ => None,
+            });
+        }
+    }
+    Ok(None)
+}
+
 fn decode_team_pr_review_destination(input: &[u8]) -> Result<Option<&'static str>, String> {
     // Current Desktop generated schema prefers pull_request_preferences (field 37, inner field 1)
     // and falls back to background_agent_settings (field 7, inner field 5).
@@ -3086,6 +3121,35 @@ mod tests {
                 "isRequired":true,
             })]
         );
+    }
+
+    #[test]
+    fn local_tool_permission_ceiling_wire_matches_desktop_generated_schema() {
+        assert_eq!(
+            DASHBOARD_GET_TEAM_ADMIN_SETTINGS_PATH,
+            "/aiserver.v1.DashboardService/GetTeamAdminSettingsOrEmptyIfNotInTeam"
+        );
+        assert_eq!(PR_REVIEW_REQUEST_TIMEOUT_MS, 10_000);
+
+        for (raw, expected) in [(1, "never"), (2, "ask"), (3, "always")] {
+            let mut controls = Vec::new();
+            encode_key(1, 0, &mut controls);
+            encode_varint(raw, &mut controls);
+            let mut response = Vec::new();
+            encode_len_delimited(60, &controls, &mut response);
+            assert_eq!(
+                decode_local_tool_permission_ceiling(&response).unwrap(),
+                Some(expected)
+            );
+        }
+
+        let mut unknown_controls = Vec::new();
+        encode_key(1, 0, &mut unknown_controls);
+        encode_varint(99, &mut unknown_controls);
+        let mut unknown_response = Vec::new();
+        encode_len_delimited(60, &unknown_controls, &mut unknown_response);
+        assert_eq!(decode_local_tool_permission_ceiling(&unknown_response).unwrap(), None);
+        assert_eq!(decode_local_tool_permission_ceiling(&[]).unwrap(), None);
     }
 
     #[test]
