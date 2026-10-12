@@ -1,5 +1,7 @@
 package com.ombhrum.fabushi
 
+import java.io.File
+
 import android.Manifest
 import android.annotation.SuppressLint
 import android.content.Context
@@ -192,6 +194,7 @@ fun FabushiMessagingSurface(
     onSendAttachment: (String, String, String, ByteArray) -> Unit = { _, _, _, _ -> },
     onSendVoice: (String, String, String, ByteArray, List<Int>) -> Unit = { _, _, _, _, _ -> },
     onLoadBlob: (String, Int, (Result<ByteArray>) -> Unit) -> Unit = { _, _, callback -> callback(Result.failure(IllegalStateException("Blob loader unavailable"))) },
+    onLoadBlobFile: (String, Int, (Result<File>) -> Unit) -> Unit = { _, _, callback -> callback(Result.failure(IllegalStateException("Blob file loader unavailable"))) },
     onSendContact: (String, MessagingContact) -> Unit = { _, _ -> },
     onSendPoll: (String, String, List<String>, Boolean) -> Unit = { _, _, _, _ -> },
     onVotePoll: (String, String, List<String>) -> Unit = { _, _, _ -> },
@@ -544,6 +547,7 @@ fun FabushiMessagingSurface(
             onSendAttachment = onSendAttachment,
             onSendVoice = onSendVoice,
             onLoadBlob = onLoadBlob,
+            onLoadBlobFile = onLoadBlobFile,
             onSendContact = onSendContact,
             onSendPoll = onSendPoll,
             onVotePoll = onVotePoll,
