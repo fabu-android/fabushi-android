@@ -1068,7 +1068,8 @@ mod tests {
 
     #[test]
     fn selected_model_is_frozen_across_reopen_and_retry() {
-        let path = temp_path("selected-model");
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("send-acks.json");
         let mut owner = DurableSendAcknowledgementOwner::open(&path, 100).unwrap();
         let first = owner
             .begin_with_attachments_rich_text_and_model(
