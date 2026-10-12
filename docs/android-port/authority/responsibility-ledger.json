@@ -315,7 +315,7 @@
       "device_test": "blocked by protected test-account secrets until CI-AUTH-001 is resolved",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Implemented from exact Desktop account source facts. Production feature.auth.oauthStart/oauthPoll no longer uses fabushi.invalid or consumes a pending attempt. Do not mark verified until the new exact HEAD passes Rust/Kotlin/package evidence and protected packaged/device login proves durable restore, cancellation, refresh, stale callback/account fencing. FBCP Revision 7 is a cross-cutting source authority for this responsibility; this mapping does not upgrade implementation_status or verification_status. Source audit c36d3d48ec44bacaea14b024b2a73f043ac1977b: linked current Desktop access/account UI contract anchors; mapped/implemented source rows retain their own exact status and do not upgrade this responsibility verification."
+      "notes": "Implemented from exact Desktop account source facts. Production feature.auth.oauthStart/oauthPoll no longer uses fabushi.invalid or consumes a pending attempt. Do not mark verified until the new exact HEAD passes Rust/Kotlin/package evidence and protected packaged/device login proves durable restore, cancellation, refresh, stale callback/account fencing. FBCP Revision 7 is a cross-cutting source authority for this responsibility; this mapping does not upgrade implementation_status or verification_status. Source audit c36d3d48ec44bacaea14b024b2a73f043ac1977b: linked current Desktop access/account UI contract anchors; mapped/implemented source rows retain their own exact status and do not upgrade this responsibility verification. Desktop account-authorization.ts adds a pre-scope authorization/foreign-durable-data fence. Android current Host/session/epoch owners are mapped, but exact descriptor-to-existing-data claim parity remains open and therefore not verified."
     },
     {
       "responsibility_id": "MSG-CANONICAL-COMMANDS-002",
@@ -749,7 +749,7 @@
       "device_test": "required on emulator/physical device as applicable",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Implemented production Rust authorization/cancellation boundary and intentionally remains not-verified pending same-exact-HEAD package/device evidence. For Box/External/Computer/Browser, authorization is necessary but not sufficient: Desktop current-main exposes those capabilities only through explicit resource/executor ports, while current Android Host has no proven outbound executor adapter. The inbound FabushiRemoteDeviceGateway must not be reused as outbound execution authority and no transport may be invented."
+      "notes": "Implemented production Rust authorization/cancellation boundary and intentionally remains not-verified pending same-exact-HEAD package/device evidence. For Box/External/Computer/Browser, authorization is necessary but not sufficient: Desktop current-main exposes those capabilities only through explicit resource/executor ports, while current Android Host has no proven outbound executor adapter. The inbound FabushiRemoteDeviceGateway must not be reused as outbound execution authority and no transport may be invented. Current Desktop rows 571-574 (box-exec Cargo/CLI/lib/entrypoint) were reviewed against the Android Remote Runner crate. Android intentionally replaces the desktop-local daemon process lifecycle with TLS/device-bound remote execution plus durable execute/reconcile/cancel semantics; this mapping remains not-verified pending exact-head production/package/device evidence."
     },
     {
       "responsibility_id": "MCP-PLUGIN-RUNTIME-001",
@@ -1221,7 +1221,7 @@
       "device_test": "required on emulator/physical device as applicable",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Implementation is recorded as implemented only after Desktop main 92fcc2b0 protocol merge, Android native data-plane review, and Android client create-outcome reconciliation wiring. Verification remains not-verified until descendant exact-head compile/unit/package/device evidence succeeds. Release signing, protected account and Authorized Remote Runner enrollment remain separate hard blockers."
+      "notes": "Implementation is recorded as implemented only after Desktop main 92fcc2b0 protocol merge, Android native data-plane review, and Android client create-outcome reconciliation wiring. Verification remains not-verified until descendant exact-head compile/unit/package/device evidence succeeds. Release signing, protected account and Authorized Remote Runner enrollment remain separate hard blockers. Current Desktop rows 571-574 (box-exec Cargo/CLI/lib/entrypoint) were reviewed against the Android Remote Runner crate. Android intentionally replaces the desktop-local daemon process lifecycle with TLS/device-bound remote execution plus durable execute/reconcile/cancel semantics; this mapping remains not-verified pending exact-head production/package/device evidence."
     },
     {
       "responsibility_id": "COMMERCE-LIFECYCLE-001",
@@ -5473,7 +5473,7 @@
       "device_test": "instrumentation semantics inspection/fault scenarios where applicable",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "N/A with replacement because Chromium DOM/createPortal/desktop preload/control-server mechanisms do not exist in native Android. Original user/product capability is engineering inspectability/fault validation, replaced by Android semantics/instrumentation/CI; no end-user feature is removed."
+      "notes": "N/A with replacement because Chromium DOM/createPortal/desktop preload/control-server mechanisms do not exist in native Android. Original user/product capability is engineering inspectability/fault validation, replaced by Android semantics/instrumentation/CI; no end-user feature is removed. Desktop electron-dev-controls/main.ts is now explicitly classified not-applicable-with-replacement: Electron privileged dev-window/IPC mechanics are replaced by Android instrumentation/semantics/CI diagnostics and must be absent from public release."
     },
     {
       "responsibility_id": "UI-NATIVE-BOOTSTRAP-ANDROID-001",
