@@ -257,7 +257,6 @@ internal fun FabushiSettingsSurface(
         if (accountLoggedIn) {
             onRefreshAccountPrivacyMode()
             onRefreshAccountUsage()
-            onRefreshAutoReviewInstructions()
             onRefreshCredentialVault()
         } else {
             credentialSecretDraft = ""
