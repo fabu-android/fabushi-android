@@ -83,6 +83,18 @@ data class AndroidPrReviewPreferences(
     val team: String?,
 )
 
+data class AndroidAutoReviewInstructions(
+    val isEnabled: Boolean = true,
+    val allowInstructions: List<String> = emptyList(),
+    val blockInstructions: List<String> = emptyList(),
+)
+
+data class AndroidAutoReviewInstructionsSnapshot(
+    val accountFence: String,
+    val revision: Long,
+    val instructions: AndroidAutoReviewInstructions,
+)
+
 data class AndroidOnDemandUsage(
     val usedCents: Long,
     val limitCents: Long,
@@ -442,6 +454,13 @@ interface AndroidCoordinatorPort {
     fun accountPrivacyMode(): JSONObject
     fun accountPrReviewPreferences(): AndroidPrReviewPreferences =
         AndroidPrReviewPreferences(user = null, team = null)
+    fun autoReviewInstructions(): AndroidAutoReviewInstructionsSnapshot =
+        error("Auto Review instructions are unavailable on this Coordinator port")
+    fun setAutoReviewInstructions(
+        expectedRevision: Long,
+        instructions: AndroidAutoReviewInstructions,
+    ): AndroidAutoReviewInstructionsSnapshot =
+        error("Auto Review instruction mutation is unavailable on this Coordinator port")
     fun accountUsageSummary(): AndroidAccountUsageSummary =
         error("Account usage summary is unavailable on this Coordinator port")
     fun accountCancelSandTrial(): Unit =
