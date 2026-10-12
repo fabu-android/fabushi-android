@@ -1,7 +1,8 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet};
-use std::fs;
+use std::fs::{self, File};
+use std::io::Write;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, MutexGuard};
 
@@ -570,10 +571,24 @@ impl CapabilityBroker {
     }
 
     fn persist(&self) -> Result<(), String> {
-        if let Some(parent)=self.path.parent(){ fs::create_dir_all(parent).map_err(|e| e.to_string())?; }
-        let tmp=self.path.with_extension("json.tmp");
-        fs::write(&tmp, serde_json::to_vec_pretty(&self.state).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
-        fs::rename(tmp, &self.path).map_err(|e| e.to_string())
+        let parent = self.path.parent().ok_or("capability broker path has no parent")?;
+        fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        let tmp = self.path.with_extension("json.tmp");
+        let bytes = serde_json::to_vec_pretty(&self.state).map_err(|e| e.to_string())?;
+        let result = (|| -> Result<(), String> {
+            let mut file = File::create(&tmp).map_err(|e| e.to_string())?;
+            file.write_all(&bytes).map_err(|e| e.to_string())?;
+            file.sync_all().map_err(|e| e.to_string())?;
+            fs::rename(&tmp, &self.path).map_err(|e| e.to_string())?;
+            if let Ok(directory) = File::open(parent) {
+                directory.sync_all().map_err(|e| e.to_string())?;
+            }
+            Ok(())
+        })();
+        if result.is_err() {
+            let _ = fs::remove_file(&tmp);
+        }
+        result
     }
 }
 
@@ -915,6 +930,39 @@ mod tests {
                 5,
             )
             .is_err());
+    }
+
+    #[test]
+    fn approval_terminal_state_is_durable_without_temporary_file_residue() {
+        let (d, mut b) = broker();
+        b.request_approval(
+            "durable-a1",
+            "durable-r1",
+            "durable-o1",
+            "remote.shell",
+            json!({"tool":"Shell","target":"device-1"}),
+            "acct-1",
+            1,
+        ).unwrap();
+        b.resolve_approval("durable-a1", true, "acct-1", 2).unwrap();
+        b.consume_approval_for_dispatch(
+            "durable-a1",
+            "durable-o1",
+            "durable-r1",
+            "remote.shell",
+            "acct-1",
+            3,
+        ).unwrap();
+        drop(b);
+
+        let reopened = CapabilityBroker::open(d.path().join("broker.json"), 4).unwrap();
+        assert_eq!(reopened.approval_state("durable-a1"), Some("consumed"));
+        assert!(
+            fs::read_dir(d.path())
+                .unwrap()
+                .all(|entry| !entry.unwrap().file_name().to_string_lossy().ends_with(".tmp")),
+            "durable approval commits must not leave a replayable temporary state behind"
+        );
     }
 
     #[test]
