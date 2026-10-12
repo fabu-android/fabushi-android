@@ -211,6 +211,55 @@ class AccountAccessProjectionOwnerTest {
         assertFalse(byTransport.isAwaitingFirstBox)
     }
 
+    @Test fun accessBlockedTelemetryRecoveryKeepsEnteredReasonAndCapsDuration() {
+        val owner = AccessBlockedTelemetryOwner()
+        val enteredProjection = AccountAccessProjection.initial(7L).copy(
+            loggedIn = true,
+            sandAccessState = AccountAccessState.PAYMENT_REQUIRED,
+            blockReason = AccountAccessBlockReason.PAYWALL_INDIVIDUAL,
+        )
+        val entered = owner.observe(enteredProjection, 1_000L)!!
+        assertEquals("entered", entered.edge)
+        assertEquals("paywallIndividual", entered.accessReason)
+        assertNull(entered.msBlocked)
+
+        val recoveredProjection = enteredProjection.copy(
+            sandAccessState = AccountAccessState.GRANTED,
+            blockReason = AccountAccessBlockReason.NONE,
+        )
+        val recovered = owner.observe(
+            recoveredProjection,
+            1_000L + 8L * 24L * 60L * 60L * 1_000L,
+        )!!
+        assertEquals("recovered", recovered.edge)
+        assertEquals(
+            "paywallIndividual",
+            recovered.accessReason,
+            "recovery must report the reason that caused the blocked interval",
+        )
+        assertEquals(7L * 24L * 60L * 60L * 1_000L, recovered.msBlocked)
+    }
+
+    @Test fun accessBlockedTelemetryAccountSwitchFencesPriorBlockedInterval() {
+        val owner = AccessBlockedTelemetryOwner()
+        val blocked = AccountAccessProjection.initial(2L).copy(
+            loggedIn = true,
+            sandAccessState = AccountAccessState.PAYMENT_REQUIRED,
+            blockReason = AccountAccessBlockReason.PAYWALL_TEAM_MEMBER,
+        )
+        assertEquals("entered", owner.observe(blocked, 5_000L)!!.edge)
+
+        val nextAccountReady = AccountAccessProjection.initial(3L).copy(
+            loggedIn = true,
+            sandAccessState = AccountAccessState.GRANTED,
+            blockReason = AccountAccessBlockReason.NONE,
+        )
+        assertNull(
+            owner.observe(nextAccountReady, 6_000L),
+            "new account epoch must not emit recovery for the prior account",
+        )
+    }
+
     @Test fun entitlementRevokeSupersedesGrant() {
         val owner = AccountAccessProjectionOwner(MemoryStore()); owner.observeAuth(true, "a")
         owner.settle(owner.beginRefresh(), AccountAccessFacts(true, entitlementState=AccountEntitlementState.GRANTED))
