@@ -623,6 +623,7 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
 
     override fun reportRecoveredProcessCrash(
         kind: String,
+        errorClass: String,
         occurredAtMs: Long,
         uptimeMs: Long,
     ): JSONObject =
@@ -630,6 +631,7 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
             "feature.telemetry.processCrash.record",
             JSONObject()
                 .put("kind", kind)
+                .put("errorClass", errorClass)
                 .put("occurredAtMs", occurredAtMs)
                 .put("uptimeMs", uptimeMs),
         )
