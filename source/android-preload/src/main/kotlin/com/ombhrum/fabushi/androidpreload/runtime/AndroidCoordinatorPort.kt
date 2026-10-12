@@ -363,6 +363,7 @@ interface AndroidCoordinatorPort {
     ): AndroidMcpOAuthCompletion
 
     fun authStatus(): JSONObject
+    fun accountPrivacyMode(): JSONObject
     fun accountAccessProjection(): AccountAccessProjection
     fun rootConnectionResilienceProjection(): RootConnectionResilienceProjection =
         RootConnectionResilienceProjection.initial()
