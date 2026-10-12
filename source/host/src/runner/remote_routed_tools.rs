@@ -1346,6 +1346,44 @@ fn now_ms() -> u64 {
 mod tests {
     use super::*;
 
+    struct NeverCalledDelegate;
+
+    impl AndroidRoutedToolBridge for NeverCalledDelegate {
+        fn list_tools(&self) -> Result<Vec<Value>, String> {
+            Ok(Vec::new())
+        }
+
+        fn call_tool(&self, _name: &str, _args: Value, _tool_call_id: &str) -> Result<Value, String> {
+            panic!("policy-gated Remote tools must not fall through to the delegate")
+        }
+    }
+
+    #[test]
+    fn never_permission_fails_closed_before_remote_binding() {
+        let root = tempfile::tempdir().unwrap();
+        let mut settings =
+            AndroidUserSettings::open(root.path().join("user-settings.json")).unwrap();
+        settings.set_local_tool_permission("never").unwrap();
+        let tools = RemoteRoutedTools {
+            delegate: Arc::new(NeverCalledDelegate),
+            broker: SharedCapabilityBroker::open(root.path().join("broker.json"), 1).unwrap(),
+            binding: Arc::new(Mutex::new(None)),
+            runner: Arc::new(Mutex::new(None)),
+            approvals: RemoteApprovalRegistry::default(),
+            user_settings: Arc::new(Mutex::new(settings)),
+            live_account_fence: Arc::new(Mutex::new(None)),
+            events: Arc::new(Mutex::new(VecDeque::new())),
+            parent_operation_id: "parent-operation".into(),
+            parent_request_id: "parent-request".into(),
+            cancelled: Arc::new(AtomicBool::new(false)),
+        };
+
+        let error = tools
+            .call_tool("Shell", json!({"command":"echo denied"}), "tool-call-1")
+            .unwrap_err();
+        assert!(error.contains("disabled by the current Host permission policy"));
+    }
+
     #[test]
     fn binding_rejects_wrong_epoch_and_untrusted_plaintext_endpoint() {
         let invalid_epoch = json!({
