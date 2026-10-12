@@ -1137,6 +1137,7 @@ impl AndroidJsonHost {
             "feature.mcp.authWatch.settle" => self.mcp_auth_watch_settle(params),
             "feature.mcp.authWatch.cancel" => self.mcp_auth_watch_cancel(params),
             "feature.mcp.authWatch.snapshot" => self.mcp_auth_watch_snapshot(),
+            "feature.auth.profileUpdate" => self.account_profile_update(params),
             "feature.auth.logout" => self.account_logout(),
             "feature.agent.diskPressure.observe" => self.agent_disk_pressure_observe(params),
             "feature.agent.diskPressure.record" => self.agent_disk_pressure_record(params),
@@ -2693,6 +2694,29 @@ impl AndroidJsonHost {
             "result":record.completion_result,
             "error":record.completion_error,
         }))
+    }
+
+    fn account_profile_update(&mut self, params: &Value) -> Result<Value, String> {
+        let display_name = required_string(params, "displayName")?;
+        if self.mode == AndroidHostMode::Test {
+            return Ok(json!({
+                "ok":true,
+                "auth":{
+                    "loggedIn":self.logged_in,
+                    "user":{
+                        "nickname":display_name,
+                        "username":"fabushi",
+                        "email":"fabushi@example.invalid"
+                    }
+                }
+            }));
+        }
+        #[cfg(feature = "ci-account-session-import")]
+        if self.ci_session_identity.is_some() {
+            return Err("Profile mutation is unavailable for imported CI sessions.".into());
+        }
+        let (result, mutation) = self.account.update_display_name(display_name)?;
+        Ok(with_account_session_mutation(result, mutation))
     }
 
     fn account_logout(&mut self) -> Result<Value, String> {
