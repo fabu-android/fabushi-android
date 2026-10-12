@@ -4172,31 +4172,40 @@
       "domain": "agent",
       "desktop_sources": [
         {
-          "path": "desktop/e2e/agent-network-responsive.spec.ts"
+          "path": "desktop/e2e/agent-network-responsive.spec.ts",
+          "blob_sha": "0954a11147b77275e1dc2043921141f6d397ed3c"
         },
         {
-          "path": "frontend/src/recovered/features/org-chart/workspace/entrypoint.ts"
+          "path": "frontend/src/recovered/features/org-chart/workspace/entrypoint.ts",
+          "blob_sha": "f69ac158af2470d55b691725014e5740750ec3b7"
         },
         {
-          "path": "frontend/src/recovered/features/org-chart/workspace/graph.css"
+          "path": "frontend/src/recovered/features/org-chart/workspace/graph.css",
+          "blob_sha": "fe8cc9bcaf694e02798e2d771ed96c45d01ed23e"
         },
         {
-          "path": "frontend/src/recovered/features/org-chart/workspace/graph.tsx"
+          "path": "frontend/src/recovered/features/org-chart/workspace/graph.tsx",
+          "blob_sha": "a1fd0a426dba3964dfbc9bab82e4ed01a0f7f967"
         },
         {
-          "path": "frontend/src/recovered/features/org-chart/workspace/inspector.tsx"
+          "path": "frontend/src/recovered/features/org-chart/workspace/inspector.tsx",
+          "blob_sha": "13dda653e59e323f22c12b032853ba45a4fd8fdb"
         },
         {
-          "path": "frontend/src/recovered/features/org-chart/workspace/layout.ts"
+          "path": "frontend/src/recovered/features/org-chart/workspace/layout.ts",
+          "blob_sha": "091733a4dad8bd7a6e2927a045a753f9668c138f"
         },
         {
-          "path": "frontend/src/recovered/features/org-chart/workspace/model.ts"
+          "path": "frontend/src/recovered/features/org-chart/workspace/model.ts",
+          "blob_sha": "f5db439dbe4a8a1f9cf46e56c88d3a7cc536da59"
         },
         {
-          "path": "frontend/src/recovered/features/org-chart/workspace/network-trigger.ts"
+          "path": "frontend/src/recovered/features/org-chart/workspace/network-trigger.ts",
+          "blob_sha": "3c1df528b2958828f84c31aaf441bbc05a905462"
         },
         {
-          "path": "frontend/src/recovered/features/org-chart/workspace/view.tsx"
+          "path": "frontend/src/recovered/features/org-chart/workspace/view.tsx",
+          "blob_sha": "58c815931b4e8af33f999c7cfdb3d98a843c0366"
         },
         {
           "path": "frontend/src/production/model.ts",
@@ -4226,7 +4235,7 @@
         "none in presentation; roster/relationships belong to Host/domain persistence"
       ],
       "protocol_wire_contract": [
-        "agent list projection with id/name/description/isGroup/memberIds/conversationPartnerIds/awaitingUserResponse/isRunning/lastMessage/updatedAt"
+        "agent list projection with id/name/description/isGroup/memberIds/conversationPartnerIds/awaitingUserResponse/isRunning/isComposingMessage/lastMessage/updatedAt"
       ],
       "visible_effect": "User can open Agent network, inspect agents/groups and their relationships/activity, pinch/drag the responsive graph, and open the selected chat/room.",
       "failure_behavior": [
@@ -4249,20 +4258,21 @@
         "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/presentation/MobileBotViewModel.kt",
         "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/production/ProductionRenderer_view.kt",
         "mobile/android/app/src/test/java/com/ombhrum/fabushi/AgentNetworkModelTest.kt",
-        "source/host/src/android_agent_roster.rs"
+        "source/host/src/android_agent_roster.rs",
+        "source/host/src/android_json_runtime.rs"
       ],
       "android_owner": "Host canonical agent roster + MobileBotViewModel read-only projection + AgentNetworkSurface ephemeral viewport/selection",
       "platform_delta": "Desktop React/CSS/wheel graph becomes native Compose Canvas/BoxWithConstraints with pinch zoom and drag pan. CSS is not copied. Android App Agent Surface also exposes stable semantic network actions. Presentation never persists a second graph.",
-      "implementation_status": "mapped",
-      "production_wiring": "Native AGENT_NETWORK route, Home trigger, responsive graph, inspector, semantic surface and canonical roster field projection are wired. However current Android Host AndroidAgentRecord does not yet populate/persist memberIds, conversationPartnerIds, awaitingUserResponse, isRunning or lastMessage, so relationship/activity parity is not complete.",
-      "unit_test": "AgentNetworkModelTest added for edge dedupe, unknown endpoint filtering, activity/summary, deterministic responsive layout, viewport bounds and stale selection reconciliation.",
-      "contract_test": "exact-head Android CI pending; Host projection contract for relationship/activity fields still required.",
-      "integration_test": "shipping route is wired; canonical Host relationship/activity production projection and packaged navigation acceptance still required.",
+      "implementation_status": "implemented",
+      "production_wiring": "Native AGENT_NETWORK route, Home trigger, responsive graph, inspector, semantic App Agent Surface, zoom/pan and canonical roster field projection are wired. Host persists group memberIds in AndroidAgentRoster, derives conversationPartnerIds from the account-fenced canonical messaging owner, derives lastMessage/updatedAt from canonical transcript state, projects isRunning from the active runtime and awaitingUserResponse from durable turn lifecycle, and filters missing relationship endpoints. MobileBotViewModel additionally projects isComposingMessage; AgentNetworkModel now preserves Desktop activity precedence waiting -> typing -> working -> idle.",
+      "unit_test": "AgentNetworkModelTest covers edge dedupe, unknown endpoint filtering, waiting/typing/working activity precedence, summary, deterministic responsive layout, viewport bounds and stale selection reconciliation. Typing parity was added by commits 1b226dfdd9353779654605fffbef431a290ed9c2, 6ee3dacc6f2be6fd9ec2a6b5a15c7aec78a75e4e and 75ba70272c0b569e6421dd291ff5b9f6943fdfdf; exact-head GitHub Actions result is still required.",
+      "contract_test": "Host test agent_roster_projects_canonical_transcript_run_and_durable_relationships exercises lastMessage, isRunning, account-fenced conversationPartnerIds, awaitingUserResponse, process-reopen recoveryRequired semantics, reconciliation and stale relationship-endpoint filtering. Same-final-head Actions evidence is pending.",
+      "integration_test": "Shipping AGENT_NETWORK route is wired through MobileBotViewModel -> typed Coordinator -> Host roster projection; implementation is code-complete for the audited Desktop Org Chart responsibility, but final exact-head CI plus packaged navigation/device acceptance remain required.",
       "packaged_test": "required on final exact-head APK/AAB",
       "device_test": "required in protected device acceptance",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "0aed119..9556376 implements the native presentation slice without inventing relationship truth. Keep mapped/not-verified until Host canonical relationship/activity projection, same-head CI, packaged and device acceptance are all successful."
+      "notes": "Current-source correction: the prior note claiming Android Host lacked membership/partner/activity projection was stale. Current Host already owns memberIds persistence, canonical messaging-derived conversationPartnerIds, transcript-derived lastMessage/updatedAt, runtime isRunning and durable awaitingUserResponse including process-reopen recovery fencing. This round closed the remaining Desktop typing-state loss by carrying isComposingMessage into AgentNetworkNode and rendering TYPING before WORKING. Marked implemented, not verified; package/device and same-exact-head CI remain open."
     },
     {
       "responsibility_id": "SECURITY-CREDENTIAL-VAULT-001",
