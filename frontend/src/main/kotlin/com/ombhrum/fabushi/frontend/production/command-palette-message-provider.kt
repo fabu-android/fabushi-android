@@ -1,5 +1,6 @@
 package com.ombhrum.fabushi
 
+import com.ombhrum.fabushi.androidpreload.runtime.AndroidContentSearchMessage
 import org.json.JSONArray
 
 internal const val COMMAND_PALETTE_MESSAGE_DEBOUNCE_MS = 150L
@@ -26,6 +27,27 @@ data class CommandPaletteMessageSnapshot(
     val status: CommandPaletteMessageStatus = CommandPaletteMessageStatus.UNAVAILABLE,
     val value: List<CommandPaletteMessage> = emptyList(),
 )
+
+internal fun commandPaletteMessagesFromHostMatches(
+    matches: List<AndroidContentSearchMessage>,
+): List<CommandPaletteMessage> =
+    matches.map { match ->
+        val role = when (match.role) {
+            "user" -> MobileChatRole.USER
+            "assistant" -> MobileChatRole.ASSISTANT
+            else -> error("Unsupported Host content-search role: ${match.role}")
+        }
+        require(match.agentId.isNotBlank()) { "Host content-search match has no Agent id" }
+        require(match.entryId.isNotBlank()) { "Host content-search match has no entry id" }
+        require(match.snippet.isNotBlank()) { "Host content-search match has no snippet" }
+        CommandPaletteMessage(
+            agentId = match.agentId,
+            entryId = match.entryId,
+            role = role,
+            timestampMs = match.timestampMs,
+            snippet = match.snippet,
+        )
+    }
 
 /**
  * Explicit generation fence for debounce/cancellation races. A result may publish only if its
