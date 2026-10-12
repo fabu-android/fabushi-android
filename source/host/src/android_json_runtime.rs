@@ -1092,6 +1092,35 @@ impl AndroidJsonHost {
     }
 
 
+    fn validate_available_model_selection(
+        &self,
+        selected_model: Option<&str>,
+    ) -> Result<Option<String>, String> {
+        let Some(selected_model) = selected_model
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        else {
+            return Ok(None);
+        };
+        let backend = self
+            .mcp_dashboard_backend
+            .as_ref()
+            .ok_or("available model catalog backend is unavailable")?;
+        let catalog = backend.resolve_available_models()?;
+        let available = catalog
+            .get("models")
+            .and_then(Value::as_array)
+            .is_some_and(|models| {
+                models.iter().any(|model| {
+                    model.get("name").and_then(Value::as_str) == Some(selected_model)
+                })
+            });
+        if !available {
+            return Err("selected model is not available for the current account".into());
+        }
+        Ok(Some(selected_model.to_string()))
+    }
+
     fn available_model_catalog(&self) -> Result<Value, String> {
         let account_fence = self.current_turn_account_fence()?;
         let catalog = self
@@ -4757,6 +4786,9 @@ impl AndroidJsonHost {
             .get("richText")
             .filter(|value| !value.is_null())
             .cloned();
+        let selected_model = self.validate_available_model_selection(
+            params.get("model").and_then(Value::as_str),
+        )?;
         let attachments = AgentAttachment::list_from_json(params.get("attachments"))?;
         self.agent_attachments
             .lock()
@@ -4776,13 +4808,14 @@ impl AndroidJsonHost {
             .send_acknowledgements
             .lock()
             .map_err(|_| "send acknowledgement owner lock poisoned".to_string())?
-            .begin_with_attachments_and_rich_text(
+            .begin_with_attachments_rich_text_and_model(
                 account_slot.as_deref(),
                 &account_fence,
                 &agent_id,
                 nonce,
                 text,
                 rich_text,
+                selected_model,
                 attachments,
                 entries,
             )?;
@@ -4872,6 +4905,7 @@ impl AndroidJsonHost {
             "text":dispatching.message_text,
             "richText":dispatching.message_rich_text,
             "attachments":dispatching.attachments,
+            "model":dispatching.selected_model,
             "accountSlot":dispatching.account_slot,
             "agentId":dispatching.agent_id,
             "mode":"agent",
