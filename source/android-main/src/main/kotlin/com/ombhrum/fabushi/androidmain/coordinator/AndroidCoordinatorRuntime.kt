@@ -34,6 +34,7 @@ import com.ombhrum.fabushi.androidpreload.runtime.AndroidCoordinatorPort
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidEntrypointAvailabilitySnapshot
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidMandatoryUpdatePolicy
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidUpdateTrackPolicy
+import com.ombhrum.fabushi.androidpreload.runtime.AndroidTimeZoneSettings
 import com.ombhrum.fabushi.AndroidBackendUpdateSignal
 import com.ombhrum.fabushi.AndroidMandatoryUpdateFacts
 import com.ombhrum.fabushi.AndroidMandatoryUpdateOwner
@@ -64,6 +65,7 @@ import com.ombhrum.fabushi.androidmain.remote.RemoteComputerDataPlaneFence
 import com.ombhrum.fabushi.core.MahayanaHost
 import org.json.JSONArray
 import org.json.JSONObject
+import java.time.ZoneId
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
@@ -520,6 +522,29 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
     override fun accountCancelSandTrial() {
         val settled = host.request("feature.account.cancelSandTrial").optBoolean("ok", false)
         require(settled) { "Sand trial cancellation did not settle successfully" }
+    }
+
+    override fun settingsTimeZone(): AndroidTimeZoneSettings =
+        AndroidTimeZoneSettings(
+            detectedTimeZone = ZoneId.systemDefault().id,
+            overrideTimeZone = host.request("feature.settings.timeZoneOverride")
+                .optString("overrideTimeZone")
+                .trim()
+                .takeIf(String::isNotEmpty),
+        )
+
+    override fun settingsSetTimeZoneOverride(timeZone: String?): AndroidTimeZoneSettings {
+        val normalized = timeZone?.trim()?.takeIf(String::isNotEmpty)?.also(ZoneId::of)
+        val response = host.request(
+            "feature.settings.timeZoneOverride.set",
+            JSONObject().put("timeZone", normalized ?: JSONObject.NULL),
+        )
+        return AndroidTimeZoneSettings(
+            detectedTimeZone = ZoneId.systemDefault().id,
+            overrideTimeZone = response.optString("overrideTimeZone")
+                .trim()
+                .takeIf(String::isNotEmpty),
+        )
     }
 
 
