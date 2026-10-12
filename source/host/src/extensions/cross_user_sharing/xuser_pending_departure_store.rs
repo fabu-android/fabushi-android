@@ -30,3 +30,29 @@ impl SandXuserPendingDepartureStore{
  pub fn record(&self,v:XuserDeparture){self.with_map(|m|{let k=departure_key(&v);if m.contains_key(&k){((),false)}else{m.insert(k,v);((),true)}})}
  pub fn clear(&self,v:&XuserDeparture){let k=departure_key(v);self.with_map(|m|((),m.remove(&k).is_some()))}
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pending_departures_survive_reopen_and_dedupe() {
+        let root = tempfile::tempdir().unwrap();
+        let departure = XuserDeparture::LeaveRoom {
+            owner_auth_id: Some("owner-a".into()),
+            room_id: "room-a".into(),
+            agent_id: "agent-a".into(),
+        };
+        let store = SandXuserPendingDepartureStore::new(root.path());
+        store.record(departure.clone());
+        store.record(departure.clone());
+        assert_eq!(store.list(), vec![departure.clone()]);
+        drop(store);
+
+        let reopened = SandXuserPendingDepartureStore::new(root.path());
+        assert_eq!(reopened.list(), vec![departure.clone()]);
+        reopened.clear(&departure);
+        drop(reopened);
+        assert!(SandXuserPendingDepartureStore::new(root.path()).list().is_empty());
+    }
+}

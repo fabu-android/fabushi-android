@@ -30,3 +30,26 @@ impl SandXuserRoomTombstoneStore{
  pub fn record(&self,v:XuserRoomTombstone){self.with_map(|m|{let k=tombstone_key(&v);if m.contains_key(&k){((),false)}else{m.insert(k,v);((),true)}})}
  pub fn clear(&self,room_id:&str,owner_auth_id:Option<&str>){let k=format!("{}\0{}",owner_auth_id.unwrap_or(""),room_id);self.with_map(|m|((),m.remove(&k).is_some()))}
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tombstones_are_durable_and_account_scoped() {
+        let root = tempfile::tempdir().unwrap();
+        let a = XuserRoomTombstone { room_id: "room-a".into(), owner_auth_id: Some("owner-a".into()), torn_down_at_ms: 10 };
+        let b = XuserRoomTombstone { room_id: "room-a".into(), owner_auth_id: Some("owner-b".into()), torn_down_at_ms: 20 };
+        let store = SandXuserRoomTombstoneStore::new(root.path());
+        store.record(a.clone());
+        store.record(a.clone());
+        store.record(b.clone());
+        assert_eq!(store.list().len(), 2);
+        drop(store);
+
+        let reopened = SandXuserRoomTombstoneStore::new(root.path());
+        assert_eq!(reopened.list().len(), 2);
+        reopened.clear("room-a", Some("owner-a"));
+        assert_eq!(reopened.list(), vec![b]);
+    }
+}
