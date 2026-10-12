@@ -16,6 +16,7 @@ import com.ombhrum.fabushi.androidpreload.runtime.AndroidPrReviewPreferences
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidAutoReviewInstructions
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidAutoReviewInstructionsSnapshot
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidHumanCallSession
+import com.ombhrum.fabushi.androidpreload.runtime.AndroidGeneratedAvatarImage
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidHumanCallLease
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidHumanCallSignal
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidHumanCallState
@@ -1945,6 +1946,21 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
                 .put("id", id)
                 .put("avatarDataUrl", avatarDataUrl ?: JSONObject.NULL),
         ) as? JSONObject ?: JSONObject()
+
+    override fun agentGenerateAvatarImage(description: String): AndroidGeneratedAvatarImage {
+        val result = host.request(
+            "feature.agent.avatar.generate",
+            JSONObject().put("description", description),
+        )
+        val imageData = result.optString("imageData").trim()
+        val mimeType = result.optString("mimeType").trim()
+        require(imageData.isNotEmpty()) { "Agent avatar generation returned no image data" }
+        require(mimeType.startsWith("image/")) { "Agent avatar generation returned an invalid MIME type" }
+        return AndroidGeneratedAvatarImage(
+            imageData = imageData,
+            mimeType = mimeType,
+        )
+    }
 
     override fun agentSetNotifyOnUpdates(id: String, isEnabled: Boolean): JSONObject =
         durableAgentRosterMutation(
