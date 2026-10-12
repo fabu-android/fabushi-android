@@ -15403,6 +15403,34 @@
       "artifact": null,
       "verification_status": "not-verified",
       "notes": "Do not downgrade ACCOUNT-SESSION-001: canonical Fabushi account lifecycle is separately implemented. This responsibility tracks Desktop inference/backend auth semantics not yet proven equivalent."
+    },
+    {
+      "responsibility_id": "AUTO-REVIEW-ANDROID-001",
+      "domain": "tools-auto-review",
+      "desktop_path": "source/host/src/extensions/auto_review/**",
+      "desktop_symbol": "AutoReviewService / SandAutoReviewAwaitingBridge / SandBackendSmartModeClassifierExecutor",
+      "source_sha": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "responsibility": "Own optional smart auto-review as a Host security decision layer: classify eligible approval requests, fence stale/settled results, retain bounded approval memory, expose waiting state, expire pending decisions and preserve cancellation/account fencing without bypassing Capability Broker grants.",
+      "source_owner": "Desktop Host auto-review extension",
+      "visible_effect": "Eligible tool approvals may be auto-reviewed safely while stale or failed classifier decisions cannot silently authorize actions, and users can see awaiting state when review is pending.",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "source/host/src/capability_broker.rs",
+        "source/host/src/mcp_auth/dashboard_mcp_auth_backend.rs",
+        "source/host/src/android_json_runtime.rs"
+      ],
+      "android_owner": "Future Rust Host auto-review service layered above Capability Broker; UI only projects waiting/result state",
+      "platform_delta": "No Android-specific reason to move the classifier/security state into Kotlin; only presentation and lifecycle adapters differ. Manual approval remains the fail-closed fallback until this Host service is real.",
+      "implementation_status": "mapped",
+      "production_wiring": "Missing. Android currently has manual approval/Capability Broker plus Dashboard backend primitives, but no auto-review service, awaiting bridge, stale-settled fencing or classifier lifecycle.",
+      "unit_test": "required for settled-memory cap, stale race, cancellation/completion race, expiry sweep and mode parsing",
+      "contract_test": "required for classifier wire/auth/privacy semantics and no implicit grant on classifier failure",
+      "integration_test": "required with real approval flow and Capability Broker consumption",
+      "packaged_test": "required on final APK/AAB",
+      "device_test": "required for smart/manual approval behavior, account switch and process-death recovery",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Keep fail-closed: absence/failure of auto-review must never turn into automatic approval."
     }
   ],
   "traceability": {
