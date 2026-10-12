@@ -17,6 +17,15 @@ sealed interface AndroidDeepLink {
         val topic: String = "deep-links",
     ) : AndroidPresentationDeepLink
 
+    data class PluginAdd(
+        val pluginId: String,
+        val source: AndroidDeepLinkSource,
+    ) : AndroidPresentationDeepLink
+
+    data class Open(
+        val source: AndroidDeepLinkSource,
+    ) : AndroidPresentationDeepLink
+
     data class Agent(val agentId: String) : AndroidPresentationDeepLink
 
     data class AppSection(val section: String) : AndroidPresentationDeepLink
