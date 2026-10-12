@@ -527,4 +527,48 @@ class ComputerRebuildStateOwnerTest {
         assertNull(reopened.visibilityTelemetry(4L))
     }
 
+    @Test
+    fun stalledRebuildTelemetryProjectionIsEpisodeScopedAndReadOnly() {
+        val store = MemoryStore()
+        var now = 5_000L
+        val owner = ComputerRebuildStateOwner(store, processGeneration = 12L, nowMs = { now })
+        owner.observeAccount(9L)
+        owner.reserveRequest(9L, "request-9")
+        owner.acceptRequest(
+            accountEpoch = 9L,
+            requestId = "request-9",
+            operationId = "operation-9",
+            kind = ComputerRebuildKind.UPDATE,
+        )
+
+        assertNull(
+            projectComputerRebuildStallTelemetry(
+                owner.snapshot(9L),
+                owner.visibilityTelemetry(9L),
+            ),
+        )
+
+        now += COMPUTER_REBUILD_STALLED_AFTER_MS
+        val snapshot = owner.snapshot(9L)
+        val projection = projectComputerRebuildStallTelemetry(
+            snapshot,
+            owner.visibilityTelemetry(9L),
+        )!!
+        assertEquals("update", projection.rebuildKind)
+        assertEquals(COMPUTER_REBUILD_STALLED_AFTER_MS, projection.elapsedMs)
+        assertTrue(projection.hasAck)
+        assertTrue(projection.streamAttached)
+        assertTrue(projection.dedupeKey.contains("operation-9"))
+        assertEquals(snapshot, owner.snapshot(9L), "telemetry projection must not mutate rebuild truth")
+
+        owner.deactivate(9L)
+        assertNull(
+            projectComputerRebuildStallTelemetry(
+                owner.snapshot(9L),
+                owner.visibilityTelemetry(9L),
+            ),
+        )
+    }
+
+
 }
