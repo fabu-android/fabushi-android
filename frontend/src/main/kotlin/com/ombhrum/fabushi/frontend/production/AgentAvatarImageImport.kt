@@ -2,10 +2,10 @@ package com.ombhrum.fabushi
 
 import android.content.Context
 import android.net.Uri
-import com.ombhrum.fabushi.androidmain.media.AndroidAvatarCrop
-import com.ombhrum.fabushi.androidmain.media.AndroidAvatarImageProcessor
-import com.ombhrum.fabushi.androidmain.media.AndroidAvatarImageSource
-import com.ombhrum.fabushi.androidmain.media.MAX_AGENT_AVATAR_SOURCE_BYTES
+import com.ombhrum.fabushi.androidpreload.media.AndroidAvatarCrop
+import com.ombhrum.fabushi.androidpreload.media.AndroidAvatarImageProcessor
+import com.ombhrum.fabushi.androidpreload.media.AndroidAvatarImageSource
+import com.ombhrum.fabushi.androidpreload.media.MAX_AGENT_AVATAR_SOURCE_BYTES
 
 internal const val AGENT_AVATAR_SOURCE_MAX_BYTES: Int = MAX_AGENT_AVATAR_SOURCE_BYTES
 

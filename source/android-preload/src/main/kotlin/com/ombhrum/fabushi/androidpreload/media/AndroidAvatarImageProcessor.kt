@@ -1,4 +1,4 @@
-package com.ombhrum.fabushi.androidmain.media
+package com.ombhrum.fabushi.androidpreload.media
 
 import android.content.Context
 import android.graphics.Bitmap
