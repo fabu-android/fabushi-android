@@ -2496,6 +2496,8 @@ impl AndroidJsonHost {
             "feature.call.reconcile" => self.human_call_reconcile(params),
             "feature.automation.upsert" => self.automation_upsert(params),
             "feature.automation.list" => self.automation_list(),
+            "feature.automation.listForAgent" => self.automation_list_for_agent(params),
+            "feature.automation.setAgentEnabled" => self.automation_set_agent_enabled(params),
             "feature.automation.start" => self.automation_start(params),
             "feature.automation.advanceStep" => self.automation_advance_step(params),
             "feature.automation.awaitApproval" => self.automation_await_approval(params),
@@ -3837,6 +3839,49 @@ impl AndroidJsonHost {
     fn automation_list(&mut self) -> Result<Value, String> {
         let account_fence = self.current_turn_account_fence()?;
         Ok(Value::Array(self.automation_runtime.list_for_account(&account_fence)))
+    }
+
+    fn automation_list_for_agent(&mut self, params: &Value) -> Result<Value, String> {
+        let account_fence = self.current_turn_account_fence()?;
+        let agent_id = required_string(params, "agentId")?;
+        if agent_id != "mahayana-assistant" {
+            let agents = self
+                .agents
+                .lock()
+                .map_err(|_| "canonical Android Agent roster lock poisoned".to_string())?;
+            if agents.get(agent_id).is_none() {
+                return Err("automation Agent owner not found".into());
+            }
+        }
+        Ok(Value::Array(
+            self.automation_runtime
+                .list_for_agent(&account_fence, agent_id),
+        ))
+    }
+
+    fn automation_set_agent_enabled(&mut self, params: &Value) -> Result<Value, String> {
+        let account_fence = self.current_turn_account_fence()?;
+        let agent_id = required_string(params, "agentId")?;
+        if agent_id != "mahayana-assistant" {
+            let agents = self
+                .agents
+                .lock()
+                .map_err(|_| "canonical Android Agent roster lock poisoned".to_string())?;
+            if agents.get(agent_id).is_none() {
+                return Err("automation Agent owner not found".into());
+            }
+        }
+        let enabled = params
+            .get("enabled")
+            .and_then(Value::as_bool)
+            .ok_or("enabled is required")?;
+        let spec = self.automation_runtime.set_agent_workflow_enabled(
+            &account_fence,
+            agent_id,
+            required_string(params, "automationId")?,
+            enabled,
+        )?;
+        serde_json::to_value(spec).map_err(|error| error.to_string())
     }
 
     fn automation_start(&mut self, params: &Value) -> Result<Value, String> {
