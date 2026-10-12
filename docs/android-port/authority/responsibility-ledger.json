@@ -15169,6 +15169,37 @@
       "artifact": null,
       "verification_status": "not-verified",
       "notes": "83e5d6075e8cc6d825d05318c2b26e33ab2a5e8d ports the missing platform-independent worker/mirror foundation. Do not promote until shipping Session production composition is implemented and exact-head Actions/package/device evidence closes it."
+    },
+    {
+      "responsibility_id": "BOX-AUTHORIZED-RUNNER-ANDROID-001",
+      "domain": "runner-box-computer-use",
+      "desktop_path": "source/host/src/box/**",
+      "desktop_symbol": "CapableBox / ProductionBoxTransport / BoxRemoteExecManager / file-transfer / window / store-policy composition",
+      "source_sha": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "responsibility": "Preserve Desktop Box product effects through an Android-safe execution boundary: capability discovery, authenticated health/exec transport, bounded shell/file transfer, MCP/environment setup, protected-resource policy, viewport/window effects, lifecycle/reconnect and storage policy without granting arbitrary local process authority.",
+      "source_owner": "Desktop Host Box composition + exec daemon transport",
+      "visible_effect": "Agent tools that require a desktop/browser/computer workspace remain available through an explicitly authorized Runner instead of disappearing on Android.",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "source/host/src/runner/remote_routed_tools.rs",
+        "source/host/src/remote_execution.rs",
+        "source/host/src/capability_broker.rs",
+        "source/box-exec-daemon/src/transport.rs",
+        "source/local-exec-daemon",
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/remote/AndroidRemoteComputerDataPlane.kt"
+      ],
+      "android_owner": "Host Capability Broker + bounded Local Runner / future authorized outbound Remote Runner; Presentation owns no execution authority",
+      "platform_delta": "Desktop loopback/VNC/process-spawn/window mechanisms are forbidden as the Android local product architecture. Android may execute only bounded local actions or route to an explicitly enrolled Remote Runner with separate credentials and reconciliation.",
+      "implementation_status": "mapped",
+      "production_wiring": "Partial only. box-exec owns job lifecycle, local-exec owns generic registered actions, Remote Computer has an inbound Android-device data plane, and CapabilityBroker enforces grants. Existing AGENT-GENERATED-SUBAGENT-001 evidence confirms there is currently no Host-side outbound Remote Runner/desktop/browser/computer adapter registered, so the Desktop Box product closure is not complete.",
+      "unit_test": "required for capability/path/transfer/transport/retry contracts",
+      "contract_test": "required on same exact head for authorization, protected resources, stable request identity and outcome-unknown reconciliation",
+      "integration_test": "required with an enrolled outbound Runner and real Host tool registration",
+      "packaged_test": "required on final APK/AAB",
+      "device_test": "required for pairing/revoke/reconnect/viewport/file-transfer/computer-use on supported Android devices",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Do not mark these Desktop Box rows not-applicable just because Android cannot host an Electron/VNC sandbox. The user capability requires a formal Local/Remote Runner replacement. One external Remote Runner enrollment blocker must not stop other source closure."
     }
   ],
   "traceability": {
