@@ -1687,6 +1687,11 @@ impl AndroidJsonHost {
     }
 
     fn onboarding_step_telemetry(&mut self, params: &Value) -> Result<Value, String> {
+        let expected_scope = required_string(params, "expectedAccountScope")?;
+        let account_scope = self.current_sidebar_account_scope()?;
+        if expected_scope != account_scope {
+            return Err("onboarding telemetry account scope changed before record".into());
+        }
         let step_index = params
             .get("stepIndex")
             .and_then(Value::as_i64)
@@ -1696,7 +1701,7 @@ impl AndroidJsonHost {
             step_index,
             required_string(params, "direction")?,
         )?;
-        self.record_product_telemetry("sand.onboarding_step", event)
+        self.record_product_telemetry("sand.onboarding.step_viewed", event)
     }
 
     fn reaction_ack_telemetry(&mut self, params: &Value) -> Result<Value, String> {
