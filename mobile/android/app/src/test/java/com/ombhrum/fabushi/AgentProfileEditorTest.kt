@@ -1,5 +1,10 @@
 package com.ombhrum.fabushi
 
+import com.ombhrum.fabushi.androidmain.media.MAX_AGENT_AVATAR_OUTPUT_DIMENSION
+import com.ombhrum.fabushi.androidmain.media.MAX_AGENT_AVATAR_SOURCE_BYTES
+import com.ombhrum.fabushi.androidmain.media.MAX_AGENT_AVATAR_SOURCE_DIMENSION
+import com.ombhrum.fabushi.androidmain.media.avatarDecodeSampleSize
+import com.ombhrum.fabushi.androidmain.media.avatarDimensionsAllowed
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -8,6 +13,24 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class AgentProfileEditorTest {
+    @Test
+    fun avatarImagePolicyKeepsDesktopSourceAndOutputBounds() {
+        assertEquals(25 * 1024 * 1024, MAX_AGENT_AVATAR_SOURCE_BYTES)
+        assertEquals(4096, MAX_AGENT_AVATAR_SOURCE_DIMENSION)
+        assertEquals(1024, MAX_AGENT_AVATAR_OUTPUT_DIMENSION)
+        assertTrue(avatarDimensionsAllowed(1, 1))
+        assertTrue(avatarDimensionsAllowed(4096, 4096))
+        assertFalse(avatarDimensionsAllowed(4097, 1024))
+        assertFalse(avatarDimensionsAllowed(1024, 4097))
+    }
+
+    @Test
+    fun avatarImageDecodeSamplingBoundsLargeSourcesBeforeCanonicalResize() {
+        assertEquals(1, avatarDecodeSampleSize(1024, 1024))
+        assertEquals(2, avatarDecodeSampleSize(2048, 1024))
+        assertEquals(4, avatarDecodeSampleSize(4096, 2048))
+    }
+
     @Test
     fun profileCommitNormalizesNameAndBoundsDescription() {
         val projected = committedAgentProfile(
