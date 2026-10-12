@@ -10,8 +10,11 @@ import java.nio.charset.StandardCharsets
 
 internal object AndroidDeepLinkRouter {
     private const val MAX_LENGTH = 2_048
+    private const val DESKTOP_SCHEME = "sand"
+    private const val DESKTOP_HOST = "app"
     private const val DESKTOP_HTTPS_HOST = "cursor.com"
-    private const val DESKTOP_HTTPS_INFO_PATH = "/sand/link/v1/info"
+    private const val DESKTOP_HTTPS_PREFIX = "/sand/link"
+    private val desktopPluginIdPattern = Regex("^[0-9]{1,19}$")
     private val attemptIdPattern = Regex("^[A-Za-z0-9_-]{8,96}$")
     private val mcpOAuthStatePattern = Regex("^[A-Za-z0-9._~-]{16,512}$")
     private val appSections = setOf("settings", "feedback", "about", "widgets", "onboarding")
@@ -28,9 +31,19 @@ internal object AndroidDeepLinkRouter {
         if (!hasCanonicalPath(uri.rawPath.orEmpty())) return null
         val query = parseQuery(uri.rawQuery) ?: return null
 
+        if (uri.scheme.equals(DESKTOP_SCHEME, ignoreCase = true)) {
+            if (host != DESKTOP_HOST) return null
+            return parseDesktopRoute(uri.path.orEmpty(), query, AndroidDeepLinkSource.PROTOCOL)
+        }
         if (uri.scheme.equals("https", ignoreCase = true)) {
-            if (host != DESKTOP_HTTPS_HOST || uri.path != DESKTOP_HTTPS_INFO_PATH) return null
-            return parseInfo("/v1/info", query, AndroidDeepLinkSource.HTTPS)
+            if (host != DESKTOP_HTTPS_HOST) return null
+            val path = uri.path.orEmpty()
+            if (!path.startsWith(DESKTOP_HTTPS_PREFIX)) return null
+            return parseDesktopRoute(
+                path.removePrefix(DESKTOP_HTTPS_PREFIX),
+                query,
+                AndroidDeepLinkSource.HTTPS,
+            )
         }
         if (!uri.scheme.equals(AndroidAuthCallbackRegistration.PROTOCOL_SCHEME, ignoreCase = true)) return null
 
@@ -101,6 +114,22 @@ internal object AndroidDeepLinkRouter {
             source = source,
             topic = "deep-links",
         )
+    }
+
+    private fun parseDesktopRoute(
+        path: String,
+        query: Map<String, List<String>>,
+        source: AndroidDeepLinkSource,
+    ): AndroidDeepLink? = when (path) {
+        "/v1/info" -> parseInfo(path, query, source)
+        "/v1/plugin/add" -> {
+            if (query.keys != setOf("id")) null
+            else query["id"].orEmpty().singleOrNull()
+                ?.takeIf(desktopPluginIdPattern::matches)
+                ?.let { AndroidDeepLink.PluginAdd(pluginId = it, source = source) }
+        }
+        "/v1/open" -> if (query.isEmpty()) AndroidDeepLink.Open(source = source) else null
+        else -> null
     }
 
     private fun parseAgent(
@@ -235,6 +264,8 @@ internal class AndroidDeepLinkController(
         is AndroidDeepLink.McpOAuthCallback ->
             "mcp-oauth:${link.state}:${link.code ?: "error:" + link.error}"
         is AndroidDeepLink.Info -> "info:${link.topic}"
+        is AndroidDeepLink.PluginAdd -> "plugin-add:${link.pluginId}"
+        is AndroidDeepLink.Open -> "open"
         is AndroidDeepLink.Agent -> "agent:${link.agentId}"
         is AndroidDeepLink.AppSection -> "section:${link.section}"
     }
