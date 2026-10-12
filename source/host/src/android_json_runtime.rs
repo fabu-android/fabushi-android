@@ -1615,6 +1615,7 @@ impl AndroidJsonHost {
             "feature.mcp.serverTools.toggle" => self.mcp_server_tools_toggle(params),
             "feature.mcp.oauthComplete" => self.mcp_oauth_complete(params),
             "feature.mcp.authenticate" => self.mcp_authenticate(params),
+            "feature.mcp.serverAccounts.list" => self.mcp_server_accounts(params),
             "feature.mcp.account.logout" => self.mcp_account_logout(params),
             "feature.mcp.account.rename" => self.mcp_account_rename(params),
             "feature.mcp.account.remove" => self.mcp_account_remove(params),
@@ -3920,6 +3921,26 @@ impl AndroidJsonHost {
             McpAuthenticateResult::Unreachable(detail) => json!({"status":"unreachable","detail":detail}),
             McpAuthenticateResult::NotSupported(detail) => json!({"status":"not-supported","detail":detail}),
         })
+    }
+
+    fn mcp_server_accounts(&self, params: &Value) -> Result<Value, String> {
+        let server_id = required_string(params, "serverId")?;
+        let _account_fence = self.current_turn_account_fence()?;
+        let backend = self
+            .mcp_dashboard_backend
+            .as_ref()
+            .ok_or("MCP Dashboard backend is available only in production")?;
+        let accounts = backend
+            .list_server_accounts(server_id)?
+            .into_iter()
+            .map(|account| {
+                json!({
+                    "accountKey": account.account_key,
+                    "rowServerIdentifier": account.row_server_identifier,
+                })
+            })
+            .collect::<Vec<_>>();
+        Ok(json!({"serverId":server_id,"accounts":accounts}))
     }
 
     fn mcp_account_logout(&mut self, params: &Value) -> Result<Value, String> {
