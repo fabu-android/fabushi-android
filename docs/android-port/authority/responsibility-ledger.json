@@ -4417,20 +4417,23 @@
       "security_boundary": "Android must use Android Keystore (or fail closed); no plaintext file/shared preferences, no public reveal API, and authorized consumers receive values only inside the execution boundary.",
       "android_disposition": "android-adapted",
       "android_target": [
-        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/security/AndroidPluginVariableSecretStore.kt"
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/security/AndroidPluginVariableSecretStore.kt",
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/security/AndroidCredentialVaultStore.kt",
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/core/MahayanaHost.kt",
+        "mobile/android/app/src/androidTest/java/com/ombhrum/fabushi/AndroidCredentialVaultStoreInstrumentedTest.kt"
       ],
-      "android_owner": "Android secure-storage layer (incomplete for Credential Vault)",
+      "android_owner": "AndroidCredentialVaultStore (Keystore secret owner) + MahayanaHost live-account-fenced command boundary; user surface/consumer wiring still open",
       "platform_delta": "Electron safeStorage becomes Android Keystore. Existing AndroidPluginVariableSecretStore proves an AES-GCM/Keystore primitive but is not the Credential Vault product contract and therefore is only a dependency candidate.",
       "implementation_status": "mapped",
-      "production_wiring": "Not complete. No shipping Android Credential Vault UI/typed command set/list metadata/rotate/revoke/origin-binding projection has been found. Existing plugin-variable secret storage must not be treated as parity.",
-      "unit_test": "required: no plaintext projection, account isolation, rotate/revoke, unavailable/corrupt Keystore fail-closed, bounded metadata/origin validation",
+      "production_wiring": "Partial production core is wired: MahayanaHost resolves the canonical live Rust account fence and exposes metadata-only list plus upsert/rotate/revoke commands. AndroidCredentialVaultStore encrypts the account-scoped document with Android Keystore AES-GCM, bounds HTTPS origins, preserves stable refs/timestamps and exposes plaintext only through an internal exact-origin resolver. No reveal command exists. Shipping user Vault surface and a real authorized connector/tool consumer remain open, so status stays mapped.",
+      "unit_test": "Instrumentation source covers plaintext-canary opacity, metadata revealable=false, stable rotate identity/timestamps, cross-account isolation, origin denial, revoke and corrupt-ciphertext fail-closed. Exact-head execution pending.",
       "contract_test": "required against Desktop Credential Vault no-reveal semantics",
-      "integration_test": "required through typed Android bridge and authorized connector/tool consumer",
+      "integration_test": "Core command boundary wired through MahayanaHost at 5f4d0f385d81984824671028215984c56a1267d5; still required: shipping Vault UI and real authorized connector/tool consumption through credentialForOrigin.",
       "packaged_test": "required on final minified APK/AAB, including plaintext canary absence",
       "device_test": "required on real/protected Android Keystore device path",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Mapped from the earliest unreviewed packaged E2E after reading Desktop Vault and secure-store responsibilities. Android secure primitive exists, but product/runtime parity remains missing."
+      "notes": "Production security core advanced without status inflation. f7264a259052a52bbce174a72356c36bef5df772 adds the no-reveal Keystore owner; 5e3bc6d35683d2f0c4b95b1048e36a221d3096be adds focused instrumentation; 5f4d0f385d81984824671028215984c56a1267d5 wires live-account-fenced list/upsert/rotate/revoke and keeps plaintext resolution internal+origin-fenced. Keep mapped/not-verified until UI, actual consumer, exact-head Actions, package canary scan and device acceptance close."
     },
     {
       "responsibility_id": "UI-AVATAR-MOTION-ANDROID-001",
