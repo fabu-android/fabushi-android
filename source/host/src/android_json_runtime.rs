@@ -6,7 +6,6 @@ use crate::account_telemetry::{
 };
 use crate::account_telemetry_spill::DurableAccountTelemetryOutbox;
 use crate::capability_broker::{CapabilityDecision, PendingCapabilityCall, SharedCapabilityBroker};
-use crate::client_failure_telemetry::client_failure_report_to_telemetry;
 use crate::automation_runtime::{run_json as automation_run_json, AutomationRuntime, AutomationSpec};
 use crate::auto_review_settings::{AutoReviewInstructions, DurableAutoReviewSettings};
 use crate::android_agent_roster::AndroidAgentRoster;
@@ -1516,20 +1515,6 @@ impl AndroidJsonHost {
         self.onepassword_provisioning_status()
     }
 
-    fn record_client_failure_telemetry(&mut self, params: &Value) -> Result<Value, String> {
-        let report = params.get("report").unwrap_or(params);
-        let normalized = client_failure_report_to_telemetry(report)?;
-        self.structured_log_spool
-            .record(
-                &normalized.level,
-                &normalized.event,
-                normalized.metadata,
-                now_ms(),
-            )
-            .map_err(|error| format!("failed to persist client failure telemetry: {error}"))?;
-        Ok(json!({"ok":true,"event":normalized.event}))
-    }
-
     fn teach_recording_status(&self) -> Result<Value, String> {
         let snapshot = self
             .teach_recording
@@ -1945,7 +1930,6 @@ impl AndroidJsonHost {
             "feature.account.dashboardAction" => self.account_dashboard_action(params),
             "feature.account.usageSummary" => self.account_usage_summary(),
             "feature.account.cancelSandTrial" => self.account_cancel_sand_trial(),
-            "feature.telemetry.clientFailure" => self.record_client_failure_telemetry(params),
             "feature.settings.timeZone" => self.time_zone_settings(),
             "feature.settings.timeZone.detected" => self.set_detected_time_zone(params),
             "feature.settings.timeZone.set" => self.set_time_zone_settings(params),

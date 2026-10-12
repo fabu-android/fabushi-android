@@ -14,7 +14,6 @@ pub mod automation_runtime;
 pub mod auto_review_settings;
 pub mod box_rebuild_backend;
 pub mod capability_broker;
-pub mod client_failure_telemetry;
 pub mod composer_draft;
 pub mod account_service;
 pub mod account_telemetry;
