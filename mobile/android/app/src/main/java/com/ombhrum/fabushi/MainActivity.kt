@@ -37,6 +37,7 @@ class MainActivity : ComponentActivity() {
         setContent {
             FabushiApplicationRoot(
                 activity = this,
+                keyboardShortcutController = globalKeyboardShortcutController,
                 deepLinks = deepLinks,
                 updateModel = updateModel,
                 runtimePort = runtimePort,

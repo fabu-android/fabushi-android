@@ -20,7 +20,7 @@ class GlobalKeyboardShortcutsTest {
             focusAgent = { calls += "agent:$it" }, toggleSidebar = { calls += "sidebar" },
         )
         return Fixture(GlobalKeyboardShortcutController().also {
-            it.setActions(createRootShellShortcutActions(handlers, agentCount))
+            it.bindPresentation().setActions(createRootShellShortcutActions(handlers, agentCount))
         }, calls)
     }
 
@@ -77,12 +77,49 @@ class GlobalKeyboardShortcutsTest {
     }
 
     @Test fun presentationBindingClearsAcrossActivityRecreation() {
-        val f = fixture()
-        val before = f.controller.bindingEpochForTest()
-        f.controller.clearPresentationBinding()
-        assertEquals(before + 1, f.controller.bindingEpochForTest())
-        assertTrue(f.controller.actionsForTest().isEmpty())
-        assertFalse(f.controller.dispatch(GlobalShortcutKeyEvent("k", ctrl = true)))
-        assertTrue(GlobalKeyboardShortcutController().actionsForTest().isEmpty())
+        val controller = GlobalKeyboardShortcutController()
+        val calls = mutableListOf<String>()
+        val staleBinding = controller.bindPresentation()
+        staleBinding.setActions(
+            listOf(
+                GlobalShortcutAction(
+                    GlobalShortcutId.COMMAND_PALETTE,
+                    "old",
+                    listOf("mod+k"),
+                    run = { calls += "old" },
+                ),
+            ),
+        )
+        val before = controller.bindingEpochForTest()
+        controller.clearPresentationBinding()
+        assertEquals(before + 1, controller.bindingEpochForTest())
+        assertTrue(controller.actionsForTest().isEmpty())
+        assertFalse(controller.dispatch(GlobalShortcutKeyEvent("k", ctrl = true)))
+
+        val currentBinding = controller.bindPresentation()
+        currentBinding.setActions(
+            listOf(
+                GlobalShortcutAction(
+                    GlobalShortcutId.COMMAND_PALETTE,
+                    "fresh",
+                    listOf("mod+k"),
+                    run = { calls += "fresh" },
+                ),
+            ),
+        )
+        staleBinding.setActions(
+            listOf(
+                GlobalShortcutAction(
+                    GlobalShortcutId.COMMAND_PALETTE,
+                    "stale-write",
+                    listOf("mod+k"),
+                    run = { calls += "stale-write" },
+                ),
+            ),
+        )
+        staleBinding.clear()
+
+        assertTrue(controller.dispatch(GlobalShortcutKeyEvent("k", ctrl = true)))
+        assertEquals(listOf("fresh"), calls)
     }
 }

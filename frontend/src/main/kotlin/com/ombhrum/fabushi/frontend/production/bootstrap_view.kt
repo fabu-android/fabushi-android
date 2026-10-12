@@ -15,12 +15,14 @@ import kotlinx.coroutines.flow.SharedFlow
 @Composable
 internal fun FabushiApplicationRoot(
     activity: ComponentActivity,
+    keyboardShortcutController: GlobalKeyboardShortcutController,
     deepLinks: SharedFlow<AndroidPresentationDeepLink>,
     updateModel: AndroidUpdateViewModel,
     runtimePort: AndroidPresentationRuntimePort,
 ) {
     ProductionRenderer(
         activity = activity,
+        keyboardShortcutController = keyboardShortcutController,
         deepLinks = deepLinks,
         updateModel = updateModel,
         runtimePort = runtimePort,

@@ -45,6 +45,7 @@ private data class KeyboardForwardTarget(
 @Composable
 internal fun ProductionRenderer(
     activity: ComponentActivity,
+    keyboardShortcutController: GlobalKeyboardShortcutController,
     deepLinks: SharedFlow<AndroidPresentationDeepLink>,
     updateModel: AndroidUpdateViewModel,
     runtimePort: AndroidPresentationRuntimePort,
@@ -90,9 +91,11 @@ internal fun ProductionRenderer(
                 }
                 AppAlertHost(controller = appAlertController)
 
-                val keyboardController = activity.globalKeyboardShortcutController
-                DisposableEffect(keyboardController) {
-                    onDispose(keyboardController::clearPresentationBinding)
+                val keyboardBinding = remember(keyboardShortcutController) {
+                    keyboardShortcutController.bindPresentation()
+                }
+                DisposableEffect(keyboardBinding) {
+                    onDispose(keyboardBinding::clear)
                 }
 
                 BackHandler(enabled = rendererRoute != RendererRoute.GROK_HOME && state.loggedIn) {
@@ -260,7 +263,7 @@ internal fun ProductionRenderer(
                         rendererRoute = RendererRoute.GROK_HOME
                         botModel.openBot(bots[target])
                     }
-                    keyboardController.setActions(
+                    keyboardBinding.setActions(
                         createRootShellShortcutActions(
                             handlers = GlobalShortcutHandlers(
                                 newAgent = {
@@ -317,7 +320,7 @@ internal fun ProductionRenderer(
                         openedMiniApp != null -> ({ openedMiniApp = null })
                         else -> null
                     }
-                    keyboardController.acceptOverlayState(
+                    keyboardBinding.acceptOverlayState(
                         RootOverlayEscapeState(
                             isArmed = rootOverlayClose != null,
                             isOverlayStacked = appAlertController.getSnapshot() != null ||
@@ -670,7 +673,7 @@ internal fun ProductionRenderer(
                             shortcutNewAgentNonce = shortcutNewAgentNonce,
                             shortcutFocusPromptNonce = shortcutFocusPromptNonce,
                             shortcutFindInChatNonce = shortcutFindInChatNonce,
-                            onPromptEditableFocusChanged = keyboardController::setEditableFocused,
+                            onPromptEditableFocusChanged = keyboardBinding::setEditableFocused,
                         )
                         if (miniAppBot != null) {
                             Button(

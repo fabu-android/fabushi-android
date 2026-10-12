@@ -71,6 +71,13 @@ internal fun createRootShellShortcutActions(
     add(GlobalShortcutAction(GlobalShortcutId.TOGGLE_SIDEBAR, "Toggle compact sidebar", listOf("mod+b"), run = handlers.toggleSidebar))
 }
 
+internal interface GlobalKeyboardShortcutPresentationBinding {
+    fun setActions(value: List<GlobalShortcutAction>)
+    fun acceptOverlayState(value: RootOverlayEscapeState)
+    fun setEditableFocused(value: Boolean)
+    fun clear()
+}
+
 /** Activity-lifecycle input owner; canonical product state stays in existing owners. */
 internal class GlobalKeyboardShortcutController {
     private var actions: List<GlobalShortcutAction> = emptyList()
@@ -78,12 +85,40 @@ internal class GlobalKeyboardShortcutController {
     private var editableFocused = false
     private var bindingEpoch = 0L
 
-    fun setActions(value: List<GlobalShortcutAction>) { actions = value }
-    fun acceptOverlayState(value: RootOverlayEscapeState) { overlay = value }
-    fun setEditableFocused(value: Boolean) { editableFocused = value }
+    fun bindPresentation(): GlobalKeyboardShortcutPresentationBinding {
+        val epoch = ++bindingEpoch
+        resetPresentationState()
+        return object : GlobalKeyboardShortcutPresentationBinding {
+            override fun setActions(value: List<GlobalShortcutAction>) =
+                writeIfCurrent(epoch) { actions = value }
+
+            override fun acceptOverlayState(value: RootOverlayEscapeState) =
+                writeIfCurrent(epoch) { overlay = value }
+
+            override fun setEditableFocused(value: Boolean) =
+                writeIfCurrent(epoch) { editableFocused = value }
+
+            override fun clear() {
+                clearPresentationBinding(epoch)
+            }
+        }
+    }
 
     fun clearPresentationBinding() {
         bindingEpoch += 1
+        resetPresentationState()
+    }
+
+    private fun clearPresentationBinding(epoch: Long) {
+        if (epoch != bindingEpoch) return
+        clearPresentationBinding()
+    }
+
+    private inline fun writeIfCurrent(epoch: Long, block: () -> Unit) {
+        if (epoch == bindingEpoch) block()
+    }
+
+    private fun resetPresentationState() {
         actions = emptyList()
         overlay = RootOverlayEscapeState()
         editableFocused = false
