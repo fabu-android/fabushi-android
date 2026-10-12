@@ -970,7 +970,7 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
-    fun reorderPinnedBot(movedId: String, targetId: String, position: PinnedMovePosition) {
+    internal fun reorderPinnedBot(movedId: String, targetId: String, position: PinnedMovePosition) {
         val current = mutableState.value.pinnedAgentIds
         val next = movePinnedAgent(current, movedId, targetId, position)
         if (next == current) return
