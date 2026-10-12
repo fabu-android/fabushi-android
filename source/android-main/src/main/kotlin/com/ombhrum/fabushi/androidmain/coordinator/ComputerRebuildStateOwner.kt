@@ -171,6 +171,28 @@ internal fun projectComputerRebuildPendingStallTelemetry(
     )
 }
 
+internal data class ComputerRebuildEscalationTelemetry(
+    val episodeKey: String,
+    val rebuildKind: String,
+    val elapsedMs: Long,
+    val escalation: String,
+)
+
+internal fun projectComputerRebuildEscalationTelemetry(
+    snapshot: ComputerRebuildSnapshot,
+    visibility: ComputerRebuildVisibilityTelemetry?,
+): ComputerRebuildEscalationTelemetry? {
+    val kind = snapshot.kind ?: return null
+    if (visibility == null || !visibility.isStalled) return null
+    val episodeIdentity = snapshot.operationId ?: snapshot.requestId ?: kind.name.lowercase()
+    return ComputerRebuildEscalationTelemetry(
+        episodeKey = "${snapshot.accountEpoch}:${snapshot.episodeStartedAtMs ?: 0L}:$episodeIdentity",
+        rebuildKind = kind.name.lowercase(),
+        elapsedMs = visibility.elapsedMs,
+        escalation = if (snapshot.connected) "taking-longer" else "unreachable",
+    )
+}
+
 internal data class ComputerRebuildStallTelemetryProjection(
     val dedupeKey: String,
     val rebuildKind: String,
