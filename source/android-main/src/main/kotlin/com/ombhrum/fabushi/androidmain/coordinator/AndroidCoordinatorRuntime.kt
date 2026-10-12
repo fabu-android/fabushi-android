@@ -2450,7 +2450,7 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
             record.generation.toString(),
             outcome,
             phase,
-        ).joinToString("\u0000")
+        ).joinToString("^@")
         val shouldReport = synchronized(sendJournalRestoreTelemetryLock) {
             sendJournalRestoreTelemetryReported.add(telemetryKey)
         }
@@ -2707,13 +2707,13 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
         ) as? JSONObject ?: JSONObject()
 
     override fun agentSetWorkflowEnabled(id: String, workflowId: String, isEnabled: Boolean): JSONObject =
-        durableAgentRosterMutation(
+        host.request(
+            "feature.automation.setAgentEnabled",
             JSONObject()
-                .put("kind", "workflow")
-                .put("id", id)
-                .put("workflowId", workflowId)
+                .put("agentId", id)
+                .put("automationId", workflowId)
                 .put("enabled", isEnabled),
-        ) as? JSONObject ?: JSONObject()
+        )
 
     override fun agentSetHidden(id: String, isHidden: Boolean): JSONObject =
         durableAgentRosterMutation(
