@@ -333,6 +333,33 @@ impl HumanCallRuntime {
             .collect())
     }
 
+    pub fn fence_account(
+        &mut self,
+        account_fence: &str,
+        reason: &str,
+        now_ms: u64,
+    ) -> Result<usize, String> {
+        let mut fenced = Vec::new();
+        for (call_id, session) in self.state.sessions.iter_mut() {
+            if session.account_fence == account_fence
+                && !session.state.terminal()
+                && session.state != HumanCallState::OutcomeUnknown
+            {
+                session.state = HumanCallState::OutcomeUnknown;
+                session.terminal_reason = Some(reason.to_string());
+                session.updated_at_ms = now_ms;
+                fenced.push(call_id.clone());
+            }
+        }
+        for call_id in &fenced {
+            self.state.owner_device_by_call.remove(call_id);
+        }
+        if !fenced.is_empty() {
+            self.persist()?;
+        }
+        Ok(fenced.len())
+    }
+
     pub fn reconcile_unknown(
         &mut self,
         call_id: &str,
@@ -443,6 +470,16 @@ mod tests {
         assert!(reopened.transition("call-1", "acct-a", generation, "connect", None, 10).is_err());
         let reconciled = reopened.reconcile_unknown("call-1", "acct-a", generation, "ended", Some("remote session no longer active".into()), 11).unwrap();
         assert_eq!(reconciled.state, HumanCallState::Ended);
+    }
+
+    #[test]
+    fn account_switch_fences_live_calls_and_releases_transport_owner() {
+        let (_root, mut runtime) = runtime();
+        let call = runtime.create("call-1", "req-1", "conversation-1", "human-a", vec!["human-b".into()], "acct-a", 2).unwrap();
+        runtime.lease("call-1", "acct-a", call.generation, "human-a", "device-a", true).unwrap();
+        assert_eq!(runtime.fence_account("acct-a", "account switched", 3).unwrap(), 1);
+        assert_eq!(runtime.list("conversation-1", "acct-a", 20)[0].state, HumanCallState::OutcomeUnknown);
+        assert!(runtime.send_signal("call-1", "acct-a", call.generation, "device-a", "offer", json!({}), 4).is_err());
     }
 
     #[test]
