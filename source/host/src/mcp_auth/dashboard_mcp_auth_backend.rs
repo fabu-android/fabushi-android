@@ -919,18 +919,24 @@ impl CursorDashboardMcpAuthBackend {
     }
 
     pub fn resolve_local_tool_permission_ceiling(&self) -> Option<&'static str> {
-        let credentials = self.credentials.credentials().ok()?;
+        self.try_resolve_local_tool_permission_ceiling()
+            .ok()
+            .flatten()
+    }
+
+    pub fn try_resolve_local_tool_permission_ceiling(
+        &self,
+    ) -> Result<Option<&'static str>, String> {
+        let credentials = self.credentials.credentials()?;
         let ghost_mode = self.resolve_ghost_mode(&credentials);
-        let response = self
-            .send_unary(
-                &credentials,
-                DASHBOARD_GET_TEAM_ADMIN_SETTINGS_PATH,
-                &[],
-                PR_REVIEW_REQUEST_TIMEOUT_MS,
-                ghost_mode,
-            )
-            .ok()?;
-        decode_local_tool_permission_ceiling(&response).ok().flatten()
+        let response = self.send_unary(
+            &credentials,
+            DASHBOARD_GET_TEAM_ADMIN_SETTINGS_PATH,
+            &[],
+            PR_REVIEW_REQUEST_TIMEOUT_MS,
+            ghost_mode,
+        )?;
+        decode_local_tool_permission_ceiling(&response)
     }
 
     pub fn resolve_sand_pr_review_preferences(&self) -> Result<Value, String> {
