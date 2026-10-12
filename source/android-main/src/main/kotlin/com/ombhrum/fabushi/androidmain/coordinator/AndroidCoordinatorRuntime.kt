@@ -715,10 +715,14 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
             ),
         )
         if (!loggedIn || currentEpoch != previousEpoch) {
-            sendSubmissionQueue.fenceForAccountChange()
-            remoteControlSessionStore.clear()
-            remotePairingStore.clear()
-            runCatching { host.clearProtectedRemoteBinding() }
+            // Account-transition cleanup must be exhaustive. A failure in one old-account
+            // adapter must not leave later owners live under the replacement account epoch.
+            AccountTransitionCleanup().apply {
+                add { sendSubmissionQueue.fenceForAccountChange() }
+                add { remoteControlSessionStore.clear() }
+                add { remotePairingStore.clear() }
+                add { host.clearProtectedRemoteBinding() }
+            }.runAll()
         }
         computerRebuildOwner.observeAccount(currentEpoch)
         if (loggedIn) resumeQueuedComputerUpdateIfNeeded()
