@@ -46,4 +46,31 @@ class AccountAvatarPolicyTest {
             ),
         )
     }
+    @Test
+    fun avatarByteCacheCopiesValuesAndEvictsLeastRecentlyUsedEntry() {
+        val cache = AccountAvatarByteCache(maxEntries = 2)
+        val first = byteArrayOf(1, 2, 3)
+        cache.put("https://example.com/first.png", first)
+        first[0] = 9
+
+        val cached = cache.get("https://example.com/first.png")!!
+        assertEquals(listOf<Byte>(1, 2, 3), cached.toList())
+        cached[1] = 8
+        assertEquals(listOf<Byte>(1, 2, 3), cache.get("https://example.com/first.png")!!.toList())
+
+        cache.put("https://example.com/second.png", byteArrayOf(4))
+        cache.get("https://example.com/first.png")
+        cache.put("https://example.com/third.png", byteArrayOf(5))
+
+        assertEquals(2, cache.size())
+        assertNull(cache.get("https://example.com/second.png"))
+        assertEquals(listOf<Byte>(1, 2, 3), cache.get("https://example.com/first.png")!!.toList())
+    }
+
+    @Test(expected = IllegalArgumentException::class)
+    fun avatarByteCacheRejectsUnboundedPayloads() {
+        AccountAvatarByteCache(maxEntries = 1)
+            .put("https://example.com/too-large.png", ByteArray(ACCOUNT_AVATAR_MAX_BYTES + 1))
+    }
+
 }
