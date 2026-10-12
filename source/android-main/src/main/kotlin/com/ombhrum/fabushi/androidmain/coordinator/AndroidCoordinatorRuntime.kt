@@ -3208,6 +3208,7 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
             .put("reconnectedSinceLeft", snapshot.reconnectedSinceLeft)
             .put("terminalMigration", snapshot.terminalMigration)
             .put("lastResolution", snapshot.lastResolution?.name?.lowercase() ?: JSONObject.NULL)
+            .put("episodeStartedAtMs", snapshot.episodeStartedAtMs ?: JSONObject.NULL)
             .put("elapsedMs", visibility?.elapsedMs ?: JSONObject.NULL)
             .put("stageElapsedMs", visibility?.stageElapsedMs ?: JSONObject.NULL)
             .put("isStalled", visibility?.isStalled ?: false)
