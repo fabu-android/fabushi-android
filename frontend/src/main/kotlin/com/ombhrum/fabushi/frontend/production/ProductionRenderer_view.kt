@@ -25,8 +25,12 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.ombhrum.fabushi.androidpreload.deeplink.AndroidDeepLink
 import com.ombhrum.fabushi.androidpreload.deeplink.AndroidPresentationDeepLink
+import com.ombhrum.fabushi.androidpreload.runtime.AndroidEntrypointAvailabilitySnapshot
+import com.ombhrum.fabushi.androidpreload.runtime.AndroidEntrypointId
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidPresentationRuntimePort
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.withContext
 import org.json.JSONObject
 
 private enum class RendererRoute { GROK_HOME, AGENT_NETWORK, MESSAGING }
@@ -46,6 +50,7 @@ internal fun ProductionRenderer(
     runtimePort: AndroidPresentationRuntimePort,
 ) {
             val appAgentSurface = runtimePort.appAgentSurface
+            val coordinator = remember { CoordinatorClient.presentation() }
 
             FabushiNativeTheme {
                 val model: MarketplaceViewModel = viewModel()
@@ -75,6 +80,9 @@ internal fun ProductionRenderer(
                 var shortcutNewAgentNonce by remember { mutableStateOf(0) }
                 var shortcutFocusPromptNonce by remember { mutableStateOf(0) }
                 var shortcutFindInChatNonce by remember { mutableStateOf(0) }
+                var entrypointAvailability by remember {
+                    mutableStateOf(AndroidEntrypointAvailabilitySnapshot.initial())
+                }
                 val rootShellNavigationOwner = remember(activity.applicationContext) {
                     createRootShellNavigationOwner(activity.applicationContext)
                 }
@@ -267,6 +275,27 @@ internal fun ProductionRenderer(
                     selectedAgentId = canonicalSelectedAgentId,
                 )
 
+                LaunchedEffect(
+                    state.loggedIn,
+                    state.rootConnectionProjection.accountGeneration,
+                    state.rootConnectionProjection.accountEpoch,
+                    botState.bots.map { it.id },
+                ) {
+                    entrypointAvailability = withContext(Dispatchers.IO) {
+                        coordinator.refreshEntrypointAvailability()
+                    }
+                }
+                val agentNetworkAvailability =
+                    entrypointAvailability.availability(AndroidEntrypointId.AGENT_NETWORK)
+                LaunchedEffect(agentNetworkAvailability, rendererRoute) {
+                    if (
+                        rendererRoute == RendererRoute.AGENT_NETWORK &&
+                        !agentNetworkAvailability.isOpenable
+                    ) {
+                        rendererRoute = RendererRoute.GROK_HOME
+                    }
+                }
+
                 SideEffect {
                     fun openPalette(tab: CommandPaletteTab) {
                         commandPaletteAgentFilter = null
@@ -302,7 +331,14 @@ internal fun ProductionRenderer(
                                     if (commandPaletteOpen) commandPaletteOpen = false
                                     else openPalette(CommandPaletteTab.ALL)
                                 },
-                                openSettings = { showSettings = true },
+                                openSettings = {
+                                    if (entrypointAvailability
+                                            .availability(AndroidEntrypointId.SETTINGS)
+                                            .isOpenable
+                                    ) {
+                                        showSettings = true
+                                    }
+                                },
                                 openTools = { openPalette(CommandPaletteTab.ACTIONS) },
                                 focusPrompt = { if (botState.activeBot != null) shortcutFocusPromptNonce += 1 },
                                 openSearch = { openPalette(CommandPaletteTab.AGENTS) },
@@ -350,7 +386,11 @@ internal fun ProductionRenderer(
                                 toggleSidebar = {
                                     rendererRoute = if (rendererRoute == RendererRoute.AGENT_NETWORK) {
                                         RendererRoute.GROK_HOME
-                                    } else RendererRoute.AGENT_NETWORK
+                                    } else if (agentNetworkAvailability.isOpenable) {
+                                        RendererRoute.AGENT_NETWORK
+                                    } else {
+                                        RendererRoute.GROK_HOME
+                                    }
                                 },
                             ),
                             agentCount = botState.bots.size,
@@ -376,7 +416,6 @@ internal fun ProductionRenderer(
 
                 val active = openedMiniApp
                 if (active != null) {
-                    val coordinator = remember { CoordinatorClient.presentation() }
                     val miniAppPlatformBridge = remember(active.pluginId, coordinator) {
                         MiniAppPlatformBridge(coordinator)
                     }
@@ -430,7 +469,13 @@ internal fun ProductionRenderer(
                         onChooseColor = { signedInOnboardingModel.choosePersona(color = it) },
                         onCreate = signedInOnboardingModel::createFirstAgent,
                     )
-                } else if (state.onboardingStep >= 3 && state.authResolved && state.loggedIn && rendererRoute == RendererRoute.AGENT_NETWORK) {
+                } else if (
+                    state.onboardingStep >= 3 &&
+                    state.authResolved &&
+                    state.loggedIn &&
+                    rendererRoute == RendererRoute.AGENT_NETWORK &&
+                    agentNetworkAvailability.isOpenable
+                ) {
                     AgentNetworkSurface(
                         bots = botState.bots,
                         appAgentSurface = appAgentSurface,
@@ -606,7 +651,12 @@ internal fun ProductionRenderer(
                                 searchText = "Settings preferences appearance theme updates",
                                 activate = {
                                     commandPaletteOpen = false
-                                    showSettings = true
+                                    if (entrypointAvailability
+                                            .availability(AndroidEntrypointId.SETTINGS)
+                                            .isOpenable
+                                    ) {
+                                        showSettings = true
+                                    }
                                 },
                             ),
                         )
@@ -656,12 +706,17 @@ internal fun ProductionRenderer(
                             messagingState = messagingState,
                             botState = botState,
                             appAgentSurface = appAgentSurface,
+                            agentNetworkAvailability = agentNetworkAvailability,
                             onOpenMessaging = { rendererRoute = RendererRoute.MESSAGING },
                             onRefreshAccess = model::refreshAccountAccess,
                             onOpenAccessOnboarding = {
                                 runtimePort.launchExternalUrl(ACCESS_ONBOARDING_URL)
                             },
-                            onOpenAgentNetwork = { rendererRoute = RendererRoute.AGENT_NETWORK },
+                            onOpenAgentNetwork = {
+                                if (agentNetworkAvailability.isOpenable) {
+                                    rendererRoute = RendererRoute.AGENT_NETWORK
+                                }
+                            },
                             onOpenConversationOutline = botModel::openConversationOutline,
                             onCloseConversationOutline = botModel::closeConversationOutline,
                             onSelectConversationOutlineAgent = botModel::selectConversationOutlineAgent,
