@@ -23,6 +23,13 @@ internal data class CanonicalAgentTranscriptMessage(
     val attachments: List<MobileTranscriptAttachment>,
 )
 
+private fun canonicalTranscriptIsHiddenAgentPeer(entry: org.json.JSONObject): Boolean =
+    entry.optBoolean("hiddenOutboundAgentPeerMessage", false) ||
+        entry.optJSONObject("toAgent")
+            ?.optString("kind")
+            ?.trim()
+            ?.equals("agent", ignoreCase = true) == true
+
 internal fun canonicalAgentTranscriptMessages(
     entries: JSONArray,
 ): List<CanonicalAgentTranscriptMessage> {
@@ -30,6 +37,7 @@ internal fun canonicalAgentTranscriptMessages(
     for (index in 0 until entries.length()) {
         val entry = entries.optJSONObject(index) ?: continue
         if (entry.optString("kind") != "message") continue
+        if (canonicalTranscriptIsHiddenAgentPeer(entry)) continue
         val id = entry.optString("id").trim()
         val agentId = entry.optString("agentId").trim()
         val role = when (entry.optString("role")) {
@@ -101,6 +109,7 @@ internal fun canonicalMobileTranscriptForAgent(
     for (index in 0 until entries.length()) {
         val entry = entries.optJSONObject(index) ?: continue
         if (entry.optString("agentId").trim() != agentId) continue
+        if (canonicalTranscriptIsHiddenAgentPeer(entry)) continue
         val id = entry.optString("id").trim()
         if (id.isBlank()) continue
         when (entry.optString("kind")) {
