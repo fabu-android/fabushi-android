@@ -840,6 +840,8 @@ mod android_jni {
                     "minimumVersion": probe.minimum_version,
                     "autoUpdateWhenIdleGateObserved": probe.auto_update_when_idle_gate_observed,
                     "autoUpdateWhenIdleGateEnabled": probe.auto_update_when_idle_gate_enabled,
+                    "sandAgentNetworkGateObserved": probe.sand_agent_network_gate_observed,
+                    "sandAgentNetworkGateEnabled": probe.sand_agent_network_gate_enabled,
                     "backendRequirement": probe.backend_requirement.wire_name(),
                     "minimumVersionError": probe.minimum_version_error,
                     "autoUpdateWhenIdleGateError": probe.auto_update_when_idle_gate_error,
