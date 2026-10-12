@@ -216,6 +216,8 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
     private val sendSubmissionExecutor = Executors.newSingleThreadExecutor { runnable ->
         Thread(runnable, "fabushi-send-submission-queue").apply { isDaemon = true }
     }
+    private val sendJournalRestoreTelemetryLock = Any()
+    private val sendJournalRestoreTelemetryReported = mutableSetOf<String>()
     private val connectivityManager =
         applicationContext.getSystemService(ConnectivityManager::class.java)
     private val sendSubmissionQueue = AndroidSendSubmissionTransportQueue(
@@ -224,6 +226,7 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
         dispatch = ::dispatchSendAcknowledgementDirect,
         cancelQueuedPersisted = ::cancelQueuedSendAcknowledgementDirect,
         onFlushed = ::publishFlushedSendAcknowledgement,
+        onRestoredSettled = ::reportRestoredSendJournal,
     )
     private val sendNetworkCallback = object : ConnectivityManager.NetworkCallback() {
         override fun onAvailable(network: Network) {
@@ -1884,6 +1887,19 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
         // A snapshot begun under an older account epoch may still be returned to its caller, but
         // it must never repopulate the live transport scheduler after an account switch.
         if (accountAccessOwner.currentProjection().accountEpoch == requestAccountEpoch) {
+            parsed.forEach { record ->
+                when (record.phase) {
+                    AndroidSendAcknowledgementPhase.PENDING ->
+                        reportRestoredSendJournal(record, "parked", phaseOverride = "prepared")
+                    AndroidSendAcknowledgementPhase.ACCEPTED_AWAITING_ECHO ->
+                        reportRestoredSendJournal(record, "parked")
+                    AndroidSendAcknowledgementPhase.OUTCOME_UNKNOWN ->
+                        if (record.reason?.contains("Host reopened while dispatch outcome was unknown") == true) {
+                            reportRestoredSendJournal(record, "parked", phaseOverride = "dispatching")
+                        }
+                    else -> Unit
+                }
+            }
             sendSubmissionQueue.discover(parsed)
             if (!isSendTransportDown()) scheduleSendSubmissionFlush()
         }
@@ -2295,6 +2311,42 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
             "feature.sendAcknowledgement.cancelQueued",
             scope.toJson(),
         ).optBoolean("cancelled", false)
+
+    private fun reportRestoredSendJournal(
+        record: AndroidSendAcknowledgement,
+        outcome: String,
+        phaseOverride: String? = null,
+    ) {
+        val phase = phaseOverride ?: when (record.phase) {
+            AndroidSendAcknowledgementPhase.PENDING -> "prepared"
+            AndroidSendAcknowledgementPhase.QUEUED -> "queued"
+            AndroidSendAcknowledgementPhase.DISPATCHING -> "dispatching"
+            AndroidSendAcknowledgementPhase.ACCEPTED_AWAITING_ECHO -> "accepted-awaiting-echo"
+            AndroidSendAcknowledgementPhase.OUTCOME_UNKNOWN -> return
+            AndroidSendAcknowledgementPhase.FAILED -> return
+        }
+        val telemetryKey = listOf(
+            record.accountSlot.orEmpty(),
+            record.agentId,
+            record.nonce,
+            record.generation.toString(),
+            outcome,
+            phase,
+        ).joinToString("\u0000")
+        val shouldReport = synchronized(sendJournalRestoreTelemetryLock) {
+            sendJournalRestoreTelemetryReported.add(telemetryKey)
+        }
+        if (!shouldReport) return
+        val ageMs = (System.currentTimeMillis() - record.enteredAtMs).coerceAtLeast(0L)
+        runCatching {
+            reportSendJournalRestore(
+                outcome = outcome,
+                phase = phase,
+                ageMs = ageMs,
+                recordCount = 1,
+            )
+        }
+    }
 
     private fun publishFlushedSendAcknowledgement(
         scope: AndroidSendSubmissionScope,
