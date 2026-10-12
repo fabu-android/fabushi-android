@@ -10,7 +10,7 @@ use crate::automation_runtime::{run_json as automation_run_json, AutomationRunti
 use crate::auto_review_settings::{AutoReviewInstructions, DurableAutoReviewSettings};
 use crate::android_agent_roster::AndroidAgentRoster;
 use crate::android_process_metrics::AndroidProcessMetricsCollector;
-use crate::process_crash_guard::AndroidUncleanExitMarker;
+use crate::process_crash_guard::{AndroidUncleanExitKind, AndroidUncleanExitMarker};
 use crate::android_structured_log_spill::AndroidStructuredLogSpool;
 use crate::agent_attachment::{
     prompt_with_agent_attachments, with_agent_attachment_tools, AgentAttachment,
@@ -986,12 +986,20 @@ impl AndroidJsonHost {
         .unwrap_or_else(|error| panic!("failed to arm Android Host session marker: {error}"));
         let mut process_crash_recent = VecDeque::new();
         if let Some(prior) = prior_unclean_exit {
+            let kind = match prior.kind {
+                AndroidUncleanExitKind::UncleanExit => "unclean_exit",
+                AndroidUncleanExitKind::MarkerOrphaned => "marker_orphaned",
+            };
             process_crash_recent.push_back(json!({
-                "kind":"unclean_exit",
+                "kind":kind,
                 "occurredAtMs":prior.last_alive_at_ms,
-                "uptimeMs":prior.last_alive_at_ms.saturating_sub(prior.started_at_ms),
+                "uptimeMs":prior.previous_uptime_bucket_ms,
                 "crashSeen":prior.crash_seen,
-                "errorCode":"SAND-E0604",
+                "errorCode":if matches!(prior.kind, AndroidUncleanExitKind::UncleanExit) {
+                    Value::String("SAND-E0610".into())
+                } else {
+                    Value::Null
+                },
                 "errorDomain":"android-process",
                 "errorRetryable":false,
             }));
