@@ -136,6 +136,12 @@ impl AutomationRuntime {
             .collect()
     }
 
+    pub fn has_owned_spec(&self, id: &str, account_fence: &str, agent_id: &str) -> bool {
+        self.state.specs.get(id).is_some_and(|spec| {
+            spec.account_fence == account_fence && spec.agent_id == agent_id
+        })
+    }
+
     pub fn set_agent_workflow_enabled(
         &mut self,
         account_fence: &str,
@@ -510,6 +516,17 @@ mod tests {
         replacement.id = "legacy".into();
         replacement.agent_id.clear();
         assert!(runtime.upsert_spec(replacement, Some("UTC")).is_err());
+    }
+
+    #[test]
+    fn owned_spec_lookup_is_account_and_agent_fenced() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("automation.json");
+        let mut runtime = AutomationRuntime::open(&path, 1).unwrap();
+        runtime.upsert_spec(spec("acct-a"), Some("UTC")).unwrap();
+        assert!(runtime.has_owned_spec("daily-brief", "acct-a", "agent-a"));
+        assert!(!runtime.has_owned_spec("daily-brief", "acct-b", "agent-a"));
+        assert!(!runtime.has_owned_spec("daily-brief", "acct-a", "agent-b"));
     }
 
     #[test]

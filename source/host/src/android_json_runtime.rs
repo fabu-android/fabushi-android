@@ -6,6 +6,7 @@ use crate::account_telemetry::{
 };
 use crate::account_telemetry_spill::DurableAccountTelemetryOutbox;
 use crate::capability_broker::{CapabilityDecision, PendingCapabilityCall, SharedCapabilityBroker};
+use crate::automation_id::stable_account_automation_id;
 use crate::automation_runtime::{run_json as automation_run_json, AutomationRuntime, AutomationSpec};
 use crate::auto_review_settings::{AutoReviewInstructions, DurableAutoReviewSettings};
 use crate::android_agent_roster::AndroidAgentRoster;
@@ -3835,7 +3836,7 @@ impl AndroidJsonHost {
         let id = spec.id.clone();
         let time_zone = self.effective_time_zone()?;
         self.automation_runtime.upsert_spec(spec, time_zone.as_deref())?;
-        Ok(json!({"id":id,"stored":true}))
+        Ok(json!({"id":id,"localId":local_id,"stored":true}))
     }
 
     fn automation_list(&mut self) -> Result<Value, String> {

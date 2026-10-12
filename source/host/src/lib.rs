@@ -11,6 +11,7 @@ pub mod android_user_settings;
 pub mod android_json_runtime;
 pub mod android_process_metrics;
 pub mod android_structured_log_spill;
+pub mod automation_id;
 pub mod automation_runtime;
 pub mod automation_schedule;
 pub mod auto_review_settings;
