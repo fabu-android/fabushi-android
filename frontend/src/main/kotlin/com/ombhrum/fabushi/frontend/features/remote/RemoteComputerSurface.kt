@@ -52,6 +52,9 @@ internal data class ComputerRebuildProgressProjection(
     val steps: List<String>,
     val activeIndex: Int,
     val progress: Double,
+    val episodeKey: String,
+    val elapsedMs: Long,
+    val isStalled: Boolean,
     val reconnectVariant: String? = null,
 ) {
     val active: Boolean get() = kind.isNotBlank()
@@ -84,6 +87,19 @@ internal object ComputerRebuildProgressPolicy {
     fun project(status: JSONObject): ComputerRebuildProgressProjection? {
         val kind = status.optString("kind").trim()
         if (kind.isEmpty() || kind == "null") return null
+        val elapsedMs = status.optLong("elapsedMs", 0L).coerceAtLeast(0L)
+        val episodeStartedAtMs = status.optLong("episodeStartedAtMs", 0L).coerceAtLeast(0L)
+        val requestId = status.optString("requestId").takeUnless { it == "null" }.orEmpty()
+        val operationId = status.optString("operationId").takeUnless { it == "null" }.orEmpty()
+        val episodeKey = listOf(
+            status.optLong("accountEpoch", -1L),
+            status.optLong("processGeneration", -1L),
+            episodeStartedAtMs,
+            requestId,
+            operationId,
+            kind,
+        ).joinToString(":")
+        val isStalled = status.optBoolean("isStalled", false)
         if (kind == "reconnecting") {
             val boxPhase = status.optString("boxPhase")
             val connected = status.optBoolean("connected", true)
@@ -102,6 +118,9 @@ internal object ComputerRebuildProgressPolicy {
                 steps = listOf("重新连接"),
                 activeIndex = 0,
                 progress = 0.0,
+                episodeKey = episodeKey,
+                elapsedMs = elapsedMs,
+                isStalled = isStalled,
                 reconnectVariant = variant,
             )
         }
@@ -181,6 +200,9 @@ internal object ComputerRebuildProgressPolicy {
             steps = steps,
             activeIndex = activeIndex,
             progress = progress,
+            episodeKey = episodeKey,
+            elapsedMs = elapsedMs,
+            isStalled = isStalled,
         )
     }
 }
@@ -204,6 +226,7 @@ fun RemoteComputerSurface(onClose: () -> Unit) {
     var nativeError by remember { mutableStateOf<String?>(null) }
     var rebuildMessage by remember { mutableStateOf<String?>(null) }
     var rebuildProgress by remember { mutableStateOf<ComputerRebuildProgressProjection?>(null) }
+    var rebuildEscalationShownFor by remember { mutableStateOf<String?>(null) }
     var pairingCode by remember { mutableStateOf("") }
     var pairingLabel by remember { mutableStateOf("Fabushi Android") }
 
@@ -263,7 +286,29 @@ fun RemoteComputerSurface(onClose: () -> Unit) {
                 withContext(Dispatchers.IO) {
                     ComputerRebuildProgressPolicy.project(coordinator.computerRebuildStatus())
                 }
-            }.onSuccess { rebuildProgress = it }
+            }.onSuccess { projection ->
+                rebuildProgress = projection
+                if (projection == null) {
+                    rebuildEscalationShownFor = null
+                } else if (
+                    projection.isStalled &&
+                    rebuildEscalationShownFor != projection.episodeKey
+                ) {
+                    // Mark first so a temporary telemetry outage cannot create an analytics storm.
+                    // The rebuild owner remains canonical; this key only deduplicates this UI event.
+                    rebuildEscalationShownFor = projection.episodeKey
+                    runCatching {
+                        withContext(Dispatchers.IO) {
+                            coordinator.reportRebuildEscalation(
+                                rebuildKind = projection.kind,
+                                elapsedMs = projection.elapsedMs,
+                                action = "shown",
+                                escalation = "taking-longer",
+                            )
+                        }
+                    }
+                }
+            }
             delay(1_500)
         }
     }
@@ -339,6 +384,20 @@ fun RemoteComputerSurface(onClose: () -> Unit) {
             },
             rebuildMessage = rebuildMessage,
             rebuildProgress = rebuildProgress,
+            onKeepWaiting = { projection ->
+                scope.launch {
+                    runCatching {
+                        withContext(Dispatchers.IO) {
+                            coordinator.reportRebuildEscalation(
+                                rebuildKind = projection.kind,
+                                elapsedMs = projection.elapsedMs,
+                                action = "keep_waiting",
+                                escalation = "taking-longer",
+                            )
+                        }
+                    }
+                }
+            },
             onRebuild = rebuild@{ force ->
                 if (nativeBusy) return@rebuild
                 scope.launch {
@@ -548,6 +607,7 @@ private fun RemoteComputerNativePanel(
     pairingLabel: String,
     rebuildMessage: String?,
     rebuildProgress: ComputerRebuildProgressProjection?,
+    onKeepWaiting: (ComputerRebuildProgressProjection) -> Unit,
     onPairingCodeChange: (String) -> Unit,
     onPairingLabelChange: (String) -> Unit,
     onRefresh: () -> Unit,
@@ -602,6 +662,15 @@ private fun RemoteComputerNativePanel(
                         verticalArrangement = Arrangement.spacedBy(6.dp),
                     ) {
                         Text(projection.title, style = MaterialTheme.typography.labelMedium)
+                        if (projection.isStalled) {
+                            Text(
+                                "这次重建耗时比预期更久。系统会继续核对当前请求，不会自动重发可能有副作用的重建。",
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                            OutlinedButton(onClick = { onKeepWaiting(projection) }, enabled = !busy) {
+                                Text("继续等待")
+                            }
+                        }
                         if (projection.reconnectVariant == null) {
                             LinearProgressIndicator(
                                 progress = { projection.progress.toFloat() },
