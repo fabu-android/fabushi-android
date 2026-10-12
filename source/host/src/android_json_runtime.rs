@@ -1601,6 +1601,9 @@ impl AndroidJsonHost {
             "feature.mcp.serverTools.toggle" => self.mcp_server_tools_toggle(params),
             "feature.mcp.oauthComplete" => self.mcp_oauth_complete(params),
             "feature.mcp.authenticate" => self.mcp_authenticate(params),
+            "feature.mcp.account.logout" => self.mcp_account_logout(params),
+            "feature.mcp.account.rename" => self.mcp_account_rename(params),
+            "feature.mcp.account.remove" => self.mcp_account_remove(params),
             "feature.mcp.authWatch.register" => self.mcp_auth_watch_register(params),
             "feature.mcp.authWatch.poll" => self.mcp_auth_watch_poll(params),
             "feature.mcp.authWatch.settle" => self.mcp_auth_watch_settle(params),
@@ -3872,6 +3875,99 @@ impl AndroidJsonHost {
             McpAuthenticateResult::Unreachable(detail) => json!({"status":"unreachable","detail":detail}),
             McpAuthenticateResult::NotSupported(detail) => json!({"status":"not-supported","detail":detail}),
         })
+    }
+
+    fn mcp_account_logout(&mut self, params: &Value) -> Result<Value, String> {
+        let server_id = required_string(params, "serverId")?.to_string();
+        let account_key = required_string(params, "accountKey")?.to_string();
+        let _account_fence = self.current_turn_account_fence()?;
+        let backend = self
+            .mcp_dashboard_backend
+            .as_ref()
+            .ok_or("MCP Dashboard backend is available only in production")?;
+        let snapshot = backend
+            .fresh_server_snapshot(&server_id)?
+            .ok_or("MCP server is not available")?;
+        let server_url = snapshot
+            .server_url
+            .as_deref()
+            .ok_or("MCP account logout requires an HTTP/SSE server URL")?;
+        backend.logout_mcp_account(server_url, &account_key)?;
+        let cancelled = self
+            .mcp_auth_watches
+            .lock()
+            .map_err(|_| "MCP auth watch manager lock poisoned".to_string())?
+            .cancel_watch(&server_id, &account_key)?;
+        if let Some(completion) = cancelled.as_ref() {
+            self.emit_mcp_auth_watch_completion(completion, Some("account-logout"));
+        }
+        self.events.push_back(json!({
+            "type":"mcp.account.changed",
+            "action":"logout",
+            "serverId":server_id,
+            "serverName":snapshot.server_name,
+            "accountKey":account_key,
+        }));
+        Ok(json!({"status":"logged-out","serverId":server_id,"accountKey":account_key}))
+    }
+
+    fn mcp_account_rename(&mut self, params: &Value) -> Result<Value, String> {
+        let server_id = required_string(params, "serverId")?.to_string();
+        let account_key = required_string(params, "accountKey")?.to_string();
+        let new_account_key = required_string(params, "newAccountKey")?.to_string();
+        let _account_fence = self.current_turn_account_fence()?;
+        let backend = self
+            .mcp_dashboard_backend
+            .as_ref()
+            .ok_or("MCP Dashboard backend is available only in production")?;
+        backend.rename_mcp_account(&server_id, &account_key, &new_account_key)?;
+        let cancelled = self
+            .mcp_auth_watches
+            .lock()
+            .map_err(|_| "MCP auth watch manager lock poisoned".to_string())?
+            .cancel_watch(&server_id, &account_key)?;
+        if let Some(completion) = cancelled.as_ref() {
+            self.emit_mcp_auth_watch_completion(completion, Some("account-renamed"));
+        }
+        self.events.push_back(json!({
+            "type":"mcp.account.changed",
+            "action":"rename",
+            "serverId":server_id,
+            "accountKey":account_key,
+            "newAccountKey":new_account_key,
+        }));
+        Ok(json!({
+            "status":"renamed",
+            "serverId":server_id,
+            "accountKey":account_key,
+            "newAccountKey":new_account_key,
+        }))
+    }
+
+    fn mcp_account_remove(&mut self, params: &Value) -> Result<Value, String> {
+        let server_id = required_string(params, "serverId")?.to_string();
+        let account_key = required_string(params, "accountKey")?.to_string();
+        let _account_fence = self.current_turn_account_fence()?;
+        let backend = self
+            .mcp_dashboard_backend
+            .as_ref()
+            .ok_or("MCP Dashboard backend is available only in production")?;
+        backend.delete_mcp_account(&server_id, &account_key)?;
+        let cancelled = self
+            .mcp_auth_watches
+            .lock()
+            .map_err(|_| "MCP auth watch manager lock poisoned".to_string())?
+            .cancel_watch(&server_id, &account_key)?;
+        if let Some(completion) = cancelled.as_ref() {
+            self.emit_mcp_auth_watch_completion(completion, Some("account-removed"));
+        }
+        self.events.push_back(json!({
+            "type":"mcp.account.changed",
+            "action":"remove",
+            "serverId":server_id,
+            "accountKey":account_key,
+        }));
+        Ok(json!({"status":"removed","serverId":server_id,"accountKey":account_key}))
     }
 
     fn mcp_auth_watch_snapshot(&self) -> Result<Value, String> {
