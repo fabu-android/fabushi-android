@@ -10,7 +10,7 @@ const STORE_VERSION: u8 = 1;
 const MAX_STORE_BYTES: u64 = 2 * 1024 * 1024;
 const MAX_ID_BYTES: usize = 512;
 const MAX_TOOLS_PER_SERVER: usize = 2_048;
-const MAX_INSTRUCTIONS_BYTES: usize = 64 * 1024;
+const MAX_INSTRUCTIONS_UTF16_UNITS: usize = 500;
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -121,22 +121,14 @@ impl McpServerToolSettings {
     ) -> Result<Option<String>, String> {
         validate_id(account_fence, "account fence")?;
         validate_id(server_id, "server id")?;
-        validate_instructions(instructions)?;
-        let normalized = instructions.trim().to_string();
+        let normalized = clamp_instructions(instructions)?;
         let mut next = self.state.clone();
-        if normalized.is_empty() {
-            if let Some(servers) = next.instructions.get_mut(account_fence) {
-                servers.remove(server_id);
-                if servers.is_empty() {
-                    next.instructions.remove(account_fence);
-                }
-            }
-        } else {
-            next.instructions
-                .entry(account_fence.to_string())
-                .or_default()
-                .insert(server_id.to_string(), normalized.clone());
-        }
+        // An explicit empty value is canonical state: Desktop uses it to suppress a connector's
+        // built-in default instructions. Do not collapse Some("") into the unset/None state.
+        next.instructions
+            .entry(account_fence.to_string())
+            .or_default()
+            .insert(server_id.to_string(), normalized);
         persist(&self.path, &next)?;
         self.state = next;
         self.custom_instructions_for(account_fence, server_id)
@@ -187,8 +179,27 @@ fn validate_state(state: &PersistedStore) -> Result<(), String> {
     Ok(())
 }
 
+fn clamp_instructions(raw: &str) -> Result<String, String> {
+    if raw.contains('\0') {
+        return Err("MCP custom instructions are invalid".into());
+    }
+    // Desktop clamps at 500 JavaScript UTF-16 code units. Rust strings cannot contain isolated
+    // surrogate halves, so preserve complete Unicode scalars while never exceeding that bound.
+    let mut used = 0usize;
+    let mut out = String::new();
+    for ch in raw.chars() {
+        let units = ch.len_utf16();
+        if used + units > MAX_INSTRUCTIONS_UTF16_UNITS {
+            break;
+        }
+        used += units;
+        out.push(ch);
+    }
+    Ok(out)
+}
+
 fn validate_instructions(raw: &str) -> Result<(), String> {
-    if raw.as_bytes().len() > MAX_INSTRUCTIONS_BYTES || raw.contains('\0') {
+    if raw.contains('\0') || raw.encode_utf16().count() > MAX_INSTRUCTIONS_UTF16_UNITS {
         return Err("MCP custom instructions are invalid".into());
     }
     Ok(())
@@ -292,15 +303,47 @@ mod tests {
     }
 
     #[test]
-    fn custom_instructions_reject_unbounded_or_nul_values() {
+    fn custom_instructions_clamp_to_desktop_limit_and_preserve_explicit_empty() {
+        let path = path("instructions-clamp");
+        let mut store = McpServerToolSettings::open(&path).unwrap();
+        let long = "x".repeat(MAX_INSTRUCTIONS_UTF16_UNITS + 25);
+        assert_eq!(
+            store
+                .set_custom_instructions("account:a", "17", &long)
+                .unwrap()
+                .as_deref()
+                .map(str::len),
+            Some(MAX_INSTRUCTIONS_UTF16_UNITS)
+        );
+        assert_eq!(
+            store
+                .set_custom_instructions("account:a", "17", "")
+                .unwrap(),
+            Some(String::new())
+        );
+        drop(store);
+        let reopened = McpServerToolSettings::open(&path).unwrap();
+        assert_eq!(
+            reopened.custom_instructions_for("account:a", "17").unwrap(),
+            Some(String::new())
+        );
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn custom_instructions_reject_nul_and_clamp_without_splitting_unicode_scalar() {
         let path = path("instructions-invalid");
         let mut store = McpServerToolSettings::open(&path).unwrap();
         assert!(store
-            .set_custom_instructions("account:a", "17", &"x".repeat(MAX_INSTRUCTIONS_BYTES + 1))
-            .is_err());
-        assert!(store
             .set_custom_instructions("account:a", "17", "bad\0value")
             .is_err());
+        let emoji = "a".repeat(499) + "😀";
+        let saved = store
+            .set_custom_instructions("account:a", "17", &emoji)
+            .unwrap()
+            .unwrap();
+        assert_eq!(saved.encode_utf16().count(), 499);
+        assert!(saved.ends_with('a'));
         let _ = fs::remove_file(path);
     }
 
