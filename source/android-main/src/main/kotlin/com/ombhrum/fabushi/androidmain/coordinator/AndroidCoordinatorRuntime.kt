@@ -998,6 +998,7 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
     override fun humanCallSendSignal(
         callId: String,
         generation: Long,
+        seq: Long,
         kind: String,
         payload: JSONObject,
     ): AndroidHumanCallSignal =
@@ -1007,6 +1008,7 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
                 JSONObject()
                     .put("callId", callId)
                     .put("generation", generation)
+                    .put("seq", seq)
                     .put("kind", kind)
                     .put("payload", JSONObject(payload.toString())),
             ),
