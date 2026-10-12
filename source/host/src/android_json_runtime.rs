@@ -1582,6 +1582,8 @@ impl AndroidJsonHost {
             "feature.settings.timeZone.set" => self.set_time_zone_settings(params),
             "feature.settings.localToolPermission" => self.local_tool_permission(),
             "feature.settings.localToolPermission.set" => self.set_local_tool_permission(params),
+            "feature.settings.processMetrics" => self.process_metrics_settings(),
+            "feature.settings.processMetrics.set" => self.set_process_metrics_settings(params),
             "feature.settings.onboardingSeen" => self.onboarding_seen(),
             "feature.settings.onboardingSeen.set" => self.set_onboarding_seen(params),
             "feature.settings.autoReviewInstructions" => self.auto_review_instructions(),
@@ -2595,6 +2597,35 @@ impl AndroidJsonHost {
             .set_local_tool_permission(requested)
             .map_err(|error| format!("failed to persist Android local tool permission: {error}"))?;
         Ok(json!({"permission": value.as_str()}))
+    }
+
+    fn process_metrics_settings(&self) -> Result<Value, String> {
+        let enabled = self
+            .user_settings
+            .lock()
+            .map_err(|_| "Android user settings lock poisoned".to_string())?
+            .process_metrics_local_enabled();
+        Ok(json!({
+            "localEnabled": enabled,
+            "backendReportingEnabled": false,
+        }))
+    }
+
+    fn set_process_metrics_settings(&mut self, params: &Value) -> Result<Value, String> {
+        let local_enabled = params
+            .get("localEnabled")
+            .and_then(Value::as_bool)
+            .ok_or("process metrics localEnabled boolean is required")?;
+        let enabled = self
+            .user_settings
+            .lock()
+            .map_err(|_| "Android user settings lock poisoned".to_string())?
+            .set_process_metrics_local_enabled(local_enabled)
+            .map_err(|error| format!("failed to persist Android process metrics setting: {error}"))?;
+        Ok(json!({
+            "localEnabled": enabled,
+            "backendReportingEnabled": false,
+        }))
     }
 
     fn auto_review_instructions(&mut self) -> Result<Value, String> {
@@ -10804,6 +10835,46 @@ mod time_zone_settings_dispatch_tests {
     }
 }
 
+
+#[cfg(test)]
+mod process_metrics_settings_dispatch_tests {
+    use super::*;
+
+    #[test]
+    fn process_metrics_settings_default_disabled_and_durable() {
+        let root = tempfile::tempdir().unwrap();
+        let mut host = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+        let initial = host
+            .dispatch("feature.settings.processMetrics", &json!({}))
+            .unwrap();
+        assert_eq!(initial["localEnabled"], false);
+        assert_eq!(initial["backendReportingEnabled"], false);
+
+        let enabled = host
+            .dispatch(
+                "feature.settings.processMetrics.set",
+                &json!({"localEnabled":true}),
+            )
+            .unwrap();
+        assert_eq!(enabled["localEnabled"], true);
+        assert_eq!(enabled["backendReportingEnabled"], false);
+        drop(host);
+
+        let mut reopened = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+        assert_eq!(
+            reopened
+                .dispatch("feature.settings.processMetrics", &json!({}))
+                .unwrap()["localEnabled"],
+            true,
+        );
+        assert!(reopened
+            .dispatch(
+                "feature.settings.processMetrics.set",
+                &json!({"localEnabled":"yes"}),
+            )
+            .is_err());
+    }
+}
 
 #[cfg(test)]
 mod local_tool_permission_dispatch_tests {
