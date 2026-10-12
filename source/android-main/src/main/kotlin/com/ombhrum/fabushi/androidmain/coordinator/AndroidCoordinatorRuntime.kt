@@ -20,6 +20,9 @@ import com.ombhrum.fabushi.androidpreload.runtime.AndroidAutoReviewInstructions
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidAutoReviewInstructionsSnapshot
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidHumanCallSession
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidGeneratedAvatarImage
+import com.ombhrum.fabushi.androidpreload.runtime.AndroidAvatarCrop
+import com.ombhrum.fabushi.androidpreload.runtime.AndroidAvatarImageSource
+import com.ombhrum.fabushi.androidmain.media.AndroidAvatarImageProcessor
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidHumanCallLease
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidHumanCallSignal
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidHumanCallState
@@ -2699,6 +2702,20 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
             mimeType = mimeType,
         )
     }
+
+    override fun stagePickedAgentAvatarImage(rawUri: String): AndroidAvatarImageSource =
+        AndroidAvatarImageProcessor.stagePickedImage(applicationContext, rawUri)
+
+    override fun stageGeneratedAgentAvatarImage(
+        imageData: String,
+        mimeType: String,
+    ): AndroidAvatarImageSource =
+        AndroidAvatarImageProcessor.stageGeneratedImage(imageData, mimeType)
+
+    override fun encodeAgentAvatarCrop(
+        source: AndroidAvatarImageSource,
+        crop: AndroidAvatarCrop,
+    ): String = AndroidAvatarImageProcessor.encodeCrop(source, crop)
 
     override fun agentSetNotifyOnUpdates(id: String, isEnabled: Boolean): JSONObject =
         durableAgentRosterMutation(
