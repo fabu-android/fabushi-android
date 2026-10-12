@@ -90,6 +90,9 @@ internal fun MarketplaceContent(
     onSubmitVariables: (Map<String, String>) -> Unit,
     onCancelVariables: () -> Unit,
     onSaveMcpServerInstructions: (String, String) -> Unit,
+    onOpenMcpServerTools: (String) -> Unit,
+    onRetryMcpServerTools: (String) -> Unit,
+    onToggleMcpServerTool: (String, String) -> Unit,
     onBack: () -> Unit,
 ) {
     state.variableRequest?.let { request ->
@@ -274,6 +277,51 @@ internal fun MarketplaceContent(
                                             },
                                         )
                                     }
+                                    val toolsState = state.mcpServerTools[server.id]
+                                    TextButton(
+                                        onClick = { onOpenMcpServerTools(server.id) },
+                                        enabled = !server.disabledByTeamAdminPolicy && toolsState?.pendingTool == null,
+                                        modifier = Modifier.testTag("mcp-server-tools-${server.id}"),
+                                    ) { Text(if (toolsState == null) "查看工具" else "刷新工具") }
+                                    when (toolsState?.status) {
+                                        McpServerToolsUiStatus.LOADING -> CircularProgressIndicator(modifier = Modifier.height(18.dp))
+                                        McpServerToolsUiStatus.FAILED -> {
+                                            Text("工具列表不可用：${toolsState.failure.orEmpty()}", style = MaterialTheme.typography.bodySmall)
+                                            TextButton(
+                                                onClick = { onRetryMcpServerTools(server.id) },
+                                                modifier = Modifier.testTag("mcp-server-tools-retry-${server.id}"),
+                                            ) { Text("重试") }
+                                        }
+                                        McpServerToolsUiStatus.READY -> {
+                                            if (toolsState.tools.isEmpty()) {
+                                                Text("此连接器没有可用工具。", style = MaterialTheme.typography.bodySmall)
+                                            } else {
+                                                toolsState.tools.forEach { tool ->
+                                                    Row(
+                                                        modifier = Modifier.fillMaxWidth(),
+                                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                                        verticalAlignment = Alignment.CenterVertically,
+                                                    ) {
+                                                        Column(modifier = Modifier.weight(1f)) {
+                                                            Text(tool.title?.takeIf(String::isNotBlank) ?: tool.name)
+                                                            tool.description?.takeIf(String::isNotBlank)?.let {
+                                                                Text(it, style = MaterialTheme.typography.bodySmall)
+                                                            }
+                                                        }
+                                                        TextButton(
+                                                            onClick = { onToggleMcpServerTool(server.id, tool.name) },
+                                                            enabled = toolsState.pendingTool == null,
+                                                            modifier = Modifier.testTag("mcp-tool-${server.id}-${tool.name}"),
+                                                        ) { Text(if (tool.isDisabled) "启用" else "停用") }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        null -> Unit
+                                    }
+                                    toolsState?.failure
+                                        ?.takeIf { toolsState.status == McpServerToolsUiStatus.READY && it.isNotBlank() }
+                                        ?.let { Text("上次工具更新失败：$it", style = MaterialTheme.typography.bodySmall) }
                                 }
                             }
                         }
