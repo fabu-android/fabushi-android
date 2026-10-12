@@ -6,6 +6,8 @@ pub mod multitask_todo;
 pub mod production_turn_agent_owner;
 pub mod production_turn_lifecycle;
 pub mod remote_routed_tools;
+pub mod sand_auto_review;
+pub mod auto_review_gate;
 pub mod stream_attempt;
 pub mod subagent_runtime;
 pub mod subagent_tool_bridge;
