@@ -979,6 +979,7 @@ internal fun ProductionRenderer(
                         onDenyPermissions = model::denyPermissions,
                         onSubmitPluginVariables = model::submitPluginVariables,
                         onCancelPluginVariables = model::cancelPluginVariables,
+                        onSaveMcpServerInstructions = model::saveMcpServerInstructions,
                         updateState = updateState,
                         onCheckUpdate = { updateModel.checkForUpdates(force = true) },
                         onInstallUpdate = updateModel::downloadAndInstall,
