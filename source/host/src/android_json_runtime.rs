@@ -2395,7 +2395,11 @@ impl AndroidJsonHost {
             .get("hasSeenOnboarding")
             .and_then(Value::as_bool)
             .ok_or("hasSeenOnboarding boolean is required")?;
+        let expected_scope = required_string(params, "expectedAccountScope")?;
         let account_scope = self.current_sidebar_account_scope()?;
+        if expected_scope != account_scope {
+            return Err("onboarding account scope changed before mutation".into());
+        }
         let saved = self
             .user_settings
             .lock()
@@ -10496,7 +10500,10 @@ mod onboarding_settings_dispatch_tests {
         assert_eq!(
             host.dispatch(
                 "feature.settings.onboardingSeen.set",
-                &json!({"hasSeenOnboarding":true}),
+                &json!({
+                    "hasSeenOnboarding":true,
+                    "expectedAccountScope":"account-device:test:android"
+                }),
             )
             .unwrap()["hasSeenOnboarding"],
             true,
@@ -10512,7 +10519,10 @@ mod onboarding_settings_dispatch_tests {
         assert!(reopened
             .dispatch(
                 "feature.settings.onboardingSeen.set",
-                &json!({"hasSeenOnboarding":"yes"}),
+                &json!({
+                    "hasSeenOnboarding":"yes",
+                    "expectedAccountScope":"account-device:test:android"
+                }),
             )
             .is_err());
     }
