@@ -18,10 +18,16 @@ class AndroidAvatarImageProcessorTest {
                 MAX_AGENT_AVATAR_SOURCE_DIMENSION,
             ),
         )
-        assertTrue(
+        assertFalse(
             avatarDimensionsAllowed(
-                MAX_AGENT_AVATAR_SOURCE_DIMENSION * 2,
-                MAX_AGENT_AVATAR_SOURCE_DIMENSION * 3,
+                MAX_AGENT_AVATAR_SOURCE_DIMENSION + 1,
+                MAX_AGENT_AVATAR_SOURCE_DIMENSION,
+            ),
+        )
+        assertFalse(
+            avatarDimensionsAllowed(
+                MAX_AGENT_AVATAR_SOURCE_DIMENSION,
+                MAX_AGENT_AVATAR_SOURCE_DIMENSION + 1,
             ),
         )
         assertFalse(avatarDimensionsAllowed(0, 512))
@@ -33,11 +39,10 @@ class AndroidAvatarImageProcessorTest {
         assertEquals(1, avatarDecodeSampleSize(1024, 1024))
         assertEquals(2, avatarDecodeSampleSize(2048, 1024))
         assertEquals(4, avatarDecodeSampleSize(4096, 4096))
-        assertEquals(8, avatarDecodeSampleSize(8192, 4097))
-        val sample = avatarDecodeSampleSize(16_384, 8_192)
-        assertTrue(16_384 / sample <= MAX_AGENT_AVATAR_OUTPUT_DIMENSION)
-        val largeSource = MAX_AGENT_AVATAR_SOURCE_DIMENSION * 3
-        val largeSample = avatarDecodeSampleSize(largeSource, largeSource * 2)
-        assertTrue((largeSource * 2) / largeSample <= MAX_AGENT_AVATAR_OUTPUT_DIMENSION)
+        val sample = avatarDecodeSampleSize(
+            MAX_AGENT_AVATAR_SOURCE_DIMENSION,
+            MAX_AGENT_AVATAR_SOURCE_DIMENSION,
+        )
+        assertTrue(MAX_AGENT_AVATAR_SOURCE_DIMENSION / sample <= MAX_AGENT_AVATAR_OUTPUT_DIMENSION)
     }
 }
