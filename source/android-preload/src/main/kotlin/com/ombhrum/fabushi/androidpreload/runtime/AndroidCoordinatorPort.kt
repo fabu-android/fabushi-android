@@ -543,6 +543,32 @@ interface AndroidCoordinatorPort {
         emoji: String,
     ): JSONObject = error("Reaction acknowledgement telemetry is unavailable on this Coordinator port")
 
+    fun reportRenderTtfr(
+        ttfrMs: Long,
+        outcome: String,
+        chunkType: String?,
+        enterEpochMs: Long,
+        isFork: Boolean,
+        traceId: String? = null,
+        spanId: String? = null,
+        clientNonce: String? = null,
+        conversationId: String? = null,
+    ): JSONObject = error("Render TTFR telemetry is unavailable on this Coordinator port")
+
+    fun reportRenderStream(
+        outcome: String,
+        chunkCount: Int,
+        maxGapMs: Long,
+        stalledMs: Long,
+        stallCount: Int,
+        streamMs: Long,
+        isFork: Boolean,
+        traceId: String? = null,
+        spanId: String? = null,
+        clientNonce: String? = null,
+        conversationId: String? = null,
+    ): JSONObject = error("Render stream telemetry is unavailable on this Coordinator port")
+
     fun reportRebuildEscalation(
         rebuildKind: String,
         elapsedMs: Long,
