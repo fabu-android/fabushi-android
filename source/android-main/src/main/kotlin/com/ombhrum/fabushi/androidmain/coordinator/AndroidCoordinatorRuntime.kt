@@ -702,6 +702,21 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
                 .put("direction", direction),
         )
 
+    override fun reportReactionAck(
+        ackMs: Long,
+        outcome: String,
+        conversationId: String,
+        emoji: String,
+    ): JSONObject =
+        host.request(
+            "feature.telemetry.reactionAck",
+            JSONObject()
+                .put("ackMs", ackMs.coerceAtLeast(0L))
+                .put("outcome", outcome)
+                .put("conversationId", conversationId)
+                .put("emoji", emoji),
+        )
+
 
     override fun reportRebuildEscalation(
         rebuildKind: String,
