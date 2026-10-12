@@ -146,6 +146,21 @@ internal fun shouldApplyAccountPrivacyModeResult(
         expectedAuthId.isNotBlank() &&
         currentAuthId == expectedAuthId
 
+internal fun shouldApplyAccountUsageResult(
+    requestGeneration: Long,
+    currentGeneration: Long,
+    expectedAuthId: String,
+    currentLoggedIn: Boolean,
+    currentAuthId: String,
+): Boolean =
+    shouldApplyAccountPrivacyModeResult(
+        requestGeneration = requestGeneration,
+        currentGeneration = currentGeneration,
+        expectedAuthId = expectedAuthId,
+        currentLoggedIn = currentLoggedIn,
+        currentAuthId = currentAuthId,
+    )
+
 data class MarketplaceUiState(
     val loading: Boolean = false,
     val installingPluginId: String? = null,
@@ -682,7 +697,7 @@ class MarketplaceViewModel(application: Application) : AndroidViewModel(applicat
                 withContext(Dispatchers.IO) { coordinator.accountUsageSummary() }
             }.onSuccess { summary ->
                 val current = mutableState.value
-                if (!shouldApplyAccountPrivacyModeResult(
+                if (!shouldApplyAccountUsageResult(
                         requestGeneration = generation,
                         currentGeneration = accountUsageRefreshGeneration,
                         expectedAuthId = expectedAuthId,
@@ -696,7 +711,7 @@ class MarketplaceViewModel(application: Application) : AndroidViewModel(applicat
                 )
             }.onFailure { error ->
                 val current = mutableState.value
-                if (shouldApplyAccountPrivacyModeResult(
+                if (shouldApplyAccountUsageResult(
                         requestGeneration = generation,
                         currentGeneration = accountUsageRefreshGeneration,
                         expectedAuthId = expectedAuthId,
