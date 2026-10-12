@@ -657,6 +657,7 @@ pub struct AndroidJsonHost {
     agents: Arc<Mutex<AndroidAgentRoster>>,
     sidebar_sections: Arc<Mutex<AndroidSidebarSections>>,
     user_settings: Arc<Mutex<AndroidUserSettings>>,
+    detected_time_zone: Arc<Mutex<Option<String>>>,
     auto_review_settings: Arc<Mutex<DurableAutoReviewSettings>>,
     transcript: Arc<Mutex<TranscriptStore>>,
     send_acknowledgements: Arc<Mutex<DurableSendAcknowledgementOwner>>,
@@ -944,6 +945,7 @@ impl AndroidJsonHost {
             agents,
             sidebar_sections,
             user_settings,
+            detected_time_zone: Arc::new(Mutex::new(None)),
             auto_review_settings,
             transcript,
             send_acknowledgements,
@@ -1352,6 +1354,7 @@ impl AndroidJsonHost {
             "feature.account.usageSummary" => self.account_usage_summary(),
             "feature.account.cancelSandTrial" => self.account_cancel_sand_trial(),
             "feature.settings.timeZone" => self.time_zone_settings(),
+            "feature.settings.timeZone.detected" => self.set_detected_time_zone(params),
             "feature.settings.timeZone.set" => self.set_time_zone_settings(params),
             "feature.settings.autoReviewInstructions" => self.auto_review_instructions(),
             "feature.settings.autoReviewInstructions.set" => self.set_auto_review_instructions(params),
@@ -2233,6 +2236,40 @@ impl AndroidJsonHost {
             object.insert("_accountSessionMutation".into(), mutation);
         }
         Ok(preferences)
+    }
+
+    fn set_detected_time_zone(&mut self, params: &Value) -> Result<Value, String> {
+        let detected = required_string(params, "detectedTimeZone")?.trim();
+        if detected.is_empty()
+            || detected.len() > 128
+            || !detected
+                .chars()
+                .all(|value| value.is_ascii_alphanumeric() || matches!(value, '/' | '_' | '-' | '+'))
+        {
+            return Err("detectedTimeZone is invalid".into());
+        }
+        *self
+            .detected_time_zone
+            .lock()
+            .map_err(|_| "Android detected time zone lock poisoned".to_string())? =
+            Some(detected.to_string());
+        Ok(json!({"detectedTimeZone": detected}))
+    }
+
+    fn effective_time_zone(&self) -> Result<Option<String>, String> {
+        let override_zone = self
+            .user_settings
+            .lock()
+            .map_err(|_| "Android user settings lock poisoned".to_string())?
+            .time_zone_override()
+            .map(str::to_string);
+        if override_zone.is_some() {
+            return Ok(override_zone);
+        }
+        self.detected_time_zone
+            .lock()
+            .map_err(|_| "Android detected time zone lock poisoned".to_string())
+            .map(|value| value.clone())
     }
 
     fn time_zone_settings(&self) -> Result<Value, String> {
@@ -4938,7 +4975,12 @@ impl AndroidJsonHost {
                 &agent_id,
                 &attachments,
             )?;
-        let prompt = prompt_with_agent_attachments(&message_text, &attachments);
+        let mut prompt = prompt_with_agent_attachments(&message_text, &attachments);
+        if let Some(time_zone) = self.effective_time_zone()? {
+            prompt.push_str("\n\n<system_reminder>\nUser time zone: ");
+            prompt.push_str(&time_zone);
+            prompt.push_str("\n</system_reminder>");
+        }
         if !hidden {
             let mut transcript = self
                 .transcript
@@ -10035,6 +10077,21 @@ mod time_zone_settings_dispatch_tests {
                 &json!({"overrideTimeZone":42}),
             )
             .is_err());
+        assert_eq!(
+            host.dispatch(
+                "feature.settings.timeZone.detected",
+                &json!({"detectedTimeZone":"America/New_York"}),
+            )
+            .unwrap()["detectedTimeZone"],
+            "America/New_York",
+        );
+        assert_eq!(host.effective_time_zone().unwrap().as_deref(), Some("America/Los_Angeles"));
+        assert!(host
+            .dispatch(
+                "feature.settings.timeZone.detected",
+                &json!({"detectedTimeZone":"bad zone"}),
+            )
+            .is_err());
 
         drop(host);
         let mut reopened = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
@@ -10051,6 +10108,11 @@ mod time_zone_settings_dispatch_tests {
             )
             .unwrap()["overrideTimeZone"]
             .is_null());
+        assert_eq!(
+            reopened.effective_time_zone().unwrap().as_deref(),
+            None,
+            "detected time zone is process-owned and must be re-synchronized after process death",
+        );
     }
 }
 
