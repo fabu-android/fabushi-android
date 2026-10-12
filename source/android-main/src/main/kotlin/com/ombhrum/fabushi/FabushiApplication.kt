@@ -8,14 +8,11 @@ import com.ombhrum.fabushi.androidmain.adapters.AndroidExternalUrlAdapter
 import com.ombhrum.fabushi.androidmain.adapters.AndroidMcpOAuthAdapter
 import java.lang.ref.WeakReference
 import java.util.concurrent.Executors
-import java.util.concurrent.TimeUnit
 import com.ombhrum.fabushi.androidmain.coordinator.AndroidCoordinatorPorts
 import com.ombhrum.fabushi.androidmain.coordinator.RootShellFocusRefreshOwner
 import com.ombhrum.fabushi.androidmain.coordinator.RootShellFocusRefreshToken
 import com.ombhrum.fabushi.androidmain.diagnostics.AndroidProcessCrashRecovery
 import com.ombhrum.fabushi.androidmain.notifications.AndroidNotificationRuntime
-import com.ombhrum.fabushi.androidmain.telemetry.SharedPreferencesAndroidProcessSessionMarkerStore
-import com.ombhrum.fabushi.androidmain.telemetry.ANDROID_PROCESS_SESSION_HEARTBEAT_INTERVAL_MS
 import com.ombhrum.fabushi.androidmain.webauthn.AndroidCredentialManagerWebAuthn
 import com.ombhrum.fabushi.androidpreload.deeplink.AndroidDeepLink
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidCoordinatorBridge
@@ -71,19 +68,6 @@ internal class FabushiProcessRuntime(
 ) : AndroidPresentationRuntimePort, AutoCloseable {
     @Volatile
     private var appForeground = false
-    private val processSessionTelemetry =
-        SharedPreferencesAndroidProcessSessionMarkerStore.production(application).also { it.start() }
-    private val processSessionHeartbeatExecutor =
-        Executors.newSingleThreadScheduledExecutor { runnable ->
-            Thread(runnable, "fabushi-process-session-heartbeat").apply { isDaemon = true }
-        }.also { executor ->
-            executor.scheduleWithFixedDelay(
-                { runCatching { processSessionTelemetry.heartbeat() } },
-                ANDROID_PROCESS_SESSION_HEARTBEAT_INTERVAL_MS,
-                ANDROID_PROCESS_SESSION_HEARTBEAT_INTERVAL_MS,
-                TimeUnit.MILLISECONDS,
-            )
-        }
     @Volatile
     private var interactiveActivityRef: WeakReference<ComponentActivity>? = null
     private val coordinator = AndroidCoordinatorPorts.presentation(application).also {
@@ -280,8 +264,6 @@ internal class FabushiProcessRuntime(
         interactiveActivityRef?.get()
 
     override fun close() {
-        processSessionHeartbeatExecutor.shutdownNow()
-        processSessionTelemetry.settleClean()
         interactiveActivityRef = null
         rootShellFocusRefreshSubscription.close()
         rootShellFocusRefreshOwner.dispose()
