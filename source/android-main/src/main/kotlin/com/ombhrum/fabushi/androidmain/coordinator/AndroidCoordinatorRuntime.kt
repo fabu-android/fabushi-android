@@ -10,6 +10,9 @@ import android.provider.OpenableColumns
 import android.util.Base64
 import android.view.View
 import android.os.StatFs
+import android.os.Debug
+import android.os.Process
+import android.os.SystemClock
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidOnDemandUsage
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidAccountUsageSummary
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidPrReviewPreferences
@@ -178,6 +181,9 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
     private val storagePressureExecutor = Executors.newSingleThreadScheduledExecutor { runnable ->
         Thread(runnable, "fabushi-storage-pressure").apply { isDaemon = true }
     }
+    private val processMetricsExecutor = Executors.newSingleThreadScheduledExecutor { runnable ->
+        Thread(runnable, "fabushi-process-metrics").apply { isDaemon = true }
+    }
     private val sendSubmissionExecutor = Executors.newSingleThreadExecutor { runnable ->
         Thread(runnable, "fabushi-send-submission-queue").apply { isDaemon = true }
     }
@@ -207,6 +213,25 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
         resumeComputerRebuildMigrationIfNeeded()
         resumeQueuedComputerUpdateIfNeeded()
         runCatching { reconcileAgentRosterMutations() }
+        processMetricsExecutor.scheduleWithFixedDelay(
+            {
+                runCatching {
+                    val memoryInfo = Debug.MemoryInfo()
+                    Debug.getMemoryInfo(memoryInfo)
+                    val memoryBytes = memoryInfo.totalPss.toLong().coerceAtLeast(0L) * 1024L
+                    host.request(
+                        "feature.telemetry.processMetrics.observe",
+                        JSONObject()
+                            .put("observedAtMs", SystemClock.elapsedRealtime())
+                            .put("cpuTimeMsCumulative", Process.getElapsedCpuTime())
+                            .put("memoryBytes", memoryBytes),
+                    )
+                }
+            },
+            PROCESS_METRICS_INITIAL_DELAY_SECONDS,
+            PROCESS_METRICS_SAMPLE_SECONDS,
+            TimeUnit.SECONDS,
+        )
         storagePressureExecutor.scheduleWithFixedDelay(
             {
                 runCatching {
@@ -3259,6 +3284,7 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
         computerRebuildQueueExecutor.shutdownNow()
         remoteComputerReconnectExecutor.shutdownNow()
         storagePressureExecutor.shutdownNow()
+        processMetricsExecutor.shutdownNow()
         sendSubmissionExecutor.shutdownNow()
         rootConnectionRetryExecutor.shutdownNow()
         computerRebuildEventHost.close()
@@ -3280,6 +3306,8 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
 
     companion object {
         private const val STORAGE_PRESSURE_SAMPLE_SECONDS = 60L
+        private const val PROCESS_METRICS_INITIAL_DELAY_SECONDS = 10L
+        private const val PROCESS_METRICS_SAMPLE_SECONDS = 10L
         private const val COMPUTER_REBUILD_RECONNECT_MS = 3_000L
         @Volatile private var instance: AndroidCoordinatorRuntime? = null
 

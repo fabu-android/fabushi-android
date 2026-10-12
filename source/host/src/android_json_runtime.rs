@@ -8,6 +8,7 @@ use crate::capability_broker::{CapabilityDecision, PendingCapabilityCall, Shared
 use crate::automation_runtime::{run_json as automation_run_json, AutomationRuntime, AutomationSpec};
 use crate::auto_review_settings::{AutoReviewInstructions, DurableAutoReviewSettings};
 use crate::android_agent_roster::AndroidAgentRoster;
+use crate::android_process_metrics::AndroidProcessMetricsCollector;
 use crate::agent_attachment::{
     prompt_with_agent_attachments, with_agent_attachment_tools, AgentAttachment,
     DurableAgentAttachmentOwner, COMPOSER_ATTACHMENT_LIMIT,
@@ -655,6 +656,7 @@ pub struct AndroidJsonHost {
     account_telemetry_outbox: Arc<Mutex<VecDeque<AccountTelemetryProjection>>>,
     account_telemetry_shipping: Arc<AtomicBool>,
     edge_failures: EdgeFailureBuffer,
+    process_metrics: AndroidProcessMetricsCollector,
     agents: Arc<Mutex<AndroidAgentRoster>>,
     sidebar_sections: Arc<Mutex<AndroidSidebarSections>>,
     user_settings: Arc<Mutex<AndroidUserSettings>>,
@@ -952,6 +954,7 @@ impl AndroidJsonHost {
             account_telemetry_outbox: Arc::new(Mutex::new(VecDeque::new())),
             account_telemetry_shipping: Arc::new(AtomicBool::new(false)),
             edge_failures: EdgeFailureBuffer::default(),
+            process_metrics: AndroidProcessMetricsCollector::default(),
             agents,
             sidebar_sections,
             user_settings,
@@ -1611,6 +1614,7 @@ impl AndroidJsonHost {
             "feature.mcp.authWatch.snapshot" => self.mcp_auth_watch_snapshot(),
             "feature.auth.profileUpdate" => self.account_profile_update(params),
             "feature.auth.logout" => self.account_logout(),
+            "feature.telemetry.processMetrics.observe" => self.process_metrics_observe(params),
             "feature.agent.diskPressure.observe" => self.agent_disk_pressure_observe(params),
             "feature.agent.diskPressure.record" => self.agent_disk_pressure_record(params),
             "feature.agent.turn.reconcile" => self.agent_turn_reconcile(params),
@@ -3148,6 +3152,14 @@ impl AndroidJsonHost {
             .map_err(|_| "canonical Android sidebar sections lock poisoned".to_string())?
             .get_snapshot(&account_scope, &known_agent_ids);
         Ok(json!({"accountFence":snapshot.account_fence,"revision":snapshot.revision,"sections":snapshot.sections}))
+    }
+
+    fn process_metrics_observe(&mut self, params: &Value) -> Result<Value, String> {
+        let observed_at_ms = params.get("observedAtMs").and_then(Value::as_u64).ok_or("observedAtMs is required")?;
+        let cpu_time_ms_cumulative = params.get("cpuTimeMsCumulative").and_then(Value::as_u64).ok_or("cpuTimeMsCumulative is required")?;
+        let memory_bytes = params.get("memoryBytes").and_then(Value::as_u64).ok_or("memoryBytes is required")?;
+        let sample = self.process_metrics.observe(observed_at_ms, cpu_time_ms_cumulative, memory_bytes)?;
+        serde_json::to_value(sample).map_err(|error| format!("failed to project Android process metrics: {error}"))
     }
 
     fn agent_disk_pressure_observe(&mut self, params: &Value) -> Result<Value, String> {
