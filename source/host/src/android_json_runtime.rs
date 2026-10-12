@@ -11165,6 +11165,7 @@ mod process_crash_telemetry_dispatch_tests {
                 "feature.telemetry.processCrash.record",
                 &json!({
                     "kind":"uncaught_exception",
+                    "errorClass":"IllegalStateException",
                     "occurredAtMs":1_000 + index as u64,
                     "uptimeMs":u64::MAX,
                     "message":"secret-token-must-not-be-accepted",
@@ -11180,6 +11181,7 @@ mod process_crash_telemetry_dispatch_tests {
         assert_eq!(rows.len(), PROCESS_CRASH_EVENT_CAP);
         assert_eq!(rows.first().unwrap()["occurredAtMs"], 1_005);
         assert_eq!(rows.last().unwrap()["errorCode"], "SAND-E0603");
+        assert_eq!(rows.last().unwrap()["errorClass"], "IllegalStateException");
         let serialized = recent.to_string();
         assert!(!serialized.contains("secret-token"));
         assert!(!serialized.contains("sensitive-stack"));
@@ -11212,14 +11214,30 @@ mod process_crash_telemetry_dispatch_tests {
             state.checkpoint.records.last().unwrap().metadata["error_code"],
             "SAND-E0603",
         );
+        assert_eq!(
+            state.checkpoint.records.last().unwrap().metadata["error_class"],
+            "IllegalStateException",
+        );
 
         let mut host = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
         assert!(host
             .dispatch(
                 "feature.telemetry.processCrash.record",
-                &json!({"kind":"signal","occurredAtMs":1,"uptimeMs":1}),
+                &json!({"kind":"signal","errorClass":"Signal","occurredAtMs":1,"uptimeMs":1}),
             )
             .is_err());
+        assert!(host
+            .dispatch(
+                "feature.telemetry.processCrash.record",
+                &json!({
+                    "kind":"uncaught_exception",
+                    "errorClass":"IllegalStateException: secret",
+                    "occurredAtMs":1,
+                    "uptimeMs":1
+                }),
+            )
+            .unwrap_err()
+            .contains("error class"));
     }
 }
 
