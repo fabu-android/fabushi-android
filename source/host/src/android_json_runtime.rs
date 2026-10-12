@@ -2712,7 +2712,6 @@ impl AndroidJsonHost {
             )),
             "feature.transcript.page" => self.transcript_page(params),
             "feature.search.agentContent" => self.agent_content_search(params),
-            "feature.search.global" => self.global_content_search(params),
             "feature.contentSearch.messages" => self.content_search_messages(params),
             "feature.contentSearch.media" => self.content_search_media(params),
             "feature.assistant.projection" => self.assistant_projection(),
@@ -2754,53 +2753,6 @@ impl AndroidJsonHost {
                 slot_ok && fence_ok
             })
             .collect())
-    }
-
-    fn global_content_search(&mut self, params: &Value) -> Result<Value, String> {
-        let query = params.get("query").and_then(Value::as_str).unwrap_or_default();
-        let message_limit = params
-            .get("messageLimit")
-            .and_then(Value::as_u64)
-            .unwrap_or(50)
-            .min(50) as usize;
-        let media_limit = params
-            .get("mediaLimit")
-            .and_then(Value::as_u64)
-            .unwrap_or(50)
-            .min(50) as usize;
-        let entries = self.current_account_search_entries()?;
-        let (messages, media) =
-            self.content_search.search(&entries, query, message_limit, media_limit)?;
-        let messages = messages
-            .into_iter()
-            .map(|item| {
-                json!({
-                    "agentId":item.agent_id,
-                    "entryId":item.entry_id,
-                    "role":item.role,
-                    "timestampMs":item.timestamp_ms,
-                    "snippet":item.snippet
-                })
-            })
-            .collect::<Vec<_>>();
-        let canonical_media = entries
-            .iter()
-            .filter_map(crate::extensions::transcript::transcript_store::project_media_search_entry)
-            .map(|item| ((item.agent_id.clone(), item.entry_id.clone()), item))
-            .collect::<BTreeMap<_, _>>();
-        let media = media
-            .into_iter()
-            .filter_map(|item| {
-                canonical_media
-                    .get(&(item.agent_id.clone(), item.entry_id.clone()))
-                    .cloned()
-            })
-            .collect::<Vec<_>>();
-        Ok(json!({
-            "ready":self.content_search.is_ready(),
-            "messages":messages,
-            "media":media
-        }))
     }
 
     fn agent_content_search(&self, params: &Value) -> Result<Value, String> {
@@ -9693,26 +9645,6 @@ fn encode_api_path_segment(value: &str) -> Result<String, String> {
 mod tests {
     use super::*;
 #[test]
-    fn global_content_search_is_persistent_account_fenced_and_reconciles_changes() {
-        let root=tempfile::tempdir().unwrap();
-        {
-            let mut host=AndroidJsonHost::new(root.path(),AndroidHostMode::Test);
-            host.logged_in=true;
-            let fence=host.current_turn_account_fence().unwrap();
-            let mut transcript=host.transcript.lock().unwrap();
-            transcript.append_entry(json!({"id":"m1","agentId":"a","kind":"message","role":"user","content":"needle old","timestampMs":1,"accountFence":fence})).unwrap();
-            transcript.append_entry(json!({"id":"m2","agentId":"b","kind":"message","role":"assistant","content":"needle new","timestampMs":2,"accountFence":fence})).unwrap();
-            transcript.append_entry(json!({"id":"foreign","agentId":"x","kind":"message","role":"assistant","content":"needle foreign","timestampMs":3,"accountFence":"foreign:epoch"})).unwrap();
-        }
-        let mut reopened=AndroidJsonHost::new(root.path(),AndroidHostMode::Test); reopened.logged_in=true;
-        let first=reopened.dispatch("feature.search.global",&json!({"query":"needle"})).unwrap();
-        assert_eq!(first["messages"].as_array().unwrap().iter().map(|v|v["entryId"].as_str().unwrap()).collect::<Vec<_>>(),vec!["m2","m1"]);
-        reopened.transcript.lock().unwrap().update_entry("m1",|entry|{let mut next=entry.clone();next["content"]=Value::String("changed".into());next}).unwrap();
-        assert_eq!(reopened.dispatch("feature.search.global",&json!({"query":"needle"})).unwrap()["messages"].as_array().unwrap().len(),1);
-        assert_eq!(reopened.dispatch("feature.search.global",&json!({"query":"changed"})).unwrap()["messages"].as_array().unwrap().len(),1);
-    }
-
-#[test]
     fn agent_content_search_reads_canonical_transcript_and_survives_reopen() {
         let root = tempfile::tempdir().unwrap();
         {
@@ -9863,13 +9795,7 @@ mod tests {
                 &json!({"query":"alpha","limit":50}),
             )
             .is_err());
-        assert!(host
-            .dispatch(
-                "feature.search.global",
-                &json!({"query":"alpha"}),
-            )
-            .is_err());
-    }
+}
 
     #[test]
     fn account_transition_cleanup_drops_old_account_secrets_and_fences_teach_recording() {
