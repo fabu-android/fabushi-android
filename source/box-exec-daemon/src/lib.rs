@@ -6,6 +6,7 @@ pub mod box_store_hydration;
 pub mod box_store_diagnostics;
 pub mod browser_ua_backend;
 pub mod cloud_agent_backend;
+pub mod cloud_agent_transcript_dump;
 pub mod box_store_backend;
 pub mod cli;
 #[allow(special_module_name)]
