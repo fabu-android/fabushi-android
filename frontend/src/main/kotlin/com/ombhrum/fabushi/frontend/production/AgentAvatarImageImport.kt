@@ -1,39 +1,39 @@
 package com.ombhrum.fabushi
 
-import android.content.Context
 import android.net.Uri
-import com.ombhrum.fabushi.androidpreload.media.AndroidAvatarCrop
-import com.ombhrum.fabushi.androidpreload.media.AndroidAvatarImageProcessor
-import com.ombhrum.fabushi.androidpreload.media.AndroidAvatarImageSource
-import com.ombhrum.fabushi.androidpreload.media.MAX_AGENT_AVATAR_SOURCE_BYTES
+import com.ombhrum.fabushi.androidpreload.runtime.ANDROID_AGENT_AVATAR_SOURCE_MAX_BYTES
+import com.ombhrum.fabushi.androidpreload.runtime.AndroidAvatarCrop
+import com.ombhrum.fabushi.androidpreload.runtime.AndroidAvatarImageSource
+import com.ombhrum.fabushi.androidpreload.runtime.AndroidCoordinatorPort
 
-internal const val AGENT_AVATAR_SOURCE_MAX_BYTES: Int = MAX_AGENT_AVATAR_SOURCE_BYTES
+internal const val AGENT_AVATAR_SOURCE_MAX_BYTES: Int = ANDROID_AGENT_AVATAR_SOURCE_MAX_BYTES
 
 internal fun importAgentAvatarImageDataUrl(
-    context: Context,
+    coordinator: AndroidCoordinatorPort,
     uri: Uri,
 ): Result<String> = runCatching {
-    AndroidAvatarImageProcessor.normalizePickedImage(context, uri.toString())
+    coordinator.stagePickedAgentAvatarImage(uri.toString()).dataUrl
 }
 
-
 internal fun stageAgentAvatarImage(
-    context: Context,
+    coordinator: AndroidCoordinatorPort,
     uri: Uri,
 ): Result<AndroidAvatarImageSource> = runCatching {
-    AndroidAvatarImageProcessor.stagePickedImage(context, uri.toString())
+    coordinator.stagePickedAgentAvatarImage(uri.toString())
 }
 
 internal fun encodeAgentAvatarCrop(
+    coordinator: AndroidCoordinatorPort,
     source: AndroidAvatarImageSource,
     crop: AndroidAvatarCrop,
 ): Result<String> = runCatching {
-    AndroidAvatarImageProcessor.encodeCrop(source, crop)
+    coordinator.encodeAgentAvatarCrop(source, crop)
 }
 
 internal fun stageGeneratedAgentAvatarImage(
+    coordinator: AndroidCoordinatorPort,
     imageData: String,
     mimeType: String,
 ): Result<AndroidAvatarImageSource> = runCatching {
-    AndroidAvatarImageProcessor.stageGeneratedImage(imageData, mimeType)
+    coordinator.stageGeneratedAgentAvatarImage(imageData, mimeType)
 }
