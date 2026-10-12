@@ -100,6 +100,7 @@ struct SendAcknowledgementState {
 pub struct DurableSendAcknowledgementOwner {
     path: PathBuf,
     state: SendAcknowledgementState,
+    restored_on_open: Vec<SendAcknowledgementRecord>,
 }
 
 impl DurableSendAcknowledgementOwner {
@@ -113,6 +114,9 @@ impl DurableSendAcknowledgementOwner {
             }
             Err(error) => return Err(error.to_string()),
         };
+        // Capture exactly the pre-existing durable rows before reopen fencing mutates them.
+        // This is observability/reconciliation evidence only; the journal remains the canonical owner.
+        let restored_on_open = state.records.values().cloned().collect::<Vec<_>>();
         state.owner_generation = state.owner_generation.saturating_add(1).max(1);
         for record in state.records.values_mut() {
             record.generation = state.owner_generation;
@@ -125,9 +129,17 @@ impl DurableSendAcknowledgementOwner {
                 record.failed_at_ms = Some(now_ms);
             }
         }
-        let owner = Self { path, state };
+        let owner = Self {
+            path,
+            state,
+            restored_on_open,
+        };
         owner.persist()?;
         Ok(owner)
+    }
+
+    pub fn restored_on_open(&self) -> Vec<SendAcknowledgementRecord> {
+        self.restored_on_open.clone()
     }
 
     pub fn generation(&self) -> u64 {
@@ -915,6 +927,43 @@ mod tests {
             .expect("retry remains durable");
         assert_eq!(durable.entered_at_ms, retried.entered_at_ms);
         assert_eq!(durable.dispatch_started_at_ms, None);
+    }
+
+    #[test]
+    fn reopen_exposes_only_preexisting_rows_before_phase_rewrite() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("restore-observation.json");
+        let mut owner = DurableSendAcknowledgementOwner::open(&path, 1).unwrap();
+        assert!(owner.restored_on_open().is_empty());
+        let record = owner
+            .begin(
+                Some("slot-a"),
+                "session:a",
+                "agent-a",
+                "restore-a",
+                "hello",
+                message("restore-a"),
+            )
+            .unwrap();
+        owner
+            .mark_dispatching(
+                Some("slot-a"),
+                "session:a",
+                "agent-a",
+                "restore-a",
+                record.generation,
+            )
+            .unwrap();
+        drop(owner);
+
+        let reopened = DurableSendAcknowledgementOwner::open(&path, 10).unwrap();
+        let restored = reopened.restored_on_open();
+        assert_eq!(restored.len(), 1);
+        assert_eq!(restored[0].phase, SendAcknowledgementPhase::Dispatching);
+        let canonical = reopened
+            .record(Some("slot-a"), "session:a", "agent-a", "restore-a")
+            .expect("canonical reopened row");
+        assert_eq!(canonical.phase, SendAcknowledgementPhase::OutcomeUnknown);
     }
 
     #[test]
