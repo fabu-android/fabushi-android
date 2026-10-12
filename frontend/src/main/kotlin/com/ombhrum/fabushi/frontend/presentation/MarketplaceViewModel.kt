@@ -287,6 +287,9 @@ data class MarketplaceUiState(
     val mcpServers: List<McpServerCatalogItem> = emptyList(),
     val mcpServersBusy: Boolean = false,
     val mcpServersError: String? = null,
+    val mcpServerInstructions: Map<String, String> = emptyMap(),
+    val mcpServerInstructionsBusy: Set<String> = emptySet(),
+    val mcpServerInstructionsError: Map<String, String> = emptyMap(),
     val permissionRequest: PermissionRequest? = null,
     val variableRequest: PluginVariableRequest? = null,
     val authResolved: Boolean = false,
@@ -1195,6 +1198,9 @@ class MarketplaceViewModel(application: Application) : AndroidViewModel(applicat
                 mcpServers = emptyList(),
                 mcpServersBusy = false,
                 mcpServersError = null,
+                mcpServerInstructions = emptyMap(),
+                mcpServerInstructionsBusy = emptySet(),
+                mcpServerInstructionsError = emptyMap(),
             )
             return
         }
@@ -1203,8 +1209,15 @@ class MarketplaceViewModel(application: Application) : AndroidViewModel(applicat
         mutableState.value = current.copy(mcpServersBusy = true, mcpServersError = null)
         viewModelScope.launch {
             runCatching {
-                withContext(Dispatchers.IO) { coordinator.mcpServerCatalog() }
-            }.onSuccess { values ->
+                withContext(Dispatchers.IO) {
+                    val values = coordinator.mcpServerCatalog()
+                    val servers = parseMcpServerCatalog(values)
+                    val instructions = servers.associate { server ->
+                        server.id to coordinator.mcpServerCustomInstructions(server.id).orEmpty()
+                    }
+                    servers to instructions
+                }
+            }.onSuccess { (servers, instructions) ->
                 val latest = mutableState.value
                 if (!shouldApplyMcpServerCatalogResult(
                         requestGeneration = generation,
@@ -1215,9 +1228,12 @@ class MarketplaceViewModel(application: Application) : AndroidViewModel(applicat
                     )
                 ) return@onSuccess
                 mutableState.value = latest.copy(
-                    mcpServers = parseMcpServerCatalog(values),
+                    mcpServers = servers,
                     mcpServersBusy = false,
                     mcpServersError = null,
+                    mcpServerInstructions = instructions,
+                    mcpServerInstructionsBusy = emptySet(),
+                    mcpServerInstructionsError = emptyMap(),
                 )
             }.onFailure { error ->
                 val latest = mutableState.value
@@ -1232,6 +1248,40 @@ class MarketplaceViewModel(application: Application) : AndroidViewModel(applicat
                 mutableState.value = latest.copy(
                     mcpServersBusy = false,
                     mcpServersError = error.message ?: error::class.java.simpleName,
+                )
+            }
+        }
+    }
+
+    fun saveMcpServerInstructions(serverId: String, instructions: String) {
+        val current = mutableState.value
+        if (!current.loggedIn || current.accountAuthId.isBlank()) return
+        val expectedAuthId = current.accountAuthId
+        mutableState.value = current.copy(
+            mcpServerInstructionsBusy = current.mcpServerInstructionsBusy + serverId,
+            mcpServerInstructionsError = current.mcpServerInstructionsError - serverId,
+        )
+        viewModelScope.launch {
+            runCatching {
+                withContext(Dispatchers.IO) {
+                    coordinator.setMcpServerCustomInstructions(serverId, instructions).orEmpty()
+                }
+            }.onSuccess { saved ->
+                val latest = mutableState.value
+                if (!latest.loggedIn || latest.accountAuthId != expectedAuthId) return@onSuccess
+                mutableState.value = latest.copy(
+                    mcpServerInstructions = latest.mcpServerInstructions + (serverId to saved),
+                    mcpServerInstructionsBusy = latest.mcpServerInstructionsBusy - serverId,
+                    mcpServerInstructionsError = latest.mcpServerInstructionsError - serverId,
+                    message = "连接器说明已保存",
+                )
+            }.onFailure { error ->
+                val latest = mutableState.value
+                if (!latest.loggedIn || latest.accountAuthId != expectedAuthId) return@onFailure
+                mutableState.value = latest.copy(
+                    mcpServerInstructionsBusy = latest.mcpServerInstructionsBusy - serverId,
+                    mcpServerInstructionsError = latest.mcpServerInstructionsError +
+                        (serverId to (error.message ?: error::class.java.simpleName)),
                 )
             }
         }
