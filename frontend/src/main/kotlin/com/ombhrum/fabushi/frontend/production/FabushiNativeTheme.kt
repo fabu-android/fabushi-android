@@ -72,11 +72,13 @@ private fun writeFabushiThemePreference(
     context: Context,
     preference: FabushiThemePreference,
 ) {
-    context.getSharedPreferences(THEME_PREFS_NAME, Context.MODE_PRIVATE)
-        .edit()
-        .putInt(THEME_SCHEMA_KEY, THEME_SCHEMA_VERSION)
-        .putString(THEME_PREFERENCE_KEY, preference.wireValue)
-        .apply()
+    check(
+        context.getSharedPreferences(THEME_PREFS_NAME, Context.MODE_PRIVATE)
+            .edit()
+            .putInt(THEME_SCHEMA_KEY, THEME_SCHEMA_VERSION)
+            .putString(THEME_PREFERENCE_KEY, preference.wireValue)
+            .commit(),
+    ) { "Unable to persist Fabushi theme preference" }
 }
 
 /**
