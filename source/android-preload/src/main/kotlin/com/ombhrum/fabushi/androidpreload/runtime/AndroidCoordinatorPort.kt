@@ -303,6 +303,20 @@ data class AndroidContentSearchMessage(
     val snippet: String,
 )
 
+data class AndroidContentSearchMedia(
+    val agentId: String,
+    val entryId: String,
+    val fileName: String,
+    val path: String,
+    val ext: String,
+    val mime: String?,
+    val kind: String,
+    val timestampMs: Long,
+    val sizeBytes: Long?,
+    val width: Long?,
+    val height: Long?,
+)
+
 data class AndroidFindInChatEntry(
     val entryId: String,
     val searchText: String,
@@ -939,6 +953,11 @@ interface AndroidCoordinatorPort {
         limit: Int = 50,
     ): List<AndroidContentSearchMessage> =
         error("Canonical content search is unavailable on this Coordinator port")
+    fun contentSearchMedia(
+        query: String,
+        limit: Int = 50,
+    ): List<AndroidContentSearchMedia> =
+        error("Canonical media search is unavailable on this Coordinator port")
     fun conversationOutlineSnapshot(agentId: String): List<AndroidConversationOutlineItem> =
         parseAndroidConversationOutlineItems(transcriptSnapshot(), agentId)
     fun assistantProjection(): JSONObject = JSONObject().put("hasUnread", false)
