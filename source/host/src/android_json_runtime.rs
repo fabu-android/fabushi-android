@@ -6968,6 +6968,7 @@ impl AndroidJsonHost {
         let remote_binding = Arc::clone(&self.remote_binding);
         let remote_runner = Arc::clone(&self.remote_runner);
         let remote_approvals = self.remote_approvals.clone();
+        let remote_user_settings = Arc::clone(&self.user_settings);
         let frozen_privacy = match self.mode {
             AndroidHostMode::Test => ProductionTurnPrivacyMode::NoStorage,
             AndroidHostMode::Production => self
@@ -7263,6 +7264,7 @@ impl AndroidJsonHost {
                         Arc::clone(&remote_binding),
                         Arc::clone(&remote_runner),
                         remote_approvals.clone(),
+                        Arc::clone(&remote_user_settings),
                         Arc::clone(&live_account_fence),
                         Arc::clone(&turn_events),
                         &operation_id_owned,
@@ -15604,6 +15606,7 @@ mod structured_log_spill_runtime_tests {
                         Arc::clone(&remote_binding),
                         Arc::clone(&remote_runner),
                         remote_approvals.clone(),
+                        Arc::clone(&remote_user_settings),
                         Arc::clone(&live_account_fence),
                         Arc::clone(&turn_events),
                         &operation_id_owned,
