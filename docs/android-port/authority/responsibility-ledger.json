@@ -2853,6 +2853,75 @@
       "notes": "Implementation is no longer merely mapped: backend-driven autonomous Host lifecycle, fresh policy/token validation, backend tool-catalog reload, durable process-death completion, account/generation fencing and hidden requesting-Agent resume are production-wired. Kept not-verified until the same exact HEAD has package provenance and protected-account device acceptance."
     },
     {
+      "responsibility_id": "MCP-SERVER-CATALOG-ANDROID-001",
+      "domain": "mcp-connectors",
+      "desktop_sources": [
+        {
+          "path": "source/electron-main/mcp/desktop-mcp-manager.ts",
+          "blob_sha": "7126c5a132a438f7180d0627e6ea8787ecff65ff",
+          "symbols": [
+            "DesktopMcpManager.listServers",
+            "DesktopMcpManager.listEffectivePlugins"
+          ]
+        }
+      ],
+      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "responsibility": "Project the authenticated account's enabled MCP server catalog as bounded typed metadata without exposing credentials or creating a second connector-session owner.",
+      "source_owner": "DesktopMcpManager account-scoped MCP registry/catalog",
+      "direct_callers": [
+        "Marketplace/connectors presentation",
+        "MCP authentication lifecycle"
+      ],
+      "downstream_dependencies": [
+        "Dashboard GetAvailableMcpServers",
+        "account session fence",
+        "typed Android Coordinator bridge"
+      ],
+      "state_owner": "Rust Host Dashboard MCP backend; ViewModel owns only account-fenced presentation projection",
+      "persistent_state": [
+        "No new canonical store; reads existing backend/account-scoped MCP server state"
+      ],
+      "protocol_wire_contract": [
+        "GetAvailableMcpServers",
+        "feature.mcp.serverCatalog"
+      ],
+      "visible_effect": "Marketplace can display the current account's enabled connector/server catalog and team-policy-disabled state.",
+      "failure_behavior": [
+        "logged-out/stale account fails closed",
+        "unsupported transport rejected",
+        "invalid/non-http remote URL rejected",
+        "backend failure surfaces unavailable state"
+      ],
+      "cancellation_behavior": "read-only request is not retried by UI after account change; stale result is discarded",
+      "retry_semantics": "manual/normal refresh may re-read catalog; no side-effect retry is involved",
+      "idempotency_semantics": "read-only catalog projection is idempotent for the same backend snapshot",
+      "process_death_recovery": "catalog is re-read from canonical backend after Host/account restoration; no UI cache becomes truth",
+      "account_fencing": "Host resolves current account fence before backend read; ViewModel generation+authId fencing rejects old-account completion",
+      "security_boundary": "Only id/name/url/transport/admin-policy metadata crosses Host->Coordinator->Compose; tokens and backend credentials never cross",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "source/host/src/mcp_auth/dashboard_mcp_auth_backend.rs",
+        "source/host/src/android_json_runtime.rs",
+        "source/android-preload/src/main/kotlin/com/ombhrum/fabushi/androidpreload/runtime/AndroidCoordinatorPort.kt",
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/coordinator/AndroidCoordinatorRuntime.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/presentation/MarketplaceViewModel.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/features/marketplace/MarketplaceContent.kt",
+        "mobile/android/app/src/test/java/com/ombhrum/fabushi/McpServerCatalogProjectionTest.kt"
+      ],
+      "android_owner": "Rust Host MCP backend + typed Coordinator read projection",
+      "platform_delta": "Android does not copy Electron IPC/DesktopMcpManager. It reuses the existing Host account/MCP backend and projects read-only server metadata through the single typed JNI/Coordinator facade.",
+      "implementation_status": "implemented",
+      "production_wiring": "Dashboard backend -> AndroidJsonHost feature.mcp.serverCatalog -> AndroidCoordinatorPort/Runtime -> MarketplaceViewModel -> MarketplaceContent.",
+      "unit_test": "dashboard_mcp_auth_backend::tests::available_server_projection_is_bounded_and_fail_closed; McpServerCatalogProjectionTest",
+      "contract_test": "feature.mcp.serverCatalog keeps credentials private and uses typed transport values; exact-head Actions pending",
+      "integration_test": "required: protected account returns its real enabled server catalog and account switch fences old completion",
+      "packaged_test": "required on final exact-head APK/AAB",
+      "device_test": "required with protected authenticated connector account",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "This closes only the server-catalog slice of DesktopMcpManager. Server add/remove/rename/logout, effective-plugin mutation, routed tool discovery/execute and install backfill remain separate/open; do not upgrade the aggregate source row beyond mapped."
+    },
+    {
       "responsibility_id": "MCP-PLUGIN-VARIABLES-001",
       "domain": "mcp",
       "desktop_sources": [
