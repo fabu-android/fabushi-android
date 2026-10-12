@@ -3165,6 +3165,18 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
                 .put("hasAck", projected.hasAck)
                 .put("streamAttached", projected.streamAttached),
         )
+        host.request(
+            "feature.telemetry.recovery",
+            JSONObject()
+                .put("kind", "rebuild_escalation")
+                .put("rebuildKind", projected.rebuildKind)
+                .put("elapsedMs", projected.elapsedMs)
+                .put("action", "shown")
+                .put(
+                    "escalation",
+                    if (projected.streamAttached) "taking-longer" else "unreachable",
+                ),
+        )
         lastComputerRebuildPendingStallKey = projected.episodeKey
     }
 
