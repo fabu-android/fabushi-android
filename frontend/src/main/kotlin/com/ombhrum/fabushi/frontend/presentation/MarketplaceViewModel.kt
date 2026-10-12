@@ -145,6 +145,8 @@ data class MarketplaceUiState(
     val loggedIn: Boolean = false,
     val accountName: String = "Fabushi",
     val accountEmail: String = "",
+    val accountAuthId: String = "",
+    val accountAvatarUrl: String = "",
     val onboardingStep: Int = 0,
     val browserLoginAttemptId: String? = null,
     val browserLoginUrl: String? = null,
@@ -196,6 +198,8 @@ class MarketplaceViewModel(application: Application) : AndroidViewModel(applicat
                     loggedIn = result.optBoolean("loggedIn"),
                     accountName = user?.optString("nickname").orEmpty().ifBlank { user?.optString("username").orEmpty().ifBlank { user?.optString("email").orEmpty().ifBlank { "Fabushi" } } },
                     accountEmail = user?.optString("email").orEmpty(),
+                    accountAuthId = result.optString("authId").ifBlank { user?.optString("id").orEmpty() },
+                    accountAvatarUrl = user?.optString("profilePictureUrl").orEmpty(),
                 )
                 refreshAccountAccess()
                 if (mutableState.value.loggedIn) {
@@ -328,6 +332,8 @@ class MarketplaceViewModel(application: Application) : AndroidViewModel(applicat
                             loggedIn = auth?.optBoolean("loggedIn", true) ?: true,
                             accountName = user?.optString("nickname").orEmpty().ifBlank { user?.optString("username").orEmpty().ifBlank { user?.optString("email").orEmpty().ifBlank { "Fabushi" } } },
                             accountEmail = user?.optString("email").orEmpty(),
+                            accountAuthId = auth?.optString("authId").orEmpty().ifBlank { user?.optString("id").orEmpty() },
+                            accountAvatarUrl = user?.optString("profilePictureUrl").orEmpty(),
                             browserLoginAttemptId = null,
                             browserLoginUrl = null,
                             loginError = null,
@@ -366,6 +372,8 @@ class MarketplaceViewModel(application: Application) : AndroidViewModel(applicat
                         loggedIn = result.optBoolean("loggedIn", false),
                         accountName = user?.optString("nickname").orEmpty().ifBlank { "Fabushi" },
                         accountEmail = user?.optString("email").orEmpty(),
+                        accountAuthId = "",
+                        accountAvatarUrl = "",
                         chatMessages = emptyList(),
                         activeOperationId = null,
                         chatBusy = false,
