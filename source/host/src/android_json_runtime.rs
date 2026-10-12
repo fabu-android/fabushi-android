@@ -41,7 +41,8 @@ use crate::extensions::telemetry::product_events::{
     access_blocked_event, agent_load_event, agents_unreachable_event, client_persistence_event,
     client_resource_event, connector_auth_clicked_event, entrypoint_error_event,
     event_loop_pressure_event, onboarding_step_event, reaction_ack_event, renderer_boundary_caught_event,
-    renderer_unhandled_event, send_queued_flush_event, startup_lifecycle_event,
+    renderer_unhandled_event, send_ack_event, send_latency_event, send_queued_flush_event,
+    startup_lifecycle_event,
     StructuredTelemetryEvent, TelemetryLevel,
 };
 use crate::extensions::telemetry::recovery_events::{
@@ -2724,11 +2725,10 @@ impl AndroidJsonHost {
                 required_scope,
             )?;
 
-        // Measure the canonical reaction mutation at the Host boundary. Compose may project an
-        // optimistic reaction, but it is never a second acknowledgement/retry owner.
-        let reaction_telemetry = envelope
-            .get("command")
-            .and_then(Value::as_object)
+        let command = envelope.get("command").and_then(Value::as_object);
+        // Acknowledgement telemetry is owned at the canonical Host mutation boundary. Compose may
+        // optimistically project UI state, but it cannot settle or retry messaging side effects.
+        let reaction_telemetry = command
             .filter(|command| command.get("type").and_then(Value::as_str) == Some("setReaction"))
             .and_then(|command| {
                 Some((
@@ -2740,16 +2740,105 @@ impl AndroidJsonHost {
                         .to_string(),
                 ))
             });
-        let started_at = Instant::now();
-        let result = self
-            .messaging
-            .lock()
-            .map_err(|_| "canonical Android messaging owner lock poisoned".to_string())?
-            .execute(params, &actor_id, i64::try_from(now_ms()).unwrap_or(i64::MAX))?;
+        let send_telemetry = command
+            .filter(|command| command.get("type").and_then(Value::as_str) == Some("sendMessage"))
+            .and_then(|command| {
+                let conversation_id = command.get("conversationId")?.as_str()?.to_string();
+                let client_nonce = command
+                    .get("clientMessageId")
+                    .and_then(Value::as_str)
+                    .map(str::to_string);
+                let content_type = command
+                    .get("content")
+                    .and_then(Value::as_object)
+                    .and_then(|content| content.get("type"))
+                    .and_then(Value::as_str)
+                    .unwrap_or("text");
+                let attachment_count = if matches!(
+                    content_type,
+                    "photo" | "video" | "animation" | "audio" | "voice" | "document"
+                ) {
+                    1.0
+                } else {
+                    0.0
+                };
+                Some((
+                    conversation_id,
+                    client_nonce,
+                    attachment_count,
+                    context
+                        .get("sentAtMs")
+                        .and_then(Value::as_f64)
+                        .unwrap_or_else(|| now_ms() as f64),
+                ))
+            });
 
+        let started_at = Instant::now();
+        let execute_result = {
+            let mut messaging = self
+                .messaging
+                .lock()
+                .map_err(|_| "canonical Android messaging owner lock poisoned".to_string())?;
+            messaging.execute(params, &actor_id, i64::try_from(now_ms()).unwrap_or(i64::MAX))
+        };
+        let elapsed_ms = started_at.elapsed().as_secs_f64() * 1_000.0;
+
+        if let Some((conversation_id, client_nonce, attachment_count, enter_epoch_ms)) =
+            send_telemetry.as_ref()
+        {
+            let outcome = if execute_result.is_ok() { "acked" } else { "failed" };
+            let ack_result = send_ack_event(
+                elapsed_ms,
+                outcome,
+                *enter_epoch_ms,
+                false,
+                *attachment_count,
+                None,
+                None,
+                client_nonce.as_deref(),
+                None,
+                Some(conversation_id.as_str()),
+                None,
+            )
+            .and_then(|event| {
+                self.record_product_telemetry("sand.send.ack", event)
+                    .map(|_| ())
+            });
+            if ack_result.is_err() {
+                self.edge_failures.report(
+                    "structured-log-spill",
+                    "send-ack-record",
+                    "TelemetryError",
+                );
+            }
+            if execute_result.is_ok() {
+                let latency_result = send_latency_event(
+                    elapsed_ms,
+                    None,
+                    *attachment_count,
+                    false,
+                    None,
+                    None,
+                    Some(conversation_id.as_str()),
+                )
+                .and_then(|event| {
+                    self.record_product_telemetry("sand.send", event)
+                        .map(|_| ())
+                });
+                if latency_result.is_err() {
+                    self.edge_failures.report(
+                        "structured-log-spill",
+                        "send-latency-record",
+                        "TelemetryError",
+                    );
+                }
+            }
+        }
+
+        let result = execute_result?;
         if let Some((conversation_id, emoji)) = reaction_telemetry {
             let telemetry_result = reaction_ack_event(
-                started_at.elapsed().as_secs_f64() * 1_000.0,
+                elapsed_ms,
                 "landed",
                 &conversation_id,
                 &emoji,
@@ -2759,8 +2848,6 @@ impl AndroidJsonHost {
                     .map(|_| ())
             });
             if telemetry_result.is_err() {
-                // Observability must not turn an already committed canonical reaction into a
-                // product failure or cause the UI to retry a side effect.
                 self.edge_failures.report(
                     "structured-log-spill",
                     "reaction-ack-record",
