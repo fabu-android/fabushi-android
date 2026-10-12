@@ -26,6 +26,21 @@ impl LocalToolPermission {
         }
     }
 
+    fn rank(self) -> u8 {
+        match self {
+            Self::Never => 0,
+            Self::Ask => 1,
+            Self::Always => 2,
+        }
+    }
+
+    fn constrained_by(self, ceiling: Option<Self>) -> Self {
+        match ceiling {
+            Some(ceiling) if self.rank() > ceiling.rank() => ceiling,
+            _ => self,
+        }
+    }
+
     pub fn parse(value: &str) -> io::Result<Self> {
         match value.trim() {
             "never" => Ok(Self::Never),
@@ -45,6 +60,8 @@ struct PersistedAndroidUserSettings {
     time_zone_override: Option<String>,
     #[serde(default)]
     local_tool_permission: LocalToolPermission,
+    #[serde(default)]
+    local_tool_permission_ceiling: Option<LocalToolPermission>,
     #[serde(default)]
     onboarding_seen_by_account: BTreeMap<String, bool>,
     #[serde(default)]
@@ -115,7 +132,35 @@ impl AndroidUserSettings {
     }
 
     pub fn local_tool_permission(&self) -> LocalToolPermission {
+        self.state
+            .local_tool_permission
+            .constrained_by(self.state.local_tool_permission_ceiling)
+    }
+
+    pub fn local_tool_permission_preference(&self) -> LocalToolPermission {
         self.state.local_tool_permission
+    }
+
+    pub fn local_tool_permission_ceiling(&self) -> Option<LocalToolPermission> {
+        self.state.local_tool_permission_ceiling
+    }
+
+    pub fn set_local_tool_permission_ceiling(
+        &mut self,
+        value: Option<&str>,
+    ) -> io::Result<LocalToolPermission> {
+        let normalized = match value {
+            Some(value) => Some(LocalToolPermission::parse(value)?),
+            None => None,
+        };
+        if self.state.local_tool_permission_ceiling == normalized {
+            return Ok(self.local_tool_permission());
+        }
+        let mut next = self.state.clone();
+        next.local_tool_permission_ceiling = normalized;
+        write_atomic_json(&self.path, &next)?;
+        self.state = next;
+        Ok(self.local_tool_permission())
     }
 
     pub fn process_metrics_local_enabled(&self) -> bool {
@@ -347,6 +392,41 @@ mod tests {
         drop(reopened);
 
         assert!(!AndroidUserSettings::open(&path).unwrap().process_metrics_local_enabled());
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn local_tool_permission_ceiling_constrains_preference_and_survives_restart() {
+        let path = test_path("local-tool-ceiling");
+        let mut settings = AndroidUserSettings::open(&path).unwrap();
+        settings.set_local_tool_permission("always").unwrap();
+        assert_eq!(settings.local_tool_permission_preference(), LocalToolPermission::Always);
+        assert_eq!(settings.local_tool_permission(), LocalToolPermission::Always);
+
+        assert_eq!(
+            settings.set_local_tool_permission_ceiling(Some("ask")).unwrap(),
+            LocalToolPermission::Ask,
+        );
+        assert_eq!(settings.local_tool_permission_preference(), LocalToolPermission::Always);
+        assert_eq!(settings.local_tool_permission_ceiling(), Some(LocalToolPermission::Ask));
+        assert_eq!(settings.local_tool_permission(), LocalToolPermission::Ask);
+
+        drop(settings);
+        let mut reopened = AndroidUserSettings::open(&path).unwrap();
+        assert_eq!(reopened.local_tool_permission_preference(), LocalToolPermission::Always);
+        assert_eq!(reopened.local_tool_permission_ceiling(), Some(LocalToolPermission::Ask));
+        assert_eq!(reopened.local_tool_permission(), LocalToolPermission::Ask);
+        assert_eq!(
+            reopened.set_local_tool_permission_ceiling(Some("never")).unwrap(),
+            LocalToolPermission::Never,
+        );
+        assert_eq!(
+            reopened.set_local_tool_permission_ceiling(None).unwrap(),
+            LocalToolPermission::Always,
+        );
+        assert!(reopened.set_local_tool_permission_ceiling(Some("invalid")).is_err());
+        assert_eq!(reopened.local_tool_permission(), LocalToolPermission::Always);
+
         let _ = fs::remove_file(path);
     }
 
