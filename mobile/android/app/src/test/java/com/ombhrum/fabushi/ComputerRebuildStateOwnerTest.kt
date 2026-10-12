@@ -540,6 +540,50 @@ class ComputerRebuildStateOwnerTest {
     }
 
     @Test
+    fun rebuildEscalationTelemetryProjectsShownClassWithoutMutatingCanonicalState() {
+        val connected = ComputerRebuildSnapshot(
+            accountEpoch = 18L,
+            processGeneration = 4L,
+            kind = ComputerRebuildKind.UPDATE,
+            operationId = "operation-18",
+            acknowledged = true,
+            connected = true,
+            episodeStartedAtMs = 2_000L,
+        )
+        val stalled = ComputerRebuildVisibilityTelemetry(
+            elapsedMs = COMPUTER_REBUILD_STALLED_AFTER_MS,
+            stageElapsedMs = 5_000L,
+            isStalled = true,
+            stage = ComputerRebuildMigrationPhase.MOVING,
+        )
+        val takingLonger = projectComputerRebuildEscalationTelemetry(connected, stalled)!!
+        assertEquals("18:2000:operation-18", takingLonger.episodeKey)
+        assertEquals("update", takingLonger.rebuildKind)
+        assertEquals(COMPUTER_REBUILD_STALLED_AFTER_MS, takingLonger.elapsedMs)
+        assertEquals("taking-longer", takingLonger.escalation)
+
+        val unreachable = projectComputerRebuildEscalationTelemetry(
+            connected.copy(connected = false),
+            stalled,
+        )!!
+        assertEquals("unreachable", unreachable.escalation)
+        assertEquals(takingLonger.episodeKey, unreachable.episodeKey)
+
+        assertNull(
+            projectComputerRebuildEscalationTelemetry(
+                connected,
+                stalled.copy(isStalled = false),
+            ),
+        )
+        assertNull(
+            projectComputerRebuildEscalationTelemetry(
+                connected.copy(kind = null),
+                stalled,
+            ),
+        )
+    }
+
+    @Test
     fun visibilityTelemetryPersistsEpisodeStageAndStallAcrossProcessReopen() {
         val store = MemoryStore()
         var now = 1_000L
