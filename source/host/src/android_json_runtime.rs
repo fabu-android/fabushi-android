@@ -39,7 +39,8 @@ use crate::mcp_auth::{
 };
 use crate::extensions::telemetry::product_events::{
     access_blocked_event, agent_load_event, agents_unreachable_event, client_persistence_event,
-    client_resource_event, connector_auth_clicked_event, event_loop_pressure_event,
+    client_resource_event, connector_auth_clicked_event, entrypoint_error_event,
+    event_loop_pressure_event, renderer_boundary_caught_event, renderer_unhandled_event,
     send_queued_flush_event, StructuredTelemetryEvent, TelemetryLevel,
 };
 use crate::extensions::teach_recording::{DurableTeachRecordingOwner, TeachRecordingPhase};
@@ -1571,6 +1572,7 @@ impl AndroidJsonHost {
         let level = match event.level {
             TelemetryLevel::Info => "info",
             TelemetryLevel::Warn => "warn",
+            TelemetryLevel::Error => "error",
         };
         self.structured_log_spool
             .record(level, message, event.metadata, now_ms())
@@ -1668,6 +1670,37 @@ impl AndroidJsonHost {
                     params.get("retryOwner").and_then(Value::as_str),
                     params.get("transportKind").and_then(Value::as_str),
                     params.get("failedMs").and_then(Value::as_f64),
+                )?,
+            ),
+            "renderer_unhandled" => (
+                "sand.renderer_unhandled",
+                renderer_unhandled_event(
+                    required_string(params, "handler")?,
+                    required_string(params, "errorClass")?,
+                    params
+                        .get("occurrence")
+                        .and_then(Value::as_u64)
+                        .ok_or("occurrence must be a positive integer")?,
+                )?,
+            ),
+            "renderer_boundary_caught" => (
+                "sand.renderer.boundary_caught",
+                renderer_boundary_caught_event(
+                    required_string(params, "boundary")?,
+                    required_string(params, "errorClass")?,
+                    params
+                        .get("occurrence")
+                        .and_then(Value::as_u64)
+                        .ok_or("occurrence must be a positive integer")?,
+                )?,
+            ),
+            "entrypoint_error" => (
+                "sand.entrypoint_error",
+                entrypoint_error_event(
+                    required_string(params, "entrypoint")?,
+                    required_string(params, "surface")?,
+                    required_string(params, "phase")?,
+                    required_string(params, "errorClass")?,
                 )?,
             ),
             "send_queued_flush" => (
