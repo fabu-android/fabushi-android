@@ -30,7 +30,7 @@ internal class AndroidProcessCrashRecovery(context: Context) {
     fun install() {
         if (installedHandler != null) return
         val previous = Thread.getDefaultUncaughtExceptionHandler()
-        val handler = Thread.UncaughtExceptionHandler { thread, _ ->
+        val handler = Thread.UncaughtExceptionHandler { thread, throwable ->
             runCatching {
                 persist(
                     AndroidProcessCrashMarker(
@@ -41,7 +41,7 @@ internal class AndroidProcessCrashRecovery(context: Context) {
                 )
             }
             if (previous != null) {
-                previous.uncaughtException(thread, RuntimeException("Fabushi process terminated"))
+                previous.uncaughtException(thread, throwable)
             } else {
                 Process.killProcess(Process.myPid())
                 exitProcess(10)
