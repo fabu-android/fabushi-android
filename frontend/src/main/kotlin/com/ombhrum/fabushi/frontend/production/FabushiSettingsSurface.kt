@@ -1,6 +1,7 @@
 package com.ombhrum.fabushi
 
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidAccountUsageSummary
+import com.ombhrum.fabushi.androidpreload.runtime.AndroidAutoReviewInstructionsSnapshot
 
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
@@ -202,6 +203,11 @@ internal fun FabushiSettingsSurface(
     accountUsageSummary: AndroidAccountUsageSummary?,
     accountUsageBusy: Boolean,
     accountUsageError: String?,
+    autoReviewSnapshot: AndroidAutoReviewInstructionsSnapshot?,
+    autoReviewBusy: Boolean,
+    autoReviewError: String?,
+    onRefreshAutoReviewInstructions: () -> Unit,
+    onSaveAutoReviewInstructions: (Long, Boolean, List<String>, List<String>) -> Unit,
     credentialVaultItems: List<CredentialVaultMetadata>,
     credentialVaultBusy: Boolean,
     credentialVaultError: String?,
@@ -228,11 +234,30 @@ internal fun FabushiSettingsSurface(
     var credentialSecretDraft by remember { mutableStateOf("") }
     var credentialOriginsDraft by remember { mutableStateOf("https://") }
     var credentialRotate by remember { mutableStateOf(false) }
+    var autoReviewEnabledDraft by remember(
+        autoReviewSnapshot?.accountFence,
+        autoReviewSnapshot?.revision,
+    ) {
+        mutableStateOf(autoReviewSnapshot?.instructions?.isEnabled ?: true)
+    }
+    var autoReviewAllowDraft by remember(
+        autoReviewSnapshot?.accountFence,
+        autoReviewSnapshot?.revision,
+    ) {
+        mutableStateOf(autoReviewSnapshot?.instructions?.allowInstructions?.joinToString("\n").orEmpty())
+    }
+    var autoReviewBlockDraft by remember(
+        autoReviewSnapshot?.accountFence,
+        autoReviewSnapshot?.revision,
+    ) {
+        mutableStateOf(autoReviewSnapshot?.instructions?.blockInstructions?.joinToString("\n").orEmpty())
+    }
     val theme = LocalFabushiThemeController.current
     LaunchedEffect(accountLoggedIn) {
         if (accountLoggedIn) {
             onRefreshAccountPrivacyMode()
             onRefreshAccountUsage()
+            onRefreshAutoReviewInstructions()
             onRefreshCredentialVault()
         } else {
             credentialSecretDraft = ""
@@ -339,6 +364,60 @@ internal fun FabushiSettingsSurface(
                             Text(
                                 "Account identity, profile mutation and privacy policy remain owned by canonical Host services.",
                             )
+                            Text("Auto Review")
+                            Text(
+                                "Canonical instructions are account-scoped and owned by the Rust Host. " +
+                                    "One instruction per line; duplicates and limits are normalized by the Host.",
+                                modifier = Modifier.testTag("settings-auto-review-description"),
+                            )
+                            if (autoReviewBusy) {
+                                LinearProgressIndicator(
+                                    modifier = Modifier.testTag("settings-auto-review-busy"),
+                                )
+                            }
+                            TextButton(
+                                onClick = { autoReviewEnabledDraft = !autoReviewEnabledDraft },
+                                enabled = !autoReviewBusy && autoReviewSnapshot != null,
+                                modifier = Modifier.testTag("settings-auto-review-enabled"),
+                            ) {
+                                Text(if (autoReviewEnabledDraft) "✓ Auto Review enabled" else "Auto Review disabled")
+                            }
+                            OutlinedTextField(
+                                value = autoReviewAllowDraft,
+                                onValueChange = { autoReviewAllowDraft = it },
+                                enabled = !autoReviewBusy && autoReviewSnapshot != null,
+                                label = { Text("Always allow") },
+                                modifier = Modifier.testTag("settings-auto-review-allow"),
+                            )
+                            OutlinedTextField(
+                                value = autoReviewBlockDraft,
+                                onValueChange = { autoReviewBlockDraft = it },
+                                enabled = !autoReviewBusy && autoReviewSnapshot != null,
+                                label = { Text("Always block") },
+                                modifier = Modifier.testTag("settings-auto-review-block"),
+                            )
+                            TextButton(
+                                onClick = {
+                                    val snapshot = autoReviewSnapshot ?: return@TextButton
+                                    onSaveAutoReviewInstructions(
+                                        snapshot.revision,
+                                        autoReviewEnabledDraft,
+                                        autoReviewAllowDraft.lines(),
+                                        autoReviewBlockDraft.lines(),
+                                    )
+                                },
+                                enabled = !autoReviewBusy && autoReviewSnapshot != null,
+                                modifier = Modifier.testTag("settings-auto-review-save"),
+                            ) {
+                                Text(if (autoReviewBusy) "Saving Auto Review…" else "Save Auto Review")
+                            }
+                            autoReviewError?.takeIf(String::isNotBlank)?.let { error ->
+                                Text(
+                                    error,
+                                    color = MaterialTheme.colorScheme.error,
+                                    modifier = Modifier.testTag("settings-auto-review-error"),
+                                )
+                            }
                         }
                         Text("Appearance")
                         Text("Theme")
