@@ -5,9 +5,9 @@
     "desktop_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
     "android_repository": "fabu-android/fabushi-android",
     "android_pr": 3,
-    "android_head_at_update": "f684eebd3755041809f9c82f5e3ea0b290ed5f7e",
+    "android_head_at_update": "22efe94e6cd30f35aa615c3c2071b15df3b5e0c8",
     "status": "incomplete",
-    "note": "Incrementally rebased to Desktop main 371b72f1cd20de03dc4dff9a15ed761054968093. Durable send acknowledgement, transcript widget actions and client-side tool-result projection remain Host/Coordinator-owned. At Android code head 8927278b8ec61145700abb906f226f97f6497195, Agent avatar presentation has Desktop-order photo/shared-room/group/persona dispatch and activity-state mapping; Agent composer prompt drafts are durably Host-owned with account/Agent fencing, process-reopen restore, corrupt-store quarantine and clear-if-current; conversation outline is a retained read-only projection over canonical transcript with Agent/subagent tabs and running-subagent polling; Agent find-in-chat searches canonical transcript semantic payloads and has native Enter/Shift+Enter/Escape focus navigation. Rows stay mapped/not-verified where upstream roster fields, full ComposerDraft attachments/recovery, exact occurrence-span highlighting, composed header controls or same-head packaged/device evidence are still missing. Full source closure remains incomplete. Spreadsheet preview audit now records CSV/TSV and bounded OOXML multi-sheet production wiring at 1e66eb907c46043bcb429c15abeae253b44ef443; Desktop legacy BIFF .xls remains mapped/not-verified. Audited f684eebd window-chrome focus, root notification trays, presentation-only Agent navigation history and root status badge are now explicitly responsibility-linked; none is verified until the new exact HEAD completes required CI/package/device evidence."
+    "note": "Incrementally rebased to Desktop main 371b72f1cd20de03dc4dff9a15ed761054968093. Durable send acknowledgement, transcript widget actions and client-side tool-result projection remain Host/Coordinator-owned. At Android code head 8927278b8ec61145700abb906f226f97f6497195, Agent avatar presentation has Desktop-order photo/shared-room/group/persona dispatch and activity-state mapping; Agent composer prompt drafts are durably Host-owned with account/Agent fencing, process-reopen restore, corrupt-store quarantine and clear-if-current; conversation outline is a retained read-only projection over canonical transcript with Agent/subagent tabs and running-subagent polling; Agent find-in-chat searches canonical transcript semantic payloads and has native Enter/Shift+Enter/Escape focus navigation. Rows stay mapped/not-verified where upstream roster fields, full ComposerDraft attachments/recovery, exact occurrence-span highlighting, composed header controls or same-head packaged/device evidence are still missing. Full source closure remains incomplete. Spreadsheet preview audit now records CSV/TSV and bounded OOXML multi-sheet production wiring at 1e66eb907c46043bcb429c15abeae253b44ef443; Desktop legacy BIFF .xls remains mapped/not-verified. Audited f684eebd window-chrome focus, root notification trays, presentation-only Agent navigation history and root status badge are now explicitly responsibility-linked; none is verified until the new exact HEAD completes required CI/package/device evidence. Corrected root-shell-state rows to mapped because the Desktop file also owns loading/empty/fatal-error surfaces; separately linked Android system-window controls and native workspace indicator replacements."
   },
   "responsibilities": [
     {
@@ -13065,6 +13065,92 @@
       "artifact": null,
       "verification_status": "not-verified",
       "notes": "Audited at f684eebd3755041809f9c82f5e3ea0b290ed5f7e against Desktop 371b72f1cd20de03dc4dff9a15ed761054968093. Grok Android Architecture run 38193852577 existing-android-regression, rust-runtime-foundation and parity-ledger succeeded. Full Android build/package/device/release evidence remains incomplete."
+    },
+    {
+      "responsibility_id": "WINDOW-CHROME-CONTROLS-ANDROID-001",
+      "domain": "navigation-shell",
+      "desktop_sources": [
+        {
+          "path": "frontend/src/recovered/features/window-chrome/view.css",
+          "blob_sha": "9f50cbcd9aa6da8d8b56cb291b627fe427165f72",
+          "symbols": [
+            "desktop drag region and window-control styling"
+          ]
+        },
+        {
+          "path": "frontend/src/recovered/features/window-chrome/view.tsx",
+          "blob_sha": "2c2668290ba69f9b70f91322ff81e6b72bdb22e5",
+          "symbols": [
+            "WindowChrome",
+            "windowControls.minimize",
+            "windowControls.toggleMaximize",
+            "windowControls.close"
+          ]
+        }
+      ],
+      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "responsibility": "Replace Desktop renderer-owned draggable titlebar and minimize/maximize/close controls with Android system-window ownership while preserving safe content geometry.",
+      "source_owner": "Desktop WindowChrome over DesktopBridge window controls",
+      "visible_effect": "Android content respects display cutout/status/navigation safe areas and relies on system task/window controls rather than rendering desktop titlebar buttons.",
+      "android_disposition": "not-applicable-with-replacement",
+      "android_target": [
+        "mobile/android/app/src/main/java/com/ombhrum/fabushi/MainActivity.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/production/bootstrap_view.kt",
+        "tests/test_window_chrome_android_replacement.py"
+      ],
+      "android_owner": "Android OS/system window owns minimize/task/close semantics; Fabushi root owns only safe drawing inset consumption.",
+      "platform_delta": "Desktop app-region drag and explicit window-control bridge do not exist on Android. enableEdgeToEdge plus safeDrawingPadding is the platform replacement.",
+      "implementation_status": "implemented",
+      "production_wiring": "MainActivity enables edge-to-edge; FabushiApplicationRoot applies fillMaxSize+safeDrawingPadding before ProductionRenderer. ProductionRenderer has no desktop windowControls calls.",
+      "unit_test": "tests/test_window_chrome_android_replacement.py",
+      "contract_test": "tests/test_window_chrome_android_replacement.py",
+      "integration_test": "Predecessor f684eebd existing-android-regression succeeded; current exact-head rerun pending.",
+      "packaged_test": "required",
+      "device_test": "required on cutout/navigation-bar device profiles",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Platform-only Desktop mechanism removed with an explicit Android replacement; no desktop controls are simulated in Compose."
+    },
+    {
+      "responsibility_id": "WORKSPACE-INDICATOR-ANDROID-001",
+      "domain": "navigation-shell",
+      "desktop_sources": [
+        {
+          "path": "frontend/src/recovered/features/window-chrome/workspace-indicator.css",
+          "blob_sha": "f9d506d10ff8a4adbcd605d67ae6f2749345d155",
+          "symbols": [
+            "chat header title styling"
+          ]
+        },
+        {
+          "path": "frontend/src/recovered/features/window-chrome/workspace-indicator.tsx",
+          "blob_sha": "4bda5d7fecb38495111d40acecb96e84e5048ace",
+          "symbols": [
+            "WorkspaceIndicator"
+          ]
+        }
+      ],
+      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "responsibility": "Expose the active workspace/Agent label in the native Android chat header without a desktop titlebar overlay and keep the label bound to the canonical active Agent projection.",
+      "source_owner": "Desktop WorkspaceIndicator",
+      "visible_effect": "The active Agent/workspace name remains visible and accessible in Android chat while respecting native mobile layout.",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/features/bots/GrokBotComponents.kt",
+        "tests/test_window_chrome_android_replacement.py"
+      ],
+      "android_owner": "GrokBotChatAndroid renders the canonical MobileBotSummaryAndroid name; it does not own workspace identity.",
+      "platform_delta": "Fixed draggable desktop titlebar label becomes an in-content native mobile Agent header/settings affordance.",
+      "implementation_status": "implemented",
+      "production_wiring": "Production bot-chat surface renders bot.name and exposes the application element name `Bot ${bot.name}` plus native settings entry.",
+      "unit_test": "tests/test_window_chrome_android_replacement.py",
+      "contract_test": "tests/test_window_chrome_android_replacement.py",
+      "integration_test": "Predecessor f684eebd existing-android-regression succeeded; current exact-head rerun pending.",
+      "packaged_test": "required",
+      "device_test": "required",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Header placement differs by platform, but the user-visible active workspace identity is preserved."
     }
   ],
   "traceability": {
