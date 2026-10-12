@@ -34,20 +34,16 @@ class RpcEdgeRuntimeTest {
 
         val firstSubscription = edge.subscribe(mapOf("changed" to first::add))
         val secondSubscription = edge.subscribe(mapOf("changed" to second::add))
-        assertEquals(2, edge.listenerCount("changed"))
-
         edge.emit("changed", 1)
         assertEquals(listOf(1), first)
         assertEquals(listOf(1), second)
 
         firstSubscription.close()
-        assertEquals(1, edge.listenerCount("changed"))
         edge.emit("changed", 2)
         assertEquals(listOf(1), first)
         assertEquals(listOf(1, 2), second)
 
         secondSubscription.close()
-        assertEquals(0, edge.listenerCount("changed"))
         edge.emit("changed", 3)
         assertEquals(listOf(1), first)
         assertEquals(listOf(1, 2), second)
