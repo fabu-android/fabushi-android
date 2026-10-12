@@ -71,6 +71,8 @@ internal val GrokMobileMuted = Color(0xFF8B8B8B)
 @Composable
 internal fun GrokHomeSurface(
     accountName: String,
+    accountAuthId: String,
+    accountAvatarUrl: String,
     accessProjection: AccountAccessProjection,
     rosterAccessReadiness: RosterAccessReadiness,
     messagingState: MessagingUiState,
@@ -631,9 +633,20 @@ internal fun GrokHomeSurface(
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Box(
-                        Modifier.size(38.dp).background(Color(0xFFFFC7D1), CircleShape).clickable(onClick = onOpenMessaging),
+                        Modifier
+                            .size(38.dp)
+                            .clickable(onClick = onOpenMessaging)
+                            .testTag("home-account-avatar-button"),
                         contentAlignment = Alignment.Center,
-                    ) { Text(accountName.take(1).uppercase().ifBlank { "F" }, color = GrokMobileInk, fontWeight = FontWeight.Bold) }
+                    ) {
+                        AccountAvatar(
+                            authId = accountAuthId,
+                            preferredUrl = accountAvatarUrl,
+                            accountName = accountName,
+                            size = 38.dp,
+                            testTagPrefix = "home-account-avatar",
+                        )
+                    }
                     Spacer(Modifier.weight(1f))
                     Text(
                         "◇",
