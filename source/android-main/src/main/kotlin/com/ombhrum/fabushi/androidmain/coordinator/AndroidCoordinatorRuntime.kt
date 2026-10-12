@@ -787,7 +787,14 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
     override fun rootConnectionRetry(): RootConnectionResilienceProjection {
         val token = rootConnectionOwner.requestRetry()
         publishRootConnectionProjection()
-        if (token != null) dispatchRootConnectionRetry(token)
+        if (token != null) {
+            reportAgentsUnreachableTelemetry(
+                phase = "retry",
+                isManual = true,
+                errorClass = rootConnectionOwner.currentProjection().failureCode,
+            )
+            dispatchRootConnectionRetry(token)
+        }
         return rootConnectionOwner.currentProjection()
     }
 
@@ -1064,13 +1071,66 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
     }
 
     private fun observeRootConnectionTransport(state: RootConnectionTransportState) {
+        val previous = rootConnectionOwner.currentProjection()
         val retryToken = rootConnectionOwner.observeTransport(state)
-        publishRootConnectionProjection()
-        if (retryToken != null) dispatchRootConnectionRetry(retryToken)
+        val current = rootConnectionOwner.currentProjection()
+        publishRootConnectionProjection(current)
+        reportRootConnectionTelemetryTransition(previous, current)
+        if (retryToken != null) {
+            reportAgentsUnreachableTelemetry(
+                phase = "retry",
+                isManual = false,
+                errorClass = current.failureCode,
+            )
+            dispatchRootConnectionRetry(retryToken)
+        }
+    }
+
+    private fun reportRootConnectionTelemetryTransition(
+        previous: RootConnectionResilienceProjection,
+        current: RootConnectionResilienceProjection,
+    ) {
+        when {
+            previous.transport != RootConnectionTransportState.DOWN &&
+                current.transport == RootConnectionTransportState.DOWN ->
+                reportAgentsUnreachableTelemetry(
+                    phase = "entered",
+                    isManual = false,
+                    errorClass = current.failureCode,
+                )
+            previous.transport == RootConnectionTransportState.DOWN &&
+                current.transport == RootConnectionTransportState.CONNECTED ->
+                reportAgentsUnreachableTelemetry(
+                    phase = "recovered",
+                    isManual = false,
+                    errorClass = current.failureCode,
+                )
+        }
+    }
+
+    private fun reportAgentsUnreachableTelemetry(
+        phase: String,
+        isManual: Boolean,
+        errorClass: String?,
+    ) {
+        runCatching {
+            host.request(
+                "feature.telemetry.agentsUnreachable",
+                JSONObject()
+                    .put("phase", phase)
+                    .put("isManual", isManual)
+                    .apply {
+                        errorClass?.trim()?.takeIf(String::isNotEmpty)?.let {
+                            put("errorClass", it.take(128))
+                        }
+                    },
+            )
+        }
     }
 
     private fun dispatchRootConnectionRetry(token: RootConnectionRetryToken) {
         rootConnectionRetryExecutor.execute {
+            val projectionBeforeRetry = rootConnectionOwner.currentProjection()
             try {
                 val access = accountAccessProjection()
                 val code = access.rosterFailureCode
@@ -1102,7 +1162,9 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
                     transportDown = true,
                 )
             } finally {
-                publishRootConnectionProjection()
+                val current = rootConnectionOwner.currentProjection()
+                publishRootConnectionProjection(current)
+                reportRootConnectionTelemetryTransition(projectionBeforeRetry, current)
             }
         }
     }
