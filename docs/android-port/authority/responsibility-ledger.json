@@ -12452,6 +12452,15 @@
             "SandSelect",
             "FloatingSurface"
           ]
+        },
+        {
+          "path": "source/shared/sand-auto-review-instructions.ts",
+          "blob_sha": "37fbdea4ffaf3241e630a7b494d2d7e89d94614d",
+          "symbols": [
+            "normalizeSandAutoReviewInstructions",
+            "SAND_AUTO_REVIEW_INSTRUCTION_MAX_ENTRIES",
+            "SAND_AUTO_REVIEW_INSTRUCTION_MAX_CHARS"
+          ]
         }
       ],
       "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
@@ -12489,22 +12498,28 @@
       "security_boundary": "instruction UI cannot bypass the canonical Auto Review policy owner.",
       "android_disposition": "android-adapted",
       "android_target": [
+        "source/host/src/auto_review_settings.rs",
+        "source/host/src/android_json_runtime.rs",
+        "source/android-preload/src/main/kotlin/com/ombhrum/fabushi/androidpreload/runtime/AndroidCoordinatorPort.kt",
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/coordinator/AndroidCoordinatorRuntime.kt",
         "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/recovered/features/settings/SettingsConfigurationModels.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/production/FabushiSettingsSurface.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/production/ProductionRenderer_view.kt",
         "mobile/android/app/src/test/java/com/ombhrum/fabushi/SettingsConfigurationModelsTest.kt"
       ],
-      "android_owner": "Android settings presentation over canonical durable settings owner",
-      "platform_delta": "Pure TypeScript model becomes pure Kotlin. Durable settings transport remains to be wired; no second local settings database is introduced.",
-      "implementation_status": "mapped",
-      "production_wiring": "Model semantics are ported in SettingsConfigurationModels.kt: allow/ask list identity, duplicate rejection, in-list edit, cross-list move, stale-row reconciliation and 20-rule cap. Desktop auto-review.tsx additionally proves enabled-state, save-pending gating, draft/edit/delete UI and async commit behavior; Android still lacks the dedicated production editor and durable account-scoped persistence path.",
-      "unit_test": "SettingsConfigurationModelsTest covers parsing, row projection, duplicate rejection, same/cross-list edit, reconciliation and cap. Same-head CI pending.",
-      "contract_test": "Recovered configuration-model contract source audited.",
-      "integration_test": "missing durable save/reload/account-switch flow",
-      "packaged_test": "required",
-      "device_test": "required",
+      "android_owner": "Rust DurableAutoReviewSettings is canonical; Kotlin/Compose owns only typed draft/presentation state.",
+      "platform_delta": "Desktop settings/resource persistence becomes an account-fenced Rust Host store behind the typed Coordinator/JNI boundary. Compose retains only drafts/busy/error. Android preserves Desktop normalization (enabled default true, trim/dedupe, 20 entries per list, 1000 chars per rule) and adds revision fencing so stale account/editor writes fail closed.",
+      "implementation_status": "implemented",
+      "production_wiring": "Shipping Settings -> ProductionRenderer generation-fenced load/save -> AndroidCoordinatorPort typed snapshot -> AndroidCoordinatorRuntime -> MahayanaHost/JNI -> AndroidJsonHost feature.settings.autoReviewInstructions(.set) -> account-scoped DurableAutoReviewSettings. Host startup reopens auto-review-settings.json. Saves require current accountFence plus expectedRevision; successful UI state is replaced only by the canonical Host snapshot. Account identity/epoch/settings visibility changes invalidate late results and clear the old canonical projection.",
+      "unit_test": "Rust auto_review_settings tests cover Desktop normalization limits/dedup/default-enabled, per-account revision fencing, process reopen recovery, invalid fence and corrupt-document fail-closed. AndroidJsonHost dispatch test covers default/load/set/stale-revision/reopen. Existing SettingsConfigurationModelsTest covers stable row identity, duplicate rejection, same/cross-list edit, stale-row reconciliation and 20-rule cap. Exact-head Actions pending.",
+      "contract_test": "Desktop shared normalize contract blob 37fbdea4... and settings overlay/editor sources are represented by Rust canonical persistence + typed Android bridge + native editor. Same exact-head Rust/Kotlin contract gates pending.",
+      "integration_test": "Production Host dispatch + typed Coordinator + native Settings wiring implemented; exact-head GitHub Actions and account-switch/device acceptance pending.",
+      "packaged_test": "Required on final minified release artifact: open Settings, edit/save/reopen Auto Review and prove no test/local shadow owner.",
+      "device_test": "Required: protected account save/reopen, account switch isolation, stale save rejection, process death/cold start recovery.",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Keep mapped/not-verified. Do not treat the model-only port as production Auto Review parity; editor, durable owner, rejection preservation and account switching remain open.",
-      "android_head_at_update": "86ca96cfdce363b777e3bcf1f84e49e5f493b8bc"
+      "notes": "Source and production wiring are implemented. Do not mark verified until the current exact Android HEAD passes Rust/Kotlin/architecture gates and packaged/protected-device acceptance. Transcript-card Always-allow approval semantics remain tracked separately by TRANSCRIPT-AUTO-REVIEW-APPROVAL-ANDROID-001.",
+      "android_head_at_update": "80d6223d1e40c8d8d2cc22d2221b40da3851b824"
     },
     {
       "responsibility_id": "SETTINGS-ROUTER-PROVIDER-ANDROID-001",
