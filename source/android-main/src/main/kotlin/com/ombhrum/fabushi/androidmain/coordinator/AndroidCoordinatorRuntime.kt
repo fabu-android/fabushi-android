@@ -417,6 +417,9 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
     override fun accountPrivacyMode(): JSONObject =
         host.request("feature.account.privacyMode")
 
+    override fun accountPrReviewPreferences(): JSONObject =
+        host.request("feature.account.prReviewPreferences")
+
     override fun rootConnectionResilienceProjection(): RootConnectionResilienceProjection =
         rootConnectionOwner.currentProjection()
 
