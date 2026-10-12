@@ -196,8 +196,6 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
     private val computerRebuildTelemetryExecutor = Executors.newSingleThreadScheduledExecutor { runnable ->
         Thread(runnable, "fabushi-computer-rebuild-telemetry").apply { isDaemon = true }
     }
-    @Volatile private var lastComputerRebuildPendingStallKey: String? = null
-    @Volatile private var lastComputerRebuildEscalationShownKey: String? = null
     private val mainThreadPressureSampler = AndroidMainThreadPressureSampler {
             p50Ms,
             p95Ms,
@@ -285,14 +283,6 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
             },
             PROCESS_SESSION_HEARTBEAT_SECONDS,
             PROCESS_SESSION_HEARTBEAT_SECONDS,
-            TimeUnit.SECONDS,
-        )
-        computerRebuildTelemetryExecutor.scheduleWithFixedDelay(
-            {
-                runCatching { reportComputerRebuildPendingStallIfNeeded() }
-            },
-            COMPUTER_REBUILD_TELEMETRY_SECONDS,
-            COMPUTER_REBUILD_TELEMETRY_SECONDS,
             TimeUnit.SECONDS,
         )
         storagePressureExecutor.scheduleWithFixedDelay(
@@ -3199,67 +3189,10 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
             .put("accepted", true)
     }
 
-    private fun reportComputerRebuildPendingStallIfNeeded() {
-        val accountEpoch = accountAccessOwner.currentProjection().accountEpoch
-        if (accountEpoch <= 0L) {
-            lastComputerRebuildPendingStallKey = null
-            return
-        }
-        val snapshot = runCatching { computerRebuildOwner.snapshot(accountEpoch) }.getOrNull()
-            ?: return
-        val projected = projectComputerRebuildPendingStallTelemetry(
-            snapshot = snapshot,
-            visibility = computerRebuildOwner.visibilityTelemetry(accountEpoch),
-        )
-        if (projected == null) {
-            lastComputerRebuildPendingStallKey = null
-            return
-        }
-        if (lastComputerRebuildPendingStallKey == projected.episodeKey) return
-
-        host.request(
-            "feature.telemetry.recovery",
-            JSONObject()
-                .put("kind", "rebuild_pending_stall")
-                .put("rebuildKind", projected.rebuildKind)
-                .put("elapsedMs", projected.elapsedMs)
-                .put("hasAck", projected.hasAck)
-                .put("streamAttached", projected.streamAttached),
-        )
-        host.request(
-            "feature.telemetry.recovery",
-            JSONObject()
-                .put("kind", "rebuild_escalation")
-                .put("rebuildKind", projected.rebuildKind)
-                .put("elapsedMs", projected.elapsedMs)
-                .put("action", "shown")
-                .put(
-                    "escalation",
-                    if (projected.streamAttached) "taking-longer" else "unreachable",
-                ),
-        )
-        lastComputerRebuildPendingStallKey = projected.episodeKey
-    }
-
     override fun computerRebuildStatus(): JSONObject {
         val accountEpoch = accountAccessOwner.currentProjection().accountEpoch
         val snapshot = computerRebuildOwner.snapshot(accountEpoch)
         val visibility = computerRebuildOwner.visibilityTelemetry(accountEpoch)
-        val escalation = projectComputerRebuildEscalationTelemetry(snapshot, visibility)
-        if (escalation == null) {
-            lastComputerRebuildEscalationShownKey = null
-        } else if (lastComputerRebuildEscalationShownKey != escalation.episodeKey) {
-            host.request(
-                "feature.telemetry.recovery",
-                JSONObject()
-                    .put("kind", "rebuild_escalation")
-                    .put("rebuildKind", escalation.rebuildKind)
-                    .put("elapsedMs", escalation.elapsedMs)
-                    .put("action", "shown")
-                    .put("escalation", escalation.escalation),
-            )
-            lastComputerRebuildEscalationShownKey = escalation.episodeKey
-        }
         return JSONObject()
             .put("accountEpoch", snapshot.accountEpoch)
             .put("processGeneration", snapshot.processGeneration)
@@ -3943,7 +3876,6 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
         private const val PROCESS_METRICS_INITIAL_DELAY_SECONDS = 10L
         private const val PROCESS_METRICS_SAMPLE_SECONDS = 10L
         private const val PROCESS_SESSION_HEARTBEAT_SECONDS = 60L
-        private const val COMPUTER_REBUILD_TELEMETRY_SECONDS = 30L
         private const val COMPUTER_REBUILD_RECONNECT_MS = 3_000L
         private const val COMPUTER_REBUILD_TELEMETRY_SAMPLE_SECONDS = 15L
         @Volatile private var instance: AndroidCoordinatorRuntime? = null
