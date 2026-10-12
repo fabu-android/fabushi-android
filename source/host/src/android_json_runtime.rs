@@ -1092,6 +1092,16 @@ impl AndroidJsonHost {
     }
 
 
+    fn available_model_catalog(&self) -> Result<Value, String> {
+        let account_fence = self.current_turn_account_fence()?;
+        let catalog = self
+            .mcp_dashboard_backend
+            .as_ref()
+            .ok_or("available model catalog backend is unavailable")?
+            .resolve_available_models()?;
+        Ok(json!({"accountFence": account_fence, "catalog": catalog}))
+    }
+
     fn mcp_team_popularity(&self) -> Result<Value, String> {
         // Desktop exposes this as best-effort account-scoped ranking metadata. Keep the account
         // fence in the projection so Presentation can discard a late result after account switch.
@@ -1596,6 +1606,7 @@ impl AndroidJsonHost {
             "feature.auth.oauthStart" => self.oauth_start(params),
             "feature.auth.oauthPoll" => self.oauth_poll(params),
             "feature.auth.oauthCancel" => self.oauth_cancel(params),
+            "feature.models.available" => self.available_model_catalog(),
             "feature.mcp.serverCatalog" => self.mcp_server_catalog(),
             "feature.mcp.teamPopularity" => self.mcp_team_popularity(),
             "feature.mcp.serverInstructions.get" => self.mcp_server_custom_instructions(params),
