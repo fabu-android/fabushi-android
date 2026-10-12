@@ -49,6 +49,7 @@ pub mod mcp_server_tool_settings;
 pub mod notify_drain_gate;
 pub mod onepassword_provisioning;
 pub mod process_crash_guard;
+pub mod process_metrics;
 pub mod production_binding_providers;
 pub mod remote_execution;
 pub mod runner;
