@@ -10,6 +10,8 @@ import java.nio.charset.StandardCharsets
 
 internal object AndroidDeepLinkRouter {
     private const val MAX_LENGTH = 2_048
+    private const val DESKTOP_HTTPS_HOST = "cursor.com"
+    private const val DESKTOP_HTTPS_INFO_PATH = "/sand/link/v1/info"
     private val attemptIdPattern = Regex("^[A-Za-z0-9_-]{8,96}$")
     private val mcpOAuthStatePattern = Regex("^[A-Za-z0-9._~-]{16,512}$")
     private val appSections = setOf("settings", "feedback", "about", "widgets", "onboarding")
@@ -20,17 +22,22 @@ internal object AndroidDeepLinkRouter {
         if ('#' in raw || '\\' in raw || !hasValidPercentEncoding(raw)) return null
 
         val uri = runCatching { URI(raw) }.getOrNull() ?: return null
-        if (!uri.scheme.equals(AndroidAuthCallbackRegistration.PROTOCOL_SCHEME, ignoreCase = true)) return null
         if (uri.userInfo != null || uri.port != -1 || uri.fragment != null) return null
         val host = uri.host?.lowercase().orEmpty()
         if (host.isBlank()) return null
         if (!hasCanonicalPath(uri.rawPath.orEmpty())) return null
         val query = parseQuery(uri.rawQuery) ?: return null
 
+        if (uri.scheme.equals("https", ignoreCase = true)) {
+            if (host != DESKTOP_HTTPS_HOST || uri.path != DESKTOP_HTTPS_INFO_PATH) return null
+            return parseInfo("/v1/info", query, AndroidDeepLinkSource.HTTPS)
+        }
+        if (!uri.scheme.equals(AndroidAuthCallbackRegistration.PROTOCOL_SCHEME, ignoreCase = true)) return null
+
         return when (host) {
             "auth" -> parseAuth(uri.path.orEmpty(), query)
             "mcp-oauth" -> parseMcpOAuth(uri.path.orEmpty(), query)
-            "app" -> parseInfo(uri.path.orEmpty(), query)
+            "app" -> parseInfo(uri.path.orEmpty(), query, AndroidDeepLinkSource.PROTOCOL)
             "agent" -> parseAgent(uri.path.orEmpty(), query)
             in appSections -> parseSection(host, uri.path.orEmpty(), query)
             else -> null
@@ -84,13 +91,14 @@ internal object AndroidDeepLinkRouter {
     private fun parseInfo(
         path: String,
         query: Map<String, List<String>>,
+        source: AndroidDeepLinkSource,
     ): AndroidDeepLink? {
         if (path != "/v1/info") return null
         if (query.keys != setOf("topic")) return null
         val topics = query["topic"].orEmpty()
         if (topics.size != 1 || topics.single() != "deep-links") return null
         return AndroidDeepLink.Info(
-            source = AndroidDeepLinkSource.PROTOCOL,
+            source = source,
             topic = "deep-links",
         )
     }
@@ -226,7 +234,7 @@ internal class AndroidDeepLinkController(
             "auth:${link.attemptId}:${link.status.name.lowercase()}"
         is AndroidDeepLink.McpOAuthCallback ->
             "mcp-oauth:${link.state}:${link.code ?: "error:" + link.error}"
-        is AndroidDeepLink.Info -> "info:${link.source.name.lowercase()}:${link.topic}"
+        is AndroidDeepLink.Info -> "info:${link.topic}"
         is AndroidDeepLink.Agent -> "agent:${link.agentId}"
         is AndroidDeepLink.AppSection -> "section:${link.section}"
     }
