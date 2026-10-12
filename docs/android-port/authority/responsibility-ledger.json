@@ -1940,6 +1940,70 @@
       "notes": "Source implemented, not verified. Stale callback/account-switch fencing still needs protected integration evidence. Source audit c36d3d48ec44bacaea14b024b2a73f043ac1977b: linked current Desktop access/account UI contract anchors; mapped/implemented source rows retain their own exact status and do not upgrade this responsibility verification."
     },
     {
+      "responsibility_id": "ACCOUNT-MACHINE-ID-ANDROID-001",
+      "domain": "account-device-identity",
+      "desktop_sources": [
+        {
+          "path": "source/electron-main/account/cursor-machine-id.ts",
+          "blob_sha": "dc762cb2bbe73c54740cd0219d0739b7980852c6",
+          "symbols": [
+            "getOrCreateMachineId",
+            "createGetOrCreateMachineId"
+          ]
+        }
+      ],
+      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "responsibility": "Own one stable protected machine/device identity across cold starts without rotating after process death or exposing partial identity to backend clients.",
+      "source_owner": "Desktop cursor-machine-id encrypted secret-store owner",
+      "direct_callers": [
+        "Cursor backend clients",
+        "account/rebuild backend identity"
+      ],
+      "downstream_dependencies": [
+        "Cursor checksum/device-scoped backend requests",
+        "Fabushi account device identity"
+      ],
+      "state_owner": "AndroidMachineIdStore platform secret resource; Rust Host consumes injected identity",
+      "persistent_state": [
+        "Keystore-protected stable machine id"
+      ],
+      "protocol_wire_contract": [
+        "one installation identity reused by account, Cursor Dashboard and rebuild backend owners"
+      ],
+      "visible_effect": "Backend/account sessions retain stable device identity across restart.",
+      "failure_behavior": [
+        "corrupt protected state fails closed",
+        "empty/whitespace/control identity rejected by JNI/Host",
+        "legacy plaintext removed only after protected commit"
+      ],
+      "cancellation_behavior": "initialization is atomic and not user-cancellable",
+      "retry_semantics": "reopen reuses protected identity; no silent rotation on corrupt protected state",
+      "idempotency_semantics": "getOrCreate returns one durable identity; protected write uses fsync/atomic replacement",
+      "process_death_recovery": "Keystore-protected noBackup document is decrypted before native Host construction",
+      "account_fencing": "installation identity intentionally survives account switch; account epoch remains separately owned",
+      "security_boundary": "machine id is encrypted by AndroidKeyStore and never projected to Compose; JNI accepts only bounded validated value",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/security/AndroidMachineIdStore.kt",
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/core/MahayanaHost.kt",
+        "source/android-host-jni/src/lib.rs",
+        "source/host/src/android_json_runtime.rs",
+        "source/host/src/mcp_auth/dashboard_mcp_auth_backend.rs"
+      ],
+      "android_owner": "AndroidMachineIdStore storage + Rust Host protocol consumer",
+      "platform_delta": "Desktop encrypted secret-store is replaced by AndroidKeyStore AES-GCM/noBackup storage; test-only Rust construction retains local fallback because no Android Keystore exists there.",
+      "implementation_status": "implemented",
+      "production_wiring": "MahayanaHost obtains protected id and passes it to nativeCreate; JNI validates it and constructs Host/rebuild backend with the same id; AndroidJsonHost feeds it to account and Cursor Dashboard owners.",
+      "unit_test": "Rust host_secret_store stable/atomic tests cover non-production fallback; AndroidMachineIdStoreInstrumentedTest covers protected stability, legacy migration and corrupt fail-closed behavior",
+      "contract_test": "typed JNI signature includes machineId and native validation; exact-head Actions required",
+      "integration_test": "required: process restart and legacy migration retain same protected id",
+      "packaged_test": "required on final APK/AAB",
+      "device_test": "required on Android Keystore-capable device/emulator",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Source and production wiring implemented on the current descendant chain; do not mark verified before same-exact-head CI/package/device evidence."
+    },
+    {
       "responsibility_id": "PLUGIN-IMMUTABLE-INSTALL-001",
       "domain": "mcp-plugins",
       "desktop_sources": [
