@@ -2687,6 +2687,7 @@ impl AndroidJsonHost {
             "feature.transcript.page" => self.transcript_page(params),
             "feature.search.agentContent" => self.agent_content_search(params),
             "feature.contentSearch.messages" => self.content_search_messages(params),
+            "feature.contentSearch.media" => self.content_search_media(params),
             "feature.assistant.projection" => self.assistant_projection(),
             "feature.assistant.markRead" => self.assistant_mark_read(),
             "feature.webauthn.registerProvider" => self.webauthn_register_provider(),
@@ -2855,6 +2856,27 @@ impl AndroidJsonHost {
             .map_err(|error| error.to_string())?;
         serde_json::to_value(matches)
             .map_err(|error| format!("failed to serialize content search result: {error}"))
+    }
+
+    fn content_search_media(&self, params: &Value) -> Result<Value, String> {
+        let query = params
+            .get("query")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        let limit = params
+            .get("limit")
+            .and_then(Value::as_u64)
+            .unwrap_or(50);
+        let limit = usize::try_from(limit)
+            .map_err(|_| "media search limit is out of range".to_string())?;
+        let matches = self
+            .transcript
+            .lock()
+            .map_err(|_| "transcript lock poisoned".to_string())?
+            .search_media(query, limit)
+            .map_err(|error| error.to_string())?;
+        serde_json::to_value(matches)
+            .map_err(|error| format!("failed to serialize media search result: {error}"))
     }
 
     fn agent_async_tasks(&self, params: &Value) -> Result<Value, String> {
@@ -12364,6 +12386,45 @@ mod transcript_page_contract_tests {
                 &json!({"query":"launch","limit":0}),
             )
             .is_err());
+    }
+
+    #[test]
+    fn host_media_search_reads_canonical_transcript_and_reopens() {
+        let root = tempfile::tempdir().unwrap();
+        let mut host = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+        host.transcript
+            .lock()
+            .unwrap()
+            .append_entry(json!({
+                "id":"media-a",
+                "agentId":"agent-a",
+                "kind":"user-attachment",
+                "filePath":"/tmp/Launch-Board.png",
+                "timestampMs":9,
+                "width":320,
+                "height":200
+            }))
+            .unwrap();
+        let first = host
+            .dispatch(
+                "feature.contentSearch.media",
+                &json!({"query":"launch bo","limit":50}),
+            )
+            .unwrap();
+        assert_eq!(first.as_array().unwrap().len(), 1);
+        assert_eq!(first[0]["entryId"], "media-a");
+        assert_eq!(first[0]["kind"], "image");
+        drop(host);
+
+        let mut reopened = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+        let second = reopened
+            .dispatch(
+                "feature.contentSearch.media",
+                &json!({"query":"launch","limit":50}),
+            )
+            .unwrap();
+        assert_eq!(second.as_array().unwrap().len(), 1);
+        assert_eq!(second[0]["fileName"], "Launch-Board.png");
     }
 
     #[test]
