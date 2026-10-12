@@ -147,6 +147,8 @@ data class MarketplaceUiState(
     val accountEmail: String = "",
     val accountAuthId: String = "",
     val accountAvatarUrl: String = "",
+    val accountProfileBusy: Boolean = false,
+    val accountProfileError: String? = null,
     val accountPrivacyMode: String? = null,
     val onboardingStep: Int = 0,
     val browserLoginAttemptId: String? = null,
@@ -395,6 +397,54 @@ class MarketplaceViewModel(application: Application) : AndroidViewModel(applicat
                         message = "退出登录失败：$detail",
                     )
                 }
+        }
+    }
+
+    fun updateAccountDisplayName(displayName: String) {
+        val normalized = displayName.trim()
+        if (normalized.isEmpty() || normalized.length > 200 || mutableState.value.accountProfileBusy) return
+        mutableState.value = mutableState.value.copy(
+            accountProfileBusy = true,
+            accountProfileError = null,
+        )
+        viewModelScope.launch {
+            runCatching {
+                withContext(Dispatchers.IO) { coordinator.authProfileUpdate(normalized) }
+            }.onSuccess { result ->
+                if (!result.optBoolean("ok", false)) {
+                    val detail = result.optString("errorMessage").ifBlank { "账号资料更新失败" }
+                    mutableState.value = mutableState.value.copy(
+                        accountProfileBusy = false,
+                        accountProfileError = detail,
+                        message = "账号资料更新失败：$detail",
+                    )
+                    return@onSuccess
+                }
+                val auth = result.optJSONObject("auth") ?: JSONObject()
+                val user = auth.optJSONObject("user")
+                mutableState.value = mutableState.value.copy(
+                    authResolved = true,
+                    loggedIn = auth.optBoolean("loggedIn", true),
+                    accountName = user?.optString("nickname").orEmpty()
+                        .ifBlank { user?.optString("username").orEmpty() }
+                        .ifBlank { user?.optString("email").orEmpty() }
+                        .ifBlank { normalized },
+                    accountEmail = user?.optString("email").orEmpty(),
+                    accountAuthId = auth.optString("authId")
+                        .ifBlank { user?.optString("id").orEmpty() },
+                    accountAvatarUrl = user?.optString("profilePictureUrl").orEmpty(),
+                    accountProfileBusy = false,
+                    accountProfileError = null,
+                    message = "账号名称已更新",
+                )
+            }.onFailure { error ->
+                val detail = error.message ?: error::class.java.simpleName
+                mutableState.value = mutableState.value.copy(
+                    accountProfileBusy = false,
+                    accountProfileError = detail,
+                    message = "账号资料更新失败：$detail",
+                )
+            }
         }
     }
 
