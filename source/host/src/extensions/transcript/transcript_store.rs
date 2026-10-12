@@ -43,6 +43,7 @@ pub struct TranscriptContentMatch {
 pub struct TranscriptMediaMatch {
     pub agent_id: String,
     pub entry_id: String,
+    pub path: String,
     pub file_name: String,
     pub path: String,
     pub ext: String,
@@ -52,6 +53,7 @@ pub struct TranscriptMediaMatch {
     pub size_bytes: Option<i64>,
     pub width: Option<i64>,
     pub height: Option<i64>,
+    pub size_bytes: Option<i64>,
 }
 
 #[derive(Clone, Debug)]
@@ -492,6 +494,7 @@ fn project_media_search_entry(entry: &Value) -> Option<TranscriptMediaMatch> {
         timestamp_ms: entry.get("timestampMs").and_then(Value::as_f64).unwrap_or(0.0),
         width,
         height,
+        size_bytes,
         file_name,
     })
 }
@@ -788,6 +791,7 @@ mod tests {
         assert_eq!(all[0].path, "https://example.invalid/reports/Project-Alpha.pdf?download=1");
         assert_eq!(all[0].kind, "pdf");
         assert_eq!(all[1].file_name, "Project Alpha.png");
+        assert_eq!(all[1].path, "content://files/Project%20Alpha.png");
         assert_eq!(all[1].mime.as_deref(), Some("image/png"));
         assert_eq!(all[1].width, Some(640));
         assert_eq!(all[1].height, Some(481));
