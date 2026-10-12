@@ -3230,6 +3230,14 @@ impl AndroidJsonHost {
     }
 
     fn process_metrics_observe(&mut self, params: &Value) -> Result<Value, String> {
+        if !self
+            .user_settings
+            .lock()
+            .map_err(|_| "Android user settings lock poisoned".to_string())?
+            .process_metrics_local_enabled()
+        {
+            return Err("process metrics collection is disabled".into());
+        }
         let observed_at_ms = params.get("observedAtMs").and_then(Value::as_u64).ok_or("observedAtMs is required")?;
         let cpu_time_ms_cumulative = params.get("cpuTimeMsCumulative").and_then(Value::as_u64).ok_or("cpuTimeMsCumulative is required")?;
         let memory_bytes = params.get("memoryBytes").and_then(Value::as_u64).ok_or("memoryBytes is required")?;
@@ -10936,6 +10944,17 @@ mod process_metrics_settings_dispatch_tests {
             .unwrap();
         assert_eq!(initial["localEnabled"], false);
         assert_eq!(initial["backendReportingEnabled"], false);
+        assert!(host
+            .dispatch(
+                "feature.telemetry.processMetrics.observe",
+                &json!({
+                    "observedAtMs":1,
+                    "cpuTimeMsCumulative":1,
+                    "memoryBytes":1024,
+                }),
+            )
+            .unwrap_err()
+            .contains("disabled"));
 
         let enabled = host
             .dispatch(
@@ -10945,6 +10964,17 @@ mod process_metrics_settings_dispatch_tests {
             .unwrap();
         assert_eq!(enabled["localEnabled"], true);
         assert_eq!(enabled["backendReportingEnabled"], false);
+        let observed = host
+            .dispatch(
+                "feature.telemetry.processMetrics.observe",
+                &json!({
+                    "observedAtMs":1,
+                    "cpuTimeMsCumulative":1,
+                    "memoryBytes":1024,
+                }),
+            )
+            .unwrap();
+        assert_eq!(observed["sampleSeqno"], 0);
         drop(host);
 
         let mut reopened = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
