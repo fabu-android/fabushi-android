@@ -180,6 +180,58 @@ internal fun shouldApplyAccountUsageResult(
         currentAuthId = currentAuthId,
     )
 
+data class CredentialVaultMetadata(
+    val name: String,
+    val label: String,
+    val allowedOrigins: List<String>,
+    val createdAtMs: Long,
+    val updatedAtMs: Long,
+)
+
+internal fun parseCredentialVaultMetadata(values: JSONArray): List<CredentialVaultMetadata> =
+    buildList {
+        for (index in 0 until values.length()) {
+            val value = values.optJSONObject(index) ?: continue
+            val name = value.optString("name").trim()
+            if (name.isEmpty() || !value.optBoolean("configured", false)) continue
+            check(!value.optBoolean("revealable", true)) {
+                "Credential Vault metadata unexpectedly became revealable"
+            }
+            val origins = value.optJSONObject("binding")
+                ?.optJSONArray("allowedOrigins")
+                ?.let { items ->
+                    buildList {
+                        for (originIndex in 0 until items.length()) {
+                            items.optString(originIndex).trim().takeIf(String::isNotEmpty)?.let(::add)
+                        }
+                    }
+                }.orEmpty()
+            add(
+                CredentialVaultMetadata(
+                    name = name,
+                    label = value.optString("label"),
+                    allowedOrigins = origins,
+                    createdAtMs = value.optLong("createdAtMs"),
+                    updatedAtMs = value.optLong("updatedAtMs"),
+                ),
+            )
+        }
+    }
+
+internal fun shouldApplyCredentialVaultResult(
+    requestGeneration: Long,
+    currentGeneration: Long,
+    expectedAuthId: String,
+    currentLoggedIn: Boolean,
+    currentAuthId: String,
+): Boolean = shouldApplyAccountPrivacyModeResult(
+    requestGeneration,
+    currentGeneration,
+    expectedAuthId,
+    currentLoggedIn,
+    currentAuthId,
+)
+
 data class MarketplaceUiState(
     val loading: Boolean = false,
     val installingPluginId: String? = null,
@@ -200,6 +252,9 @@ data class MarketplaceUiState(
     val accountUsageSummary: AndroidAccountUsageSummary? = null,
     val accountUsageBusy: Boolean = false,
     val accountUsageError: String? = null,
+    val credentialVaultItems: List<CredentialVaultMetadata> = emptyList(),
+    val credentialVaultBusy: Boolean = false,
+    val credentialVaultError: String? = null,
     val onboardingStep: Int = 0,
     val browserLoginAttemptId: String? = null,
     val browserLoginUrl: String? = null,
@@ -226,6 +281,7 @@ class MarketplaceViewModel(application: Application) : AndroidViewModel(applicat
     private var rootConnectionSubscription: AutoCloseable? = null
     private var accountPrivacyRefreshGeneration: Long = 0L
     private var accountUsageRefreshGeneration: Long = 0L
+    private var credentialVaultGeneration: Long = 0L
 
     init {
         featureEventSubscription = coordinator.addFeatureEventListener { event ->
@@ -449,6 +505,9 @@ class MarketplaceViewModel(application: Application) : AndroidViewModel(applicat
                         accountUsageSummary = null,
                         accountUsageBusy = false,
                         accountUsageError = null,
+                        credentialVaultItems = emptyList(),
+                        credentialVaultBusy = false,
+                        credentialVaultError = null,
                         chatMessages = emptyList(),
                         activeOperationId = null,
                         chatBusy = false,
@@ -810,6 +869,170 @@ class MarketplaceViewModel(application: Application) : AndroidViewModel(applicat
                         "Trial cancellation outcome unknown; not retried"
                 },
             )
+        }
+    }
+
+    fun refreshCredentialVault() {
+        val snapshot = mutableState.value
+        val generation = ++credentialVaultGeneration
+        if (!snapshot.loggedIn || snapshot.accountAuthId.isBlank()) {
+            mutableState.value = snapshot.copy(
+                credentialVaultItems = emptyList(),
+                credentialVaultBusy = false,
+                credentialVaultError = null,
+            )
+            return
+        }
+        val expectedAuthId = snapshot.accountAuthId
+        mutableState.value = snapshot.copy(credentialVaultBusy = true, credentialVaultError = null)
+        viewModelScope.launch {
+            runCatching {
+                withContext(Dispatchers.IO) { coordinator.credentialVaultList() }
+            }.onSuccess { values ->
+                val current = mutableState.value
+                if (!shouldApplyCredentialVaultResult(
+                        generation,
+                        credentialVaultGeneration,
+                        expectedAuthId,
+                        current.loggedIn,
+                        current.accountAuthId,
+                    )) return@onSuccess
+                mutableState.value = current.copy(
+                    credentialVaultItems = parseCredentialVaultMetadata(values),
+                    credentialVaultBusy = false,
+                    credentialVaultError = null,
+                )
+            }.onFailure { error ->
+                val current = mutableState.value
+                if (shouldApplyCredentialVaultResult(
+                        generation,
+                        credentialVaultGeneration,
+                        expectedAuthId,
+                        current.loggedIn,
+                        current.accountAuthId,
+                    )) {
+                    mutableState.value = current.copy(
+                        credentialVaultBusy = false,
+                        credentialVaultError = error.message ?: error::class.java.simpleName,
+                    )
+                }
+            }
+        }
+    }
+
+    fun saveCredential(
+        name: String,
+        label: String,
+        secretValue: String,
+        allowedOrigins: List<String>,
+        rotate: Boolean,
+    ) {
+        val snapshot = mutableState.value
+        if (!snapshot.loggedIn || snapshot.accountAuthId.isBlank() || snapshot.credentialVaultBusy) return
+        val normalizedName = name.trim()
+        val normalizedSecret = secretValue
+        val origins = allowedOrigins.map(String::trim).filter(String::isNotEmpty)
+        if (normalizedName.isEmpty() || normalizedSecret.isEmpty() || origins.isEmpty()) return
+        val generation = ++credentialVaultGeneration
+        val expectedAuthId = snapshot.accountAuthId
+        mutableState.value = snapshot.copy(credentialVaultBusy = true, credentialVaultError = null)
+        viewModelScope.launch {
+            runCatching {
+                withContext(Dispatchers.IO) {
+                    if (rotate) {
+                        coordinator.credentialVaultRotate(
+                            normalizedName,
+                            label.trim(),
+                            normalizedSecret,
+                            origins,
+                        )
+                    } else {
+                        coordinator.credentialVaultUpsert(
+                            normalizedName,
+                            label.trim(),
+                            normalizedSecret,
+                            origins,
+                        )
+                    }
+                    coordinator.credentialVaultList()
+                }
+            }.onSuccess { values ->
+                val current = mutableState.value
+                if (!shouldApplyCredentialVaultResult(
+                        generation,
+                        credentialVaultGeneration,
+                        expectedAuthId,
+                        current.loggedIn,
+                        current.accountAuthId,
+                    )) return@onSuccess
+                mutableState.value = current.copy(
+                    credentialVaultItems = parseCredentialVaultMetadata(values),
+                    credentialVaultBusy = false,
+                    credentialVaultError = null,
+                    message = if (rotate) "Credential rotated" else "Credential saved",
+                )
+            }.onFailure { error ->
+                val current = mutableState.value
+                if (shouldApplyCredentialVaultResult(
+                        generation,
+                        credentialVaultGeneration,
+                        expectedAuthId,
+                        current.loggedIn,
+                        current.accountAuthId,
+                    )) {
+                    mutableState.value = current.copy(
+                        credentialVaultBusy = false,
+                        credentialVaultError = error.message ?: error::class.java.simpleName,
+                    )
+                }
+            }
+        }
+    }
+
+    fun revokeCredential(name: String) {
+        val snapshot = mutableState.value
+        if (!snapshot.loggedIn || snapshot.accountAuthId.isBlank() || snapshot.credentialVaultBusy) return
+        val normalizedName = name.trim()
+        if (normalizedName.isEmpty()) return
+        val generation = ++credentialVaultGeneration
+        val expectedAuthId = snapshot.accountAuthId
+        mutableState.value = snapshot.copy(credentialVaultBusy = true, credentialVaultError = null)
+        viewModelScope.launch {
+            runCatching {
+                withContext(Dispatchers.IO) {
+                    coordinator.credentialVaultRevoke(normalizedName)
+                    coordinator.credentialVaultList()
+                }
+            }.onSuccess { values ->
+                val current = mutableState.value
+                if (!shouldApplyCredentialVaultResult(
+                        generation,
+                        credentialVaultGeneration,
+                        expectedAuthId,
+                        current.loggedIn,
+                        current.accountAuthId,
+                    )) return@onSuccess
+                mutableState.value = current.copy(
+                    credentialVaultItems = parseCredentialVaultMetadata(values),
+                    credentialVaultBusy = false,
+                    credentialVaultError = null,
+                    message = "Credential revoked",
+                )
+            }.onFailure { error ->
+                val current = mutableState.value
+                if (shouldApplyCredentialVaultResult(
+                        generation,
+                        credentialVaultGeneration,
+                        expectedAuthId,
+                        current.loggedIn,
+                        current.accountAuthId,
+                    )) {
+                    mutableState.value = current.copy(
+                        credentialVaultBusy = false,
+                        credentialVaultError = error.message ?: error::class.java.simpleName,
+                    )
+                }
+            }
         }
     }
 
