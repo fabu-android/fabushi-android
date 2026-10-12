@@ -17,6 +17,7 @@ pub mod capability_broker;
 pub mod composer_draft;
 pub mod account_service;
 pub mod account_telemetry;
+pub mod account_telemetry_spill;
 
 pub mod attachment_paths;
 pub mod durable_file_policy;
