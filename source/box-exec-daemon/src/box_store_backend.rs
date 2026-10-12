@@ -1,3 +1,4 @@
+use crate::box_store_manifest_format::BOX_STORE_BLOBS_PREFIX;
 use crate::box_store_hydration::{
     remove_hydration_handoff_marker, write_hydration_handoff_marker,
     BOX_STORE_HYDRATION_HANDOFF_FILE_NAME,
@@ -229,7 +230,7 @@ impl RemoteBoxStoreBackend {
     }
 
     fn objects_dir(&self, store_id: &str) -> PathBuf {
-        self.store_dir(store_id).join("objects")
+        self.store_dir(store_id).join(BOX_STORE_BLOBS_PREFIX)
     }
 
     fn load_manifest(
