@@ -193,6 +193,10 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
     private val processSessionHeartbeatExecutor = Executors.newSingleThreadScheduledExecutor { runnable ->
         Thread(runnable, "fabushi-process-session-heartbeat").apply { isDaemon = true }
     }
+    private val computerRebuildTelemetryExecutor = Executors.newSingleThreadScheduledExecutor { runnable ->
+        Thread(runnable, "fabushi-computer-rebuild-telemetry").apply { isDaemon = true }
+    }
+    @Volatile private var lastComputerRebuildPendingStallKey: String? = null
     private val mainThreadPressureSampler = AndroidMainThreadPressureSampler {
             p50Ms,
             p95Ms,
@@ -274,6 +278,14 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
             },
             PROCESS_SESSION_HEARTBEAT_SECONDS,
             PROCESS_SESSION_HEARTBEAT_SECONDS,
+            TimeUnit.SECONDS,
+        )
+        computerRebuildTelemetryExecutor.scheduleWithFixedDelay(
+            {
+                runCatching { reportComputerRebuildPendingStallIfNeeded() }
+            },
+            COMPUTER_REBUILD_TELEMETRY_SECONDS,
+            COMPUTER_REBUILD_TELEMETRY_SECONDS,
             TimeUnit.SECONDS,
         )
         storagePressureExecutor.scheduleWithFixedDelay(
@@ -3118,6 +3130,43 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
             .put("accepted", true)
     }
 
+    private fun reportComputerRebuildPendingStallIfNeeded() {
+        val accountEpoch = accountAccessOwner.currentProjection().accountEpoch
+        if (accountEpoch <= 0L) {
+            lastComputerRebuildPendingStallKey = null
+            return
+        }
+        val snapshot = runCatching { computerRebuildOwner.snapshot(accountEpoch) }.getOrNull()
+            ?: return
+        val visibility = computerRebuildOwner.visibilityTelemetry(accountEpoch)
+        if (snapshot.kind == null || visibility == null || !visibility.isStalled) {
+            lastComputerRebuildPendingStallKey = null
+            return
+        }
+        val rebuildKind = snapshot.kind.name.lowercase()
+        val episodeKey = buildString {
+            append(accountEpoch)
+            append(':')
+            append(snapshot.episodeStartedAtMs ?: 0L)
+            append(':')
+            append(snapshot.operationId ?: snapshot.requestId ?: rebuildKind)
+        }
+        if (lastComputerRebuildPendingStallKey == episodeKey) return
+
+        host.request(
+            "feature.telemetry.recovery",
+            JSONObject()
+                .put("kind", "rebuild_pending_stall")
+                .put("rebuildKind", rebuildKind)
+                .put("elapsedMs", visibility.elapsedMs)
+                .put("hasAck", snapshot.acknowledged)
+                // Desktop names this fact streamAttached. Android has no renderer stream owner;
+                // the canonical replacement is the durable rebuild transport connection state.
+                .put("streamAttached", snapshot.connected),
+        )
+        lastComputerRebuildPendingStallKey = episodeKey
+    }
+
     override fun computerRebuildStatus(): JSONObject {
         val accountEpoch = accountAccessOwner.currentProjection().accountEpoch
         val snapshot = computerRebuildOwner.snapshot(accountEpoch)
@@ -3704,6 +3753,7 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
         storagePressureExecutor.shutdownNow()
         processMetricsExecutor.shutdownNow()
         processSessionHeartbeatExecutor.shutdownNow()
+        computerRebuildTelemetryExecutor.shutdownNow()
         mainThreadPressureSampler.close()
         sendSubmissionExecutor.shutdownNow()
         rootConnectionRetryExecutor.shutdownNow()
@@ -3729,6 +3779,7 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
         private const val PROCESS_METRICS_INITIAL_DELAY_SECONDS = 10L
         private const val PROCESS_METRICS_SAMPLE_SECONDS = 10L
         private const val PROCESS_SESSION_HEARTBEAT_SECONDS = 60L
+        private const val COMPUTER_REBUILD_TELEMETRY_SECONDS = 30L
         private const val COMPUTER_REBUILD_RECONNECT_MS = 3_000L
         @Volatile private var instance: AndroidCoordinatorRuntime? = null
 
