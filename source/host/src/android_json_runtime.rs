@@ -1114,6 +1114,7 @@ impl AndroidJsonHost {
             "feature.account.sandAccess" => self.account_sand_access(),
             "feature.account.privacyMode" => Ok(self.account_privacy_mode()),
             "feature.account.teamRules" => self.account_team_rules(),
+            "feature.account.prReviewPreferences" => self.account_pr_review_preferences(),
             "feature.account.dashboardAction" => self.account_dashboard_action(params),
             "feature.remote.binding.status" => Ok(self.remote_binding_status()),
             "feature.teachRecording.status" => self.teach_recording_status(),
@@ -1956,6 +1957,27 @@ impl AndroidJsonHost {
                 .unwrap_or("unknown"),
         };
         json!({"mode":mode})
+    }
+
+    fn account_pr_review_preferences(&mut self) -> Result<Value, String> {
+        let status = self.account_status()?;
+        let session_mutation = status.get("_accountSessionMutation").cloned();
+        let mut preferences = if status.get("loggedIn").and_then(Value::as_bool) == Some(true) {
+            match self.mode {
+                AndroidHostMode::Test => json!({"user":Value::Null,"team":Value::Null}),
+                AndroidHostMode::Production => self
+                    .mcp_dashboard_backend
+                    .as_ref()
+                    .ok_or("PR review preference backend is unavailable")?
+                    .resolve_sand_pr_review_preferences()?,
+            }
+        } else {
+            json!({"user":Value::Null,"team":Value::Null})
+        };
+        if let (Some(mutation), Some(object)) = (session_mutation, preferences.as_object_mut()) {
+            object.insert("_accountSessionMutation".into(), mutation);
+        }
+        Ok(preferences)
     }
 
     fn account_team_rules(&self) -> Result<Value, String> {

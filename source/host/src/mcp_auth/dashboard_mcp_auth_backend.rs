@@ -33,6 +33,11 @@ pub const DASHBOARD_LIST_SAND_MCP_TOOLS_PATH: &str =
     "/aiserver.v1.DashboardService/ListSandMcpTools";
 pub const DASHBOARD_CLIENT_ACTION_PATH: &str =
     "/aiserver.v1.DashboardService/ClientAction";
+pub const BACKGROUND_COMPOSER_GET_USER_SETTINGS_PATH: &str =
+    "/aiserver.v1.BackgroundComposerService/GetBackgroundComposerUserSettings";
+pub const DASHBOARD_GET_TEAM_ADMIN_SETTINGS_PATH: &str =
+    "/aiserver.v1.DashboardService/GetTeamAdminSettingsOrEmptyIfNotInTeam";
+pub const PR_REVIEW_REQUEST_TIMEOUT_MS: u64 = 10_000;
 pub const LIST_TOOLS_TIMEOUT_MS: u64 = 60_000;
 pub const CONTROL_RPC_TIMEOUT_MS: u64 = 30_000;
 pub const DEFAULT_CURSOR_BACKEND_URL: &str = "https://api2.cursor.sh";
@@ -435,6 +440,41 @@ impl CursorDashboardMcpAuthBackend {
             }
         }
         Ok(merged)
+    }
+
+    pub fn resolve_sand_pr_review_preferences(&self) -> Result<Value, String> {
+        let credentials = self.credentials.credentials()?;
+        let ghost_mode = self.resolve_ghost_mode(&credentials);
+        std::thread::scope(|scope| {
+            let user = scope.spawn(|| {
+                self.send_unary(
+                    &credentials,
+                    BACKGROUND_COMPOSER_GET_USER_SETTINGS_PATH,
+                    &[],
+                    PR_REVIEW_REQUEST_TIMEOUT_MS,
+                    ghost_mode,
+                )
+            });
+            let team = scope.spawn(|| {
+                self.send_unary(
+                    &credentials,
+                    DASHBOARD_GET_TEAM_ADMIN_SETTINGS_PATH,
+                    &[],
+                    PR_REVIEW_REQUEST_TIMEOUT_MS,
+                    ghost_mode,
+                )
+            });
+            let user_bytes = user
+                .join()
+                .map_err(|_| "PR review user preference request panicked".to_string())??;
+            let team_bytes = team
+                .join()
+                .map_err(|_| "PR review team preference request panicked".to_string())??;
+            Ok(json!({
+                "user": decode_user_pr_review_destination(&user_bytes)?,
+                "team": decode_team_pr_review_destination(&team_bytes)?,
+            }))
+        })
     }
 
     pub fn client_action(
@@ -1094,6 +1134,41 @@ fn decode_sand_team_rules(response: &[u8]) -> Result<Vec<Value>, String> {
     Ok(rules)
 }
 
+fn pr_review_destination_from_proto(value: u64) -> Option<&'static str> {
+    match value {
+        1 => Some("github"),
+        2 => Some("graphite"),
+        3 => Some("reviewCursor"),
+        _ => None,
+    }
+}
+
+fn decode_user_pr_review_destination(input: &[u8]) -> Result<Option<&'static str>, String> {
+    decode_optional_varint_field(input, 6).map(|value| value.and_then(pr_review_destination_from_proto))
+}
+
+fn decode_nested_pr_review_destination(
+    input: &[u8],
+    outer_field: u32,
+    inner_field: u32,
+) -> Result<Option<&'static str>, String> {
+    for nested in repeated_message_fields(input, outer_field)? {
+        if let Some(value) = decode_optional_varint_field(nested, inner_field)? {
+            if let Some(destination) = pr_review_destination_from_proto(value) {
+                return Ok(Some(destination));
+            }
+        }
+    }
+    Ok(None)
+}
+
+fn decode_team_pr_review_destination(input: &[u8]) -> Result<Option<&'static str>, String> {
+    // Current Desktop generated schema prefers pull_request_preferences (field 37, inner field 1)
+    // and falls back to background_agent_settings (field 7, inner field 5).
+    Ok(decode_nested_pr_review_destination(input, 37, 1)?
+        .or(decode_nested_pr_review_destination(input, 7, 5)?))
+}
+
 pub fn create_cursor_checksum(machine_id: &str, now_ms: u64) -> String {
     let kilo_seconds = now_ms / 1_000_000;
     let mut bytes = [
@@ -1267,6 +1342,44 @@ mod tests {
                 "isRequired":true,
             })]
         );
+    }
+
+    #[test]
+    fn pr_review_preference_wire_matches_desktop_generated_schema() {
+        assert_eq!(
+            BACKGROUND_COMPOSER_GET_USER_SETTINGS_PATH,
+            "/aiserver.v1.BackgroundComposerService/GetBackgroundComposerUserSettings"
+        );
+        assert_eq!(
+            DASHBOARD_GET_TEAM_ADMIN_SETTINGS_PATH,
+            "/aiserver.v1.DashboardService/GetTeamAdminSettingsOrEmptyIfNotInTeam"
+        );
+        assert_eq!(PR_REVIEW_REQUEST_TIMEOUT_MS, 10_000);
+        assert_eq!(pr_review_destination_from_proto(1), Some("github"));
+        assert_eq!(pr_review_destination_from_proto(2), Some("graphite"));
+        assert_eq!(pr_review_destination_from_proto(3), Some("reviewCursor"));
+        assert_eq!(pr_review_destination_from_proto(0), None);
+        assert_eq!(pr_review_destination_from_proto(99), None);
+
+        let mut user = Vec::new();
+        encode_key(6, 0, &mut user);
+        encode_varint(3, &mut user);
+        assert_eq!(decode_user_pr_review_destination(&user).unwrap(), Some("reviewCursor"));
+
+        let mut preferred = Vec::new();
+        encode_key(1, 0, &mut preferred);
+        encode_varint(2, &mut preferred);
+        let mut fallback = Vec::new();
+        encode_key(5, 0, &mut fallback);
+        encode_varint(1, &mut fallback);
+        let mut team = Vec::new();
+        encode_len_delimited(7, &fallback, &mut team);
+        encode_len_delimited(37, &preferred, &mut team);
+        assert_eq!(decode_team_pr_review_destination(&team).unwrap(), Some("graphite"));
+
+        let mut fallback_only = Vec::new();
+        encode_len_delimited(7, &fallback, &mut fallback_only);
+        assert_eq!(decode_team_pr_review_destination(&fallback_only).unwrap(), Some("github"));
     }
 
     #[test]
