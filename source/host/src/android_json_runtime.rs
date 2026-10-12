@@ -1779,7 +1779,7 @@ impl AndroidJsonHost {
             required_string(params, "conversationId")?,
             required_string(params, "emoji")?,
         )?;
-        self.record_product_telemetry("sand.reaction_ack", event)
+        self.record_product_telemetry("sand.reaction.ack", event)
     }
 
     fn agents_unreachable_telemetry(&mut self, params: &Value) -> Result<Value, String> {
@@ -2936,7 +2936,7 @@ impl AndroidJsonHost {
                 None,
             )
             .and_then(|event| {
-                self.record_product_telemetry("sand.send.ack", event)
+                self.record_product_telemetry("sand.send_ack", event)
                     .map(|_| ())
             });
             if ack_result.is_err() {
@@ -20888,7 +20888,7 @@ mod reaction_ack_runtime_tests {
         assert!(failed.is_err(), "telemetry must not convert the canonical failure to success");
 
         let raw = std::fs::read_to_string(spill).unwrap();
-        assert!(raw.contains("sand.send.ack"));
+        assert!(raw.contains("sand.send_ack"));
         assert!(raw.contains("\"acked\""));
         assert!(raw.contains("\"failed\""));
         assert!(raw.contains("sand.send"));
