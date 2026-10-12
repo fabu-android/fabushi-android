@@ -417,11 +417,15 @@ impl WebAuthnBridge {
             WebAuthnBridgeSettlement::CredentialJson(_) => ("ok", None, None, None),
             WebAuthnBridgeSettlement::Error { name, code, .. } => (
                 "failed",
-                pending
-                    .last_stage
-                    .and_then(stage_cause)
-                    .unwrap_or("desktop_failed")
-                    .into(),
+                if code.as_deref() == Some("passkey_stall") {
+                    "timeout"
+                } else {
+                    pending
+                        .last_stage
+                        .and_then(stage_cause)
+                        .unwrap_or("desktop_failed")
+                }
+                .into(),
                 Some(name.clone()),
                 code.clone(),
             ),
@@ -517,6 +521,41 @@ mod tests {
                 }],
             )
             .is_empty());
+    }
+
+    #[test]
+    fn native_passkey_stall_preserves_timeout_cause_over_failed_sign_stage() {
+        let mut bridge = WebAuthnBridge::new(120_000, 30_000);
+        let (provider, _) = bridge.register_provider(0);
+        let request = bridge.request_ceremony(1, ceremony()).unwrap();
+        bridge.submit_responses(
+            2,
+            Some(&provider),
+            &[WebAuthnResponseFrame::Stage {
+                request_id: request.request_id.clone(),
+                stage: WebAuthnStage::Sign,
+                outcome: WebAuthnStageOutcome::Failed,
+            }],
+        );
+        let settlements = bridge.submit_responses(
+            60_001,
+            Some(&provider),
+            &[WebAuthnResponseFrame::Error {
+                request_id: request.request_id.clone(),
+                name: "NotAllowedError".into(),
+                message: "Passkey request stalled".into(),
+                code: Some("passkey_stall".into()),
+            }],
+        );
+        assert_eq!(settlements.len(), 1);
+        let reports = bridge.take_reports();
+        let complete = reports
+            .iter()
+            .find(|report| report.request_id == request.request_id && report.stage == "complete")
+            .expect("passkey stall should emit a completion report");
+        assert_eq!(complete.cause.as_deref(), Some("timeout"));
+        assert_eq!(complete.raw_dom_error_name.as_deref(), Some("NotAllowedError"));
+        assert_eq!(complete.raw_sign_error_class.as_deref(), Some("passkey_stall"));
     }
 
     #[test]
