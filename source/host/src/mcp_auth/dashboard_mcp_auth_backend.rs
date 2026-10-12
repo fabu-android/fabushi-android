@@ -1,3 +1,4 @@
+use crate::account_telemetry::AccountTelemetryProjection;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
 use fabushi_android_shared::node::mcp::mcp_auth_watch_lifecycle::{
@@ -33,6 +34,12 @@ pub const DASHBOARD_LIST_SAND_MCP_TOOLS_PATH: &str =
     "/aiserver.v1.DashboardService/ListSandMcpTools";
 pub const DASHBOARD_CLIENT_ACTION_PATH: &str =
     "/aiserver.v1.DashboardService/ClientAction";
+pub const ANALYTICS_SUBMIT_LOGS_PATH: &str =
+    "/aiserver.v1.AnalyticsService/SubmitLogs";
+pub const ACCOUNT_TELEMETRY_SUBMIT_TIMEOUT_MS: u64 = 15_000;
+pub const DESKTOP_SESSION_EVENT: &str = "sand.desktop.session";
+pub const DESKTOP_SIGNIN_EVENT: &str = "sand.desktop.signin";
+pub const SAND_LOG_KEY: &str = "sand";
 pub const DASHBOARD_GET_CURRENT_PERIOD_USAGE_PATH: &str =
     "/aiserver.v1.DashboardService/GetCurrentPeriodUsage";
 pub const DASHBOARD_GET_SAND_USAGE_STATUS_PATH: &str =
@@ -340,6 +347,44 @@ impl CursorDashboardMcpAuthBackend {
             return Err("MCP backend RPC response exceeds bounded size".into());
         }
         Ok(bytes)
+    }
+
+    pub fn submit_account_telemetry(
+        &self,
+        entries: &[AccountTelemetryProjection],
+    ) -> Result<(u64, u64), String> {
+        if entries.is_empty() {
+            return Ok((0, 0));
+        }
+        let credentials = self.credentials.credentials()?;
+        let request = encode_account_telemetry_submit_logs_request(
+            entries,
+            &credentials.machine_id,
+            &credentials.client_version,
+            system_now_ms(),
+        )?;
+        let ghost_mode = self.resolve_ghost_mode(&credentials);
+        let response = self.send_unary(
+            &credentials,
+            ANALYTICS_SUBMIT_LOGS_PATH,
+            &request,
+            ACCOUNT_TELEMETRY_SUBMIT_TIMEOUT_MS,
+            ghost_mode,
+        )?;
+        let receipt = decode_submit_logs_response(&response)?;
+        if !receipt.success {
+            return Err(receipt
+                .error_message
+                .unwrap_or_else(|| "AnalyticsService.SubmitLogs rejected account telemetry".into()));
+        }
+        let expected = entries.len() as u64;
+        if receipt.logs_processed.saturating_add(receipt.logs_dropped) != expected {
+            return Err(format!(
+                "AnalyticsService.SubmitLogs returned invalid receipt: processed={} dropped={} expected={expected}",
+                receipt.logs_processed, receipt.logs_dropped,
+            ));
+        }
+        Ok((receipt.logs_processed, receipt.logs_dropped))
     }
 
     pub fn reload_server_tools(&self, server_id: &str) -> Result<usize, String> {
@@ -1182,6 +1227,112 @@ fn decode_sand_usage_summary(
     }))
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct SubmitLogsReceipt {
+    success: bool,
+    error_message: Option<String>,
+    logs_processed: u64,
+    logs_dropped: u64,
+}
+
+fn encode_account_telemetry_submit_logs_request(
+    entries: &[AccountTelemetryProjection],
+    machine_id: &str,
+    client_version: &str,
+    timestamp_ms: u64,
+) -> Result<Vec<u8>, String> {
+    let machine_id = machine_id.trim();
+    if machine_id.is_empty() {
+        return Err("account telemetry machine id is required".into());
+    }
+    let client_version = client_version.trim();
+    if client_version.is_empty() {
+        return Err("account telemetry client version is required".into());
+    }
+    let app_version = env::var("SAND_CLIENT_APP_VERSION")
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "0.18.0".into());
+    let mut request = Vec::new();
+    for projection in entries {
+        let (level, message) = match (projection.level.as_str(), projection.stream.as_str()) {
+            ("info", "session") => (1_u64, DESKTOP_SESSION_EVENT),
+            ("warn", "session") => (3_u64, DESKTOP_SESSION_EVENT),
+            ("info", "signin") => (1_u64, DESKTOP_SIGNIN_EVENT),
+            ("warn", "signin") => (3_u64, DESKTOP_SIGNIN_EVENT),
+            (level, stream) => {
+                return Err(format!(
+                    "unsupported account telemetry projection level={level} stream={stream}"
+                ))
+            }
+        };
+        let mut metadata = std::collections::BTreeMap::<String, String>::from([
+            ("client".into(), "sand".into()),
+            ("client.type".into(), "sand".into()),
+            ("client.machine_id".into(), machine_id.to_string()),
+            ("client_version".into(), client_version.to_string()),
+            ("app_version".into(), app_version.clone()),
+            ("arch".into(), std::env::consts::ARCH.to_string()),
+            ("platform".into(), "android".into()),
+        ]);
+        if let Some(values) = projection.metadata.as_object() {
+            for (key, value) in values {
+                if key.len() > 96 {
+                    continue;
+                }
+                let value = match value {
+                    Value::String(value) => value.clone(),
+                    Value::Bool(value) => value.to_string(),
+                    Value::Number(value) => value.to_string(),
+                    Value::Null => continue,
+                    _ => continue,
+                };
+                metadata.insert(key.clone(), value.chars().take(512).collect());
+            }
+        }
+
+        let mut log = Vec::new();
+        encode_key(1, 0, &mut log);
+        encode_varint(level, &mut log);
+        encode_string(2, message, &mut log);
+        for (key, value) in metadata {
+            let mut pair = Vec::new();
+            encode_string(1, &key, &mut pair);
+            encode_string(2, &value, &mut pair);
+            encode_len_delimited(3, &pair, &mut log);
+        }
+        encode_key(4, 0, &mut log);
+        encode_varint(timestamp_ms, &mut log);
+        encode_string(7, SAND_LOG_KEY, &mut log);
+        encode_len_delimited(1, &log, &mut request);
+    }
+    Ok(request)
+}
+
+fn decode_submit_logs_response(input: &[u8]) -> Result<SubmitLogsReceipt, String> {
+    let mut cursor = 0usize;
+    let mut receipt = SubmitLogsReceipt {
+        success: false,
+        error_message: None,
+        logs_processed: 0,
+        logs_dropped: 0,
+    };
+    while cursor < input.len() {
+        let key = read_varint(input, &mut cursor)?;
+        let field = (key >> 3) as u32;
+        let wire = (key & 0x07) as u8;
+        match (field, wire) {
+            (1, 0) => receipt.success = read_varint(input, &mut cursor)? != 0,
+            (2, 2) => receipt.error_message = Some(read_string(input, &mut cursor)?),
+            (3, 0) => receipt.logs_processed = read_varint(input, &mut cursor)?,
+            (4, 0) => receipt.logs_dropped = read_varint(input, &mut cursor)?,
+            _ => skip_field(input, &mut cursor, wire)?,
+        }
+    }
+    Ok(receipt)
+}
+
 fn encode_client_action_request(
     action: &str,
     args: &std::collections::BTreeMap<String, String>,
@@ -1442,6 +1593,73 @@ mod tests {
         );
     }
 
+
+    #[test]
+    fn account_telemetry_submit_logs_wire_matches_desktop_contract() {
+        assert_eq!(
+            ANALYTICS_SUBMIT_LOGS_PATH,
+            "/aiserver.v1.AnalyticsService/SubmitLogs"
+        );
+        assert_eq!(ACCOUNT_TELEMETRY_SUBMIT_TIMEOUT_MS, 15_000);
+        let projection = AccountTelemetryProjection {
+            stream: "session".into(),
+            level: "warn".into(),
+            metadata: json!({
+                "phase":"signed_out",
+                "cause":"session_revoked",
+                "durable":"true"
+            }),
+        };
+        let request = encode_account_telemetry_submit_logs_request(
+            &[projection],
+            "machine-1",
+            "0.18.0",
+            1_728_000_000_000,
+        )
+        .unwrap();
+        let logs = repeated_message_fields(&request, 1).unwrap();
+        assert_eq!(logs.len(), 1);
+        let log = logs[0];
+        assert_eq!(decode_optional_varint_field(log, 1).unwrap(), Some(3));
+        assert_eq!(
+            string_fields(log, 2).unwrap(),
+            vec![DESKTOP_SESSION_EVENT.to_string()]
+        );
+        assert_eq!(decode_optional_varint_field(log, 4).unwrap(), Some(1_728_000_000_000));
+        assert_eq!(string_fields(log, 7).unwrap(), vec![SAND_LOG_KEY.to_string()]);
+        let metadata = repeated_message_fields(log, 3).unwrap();
+        let metadata = metadata
+            .into_iter()
+            .map(|entry| {
+                let key = string_fields(entry, 1).unwrap().into_iter().next().unwrap();
+                let value = string_fields(entry, 2).unwrap().into_iter().next().unwrap();
+                (key, value)
+            })
+            .collect::<std::collections::BTreeMap<_, _>>();
+        assert_eq!(metadata.get("client.machine_id").map(String::as_str), Some("machine-1"));
+        assert_eq!(metadata.get("platform").map(String::as_str), Some("android"));
+        assert_eq!(metadata.get("phase").map(String::as_str), Some("signed_out"));
+        assert_eq!(metadata.get("cause").map(String::as_str), Some("session_revoked"));
+    }
+
+    #[test]
+    fn submit_logs_receipt_requires_backend_success_shape() {
+        let mut response = Vec::new();
+        encode_bool(1, true, &mut response);
+        encode_key(3, 0, &mut response);
+        encode_varint(1, &mut response);
+        encode_key(4, 0, &mut response);
+        encode_varint(0, &mut response);
+        assert_eq!(
+            decode_submit_logs_response(&response).unwrap(),
+            SubmitLogsReceipt {
+                success: true,
+                error_message: None,
+                logs_processed: 1,
+                logs_dropped: 0,
+            }
+        );
+    }
 
     #[test]
     fn client_action_wire_matches_desktop_dashboard_contract() {
