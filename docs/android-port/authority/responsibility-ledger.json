@@ -14771,6 +14771,81 @@
       "artifact": null,
       "verification_status": "not-verified",
       "notes": "Source responsibility implemented and platform-adapted. Do not mark verified until descendant exact-head CI/package evidence succeeds."
+    },
+    {
+      "responsibility_id": "TELEMETRY-UNCLEAN-EXIT-ANDROID-001",
+      "domain": "observability-process-lifecycle",
+      "desktop_sources": [
+        {
+          "path": "source/electron-main/telemetry/desktop-unclean-exit-telemetry.ts",
+          "blob_sha": "cbb3a6fe7c568ae06f5073ca57803ef6c680c340",
+          "symbols": [
+            "createDesktopUncleanExitSettlement",
+            "decideUncleanExitSettlement",
+            "uncleanExitReport"
+          ]
+        },
+        {
+          "path": "source/electron-main/telemetry/desktop-unclean-exit-wiring.ts",
+          "blob_sha": "89d8783e5f3d3b29a61a2635c08a78644dffb924",
+          "symbols": [
+            "wireDesktopUncleanExitSettlement"
+          ]
+        }
+      ],
+      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "responsibility": "Persist a bounded process-session marker, heartbeat liveness, distinguish recent unclean exit from stale orphan, retain crash-seen context across process death, and clear the marker only on proven clean shutdown.",
+      "source_owner": "Desktop main-process unclean-exit settlement/wiring",
+      "direct_callers": [
+        "Desktop startup telemetry wiring",
+        "AndroidJsonHost constructor",
+        "AndroidCoordinatorRuntime process heartbeat"
+      ],
+      "downstream_dependencies": [
+        "durable Host app-data directory",
+        "process crash diagnostics",
+        "structured telemetry projection"
+      ],
+      "state_owner": "Rust AndroidUncleanExitMarker is the production canonical session-marker owner; Kotlin Coordinator only drives heartbeat timing",
+      "persistent_state": [
+        "host-session-marker.json while process is armed"
+      ],
+      "protocol_wire_contract": [
+        "heartbeat every 60000ms",
+        "orphan bound 30 days",
+        "uptime bucket ceilings 60s/5m/30m/6h/1d/30d",
+        "unclean exit carries SAND-E0610 while marker orphan is informational",
+        "clean settlement removes marker"
+      ],
+      "visible_effect": "After OS kill/crash, next launch can diagnose the previous process as unclean without exposing stack/content; clean shutdown is not misreported.",
+      "failure_behavior": [
+        "marker write/open failure fails Host construction rather than silently discarding recovery truth",
+        "stale heartbeat never moves lastAlive backwards"
+      ],
+      "cancellation_behavior": "explicit Coordinator close stops heartbeat producer before Host close; clean Host drop settles marker, panic drop preserves it",
+      "retry_semantics": "cold start reopens prior marker exactly once into current process-local diagnostic projection; normal heartbeat is monotonic/idempotent",
+      "idempotency_semantics": "clean settle is idempotent; heartbeat older than current lastAlive is ignored",
+      "process_death_recovery": "marker survives abrupt process death and is consumed as prior-session evidence on next Host construction",
+      "account_fencing": "process-session marker is installation/process scoped and intentionally independent from account truth; durable structured telemetry rotates by account separately",
+      "security_boundary": "marker contains only bounded process times/crashSeen, no message, stack, token, account secret or user content",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "source/host/src/process_crash_guard.rs",
+        "source/host/src/android_json_runtime.rs",
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/coordinator/AndroidCoordinatorRuntime.kt"
+      ],
+      "android_owner": "Rust Host process-session marker + Kotlin heartbeat scheduler",
+      "platform_delta": "Desktop can test arbitrary prior PID liveness; Android app process cold start implies the previous app process owning this exclusive Host marker is no longer the active runtime. The Android replacement therefore relies on process-scoped Host construction plus durable marker recovery instead of Node isProcessAlive.",
+      "implementation_status": "implemented",
+      "production_wiring": "AndroidJsonHost opens host-session-marker.json during construction and projects any prior record; AndroidCoordinatorRuntime emits feature.telemetry.session.heartbeat every 60 seconds and stops producer before host.close().",
+      "unit_test": "process_crash_guard tests cover reopen, clean drop, panic preservation and stale-heartbeat monotonicity",
+      "contract_test": "Host dispatch feature.telemetry.session.heartbeat validates observedAtMs and persists through the canonical marker owner",
+      "integration_test": "required exact-head cold-start/process-death Host reopen evidence",
+      "packaged_test": "required on final exact-head APK/AAB",
+      "device_test": "required OS kill/relaunch and clean explicit shutdown acceptance",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Source and production wiring are implemented. Do not mark verified until same exact HEAD CI/package/device evidence succeeds."
     }
   ],
   "traceability": {
