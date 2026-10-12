@@ -4,6 +4,7 @@ use crate::account_telemetry::{
     AccountTelemetryBuffer, AccountTelemetryProjection, SessionReport, SigninLoginReport,
     SigninSignoutCause,
 };
+use crate::account_telemetry_spill::DurableAccountTelemetryOutbox;
 use crate::capability_broker::{CapabilityDecision, PendingCapabilityCall, SharedCapabilityBroker};
 use crate::automation_runtime::{run_json as automation_run_json, AutomationRuntime, AutomationSpec};
 use crate::auto_review_settings::{AutoReviewInstructions, DurableAutoReviewSettings};
@@ -655,7 +656,8 @@ pub struct AndroidJsonHost {
     preexisting_account_durable_data: bool,
     account_binding_refusal: Option<String>,
     account_telemetry: AccountTelemetryBuffer,
-    account_telemetry_outbox: Arc<Mutex<VecDeque<AccountTelemetryProjection>>>,
+    account_telemetry_outbox: Arc<Mutex<Option<DurableAccountTelemetryOutbox>>>,
+    account_telemetry_spill_path: PathBuf,
     account_telemetry_shipping: Arc<AtomicBool>,
     edge_failures: EdgeFailureBuffer,
     structured_log_spool: AndroidStructuredLogSpool,
@@ -971,7 +973,8 @@ impl AndroidJsonHost {
             preexisting_account_durable_data,
             account_binding_refusal,
             account_telemetry: AccountTelemetryBuffer::default(),
-            account_telemetry_outbox: Arc::new(Mutex::new(VecDeque::new())),
+            account_telemetry_outbox: Arc::new(Mutex::new(None)),
+            account_telemetry_spill_path: app_data_dir.join("account-telemetry-spill.json"),
             account_telemetry_shipping: Arc::new(AtomicBool::new(false)),
             edge_failures: EdgeFailureBuffer::default(),
             structured_log_spool,
@@ -1568,21 +1571,39 @@ impl AndroidJsonHost {
         let Some(backend) = self.mcp_dashboard_backend.clone() else {
             return;
         };
+        let Ok(account_fence) = self.current_turn_account_fence() else {
+            return;
+        };
+        let account_slot = crate::sha256::sha256_hex(account_fence.as_bytes());
+        let counter_id = format!("account-telemetry:{}", &account_slot[..16.min(account_slot.len())]);
         let mut entries = self.account_telemetry.drain();
         entries.extend(self.account.drain_session_telemetry());
-        if entries.is_empty() {
-            return;
-        }
         let outbox = Arc::clone(&self.account_telemetry_outbox);
-        if let Ok(mut queue) = outbox.lock() {
-            for entry in entries {
-                if queue.len() >= ACCOUNT_TELEMETRY_OUTBOX_CAP {
-                    queue.pop_front();
-                }
-                queue.push_back(entry);
+        let now = now_ms();
+        {
+            let Ok(mut owner) = outbox.lock() else {
+                return;
+            };
+            let rotate = owner
+                .as_ref()
+                .is_none_or(|current| current.account_slot() != account_slot);
+            if rotate {
+                let Ok(opened) = DurableAccountTelemetryOutbox::open(
+                    &self.account_telemetry_spill_path,
+                    &account_slot,
+                    &counter_id,
+                    now,
+                ) else {
+                    return;
+                };
+                *owner = Some(opened);
             }
-        } else {
-            return;
+            let Some(owner) = owner.as_mut() else {
+                return;
+            };
+            if owner.push(entries, now).is_err() || owner.batch().is_empty() {
+                return;
+            }
         }
 
         let shipping = Arc::clone(&self.account_telemetry_shipping);
@@ -1592,9 +1613,24 @@ impl AndroidJsonHost {
         {
             return;
         }
+        let live_account_fence = Arc::clone(&self.live_account_fence);
         thread::spawn(move || loop {
+            let still_current = live_account_fence
+                .lock()
+                .ok()
+                .and_then(|fence| fence.clone())
+                .is_some_and(|fence| fence == account_fence);
+            if !still_current {
+                shipping.store(false, Ordering::Release);
+                return;
+            }
+
             let batch = match outbox.lock() {
-                Ok(queue) => queue.iter().cloned().collect::<Vec<_>>(),
+                Ok(owner) => owner
+                    .as_ref()
+                    .filter(|owner| owner.account_slot() == account_slot)
+                    .map(DurableAccountTelemetryOutbox::batch)
+                    .unwrap_or_default(),
                 Err(_) => {
                     shipping.store(false, Ordering::Release);
                     return;
@@ -1602,30 +1638,43 @@ impl AndroidJsonHost {
             };
             if batch.is_empty() {
                 shipping.store(false, Ordering::Release);
-                let should_resume = outbox
-                    .lock()
-                    .map(|queue| !queue.is_empty())
-                    .unwrap_or(false)
-                    && shipping
-                        .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
-                        .is_ok();
-                if should_resume {
-                    continue;
-                }
                 return;
             }
-            if backend.submit_account_telemetry(&batch).is_err() {
-                // Keep the bounded outbox intact. A later account dispatch retries without making
-                // telemetry transport success part of the authentication/session state machine.
+
+            let receipt = backend.submit_account_telemetry(&batch);
+            let still_current = live_account_fence
+                .lock()
+                .ok()
+                .and_then(|fence| fence.clone())
+                .is_some_and(|fence| fence == account_fence);
+            if !still_current {
                 shipping.store(false, Ordering::Release);
                 return;
             }
-            let Ok(mut queue) = outbox.lock() else {
+
+            let Ok(mut locked) = outbox.lock() else {
                 shipping.store(false, Ordering::Release);
                 return;
             };
-            for _ in 0..batch.len().min(queue.len()) {
-                queue.pop_front();
+            let Some(owner) = locked
+                .as_mut()
+                .filter(|owner| owner.account_slot() == account_slot)
+            else {
+                shipping.store(false, Ordering::Release);
+                return;
+            };
+            match receipt {
+                Ok((processed, dropped)) => {
+                    if owner.settle_success(processed, dropped, now_ms()).is_err() {
+                        shipping.store(false, Ordering::Release);
+                        return;
+                    }
+                }
+                Err(_) => {
+                    let _ = owner.mark_ship_failed(now_ms());
+                    shipping.store(false, Ordering::Release);
+                    return;
+                }
             }
         });
     }
