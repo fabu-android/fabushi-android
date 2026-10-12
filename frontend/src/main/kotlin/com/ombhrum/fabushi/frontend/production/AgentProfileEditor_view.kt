@@ -332,6 +332,32 @@ internal fun AgentProfileEditor(
                             modifier = Modifier.testTag("agent-profile-notifications-${target.id}"),
                         )
                     }
+
+                    Text("Channels")
+                    Text("Connect this agent to a messaging platform so it can talk to people there.")
+                    desktopMainAgentChannelManifests
+                        .map { manifest -> projectAgentChannelRow(manifest, connection = null) }
+                        .forEach { row ->
+                            Row(
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .testTag("agent-profile-channel-${target.id}-${row.manifest.platform}"),
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(row.manifest.displayName)
+                                    Text(row.detail)
+                                }
+                                row.statusLabel?.let { label ->
+                                    Text(
+                                        label,
+                                        modifier = Modifier.testTag(
+                                            "agent-profile-channel-status-${target.id}-${row.manifest.platform}",
+                                        ),
+                                    )
+                                }
+                            }
+                        }
                 }
             }
         },
