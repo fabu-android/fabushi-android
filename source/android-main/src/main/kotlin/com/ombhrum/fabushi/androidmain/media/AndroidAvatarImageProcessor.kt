@@ -71,8 +71,7 @@ internal fun panAndroidAvatarCrop(
 }
 
 internal fun avatarDimensionsAllowed(width: Int, height: Int): Boolean =
-    width in 1..MAX_AGENT_AVATAR_SOURCE_DIMENSION &&
-        height in 1..MAX_AGENT_AVATAR_SOURCE_DIMENSION
+    width > 0 && height > 0
 
 internal fun avatarDecodeSampleSize(width: Int, height: Int): Int {
     var sample = 1
@@ -181,7 +180,7 @@ internal object AndroidAvatarImageProcessor {
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
         BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
         require(avatarDimensionsAllowed(bounds.outWidth, bounds.outHeight)) {
-            "Avatar image dimensions exceed " + MAX_AGENT_AVATAR_SOURCE_DIMENSION + "px"
+            "Selected avatar image has invalid dimensions"
         }
 
         val options = BitmapFactory.Options().apply {
