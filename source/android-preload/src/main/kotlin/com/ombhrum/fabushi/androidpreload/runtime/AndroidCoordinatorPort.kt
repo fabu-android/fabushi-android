@@ -513,6 +513,16 @@ interface AndroidCoordinatorPort {
         occurredAtMs: Long,
         uptimeMs: Long,
     ): JSONObject = error("Process crash telemetry is unavailable on this Coordinator port")
+    fun reportAgentLoad(
+        durationMs: Long,
+        openRpcMs: Long?,
+        queueMs: Long? = null,
+        renderMs: Long? = null,
+        cold: Boolean,
+        stale: Boolean?,
+        boxState: String = "unknown",
+        outcome: String,
+    ): JSONObject = error("Agent load telemetry is unavailable on this Coordinator port")
     fun autoReviewInstructions(): AndroidAutoReviewInstructionsSnapshot =
         error("Auto Review instructions are unavailable on this Coordinator port")
     fun setAutoReviewInstructions(
