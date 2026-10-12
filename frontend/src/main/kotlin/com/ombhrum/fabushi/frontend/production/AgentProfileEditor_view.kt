@@ -60,7 +60,6 @@ internal fun AgentProfileEditor(
     var avatarImageError by remember(target.id) { mutableStateOf<String?>(null) }
     var avatarImageBusy by remember(target.id) { mutableStateOf(false) }
     var avatarGenerationPrompt by remember(target.id) { mutableStateOf("") }
-    var avatarGenerateDescription by remember(target.id) { mutableStateOf("") }
     var stagedAvatarSource by remember(target.id) { mutableStateOf<AndroidAvatarImageSource?>(null) }
     var stagedAvatarCrop by remember(target.id) { mutableStateOf<AndroidAvatarCrop?>(null) }
     var stagedAvatarPreview by remember(target.id) { mutableStateOf<String?>(null) }
@@ -282,48 +281,6 @@ internal fun AgentProfileEditor(
                             modifier = Modifier.testTag("agent-profile-avatar-image-clear-${target.id}"),
                         ) { Text("Remove image") }
                     }
-                }
-                OutlinedTextField(
-                    value = avatarGenerateDescription,
-                    onValueChange = { avatarGenerateDescription = it },
-                    label = { Text("Generate avatar") },
-                    placeholder = { Text("Describe the avatar you want") },
-                    enabled = !avatarImageBusy,
-                    minLines = 2,
-                    maxLines = 4,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .testTag("agent-profile-avatar-generate-description-${target.id}"),
-                )
-                TextButton(
-                    enabled = !avatarImageBusy && avatarGenerateDescription.isNotBlank(),
-                    onClick = {
-                        val prompt = avatarGenerateDescription.trim()
-                        if (prompt.isEmpty()) return@TextButton
-                        avatarImageBusy = true
-                        avatarImageError = null
-                        scope.launch {
-                            val generated = onGenerateAvatarImage(target.id, prompt)
-                            generated.onSuccess { image ->
-                                val staged = withContext(Dispatchers.IO) {
-                                    stageGeneratedAgentAvatarImage(image.imageData, image.mimeType)
-                                }
-                                staged.onSuccess { source ->
-                                    stagedAvatarSource = source
-                                    stagedAvatarCrop = initialAndroidAvatarCrop(source)
-                                    stagedAvatarPreview = null
-                                }.onFailure { error ->
-                                    avatarImageError = error.message ?: "Generated avatar could not be decoded"
-                                }
-                            }.onFailure { error ->
-                                avatarImageError = error.message ?: "Avatar generation failed"
-                            }
-                            avatarImageBusy = false
-                        }
-                    },
-                    modifier = Modifier.testTag("agent-profile-avatar-generate-${target.id}"),
-                ) {
-                    Text(if (avatarImageBusy) "Generating…" else "Generate image")
                 }
                 avatarImageError?.let { error ->
                     Text(
