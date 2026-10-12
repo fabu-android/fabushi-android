@@ -3012,6 +3012,10 @@ impl AndroidJsonHost {
         if description.len() > 8_000 {
             return Err("Agent avatar generation description is too large".into());
         }
+
+        // Generated-image results are account-scoped backend projections. Capture the fence before
+        // the network request and reject the result if an account transition happened in-flight.
+        let account_fence = self.current_turn_account_fence()?;
         // Cursor/Sand credentials and machine identity remain owned by the Rust backend.
         // Presentation receives only bounded generated image bytes, never a credential.
         let generated = self
@@ -3020,9 +3024,24 @@ impl AndroidJsonHost {
             .ok_or("Agent avatar generation backend is unavailable")?
             .generate_image(description, &[])
             .map_err(|error| error.to_string())?;
-        if !generated.mime_type.starts_with("image/") {
-            return Err("Agent avatar generation returned a non-image MIME type".into());
+        if self.current_turn_account_fence()? != account_fence {
+            return Err("Agent avatar generation result is stale after account switch".into());
         }
+
+        // Desktop's cursor-generate-image adapter treats the backend MIME value as an image
+        // subtype and constructs data:image/<mime>;base64,... . Accept either that wire shape
+        // ("png", "webp") or a fully-qualified image MIME and normalize exactly once.
+        let mime = generated.mime_type.trim();
+        if mime.is_empty() || mime.chars().any(char::is_control) {
+            return Err("Agent avatar generation returned an invalid MIME type".into());
+        }
+        let mime_type = if mime.starts_with("image/") {
+            mime.to_string()
+        } else if mime.bytes().all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'+' | b'-' | b'.')) {
+            format!("image/{mime}")
+        } else {
+            return Err("Agent avatar generation returned a non-image MIME type".into());
+        };
         let bytes = BASE64_STANDARD
             .decode(generated.image_data.as_bytes())
             .map_err(|_| "Agent avatar generation returned invalid base64")?;
@@ -3032,9 +3051,12 @@ impl AndroidJsonHost {
         if bytes.len() > 25 * 1024 * 1024 {
             return Err("Agent avatar generation returned an image larger than 25 MB".into());
         }
+        let data_url = format!("data:{mime_type};base64,{}", generated.image_data);
         Ok(json!({
+            "accountFence": account_fence,
             "imageData": generated.image_data,
-            "mimeType": generated.mime_type,
+            "mimeType": mime_type,
+            "dataUrl": data_url,
         }))
     }
 
