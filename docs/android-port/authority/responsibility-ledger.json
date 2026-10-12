@@ -15230,6 +15230,35 @@
       "artifact": null,
       "verification_status": "not-verified",
       "notes": "Do not collapse this into generated local subagents or async-task UI. Real Cloud Agent production wiring is a distinct open responsibility."
+    },
+    {
+      "responsibility_id": "CONNECTOR-CHANNEL-DELIVERY-ANDROID-001",
+      "domain": "connectors-channel-delivery",
+      "desktop_path": "source/host/src/connectors/**",
+      "desktop_symbol": "ResolvedChannelAttachment / ChannelDeliveryPort / HostChannelDelivery",
+      "source_sha": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "responsibility": "Own connector/channel outbound text and attachment delivery from Host canonical state, resolve only permitted attachment references/uploads, and surface unregistered/failure outcomes back into durable Agent wake/retry semantics.",
+      "source_owner": "Desktop Host connectors + transcript/cross-user sharing",
+      "visible_effect": "Agents can send real messages/files through connected channels and failures become actionable state instead of disappearing.",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "source/host/src/android_json_runtime.rs",
+        "source/host/src/mcp_auth",
+        "source/host/src/attachment_paths.rs",
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/coordinator/AndroidCoordinatorRuntime.kt"
+      ],
+      "android_owner": "Rust Host connector delivery port; Presentation must not deliver directly",
+      "platform_delta": "Android local files must use scoped Host/ContentResolver staging rather than Desktop arbitrary filesystem reanchoring; channel provider transport remains Host/plugin owned.",
+      "implementation_status": "mapped",
+      "production_wiring": "Missing. Android has connector/MCP auth/catalog primitives and safe attachment storage, but no shipping address-token channel delivery port or cross-user channel attachment resolver wired into transcript wakes.",
+      "unit_test": "required for URL/local attachment limits, unregistered delivery and provider failure",
+      "contract_test": "required for account/Agent/address-token fencing and no blind retry on unknown delivery outcome",
+      "integration_test": "required against real connector provider through Host",
+      "packaged_test": "required on final APK/AAB",
+      "device_test": "required for text+attachment send/failure/reconnect on Android",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Do not treat MCP connection readiness as proof of channel message delivery."
     }
   ],
   "traceability": {
