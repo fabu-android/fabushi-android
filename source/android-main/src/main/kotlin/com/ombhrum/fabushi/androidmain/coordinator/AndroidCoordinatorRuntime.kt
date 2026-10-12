@@ -195,6 +195,10 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
     }
 
     init {
+        host.request(
+            "feature.settings.timeZone.detected",
+            JSONObject().put("detectedTimeZone", ZoneId.systemDefault().id),
+        )
         computerRebuildOwner.observeAccount(accountAccessOwner.currentProjection().accountEpoch)
         runCatching { connectivityManager.registerDefaultNetworkCallback(sendNetworkCallback) }
         startComputerRebuildEventPump()
@@ -456,6 +460,10 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
 
     override fun timeZoneSettings(): AndroidTimeZoneSettings {
         val detected = ZoneId.systemDefault().id
+        host.request(
+            "feature.settings.timeZone.detected",
+            JSONObject().put("detectedTimeZone", detected),
+        )
         val projection = host.request("feature.settings.timeZone")
         val override = projection
             .takeIf { it.has("overrideTimeZone") && !it.isNull("overrideTimeZone") }
@@ -470,6 +478,11 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
     }
 
     override fun setTimeZoneOverride(value: String?): AndroidTimeZoneSettings {
+        val detected = ZoneId.systemDefault().id
+        host.request(
+            "feature.settings.timeZone.detected",
+            JSONObject().put("detectedTimeZone", detected),
+        )
         val normalized = value
             ?.trim()
             ?.takeIf(String::isNotEmpty)
@@ -485,7 +498,7 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
             ?.takeIf(String::isNotEmpty)
             ?.let(::validatedTimeZoneId)
         return AndroidTimeZoneSettings(
-            detectedTimeZone = ZoneId.systemDefault().id,
+            detectedTimeZone = detected,
             overrideTimeZone = saved,
         )
     }
