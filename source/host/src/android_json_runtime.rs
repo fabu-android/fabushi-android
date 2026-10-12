@@ -2685,6 +2685,7 @@ impl AndroidJsonHost {
                     .get_transcript(),
             )),
             "feature.transcript.page" => self.transcript_page(params),
+            "feature.search.agentContent" => self.agent_content_search(params),
             "feature.contentSearch.messages" => self.content_search_messages(params),
             "feature.assistant.projection" => self.assistant_projection(),
             "feature.assistant.markRead" => self.assistant_mark_read(),
@@ -2701,6 +2702,113 @@ impl AndroidJsonHost {
         result
     }
 
+
+    fn agent_content_search(&self, params: &Value) -> Result<Value, String> {
+        use crate::extensions::content_search::agent_content_search::{
+            find_agent_content_matches, AgentContentRole, SearchableTranscriptEntry,
+            SearchableTranscriptEntryKind, AGENT_CONTENT_SEARCH_MAX_MATCHES_PER_AGENT,
+        };
+
+        let agent_id = required_string(params, "agentId")?.trim().to_string();
+        let query = required_string(params, "query")?;
+        let normalized_query = query
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+            .to_lowercase();
+        if normalized_query.is_empty() {
+            return Ok(json!({"matches":[]}));
+        }
+        let requested_limit = params
+            .get("limit")
+            .and_then(Value::as_u64)
+            .unwrap_or(AGENT_CONTENT_SEARCH_MAX_MATCHES_PER_AGENT as u64);
+        let limit = usize::try_from(requested_limit)
+            .map_err(|_| "agent content search limit is out of range".to_string())?
+            .min(AGENT_CONTENT_SEARCH_MAX_MATCHES_PER_AGENT);
+        if limit == 0 {
+            return Ok(json!({"matches":[]}));
+        }
+
+        let entries = self
+            .transcript
+            .lock()
+            .map_err(|_| "transcript lock poisoned".to_string())?
+            .get_transcript()
+            .into_iter()
+            .filter(|entry| entry.get("agentId").and_then(Value::as_str) == Some(agent_id.as_str()))
+            .filter_map(|entry| {
+                let id = entry.get("id")?.as_str()?.trim();
+                if id.is_empty() {
+                    return None;
+                }
+                let kind = match entry.get("kind").and_then(Value::as_str).unwrap_or_default() {
+                    "message" => SearchableTranscriptEntryKind::Message {
+                        content: entry
+                            .get("content")
+                            .and_then(Value::as_str)
+                            .unwrap_or_default()
+                            .to_string(),
+                        role: if entry.get("role").and_then(Value::as_str) == Some("user") {
+                            AgentContentRole::User
+                        } else {
+                            AgentContentRole::Assistant
+                        },
+                    },
+                    "send-message" => {
+                        let message = entry.get("message").and_then(Value::as_object);
+                        SearchableTranscriptEntryKind::SendMessage {
+                            message_type: message
+                                .and_then(|value| value.get("type"))
+                                .and_then(Value::as_str)
+                                .unwrap_or_default()
+                                .to_string(),
+                            content: message
+                                .and_then(|value| value.get("content"))
+                                .and_then(Value::as_str)
+                                .map(str::to_string),
+                        }
+                    }
+                    "notice" => SearchableTranscriptEntryKind::Notice {
+                        text: entry
+                            .get("text")
+                            .and_then(Value::as_str)
+                            .unwrap_or_default()
+                            .to_string(),
+                    },
+                    _ => SearchableTranscriptEntryKind::Other,
+                };
+                let hidden_outbound_agent_peer_message = entry
+                    .get("hiddenOutboundAgentPeerMessage")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false)
+                    || (entry.get("hidden").and_then(Value::as_bool).unwrap_or(false)
+                        && entry.get("toAgent").is_some());
+                Some(SearchableTranscriptEntry {
+                    id: id.to_string(),
+                    kind,
+                    timestamp_ms: entry.get("timestampMs").and_then(Value::as_f64),
+                    hidden_outbound_agent_peer_message,
+                })
+            })
+            .collect::<Vec<_>>();
+
+        let matches = find_agent_content_matches(&entries, &normalized_query, limit)
+            .into_iter()
+            .map(|item| {
+                json!({
+                    "entryId":item.entry_id,
+                    "role":match item.role {
+                        AgentContentRole::User => "user",
+                        AgentContentRole::Assistant => "assistant",
+                    },
+                    "timestampMs":item.timestamp_ms,
+                    "snippet":item.snippet,
+                })
+            })
+            .collect::<Vec<_>>();
+        Ok(json!({"matches":matches}))
+    }
 
     fn transcript_page(&self, params: &Value) -> Result<Value, String> {
         let agent_id = required_string(params, "agentId")?;
@@ -9454,6 +9562,27 @@ fn encode_api_path_segment(value: &str) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+#[test]
+    fn agent_content_search_reads_canonical_transcript_and_survives_reopen() {
+        let root = tempfile::tempdir().unwrap();
+        {
+            let mut host = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+            let mut transcript = host.transcript.lock().unwrap();
+            transcript.append_entry(json!({"id":"old","agentId":"agent-a","kind":"message","role":"user","content":"Alpha   BETA older","timestampMs":1})).unwrap();
+            transcript.append_entry(json!({"id":"new","agentId":"agent-a","kind":"send-message","message":{"type":"text","content":"alpha beta newest"},"timestampMs":2})).unwrap();
+            transcript.append_entry(json!({"id":"hidden","agentId":"agent-a","kind":"message","role":"assistant","content":"alpha beta hidden","hiddenOutboundAgentPeerMessage":true,"timestampMs":3})).unwrap();
+            transcript.append_entry(json!({"id":"other","agentId":"agent-b","kind":"message","role":"assistant","content":"alpha beta other agent","timestampMs":4})).unwrap();
+        }
+        let mut reopened = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+        let result = reopened.dispatch("feature.search.agentContent", &json!({"agentId":"agent-a","query":"ALPHA beta","limit":5})).unwrap();
+        let matches = result["matches"].as_array().unwrap();
+        assert_eq!(matches.iter().map(|v| v["entryId"].as_str().unwrap()).collect::<Vec<_>>(), vec!["new","old"]);
+        assert_eq!(matches[0]["role"], "assistant");
+        assert_eq!(matches[1]["role"], "user");
+        assert_eq!(matches[1]["snippet"], "Alpha BETA older");
+        assert!(reopened.dispatch("feature.search.agentContent", &json!({"agentId":"agent-b","query":"alpha beta"})).unwrap()["matches"].as_array().unwrap().iter().all(|v| v["entryId"] == "other"));
+    }
+
     use crate::runner::SubagentLineage;
 
     #[test]

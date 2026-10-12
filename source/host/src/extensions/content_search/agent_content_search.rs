@@ -1,6 +1,3 @@
-use serde::Serialize;
-use serde_json::Value;
-
 pub const AGENT_CONTENT_SEARCH_MAX_MATCHES_PER_AGENT: usize = 5;
 pub const AGENT_CONTENT_SEARCH_MAX_RESULTS: usize = 50;
 
@@ -8,8 +5,7 @@ const SNIPPET_LEAD: usize = 30;
 const SNIPPET_TRAIL: usize = 60;
 const ELLIPSIS: &str = "…";
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "lowercase")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AgentContentRole {
     User,
     Assistant,
@@ -39,8 +35,7 @@ pub struct SearchableTranscriptEntry {
     pub hidden_outbound_agent_peer_message: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone, PartialEq)]
 pub struct AgentContentMatch {
     pub entry_id: String,
     pub role: AgentContentRole,
@@ -80,7 +75,10 @@ fn flatten_whitespace(text: &str) -> String {
     flat
 }
 
-fn find_normalized_query(flat_chars: &[char], normalized_query: &str) -> Option<(usize, usize)> {
+fn find_normalized_query(
+    flat_chars: &[char],
+    normalized_query: &str,
+) -> Option<(usize, usize)> {
     if normalized_query.is_empty() {
         return None;
     }
@@ -90,6 +88,9 @@ fn find_normalized_query(flat_chars: &[char], normalized_query: &str) -> Option<
         return None;
     }
 
+    // JavaScript lower-cases the flattened text before indexOf(). Preserve a
+    // map back to the original flattened character positions so the returned
+    // snippet keeps original casing even when Unicode lower-casing expands.
     let mut lowered = Vec::new();
     let mut source_index = Vec::new();
     for (index, ch) in flat_chars.iter().copied().enumerate() {
@@ -180,119 +181,69 @@ pub fn find_agent_content_matches_default(
     )
 }
 
-pub fn search_canonical_agent_transcript(
-    entries: &[Value],
-    agent_id: &str,
-    query: &str,
-    limit: usize,
-) -> Vec<AgentContentMatch> {
-    let agent_id = agent_id.trim();
-    let normalized_query = query.trim().to_lowercase();
-    if agent_id.is_empty() || normalized_query.is_empty() || limit == 0 {
-        return Vec::new();
-    }
-    let limit = limit.min(AGENT_CONTENT_SEARCH_MAX_MATCHES_PER_AGENT);
-    let projected = entries
-        .iter()
-        .filter(|entry| entry.get("agentId").and_then(Value::as_str) == Some(agent_id))
-        .filter_map(project_entry)
-        .collect::<Vec<_>>();
-    find_agent_content_matches(&projected, &normalized_query, limit)
-}
-
-fn project_entry(entry: &Value) -> Option<SearchableTranscriptEntry> {
-    let id = entry.get("id")?.as_str()?.trim();
-    if id.is_empty() {
-        return None;
-    }
-    let hidden = entry
-        .get("hiddenOutboundAgentPeerMessage")
-        .and_then(Value::as_bool)
-        .unwrap_or(false);
-    let timestamp_ms = entry.get("timestampMs").and_then(Value::as_f64);
-    let kind = match entry.get("kind").and_then(Value::as_str).unwrap_or_default() {
-        "message" => SearchableTranscriptEntryKind::Message {
-            content: entry
-                .get("content")
-                .and_then(Value::as_str)
-                .unwrap_or_default()
-                .to_string(),
-            role: if entry.get("role").and_then(Value::as_str) == Some("user") {
-                AgentContentRole::User
-            } else {
-                AgentContentRole::Assistant
-            },
-        },
-        "sendMessage" | "send-message" | "send_message" => {
-            SearchableTranscriptEntryKind::SendMessage {
-                message_type: entry
-                    .get("messageType")
-                    .and_then(Value::as_str)
-                    .unwrap_or_default()
-                    .to_string(),
-                content: entry.get("content").and_then(Value::as_str).map(str::to_string),
-            }
-        }
-        "notice" => SearchableTranscriptEntryKind::Notice {
-            text: entry
-                .get("text")
-                .and_then(Value::as_str)
-                .unwrap_or_default()
-                .to_string(),
-        },
-        _ => SearchableTranscriptEntryKind::Other,
-    };
-    Some(SearchableTranscriptEntry {
-        id: id.to_string(),
-        kind,
-        timestamp_ms,
-        hidden_outbound_agent_peer_message: hidden,
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json;
+
+    fn message(id: &str, content: &str, role: AgentContentRole, timestamp_ms: f64) -> SearchableTranscriptEntry {
+        SearchableTranscriptEntry {
+            id: id.into(),
+            kind: SearchableTranscriptEntryKind::Message { content: content.into(), role },
+            timestamp_ms: Some(timestamp_ms),
+            hidden_outbound_agent_peer_message: false,
+        }
+    }
 
     #[test]
-    fn canonical_projection_preserves_desktop_match_semantics() {
+    fn search_matches_desktop_whitespace_case_recent_order_and_limit() {
         let entries = vec![
-            json!({"id":"old","agentId":"a","kind":"message","role":"user","content":"  Hello\nWorld  ","timestampMs":1}),
-            json!({"id":"hidden","agentId":"a","kind":"message","role":"assistant","content":"hello hidden","timestampMs":2,"hiddenOutboundAgentPeerMessage":true}),
-            json!({"id":"other-agent","agentId":"b","kind":"message","role":"assistant","content":"hello other","timestampMs":3}),
-            json!({"id":"new","agentId":"a","kind":"notice","text":"HELLO notice","timestampMs":4}),
+            message("old", "  Alpha\n   BETA context  ", AgentContentRole::User, 1.0),
+            message("new", "alpha beta latest", AgentContentRole::Assistant, 2.0),
         ];
-        let found = search_canonical_agent_transcript(&entries, "a", "hello", 5);
-        assert_eq!(found.len(), 2);
-        assert_eq!(found[0].entry_id, "new");
-        assert_eq!(found[0].role, AgentContentRole::Assistant);
-        assert_eq!(found[1].entry_id, "old");
-        assert_eq!(found[1].role, AgentContentRole::User);
-        assert_eq!(found[1].snippet, "Hello World");
+        let matches = find_agent_content_matches(&entries, "alpha beta", 1);
+        assert_eq!(matches.len(), 1);
+        assert_eq!(matches[0].entry_id, "new");
+        assert_eq!(matches[0].role, AgentContentRole::Assistant);
+        assert_eq!(build_content_snippet("  Alpha\n   BETA context  ", "alpha beta"), Some("Alpha BETA context".into()));
     }
 
     #[test]
-    fn canonical_projection_caps_per_agent_and_supports_text_send_message_only() {
-        let entries = (0..8)
-            .map(|index| json!({
-                "id":format!("m-{index}"),
-                "agentId":"a",
-                "kind":"sendMessage",
-                "messageType":if index == 0 {"image"} else {"text"},
-                "content":"needle",
-                "timestampMs":index,
-            }))
-            .collect::<Vec<_>>();
-        let found = search_canonical_agent_transcript(&entries, "a", "needle", 50);
-        assert_eq!(found.len(), AGENT_CONTENT_SEARCH_MAX_MATCHES_PER_AGENT);
-        assert_eq!(found[0].entry_id, "m-7");
-        assert!(!found.iter().any(|entry| entry.entry_id == "m-0"));
-    }
-
-    #[test]
-    fn unicode_lowercase_expansion_keeps_original_snippet_coordinates() {
-        let snippet = build_content_snippet("İSTANBUL", "i̇stanbul").unwrap();
-        assert_eq!(snippet, "İSTANBUL");
+    fn hidden_agent_peer_rows_and_non_text_send_messages_are_excluded() {
+        let entries = vec![
+            SearchableTranscriptEntry {
+                id: "hidden".into(),
+                kind: SearchableTranscriptEntryKind::Message {
+                    content: "secret alpha".into(),
+                    role: AgentContentRole::Assistant,
+                },
+                timestamp_ms: Some(3.0),
+                hidden_outbound_agent_peer_message: true,
+            },
+            SearchableTranscriptEntry {
+                id: "attachment".into(),
+                kind: SearchableTranscriptEntryKind::SendMessage {
+                    message_type: "attachment".into(),
+                    content: Some("alpha.pdf".into()),
+                },
+                timestamp_ms: Some(2.0),
+                hidden_outbound_agent_peer_message: false,
+            },
+            SearchableTranscriptEntry {
+                id: "text".into(),
+                kind: SearchableTranscriptEntryKind::SendMessage {
+                    message_type: "text".into(),
+                    content: Some("visible alpha".into()),
+                },
+                timestamp_ms: Some(1.0),
+                hidden_outbound_agent_peer_message: false,
+            },
+        ];
+        assert_eq!(
+            find_agent_content_matches_default(&entries, "alpha")
+                .into_iter()
+                .map(|item| item.entry_id)
+                .collect::<Vec<_>>(),
+            vec!["text"],
+        );
     }
 }
