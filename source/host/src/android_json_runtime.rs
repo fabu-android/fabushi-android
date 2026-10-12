@@ -811,17 +811,17 @@ impl AndroidJsonHost {
                 .unwrap_or_else(|error| panic!("failed to open canonical Android sidebar sections: {error}")),
         ));
         let user_settings = Arc::new(Mutex::new(
-            AndroidUserSettings::open(app_data_dir.join("android-user-settings.json"))
-                .unwrap_or_else(|error| panic!("failed to open canonical Android user settings: {error}")),
+            AndroidUserSettings::open_migrating(
+                app_data_dir.join("android-user-settings.json"),
+                app_data_dir.join("user-settings.json"),
+            )
+            .unwrap_or_else(|error| panic!("failed to open canonical Android user settings: {error}")),
         ));
         let auto_review_settings = Arc::new(Mutex::new(
             DurableAutoReviewSettings::open(app_data_dir.join("auto-review-settings.json"))
                 .unwrap_or_else(|error| panic!("failed to open durable Android Auto Review settings: {error}")),
         ));
-        let user_settings = Arc::new(Mutex::new(
-            AndroidUserSettings::open(app_data_dir.join("user-settings.json"))
-                .unwrap_or_else(|error| panic!("failed to open durable Android user settings: {error}")),
-        ));
+
         let transcript = Arc::new(Mutex::new(
             TranscriptStore::open(app_data_dir.join("transcript.json"))
                 .unwrap_or_else(|error| panic!("failed to open canonical Android transcript: {error}")),
@@ -1288,23 +1288,6 @@ impl AndroidJsonHost {
             "feature.settings.timeZone.set" => self.set_time_zone_settings(params),
             "feature.settings.autoReviewInstructions" => self.auto_review_instructions(),
             "feature.settings.autoReviewInstructions.set" => self.set_auto_review_instructions(params),
-            "feature.settings.timeZoneOverride" => {
-                let settings = self.user_settings.lock()
-                    .map_err(|_| "Android user settings lock poisoned".to_string())?;
-                Ok(json!({"overrideTimeZone": settings.time_zone_override()}))
-            },
-            "feature.settings.timeZoneOverride.set" => {
-                let requested = match params.get("timeZone") {
-                    None | Some(Value::Null) => None,
-                    Some(Value::String(value)) => Some(value.as_str()),
-                    Some(_) => return Err("timeZone must be a string or null".into()),
-                };
-                let value = self.user_settings.lock()
-                    .map_err(|_| "Android user settings lock poisoned".to_string())?
-                    .set_time_zone_override(requested)
-                    .map_err(|error| format!("failed to persist time zone override: {error}"))?;
-                Ok(json!({"overrideTimeZone": value}))
-            },
             "feature.remote.binding.status" => Ok(self.remote_binding_status()),
             "feature.teachRecording.status" => self.teach_recording_status(),
             "feature.auth.deviceAgentSession" => Ok(self.device_agent_session()),
