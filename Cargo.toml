@@ -1,0 +1,27 @@
+[workspace]
+resolver = "2"
+members = [
+  "source/shared",
+  "source/internal",
+  "source/mahayana-agent-coordinator",
+  "source/host",
+  "source/android-host-jni",
+  "source/local-exec-daemon",
+  "source/box-exec-daemon",
+  "source/packages/agent-core",
+  "source/packages/agent-kv",
+  "source/packages/agent-transcript",
+  "source/packages/chat-inference-proto",
+  "source/packages/context",
+  "source/packages/constants",
+  "source/packages/mcp-core",
+  "source/packages/mahayana-plugin-runtime",
+  "source/packages/mahayana-js-runtime",
+  "source/packages/redaction",
+  "source/packages/utils",
+]
+
+[workspace.package]
+edition = "2021"
+license = "UNLICENSED"
+version = "0.1.0"

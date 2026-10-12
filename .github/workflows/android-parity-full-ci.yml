@@ -1,0 +1,422 @@
+name: Android Parity Full CI
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+
+jobs:
+  architecture-and-contracts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.SOURCE_SHA }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Validate frozen inventory and current ledger
+        run: python scripts/check_grok_android_parity.py
+      - name: Test architecture checker
+        run: python -m unittest discover -s tests -p 'test_*.py'
+      - name: Rust contract/runtime tests
+        run: |
+          set -eu
+          cargo test --workspace --all-targets
+          cargo test -p fabushi-mahayana-host --features ci-account-session-import
+          cargo test -p fabushi-android-host-jni --features ci-account-session-import
+      - name: Run strict architecture and complete Desktop-source closure gate
+        id: strict
+        run: python scripts/check_grok_android_parity.py --strict
+      - name: Record strict gate outcome
+        if: always()
+        run: |
+          mkdir -p evidence
+          printf 'head=%s\nstrict_outcome=%s\n' "$SOURCE_SHA" "${{ steps.strict.outcome }}" > evidence/architecture-gate.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: architecture-contract-evidence-${{ env.SOURCE_SHA }}
+          path: evidence/architecture-gate.txt
+          if-no-files-found: error
+
+  android-build-unit-lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.SOURCE_SHA }}
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+      - uses: gradle/actions/setup-gradle@v4
+      - uses: android-actions/setup-android@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android,x86_64-linux-android
+      - name: Install Android NDK for native Host
+        run: sdkmanager 'ndk;28.2.13676358'
+      - name: Install cargo-ndk
+        run: command -v cargo-ndk >/dev/null 2>&1 || cargo install cargo-ndk --locked
+      - name: Build exact-HEAD native Mahayana Coordinator Host
+        env:
+          ANDROID_NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/28.2.13676358
+          ANDROID_NDK_ROOT: ${{ env.ANDROID_HOME }}/ndk/28.2.13676358
+        run: |
+          set -eu
+          rm -rf mobile/android/app/src/main/jniLibs mobile/android/app/src/ciAcceptance/jniLibs
+          cargo ndk -t arm64-v8a -t x86_64 -o mobile/android/app/src/main/jniLibs build --release -p fabushi-android-host-jni
+          cargo ndk -t arm64-v8a -t x86_64 -o mobile/android/app/src/ciAcceptance/jniLibs build --release -p fabushi-android-host-jni --features ci-account-session-import
+          test -s mobile/android/app/src/main/jniLibs/arm64-v8a/libmahayana_app_host.so
+          test -s mobile/android/app/src/main/jniLibs/x86_64/libmahayana_app_host.so
+          test -s mobile/android/app/src/ciAcceptance/jniLibs/arm64-v8a/libmahayana_app_host.so
+          test -s mobile/android/app/src/ciAcceptance/jniLibs/x86_64/libmahayana_app_host.so
+      - name: Compile, unit-test, lint, and assemble non-release acceptance APKs
+        working-directory: mobile/android
+        run: |
+          set -eu
+          ./gradlew --no-daemon clean \
+            assembleDebug \
+            assembleCiAcceptance \
+            assembleCiAcceptanceAndroidTest \
+            testCiAcceptanceUnitTest \
+            lintDebug
+      - name: Test release SBOM dependency parser
+        run: python scripts/test_generate_android_release_sbom.py
+      - name: Generate exact-HEAD SBOM and license inventory
+        working-directory: mobile/android
+        run: |
+          set -euo pipefail
+          cargo metadata --format-version 1 --manifest-path ../../Cargo.toml > release-cargo-metadata.json
+          ./gradlew --no-daemon app:dependencies --configuration githubReleaseRuntimeClasspath > github-release-runtime-dependencies.txt
+          python ../../scripts/generate_android_release_sbom.py \
+            --cargo-metadata release-cargo-metadata.json \
+            --gradle-dependencies github-release-runtime-dependencies.txt \
+            --gradle-cache "$HOME/.gradle/caches/modules-2/files-2.1" \
+            --source-sha "$SOURCE_SHA" \
+            --sbom-out android-release-sbom.cdx.json \
+            --licenses-out android-release-license-inventory.json
+          python - <<'PY'
+          import json
+          data=json.load(open("android-release-license-inventory.json", encoding="utf-8"))
+          unresolved=[x for x in data["components"] if x.get("license_status") == "unresolved"]
+          if unresolved:
+              for item in unresolved:
+                  print("unresolved release dependency license:", item["ecosystem"], item["name"], item["version"])
+              raise SystemExit("release license inventory contains unresolved dependency metadata")
+          PY
+      - name: Record exact-HEAD non-release APK identities
+        working-directory: mobile/android
+        run: |
+          set -eu
+          DEBUG_APK="app/build/outputs/apk/debug/app-debug.apk"
+          CI_APK="$(find app/build/outputs/apk/ciAcceptance -type f -name '*.apk' -print -quit)"
+          CI_TEST_APK="$(find app/build/outputs/apk/androidTest/ciAcceptance -type f -name '*.apk' -print -quit)"
+          test -s "$DEBUG_APK"
+          test -s "$CI_APK"
+          test -s "$CI_TEST_APK"
+          cp "$DEBUG_APK" "fabushi-android-${SOURCE_SHA}.apk"
+          cp "$CI_APK" "fabushi-android-ci-acceptance-${SOURCE_SHA}.apk"
+          cp "$CI_TEST_APK" "fabushi-android-ci-acceptance-test-${SOURCE_SHA}.apk"
+          sha256sum \
+            "fabushi-android-${SOURCE_SHA}.apk" \
+            "fabushi-android-ci-acceptance-${SOURCE_SHA}.apk" \
+            "fabushi-android-ci-acceptance-test-${SOURCE_SHA}.apk" \
+            > exact-head-apks.sha256
+          printf 'head=%s\n' "$SOURCE_SHA" > artifact-identity.txt
+          cat exact-head-apks.sha256 >> artifact-identity.txt
+          find app/src/main/jniLibs -type f -name 'libmahayana_app_host.so' -print0 | sort -z | xargs -0 sha256sum > native-jni.sha256
+          find app/src/ciAcceptance/jniLibs -type f -name 'libmahayana_app_host.so' -print0 | sort -z | xargs -0 sha256sum > ci-native-jni.sha256
+          cat native-jni.sha256 >> artifact-identity.txt
+          cat ci-native-jni.sha256 >> artifact-identity.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android-exact-head-apks-${{ env.SOURCE_SHA }}
+          path: |
+            mobile/android/fabushi-android-${{ env.SOURCE_SHA }}.apk
+            mobile/android/fabushi-android-ci-acceptance-${{ env.SOURCE_SHA }}.apk
+            mobile/android/fabushi-android-ci-acceptance-test-${{ env.SOURCE_SHA }}.apk
+            mobile/android/exact-head-apks.sha256
+            mobile/android/artifact-identity.txt
+            mobile/android/native-jni.sha256
+            mobile/android/ci-native-jni.sha256
+            mobile/android/android-release-sbom.cdx.json
+            mobile/android/android-release-license-inventory.json
+            mobile/android/github-release-runtime-dependencies.txt
+            mobile/android/release-cargo-metadata.json
+          if-no-files-found: error
+
+  android-release-package:
+    needs: android-build-unit-lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.SOURCE_SHA }}
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+      - uses: gradle/actions/setup-gradle@v4
+      - uses: android-actions/setup-android@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android,x86_64-linux-android
+      - name: Install Android NDK for native Host
+        run: sdkmanager 'ndk;28.2.13676358'
+      - name: Install cargo-ndk
+        run: command -v cargo-ndk >/dev/null 2>&1 || cargo install cargo-ndk --locked
+      - name: Build release native Mahayana Coordinator Host
+        env:
+          ANDROID_NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/28.2.13676358
+          ANDROID_NDK_ROOT: ${{ env.ANDROID_HOME }}/ndk/28.2.13676358
+        run: |
+          set -eu
+          rm -rf mobile/android/app/src/main/jniLibs mobile/android/app/src/ciAcceptance/jniLibs
+          cargo ndk -t arm64-v8a -t x86_64 -o mobile/android/app/src/main/jniLibs build --release -p fabushi-android-host-jni
+          cargo ndk -t arm64-v8a -t x86_64 -o mobile/android/app/src/ciAcceptance/jniLibs build --release -p fabushi-android-host-jni --features ci-account-session-import
+      - name: Prepare mandatory release signing material
+        env:
+          ANDROID_RELEASE_KEYSTORE_BASE64: ${{ secrets.ANDROID_RELEASE_KEYSTORE_BASE64 }}
+          ANDROID_RELEASE_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_RELEASE_KEYSTORE_PASSWORD }}
+          ANDROID_RELEASE_KEY_ALIAS: ${{ secrets.ANDROID_RELEASE_KEY_ALIAS }}
+          ANDROID_RELEASE_KEY_PASSWORD: ${{ secrets.ANDROID_RELEASE_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          mkdir -p evidence/release
+          if [ -z "$ANDROID_RELEASE_KEYSTORE_BASE64" ] || [ -z "$ANDROID_RELEASE_KEYSTORE_PASSWORD" ] || [ -z "$ANDROID_RELEASE_KEY_ALIAS" ] || [ -z "$ANDROID_RELEASE_KEY_PASSWORD" ]; then
+            printf 'status=blocked\nreason=missing-release-signing-secrets\nhead=%s\n' "$SOURCE_SHA" > evidence/release/signing-prerequisite.txt
+            echo "githubRelease requires ANDROID_RELEASE_KEYSTORE_BASE64, ANDROID_RELEASE_KEYSTORE_PASSWORD, ANDROID_RELEASE_KEY_ALIAS and ANDROID_RELEASE_KEY_PASSWORD" >&2
+            exit 1
+          fi
+          KEYSTORE_PATH="$RUNNER_TEMP/fabushi-android-release.keystore"
+          printf '%s' "$ANDROID_RELEASE_KEYSTORE_BASE64" | base64 --decode > "$KEYSTORE_PATH"
+          chmod 600 "$KEYSTORE_PATH"
+          test -s "$KEYSTORE_PATH"
+          printf 'status=available\nhead=%s\n' "$SOURCE_SHA" > evidence/release/signing-prerequisite.txt
+          echo "ANDROID_KEYSTORE_PATH=$KEYSTORE_PATH" >> "$GITHUB_ENV"
+          echo "ANDROID_KEYSTORE_PASSWORD=$ANDROID_RELEASE_KEYSTORE_PASSWORD" >> "$GITHUB_ENV"
+          echo "ANDROID_KEY_ALIAS=$ANDROID_RELEASE_KEY_ALIAS" >> "$GITHUB_ENV"
+          echo "ANDROID_KEY_PASSWORD=$ANDROID_RELEASE_KEY_PASSWORD" >> "$GITHUB_ENV"
+      - name: Assemble signed GitHub release and CI comparison package
+        working-directory: mobile/android
+        run: |
+          set -eu
+          ./gradlew --no-daemon clean assembleGithubRelease bundleGithubRelease assembleCiAcceptance
+      - name: Test release SBOM dependency parser
+        run: python scripts/test_generate_android_release_sbom.py
+      - name: Generate release SBOM and license inventory
+        working-directory: mobile/android
+        run: |
+          set -euo pipefail
+          cargo metadata --format-version 1 --manifest-path ../../Cargo.toml > release-cargo-metadata.json
+          ./gradlew --no-daemon app:dependencies --configuration githubReleaseRuntimeClasspath > github-release-runtime-dependencies.txt
+          python ../../scripts/generate_android_release_sbom.py \
+            --cargo-metadata release-cargo-metadata.json \
+            --gradle-dependencies github-release-runtime-dependencies.txt \
+            --gradle-cache "$HOME/.gradle/caches/modules-2/files-2.1" \
+            --source-sha "$SOURCE_SHA" \
+            --sbom-out android-release-sbom.cdx.json \
+            --licenses-out android-release-license-inventory.json
+          python - <<'PY'
+          import json
+          data=json.load(open("android-release-license-inventory.json", encoding="utf-8"))
+          unresolved=[x for x in data["components"] if x.get("license_status") == "unresolved"]
+          if unresolved:
+              for item in unresolved:
+                  print("unresolved release dependency license:", item["ecosystem"], item["name"], item["version"])
+              raise SystemExit("release license inventory contains unresolved dependency metadata")
+          PY
+      - name: Verify public GitHub release strips CI account bootstrap
+        working-directory: mobile/android
+        run: |
+          set -euo pipefail
+          GITHUB_APK="$(find app/build/outputs/apk/githubRelease -type f -name '*.apk' -print -quit)"
+          GITHUB_AAB="$(find app/build/outputs/bundle/githubRelease -type f -name '*.aab' -print -quit)"
+          CI_APK="$(find app/build/outputs/apk/ciAcceptance -type f -name '*.apk' -print -quit)"
+          test -s "$GITHUB_APK"
+          test -s "$GITHUB_AAB"
+          test -s "$CI_APK"
+          unzip -p "$GITHUB_APK" 'classes*.dex' > /tmp/fabushi-github-release.dex
+          unzip -p "$GITHUB_APK" 'lib/*/libmahayana_app_host.so' > /tmp/fabushi-github-release-native.so
+          unzip -p "$CI_APK" 'lib/*/libmahayana_app_host.so' > /tmp/fabushi-ci-acceptance-native.so
+          if grep -aFq 'FABUSHI_CI_ACCOUNT_SESSION_FILE' /tmp/fabushi-github-release.dex; then
+            echo "public githubRelease APK still contains Kotlin CI account bootstrap marker" >&2
+            exit 1
+          fi
+          if grep -aFq 'fabushi-ci-session.json' /tmp/fabushi-github-release.dex; then
+            echo "public githubRelease APK still contains CI session filename marker" >&2
+            exit 1
+          fi
+          if grep -aFq 'FABUSHI_CI_ACCOUNT_SESSION_FILE' /tmp/fabushi-github-release-native.so; then
+            echo "public githubRelease native Host still contains CI account import capability" >&2
+            exit 1
+          fi
+          if ! grep -aFq 'FABUSHI_CI_ACCOUNT_SESSION_FILE' /tmp/fabushi-ci-acceptance-native.so; then
+            echo "ciAcceptance native Host is missing its explicitly enabled CI account import capability" >&2
+            exit 1
+          fi
+          RELEASE_APK="fabushi-android-github-release-${SOURCE_SHA}.apk"
+          RELEASE_AAB="fabushi-android-github-release-${SOURCE_SHA}.aab"
+          cp "$GITHUB_APK" "$RELEASE_APK"
+          cp "$GITHUB_AAB" "$RELEASE_AAB"
+          printf 'head=%s\ngithub_release_ci_import=absent\n' "$SOURCE_SHA" > github-release-security.txt
+          sha256sum "$RELEASE_APK" "$RELEASE_AAB" >> github-release-security.txt
+      - name: Verify githubRelease signature ABI native 16KB and provenance
+        working-directory: mobile/android
+        run: |
+          set -euo pipefail
+          RELEASE_APK="fabushi-android-github-release-${SOURCE_SHA}.apk"
+          RELEASE_AAB="fabushi-android-github-release-${SOURCE_SHA}.aab"
+          test -s "$RELEASE_APK"
+          test -s "$RELEASE_AAB"
+          BUILD_TOOLS="$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n1)"
+          APKSIGNER="$BUILD_TOOLS/apksigner"
+          ZIPALIGN="$BUILD_TOOLS/zipalign"
+          READELF="$ANDROID_HOME/ndk/28.2.13676358/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf"
+          test -x "$APKSIGNER"
+          test -x "$ZIPALIGN"
+          test -x "$READELF"
+          "$APKSIGNER" verify --verbose --print-certs "$RELEASE_APK" > github-release-apk-signing.txt
+          jarsigner -verify -strict -certs "$RELEASE_AAB" > github-release-aab-signing.txt
+          "$ZIPALIGN" -c -P 16 -v 4 "$RELEASE_APK" > github-release-zipalign-16k.txt
+          for ABI in arm64-v8a x86_64; do
+            unzip -l "$RELEASE_APK" "lib/$ABI/libmahayana_app_host.so" | grep -F "lib/$ABI/libmahayana_app_host.so"
+            unzip -l "$RELEASE_AAB" "base/lib/$ABI/libmahayana_app_host.so" | grep -F "base/lib/$ABI/libmahayana_app_host.so"
+            unzip -p "$RELEASE_APK" "lib/$ABI/libmahayana_app_host.so" > "/tmp/libmahayana_app_host-$ABI.so"
+            python - "$READELF" "/tmp/libmahayana_app_host-$ABI.so" "$ABI" <<'PY'
+          import re,subprocess,sys
+          readelf,path,abi=sys.argv[1:]
+          text=subprocess.check_output([readelf,"-lW",path], text=True)
+          aligns=[]
+          for line in text.splitlines():
+              if line.lstrip().startswith("LOAD"):
+                  m=re.search(r"(0x[0-9a-fA-F]+)\s*$", line)
+                  if m:
+                      aligns.append(int(m.group(1),16))
+          if not aligns:
+              raise SystemExit(f"{abi}: no ELF LOAD alignment records")
+          if min(aligns) < 16384:
+              raise SystemExit(f"{abi}: ELF LOAD alignment below 16KB: {aligns}")
+          print(f"{abi}: 16KB-compatible LOAD alignments {aligns}")
+          PY
+          done > github-release-native-16k.txt
+          {
+            printf 'head=%s\nrun_id=%s\nrun_attempt=%s\n' "$SOURCE_SHA" "${{ github.run_id }}" "${{ github.run_attempt }}"
+            printf 'android_gradle_plugin=9.3.0\nndk=28.2.13676358\n'
+            java -version 2>&1 | head -n1
+            rustc --version
+            cargo --version
+            "$BUILD_TOOLS/apksigner" version
+            sha256sum "$RELEASE_APK" "$RELEASE_AAB" android-release-sbom.cdx.json android-release-license-inventory.json
+          } > github-release-provenance.txt
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: android-release-blocker-evidence-${{ env.SOURCE_SHA }}
+          path: evidence/release
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android-release-package-${{ env.SOURCE_SHA }}
+          path: |
+            mobile/android/github-release-security.txt
+            mobile/android/github-release-apk-signing.txt
+            mobile/android/github-release-aab-signing.txt
+            mobile/android/github-release-zipalign-16k.txt
+            mobile/android/github-release-native-16k.txt
+            mobile/android/github-release-provenance.txt
+            mobile/android/android-release-sbom.cdx.json
+            mobile/android/android-release-license-inventory.json
+            mobile/android/github-release-runtime-dependencies.txt
+            mobile/android/release-cargo-metadata.json
+            mobile/android/fabushi-android-github-release-${{ env.SOURCE_SHA }}.apk
+            mobile/android/fabushi-android-github-release-${{ env.SOURCE_SHA }}.aab
+          if-no-files-found: error
+
+  android-emulator-instrumentation:
+    needs: android-build-unit-lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.SOURCE_SHA }}
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+      - uses: gradle/actions/setup-gradle@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: android-exact-head-apks-${{ env.SOURCE_SHA }}
+          path: exact-head-apk
+      - name: Verify downloaded exact-HEAD APK identities
+        run: |
+          set -eu
+          test -s "exact-head-apk/fabushi-android-ci-acceptance-${SOURCE_SHA}.apk"
+          test -s "exact-head-apk/fabushi-android-ci-acceptance-test-${SOURCE_SHA}.apk"
+          (cd exact-head-apk && sha256sum -c exact-head-apks.sha256)
+          grep -F "head=${SOURCE_SHA}" exact-head-apk/artifact-identity.txt
+      - name: Record emulator acceptance provenance
+        run: |
+          set -eu
+          mkdir -p evidence/emulator
+          printf 'head=%s\nrun_id=%s\nrun_attempt=%s\npackage_artifact=%s\n' \
+            "$SOURCE_SHA" "${{ github.run_id }}" "${{ github.run_attempt }}" \
+            "android-exact-head-apks-${SOURCE_SHA}" > evidence/emulator/provenance.txt
+      - name: Prepare bounded authenticated App session
+        env:
+          FABUSHI_CI_TEST_USERNAME: ${{ secrets.FABUSHI_CI_TEST_USERNAME }}
+          FABUSHI_CI_TEST_PASSWORD: ${{ secrets.FABUSHI_CI_TEST_PASSWORD }}
+          FABUSHI_API_BASE_URL: ${{ vars.FABUSHI_API_BASE_URL || 'https://api.ombhrum.com' }}
+          FABUSHI_CI_AUTH_BASE_URL: ${{ vars.FABUSHI_CI_AUTH_BASE_URL || 'https://mahayana-platform.bhrumom.workers.dev' }}
+          DEVICE_ID: gha-${{ github.run_id }}-${{ github.run_attempt }}-interactive
+          FABUSHI_CI_ACCOUNT_SESSION_FILE: ${{ runner.temp }}/fabushi-android-ci/session.json
+        run: |
+          set -euo pipefail
+          if [ -z "$FABUSHI_CI_TEST_USERNAME" ] || [ -z "$FABUSHI_CI_TEST_PASSWORD" ]; then
+            printf 'status=blocked\nreason=missing-protected-account-secrets\nhead=%s\n' "$SOURCE_SHA" > evidence/emulator/account-prerequisite.txt
+            echo "protected Android acceptance requires FABUSHI_CI_TEST_USERNAME and FABUSHI_CI_TEST_PASSWORD" >&2
+            exit 1
+          fi
+          printf 'status=available\nhead=%s\n' "$SOURCE_SHA" > evidence/emulator/account-prerequisite.txt
+          python scripts/prepare_ci_android_account_session.py
+          test -s "$FABUSHI_CI_ACCOUNT_SESSION_FILE"
+          test "$(stat -c '%a' "$FABUSHI_CI_ACCOUNT_SESSION_FILE")" = 600
+          python - "$FABUSHI_CI_ACCOUNT_SESSION_FILE" <<'PY'
+          import json,sys
+          value=json.load(open(sys.argv[1],encoding="utf-8"))
+          assert "refreshToken" not in value
+          assert value.get("provider") == "github-actions"
+          assert value.get("ciRunner") is True
+          PY
+          echo "FABUSHI_CI_ACCOUNT_SESSION_FILE=$FABUSHI_CI_ACCOUNT_SESSION_FILE" >> "$GITHUB_ENV"
+          echo "DEVICE_ID=$DEVICE_ID" >> "$GITHUB_ENV"
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          arch: x86_64
+          profile: pixel_7
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim
+          working-directory: mobile/android
+          script: bash ../../scripts/android_emulator_acceptance.sh
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: android-emulator-evidence-${{ env.SOURCE_SHA }}
+          path: evidence/emulator
+          if-no-files-found: error

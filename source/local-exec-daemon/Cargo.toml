@@ -1,0 +1,11 @@
+[package]
+name = "fabushi-android-local-exec-daemon"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+fabushi-android-shared = { path = "../shared" }
+
+[lib]
+path = "src/lib.rs"

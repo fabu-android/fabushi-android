@@ -1,0 +1,70 @@
+name: Android migration documentation
+on:
+  pull_request:
+    paths:
+      - 'docs/android-port/**'
+      - 'docs/specs/desktop-main-android-full-parity.md'
+      - 'ANDROID_PORT.md'
+      - 'scripts/android-port-docs.py'
+      - '.github/workflows/android-port-docs.yml'
+  push:
+    branches: ['spec/grok-bot-018-android-parity-20260922']
+    paths:
+      - 'docs/android-port/**'
+      - 'docs/specs/desktop-main-android-full-parity.md'
+      - 'ANDROID_PORT.md'
+      - 'scripts/android-port-docs.py'
+      - '.github/workflows/android-port-docs.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: android-port-docs-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  source-inventory:
+    name: Pinned Desktop complete source inventory
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Enumerate source and verify authority
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/android-port-docs.py inventory
+      - name: Package documentation and source evidence
+        if: always()
+        run: python3 scripts/android-port-docs.py bundle
+      - name: Upload source inventory and documentation
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: android-port-source-and-docs-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            docs/android-port/generated/
+            android-port-documentation.zip
+            android-port-documentation.zip.sha256
+          if-no-files-found: error
+          retention-days: 30
+  documentation-contract:
+    name: Documentation completeness and links
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Validate documentation completeness
+        run: python3 scripts/android-port-docs.py validate
+      - name: Upload documentation validation report
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: android-port-docs-validation-${{ github.run_id }}-${{ github.run_attempt }}
+          path: docs/android-port/generated/docs-validation.json
+          if-no-files-found: error
+          retention-days: 30
