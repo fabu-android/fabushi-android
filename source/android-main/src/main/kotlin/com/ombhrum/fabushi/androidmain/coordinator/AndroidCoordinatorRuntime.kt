@@ -216,6 +216,10 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
         processMetricsExecutor.scheduleWithFixedDelay(
             {
                 runCatching {
+                    val settings = host.request("feature.settings.processMetrics")
+                    if (!settings.optBoolean("localEnabled", false)) {
+                        return@runCatching
+                    }
                     val memoryInfo = Debug.MemoryInfo()
                     Debug.getMemoryInfo(memoryInfo)
                     val memoryBytes = memoryInfo.totalPss.toLong().coerceAtLeast(0L) * 1024L
