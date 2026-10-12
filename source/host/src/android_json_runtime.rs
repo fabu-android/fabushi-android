@@ -1,4 +1,7 @@
 use crate::account_service::{AccountSessionMutation, AndroidAccountService};
+use crate::account_telemetry::{
+    AccountTelemetryBuffer, SigninLoginReport, SigninSignoutCause,
+};
 use crate::capability_broker::{CapabilityDecision, PendingCapabilityCall, SharedCapabilityBroker};
 use crate::automation_runtime::{run_json as automation_run_json, AutomationRuntime, AutomationSpec};
 use crate::android_agent_roster::AndroidAgentRoster;
@@ -639,6 +642,7 @@ pub struct AndroidJsonHost {
     account_binding: EnvDescriptorAccountBinding,
     preexisting_account_durable_data: bool,
     account_binding_refusal: Option<String>,
+    account_telemetry: AccountTelemetryBuffer,
     agents: Arc<Mutex<AndroidAgentRoster>>,
     sidebar_sections: Arc<Mutex<AndroidSidebarSections>>,
     transcript: Arc<Mutex<TranscriptStore>>,
@@ -901,6 +905,7 @@ impl AndroidJsonHost {
             account_binding,
             preexisting_account_durable_data,
             account_binding_refusal,
+            account_telemetry: AccountTelemetryBuffer::default(),
             agents,
             sidebar_sections,
             transcript,
@@ -1125,6 +1130,8 @@ impl AndroidJsonHost {
                 }
             })),
             "feature.auth.status" => self.account_status(),
+            "feature.account.telemetry.snapshot" => serde_json::to_value(self.account_telemetry.snapshot())
+                .map_err(|error| format!("failed to serialize account telemetry snapshot: {error}")),
             "feature.account.fence" => Ok(json!({"accountFence":self.current_turn_account_fence()?})),
             "feature.account.sandAccess" => self.account_sand_access(),
             "feature.account.privacyMode" => Ok(self.account_privacy_mode()),
@@ -2764,6 +2771,9 @@ impl AndroidJsonHost {
         self.account_binding_refusal = None;
         if self.mode == AndroidHostMode::Test {
             self.logged_in = false;
+            self.account_telemetry.report_signin(SigninLoginReport::SignedOut(
+                SigninSignoutCause::UserLogout,
+            ));
             return Ok(self.auth_status());
         }
         #[cfg(feature = "ci-account-session-import")]
@@ -2776,6 +2786,9 @@ impl AndroidJsonHost {
             return Ok(self.auth_status());
         }
         let (status, mutation) = self.account.logout()?;
+        self.account_telemetry.report_signin(SigninLoginReport::SignedOut(
+            SigninSignoutCause::UserLogout,
+        ));
         Ok(with_account_session_mutation(status, Some(mutation)))
     }
 
@@ -2813,10 +2826,13 @@ impl AndroidJsonHost {
     }
 
     fn auth_browser_start(&mut self) -> Result<Value, String> {
-        if self.mode == AndroidHostMode::Test {
-            return self.browser_start();
-        }
-        self.account.browser_start()
+        let result = if self.mode == AndroidHostMode::Test {
+            self.browser_start()?
+        } else {
+            self.account.browser_start()?
+        };
+        self.account_telemetry.report_signin(SigninLoginReport::LoginStarted);
+        Ok(result)
     }
 
     fn auth_browser_reopen(&mut self, params: &Value) -> Result<Value, String> {
@@ -3394,24 +3410,27 @@ impl AndroidJsonHost {
 
     fn oauth_start(&mut self, params: &Value) -> Result<Value, String> {
         let provider = required_string(params, "provider")?;
-        if self.mode == AndroidHostMode::Test {
+        let projected = if self.mode == AndroidHostMode::Test {
             let attempt_id = self.next_attempt_id("oauth");
             self.oauth_attempts.insert(attempt_id.clone());
-            return Ok(json!({
+            json!({
                 "attemptId":attempt_id,
                 "provider":provider,
                 "url":format!("https://api.ombhrum.com/sign-in?attempt={attempt_id}")
-            }));
-        }
-        let result = self.account.browser_start_for_provider(Some(provider))?;
-        Ok(json!({
-            "attemptId":result["attemptId"],
-            "provider":provider,
-            "url":result["loginUrl"],
-            "status":result["status"],
-            "pollAfterMs":result["pollAfterMs"],
-            "expiresAt":result["expiresAt"],
-        }))
+            })
+        } else {
+            let result = self.account.browser_start_for_provider(Some(provider))?;
+            json!({
+                "attemptId":result["attemptId"],
+                "provider":provider,
+                "url":result["loginUrl"],
+                "status":result["status"],
+                "pollAfterMs":result["pollAfterMs"],
+                "expiresAt":result["expiresAt"],
+            })
+        };
+        self.account_telemetry.report_signin(SigninLoginReport::LoginStarted);
+        Ok(projected)
     }
 
     fn oauth_poll(&mut self, params: &Value) -> Result<Value, String> {
