@@ -10,8 +10,8 @@ pub mod transport;
 
 use fabushi_android_shared::{ExecutionError, ExecutionRequest};
 pub use box_store_sync_backend::{
-    BoxStoreSyncAction, BoxStoreSyncBackend, BoxStoreSyncExecutor, BoxStoreSyncRequest,
-    BOX_STORE_SYNC_CAPABILITY,
+    open_box_store_sync_service, BoxStoreSyncAction, BoxStoreSyncBackend, BoxStoreSyncExecutor,
+    BoxStoreSyncRequest, BOX_STORE_SYNC_CAPABILITY,
 };
 pub use transport::{
     AuthenticatedRemoteHttpTransport, RemoteBearerCredential, RemoteCancelOutcome,
