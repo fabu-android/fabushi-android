@@ -1126,6 +1126,56 @@ mod tests {
         assert!(send_latency_event(-1.0, None, 0.0, false, None, None, None).is_err());
     }
 
+    #[test]
+    fn gateway_reachability_and_dns_metadata_match_desktop_contract() {
+        let ok = gateway_reachability_event(
+            "ok",
+            "HEAD",
+            12.6,
+            "api",
+            None,
+            None,
+        )
+        .unwrap();
+        assert_eq!(ok.level, TelemetryLevel::Info);
+        assert_eq!(ok.metadata.get("outcome").map(String::as_str), Some("ok"));
+        assert_eq!(ok.metadata.get("method").map(String::as_str), Some("HEAD"));
+        assert_eq!(ok.metadata.get("latency_ms").map(String::as_str), Some("13"));
+        assert_eq!(ok.metadata.get("base_url_kind").map(String::as_str), Some("api"));
+        assert!(!ok.metadata.contains_key("http_status"));
+        assert!(!ok.metadata.contains_key("cause"));
+
+        let failed = gateway_reachability_event(
+            "timeout",
+            "GET",
+            99.4,
+            "gateway",
+            Some(504),
+            Some("deadline"),
+        )
+        .unwrap();
+        assert_eq!(failed.level, TelemetryLevel::Warn);
+        assert_eq!(failed.metadata.get("http_status").map(String::as_str), Some("504"));
+        assert_eq!(failed.metadata.get("cause").map(String::as_str), Some("deadline"));
+
+        let dns = dns_diagnostic_metadata(
+            "prod",
+            "gateway-failure",
+            "split-horizon",
+            Some("198.51.100.1"),
+            Some("203.0.113.2"),
+            None,
+            Some("203.0.113.53"),
+        );
+        assert_eq!(dns.get("cluster").map(String::as_str), Some("prod"));
+        assert_eq!(dns.get("trigger").map(String::as_str), Some("gateway-failure"));
+        assert_eq!(dns.get("diagnosis").map(String::as_str), Some("split-horizon"));
+        assert_eq!(dns.get("system_exact").map(String::as_str), Some("198.51.100.1"));
+        assert_eq!(dns.get("independent_exact").map(String::as_str), Some("203.0.113.2"));
+        assert!(!dns.contains_key("independent_wildcard"));
+        assert_eq!(dns.get("independent_general").map(String::as_str), Some("203.0.113.53"));
+    }
+
 
     #[test]
     fn event_loop_pressure_matches_desktop_thresholds_and_caps() {
