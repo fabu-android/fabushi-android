@@ -916,7 +916,7 @@ mod tests {
         let config = config("roundtrip");
         fs::create_dir_all(&config.workspace_root).unwrap();
         fs::write(config.workspace_root.join("note.txt"), b"one").unwrap();
-        let root = config.store_root.parent().unwrap().parent().unwrap().to_path_buf();
+        let root = config.store_root.parent().unwrap().to_path_buf();
         let mut backend = RemoteBoxStoreBackend::open(config.clone()).unwrap();
 
         let first = completed(
@@ -972,7 +972,7 @@ mod tests {
         let config = config("duplicate");
         fs::create_dir_all(&config.workspace_root).unwrap();
         fs::write(config.workspace_root.join("note.txt"), b"one").unwrap();
-        let root = config.store_root.parent().unwrap().parent().unwrap().to_path_buf();
+        let root = config.store_root.parent().unwrap().to_path_buf();
         let mut backend = RemoteBoxStoreBackend::open(config.clone()).unwrap();
         let identity = identity("op-1", "req-1");
         let request = request("op-1", "snapshot", None);
@@ -986,7 +986,7 @@ mod tests {
     #[test]
     fn pending_side_effect_is_never_blind_replayed_after_reopen() {
         let config = config("pending");
-        let root = config.store_root.parent().unwrap().parent().unwrap().to_path_buf();
+        let root = config.store_root.parent().unwrap().to_path_buf();
         let backend = RemoteBoxStoreBackend::open(config.clone()).unwrap();
         let identity = identity("op-1", "req-1");
         let request = request("op-1", "snapshot", None);
@@ -1020,7 +1020,7 @@ mod tests {
     #[test]
     fn store_id_and_manifest_paths_fail_closed() {
         let config = config("validation");
-        let root = config.store_root.parent().unwrap().parent().unwrap().to_path_buf();
+        let root = config.store_root.parent().unwrap().to_path_buf();
         let mut backend = RemoteBoxStoreBackend::open(config).unwrap();
         let bad = ExecutionRequest {
             operation_id: "op-1".into(),
