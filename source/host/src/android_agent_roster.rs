@@ -1376,16 +1376,23 @@ mod tests {
             "data:image/avif;base64,AAAA".into()
         ))).is_err());
 
-        let max_payload_len = ((5 * 1024 * 1024 + 2) / 3) * 4;
-        let max_payload = format!("{}=", "A".repeat(max_payload_len - 1));
-        let max_value = format!("data:image/png;base64,{max_payload}");
+        let mut max_png = vec![0u8; 5 * 1024 * 1024];
+        max_png[..8].copy_from_slice(&[137, 80, 78, 71, 13, 10, 26, 10]);
+        let max_value = format!(
+            "data:image/png;base64,{}",
+            BASE64_STANDARD.encode(&max_png),
+        );
         assert!(parse_avatar_data_url(Some(&Value::String(max_value))).is_ok());
         assert!(parse_avatar_data_url(Some(&Value::String(
             "data:image/png;base64,A=AA".into()
         ))).is_err());
 
-        let too_large_payload = "A".repeat(max_payload_len + 4);
-        let too_large = format!("data:image/png;base64,{too_large_payload}");
+        let mut too_large_png = vec![0u8; (5 * 1024 * 1024) + 1];
+        too_large_png[..8].copy_from_slice(&[137, 80, 78, 71, 13, 10, 26, 10]);
+        let too_large = format!(
+            "data:image/png;base64,{}",
+            BASE64_STANDARD.encode(&too_large_png),
+        );
         assert!(parse_avatar_data_url(Some(&Value::String(too_large))).is_err());
     }
 
