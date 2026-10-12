@@ -1336,7 +1336,8 @@ fn encode_generate_image_request(
         encode_len_delimited(2, &reference, &mut output);
     }
     encode_string(3, model_id, &mut output);
-    encode_bool(4, true, &mut output);
+    // Desktop avatar generation does not pass maxMode. In proto3 the false default is omitted
+    // from the wire; emitting field 4=true changes backend model routing.
     output
 }
 
@@ -2014,7 +2015,7 @@ mod tests {
         assert_eq!(string_fields(references[0], 1).unwrap(), vec!["cmVmZXJlbmNl".to_string()]);
         assert_eq!(string_fields(references[0], 2).unwrap(), vec!["image/png".to_string()]);
         assert_eq!(string_fields(&request, 3).unwrap(), vec!["grok-image-test".to_string()]);
-        assert_eq!(decode_optional_varint_field(&request, 4).unwrap(), Some(1));
+        assert_eq!(decode_optional_varint_field(&request, 4).unwrap(), None);
 
         let mut success = Vec::new();
         encode_string(1, "aW1hZ2U=", &mut success);
