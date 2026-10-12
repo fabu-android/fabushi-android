@@ -7,10 +7,43 @@ use std::{
 
 const TIME_ZONE_MAX_CHARS: usize = 128;
 
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum LocalToolPermission {
+    Never,
+    #[default]
+    Ask,
+    Always,
+}
+
+impl LocalToolPermission {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Never => "never",
+            Self::Ask => "ask",
+            Self::Always => "always",
+        }
+    }
+
+    pub fn parse(value: &str) -> io::Result<Self> {
+        match value.trim() {
+            "never" => Ok(Self::Never),
+            "ask" => Ok(Self::Ask),
+            "always" => Ok(Self::Always),
+            _ => Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "local tool permission must be never, ask, or always",
+            )),
+        }
+    }
+}
+
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 struct PersistedAndroidUserSettings {
     time_zone_override: Option<String>,
+    #[serde(default)]
+    local_tool_permission: LocalToolPermission,
 }
 
 /// Canonical Host-owned Android user settings that must survive Activity/process recreation.
@@ -71,6 +104,25 @@ impl AndroidUserSettings {
         }
         let next = PersistedAndroidUserSettings {
             time_zone_override: normalized.clone(),
+            local_tool_permission: self.state.local_tool_permission,
+        };
+        write_atomic_json(&self.path, &next)?;
+        self.state = next;
+        Ok(normalized)
+    }
+
+    pub fn local_tool_permission(&self) -> LocalToolPermission {
+        self.state.local_tool_permission
+    }
+
+    pub fn set_local_tool_permission(&mut self, value: &str) -> io::Result<LocalToolPermission> {
+        let normalized = LocalToolPermission::parse(value)?;
+        if self.state.local_tool_permission == normalized {
+            return Ok(normalized);
+        }
+        let next = PersistedAndroidUserSettings {
+            time_zone_override: self.state.time_zone_override.clone(),
+            local_tool_permission: normalized,
         };
         write_atomic_json(&self.path, &next)?;
         self.state = next;
@@ -177,6 +229,7 @@ mod tests {
         let legacy = test_path("legacy");
         let legacy_state = PersistedAndroidUserSettings {
             time_zone_override: Some("Asia/Tokyo".into()),
+            ..Default::default()
         };
         write_atomic_json(&legacy, &legacy_state).unwrap();
 
@@ -192,6 +245,7 @@ mod tests {
             &legacy,
             &PersistedAndroidUserSettings {
                 time_zone_override: Some("Europe/London".into()),
+                ..Default::default()
             },
         )
         .unwrap();
@@ -200,6 +254,32 @@ mod tests {
 
         let _ = fs::remove_file(canonical);
         let _ = fs::remove_file(legacy);
+    }
+
+    #[test]
+    fn local_tool_permission_defaults_to_ask_and_is_durable() {
+        let path = test_path("local-tool-permission");
+        let mut settings = AndroidUserSettings::open(&path).unwrap();
+        assert_eq!(settings.local_tool_permission(), LocalToolPermission::Ask);
+
+        assert_eq!(
+            settings.set_local_tool_permission("always").unwrap(),
+            LocalToolPermission::Always,
+        );
+        settings.set_time_zone_override(Some("UTC")).unwrap();
+        drop(settings);
+
+        let mut reopened = AndroidUserSettings::open(&path).unwrap();
+        assert_eq!(reopened.local_tool_permission(), LocalToolPermission::Always);
+        assert_eq!(reopened.time_zone_override(), Some("UTC"));
+        assert_eq!(
+            reopened.set_local_tool_permission("never").unwrap(),
+            LocalToolPermission::Never,
+        );
+        assert!(reopened.set_local_tool_permission("sometimes").is_err());
+        assert_eq!(reopened.local_tool_permission(), LocalToolPermission::Never);
+
+        let _ = fs::remove_file(path);
     }
 
     #[test]
