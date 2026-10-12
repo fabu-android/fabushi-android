@@ -134,6 +134,16 @@ impl McpServerToolSettings {
         self.custom_instructions_for(account_fence, server_id)
     }
 
+    pub fn resolved_custom_instructions(
+        &self,
+        account_fence: &str,
+        server_id: &str,
+        server_name: &str,
+    ) -> Result<String, String> {
+        let stored = self.custom_instructions_for(account_fence, server_id)?;
+        Ok(resolve_mcp_custom_instruction(server_name, stored.as_deref()))
+    }
+
     pub fn clear_server(&mut self, account_fence: &str, server_id: &str) -> Result<(), String> {
         validate_id(account_fence, "account fence")?;
         validate_id(server_id, "server id")?;
@@ -177,6 +187,52 @@ fn validate_state(state: &PersistedStore) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+const DEFAULT_HEX_MCP_CUSTOM_INSTRUCTION: &str =
+    "When using Hex, get the underlying numbers as data: download/export the results as CSV or use the data the connector returns, and analyze those raw values directly. Don't read rendered charts or graphs from screenshots (computer-use chart reading is unreliable) — work from the actual data.";
+
+pub fn resolve_mcp_custom_instruction(server_name: &str, stored: Option<&str>) -> String {
+    match stored {
+        Some(value) => value.trim().to_string(),
+        None if server_name.trim().eq_ignore_ascii_case("hex") => {
+            DEFAULT_HEX_MCP_CUSTOM_INSTRUCTION.to_string()
+        }
+        None => String::new(),
+    }
+}
+
+pub fn format_mcp_custom_instruction_tool_note(server_name: &str, instructions: &str) -> String {
+    format!(
+        "Custom instructions for the \"{}\" connector (always follow them when using this tool):\n{}",
+        server_name,
+        instructions.trim()
+    )
+}
+
+pub fn build_mcp_custom_instructions_system_prompt_section(
+    entries: &[(String, String)],
+) -> Option<String> {
+    let mut unique = BTreeMap::<String, String>::new();
+    for (name, instructions) in entries {
+        let instructions = instructions.trim();
+        if !instructions.is_empty() {
+            unique.entry(name.clone()).or_insert_with(|| instructions.to_string());
+        }
+    }
+    if unique.is_empty() {
+        return None;
+    }
+    let mut lines = vec![
+        "## Connector custom instructions".to_string(),
+        "Custom instructions are configured for some connected tools (MCP connectors). Always follow the matching instruction whenever you use that connector's tools, even before your first call to it:".to_string(),
+    ];
+    lines.extend(
+        unique
+            .into_iter()
+            .map(|(name, instructions)| format!("- {name}: {instructions}")),
+    );
+    Some(lines.join("\n"))
 }
 
 fn clamp_instructions(raw: &str) -> Result<String, String> {
@@ -345,6 +401,50 @@ mod tests {
         assert_eq!(saved.encode_utf16().count(), 499);
         assert!(saved.ends_with('a'));
         let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn connector_defaults_and_explicit_empty_match_desktop_resolution() {
+        let path = path("instructions-default");
+        let mut store = McpServerToolSettings::open(&path).unwrap();
+        let default = store
+            .resolved_custom_instructions("account:a", "17", " Hex ")
+            .unwrap();
+        assert!(default.contains("underlying numbers as data"));
+        assert_eq!(
+            store
+                .set_custom_instructions("account:a", "17", "")
+                .unwrap(),
+            Some(String::new())
+        );
+        assert_eq!(
+            store
+                .resolved_custom_instructions("account:a", "17", "Hex")
+                .unwrap(),
+            ""
+        );
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn connector_instruction_prompt_helpers_are_deterministic() {
+        let note = format_mcp_custom_instruction_tool_note("Calendar", "  Read only.  ");
+        assert_eq!(
+            note,
+            "Custom instructions for the \"Calendar\" connector (always follow them when using this tool):\nRead only."
+        );
+        let section = build_mcp_custom_instructions_system_prompt_section(&[
+            ("Drive".into(), "Use source links.".into()),
+            ("Calendar".into(), "Read only.".into()),
+            ("Drive".into(), "ignored duplicate".into()),
+            ("Empty".into(), "   ".into()),
+        ])
+        .unwrap();
+        assert!(section.starts_with("## Connector custom instructions\n"));
+        assert!(section.contains("- Calendar: Read only."));
+        assert!(section.contains("- Drive: Use source links."));
+        assert!(!section.contains("ignored duplicate"));
+        assert!(!section.contains("- Empty:"));
     }
 
     #[test]
