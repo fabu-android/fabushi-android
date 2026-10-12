@@ -1,6 +1,7 @@
 package com.ombhrum.fabushi
 
 import android.app.Application
+import android.os.SystemClock
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidAgentAttachment
@@ -1302,12 +1303,27 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
 
         refreshAvailableModels()
 
+        val loadStartedAtMs = SystemClock.elapsedRealtime()
+        val loadWasCold = cachedMessages.isEmpty()
         viewModelScope.launch {
+            val rpcStartedAtMs = SystemClock.elapsedRealtime()
             try {
                 val durable = withContext(Dispatchers.IO) {
                     loadDurableAgentTranscript(bot.id, rosterSelectionAccountSlot)
                 }
-                if (generation != openBotGeneration || mutableState.value.activeBot?.id != bot.id) return@launch
+                val rpcFinishedAtMs = SystemClock.elapsedRealtime()
+                val stale = generation != openBotGeneration || mutableState.value.activeBot?.id != bot.id
+                if (stale) {
+                    reportAgentLoadTelemetry(
+                        loadStartedAtMs = loadStartedAtMs,
+                        rpcStartedAtMs = rpcStartedAtMs,
+                        rpcFinishedAtMs = rpcFinishedAtMs,
+                        cold = loadWasCold,
+                        stale = true,
+                        outcome = "superseded",
+                    )
+                    return@launch
+                }
                 val merged = durable.copy(
                     messages = mergeCanonicalMobileTranscript(
                         baselineEntryIds = baselineEntryIds,
@@ -1329,10 +1345,28 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
                     ),
                 )
                 rosterSelection.settle(bot.id)
+                reportAgentLoadTelemetry(
+                    loadStartedAtMs = loadStartedAtMs,
+                    rpcStartedAtMs = rpcStartedAtMs,
+                    rpcFinishedAtMs = rpcFinishedAtMs,
+                    cold = loadWasCold,
+                    stale = false,
+                    outcome = "ready",
+                )
             } catch (error: CancellationException) {
                 throw error
             } catch (error: Throwable) {
-                if (generation == openBotGeneration && mutableState.value.activeBot?.id == bot.id) {
+                val failedAtMs = SystemClock.elapsedRealtime()
+                val stale = generation != openBotGeneration || mutableState.value.activeBot?.id != bot.id
+                reportAgentLoadTelemetry(
+                    loadStartedAtMs = loadStartedAtMs,
+                    rpcStartedAtMs = rpcStartedAtMs,
+                    rpcFinishedAtMs = failedAtMs,
+                    cold = loadWasCold,
+                    stale = stale,
+                    outcome = if (stale) "superseded" else "failed",
+                )
+                if (!stale) {
                     commitState(
                         mutableState.value.copy(
                             transcriptLoadError = true,
@@ -1341,6 +1375,35 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
                     )
                     rosterSelection.settle(bot.id)
                 }
+            }
+        }
+    }
+
+    private fun reportAgentLoadTelemetry(
+        loadStartedAtMs: Long,
+        rpcStartedAtMs: Long,
+        rpcFinishedAtMs: Long,
+        cold: Boolean,
+        stale: Boolean,
+        outcome: String,
+    ) {
+        val finishedAtMs = SystemClock.elapsedRealtime()
+        val queueMs = (rpcStartedAtMs - loadStartedAtMs).coerceAtLeast(0L)
+        val openRpcMs = (rpcFinishedAtMs - rpcStartedAtMs).coerceAtLeast(0L)
+        val renderMs = (finishedAtMs - rpcFinishedAtMs).coerceAtLeast(0L)
+        val durationMs = (finishedAtMs - loadStartedAtMs).coerceAtLeast(0L)
+        viewModelScope.launch(Dispatchers.IO) {
+            runCatching {
+                coordinator.reportAgentLoad(
+                    durationMs = durationMs,
+                    openRpcMs = openRpcMs,
+                    queueMs = queueMs,
+                    renderMs = renderMs,
+                    cold = cold,
+                    stale = stale,
+                    boxState = "unknown",
+                    outcome = outcome,
+                )
             }
         }
     }
