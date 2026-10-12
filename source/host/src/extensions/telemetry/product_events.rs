@@ -938,6 +938,98 @@ pub fn render_stream_event(
     })
 }
 
+
+pub fn transport_stream_down_event(
+    reason: &str,
+    cause: Option<&str>,
+    generation: u64,
+    stream_lifetime_ms: Option<f64>,
+) -> Result<Option<StructuredTelemetryEvent>, String> {
+    if generation == 0 {
+        return Ok(None);
+    }
+    if stream_lifetime_ms.is_some_and(|value| !value.is_finite() || value < 0.0) {
+        return Err("transport stream lifetime must be finite and nonnegative".into());
+    }
+    let normalized_reason = match reason {
+        "stream-ended" => "stream_ended",
+        "stall-timeout" => "stall_timeout",
+        "forced-reconnect" => "forced_reconnect",
+        "refused" | "dns" | "timeout" | "network" | "no_storage" | "access_denied"
+        | "box_blocked" | "http_5xx" => reason,
+        _ => "unknown",
+    };
+    let mut metadata = BTreeMap::from([
+        ("reason".into(), normalized_reason.into()),
+        ("generation".into(), generation.to_string()),
+    ]);
+    if let Some(value) = cause {
+        metadata.insert("cause".into(), value.into());
+    }
+    if let Some(value) = stream_lifetime_ms {
+        metadata.insert("stream_lifetime_ms".into(), value.round().to_string());
+    }
+
+    let errno = cause
+        .and_then(|value| value.rsplit('/').next())
+        .filter(|value| {
+            !value.is_empty()
+                && value.as_bytes()[0].is_ascii_uppercase()
+                && value
+                    .bytes()
+                    .all(|byte| byte.is_ascii_uppercase() || byte.is_ascii_digit() || byte == b'_')
+        });
+    let (code, domain, retryable, http_status) = match reason {
+        "refused" => (Some("SAND-E0101"), Some("transport"), Some(true), None),
+        "timeout" => (Some("SAND-E0102"), Some("transport"), Some(true), None),
+        "http_5xx" => {
+            let status = cause.and_then(|value| value.parse::<u16>().ok());
+            if status.is_none() {
+                (None, None, None, None)
+            } else {
+                (Some("SAND-E0103"), Some("transport"), Some(true), status)
+            }
+        }
+        "dns" => (Some("SAND-E0104"), Some("transport"), Some(true), None),
+        "network" => (Some("SAND-E0105"), Some("transport"), Some(true), None),
+        "stall-timeout" => (Some("SAND-E0110"), Some("transport"), Some(true), None),
+        "no_storage" => (Some("SAND-E0201"), Some("auth"), Some(false), None),
+        "access_denied" => (
+            Some("SAND-E0202"),
+            Some("auth"),
+            Some(false),
+            cause.and_then(|value| value.parse::<u16>().ok()),
+        ),
+        _ => (None, None, None, None),
+    };
+    if let Some(value) = code {
+        metadata.insert("error_code".into(), value.into());
+    }
+    if let Some(value) = domain {
+        metadata.insert("error_domain".into(), value.into());
+    }
+    if let Some(value) = retryable {
+        metadata.insert("error_retryable".into(), value.to_string());
+    }
+    if matches!(reason, "refused" | "dns" | "timeout" | "network") {
+        if let Some(value) = errno {
+            metadata.insert("errno".into(), value.into());
+        }
+    }
+    if let Some(value) = http_status {
+        metadata.insert("http_status".into(), value.to_string());
+    }
+
+    Ok(Some(StructuredTelemetryEvent {
+        level: if reason == "stall-timeout" {
+            TelemetryLevel::Warn
+        } else {
+            TelemetryLevel::Info
+        },
+        metadata,
+    }))
+}
+
 pub fn event_loop_pressure_event(
     p50_ms: f64,
     p95_ms: f64,
@@ -978,6 +1070,44 @@ pub fn event_loop_pressure_event(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn transport_stream_preserves_desktop_reason_error_and_generation_contract() {
+        assert!(transport_stream_down_event("network", None, 0, None).unwrap().is_none());
+
+        let stalled = transport_stream_down_event(
+            "stall-timeout",
+            Some("network/ETIMEDOUT"),
+            4,
+            Some(1_234.4),
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(stalled.level, TelemetryLevel::Warn);
+        assert_eq!(stalled.metadata.get("reason").map(String::as_str), Some("stall_timeout"));
+        assert_eq!(stalled.metadata.get("error_code").map(String::as_str), Some("SAND-E0110"));
+        assert_eq!(
+            stalled.metadata.get("stream_lifetime_ms").map(String::as_str),
+            Some("1234"),
+        );
+
+        let dns = transport_stream_down_event(
+            "dns",
+            Some("resolver/EAI_AGAIN"),
+            9,
+            None,
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(dns.metadata.get("error_code").map(String::as_str), Some("SAND-E0104"));
+        assert_eq!(dns.metadata.get("errno").map(String::as_str), Some("EAI_AGAIN"));
+
+        let denied = transport_stream_down_event("access_denied", Some("403"), 5, None)
+            .unwrap()
+            .unwrap();
+        assert_eq!(denied.metadata.get("error_code").map(String::as_str), Some("SAND-E0202"));
+        assert_eq!(denied.metadata.get("http_status").map(String::as_str), Some("403"));
+    }
 
     #[test]
     fn access_blocked_validates_and_caps_duration() {
