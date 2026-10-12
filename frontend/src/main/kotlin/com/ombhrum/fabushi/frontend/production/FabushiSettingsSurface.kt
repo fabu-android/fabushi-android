@@ -52,6 +52,7 @@ private enum class FabushiSettingsSection {
     UPDATES,
 }
 
+internal const val FABUSHI_HELP_CENTER_URL = "https://cursor.com/help"
 internal const val ACCOUNT_AVATAR_TIMEOUT_MS = 10_000
 internal const val ACCOUNT_AVATAR_MAX_BYTES = 1024 * 1024
 internal const val ACCOUNT_AVATAR_CACHE_MAX_ENTRIES = 32
@@ -270,6 +271,8 @@ internal fun FabushiSettingsSurface(
     onCheckUpdate: () -> Unit,
     onInstallUpdate: () -> Unit,
     onOpenFeedback: () -> Unit,
+    onOpenHelpCenter: () -> Unit,
+    onOpenAbout: () -> Unit,
     onClose: () -> Unit,
 ) {
     var section by remember { mutableStateOf(FabushiSettingsSection.GENERAL) }
@@ -548,6 +551,20 @@ internal fun FabushiSettingsSurface(
                             modifier = Modifier.testTag("settings-feedback-open"),
                         ) {
                             Text("Send feedback")
+                        }
+
+                        Text("Help")
+                        TextButton(
+                            onClick = onOpenHelpCenter,
+                            modifier = Modifier.testTag("settings-help-center"),
+                        ) {
+                            Text("Help Center")
+                        }
+                        TextButton(
+                            onClick = onOpenAbout,
+                            modifier = Modifier.testTag("settings-about"),
+                        ) {
+                            Text("About Fabushi")
                         }
 
                         Text("Appearance")
