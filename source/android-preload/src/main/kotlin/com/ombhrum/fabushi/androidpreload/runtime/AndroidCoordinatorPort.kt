@@ -626,6 +626,30 @@ interface AndroidCoordinatorPort {
         }
         return sendAcknowledgementBegin(accountSlot, agentId, nonce, text, entries)
     }
+    fun sendAcknowledgementBeginWithModelAndAttachments(
+        accountSlot: String?,
+        agentId: String,
+        nonce: String,
+        text: String,
+        richText: JSONObject? = null,
+        model: String?,
+        attachments: List<AndroidAgentAttachment>,
+        entries: List<AndroidSendAcknowledgementEntry>,
+    ): AndroidSendAcknowledgement {
+        if (!model.isNullOrBlank()) {
+            error("Model-aware Agent send acknowledgement is unavailable on this Coordinator port")
+        }
+        return sendAcknowledgementBeginWithAttachments(
+            accountSlot = accountSlot,
+            agentId = agentId,
+            nonce = nonce,
+            text = text,
+            richText = richText,
+            attachments = attachments,
+            entries = entries,
+        )
+    }
+
     fun sendAcknowledgementDispatch(
         accountSlot: String?,
         agentId: String,
