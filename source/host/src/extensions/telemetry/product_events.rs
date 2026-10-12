@@ -147,6 +147,81 @@ pub fn agent_load_event(
     })
 }
 
+pub fn startup_lifecycle_event(
+    outcome: &str,
+    phase: &str,
+    elapsed_ms: f64,
+    phase_elapsed_ms: Option<f64>,
+    window_ms: Option<f64>,
+) -> Result<StructuredTelemetryEvent, String> {
+    if !matches!(outcome, "start" | "stuck" | "ready" | "failed") {
+        return Err("startup outcome is invalid".into());
+    }
+    if !bounded_token(phase) {
+        return Err("startup phase must be a bounded token".into());
+    }
+    for (name, value) in [
+        ("elapsedMs", Some(elapsed_ms)),
+        ("phaseElapsedMs", phase_elapsed_ms),
+        ("windowMs", window_ms),
+    ] {
+        if value.is_some_and(|value| !value.is_finite() || value < 0.0) {
+            return Err(format!("{name} must be finite and nonnegative"));
+        }
+    }
+    if outcome != "stuck" && phase_elapsed_ms.is_some() {
+        return Err("phaseElapsedMs is only valid for stuck startup telemetry".into());
+    }
+    if outcome != "ready" && window_ms.is_some() {
+        return Err("windowMs is only valid for ready startup telemetry".into());
+    }
+
+    let mut metadata = BTreeMap::from([
+        ("outcome".into(), outcome.into()),
+        ("phase".into(), phase.into()),
+    ]);
+    let elapsed = elapsed_ms.round().to_string();
+    match outcome {
+        "start" => {
+            metadata.insert("elapsed_ms".into(), elapsed);
+        }
+        "stuck" => {
+            metadata.insert("elapsed_ms".into(), elapsed);
+            metadata.insert(
+                "phase_elapsed_ms".into(),
+                phase_elapsed_ms.unwrap_or_default().round().to_string(),
+            );
+            metadata.extend(android_error_tags(
+                AndroidErrorCode::E0602,
+                &BTreeMap::from([("phase".into(), phase.into())]),
+            ));
+        }
+        "ready" => {
+            metadata.insert("duration_ms".into(), elapsed);
+            if let Some(window_ms) = window_ms {
+                metadata.insert("window_ms".into(), window_ms.round().to_string());
+            }
+        }
+        "failed" => {
+            metadata.insert("duration_ms".into(), elapsed);
+            metadata.extend(android_error_tags(
+                AndroidErrorCode::E0601,
+                &BTreeMap::from([("phase".into(), phase.into())]),
+            ));
+        }
+        _ => unreachable!(),
+    }
+
+    Ok(StructuredTelemetryEvent {
+        level: match outcome {
+            "stuck" => TelemetryLevel::Warn,
+            "failed" => TelemetryLevel::Error,
+            _ => TelemetryLevel::Info,
+        },
+        metadata,
+    })
+}
+
 pub fn agents_unreachable_event(
     phase: &str,
     is_manual: bool,
@@ -816,6 +891,30 @@ mod tests {
         assert_eq!(event.metadata.get("box_state").map(String::as_str), Some("other"));
         assert!(agent_load_event(-1.0, None, None, None, false, None, "local", "ready").is_err());
         assert!(agent_load_event(1.0, None, None, None, false, None, "local", "bad").is_err());
+    }
+
+    #[test]
+    fn startup_lifecycle_preserves_desktop_terminal_and_stuck_contract() {
+        let start = startup_lifecycle_event("start", "app_ready_wait", 0.0, None, None).unwrap();
+        assert_eq!(start.level, TelemetryLevel::Info);
+        assert_eq!(start.metadata.get("outcome").map(String::as_str), Some("start"));
+
+        let stuck = startup_lifecycle_event("stuck", "coordinator", 120_001.0, Some(61_234.4), None).unwrap();
+        assert_eq!(stuck.level, TelemetryLevel::Warn);
+        assert_eq!(stuck.metadata.get("error_code").map(String::as_str), Some("SAND-E0602"));
+        assert_eq!(stuck.metadata.get("phase_elapsed_ms").map(String::as_str), Some("61234"));
+
+        let ready = startup_lifecycle_event("ready", "window", 450.4, None, Some(120.6)).unwrap();
+        assert_eq!(ready.metadata.get("duration_ms").map(String::as_str), Some("450"));
+        assert_eq!(ready.metadata.get("window_ms").map(String::as_str), Some("121"));
+
+        let failed = startup_lifecycle_event("failed", "services", 12.0, None, None).unwrap();
+        assert_eq!(failed.level, TelemetryLevel::Error);
+        assert_eq!(failed.metadata.get("error_code").map(String::as_str), Some("SAND-E0601"));
+        assert!(startup_lifecycle_event("bad", "services", 1.0, None, None).is_err());
+        assert!(startup_lifecycle_event("ready", "bad\nphase", 1.0, None, None).is_err());
+        assert!(startup_lifecycle_event("ready", "window", -1.0, None, None).is_err());
+        assert!(startup_lifecycle_event("ready", "window", 1.0, Some(1.0), None).is_err());
     }
 
     #[test]
