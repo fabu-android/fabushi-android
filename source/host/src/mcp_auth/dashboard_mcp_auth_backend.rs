@@ -387,6 +387,23 @@ impl CursorDashboardMcpAuthBackend {
         Ok((receipt.logs_processed, receipt.logs_dropped))
     }
 
+    pub fn list_server_snapshots(&self) -> Result<Vec<McpAuthServerSnapshot>, String> {
+        let credentials = self.credentials.credentials()?;
+        let ghost_mode = self.resolve_ghost_mode(&credentials);
+        let response = self.send_unary(
+            &credentials,
+            DASHBOARD_GET_AVAILABLE_MCP_SERVERS_PATH,
+            &[],
+            CONTROL_RPC_TIMEOUT_MS,
+            ghost_mode,
+        )?;
+        decode_available_mcp_servers_response(&response)?
+            .into_iter()
+            .filter(|server| server.enabled)
+            .map(project_available_server)
+            .collect()
+    }
+
     pub fn reload_server_tools(&self, server_id: &str) -> Result<usize, String> {
         let requested_id = server_id
             .parse::<i32>()
@@ -441,20 +458,11 @@ impl CursorDashboardMcpAuthBackend {
             ghost_mode,
         )?;
         let servers = decode_available_mcp_servers_response(&response)?;
-        Ok(servers
+        servers
             .into_iter()
             .find(|server| server.id == requested_id)
-            .map(|server| McpAuthServerSnapshot {
-                server_id: server.id.to_string(),
-                server_name: server.name,
-                server_url: server.url,
-                transport: match server.transport.to_ascii_lowercase().as_str() {
-                    "stdio" => McpAuthTransport::Stdio,
-                    "sse" => McpAuthTransport::Sse,
-                    _ => McpAuthTransport::Http,
-                },
-                disabled_by_team_admin_policy: server.disabled_by_team_admin_policy,
-            }))
+            .map(project_available_server)
+            .transpose()
     }
 
     pub fn resolve_sand_team_rules(&self) -> Result<Vec<Value>, String> {
@@ -730,6 +738,42 @@ impl McpAuthBackendPort for CursorDashboardMcpAuthBackend {
     fn reload_server_tools(&self, server_id: &str) -> Result<usize, String> {
         CursorDashboardMcpAuthBackend::reload_server_tools(self, server_id)
     }
+}
+
+fn project_available_server(
+    server: AvailableServerWire,
+) -> Result<McpAuthServerSnapshot, String> {
+    if server.id <= 0 {
+        return Err("MCP server id is invalid".into());
+    }
+    let name = server.name.trim();
+    if name.is_empty() || name.len() > 320 || name.chars().any(char::is_control) {
+        return Err("MCP server name is invalid".into());
+    }
+    let transport = match server.transport.trim().to_ascii_lowercase().as_str() {
+        "stdio" => McpAuthTransport::Stdio,
+        "sse" => McpAuthTransport::Sse,
+        "http" | "streamable-http" | "streamable_http" => McpAuthTransport::Http,
+        _ => return Err("MCP server transport is unsupported".into()),
+    };
+    let server_url = server
+        .url
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    if !matches!(transport, McpAuthTransport::Stdio) {
+        let parsed = Url::parse(server_url.as_deref().ok_or("MCP server URL is required")?)
+            .map_err(|_| "MCP server URL is invalid".to_string())?;
+        if !matches!(parsed.scheme(), "http" | "https") {
+            return Err("MCP server URL is invalid".into());
+        }
+    }
+    Ok(McpAuthServerSnapshot {
+        server_id: server.id.to_string(),
+        server_name: name.to_string(),
+        server_url,
+        transport,
+        disabled_by_team_admin_policy: server.disabled_by_team_admin_policy,
+    })
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
