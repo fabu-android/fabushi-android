@@ -1614,6 +1614,7 @@ impl AndroidJsonHost {
             "feature.agent.subagent.tool" => self.agent_subagent_tool(params),
             "feature.agent.subagent.reconcile" => self.agent_subagent_reconcile(params),
             "feature.agent.asyncTasks" => self.agent_async_tasks(params),
+            "feature.agent.avatar.generate" => self.agent_avatar_generate(params),
             "feature.agent.rosterMutation" => self.agent_roster_mutation(params),
             "feature.agent.sidebarSections" => self.agent_sidebar_sections(),
             "feature.agent.upgradeQuiesce" => self.agent_upgrade_quiesce(params),
@@ -2999,6 +3000,40 @@ impl AndroidJsonHost {
         Ok(())
     }
 
+
+    fn agent_avatar_generate(&self, params: &Value) -> Result<Value, String> {
+        let description = required_string(params, "description")?.trim();
+        if description.is_empty() {
+            return Err("Agent avatar generation requires a description".into());
+        }
+        if description.len() > 8_000 {
+            return Err("Agent avatar generation description is too large".into());
+        }
+        // Cursor/Sand credentials and machine identity remain owned by the Rust backend.
+        // Presentation receives only bounded generated image bytes, never a credential.
+        let generated = self
+            .mcp_dashboard_backend
+            .as_ref()
+            .ok_or("Agent avatar generation backend is unavailable")?
+            .generate_image(description, &[])
+            .map_err(|error| error.to_string())?;
+        if !generated.mime_type.starts_with("image/") {
+            return Err("Agent avatar generation returned a non-image MIME type".into());
+        }
+        let bytes = BASE64_STANDARD
+            .decode(generated.image_data.as_bytes())
+            .map_err(|_| "Agent avatar generation returned invalid base64")?;
+        if bytes.is_empty() {
+            return Err("Agent avatar generation returned an empty image".into());
+        }
+        if bytes.len() > 25 * 1024 * 1024 {
+            return Err("Agent avatar generation returned an image larger than 25 MB".into());
+        }
+        Ok(json!({
+            "imageData": generated.image_data,
+            "mimeType": generated.mime_type,
+        }))
+    }
 
     fn agent_roster_mutation(&mut self, params: &Value) -> Result<Value, String> {
         let operation_id = required_string(params, "operationId")?;
