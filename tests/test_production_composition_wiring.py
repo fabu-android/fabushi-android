@@ -5,6 +5,8 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 APPLICATION = ROOT / "source/android-main/src/main/kotlin/com/ombhrum/fabushi/FabushiApplication.kt"
 ACTIVITY = ROOT / "mobile/android/app/src/main/java/com/ombhrum/fabushi/MainActivity.kt"
 COORDINATOR = ROOT / "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/coordinator/AndroidCoordinatorRuntime.kt"
+PORTS = ROOT / "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/coordinator/AndroidCoordinatorPorts.kt"
+BRIDGE = ROOT / "source/android-preload/src/main/kotlin/com/ombhrum/fabushi/androidpreload/runtime/AndroidCoordinatorBridge.kt"
 HOST = ROOT / "source/android-main/src/main/kotlin/com/ombhrum/fabushi/core/MahayanaHost.kt"
 BOOTSTRAP = ROOT / "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/production/bootstrap_view.kt"
 RENDERER = ROOT / "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/production/ProductionRenderer_view.kt"
@@ -55,6 +57,42 @@ class ProductionCompositionWiringTest(unittest.TestCase):
         self.assertIn("nativeCreateTest(appDataDir)", production_branch)
         self.assertIn("nativeCreate(", production_branch)
         self.assertLess(production_branch.index("nativeCreateTest(appDataDir)"), production_branch.index("nativeCreate("))
+
+
+    def test_process_runtime_quiesces_and_releases_the_single_coordinator_owner(self):
+        runtime = COORDINATOR.read_text(encoding="utf-8")
+        ports = PORTS.read_text(encoding="utf-8")
+        bridge = BRIDGE.read_text(encoding="utf-8")
+        application = APPLICATION.read_text(encoding="utf-8")
+
+        self.assertIn("AndroidCoordinatorPort, AutoCloseable", runtime)
+        self.assertIn("private val closed = AtomicBoolean(false)", runtime)
+        self.assertIn("connectivityManager.unregisterNetworkCallback(sendNetworkCallback)", runtime)
+        for executor in (
+            "eventPumpExecutor",
+            "computerRebuildEventExecutor",
+            "computerRebuildMigrationExecutor",
+            "computerRebuildQueueExecutor",
+            "remoteComputerReconnectExecutor",
+            "storagePressureExecutor",
+            "sendSubmissionExecutor",
+            "rootConnectionRetryExecutor",
+        ):
+            self.assertIn(f"{executor}.shutdownNow()", runtime)
+        self.assertIn("computerRebuildEventHost.close()", runtime)
+        self.assertIn("host.close()", runtime)
+
+        pump = runtime[
+            runtime.index("private fun startComputerRebuildEventPump()"):
+            runtime.index("private fun observeComputerRebuildTransport")
+        ]
+        self.assertIn("while (!closed.get())", pump)
+        self.assertNotIn("while (true)", pump)
+        self.assertIn("AndroidCoordinatorRuntime.closeProcessRuntime()", ports)
+        self.assertIn("internal fun clearTrustedRuntime(expected: AndroidCoordinatorPort)", bridge)
+        self.assertIn("if (installed === expected) installed = null", bridge)
+        self.assertIn("AndroidCoordinatorBridge.clearTrustedRuntime(coordinator)", application)
+        self.assertIn("AndroidCoordinatorPorts.closeProcessRuntime()", application)
 
 
 if __name__ == "__main__":
