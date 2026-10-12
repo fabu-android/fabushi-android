@@ -333,13 +333,36 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
         return status.put("lastUncleanProcessSession", projected ?: JSONObject.NULL)
     }
 
-    override fun coordinatorResync(generation: Long, afterSequence: Long) =
-        host.request(
-            "coordinator.resync",
-            JSONObject()
-                .put("generation", generation)
-                .put("afterSequence", afterSequence),
-        )
+    override fun coordinatorResync(generation: Long, afterSequence: Long): JSONObject {
+        val startedAtNanos = System.nanoTime()
+        fun elapsedMs(): Long =
+            ((System.nanoTime() - startedAtNanos) / 1_000_000L).coerceAtLeast(0L)
+        return try {
+            val result = host.request(
+                "coordinator.resync",
+                JSONObject()
+                    .put("generation", generation)
+                    .put("afterSequence", afterSequence),
+            )
+            // Telemetry is observational only: it must never turn a successful canonical resync
+            // into a failure. Per-replica outcomes remain owned by their durable state machines.
+            runCatching {
+                reportResyncCompleted(
+                    failedSteps = emptyList(),
+                    durationMs = elapsedMs(),
+                )
+            }
+            result
+        } catch (error: Throwable) {
+            runCatching {
+                reportResyncCompleted(
+                    failedSteps = listOf("coordinator"),
+                    durationMs = elapsedMs(),
+                )
+            }
+            throw error
+        }
+    }
 
     override fun resolveUpdateTrackPolicy(
         managedTrack: String?,
