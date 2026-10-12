@@ -650,23 +650,47 @@ mod tests {
     }
 
     #[test]
-    fn android_error_tags_preserve_retryability_and_redact_unbounded_payload() {
+    fn android_error_tags_preserve_desktop_code_table_and_redact_unbounded_payload() {
+        let cases = [
+            (AndroidErrorCode::E0601, "SAND-E0601", false),
+            (AndroidErrorCode::E0602, "SAND-E0602", true),
+            (AndroidErrorCode::E0603, "SAND-E0603", false),
+            (AndroidErrorCode::E0604, "SAND-E0604", false),
+            (AndroidErrorCode::E0605, "SAND-E0605", true),
+            (AndroidErrorCode::E0606, "SAND-E0606", true),
+            (AndroidErrorCode::E0607, "SAND-E0607", true),
+            (AndroidErrorCode::E0610, "SAND-E0610", false),
+        ];
+        for (code, wire, retryable) in cases {
+            let tags = android_error_tags(code, &BTreeMap::new());
+            assert_eq!(tags.get("error_code").map(String::as_str), Some(wire));
+            assert_eq!(tags.get("error_domain").map(String::as_str), Some("android"));
+            assert_eq!(
+                tags.get("error_retryable").map(String::as_str),
+                Some(if retryable { "true" } else { "false" }),
+            );
+        }
+
         let payload = BTreeMap::from([
             ("process".into(), "host".into()),
             ("reason".into(), "timeout".into()),
             ("ignored".into(), "secret".into()),
         ]);
         let tags = android_error_tags(AndroidErrorCode::E0605, &payload);
-        assert_eq!(tags.get("error_code").map(String::as_str), Some("SAND-E0605"));
-        assert_eq!(tags.get("error_domain").map(String::as_str), Some("android"));
-        assert_eq!(tags.get("error_retryable").map(String::as_str), Some("true"));
         assert_eq!(tags.get("process").map(String::as_str), Some("host"));
+        assert_eq!(tags.get("reason").map(String::as_str), Some("timeout"));
         assert!(!tags.contains_key("ignored"));
+
+        let timeout = android_error_tags(
+            AndroidErrorCode::E0607,
+            &BTreeMap::from([("timeoutMs".into(), "12000".into())]),
+        );
+        assert_eq!(timeout.get("timeout_ms").map(String::as_str), Some("12000"));
+        assert!(!timeout.contains_key("timeoutMs"));
 
         let unsafe_payload = BTreeMap::from([("phase".into(), "bad\\nvalue".into())]);
         let tags = android_error_tags(AndroidErrorCode::E0601, &unsafe_payload);
         assert!(!tags.contains_key("phase"));
-        assert_eq!(tags.get("error_retryable").map(String::as_str), Some("false"));
     }
 
 
