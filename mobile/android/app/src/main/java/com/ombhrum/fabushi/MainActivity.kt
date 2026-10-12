@@ -66,9 +66,7 @@ class MainActivity : ComponentActivity() {
         super.onStop()
     }
 
-    override fun dispatchKeyEvent(event: KeyEvent): Boolean {
-        if (event.action != KeyEvent.ACTION_DOWN) return super.dispatchKeyEvent(event)
-        val childHandled = super.dispatchKeyEvent(event)
+    override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {
         val shortcutHandled = globalKeyboardShortcutController.dispatch(
             GlobalShortcutKeyEvent(
                 key = shortcutKeyName(event),
@@ -76,11 +74,11 @@ class MainActivity : ComponentActivity() {
                 meta = event.isMetaPressed,
                 alt = event.isAltPressed,
                 shift = event.isShiftPressed,
-                defaultPrevented = childHandled,
+                defaultPrevented = false,
                 repeat = event.repeatCount > 0,
             ),
         )
-        return childHandled || shortcutHandled
+        return shortcutHandled || super.onKeyDown(keyCode, event)
     }
 
     override fun onNewIntent(intent: Intent) {
