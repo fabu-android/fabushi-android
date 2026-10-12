@@ -2226,6 +2226,10 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
             attachments = parseAgentAttachments(value.optJSONArray("attachments") ?: JSONArray()),
             phase = AndroidSendAcknowledgementPhase.fromWire(value.getString("phase")),
             generation = value.getLong("generation"),
+            enteredAtMs = value.optLong("enteredAtMs", 0L).coerceAtLeast(0L),
+            dispatchStartedAtMs = value.opt("dispatchStartedAtMs").let { raw ->
+                if (raw is Number) raw.toLong().coerceAtLeast(0L) else null
+            },
             failedAtMs = value.opt("failedAtMs").let { raw ->
                 if (raw is Number) raw.toLong() else null
             },
