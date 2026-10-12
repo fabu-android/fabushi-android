@@ -1294,6 +1294,31 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
             ),
         )
 
+    override fun sendAcknowledgementBeginWithModelAndAttachments(
+        accountSlot: String?,
+        agentId: String,
+        nonce: String,
+        text: String,
+        richText: JSONObject?,
+        model: String?,
+        attachments: List<AndroidAgentAttachment>,
+        entries: List<AndroidSendAcknowledgementEntry>,
+    ): AndroidSendAcknowledgement =
+        parseSendAcknowledgement(
+            host.request(
+                "feature.sendAcknowledgement.begin",
+                JSONObject()
+                    .putNullable("accountSlot", accountSlot)
+                    .put("agentId", agentId)
+                    .put("nonce", nonce)
+                    .put("text", text)
+                    .put("richText", richText ?: JSONObject.NULL)
+                    .put("model", model?.trim()?.takeIf(String::isNotEmpty) ?: JSONObject.NULL)
+                    .put("attachments", agentAttachmentsJson(attachments))
+                    .put("entries", sendAcknowledgementEntriesJson(entries)),
+            ),
+        )
+
     override fun sendAcknowledgementDispatch(
         accountSlot: String?,
         agentId: String,
