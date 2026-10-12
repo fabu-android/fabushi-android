@@ -13,6 +13,7 @@ import com.ombhrum.fabushi.androidmain.coordinator.RootShellFocusRefreshOwner
 import com.ombhrum.fabushi.androidmain.coordinator.RootShellFocusRefreshToken
 import com.ombhrum.fabushi.androidmain.diagnostics.AndroidProcessCrashRecovery
 import com.ombhrum.fabushi.androidmain.notifications.AndroidNotificationRuntime
+import com.ombhrum.fabushi.androidmain.telemetry.SharedPreferencesAndroidProcessSessionMarkerStore
 import com.ombhrum.fabushi.androidmain.webauthn.AndroidCredentialManagerWebAuthn
 import com.ombhrum.fabushi.androidpreload.deeplink.AndroidDeepLink
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidCoordinatorBridge
@@ -68,6 +69,8 @@ internal class FabushiProcessRuntime(
 ) : AndroidPresentationRuntimePort, AutoCloseable {
     @Volatile
     private var appForeground = false
+    private val processSessionTelemetry =
+        SharedPreferencesAndroidProcessSessionMarkerStore.production(application).also { it.start() }
     @Volatile
     private var interactiveActivityRef: WeakReference<ComponentActivity>? = null
     private val coordinator = AndroidCoordinatorPorts.presentation(application).also {
@@ -263,6 +266,7 @@ internal class FabushiProcessRuntime(
         interactiveActivityRef?.get()
 
     override fun close() {
+        processSessionTelemetry.settleClean()
         interactiveActivityRef = null
         rootShellFocusRefreshSubscription.close()
         rootShellFocusRefreshOwner.dispose()
