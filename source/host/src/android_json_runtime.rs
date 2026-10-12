@@ -34,6 +34,7 @@ use crate::mcp_auth::{
     cleanup_legacy_mcp_auth_credentials, AndroidMcpAuthWatchManager,
     AndroidMcpAuthWatchOwner, CursorDashboardMcpAuthBackend, McpAuthAdminPolicyPort,
     McpAuthBackendPort, McpAuthOwnerEvent, McpAuthenticateResult,
+    McpToolExecutionBackendResult, EXECUTE_TOOL_TIMEOUT_MS,
     SandPrivacyMode as BackendSandPrivacyMode,
 };
 use crate::extensions::teach_recording::{DurableTeachRecordingOwner, TeachRecordingPhase};
@@ -189,6 +190,11 @@ impl SubagentReviewApprovalRegistry {
             pending.remove(approval_id);
         }
     }
+}
+
+fn mcp_account_fence_generation(account_fence: &str) -> u64 {
+    let digest = crate::sha256::sha256_hex(account_fence.as_bytes());
+    u64::from_str_radix(&digest[..16], 16).unwrap_or(1).max(1)
 }
 
 fn mark_turn_awaiting_user(
@@ -5599,6 +5605,162 @@ impl AndroidJsonHost {
         Ok(())
     }
 
+    fn mcp_routed_execute(
+        &mut self,
+        command: &Value,
+        operation_id: &str,
+        feature_request_id: &str,
+    ) -> Result<(), String> {
+        let server_id = required_string(command, "serverId")?.to_string();
+        let tool_name = required_string(command, "toolName")?.to_string();
+        let tool_call_id = required_string(command, "toolCallId")?.to_string();
+        let approval_id = required_string(command, "approvalId")?;
+        let approval_operation_id = required_string(command, "approvalOperationId")?;
+        let approval_request_id = required_string(command, "approvalRequestId")?;
+        let arguments = command
+            .get("arguments")
+            .cloned()
+            .unwrap_or_else(|| json!({}));
+        if !arguments.is_object() {
+            return Err("mcp.routed.execute arguments must be a JSON object".into());
+        }
+        let account_fence = self.current_turn_account_fence()?;
+        let disabled = self
+            .mcp_server_tool_settings
+            .lock()
+            .map_err(|_| "MCP server tool settings lock poisoned".to_string())?
+            .disabled_for(&account_fence, &server_id)?;
+        if disabled.contains(&tool_name) {
+            return Err("mcp.routed.execute tool is disabled for the current account".into());
+        }
+
+        self.capability_broker.consume_approval_for_dispatch(
+            approval_id,
+            approval_operation_id,
+            approval_request_id,
+            "mcp.execute",
+            &account_fence,
+            now_ms(),
+        )?;
+
+        let broker_request_id = format!("mcp-exec:{tool_call_id}");
+        let plugin_id = format!("mcp:{server_id}");
+        let generation = mcp_account_fence_generation(&account_fence);
+        let started = now_ms();
+        self.capability_broker.begin(PendingCapabilityCall {
+            request_id: broker_request_id.clone(),
+            plugin_id: plugin_id.clone(),
+            capability: "mcp.execute".into(),
+            tool: tool_name.clone(),
+            arguments: arguments.clone(),
+            required_permissions: BTreeSet::new(),
+            account_fence: account_fence.clone(),
+            runtime_generation: generation,
+            started_at_ms: started,
+            deadline_at_ms: started.saturating_add(EXECUTE_TOOL_TIMEOUT_MS),
+            state: "pending".into(),
+        })?;
+        self.capability_broker.assert_current(
+            &broker_request_id,
+            &plugin_id,
+            &account_fence,
+            generation,
+            now_ms(),
+        )?;
+
+        let backend = self
+            .mcp_dashboard_backend
+            .as_ref()
+            .ok_or("MCP Dashboard backend is available only in production")?;
+        let execution = backend.execute_server_tool(
+            &server_id,
+            &tool_name,
+            &arguments,
+            &tool_call_id,
+            command.get("agentId").and_then(Value::as_str),
+        );
+        let finished = now_ms();
+
+        if self.current_turn_account_fence().as_deref() != Ok(account_fence.as_str()) {
+            if self.capability_broker.assert_current(
+                &broker_request_id,
+                &plugin_id,
+                &account_fence,
+                generation,
+                finished,
+            ).is_ok() {
+                self.capability_broker.settle(
+                    &broker_request_id,
+                    "outcome_unknown",
+                    Some("account fence changed while MCP tool execution was in flight".into()),
+                    finished,
+                )?;
+            }
+            return Err(
+                "mcp.routed.execute result fenced by account switch; reconciliation required"
+                    .into(),
+            );
+        }
+
+        match execution {
+            Ok(McpToolExecutionBackendResult::Settled(result)) => {
+                self.capability_broker.assert_current(
+                    &broker_request_id,
+                    &plugin_id,
+                    &account_fence,
+                    generation,
+                    finished,
+                )?;
+                self.capability_broker
+                    .settle(&broker_request_id, "completed", None, finished)?;
+                self.events.push_back(json!({
+                    "type":"mcp.tool.completed",
+                    "operationId":operation_id,
+                    "requestId":feature_request_id,
+                    "capabilityRequestId":broker_request_id,
+                    "serverId":server_id,
+                    "toolName":tool_name,
+                    "toolCallId":tool_call_id,
+                    "result":result,
+                }));
+                self.finish_operation(operation_id);
+                Ok(())
+            }
+            Ok(McpToolExecutionBackendResult::OutcomeUnknown { message }) => {
+                self.capability_broker.settle(
+                    &broker_request_id,
+                    "outcome_unknown",
+                    Some(message.clone()),
+                    finished,
+                )?;
+                self.events.push_back(json!({
+                    "type":"mcp.tool.outcome-unknown",
+                    "operationId":operation_id,
+                    "requestId":feature_request_id,
+                    "capabilityRequestId":broker_request_id,
+                    "serverId":server_id,
+                    "toolName":tool_name,
+                    "toolCallId":tool_call_id,
+                    "message":message,
+                    "retrySafe":false,
+                }));
+                self.finish_operation(operation_id);
+                Ok(())
+            }
+            Err(error) => {
+                self.capability_broker.settle(
+                    &broker_request_id,
+                    "failed",
+                    Some(format!(
+                        "MCP execution failed before a backend tool result was accepted: {error}"
+                    )),
+                    finished,
+                )?;
+                Err(error)
+            }
+        }
+    }
+
     fn feature_execute(&mut self, params: &Value) -> Result<Value, String> {
         let command = params.get("command").and_then(Value::as_object).ok_or("feature.execute requires command")?;
         let command = Value::Object(command.clone());
@@ -5684,6 +5846,14 @@ impl AndroidJsonHost {
             }
             "miniapp.open" | "session.clear" => {
                 self.finish_operation(&operation_id);
+            }
+            "mcp.routed.execute" => {
+                if let Err(error) =
+                    self.mcp_routed_execute(&command, &operation_id, request_id)
+                {
+                    self.active_operations.remove(&operation_id);
+                    return Err(error);
+                }
             }
             "capability.request" => {
                 let capability = required_string(&command, "capability")?;
