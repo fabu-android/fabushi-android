@@ -95,6 +95,25 @@ internal object RemoteComputerDataPlanePolicy {
             .put("metaState", metaState)
             .put("repeatCount", repeatCount)
     }
+
+    fun clipboardEnvelope(
+        fence: RemoteComputerDataPlaneFence,
+        text: String,
+    ): JSONObject {
+        require(text.isNotEmpty()) { "Remote clipboard text is empty" }
+        require(text.toByteArray(StandardCharsets.UTF_8).size <= MAX_CLIPBOARD_BYTES) {
+            "Remote clipboard text is too large"
+        }
+        return JSONObject()
+            .put("v", 1)
+            .put("kind", "clipboard")
+            .put("eventId", UUID.randomUUID().toString())
+            .put("processGeneration", fence.processGeneration)
+            .put("viewportRevision", fence.viewportRevision)
+            .put("text", text)
+    }
+
+    const val MAX_CLIPBOARD_BYTES = 256 * 1024
 }
 
 /**
@@ -391,6 +410,17 @@ internal class AndroidRemoteComputerDataPlane(
                 event.buttonState,
             ),
             impactful = action == "down",
+        )
+    }
+
+    fun sendClipboardText(text: String): Boolean {
+        val active = activeFence ?: return false
+        val current = currentFence() ?: return false
+        if (!RemoteComputerDataPlanePolicy.canSendInput(active, current)) return false
+        if (text.isEmpty()) return false
+        return sendInput(
+            RemoteComputerDataPlanePolicy.clipboardEnvelope(current, text),
+            impactful = true,
         )
     }
 
