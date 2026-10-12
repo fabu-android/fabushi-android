@@ -38,7 +38,7 @@ use crate::mcp_auth::{
     SandPrivacyMode as BackendSandPrivacyMode,
 };
 use crate::extensions::telemetry::product_events::{
-    agent_load_event, agents_unreachable_event, event_loop_pressure_event,
+    access_blocked_event, agent_load_event, agents_unreachable_event, event_loop_pressure_event,
     StructuredTelemetryEvent, TelemetryLevel,
 };
 use crate::extensions::teach_recording::{DurableTeachRecordingOwner, TeachRecordingPhase};
@@ -1577,6 +1577,18 @@ impl AndroidJsonHost {
         Ok(json!({"recorded":true}))
     }
 
+    fn access_blocked_telemetry(&mut self, params: &Value) -> Result<Value, String> {
+        let edge = required_string(params, "edge")?;
+        let cause = required_string(params, "cause")?;
+        let access_reason = required_string(params, "accessReason")?;
+        let ms_blocked = params.get("msBlocked").and_then(Value::as_f64);
+        let event = access_blocked_event(edge, cause, access_reason, ms_blocked)?;
+        self.account_telemetry.report_access_blocked(
+            edge, cause, access_reason, ms_blocked.map(|value| value.round().max(0.0) as u64),
+        )?;
+        self.record_product_telemetry("sand.access_blocked", event)
+    }
+
     fn agent_load_telemetry(&mut self, params: &Value) -> Result<Value, String> {
         let duration_ms = params
             .get("durationMs")
@@ -1812,15 +1824,7 @@ impl AndroidJsonHost {
                     .report_session(SessionReport::ProtectedStoreUnavailable);
                 Ok(json!({"recorded":true}))
             },
-            "feature.account.telemetry.accessBlocked" => {
-                let edge = required_string(params, "edge")?;
-                let cause = required_string(params, "cause")?;
-                let access_reason = required_string(params, "accessReason")?;
-                let ms_blocked = params.get("msBlocked").and_then(Value::as_u64);
-                self.account_telemetry
-                    .report_access_blocked(edge, cause, access_reason, ms_blocked)?;
-                Ok(json!({"recorded":true}))
-            },
+            "feature.account.telemetry.accessBlocked" => self.access_blocked_telemetry(params),
             "feature.telemetry.agentLoad" => self.agent_load_telemetry(params),
             "feature.telemetry.agentsUnreachable" => self.agents_unreachable_telemetry(params),
             "feature.telemetry.eventLoopPressure" => self.event_loop_pressure_telemetry(params),
@@ -19961,5 +19965,22 @@ mod structured_log_spill_runtime_tests {
         assert_eq!(record.metadata["area"], "android-host-jni");
         assert_eq!(record.metadata["leg"], "feature.account.profileUpdate");
         assert_eq!(record.metadata["error_class"], "Error");
+    }
+}
+
+#[cfg(test)]
+mod access_blocked_durable_dispatch_tests {
+    use super::*;
+    use crate::android_structured_log_spill::{FileAndroidStructuredLogSpill, SpillLoad};
+    #[test]
+    fn access_blocked_persists_bounded_product_event() {
+        let root = tempfile::tempdir().unwrap();
+        let mut host = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+        host.dispatch("feature.account.telemetry.accessBlocked", &json!({"edge":"entered","cause":"seat_revoked","accessReason":"teamAccessRequired","msBlocked":u64::MAX})).unwrap();
+        let state = match FileAndroidStructuredLogSpill::new(root.path().join("android-structured-log-spill.v1.json")).load("logged-out", now_ms()).unwrap() { SpillLoad::Loaded(state) => state, other => panic!("expected spill, got {other:?}") };
+        let record = state.checkpoint.records.iter().find(|record| record.message == "sand.access_blocked").unwrap();
+        assert_eq!(record.level, "warn");
+        assert_eq!(record.metadata["ms_blocked"], (7_u64 * 24 * 60 * 60 * 1_000).to_string());
+        assert!(host.dispatch("feature.account.telemetry.accessBlocked", &json!({"edge":"entered","cause":"secret free text","accessReason":"none"})).is_err());
     }
 }

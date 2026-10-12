@@ -52,6 +52,7 @@ pub const ANALYTICS_SUBMIT_LOGS_PATH: &str =
 pub const ACCOUNT_TELEMETRY_SUBMIT_TIMEOUT_MS: u64 = 15_000;
 pub const DESKTOP_SESSION_EVENT: &str = "sand.desktop.session";
 pub const DESKTOP_SIGNIN_EVENT: &str = "sand.desktop.signin";
+pub const ACCESS_BLOCKED_EVENT: &str = "sand.access_blocked";
 pub const SAND_LOG_KEY: &str = "sand";
 pub const DASHBOARD_GET_CURRENT_PERIOD_USAGE_PATH: &str =
     "/aiserver.v1.DashboardService/GetCurrentPeriodUsage";
@@ -2337,6 +2338,8 @@ fn encode_account_telemetry_submit_logs_request(
             ("warn", "session") => (3_u64, DESKTOP_SESSION_EVENT),
             ("info", "signin") => (1_u64, DESKTOP_SIGNIN_EVENT),
             ("warn", "signin") => (3_u64, DESKTOP_SIGNIN_EVENT),
+            ("info", "access-blocked") => (1_u64, ACCESS_BLOCKED_EVENT),
+            ("warn", "access-blocked") => (3_u64, ACCESS_BLOCKED_EVENT),
             (level, stream) => {
                 return Err(format!(
                     "unsupported account telemetry projection level={level} stream={stream}"
@@ -3408,5 +3411,18 @@ mod tests {
         );
         let error = provider.credentials().unwrap_err();
         assert!(error.contains("credential is unavailable"));
+    }
+}
+
+#[cfg(test)]
+mod access_blocked_submit_logs_tests {
+    use super::*;
+    #[test]
+    fn access_blocked_projection_encodes_for_analytics_submit_logs() {
+        let projection = AccountTelemetryProjection { stream:"access-blocked".into(), level:"warn".into(), metadata:json!({"edge":"entered","cause":"seat_revoked","access_reason":"teamAccessRequired","ms_blocked":"42"}) };
+        let request = encode_account_telemetry_submit_logs_request(&[projection], "machine-1", "0.18.0", 1_728_000_000_000).unwrap();
+        let logs = repeated_message_fields(&request, 1).unwrap();
+        assert_eq!(decode_optional_varint_field(logs[0], 1).unwrap(), Some(3));
+        assert_eq!(string_fields(logs[0], 2).unwrap(), vec![ACCESS_BLOCKED_EVENT.to_string()]);
     }
 }
