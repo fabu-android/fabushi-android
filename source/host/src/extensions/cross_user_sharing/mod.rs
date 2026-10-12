@@ -8,3 +8,4 @@ pub mod xuser_departure_obligations;
 pub mod xuser_sharing_environment;
 
 pub mod xuser_entry_publisher;
+pub mod xuser_remote_turn_admission;
