@@ -10,6 +10,9 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import com.ombhrum.fabushi.androidmain.deeplink.AndroidDeepLinkController
 import com.ombhrum.fabushi.androidpreload.deeplink.AndroidDeepLink
 import com.ombhrum.fabushi.androidpreload.deeplink.AndroidPresentationDeepLink
@@ -26,43 +29,51 @@ class MainActivity : ComponentActivity() {
     internal val globalKeyboardShortcutController = GlobalKeyboardShortcutController()
     private val deepLinks = MutableSharedFlow<AndroidPresentationDeepLink>(replay = 1, extraBufferCapacity = 31)
     private lateinit var runtimePort: AndroidPresentationRuntimePort
+    private var runtimeReady = false
+    private var activityStarted = false
+    private var startupFailure by mutableStateOf<FabushiRootFailure?>(null)
     private val deepLinkController = AndroidDeepLinkController(
         dispatch = ::dispatchDeepLink,
     )
     private val updateModel: AndroidUpdateViewModel by viewModels()
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        runtimePort = (application as FabushiApplication).ensurePresentationRuntime(intent)
+        initializePresentationRuntime()
         enableEdgeToEdge()
         setContent {
-            FabushiApplicationRoot(
-                activity = this,
-                keyboardShortcutController = globalKeyboardShortcutController,
-                deepLinks = deepLinks,
-                updateModel = updateModel,
-                runtimePort = runtimePort,
-            )
+            val failure = startupFailure
+            when {
+                failure != null -> FabushiRootErrorSurface(failure = failure, onRetry = ::retryPresentationRuntime)
+                runtimeReady -> FabushiApplicationRoot(
+                    activity = this,
+                    keyboardShortcutController = globalKeyboardShortcutController,
+                    deepLinks = deepLinks,
+                    updateModel = updateModel,
+                    runtimePort = runtimePort,
+                )
+            }
         }
-        deepLinkController.markReady()
-        intent?.data?.let(::enqueueDeepLink)
+        if (runtimeReady) markPresentationRuntimeReady()
     }
 
     override fun onStart() {
         super.onStart()
-        (application as FabushiApplication).requirePresentationRuntime().apply {
-            attachInteractiveActivity(this@MainActivity)
-            setForeground(true)
+        activityStarted = true
+        if (runtimeReady) {
+            runtimePort.attachInteractiveActivity(this)
+            runtimePort.setForeground(true)
+            updateModel.setForeground(true)
+            ensureNotificationPermission()
         }
-        updateModel.setForeground(true)
-        ensureNotificationPermission()
     }
 
     override fun onStop() {
-        (application as FabushiApplication).requirePresentationRuntime().apply {
-            setForeground(false)
-            detachInteractiveActivity(this@MainActivity)
+        activityStarted = false
+        if (runtimeReady) {
+            runtimePort.setForeground(false)
+            runtimePort.detachInteractiveActivity(this)
+            updateModel.setForeground(false)
         }
-        updateModel.setForeground(false)
         super.onStop()
     }
 
@@ -100,10 +111,44 @@ class MainActivity : ComponentActivity() {
         (application as FabushiApplication).requirePresentationRuntime().appAgentSurface
 
     private fun dispatchDeepLink(link: AndroidDeepLink) {
-        if (runtimePort.handlePlatformDeepLink(link)) return
+        if (runtimeReady && runtimePort.handlePlatformDeepLink(link)) return
         if (link is AndroidPresentationDeepLink) {
             deepLinks.tryEmit(link)
         }
+    }
+
+
+    private fun initializePresentationRuntime(): Boolean =
+        runCatching { (application as FabushiApplication).ensurePresentationRuntime(intent) }
+            .fold(
+                onSuccess = { runtime ->
+                    runtimePort = runtime
+                    runtimeReady = true
+                    startupFailure = null
+                    true
+                },
+                onFailure = { error ->
+                    runtimeReady = false
+                    deepLinkController.markNotReady()
+                    startupFailure = projectFabushiRootFailure(error)
+                    false
+                },
+            )
+
+    private fun retryPresentationRuntime() {
+        if (!initializePresentationRuntime()) return
+        markPresentationRuntimeReady()
+        if (activityStarted) {
+            runtimePort.attachInteractiveActivity(this)
+            runtimePort.setForeground(true)
+            updateModel.setForeground(true)
+            ensureNotificationPermission()
+        }
+    }
+
+    private fun markPresentationRuntimeReady() {
+        deepLinkController.markReady()
+        intent?.data?.let(::enqueueDeepLink)
     }
 
     private fun ensureNotificationPermission() {
