@@ -196,6 +196,54 @@ internal fun MarketplaceContent(
                 }
             }
 
+            item {
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("mcp-server-catalog"),
+                ) {
+                    Column(
+                        modifier = Modifier.padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Text("连接器", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                        Text(
+                            "账户范围的 MCP server catalog 由 Rust Host 投影；此处仅显示连接状态元数据，不暴露凭据。",
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                        when {
+                            state.mcpServersBusy -> CircularProgressIndicator(modifier = Modifier.height(20.dp))
+                            state.mcpServersError != null -> Text(
+                                "连接器目录不可用：${state.mcpServersError}",
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                            state.mcpServers.isEmpty() -> Text(
+                                "当前账户没有已启用连接器。",
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                            else -> state.mcpServers.forEach { server ->
+                                Column(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .testTag("mcp-server-${server.id}"),
+                                    verticalArrangement = Arrangement.spacedBy(2.dp),
+                                ) {
+                                    Text(server.name, fontWeight = FontWeight.Medium)
+                                    Text(
+                                        buildString {
+                                            append(server.transport.uppercase())
+                                            server.url?.let { append(" · "); append(it) }
+                                            if (server.disabledByTeamAdminPolicy) append(" · 受团队策略限制")
+                                        },
+                                        style = MaterialTheme.typography.labelSmall,
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
             if (state.plugins.isEmpty() && !state.loading) {
                 item { Text("没有匹配的 Android 插件。", modifier = Modifier.padding(16.dp)) }
             }
