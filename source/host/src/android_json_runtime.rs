@@ -11330,3 +11330,42 @@ mod auto_review_settings_dispatch_tests {
         assert_eq!(restored["instructions"]["blockInstructions"], json!(["delete files"]));
     }
 }
+
+
+#[cfg(test)]
+mod structured_log_spill_runtime_tests {
+    use super::*;
+    use crate::android_structured_log_spill::{
+        FileAndroidStructuredLogSpill, SpillLoad,
+    };
+
+    #[test]
+    fn sanitized_edge_failure_is_durable_without_raw_error_detail() {
+        let root = tempfile::tempdir().unwrap();
+        let spill_path = root.path().join("android-structured-log-spill.v1.json");
+        let mut host = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+        host.report_edge_failure(
+            "android-host-jni",
+            "feature.account.profileUpdate",
+            "HostError secret-token-must-not-survive",
+        );
+        drop(host);
+
+        let raw = std::fs::read_to_string(&spill_path).unwrap();
+        assert!(!raw.contains("secret-token-must-not-survive"));
+
+        let loaded = FileAndroidStructuredLogSpill::new(&spill_path)
+            .load("logged-out", now_ms())
+            .unwrap();
+        let state = match loaded {
+            SpillLoad::Loaded(state) => state,
+            other => panic!("expected durable structured-log spill, got {other:?}"),
+        };
+        assert_eq!(state.checkpoint.records.len(), 1);
+        let record = &state.checkpoint.records[0];
+        assert_eq!(record.message, "sand.desktop.edge_failed");
+        assert_eq!(record.metadata["area"], "android-host-jni");
+        assert_eq!(record.metadata["leg"], "feature.account.profileUpdate");
+        assert_eq!(record.metadata["error_class"], "Error");
+    }
+}
