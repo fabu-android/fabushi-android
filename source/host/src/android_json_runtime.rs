@@ -2236,6 +2236,36 @@ impl AndroidJsonHost {
         Ok(())
     }
 
+    fn prepare_account_transition_cleanup(
+        &mut self,
+        previous_fence: &str,
+        reason: &str,
+    ) -> Result<(), String> {
+        self.fence_turns_for_account_change(previous_fence, reason)?;
+
+        let teach_identity = self
+            .teach_recording
+            .lock()
+            .map_err(|_| "Teach Recording owner lock poisoned".to_string())?
+            .snapshot()
+            .clone();
+        if teach_identity.phase != TeachRecordingPhase::Idle
+            && teach_identity.account_fence.as_deref() == Some(previous_fence)
+        {
+            self.teach_recording
+                .lock()
+                .map_err(|_| "Teach Recording owner lock poisoned".to_string())?
+                .fence_account_switch(previous_fence, teach_identity.account_epoch)?;
+        }
+
+        // Prepared variable writes may contain secret values. Even though commit is account-fenced,
+        // the old account's uncommitted secret material must not survive the transition in memory.
+        self.pending_plugin_variable_writes.clear();
+        self.cancel_mcp_auth_watches_for_account_change(reason)?;
+        Ok(())
+    }
+
+
     fn agent_roster_mutation(&mut self, params: &Value) -> Result<Value, String> {
         let operation_id = required_string(params, "operationId")?;
         let expected_account_fence = required_string(params, "accountFence")?;
@@ -2748,24 +2778,11 @@ impl AndroidJsonHost {
     fn account_logout(&mut self) -> Result<Value, String> {
         let previous_fence = self.current_turn_account_fence().ok();
         if let Some(previous_fence) = previous_fence.as_deref() {
-            self.fence_turns_for_account_change(previous_fence, "account-logout")?;
-            let teach_identity = self
-                .teach_recording
-                .lock()
-                .map_err(|_| "Teach Recording owner lock poisoned".to_string())?
-                .snapshot()
-                .clone();
-            if teach_identity.phase != TeachRecordingPhase::Idle
-                && teach_identity.account_fence.as_deref() == Some(previous_fence)
-            {
-                self.teach_recording
-                    .lock()
-                    .map_err(|_| "Teach Recording owner lock poisoned".to_string())?
-                    .fence_account_switch(previous_fence, teach_identity.account_epoch)?;
-            }
+            self.prepare_account_transition_cleanup(previous_fence, "account-logout")?;
+        } else {
+            self.pending_plugin_variable_writes.clear();
+            self.cancel_mcp_auth_watches_for_account_change("account-logout")?;
         }
-        self.pending_plugin_variable_writes.clear();
-        self.cancel_mcp_auth_watches_for_account_change("account-logout")?;
         *self
             .live_account_fence
             .lock()
@@ -2916,9 +2933,8 @@ impl AndroidJsonHost {
             && previous_fence != current_fence
         {
             if let Some(previous_fence) = previous_fence.as_deref() {
-                self.fence_turns_for_account_change(previous_fence, "account-switch")?;
+                self.prepare_account_transition_cleanup(previous_fence, "account-switch")?;
             }
-            self.cancel_mcp_auth_watches_for_account_change("account-switch")?;
         }
         Ok(with_account_session_mutation(result, mutation))
     }
@@ -3505,9 +3521,8 @@ impl AndroidJsonHost {
             && previous_fence != current_fence
         {
             if let Some(previous_fence) = previous_fence.as_deref() {
-                self.fence_turns_for_account_change(previous_fence, "account-switch")?;
+                self.prepare_account_transition_cleanup(previous_fence, "account-switch")?;
             }
-            self.cancel_mcp_auth_watches_for_account_change("account-switch")?;
         }
         Ok(with_account_session_mutation(result, mutation))
     }
@@ -6976,6 +6991,46 @@ mod tests {
 
         host.logged_in = false;
         assert!(host.dispatch("feature.messaging.execute", &valid).is_err());
+    }
+
+    #[test]
+    fn account_transition_cleanup_drops_old_account_secrets_and_fences_teach_recording() {
+        let root = tempfile::tempdir().unwrap();
+        let mut host = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+        let fence = host.current_turn_account_fence().unwrap();
+
+        let prepared = host
+            .plugin_variable_prepare(&json!({
+                "pluginId":"plugin-a",
+                "schema":{"fields":[{"key":"token","type":"string","secret":true}]},
+                "values":{"token":"old-account-secret"},
+                "teamConfigured":false
+            }))
+            .unwrap();
+        let write_id = prepared["writeId"].as_str().unwrap().to_string();
+        assert_eq!(host.pending_plugin_variable_writes.len(), 1);
+
+        {
+            let mut owner = host.teach_recording.lock().unwrap();
+            owner
+                .begin_start(&fence, 7, "agent-a", "request-a", "operation-a")
+                .unwrap();
+            owner
+                .mark_recording(&fence, 7, "operation-a", 11)
+                .unwrap();
+        }
+
+        host.prepare_account_transition_cleanup(&fence, "account-switch")
+            .unwrap();
+
+        assert!(host.pending_plugin_variable_writes.is_empty());
+        assert!(host
+            .plugin_variable_commit(&json!({"writeId":write_id}))
+            .unwrap_err()
+            .contains("stale, cancelled, or already committed"));
+        let teach = host.teach_recording.lock().unwrap().snapshot().clone();
+        assert_eq!(teach.phase, TeachRecordingPhase::OutcomeUnknown);
+        assert_eq!(teach.account_fence.as_deref(), Some(fence.as_str()));
     }
 
     #[test]
