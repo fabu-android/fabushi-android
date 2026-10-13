@@ -3078,6 +3078,7 @@ impl AndroidJsonHost {
             "feature.agent.upgradeQuiesce" => self.agent_upgrade_quiesce(params),
             "feature.call.create" => self.human_call_create(params),
             "feature.call.list" => self.human_call_list(params),
+            "feature.call.iceServers" => self.human_call_ice_servers(),
             "feature.call.lease" => self.human_call_lease(params),
             "feature.call.transition" => self.human_call_transition(params),
             "feature.call.media.update" => self.human_call_media_update(params),
@@ -5528,6 +5529,25 @@ impl AndroidJsonHost {
             limit,
         ))
         .map_err(|error| error.to_string())
+    }
+
+    fn human_call_ice_servers(&mut self) -> Result<Value, String> {
+        if self.mode == AndroidHostMode::Test {
+            return Err(
+                "Human call ICE credentials require the production account transport".into(),
+            );
+        }
+        let account_fence = self.current_turn_account_fence()?;
+        let (response, mutation) = self.account.authenticated_device_api_request(
+            "GET",
+            "/api/social/calls/ice",
+            None,
+        )?;
+        let normalized = normalize_human_call_ice_envelope(&response)?;
+        if self.current_turn_account_fence()? != account_fence {
+            return Err("Human call ICE response became stale after the account changed".into());
+        }
+        Ok(with_account_session_mutation(normalized, mutation))
     }
 
     fn human_call_lease(&mut self, params: &Value) -> Result<Value, String> {
@@ -11748,6 +11768,79 @@ fn human_remote_messages_path(
     Ok(path)
 }
 
+fn valid_human_call_ice_urls(value: &Value) -> bool {
+    let valid = |url: &str| {
+        let trimmed = url.trim();
+        !trimmed.is_empty()
+            && trimmed.len() <= 1024
+            && !trimmed.chars().any(char::is_whitespace)
+            && (trimmed.starts_with("stun:")
+                || trimmed.starts_with("turn:")
+                || trimmed.starts_with("turns:"))
+    };
+    match value {
+        Value::String(url) => valid(url),
+        Value::Array(urls) => {
+            !urls.is_empty()
+                && urls.len() <= 16
+                && urls.iter().all(|url| url.as_str().is_some_and(valid))
+        }
+        _ => false,
+    }
+}
+
+fn normalize_human_call_ice_envelope(value: &Value) -> Result<Value, String> {
+    let object = value
+        .as_object()
+        .ok_or("Fabushi Human call ICE response must be an object")?;
+    if object.get("success").and_then(Value::as_bool) != Some(true) {
+        let detail = object
+            .get("error")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .unwrap_or("backend rejected the request");
+        return Err(format!("Fabushi Human call ICE credentials were rejected: {detail}"));
+    }
+    let ttl_seconds = object
+        .get("ttlSeconds")
+        .and_then(Value::as_u64)
+        .filter(|ttl| (300..=86_400).contains(ttl))
+        .ok_or("Fabushi Human call ICE response contained an invalid TTL")?;
+    let ice_servers = object
+        .get("iceServers")
+        .and_then(Value::as_array)
+        .ok_or("Fabushi Human call ICE response omitted iceServers")?;
+    if ice_servers.is_empty() || ice_servers.len() > 16 {
+        return Err("Fabushi Human call ICE response contained an invalid server list".into());
+    }
+    for server in ice_servers {
+        let server = server
+            .as_object()
+            .ok_or("Fabushi Human call ICE response contained an invalid server")?;
+        let urls = server
+            .get("urls")
+            .ok_or("Fabushi Human call ICE response contained a server without urls")?;
+        let optional_bounded_secret = |key: &str| -> bool {
+            match server.get(key) {
+                None | Some(Value::Null) => true,
+                Some(Value::String(value)) => value.len() <= 2048,
+                Some(_) => false,
+            }
+        };
+        if !valid_human_call_ice_urls(urls)
+            || !optional_bounded_secret("username")
+            || !optional_bounded_secret("credential")
+        {
+            return Err("Fabushi Human call ICE response contained an invalid server".into());
+        }
+    }
+    Ok(json!({
+        "iceServers": ice_servers,
+        "ttlSeconds": ttl_seconds,
+    }))
+}
+
 fn validate_human_remote_envelope(value: &Value, operation: &str) -> Result<(), String> {
     let object = value
         .as_object()
@@ -12055,6 +12148,35 @@ fn encode_api_path_segment(value: &str) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn human_call_ice_projection_matches_desktop_bounds_and_fails_closed() {
+        let valid = normalize_human_call_ice_envelope(&json!({
+            "success": true,
+            "iceServers": [
+                {"urls":"stun:stun.example.test:3478"},
+                {
+                    "urls":["turn:turn.example.test:3478","turns:turn.example.test:5349"],
+                    "username":"user",
+                    "credential":"credential"
+                }
+            ],
+            "ttlSeconds": 600
+        }))
+        .unwrap();
+        assert_eq!(valid["ttlSeconds"], 600);
+        assert_eq!(valid["iceServers"].as_array().unwrap().len(), 2);
+
+        for invalid in [
+            json!({"success":true,"iceServers":[],"ttlSeconds":600}),
+            json!({"success":true,"iceServers":[{"urls":"https://not-ice.example"}],"ttlSeconds":600}),
+            json!({"success":true,"iceServers":[{"urls":"stun:ok"}],"ttlSeconds":299}),
+            json!({"success":true,"iceServers":[{"urls":"stun:ok","credential":7}],"ttlSeconds":600}),
+            json!({"success":false,"error":"denied","iceServers":[{"urls":"stun:ok"}],"ttlSeconds":600}),
+        ] {
+            assert!(normalize_human_call_ice_envelope(&invalid).is_err());
+        }
+    }
 
     #[test]
     fn mcp_approval_target_fences_server_and_tool_identity() {
