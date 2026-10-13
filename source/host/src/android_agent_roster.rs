@@ -92,6 +92,7 @@ impl Default for AndroidAgentRosterFile {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AndroidAgentRosterRecoveryOutcome {
+    RecoveredLastKnownGood,
     ResetCorruptStore,
 }
 
@@ -138,6 +139,30 @@ impl AndroidAgentRoster {
                     fs::create_dir_all(parent)?;
                 }
                 fs::rename(&path, &quarantine)?;
+
+                let backup = recovery_backup_path(&path);
+                if let Ok(raw_backup) = fs::read_to_string(&backup) {
+                    if let Ok(mut recovered) =
+                        serde_json::from_str::<AndroidAgentRosterFile>(&raw_backup)
+                    {
+                        if recovered.schema_version == ROSTER_SCHEMA_VERSION {
+                            normalize_state(&mut recovered);
+                            persist(&path, &recovered)?;
+                            return Ok((
+                                Self {
+                                    path,
+                                    state: recovered,
+                                },
+                                Some(AndroidAgentRosterRecovery {
+                                    outcome:
+                                        AndroidAgentRosterRecoveryOutcome::RecoveredLastKnownGood,
+                                    quarantine_path: quarantine,
+                                }),
+                            ));
+                        }
+                    }
+                }
+
                 Ok((
                     Self {
                         path,
@@ -799,17 +824,19 @@ fn management_call_key(
     ))
 }
 
-fn persist(path: &Path, state: &AndroidAgentRosterFile) -> io::Result<()> {
+fn recovery_backup_path(path: &Path) -> PathBuf {
+    PathBuf::from(format!("{}.recovery-backup", path.display()))
+}
+
+fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
     let parent = path
         .parent()
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "roster path has no parent"))?;
     fs::create_dir_all(parent)?;
-    let temporary = path.with_extension(format!("json.tmp-{}", std::process::id()));
-    let bytes = serde_json::to_vec_pretty(state)
-        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+    let temporary = path.with_extension(format!("tmp-{}", std::process::id()));
     let result = (|| -> io::Result<()> {
         let mut file = fs::File::create(&temporary)?;
-        file.write_all(&bytes)?;
+        file.write_all(bytes)?;
         file.sync_all()?;
         fs::rename(&temporary, path)?;
         if let Ok(directory) = fs::File::open(parent) {
@@ -821,6 +848,15 @@ fn persist(path: &Path, state: &AndroidAgentRosterFile) -> io::Result<()> {
         let _ = fs::remove_file(&temporary);
     }
     result
+}
+
+fn persist(path: &Path, state: &AndroidAgentRosterFile) -> io::Result<()> {
+    let bytes = serde_json::to_vec_pretty(state)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+    // The backup is a recovery replica, never a second canonical owner. Commit the complete next
+    // state there first so a later canonical-file corruption can salvage the latest settled roster.
+    write_atomic(&recovery_backup_path(path), &bytes)?;
+    write_atomic(path, &bytes)
 }
 
 fn normalize_state(state: &mut AndroidAgentRosterFile) {
@@ -1077,7 +1113,7 @@ mod tests {
     }
 
     #[test]
-    fn corrupt_roster_is_quarantined_and_reports_reset_recovery() {
+    fn corrupt_roster_is_quarantined_and_reports_reset_recovery_without_backup() {
         let path = temp_path("corrupt-recovery");
         fs::write(&path, b"{not-json").unwrap();
 
@@ -1091,11 +1127,39 @@ mod tests {
             AndroidAgentRosterRecoveryOutcome::ResetCorruptStore
         );
         assert!(recovery.quarantine_path.exists());
-        assert_eq!(
-            fs::read(&recovery.quarantine_path).unwrap(),
-            b"{not-json"
-        );
+        assert_eq!(fs::read(&recovery.quarantine_path).unwrap(), b"{not-json");
 
+        let _ = fs::remove_file(recovery.quarantine_path);
+    }
+
+    #[test]
+    fn corrupt_roster_recovers_latest_settled_backup() {
+        let path = temp_path("backup-recovery");
+        let agent_id = {
+            let mut roster = AndroidAgentRoster::open(&path).unwrap();
+            let created = roster.create("Recover Me", "durable").unwrap();
+            roster.set_unread(&created.id, true).unwrap();
+            created.id
+        };
+        let backup = recovery_backup_path(&path);
+        assert!(backup.exists(), "settled roster writes must refresh the recovery replica");
+
+        fs::write(&path, b"{corrupt-canonical").unwrap();
+        let (roster, recovery) = AndroidAgentRoster::open_recovering(&path).unwrap();
+        let recovered = roster.get(&agent_id).expect("latest settled agent must be salvaged");
+        assert!(recovered.has_unread);
+
+        let recovery = recovery.expect("corrupt canonical roster must report recovery");
+        assert_eq!(
+            recovery.outcome,
+            AndroidAgentRosterRecoveryOutcome::RecoveredLastKnownGood
+        );
+        assert!(recovery.quarantine_path.exists());
+        assert!(path.exists(), "recovery must reinstall a canonical roster");
+        assert!(AndroidAgentRoster::open(&path).unwrap().get(&agent_id).is_some());
+
+        let _ = fs::remove_file(path);
+        let _ = fs::remove_file(backup);
         let _ = fs::remove_file(recovery.quarantine_path);
     }
 
