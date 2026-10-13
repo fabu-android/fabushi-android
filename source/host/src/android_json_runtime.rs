@@ -3151,6 +3151,7 @@ impl AndroidJsonHost {
             "runtime.cancel" => self.runtime_cancel(params),
             "feature.messaging.access.issue" => self.messaging_access_issue(params),
             "feature.messaging.blob.read" => self.messaging_blob_read(params),
+            "feature.messaging.forwardRecipients" => self.messaging_forward_recipients(params),
             "feature.messaging.execute" => self.messaging_execute(params),
             "feature.humanRemote.contacts" => self.human_remote_contacts(),
             "feature.humanRemote.messages" => self.human_remote_messages(params),
@@ -3749,6 +3750,45 @@ impl AndroidJsonHost {
             .authenticated_device_api_request("GET", &path, None)?;
         validate_human_remote_envelope(&result, "message sync")?;
         Ok(with_account_session_mutation(result, mutation))
+    }
+
+    fn messaging_forward_recipients(&mut self, params: &Value) -> Result<Value, String> {
+        let (actor_id, mutation) = self.current_messaging_identity()?;
+        let account_fence = self.current_turn_account_fence()?;
+        let device_id = required_string(params, "deviceId")?;
+        let session_id = required_string(params, "sessionId")?;
+        self.messaging_access
+            .as_ref()
+            .ok_or("messaging access grant has not been issued")?
+            .authorize(
+                &account_fence,
+                &actor_id,
+                Some(device_id),
+                Some(session_id),
+                "messaging",
+            )?;
+        let source_conversation_id = required_string(params, "sourceConversationId")?;
+        let source_message_id = required_string(params, "sourceMessageId")?;
+        let query = params.get("query").and_then(Value::as_str).unwrap_or_default();
+        let requested_limit = params.get("limit").and_then(Value::as_u64).unwrap_or(50);
+        let limit = usize::try_from(requested_limit)
+            .map_err(|_| "recipient search limit is out of range".to_string())?;
+        let recipients = self
+            .messaging
+            .lock()
+            .map_err(|_| "canonical Android messaging owner lock poisoned".to_string())?
+            .search_forward_recipients(
+                &actor_id,
+                source_conversation_id,
+                source_message_id,
+                query,
+                limit,
+                i64::try_from(now_ms()).unwrap_or(i64::MAX),
+            )?;
+        Ok(with_account_session_mutation(
+            json!({"recipients":recipients}),
+            mutation,
+        ))
     }
 
     fn messaging_execute(&mut self, params: &Value) -> Result<Value, String> {
