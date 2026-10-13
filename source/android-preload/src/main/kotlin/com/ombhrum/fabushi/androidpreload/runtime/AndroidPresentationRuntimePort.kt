@@ -3,6 +3,7 @@ package com.ombhrum.fabushi.androidpreload.runtime
 import androidx.activity.ComponentActivity
 import com.ombhrum.fabushi.FabushiAppAgentSurface
 import com.ombhrum.fabushi.androidpreload.deeplink.AndroidDeepLink
+import com.ombhrum.fabushi.androidpreload.media.AndroidHumanCallMediaPermissionProjection
 import org.json.JSONArray
 import org.json.JSONObject
 
