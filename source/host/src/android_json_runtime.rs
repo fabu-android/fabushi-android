@@ -8315,6 +8315,24 @@ impl AndroidJsonHost {
             agent_id,
             if trigger.is_empty() { "returned" } else { trigger },
         );
+
+        // The durable turn journal is the idempotency authority. If a prior process queued this
+        // exact continuation but died before acknowledging the handoff obligation, never queue a
+        // second model turn: the original outcome is already owned by the journal.
+        if self
+            .turn_journal
+            .lock()
+            .map_err(|_| "turn journal lock poisoned".to_string())?
+            .record(&request_id)
+            .is_some()
+        {
+            self.box_handoff
+                .lock()
+                .map_err(|_| "Android box handoff lock poisoned".to_string())?
+                .acknowledge_resume(account_fence, agent_id, handoff_request_id)?;
+            return Ok(None);
+        }
+
         let operation_id = self.next_operation_id(&request_id);
         self.active_operations.insert(operation_id.clone());
         let (bearer_token, session_mutation) = match self.bearer_token_for_turn() {
@@ -8330,6 +8348,8 @@ impl AndroidJsonHost {
             "agentId":agent_id,
             "text":Self::box_handoff_resume_prompt(trigger),
             "hidden":true,
+            "appendUserMessage":false,
+            "awaitTurn":false,
             "requestSource":"handoff-resume",
             "skipAckObligation":true,
             "directAddressedAcceptance":true,
@@ -8341,10 +8361,40 @@ impl AndroidJsonHost {
             bearer_token,
         ) {
             self.active_operations.remove(&operation_id);
+            self.agent_turn_interruptions.unregister_operation(&operation_id);
             return Err(error);
         }
-        let _ = account_fence;
+        self.box_handoff
+            .lock()
+            .map_err(|_| "Android box handoff lock poisoned".to_string())?
+            .acknowledge_resume(account_fence, agent_id, handoff_request_id)?;
         Ok(session_mutation)
+    }
+
+    fn drain_box_handoff_resume_once(&mut self) -> Result<(), String> {
+        let account_fence = match self.current_turn_account_fence() {
+            Ok(value) => value,
+            Err(_) => return Ok(()),
+        };
+        let pending = self
+            .box_handoff
+            .lock()
+            .map_err(|_| "Android box handoff lock poisoned".to_string())?
+            .pending_resumes_for_account(&account_fence)?;
+        let Some(ended) = pending.into_iter().next() else {
+            return Ok(());
+        };
+
+        // A transient credential/provider failure must not retire the durable obligation. The
+        // next receive/cold-start cycle retries it, while queue_box_handoff_resume_turn fences
+        // already-journaled continuations from duplicate execution.
+        let _ = self.queue_box_handoff_resume_turn(
+            &account_fence,
+            &ended.agent_id,
+            &ended.request_id,
+            &ended.trigger,
+        );
+        Ok(())
     }
 
     fn agent_handoff_status(&self, params: &Value) -> Result<Value, String> {
@@ -13231,6 +13281,7 @@ impl AndroidJsonHost {
 
     fn feature_receive(&mut self) -> Result<Value, String> {
         self.drain_mcp_auth_owner_events()?;
+        self.drain_box_handoff_resume_once()?;
         self.drain_agent_wake_once()?;
         self.drain_visible_ack_redrive_once()?;
         self.drain_created_agent_kickstart_nudge_once()?;
@@ -20708,6 +20759,24 @@ mod android_box_handoff_runtime_tests {
                 )
                 .unwrap();
             assert_eq!(ended["ended"], true);
+            assert_eq!(ended["resumeQueued"], true);
+            assert!(reopened
+                .box_handoff
+                .lock()
+                .unwrap()
+                .pending_resumes_for_account("session:test:android")
+                .unwrap()
+                .is_empty());
+            let resume_request_id =
+                format!("box-handoff-resume:{request_id}:agent-handoff:user");
+            let resume = reopened
+                .turn_journal
+                .lock()
+                .unwrap()
+                .record(&resume_request_id)
+                .cloned()
+                .expect("handoff continuation must be durably queued before the obligation retires");
+            assert_eq!(resume.request_source.as_deref(), Some("handoff-resume"));
         }
 
         let mut after_end = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
@@ -20720,6 +20789,63 @@ mod android_box_handoff_runtime_tests {
                 .unwrap()
                 .is_null(),
             "terminal handoff must not resurrect after process reopen",
+        );
+    }
+
+    #[test]
+    fn journaled_handoff_resume_recovery_acknowledges_without_duplicate_turn() {
+        let root = tempfile::tempdir().unwrap();
+        let mut host = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+        let account_fence = host.current_turn_account_fence().unwrap();
+        let started = host
+            .box_handoff
+            .lock()
+            .unwrap()
+            .start(&account_fence, "agent-replay", "Take over", now_ms())
+            .unwrap();
+        let AndroidHandoffStart::Started(started) = started else { panic!() };
+        let ended = host
+            .box_handoff
+            .lock()
+            .unwrap()
+            .end(
+                &account_fence,
+                "agent-replay",
+                &started.request_id,
+                Some("completed"),
+                Some("viewer-closed"),
+            )
+            .unwrap()
+            .unwrap();
+        let request_id = format!(
+            "box-handoff-resume:{}:{}:{}",
+            ended.request_id, ended.agent_id, ended.trigger
+        );
+        let generation = host
+            .turn_journal
+            .lock()
+            .unwrap()
+            .begin_with_context(
+                &request_id,
+                "already-queued-operation",
+                &account_fence,
+                Some("handoff-resume"),
+                Some("agent-replay"),
+                now_ms(),
+            )
+            .unwrap();
+        host.drain_box_handoff_resume_once().unwrap();
+        assert!(host
+            .box_handoff
+            .lock()
+            .unwrap()
+            .pending_resumes_for_account(&account_fence)
+            .unwrap()
+            .is_empty());
+        assert_eq!(
+            host.turn_journal.lock().unwrap().record(&request_id).unwrap().generation,
+            generation,
+            "recovery must acknowledge the existing durable continuation instead of queuing another"
         );
     }
 
