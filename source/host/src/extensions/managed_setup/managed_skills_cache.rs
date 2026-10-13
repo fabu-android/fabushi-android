@@ -1,6 +1,6 @@
 use std::collections::BTreeSet;
 use std::fs;
-use std::io;
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -136,15 +136,23 @@ fn create_agent_readable_dir(path: &Path) -> io::Result<()> {
 
 fn atomic_write_agent_readable(path: &Path, bytes: &[u8]) -> io::Result<()> {
     let temp = PathBuf::from(format!("{}.tmp", path.display()));
-    fs::write(&temp, bytes)?;
-    set_mode(&temp, AGENT_READABLE_SKILL_FILE_MODE)?;
-    match fs::rename(&temp, path) {
-        Ok(()) => Ok(()),
-        Err(error) => {
-            let _ = fs::remove_file(&temp);
-            Err(error)
+    let result = (|| -> io::Result<()> {
+        let mut file = fs::File::create(&temp)?;
+        file.write_all(bytes)?;
+        set_mode(&temp, AGENT_READABLE_SKILL_FILE_MODE)?;
+        file.sync_all()?;
+        fs::rename(&temp, path)?;
+        if let Some(parent) = path.parent() {
+            // Persist the directory entry as well as file contents so process death cannot
+            // resurrect a previous managed-skill snapshot after refresh was acknowledged.
+            fs::File::open(parent)?.sync_all()?;
         }
+        Ok(())
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(&temp);
     }
+    result
 }
 
 #[cfg(unix)]
@@ -171,5 +179,11 @@ mod android_parity_tests {
         write_managed_skills_cache(root.path(), &[alpha.clone()], 20.0).unwrap();
         assert_eq!(read_managed_skills_cache(root.path()).unwrap().skills, vec![alpha]);
         assert!(!get_managed_skill_file_path(root.path(), "beta").exists());
+        assert!(
+            fs::read_dir(root.path())
+                .unwrap()
+                .all(|entry| !entry.unwrap().file_name().to_string_lossy().ends_with(".tmp")),
+            "committed managed-skill cache must not leave a temporary canonical candidate",
+        );
     }
 }
