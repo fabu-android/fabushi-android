@@ -62,6 +62,7 @@ use crate::extensions::telemetry::agent_error_telemetry::{
     agent_error_telemetry, AgentErrorReport,
 };
 use crate::extensions::telemetry::sand_error_tags::SandErrorValue;
+use crate::extensions::telemetry::host_event_bus_telemetry::host_event_bus_telemetry;
 use crate::extensions::telemetry::memory_synthesis_telemetry::memory_synthesis_service_telemetry;
 use crate::extensions::telemetry::box_recreate_decided_telemetry::box_recreate_decided_telemetry;
 use crate::extensions::telemetry::connector_auth_telemetry::{
@@ -1797,20 +1798,12 @@ impl AndroidJsonHost {
             AndroidEventLoopTelemetryRuntime::start(Arc::clone(&structured_log_spool));
         let host_event_failure_spool = Arc::clone(&structured_log_spool);
         let host_event_bus = HostEventBus::with_failure_reporter(Arc::new(move |failure| {
-            let mut metadata = BTreeMap::from([
-                ("kind".to_string(), failure.kind.to_string()),
-                ("error_class".to_string(), failure.error_class.to_string()),
-            ]);
-            if let Some(topic) = failure.topic.as_ref() {
-                metadata.insert("topic".to_string(), topic.clone());
-            }
+            let projection = host_event_bus_telemetry(failure);
+            let (Some(level), Some(event)) = (projection.level, projection.event) else {
+                return;
+            };
             if let Ok(mut spool) = host_event_failure_spool.lock() {
-                let _ = spool.record(
-                    "error",
-                    "sand.host.event_bus",
-                    metadata,
-                    now_ms(),
-                );
+                let _ = spool.record(level, event, projection.metadata, now_ms());
             }
         }));
         Self {
