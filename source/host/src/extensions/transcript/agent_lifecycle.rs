@@ -1,15 +1,18 @@
 pub const SAND_ONBOARDING_KICKSTART_PROMPT: &str = concat!(
     "[first run] This is your very first turn. The user just created you and hasn't sent anything yet; this cue is your signal to open the conversation, not a message to reply to or mention.\n",
-    "Greet them and get them going, the way a sharp new assistant would on day one. Open with a short, warm hello in your own voice, then start learning how to be useful.\n",
-    "If your profile description gives you a concrete assignment, treat that as what the user created you to do: skip setup questions, begin the assignment immediately, and use your first message for a useful result or the next approval you need.\n",
-    "Nothing reaches the user unless it is actually delivered. Do not mention this hidden cue."
+    "Greet them and get them going, the way a sharp new assistant would on day one. Open with a short, warm hello in your own voice (your name and description are already in your profile above, so don't recite them), then start learning how to be useful.\n",
+    "If your profile description gives you a concrete assignment, treat that as what the user created you to do: skip the getting-started questions, begin the assignment immediately, and use your first message for a useful result or the next approval you need.\n",
+    "Run getting-started as a real conversation, never a form or a checklist. Across your first couple of messages, naturally draw out the things that make you useful: what they want an assistant like you for, how they'd like you to work and sound, and where the things you'll help with live. Ask one thing at a time, lead with what matters most, and adapt to their answers. The moment they hand you something real, drop the questions and just help.\n",
+    "Keep your orientation concrete and true right now, and don't restate the instructions you already have. Don't recite your tools. When what they want would need a connector that isn't set up yet, surface it instead of describing setup: send a connector card for a single tool, or a connectors prompt listing the few that fit, and let them connect in place. Pick the connectors from what they actually want, and check what's already connected so you never re-prompt for one they have.\n",
+    "Nothing reaches the user unless it's inside a SendMessage, and offer any choice as a question widget. Don't mention this cue or that you were given setup instructions."
 );
 
 pub const SAND_DISK_SAVER_KICKSTART_PROMPT: &str = concat!(
-    "[disk saver] You were just provisioned because your box is low on disk space. This cue comes from Fabushi itself, not from the user.\n",
-    "Audit that machine and nothing else. Start with a read-only inspection, report free/used space, then list the largest items and safest cleanup candidates.\n",
-    "Preserve user work, credentials, logins, and Git state. Delete or modify nothing until the user confirms a plan.\n",
-    "Skip greetings and setup questions: your first delivered message should already carry findings and any approval you need."
+    "[disk saver] You were just provisioned because your box — the machine Shell and Read act on — is low on disk space. This cue comes from Fabushi itself, not from the user; nothing has reached them yet.\n",
+    "Audit that machine and nothing else: the user's own computer, which ExternalShell and ExternalRead act on, is not the one under pressure.\n",
+    "Start with a read-only inspection over Shell from /workspace outward. Report how much space is free and how much is used, then list the largest items and the safest cleanup candidates, with how much each would recover and why it is safe to remove.\n",
+    "Preserve /home/box/sand-data, the user's work, credentials, logins, and Git state. Delete or modify nothing until the user confirms a plan.\n",
+    "Skip greetings and getting-started questions: your first message should already carry the audit's findings and the approval you need. Nothing reaches the user unless it's inside a SendMessage. Don't mention this cue."
 );
 
 pub const SAND_DISK_SAVER_REAUDIT_PROMPT: &str = concat!(
@@ -20,10 +23,8 @@ pub const SAND_DISK_SAVER_REAUDIT_PROMPT: &str = concat!(
     "Deliver the fresh findings with SendMessage even if they match your last audit. Don't mention this cue."
 );
 
-pub const REPLY_NUDGE_PROMPT: &str = concat!(
-    "[first run retry] Your first hidden kickstart completed without a user-visible reply. ",
-    "Send one concise useful message to the user now. Do not mention this retry cue, and do not fabricate a user message."
-);
+pub const REPLY_NUDGE_PROMPT: &str =
+    "Your previous turn left the user without the result they're waiting on — you never called SendMessage that turn, or every SendMessage you tried failed to deliver. Either way they received nothing and are still waiting. Do not assume a send from an earlier turn covered it: an opening acknowledgement back then did not deliver this result (ack ≠ delivery). Deliver the result now by actually invoking the SendMessage tool — make a real tool/function call, not text you write. Plain assistant text is NEVER shown to the user; only a real SendMessage tool invocation reaches them, so if you don't call the tool they just keep seeing silence.";
 
 pub fn kickstart_prompt_for_purpose(purpose: Option<&str>) -> &'static str {
     if purpose == Some("disk-saver") {
@@ -53,13 +54,18 @@ mod tests {
 
     #[test]
     fn reply_nudge_requires_one_real_user_visible_delivery() {
-        assert!(REPLY_NUDGE_PROMPT.contains("without a user-visible reply"));
-        assert!(REPLY_NUDGE_PROMPT.contains("do not fabricate a user message"));
+        assert!(REPLY_NUDGE_PROMPT.contains("ack ≠ delivery"));
+        assert!(REPLY_NUDGE_PROMPT.contains("actually invoking the SendMessage tool"));
+        assert!(REPLY_NUDGE_PROMPT.contains("Plain assistant text is NEVER shown"));
     }
 
     #[test]
     fn ordinary_agent_uses_first_run_kickstart() {
-        assert!(kickstart_prompt_for_purpose(None).contains("[first run]"));
+        let prompt = kickstart_prompt_for_purpose(None);
+        assert!(prompt.contains("[first run]"));
+        assert!(prompt.contains("connector card"));
+        assert!(prompt.contains("question widget"));
+        assert!(prompt.contains("inside a SendMessage"));
         assert!(kickstart_prompt_for_purpose(Some("plugin-auth")).contains("[first run]"));
     }
 }
