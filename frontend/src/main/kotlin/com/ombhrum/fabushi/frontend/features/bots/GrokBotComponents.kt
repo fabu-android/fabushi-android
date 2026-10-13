@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
@@ -363,6 +364,9 @@ internal fun GrokBotChatAndroid(
     onCancelQueuedSend: (String) -> Unit,
     onRetryTranscriptLoad: () -> Unit,
     onLoadOlderMessages: () -> Unit,
+    onOpenTranscriptThread: (String) -> Unit,
+    onRetryTranscriptThread: () -> Unit,
+    onCloseTranscriptThread: () -> Unit,
     onRespondToWidget: (String, String) -> Unit,
     onDismissWidget: (String) -> Unit,
     onStop: () -> Unit,
@@ -380,6 +384,7 @@ internal fun GrokBotChatAndroid(
     var findQuery by remember(bot.id) { mutableStateOf("") }
     var findIndex by remember(bot.id) { mutableStateOf(-1) }
     var historyAnchor by remember(bot.id) { mutableStateOf<Pair<String, Int>?>(null) }
+    var threadRestoreRootId by remember(bot.id) { mutableStateOf<String?>(null) }
     val attachmentPicker = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenMultipleDocuments(),
     ) { uris ->
@@ -425,6 +430,17 @@ internal fun GrokBotChatAndroid(
             messageListState.scrollToItem(index, anchor.second)
         }
         historyAnchor = null
+    }
+
+    LaunchedEffect(bot.id, state.transcriptThread.isOpen, state.messages) {
+        if (state.transcriptThread.isOpen) return@LaunchedEffect
+        val rootId = threadRestoreRootId ?: return@LaunchedEffect
+        val targetIndex = state.messages.indexOfFirst { it.id == rootId }
+        if (targetIndex >= 0) {
+            if (reducedTranscriptMotion) messageListState.scrollToItem(targetIndex)
+            else messageListState.animateScrollToItem(targetIndex)
+        }
+        threadRestoreRootId = null
     }
 
     LaunchedEffect(bot.id, state.messageTargetId, state.messages) {
@@ -787,6 +803,22 @@ internal fun GrokBotChatAndroid(
                         }
                     }
                 }
+                state.transcriptThreadSummaries[entry.id]?.takeIf { it > 0 }?.let { count ->
+                    Text(
+                        if (count == 1) "View thread · 1 reply" else "View thread · $count replies",
+                        color = Color(0xFF2A92FE),
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier
+                            .padding(top = 3.dp)
+                            .clickable {
+                                threadRestoreRootId = entry.id
+                                onOpenTranscriptThread(entry.id)
+                            }
+                            .padding(horizontal = 4.dp, vertical = 4.dp)
+                            .testTag("mobile-bot-thread-open-" + entry.id),
+                    )
+                }
                 }
             }
             state.pendingApproval?.takeUnless { state.transcriptLoadError }?.let { approval ->
@@ -973,6 +1005,91 @@ internal fun GrokBotChatAndroid(
                 contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp),
             ) { Text(if (state.busy) "■" else "↑", fontSize = 19.sp, fontWeight = FontWeight.Bold) }
         }
+    }
+
+    if (state.transcriptThread.isOpen) {
+        val thread = state.transcriptThread
+        AlertDialog(
+            onDismissRequest = onCloseTranscriptThread,
+            modifier = Modifier.testTag("mobile-bot-thread-dialog"),
+            title = { Text("Thread") },
+            text = {
+                when (thread.status) {
+                    MobileTranscriptThreadStatus.LOADING -> Row(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                        Text("Loading thread…", color = GrokMobileMuted)
+                    }
+                    MobileTranscriptThreadStatus.READY -> LazyColumn(
+                        modifier = Modifier.fillMaxWidth().heightIn(max = 420.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        items(thread.messages, key = { message -> message.id }) { message ->
+                            Column(
+                                Modifier
+                                    .fillMaxWidth()
+                                    .background(Color(0xFFF6F6F7), RoundedCornerShape(10.dp))
+                                    .padding(10.dp)
+                                    .testTag("mobile-bot-thread-entry-" + message.id),
+                                verticalArrangement = Arrangement.spacedBy(4.dp),
+                            ) {
+                                Text(
+                                    if (message.role == MobileChatRole.USER) "You" else bot.name,
+                                    color = GrokMobileMuted,
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                )
+                                val body = message.text.takeIf(String::isNotBlank)
+                                    ?: message.actionTitle?.takeIf(String::isNotBlank)
+                                    ?: when (message.kind) {
+                                        MobileChatEntryKind.THINKING -> "Thinking…"
+                                        MobileChatEntryKind.ACTION -> "Agent action"
+                                        MobileChatEntryKind.TOOL_RESULT -> "Tool result"
+                                        MobileChatEntryKind.WIDGET -> "Interactive card"
+                                        else -> "Message"
+                                    }
+                                Text(body, color = GrokMobileInk, fontSize = 12.sp)
+                            }
+                        }
+                    }
+                    MobileTranscriptThreadStatus.EMPTY -> Text(
+                        "No replies in this thread.",
+                        color = GrokMobileMuted,
+                        modifier = Modifier.testTag("mobile-bot-thread-empty"),
+                    )
+                    MobileTranscriptThreadStatus.FAILED -> Column(
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Text(
+                            thread.error ?: "Thread could not be loaded.",
+                            color = Color.Red,
+                            modifier = Modifier.testTag("mobile-bot-thread-error"),
+                        )
+                        TextButton(
+                            onClick = onRetryTranscriptThread,
+                            modifier = Modifier.testTag("mobile-bot-thread-retry"),
+                        ) { Text("Retry") }
+                    }
+                    MobileTranscriptThreadStatus.UNAVAILABLE -> Text(
+                        "Thread is unavailable for this conversation.",
+                        color = GrokMobileMuted,
+                        modifier = Modifier.testTag("mobile-bot-thread-unavailable"),
+                    )
+                    MobileTranscriptThreadStatus.IDLE -> Text(
+                        "Thread is unavailable.",
+                        color = GrokMobileMuted,
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = onCloseTranscriptThread,
+                    modifier = Modifier.testTag("mobile-bot-thread-close"),
+                ) { Text("Close") }
+            },
+        )
     }
 }
 
