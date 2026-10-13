@@ -551,8 +551,8 @@ internal fun FabushiSettingsSurface(
                         } else {
                             val ceilingLabel = localToolSettings.ceiling?.wireValue ?: "none"
                             Text(
-                                "Effective: \${localToolSettings.permission.wireValue} · " +
-                                    "Preference: \${localToolSettings.preference.wireValue} · " +
+                                "Effective: ${localToolSettings.permission.wireValue} · " +
+                                    "Preference: ${localToolSettings.preference.wireValue} · " +
                                     "Managed ceiling: $ceilingLabel",
                                 modifier = Modifier.testTag("settings-local-tool-permission-summary"),
                             )
@@ -564,12 +564,12 @@ internal fun FabushiSettingsSurface(
                                         onClick = { onSetLocalToolPermission(option) },
                                         enabled = !localToolPermissionBusy && allowedByCeiling,
                                         modifier = Modifier.testTag(
-                                            "settings-local-tool-permission-\${option.wireValue}",
+                                            "settings-local-tool-permission-${option.wireValue}",
                                         ),
                                     ) {
                                         Text(
                                             if (localToolSettings.preference == option) {
-                                                "✓ \${option.wireValue}"
+                                                "✓ ${option.wireValue}"
                                             } else {
                                                 option.wireValue
                                             },
@@ -579,13 +579,13 @@ internal fun FabushiSettingsSurface(
                             }
                             if (localToolSettings.settledPendingRemoteApprovals > 0) {
                                 Text(
-                                    "Applied to \${localToolSettings.settledPendingRemoteApprovals} pending Remote request(s).",
+                                    "Applied to ${localToolSettings.settledPendingRemoteApprovals} pending Remote request(s).",
                                     modifier = Modifier.testTag("settings-local-tool-permission-settled"),
                                 )
                             }
                             localToolSettings.ceiling?.let { ceiling ->
                                 Text(
-                                    "Your organization limits this setting to \${ceiling.wireValue} or stricter.",
+                                    "Your organization limits this setting to ${ceiling.wireValue} or stricter.",
                                     modifier = Modifier.testTag("settings-local-tool-permission-ceiling"),
                                 )
                             }
