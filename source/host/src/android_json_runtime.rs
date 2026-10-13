@@ -4438,6 +4438,9 @@ impl AndroidJsonHost {
         // the old account's uncommitted secret material must not survive the transition in memory.
         self.pending_plugin_variable_writes.clear();
         self.experiments.clear_account_scope();
+        if let Some(core) = self.cross_user_core.as_ref() {
+            core.extension.fence_account_transition();
+        }
         self.cancel_mcp_auth_watches_for_account_change(reason)?;
         self.user_settings
             .lock()
