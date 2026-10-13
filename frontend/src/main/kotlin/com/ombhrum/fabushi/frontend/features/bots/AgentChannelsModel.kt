@@ -14,7 +14,7 @@ internal data class AgentChannelManifest(
     val connectGuide: String,
 )
 
-internal data class AgentChannelConnection(
+data class AgentChannelConnection(
     val platform: String,
     val label: String,
     val status: String,
