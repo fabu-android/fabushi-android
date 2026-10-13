@@ -16553,6 +16553,47 @@
       "artifact": null,
       "verification_status": "not-verified",
       "notes": "First concrete implementation step: port platform-independent MemoryService/project membership stores, then wire synthesis through the existing Host inference owner; never make Compose a second memory owner."
+    },
+    {
+      "responsibility_id": "MANAGED-SKILLS-CORE-ANDROID-001",
+      "domain": "agent-managed-skills",
+      "desktop_sources": [
+        {
+          "path": "source/host/src/extensions/managed_setup/managed_skills_cache.rs",
+          "blob_sha": "9349e4cd37c7042ecea884087d0fd6a4bb64b31a"
+        },
+        {
+          "path": "source/host/src/extensions/managed_setup/managed_skills_service.rs",
+          "blob_sha": "b96a064e1783d7bb4bb8fbd7093ba4584f975ae1"
+        },
+        {
+          "path": "source/host/src/extensions/managed_setup/sand_managed_skills.rs",
+          "blob_sha": "68097353db975c2833294bc4df2eb969985a5d83"
+        }
+      ],
+      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "responsibility": "Normalize remotely managed Agent skills, persist a durable materialized cache, coalesce refresh work, remove revoked skills, and expose on-demand cache presence without creating a second account/network credential owner.",
+      "source_owner": "Desktop ManagedSetup managed-skills core",
+      "visible_effect": "Managed skills can be safely materialized for Agent use and remain stable across Host restart once the Android production fetch adapter supplies them.",
+      "android_disposition": "direct-port",
+      "android_target": [
+        "source/host/src/extensions/managed_setup/managed_skills_cache.rs",
+        "source/host/src/extensions/managed_setup/managed_skills_service.rs",
+        "source/host/src/extensions/managed_setup/sand_managed_skills.rs",
+        "source/host/src/storage/folder_id.rs"
+      ],
+      "android_owner": "Rust Host managed-skills core; production fetch credentials remain owned by existing CursorDashboard/Android account boundaries",
+      "platform_delta": "Core cache/normalization/refresh semantics are platform-independent and directly ported. Desktop HostAuth/cursor_backend transport is deliberately not copied; Android production fetch will adapt the existing dashboard credential owner.",
+      "implementation_status": "implemented",
+      "production_wiring": "Core modules are compiled into Host module composition. Remote fetch/startup/auth-change wiring remains open under managed-setup production responsibilities.",
+      "unit_test": "managed_skills_cache::android_parity_tests; managed_skills_service::android_parity_tests; sand_managed_skills::android_parity_tests; exact-head Actions pending",
+      "contract_test": "safe folder id and cache serialization semantics preserved from Desktop; exact-head Actions pending",
+      "integration_test": "required after Android dashboard fetch adapter is production-bound",
+      "packaged_test": "required on final exact-head package",
+      "device_test": "required after managed setup UI/runtime exposure",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Do not infer complete managed setup parity from this record. cursor_skills_marketplace, team_rules, extension and production network/auth wiring remain unreviewed/mapped until adapted to the existing Android credential owner."
     }
   ],
   "traceability": {
