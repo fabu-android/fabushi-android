@@ -6,7 +6,7 @@ use crate::extensions::content_search::agent_content_search::{
 use serde::Serialize;
 use serde_json::Value;
 use unicode_normalization::{char::is_combining_mark, UnicodeNormalization};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::{
     fs,
     io::{self, Write},
@@ -293,7 +293,13 @@ impl TranscriptStore {
     }
 
     pub fn append_entry(&mut self, entry: Value) -> io::Result<()> {
-        entry_id(&entry)?;
+        let id = entry_id(&entry)?.to_string();
+        if self.contains_id(&id) {
+            return Err(io::Error::new(
+                io::ErrorKind::AlreadyExists,
+                format!("duplicate transcript entry id: {id}"),
+            ));
+        }
         self.entries.push(entry);
         if let Err(error) = self.persist() {
             self.entries.pop();
@@ -651,8 +657,15 @@ fn project_content_search_entry(entry: &Value) -> Option<SearchableTranscriptEnt
 }
 
 fn validate_entries(entries: &[Value]) -> io::Result<()> {
+    let mut ids = HashSet::with_capacity(entries.len());
     for entry in entries {
-        entry_id(entry)?;
+        let id = entry_id(entry)?;
+        if !ids.insert(id.to_string()) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("duplicate transcript entry id: {id}"),
+            ));
+        }
     }
     Ok(())
 }
@@ -863,6 +876,43 @@ mod tests {
         assert_eq!(fs::read_to_string(&quarantine).unwrap(), "{not-json");
         assert_eq!(store.get_transcript()[0]["id"], "from-temp");
         assert!(!temporary.exists());
+        let _ = fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
+    fn duplicate_entry_ids_are_never_accepted_as_canonical_transcript() {
+        let path = temp_path();
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(
+            &path,
+            r#"[
+                {"id":"duplicate","agentId":"agent-a","kind":"message"},
+                {"id":"duplicate","agentId":"agent-a","kind":"message"}
+            ]"#,
+        )
+        .unwrap();
+
+        assert_eq!(
+            TranscriptStore::open(&path).unwrap_err().kind(),
+            io::ErrorKind::InvalidData,
+        );
+
+        let (store, recovery) = TranscriptStore::open_recovering(&path).unwrap();
+        let recovery = recovery.expect("duplicate ids must be treated as canonical corruption");
+        assert_eq!(recovery.outcome, TranscriptRecoveryOutcome::ResetCorruptStore);
+        assert!(recovery.quarantine_path.unwrap().exists());
+        assert!(store.get_transcript().is_empty());
+
+        let mut store = TranscriptStore::open(&path).unwrap();
+        store
+            .append_entry(json!({"id":"one","agentId":"agent-a","kind":"message"}))
+            .unwrap();
+        let error = store
+            .append_entry(json!({"id":"one","agentId":"agent-a","kind":"message"}))
+            .unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::AlreadyExists);
+        assert_eq!(store.get_transcript().len(), 1);
+
         let _ = fs::remove_dir_all(path.parent().unwrap());
     }
 
