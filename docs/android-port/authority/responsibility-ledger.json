@@ -17404,6 +17404,22 @@
             "start_session_extension",
             "conversation_size_limits_from_experiments"
           ]
+        },
+        {
+          "path": "source/host/src/extensions/transcript/box_handoff_resume.rs",
+          "blob_sha": "f4528b5b33432c63e1ac06b563299486251aee85",
+          "symbols": [
+            "box_handoff_resume_prompt",
+            "build_hidden_handoff_resume_send_args",
+            "settle_box_handoff_state"
+          ]
+        },
+        {
+          "path": "source/host/src/extensions/transcript/box_request_entries.rs",
+          "blob_sha": "8c0ab22f82ead39c52fb2282f6c2c7bffdab8b25",
+          "symbols": [
+            "resolve_box_request_entry"
+          ]
         }
       ],
       "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
@@ -17442,9 +17458,9 @@
         "policy subscription teardown never creates a second session owner"
       ],
       "cancellation_behavior": "ending a handoff consumes the matching durable request; stale or already-ended requests have no effect; Host teardown drops policy subscriptions and canonical owners.",
-      "retry_semantics": "duplicate handoff start for the same account/Agent returns the existing request instead of creating a second side effect; process reopen resumes the durable pending handoff.",
-      "idempotency_semantics": "request identity plus account fence makes start/attach/end idempotent or stale-safe; experiment policy projection is read from the canonical Host experiments owner.",
-      "process_death_recovery": "AndroidBoxHandoffOwner reopens durable pending state; transcript/session repositories reopen independently; no request is re-sent merely because the process restarted.",
+      "retry_semantics": "Duplicate handoff start reuses the live request. Terminal handoff first persists a resume obligation, then queues one deterministic handoff-resume turn. Transient credential/provider failure leaves the obligation durable; if the turn journal already owns that request after a crash, recovery acknowledges the obligation instead of resending.",
+      "idempotency_semantics": "Account fence + handoff request identity fence start/attach/end. Resume uses deterministic request identity derived from the handoff request, Agent and trigger; DurableTurnJournal is the execution idempotency authority, so a crash between queue and obligation acknowledgement cannot create a duplicate model turn.",
+      "process_death_recovery": "AndroidBoxHandoffOwner persists both live handoffs and terminal resume obligations. feature.receive drains current-account obligations; queue_box_handoff_resume_turn reconciles an existing durable turn-journal record before creating any operation, then acknowledges the obligation only after queue ownership is established.",
       "account_fencing": "Every production handoff feature reads the canonical Host account fence and AndroidBoxHandoffOwner persists/checks it before status/start/snapshot/end.",
       "security_boundary": "Compose/JNI can request lifecycle operations but cannot mutate handoff files or session truth directly; Remote Runner/viewport code may attach a snapshot only with the live account fence and request identity.",
       "android_disposition": "android-adapted",
@@ -17458,15 +17474,15 @@
       "android_owner": "Rust AndroidJsonHost split composition: canonical session/transcript owners + AndroidSessionPolicyBindings + AndroidBoxHandoffOwner",
       "platform_delta": "Desktop SessionExtension retains ProductionSessionWorkers and process-local BoxHandoffService. Android keeps its already-shipping native canonical repositories, projects only applicable session policy gates, and replaces process-local handoff with a crash-safe durable account-fenced owner. Desktop legacy member-directory cleanup is not run against unrelated Android storage layout.",
       "implementation_status": "implemented",
-      "production_wiring": "AndroidJsonHost constructs AndroidSessionPolicyBindings and one durable AndroidBoxHandoffOwner during production startup; dispatch exposes feature.agent.handoff.status/start/attachSnapshot/end; Rust ownership tears down policy subscriptions/owners with the Host.",
-      "unit_test": "android_session_policy_runtime::tests::binding_tracks_live_maintenance_gate_changes_without_a_second_owner; android_box_handoff::tests cover duplicate/reopen, stale snapshot, account switch and durable end; direct BoxHandoffService focused tests also cover stale snapshot fencing.",
+      "production_wiring": "AndroidJsonHost constructs one durable AndroidBoxHandoffOwner, exposes handoff status/start/attachSnapshot/end, queues Desktop-compatible hidden handoff-resume turns with appendUserMessage=false, awaitTurn=false, requestSource=handoff-resume, skipAckObligation=true and directAddressedAcceptance=true, and drains leftover resume obligations before normal receive processing.",
+      "unit_test": "android_box_handoff tests cover duplicate/reopen, stale snapshot, account switch, durable terminal resume obligations and scoped acknowledgement; android_json_runtime tests cover hidden handoff resume queueing plus journaled recovery without duplicate turn.",
       "contract_test": "Host dispatch requires canonical account fence before handoff mutations and AndroidBoxHandoffOwner validates account/request identity.",
-      "integration_test": "required: production Host process-reopen resumes pending handoff and account switch cannot observe/mutate the prior account handoff.",
+      "integration_test": "Rust Host integration covers process-reopen durable handoff lifecycle and journaled handoff-resume reconciliation. Remaining integration gap: authorized Remote Runner screenshot/takeover plus packaged current-account backend path.",
       "packaged_test": "required on final exact-head APK/AAB",
       "device_test": "required with authorized Remote Runner snapshot/takeover path",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Implementation source and production Host route exist, but authorized Remote Runner screenshot capture plus exact-head package/device evidence remain open. Do not upgrade to verified from unit/Rust gates alone."
+      "notes": "Core handoff + hidden resume lifecycle is implemented in production Host with durable process-death/idempotency semantics. Desktop transcript request-entry representation is replaced by AndroidBoxHandoffOwner projection rather than a second transcript owner. Keep not-verified until current exact-head Rust/Android/package/device evidence closes authorized Remote Runner acceptance."
     },
     {
       "responsibility_id": "AGENT-SESSION-MATERIALIZATION-ANDROID-001",
