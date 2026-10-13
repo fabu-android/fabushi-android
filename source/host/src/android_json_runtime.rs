@@ -152,6 +152,7 @@ use crate::extensions::transcript::pending_wake_rearm::PENDING_WAKE_STALE_MAX_AG
 use crate::extensions::transcript::run_scheduler::{
     QueueAccepted, QueueDequeued, RunSettlement, WatchdogEvent, WatchdogStage,
 };
+use crate::extensions::transcript::replica_writer::HostReplicaWriter;
 use crate::extensions::transcript::send_turn_dispatch::{
     classify_send_dispatch, ProductionTurnDispatch, UserTurnTicket,
 };
@@ -1375,6 +1376,7 @@ pub struct AndroidJsonHost {
     local_runner: Arc<Mutex<AndroidLocalRunner>>,
     remote_approvals: RemoteApprovalRegistry,
     turn_events: Arc<Mutex<VecDeque<Value>>>,
+    replica_writer: HostReplicaWriter,
     turn_cancellations: BTreeMap<String, Arc<AtomicBool>>,
     turn_dispatch: Arc<(Mutex<ProductionTurnDispatch>, Condvar)>,
     turn_journal: Arc<Mutex<DurableTurnJournal>>,
@@ -2239,6 +2241,7 @@ impl AndroidJsonHost {
             )),
             remote_approvals: RemoteApprovalRegistry::default(),
             turn_events: Arc::new(Mutex::new(VecDeque::new())),
+            replica_writer: HostReplicaWriter::new(),
             turn_cancellations: BTreeMap::new(),
             turn_dispatch: Arc::new((Mutex::new(ProductionTurnDispatch::default()), Condvar::new())),
             turn_journal: Arc::new(Mutex::new(
@@ -4396,12 +4399,18 @@ impl AndroidJsonHost {
                 let profile_changed =
                     previous.name != agent.name || previous.description != agent.description;
                 if previous.name != agent.name {
+                    let stamp = self.replica_writer.next_stamp("roster");
                     push_turn_event(
                         &self.turn_events,
                         json!({
                             "type":"agent.timeline.event",
                             "agentId":agent.id,
                             "updatedAt":agent.updated_at,
+                            "ordered":{
+                                "replicaKey":stamp.replica_key,
+                                "epoch":stamp.epoch,
+                                "sequence":stamp.sequence,
+                            },
                             "event":{
                                 "type":"name-changed",
                                 "from":previous.name,
@@ -4411,12 +4420,18 @@ impl AndroidJsonHost {
                     );
                 }
                 if profile_changed {
+                    let stamp = self.replica_writer.next_stamp("roster");
                     push_turn_event(
                         &self.turn_events,
                         json!({
                             "type":"agent.profile.changed",
                             "agentId":agent.id,
                             "updatedAt":agent.updated_at,
+                            "ordered":{
+                                "replicaKey":stamp.replica_key,
+                                "epoch":stamp.epoch,
+                                "sequence":stamp.sequence,
+                            },
                         }),
                     );
                 }
@@ -17230,11 +17245,18 @@ mod tests {
         assert_eq!(timeline["event"]["from"], "Before");
         assert_eq!(timeline["event"]["to"], "After");
         assert_eq!(timeline["updatedAt"], updated["updatedAt"]);
+        assert_eq!(timeline["ordered"]["replicaKey"], "roster");
+        assert_eq!(timeline["ordered"]["sequence"], 1);
+        let replica_epoch = timeline["ordered"]["epoch"].as_str().unwrap().to_string();
+        assert!(!replica_epoch.is_empty());
 
         let profile = host.dispatch("feature.receive", &json!({})).unwrap();
         assert_eq!(profile["type"], "agent.profile.changed");
         assert_eq!(profile["agentId"], agent.id);
         assert_eq!(profile["updatedAt"], updated["updatedAt"]);
+        assert_eq!(profile["ordered"]["replicaKey"], "roster");
+        assert_eq!(profile["ordered"]["epoch"], replica_epoch);
+        assert_eq!(profile["ordered"]["sequence"], 2);
 
         host.dispatch(
             "updateAgent",
