@@ -1,8 +1,12 @@
 use std::path::Path;
 use std::sync::Arc;
+use std::time::Duration;
 
-use serde::{Deserialize, Serialize};
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::Value;
+use url::Url;
+
+const DEFAULT_FABUSHI_API_BASE_URL: &str = "https://api.ombhrum.com";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FabushiNativeIdentity {
@@ -118,9 +122,38 @@ pub trait FabushiNativeMessagingCredentialProvider: Send + Sync {
     fn current_credential(&self) -> Result<FabushiNativeMessagingCredential, String>;
 }
 
+#[derive(Debug, Deserialize)]
+struct FriendData { friends: Vec<FabushiRemoteHumanContact> }
+#[derive(Debug, Deserialize)]
+struct FriendEnvelope { success: bool, data: Option<FriendData>, error: Option<String> }
+#[derive(Debug, Deserialize)]
+struct ListData { messages: Vec<FabushiRemoteHumanMessage> }
+#[derive(Debug, Deserialize)]
+struct ListEnvelope { success: bool, data: Option<ListData>, error: Option<String> }
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CallEnvelope {
+    success: bool,
+    call: Option<FabushiRemoteHumanCall>,
+    #[serde(default)] calls: Vec<FabushiRemoteHumanCall>,
+    #[serde(default)] events: Vec<FabushiRemoteHumanCallEvent>,
+    next_after_seq: Option<u64>,
+    error: Option<String>,
+}
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CallIceEnvelope {
+    success: bool,
+    #[serde(default)] ice_servers: Vec<FabushiCallIceServer>,
+    ttl_seconds: Option<u64>,
+    error: Option<String>,
+}
+
 #[derive(Clone)]
 pub struct FabushiNativeMessagingClient {
+    base_url: Url,
     credential_provider: Arc<dyn FabushiNativeMessagingCredentialProvider>,
+    agent: ureq::Agent,
 }
 
 impl std::fmt::Debug for FabushiNativeMessagingClient {
@@ -143,7 +176,21 @@ impl FabushiNativeMessagingClient {
     pub fn with_credential_provider(
         credential_provider: Arc<dyn FabushiNativeMessagingCredentialProvider>,
     ) -> Self {
-        Self { credential_provider }
+        Self::with_credential_provider_and_base_url(credential_provider, DEFAULT_FABUSHI_API_BASE_URL)
+            .expect("the built-in Fabushi API base URL must be valid")
+    }
+
+    pub fn with_credential_provider_and_base_url(
+        credential_provider: Arc<dyn FabushiNativeMessagingCredentialProvider>,
+        base_url: &str,
+    ) -> Result<Self, String> {
+        let base_url = validate_base_url(base_url)?;
+        let agent = ureq::AgentBuilder::new()
+            .timeout_connect(Duration::from_secs(10))
+            .timeout(Duration::from_secs(30))
+            .redirects(0)
+            .build();
+        Ok(Self { base_url, credential_provider, agent })
     }
 
     fn current_credential(&self) -> Result<FabushiNativeMessagingCredential, String> {
@@ -156,8 +203,36 @@ impl FabushiNativeMessagingClient {
 
     fn unavailable<T>(&self, operation: &str) -> Result<T, String> {
         Err(format!(
-            "Android native Human messaging {operation} is unavailable until the canonical account credential owner is injected."
+            "Android native Human messaging {operation} is unavailable until the durable side-effect transport is bound."
         ))
+    }
+
+    fn endpoint(&self, path: &str) -> Result<Url, String> {
+        self.base_url.join(path.trim_start_matches('/'))
+            .map_err(|error| format!("Fabushi messaging endpoint is invalid: {error}"))
+    }
+
+    fn get_json<T: DeserializeOwned>(&self, operation: &str, url: Url) -> Result<(u16, T), String> {
+        let credential = self.current_credential()?;
+        let token = required_trimmed(&credential.access_token, "accessToken")?;
+        let device_id = required_trimmed(&credential.device_id, "deviceId")?;
+        let authorization = format!("Bearer {token}");
+        let response = self.agent.get(url.as_str())
+            .set("authorization", &authorization)
+            .set("x-fabushi-device-id", device_id)
+            .set("accept", "application/json")
+            .call();
+        let (status, response) = match response {
+            Ok(response) => (response.status(), response),
+            Err(ureq::Error::Status(status, response)) => (status, response),
+            Err(ureq::Error::Transport(error)) =>
+                return Err(format!("Fabushi Human {operation} transport failed: {error}")),
+        };
+        let body = response.into_string()
+            .map_err(|error| format!("Fabushi Human {operation} response could not be read: {error}"))?;
+        let parsed = serde_json::from_str::<T>(&body)
+            .map_err(|error| format!("Fabushi Human {operation} response was invalid JSON (HTTP {status}): {error}"))?;
+        Ok((status, parsed))
     }
 
     pub fn identity(&self) -> Result<FabushiNativeIdentity, String> {
@@ -205,29 +280,70 @@ impl FabushiNativeMessagingClient {
     }
 
     pub fn list_friends(&self) -> Result<Vec<FabushiRemoteHumanContact>, String> {
-        self.unavailable("contact sync")
+        let (status, envelope): (u16, FriendEnvelope) =
+            self.get_json("contact sync", self.endpoint("/api/social/friends")?)?;
+        if !(200..300).contains(&status) || !envelope.success {
+            return Err(format!("Fabushi Human contact sync was rejected (HTTP {status}): {}",
+                envelope.error.unwrap_or_else(|| "unknown backend error".into())));
+        }
+        Ok(envelope.data.map(|data| data.friends).unwrap_or_default())
     }
 
     pub fn list_direct_messages(
         &self,
-        _peer_human_id: &str,
-        _before: Option<&str>,
-        _limit: usize,
+        peer_human_id: &str,
+        before: Option<&str>,
+        limit: usize,
     ) -> Result<Vec<FabushiRemoteHumanMessage>, String> {
-        self.unavailable("message sync")
+        let peer_human_id = required_trimmed(peer_human_id, "peer Human id")?;
+        let mut url = self.endpoint("/api/social/messages")?;
+        {
+            let mut query = url.query_pairs_mut();
+            query.append_pair("contactId", peer_human_id);
+            query.append_pair("limit", &limit.clamp(1, 200).to_string());
+            if let Some(before) = before.map(str::trim).filter(|value| !value.is_empty()) {
+                query.append_pair("before", before);
+            }
+        }
+        let (status, envelope): (u16, ListEnvelope) = self.get_json("message sync", url)?;
+        if !(200..300).contains(&status) || !envelope.success {
+            return Err(format!("Fabushi Human message sync was rejected (HTTP {status}): {}",
+                envelope.error.unwrap_or_else(|| "unknown backend error".into())));
+        }
+        Ok(envelope.data.map(|data| data.messages).unwrap_or_default())
     }
 
-    pub fn get_human_call_ice_servers(
-        &self,
-    ) -> Result<(Vec<FabushiCallIceServer>, u64), String> {
-        self.unavailable("call ICE credentials")
+    pub fn get_human_call_ice_servers(&self) -> Result<(Vec<FabushiCallIceServer>, u64), String> {
+        let (status, envelope): (u16, CallIceEnvelope) =
+            self.get_json("call ICE credential request", self.endpoint("/api/social/calls/ice")?)?;
+        if !(200..300).contains(&status) || !envelope.success {
+            return Err(format!("Fabushi Human call ICE credentials were rejected (HTTP {status}): {}",
+                envelope.error.unwrap_or_else(|| "unknown backend error".into())));
+        }
+        let ttl_seconds = envelope.ttl_seconds.filter(|ttl| (300..=86_400).contains(ttl))
+            .ok_or_else(|| "Fabushi Human call ICE response contained an invalid TTL".to_string())?;
+        if envelope.ice_servers.is_empty() || envelope.ice_servers.len() > 16 {
+            return Err("Fabushi Human call ICE response contained an invalid server list".into());
+        }
+        for server in &envelope.ice_servers {
+            if !valid_call_ice_urls(&server.urls)
+                || server.username.as_deref().is_some_and(|v| v.len() > 2048)
+                || server.credential.as_deref().is_some_and(|v| v.len() > 2048) {
+                return Err("Fabushi Human call ICE response contained an invalid server".into());
+            }
+        }
+        Ok((envelope.ice_servers, ttl_seconds))
     }
 
-    pub fn list_human_calls(
-        &self,
-        _limit: usize,
-    ) -> Result<Vec<FabushiRemoteHumanCall>, String> {
-        self.unavailable("call discovery")
+    pub fn list_human_calls(&self, limit: usize) -> Result<Vec<FabushiRemoteHumanCall>, String> {
+        let mut url = self.endpoint("/api/social/calls")?;
+        url.query_pairs_mut().append_pair("limit", &limit.clamp(1, 200).to_string());
+        let (status, envelope): (u16, CallEnvelope) = self.get_json("call discovery", url)?;
+        if !(200..300).contains(&status) || !envelope.success {
+            return Err(format!("Fabushi Human call discovery was rejected (HTTP {status}): {}",
+                envelope.error.unwrap_or_else(|| "unknown backend error".into())));
+        }
+        Ok(envelope.calls)
     }
 
     pub fn create_human_call(
@@ -240,11 +356,31 @@ impl FabushiNativeMessagingClient {
 
     pub fn get_human_call(
         &self,
-        _call_id: &str,
-        _after_seq: u64,
-        _limit: usize,
+        call_id: &str,
+        after_seq: u64,
+        limit: usize,
     ) -> Result<(FabushiRemoteHumanCall, Vec<FabushiRemoteHumanCallEvent>, u64), String> {
-        self.unavailable("call sync")
+        let call_id = required_trimmed(call_id, "call id")?;
+        let encoded: String = url::form_urlencoded::byte_serialize(call_id.as_bytes()).collect();
+        let mut url = self.endpoint(&format!("/api/social/calls/{encoded}"))?;
+        {
+            let mut query = url.query_pairs_mut();
+            query.append_pair("afterSeq", &after_seq.to_string());
+            query.append_pair("limit", &limit.clamp(1, 200).to_string());
+        }
+        let (status, mut envelope): (u16, CallEnvelope) = self.get_json("call sync", url)?;
+        if !(200..300).contains(&status) || !envelope.success {
+            return Err(format!("Fabushi Human call sync was rejected (HTTP {status}): {}",
+                envelope.error.unwrap_or_else(|| "unknown backend error".into())));
+        }
+        let call = envelope.call.take()
+            .ok_or_else(|| "Fabushi Human call sync response omitted the call.".to_string())?;
+        if call.call_id != call_id {
+            return Err("Fabushi Human call backend returned a mismatched call id".into());
+        }
+        let next = envelope.next_after_seq
+            .unwrap_or_else(|| envelope.events.last().map(|event| event.seq).unwrap_or(after_seq));
+        Ok((call, envelope.events, next))
     }
 
     pub fn append_human_call_event(
@@ -257,6 +393,37 @@ impl FabushiNativeMessagingClient {
     ) -> Result<(FabushiRemoteHumanCall, FabushiRemoteHumanCallEvent), String> {
         self.unavailable("call event")
     }
+}
+
+fn valid_call_ice_urls(value: &Value) -> bool {
+    let valid = |url: &str| {
+        let trimmed = url.trim();
+        !trimmed.is_empty() && trimmed.len() <= 1024
+            && !trimmed.chars().any(char::is_whitespace)
+            && (trimmed.starts_with("stun:") || trimmed.starts_with("turn:") || trimmed.starts_with("turns:"))
+    };
+    match value {
+        Value::String(url) => valid(url),
+        Value::Array(urls) => !urls.is_empty() && urls.len() <= 16
+            && urls.iter().all(|url| url.as_str().is_some_and(valid)),
+        _ => false,
+    }
+}
+
+fn validate_base_url(raw: &str) -> Result<Url, String> {
+    let normalized = raw.trim().trim_end_matches('/');
+    let mut url = Url::parse(&format!("{normalized}/"))
+        .map_err(|error| format!("Fabushi messaging API base URL is invalid: {error}"))?;
+    let loopback = matches!(url.host_str(), Some("localhost" | "127.0.0.1" | "::1"));
+    if url.scheme() != "https" && !(loopback && url.scheme() == "http") {
+        return Err("Fabushi messaging API must use HTTPS outside loopback development.".into());
+    }
+    if !url.username().is_empty() || url.password().is_some() || url.query().is_some() || url.fragment().is_some() {
+        return Err("Fabushi messaging API base URL must not contain credentials, query, or fragment.".into());
+    }
+    url.set_query(None);
+    url.set_fragment(None);
+    Ok(url)
 }
 
 fn required_trimmed<'a>(value: &'a str, name: &str) -> Result<&'a str, String> {
@@ -326,6 +493,16 @@ mod tests {
             .send_direct_message("human:peer", "hello", "nonce-1", None, &[])
             .is_err());
         assert!(client.list_human_calls(20).is_err());
+    }
+
+    #[test]
+    fn base_url_policy_rejects_cleartext_remote_and_embedded_credentials() {
+        assert!(FabushiNativeMessagingClient::with_credential_provider_and_base_url(
+            Arc::new(TestCredentialProvider), "http://api.example.com").is_err());
+        assert!(FabushiNativeMessagingClient::with_credential_provider_and_base_url(
+            Arc::new(TestCredentialProvider), "https://user:secret@api.example.com").is_err());
+        assert!(FabushiNativeMessagingClient::with_credential_provider_and_base_url(
+            Arc::new(TestCredentialProvider), "http://127.0.0.1:18080").is_ok());
     }
 
     #[test]
