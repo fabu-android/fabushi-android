@@ -1,4 +1,5 @@
 pub mod async_task_union;
+pub mod channel_delivery_unregistered_error;
 pub mod pending_wake_rearm;
 pub mod pending_card_sweeps;
 pub mod sand_pending_wake_store;
