@@ -422,6 +422,27 @@ impl CursorDashboardMcpAuthBackend {
         Arc::clone(&self.credentials)
     }
 
+    /// Authenticated protobuf lane for managed-setup responsibilities.
+    ///
+    /// Keep this crate-private and path-allowlisted so managed skills reuse the canonical
+    /// Dashboard credential/machine-id/privacy owner without gaining arbitrary RPC access or
+    /// exposing tokens outside Host.
+    pub(crate) fn send_managed_setup_unary(
+        &self,
+        path: &str,
+        body: &[u8],
+        timeout_ms: u64,
+    ) -> Result<Vec<u8>, String> {
+        match path {
+            "/aiserver.v1.DashboardService/GetManagedSkills"
+            | "/aiserver.v1.DashboardService/ListMarketplacePlugins" => {}
+            _ => return Err("managed setup Dashboard RPC path is not allowed".into()),
+        }
+        let credentials = self.credentials.credentials()?;
+        let ghost_mode = self.resolve_ghost_mode(&credentials);
+        self.send_unary(&credentials, path, body, timeout_ms, ghost_mode)
+    }
+
     fn send_unary(
         &self,
         credentials: &SandMcpBackendCredentials,
