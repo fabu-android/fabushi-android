@@ -87,8 +87,10 @@ impl LocalToolPermission {
 #[serde(rename_all = "camelCase")]
 struct PersistedAndroidUserSettings {
     time_zone_override: Option<String>,
+    #[serde(default, rename = "localToolPermission", skip_serializing)]
+    legacy_local_tool_permission: LocalToolPermission,
     #[serde(default)]
-    local_tool_permission: LocalToolPermission,
+    local_tool_permission_by_account: BTreeMap<String, LocalToolPermission>,
     #[serde(default)]
     local_tool_permission_ceiling: Option<LocalToolPermission>,
     #[serde(default)]
@@ -170,14 +172,26 @@ impl AndroidUserSettings {
         Ok(normalized)
     }
 
-    pub fn local_tool_permission(&self) -> LocalToolPermission {
-        self.state
-            .local_tool_permission
-            .constrained_by(self.state.local_tool_permission_ceiling)
+    pub fn local_tool_permission_for(
+        &self,
+        account_scope: &str,
+    ) -> io::Result<LocalToolPermission> {
+        Ok(self
+            .local_tool_permission_preference_for(account_scope)?
+            .constrained_by(self.state.local_tool_permission_ceiling))
     }
 
-    pub fn local_tool_permission_preference(&self) -> LocalToolPermission {
-        self.state.local_tool_permission
+    pub fn local_tool_permission_preference_for(
+        &self,
+        account_scope: &str,
+    ) -> io::Result<LocalToolPermission> {
+        validate_account_scope(account_scope)?;
+        Ok(self
+            .state
+            .local_tool_permission_by_account
+            .get(account_scope)
+            .copied()
+            .unwrap_or(LocalToolPermission::Ask))
     }
 
     pub fn local_tool_permission_ceiling(&self) -> Option<LocalToolPermission> {
@@ -187,19 +201,19 @@ impl AndroidUserSettings {
     pub fn set_local_tool_permission_ceiling(
         &mut self,
         value: Option<&str>,
-    ) -> io::Result<LocalToolPermission> {
+    ) -> io::Result<()> {
         let normalized = match value {
             Some(value) => Some(LocalToolPermission::parse(value)?),
             None => None,
         };
         if self.state.local_tool_permission_ceiling == normalized {
-            return Ok(self.local_tool_permission());
+            return Ok(());
         }
         let mut next = self.state.clone();
         next.local_tool_permission_ceiling = normalized;
         write_atomic_json(&self.path, &next)?;
         self.state = next;
-        Ok(self.local_tool_permission())
+        Ok(())
     }
 
     pub fn agent_default_model(&self, account_scope: &str) -> Option<&str> {
@@ -417,16 +431,32 @@ impl AndroidUserSettings {
     }
 
 
-    pub fn set_local_tool_permission(&mut self, value: &str) -> io::Result<LocalToolPermission> {
+    pub fn set_local_tool_permission_for(
+        &mut self,
+        account_scope: &str,
+        value: &str,
+    ) -> io::Result<LocalToolPermission> {
+        validate_account_scope(account_scope)?;
         let normalized = LocalToolPermission::parse(value)?;
-        if self.state.local_tool_permission == normalized {
-            return Ok(normalized);
+        let current = self
+            .state
+            .local_tool_permission_by_account
+            .get(account_scope)
+            .copied()
+            .unwrap_or(LocalToolPermission::Ask);
+        if current == normalized {
+            return self.local_tool_permission_for(account_scope);
         }
         let mut next = self.state.clone();
-        next.local_tool_permission = normalized;
+        if normalized == LocalToolPermission::Ask {
+            next.local_tool_permission_by_account.remove(account_scope);
+        } else {
+            next.local_tool_permission_by_account
+                .insert(account_scope.to_string(), normalized);
+        }
         write_atomic_json(&self.path, &next)?;
         self.state = next;
-        Ok(normalized)
+        self.local_tool_permission_for(account_scope)
     }
 }
 
@@ -757,63 +787,36 @@ mod tests {
     }
 
     #[test]
-    fn local_tool_permission_ceiling_constrains_preference_and_survives_restart() {
-        let path = test_path("local-tool-ceiling");
+    fn local_tool_permission_is_account_scoped_and_ceiling_remains_global() {
+        let path = test_path("local-tool-account-scope");
         let mut settings = AndroidUserSettings::open(&path).unwrap();
-        settings.set_local_tool_permission("always").unwrap();
-        assert_eq!(settings.local_tool_permission_preference(), LocalToolPermission::Always);
-        assert_eq!(settings.local_tool_permission(), LocalToolPermission::Always);
-
-        assert_eq!(
-            settings.set_local_tool_permission_ceiling(Some("ask")).unwrap(),
-            LocalToolPermission::Ask,
-        );
-        assert_eq!(settings.local_tool_permission_preference(), LocalToolPermission::Always);
-        assert_eq!(settings.local_tool_permission_ceiling(), Some(LocalToolPermission::Ask));
-        assert_eq!(settings.local_tool_permission(), LocalToolPermission::Ask);
-
+        let account_a = "session:account-a";
+        let account_b = "session:account-b";
+        assert_eq!(settings.local_tool_permission_for(account_a).unwrap(), LocalToolPermission::Ask);
+        settings.set_local_tool_permission_for(account_a, "always").unwrap();
+        assert_eq!(settings.local_tool_permission_preference_for(account_a).unwrap(), LocalToolPermission::Always);
+        assert_eq!(settings.local_tool_permission_for(account_b).unwrap(), LocalToolPermission::Ask);
+        settings.set_local_tool_permission_ceiling(Some("ask")).unwrap();
+        assert_eq!(settings.local_tool_permission_for(account_a).unwrap(), LocalToolPermission::Ask);
+        assert_eq!(settings.local_tool_permission_preference_for(account_a).unwrap(), LocalToolPermission::Always);
         drop(settings);
         let mut reopened = AndroidUserSettings::open(&path).unwrap();
-        assert_eq!(reopened.local_tool_permission_preference(), LocalToolPermission::Always);
-        assert_eq!(reopened.local_tool_permission_ceiling(), Some(LocalToolPermission::Ask));
-        assert_eq!(reopened.local_tool_permission(), LocalToolPermission::Ask);
-        assert_eq!(
-            reopened.set_local_tool_permission_ceiling(Some("never")).unwrap(),
-            LocalToolPermission::Never,
-        );
-        assert_eq!(
-            reopened.set_local_tool_permission_ceiling(None).unwrap(),
-            LocalToolPermission::Always,
-        );
-        assert!(reopened.set_local_tool_permission_ceiling(Some("invalid")).is_err());
-        assert_eq!(reopened.local_tool_permission(), LocalToolPermission::Always);
-
+        assert_eq!(reopened.local_tool_permission_preference_for(account_a).unwrap(), LocalToolPermission::Always);
+        assert_eq!(reopened.local_tool_permission_for(account_b).unwrap(), LocalToolPermission::Ask);
+        reopened.set_local_tool_permission_ceiling(None).unwrap();
+        assert_eq!(reopened.local_tool_permission_for(account_a).unwrap(), LocalToolPermission::Always);
         let _ = fs::remove_file(path);
     }
 
     #[test]
-    fn local_tool_permission_defaults_to_ask_and_is_durable() {
-        let path = test_path("local-tool-permission");
-        let mut settings = AndroidUserSettings::open(&path).unwrap();
-        assert_eq!(settings.local_tool_permission(), LocalToolPermission::Ask);
-
+    fn legacy_global_permission_is_not_promoted_to_a_new_account() {
+        let path = test_path("legacy-local-tool-permission");
+        fs::write(&path, br#"{"localToolPermission":"always","localToolPermissionCeiling":null}"#).unwrap();
+        let settings = AndroidUserSettings::open(&path).unwrap();
         assert_eq!(
-            settings.set_local_tool_permission("always").unwrap(),
-            LocalToolPermission::Always,
+            settings.local_tool_permission_for("session:new-account").unwrap(),
+            LocalToolPermission::Ask,
         );
-        settings.set_time_zone_override(Some("UTC")).unwrap();
-        drop(settings);
-
-        let mut reopened = AndroidUserSettings::open(&path).unwrap();
-        assert_eq!(reopened.local_tool_permission(), LocalToolPermission::Always);
-        assert_eq!(reopened.time_zone_override(), Some("UTC"));
-        assert_eq!(
-            reopened.set_local_tool_permission("never").unwrap(),
-            LocalToolPermission::Never,
-        );
-        assert!(reopened.set_local_tool_permission("sometimes").is_err());
-        assert_eq!(reopened.local_tool_permission(), LocalToolPermission::Never);
-
         let _ = fs::remove_file(path);
     }
 
