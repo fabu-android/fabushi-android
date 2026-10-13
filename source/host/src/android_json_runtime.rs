@@ -8513,6 +8513,11 @@ impl AndroidJsonHost {
                                         format!("failed to persist assistant transcript entry: {error}")
                                     })?;
                                 let _ = persist;
+                                agent_roster
+                                    .lock()
+                                    .map_err(|_| "canonical Android Agent roster lock poisoned".to_string())?
+                                    .mark_activity(&conversation_id_owned, now_ms())
+                                    .map_err(|error| format!("failed to persist Agent unread activity: {error}"))?;
                                 push_turn_event(
                                     &turn_events,
                                     json!({
@@ -12266,6 +12271,11 @@ export function apply(ctx) {
             }
         }
         assert!(completed, "test provider turn must reach one terminal completion");
+        let unread = host.agents.lock().unwrap().get(&agent.id).unwrap();
+        assert!(unread.has_unread, "completed assistant turn must durably mark the Agent unread");
+        assert_eq!(unread.unread_count, 1);
+        let unread_activity_at = unread.last_activity_at;
+        assert!(unread_activity_at > 0);
 
         assert_eq!(
             host.turn_lifecycle
