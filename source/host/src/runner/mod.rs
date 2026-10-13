@@ -8,6 +8,7 @@ pub mod multitask_todo;
 pub mod production_turn_agent_owner;
 pub mod production_turn_lifecycle;
 pub mod remote_routed_tools;
+pub mod local_routed_tools;
 pub mod sand_labeling;
 pub mod web_routed_tools;
 pub mod sand_auto_review;
@@ -67,6 +68,8 @@ pub(crate) use web_routed_tools::with_web_routed_tools;
 pub(crate) use remote_routed_tools::{
     with_remote_routed_tools, RemoteApprovalRegistry, RemoteDispatchBinding,
 };
+
+pub(crate) use local_routed_tools::{with_local_file_tools, LocalApprovalRegistry};
 
 pub use multitask_todo::{
     with_multitask_todo_tools, DurableMultitaskTodoStore, MultitaskTodoItem,
