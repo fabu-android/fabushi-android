@@ -1,4 +1,5 @@
 use std::fs;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
@@ -425,12 +426,9 @@ impl SandPendingWakeStore {
             fs::create_dir_all(parent)?;
         }
         let part = PathBuf::from(format!("{}.part", self.file_path.display()));
-        fs::write(
-            &part,
-            serde_json::to_vec(&File { version: 2, pending })
-                .map_err(std::io::Error::other)?,
-        )?;
-        replace_file(&part, &self.file_path)
+        let encoded = serde_json::to_vec(&File { version: 2, pending })
+            .map_err(std::io::Error::other)?;
+        atomic_replace(&part, &self.file_path, &encoded)
     }
 
     fn delete_unlocked(&self) -> std::io::Result<()> {
@@ -442,15 +440,25 @@ impl SandPendingWakeStore {
     }
 }
 
-fn replace_file(part: &Path, target: &Path) -> std::io::Result<()> {
-    match fs::rename(part, target) {
-        Ok(()) => Ok(()),
-        Err(first) if target.exists() => {
-            fs::remove_file(target)?;
-            fs::rename(part, target).map_err(|_| first)
+fn atomic_replace(part: &Path, target: &Path, encoded: &[u8]) -> std::io::Result<()> {
+    let result = (|| -> std::io::Result<()> {
+        let mut file = fs::File::create(part)?;
+        file.write_all(encoded)?;
+        file.sync_all()?;
+        // Android/Linux rename replaces an existing same-filesystem target atomically. Never
+        // delete the canonical pending-wake file first: process death must leave either the old
+        // durable marker set or the fully written replacement.
+        fs::rename(part, target)?;
+        #[cfg(unix)]
+        if let Some(parent) = target.parent() {
+            fs::File::open(parent)?.sync_all()?;
         }
-        Err(error) => Err(error),
+        Ok(())
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(part);
     }
+    result
 }
 
 #[cfg(test)]
@@ -521,6 +529,40 @@ mod tests {
         assert_eq!(store.list_pending_for("acct-a", "agent-2").len(), 1);
         assert_eq!(store.list_pending_for("acct-b", "agent-1").len(), 1);
         assert_eq!(store.clear_agent("acct-a", "agent-1"), 0);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn committed_pending_wake_reopen_never_observes_partial_replacement() {
+        let root = root("atomic-reopen");
+        let store = SandPendingWakeStore::new(&root);
+        assert!(store.mark_pending(marker(
+            "acct-a",
+            "agent-1",
+            PendingWakeKind::Shell,
+            "shell-1",
+        )));
+        let part = PathBuf::from(format!("{}.part", store.file_path.display()));
+        fs::write(&part, br#"{"version":2,"pending":["#).unwrap();
+
+        let reopened = SandPendingWakeStore::new(&root);
+        let recovered = reopened.list_pending_for("acct-a", "agent-1");
+        assert_eq!(recovered.len(), 1);
+        assert_eq!(recovered[0].work_id, "shell-1");
+        assert!(
+            part.exists(),
+            "an uncommitted sibling write must never replace canonical pending-wake state"
+        );
+        assert!(reopened.mark_pending(marker(
+            "acct-a",
+            "agent-1",
+            PendingWakeKind::CloudAgent,
+            "cloud-1",
+        )));
+        assert!(
+            !part.exists(),
+            "successful atomic replacement must consume the temporary sibling"
+        );
         let _ = fs::remove_dir_all(root);
     }
 
