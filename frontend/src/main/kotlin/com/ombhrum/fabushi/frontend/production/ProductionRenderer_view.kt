@@ -7,7 +7,6 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.MaterialTheme
@@ -194,7 +193,7 @@ internal fun ProductionRenderer(
                     },
                 )
                 if (showModelPicker) {
-                    AlertDialog(
+                    FabushiProductModal(
                         onDismissRequest = { showModelPicker = false },
                         title = { Text("Switch model") },
                         text = {
@@ -1333,7 +1332,7 @@ internal fun FabushiFeedbackSurface(
         }
     }
 
-    AlertDialog(
+    FabushiProductModal(
         onDismissRequest = ::closeIfAllowed,
         modifier = Modifier.testTag("fabushi-feedback-dialog"),
         title = { Text(if (sent) "Feedback sent" else "Send feedback") },
