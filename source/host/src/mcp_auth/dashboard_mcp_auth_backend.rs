@@ -81,6 +81,11 @@ pub const CONTROL_RPC_TIMEOUT_MS: u64 = 30_000;
 pub const RUN_GENERATE_IMAGE_PATH: &str = "/aiserver.v1.AiService/RunGenerateImage";
 pub const RUN_WEB_SEARCH_PATH: &str = "/aiserver.v1.AiService/RunWebSearch";
 pub const RUN_WEB_FETCH_PATH: &str = "/aiserver.v1.AiService/RunWebFetch";
+pub const RECORD_AGENT_FOLLOWUP_CLASSIFICATION_PATH: &str =
+    "/aiserver.v1.InferenceService/RecordAgentFollowupClassification";
+pub const RECORD_AGENT_POST_TURN_LABELING_PATH: &str =
+    "/aiserver.v1.InferenceService/RecordAgentPostTurnLabeling";
+pub const LABELING_RPC_TIMEOUT_MS: u64 = 10_000;
 pub const WEB_TOOL_REQUEST_TIMEOUT_MS: u64 = 60_000;
 pub const GENERATE_IMAGE_REQUEST_TIMEOUT_MS: u64 = 60_000;
 pub const AI_AVAILABLE_MODELS_PATH: &str = "/aiserver.v1.AiService/AvailableModels";
@@ -352,6 +357,18 @@ pub trait McpAuthBackendPort: Send + Sync {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AgentLabelingMessage {
+    pub role: String,
+    pub text: String,
+}
+
+impl AgentLabelingMessage {
+    pub fn new(role: impl Into<String>, text: impl Into<String>) -> Self {
+        Self { role: role.into(), text: text.into() }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct GeneratedImageBackendResult {
     pub image_data: String,
     pub mime_type: String,
@@ -599,6 +616,69 @@ impl CursorDashboardMcpAuthBackend {
             ghost_mode,
         )?;
         decode_web_fetch_response(&response)
+    }
+
+    pub fn record_agent_post_turn_labeling(
+        &self,
+        request_id: &str,
+        messages: &[AgentLabelingMessage],
+        conversation_id: Option<&str>,
+        agent_mode: Option<&str>,
+        model_name: Option<&str>,
+    ) -> Result<(), String> {
+        validate_labeling_request(request_id, messages)?;
+        let credentials = self.credentials.credentials()?;
+        let body = encode_post_turn_labeling_request(
+            request_id,
+            messages,
+            conversation_id,
+            agent_mode,
+            model_name,
+        )?;
+        let ghost_mode = self.resolve_ghost_mode(&credentials);
+        let _ = self.send_unary(
+            &credentials,
+            RECORD_AGENT_POST_TURN_LABELING_PATH,
+            &body,
+            LABELING_RPC_TIMEOUT_MS,
+            ghost_mode,
+        )?;
+        Ok(())
+    }
+
+    pub fn record_agent_followup_classification(
+        &self,
+        request_id: &str,
+        replying_to_request_id: &str,
+        messages: &[AgentLabelingMessage],
+        conversation_id: Option<&str>,
+        agent_mode: Option<&str>,
+        model_name: Option<&str>,
+    ) -> Result<(), String> {
+        validate_labeling_request(request_id, messages)?;
+        if replying_to_request_id.trim().is_empty()
+            || replying_to_request_id.chars().count() > 512
+        {
+            return Err("followup labeling replying_to_request_id is required and bounded".into());
+        }
+        let credentials = self.credentials.credentials()?;
+        let body = encode_followup_labeling_request(
+            request_id,
+            replying_to_request_id,
+            messages,
+            conversation_id,
+            agent_mode,
+            model_name,
+        )?;
+        let ghost_mode = self.resolve_ghost_mode(&credentials);
+        let _ = self.send_unary(
+            &credentials,
+            RECORD_AGENT_FOLLOWUP_CLASSIFICATION_PATH,
+            &body,
+            LABELING_RPC_TIMEOUT_MS,
+            ghost_mode,
+        )?;
+        Ok(())
     }
 
     pub fn submit_feedback_report(
@@ -2248,6 +2328,106 @@ fn decode_generate_image_failure(
         }
     }
     Ok((message, model_restricted))
+}
+
+fn validate_labeling_request(
+    request_id: &str,
+    messages: &[AgentLabelingMessage],
+) -> Result<(), String> {
+    if request_id.trim().is_empty() || request_id.chars().count() > 512 {
+        return Err("labeling request_id is required and bounded".into());
+    }
+    if messages.is_empty() || messages.len() > 512 {
+        return Err("labeling messages must contain between 1 and 512 entries".into());
+    }
+    let mut total = 0usize;
+    for message in messages {
+        let role = message.role.trim();
+        if !matches!(role, "user" | "assistant" | "tool" | "system") {
+            return Err("labeling message role is invalid".into());
+        }
+        if message.text.chars().count() > 1_000_000 {
+            return Err("labeling message text exceeds bounded size".into());
+        }
+        total = total.saturating_add(message.text.len());
+        if total > 2 * 1024 * 1024 {
+            return Err("labeling message batch exceeds bounded size".into());
+        }
+    }
+    Ok(())
+}
+
+fn encode_labeling_core_message(message: &AgentLabelingMessage) -> Result<Vec<u8>, String> {
+    let role = match message.role.trim() {
+        "user" => 1u64,
+        "assistant" => 2u64,
+        "tool" => 3u64,
+        "system" => 4u64,
+        _ => return Err("labeling message role is invalid".into()),
+    };
+    let mut output = Vec::new();
+    encode_key(1, 0, &mut output);
+    encode_varint(role, &mut output);
+    encode_string(2, &message.text, &mut output);
+    Ok(output)
+}
+
+fn encode_labeling_messages(
+    field: u32,
+    messages: &[AgentLabelingMessage],
+    output: &mut Vec<u8>,
+) -> Result<(), String> {
+    for message in messages {
+        let encoded = encode_labeling_core_message(message)?;
+        encode_len_delimited(field, &encoded, output);
+    }
+    Ok(())
+}
+
+fn encode_post_turn_labeling_request(
+    request_id: &str,
+    messages: &[AgentLabelingMessage],
+    conversation_id: Option<&str>,
+    agent_mode: Option<&str>,
+    model_name: Option<&str>,
+) -> Result<Vec<u8>, String> {
+    let mut output = Vec::new();
+    encode_string(1, request_id, &mut output);
+    encode_labeling_messages(2, messages, &mut output)?;
+    if let Some(value) = conversation_id.map(str::trim).filter(|value| !value.is_empty()) {
+        encode_string(3, value, &mut output);
+    }
+    if let Some(value) = agent_mode.map(str::trim).filter(|value| !value.is_empty()) {
+        encode_string(4, value, &mut output);
+    }
+    if let Some(value) = model_name.map(str::trim).filter(|value| !value.is_empty()) {
+        encode_string(5, value, &mut output);
+    }
+    Ok(output)
+}
+
+fn encode_followup_labeling_request(
+    request_id: &str,
+    replying_to_request_id: &str,
+    messages: &[AgentLabelingMessage],
+    conversation_id: Option<&str>,
+    agent_mode: Option<&str>,
+    model_name: Option<&str>,
+) -> Result<Vec<u8>, String> {
+    let mut output = Vec::new();
+    encode_string(1, request_id, &mut output);
+    encode_string(2, replying_to_request_id, &mut output);
+    encode_labeling_messages(3, messages, &mut output)?;
+    if let Some(value) = conversation_id.map(str::trim).filter(|value| !value.is_empty()) {
+        encode_string(4, value, &mut output);
+    }
+    if let Some(value) = agent_mode.map(str::trim).filter(|value| !value.is_empty()) {
+        encode_string(5, value, &mut output);
+    }
+    if let Some(value) = model_name.map(str::trim).filter(|value| !value.is_empty()) {
+        encode_string(6, value, &mut output);
+    }
+    Ok(output)
 }
 
 fn encode_bool(field: u32, value: bool, output: &mut Vec<u8>) {
@@ -3952,4 +4132,29 @@ mod feedback_submit_contract_tests {
         assert_eq!(feedback_error_for_status(429).code(), "rate-limited");
         assert_eq!(feedback_error_for_status(500).code(), "unavailable");
     }
+
+    #[test]
+    fn labeling_wire_preserves_desktop_field_tags_and_validation() {
+        let messages = vec![
+            AgentLabelingMessage::new("user", "hello"),
+            AgentLabelingMessage::new("assistant", "world"),
+        ];
+        let post = encode_post_turn_labeling_request(
+            "req-2", &messages, Some("conv"), Some("agent"), Some("model"),
+        ).unwrap();
+        assert!(!post.is_empty());
+        assert_eq!(post[0], 0x0a, "post-turn request_id must remain field 1");
+        assert!(post.contains(&0x12), "post-turn messages must remain field 2");
+
+        let followup = encode_followup_labeling_request(
+            "req-2", "req-1", &messages, Some("conv"), Some("agent"), Some("model"),
+        ).unwrap();
+        assert_eq!(followup[0], 0x0a, "followup request_id must remain field 1");
+        assert!(followup.contains(&0x12), "followup replying_to_request_id must remain field 2");
+        assert!(followup.contains(&0x1a), "followup messages must remain field 3");
+        assert!(validate_labeling_request("", &messages).is_err());
+        assert!(validate_labeling_request("req", &[]).is_err());
+        assert!(encode_labeling_core_message(&AgentLabelingMessage::new("bad", "x")).is_err());
+    }
+
 }
