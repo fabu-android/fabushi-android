@@ -177,6 +177,45 @@ internal fun isExplicitReactionAckTimeout(error: Throwable): Boolean {
 
 data class ChatPollOption(val id: String, val text: String, val voterCount: Int, val chosen: Boolean)
 
+data class RemoteHumanAttachment(
+    val resourceId: String,
+    val fileName: String,
+    val mimeType: String,
+    val sizeBytes: Int,
+    val localBlobId: String? = null,
+    val localUrl: String? = null,
+)
+
+internal fun canonicalRemoteHumanAttachments(data: JSONObject): List<RemoteHumanAttachment> = buildList {
+    val values = data.optJSONArray("remoteAttachments") ?: JSONArray()
+    for (index in 0 until values.length()) {
+        val raw = values.optJSONObject(index) ?: continue
+        val resourceId = raw.optString("resourceId")
+        val fileName = raw.optString("name")
+        val sizeBytes = raw.optInt("size", 0)
+        if (
+            resourceId.isBlank() ||
+            resourceId.length > 128 ||
+            resourceId.any { it.isISOControl() || it == '/' || it == '\\' } ||
+            fileName.isBlank() ||
+            sizeBytes <= 0 ||
+            sizeBytes > 32 * 1024 * 1024
+        ) continue
+        add(
+            RemoteHumanAttachment(
+                resourceId = resourceId,
+                fileName = fileName,
+                mimeType = raw.optString("contentType")
+                    .takeIf { it.isNotBlank() }
+                    ?: "application/octet-stream",
+                sizeBytes = sizeBytes,
+                localBlobId = raw.optString("localBlobId").takeIf { it.isNotBlank() },
+                localUrl = raw.optString("localUrl").takeIf { it.isNotBlank() },
+            ),
+        )
+    }
+}
+
 data class ChatMessage(
     val id: String,
     val conversationId: String,
@@ -186,6 +225,7 @@ data class ChatMessage(
     val mediaBlobId: String? = null,
     val mediaMimeType: String? = null,
     val mediaSizeBytes: Int = 0,
+    val remoteAttachments: List<RemoteHumanAttachment> = emptyList(),
     val contactName: String? = null,
     val latitude: Double? = null,
     val longitude: Double? = null,
@@ -468,6 +508,18 @@ internal class MessagingViewModel(application: Application) : AndroidViewModel(a
             }}.onFailure { mutableState.value = mutableState.value.copy(error = it.message) }
         }
     }
+
+    fun downloadRemoteHumanAttachment(
+        conversationId: String,
+        messageId: String,
+        resourceId: String,
+    ) = executeAsync(
+        JSONObject()
+            .put("type", "downloadRemoteHumanAttachment")
+            .put("conversationId", conversationId)
+            .put("messageId", messageId)
+            .put("resourceId", resourceId),
+    )
 
     fun setMessagePinned(conversationId: String, messageId: String, pinned: Boolean) =
         executeAsync(JSONObject().put("type", "pinMessage").put("conversationId", conversationId).put("messageId", messageId).put("pinned", pinned))
@@ -813,6 +865,7 @@ internal class MessagingViewModel(application: Application) : AndroidViewModel(a
         val mediaBlobId = media?.optString("id")?.takeIf { it.isNotBlank() }
         val mediaMimeType = media?.optString("mimeType")?.takeIf { it.isNotBlank() }
         val mediaSizeBytes = media?.optInt("sizeBytes", 0) ?: 0
+        val remoteAttachments = canonicalRemoteHumanAttachments(data)
         val contactName = data.optString("displayName").takeIf { it.isNotBlank() }
         val latitude = if (data.has("latitude")) data.optDouble("latitude") else null
         val longitude = if (data.has("longitude")) data.optDouble("longitude") else null
@@ -854,7 +907,7 @@ internal class MessagingViewModel(application: Application) : AndroidViewModel(a
             else -> "sent"
         }
         return ChatMessage(
-            id = id, conversationId = conversationId, text = text, contentType = contentType, mediaFileName = mediaFileName, mediaBlobId = mediaBlobId, mediaMimeType = mediaMimeType, mediaSizeBytes = mediaSizeBytes, contactName = contactName,
+            id = id, conversationId = conversationId, text = text, contentType = contentType, mediaFileName = mediaFileName, mediaBlobId = mediaBlobId, mediaMimeType = mediaMimeType, mediaSizeBytes = mediaSizeBytes, remoteAttachments = remoteAttachments, contactName = contactName,
             latitude = latitude, longitude = longitude, pollQuestion = pollQuestion, pollOptions = pollOptions, pollMultipleAnswers = pollMultipleAnswers, outgoing = senderId == actorId,
             time = timeLabel(raw.optLong("createdAtMs")), replyToMessageId = raw.optString("replyToMessageId").takeIf { it.isNotBlank() },
             forwardOrigin = raw.optString("forwardOrigin").takeIf { it.isNotBlank() }, reactions = reactions, deliveryState = deliveryState,
