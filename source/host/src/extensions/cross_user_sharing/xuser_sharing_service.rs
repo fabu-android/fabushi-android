@@ -754,3 +754,65 @@ fn system_now_ms() -> f64 {
         .unwrap_or_default()
         .as_millis() as f64
 }
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use super::super::xuser_relay::{SandXuserRelayHttpError, XuserRelayTransport};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    struct FakeRelayTransport {
+        requests: AtomicUsize,
+    }
+
+    impl XuserRelayTransport for FakeRelayTransport {
+        fn request(
+            &self,
+            _method: &str,
+            url: &str,
+            _token: &str,
+            _body: Option<&Value>,
+        ) -> Result<Value, SandXuserRelayHttpError> {
+            self.requests.fetch_add(1, Ordering::SeqCst);
+            if url.ends_with("/sand/share-state") {
+                return Ok(serde_json::json!({
+                    "pendingJoinRequests":[{"id":"join-a"}],
+                    "rooms":[]
+                }));
+            }
+            Ok(serde_json::json!({}))
+        }
+    }
+
+    #[test]
+    fn sharing_service_is_fail_closed_until_enabled_and_reconciles_state() {
+        let transport = Arc::new(FakeRelayTransport {
+            requests: AtomicUsize::new(0),
+        });
+        let relay = Arc::new(SandXuserRelayClient::new(
+            "https://relay.example.invalid".into(),
+            Arc::new(|| Ok("token".to_string())),
+            transport.clone(),
+        ));
+        let service = SandXuserSharingService::new(relay);
+
+        let initial = service.start().unwrap();
+        assert!(!initial.is_enabled);
+        assert_eq!(transport.requests.load(Ordering::SeqCst), 0);
+
+        service.set_enabled(true);
+        let started = service.start().unwrap();
+        assert!(started.is_enabled);
+        assert_eq!(started.pending_join_requests.len(), 1);
+        assert_eq!(transport.requests.load(Ordering::SeqCst), 1);
+
+        service.set_enabled(false);
+        let disabled = service.get_state();
+        assert!(!disabled.is_enabled);
+        assert!(disabled.pending_join_requests.is_empty());
+        assert!(disabled.rooms.is_empty());
+        assert!(disabled.typing_users.is_empty());
+        assert!(!service.is_started());
+    }
+}
