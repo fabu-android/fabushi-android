@@ -2596,7 +2596,9 @@ impl AndroidJsonHost {
                     .as_ref()
                     .is_some_and(|core| core.extension.is_enabled()),
                 "credentialBoundary": "sand-renewal-only",
-                "canonicalRoomManagerBound": false,
+                "canonicalRoomManagerBound": self.cross_user_core
+                    .as_ref()
+                    .is_some_and(ProductionCrossUserCore::canonical_room_manager_bound),
             })),
             "feature.crossUserSharing.state" | "feature.crossUserSharing.getSharingState" => {
                 self.cross_user_fenced(|core| Ok(project_cross_user_state(Some(core))))
