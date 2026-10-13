@@ -264,7 +264,6 @@ pub fn with_send_message_tools(
         live_account_fence,
         account_fence,
         agent_id,
-        agent_id,
         request_id,
         operation_id,
         turn_generation,
