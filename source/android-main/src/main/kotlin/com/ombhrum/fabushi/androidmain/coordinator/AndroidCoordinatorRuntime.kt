@@ -62,6 +62,7 @@ import com.ombhrum.fabushi.androidpreload.runtime.parseAndroidConversationOutlin
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidMcpOAuthCompletion
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidToolResultCard
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidTranscriptHistoryPage
+import com.ombhrum.fabushi.androidpreload.runtime.AndroidTranscriptThread
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidSendAcknowledgement
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidSendAcknowledgementDispatch
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidSendAcknowledgementEntry
