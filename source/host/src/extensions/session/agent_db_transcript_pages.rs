@@ -167,7 +167,7 @@ mod tests {
         let db = Connection::open_in_memory().unwrap();
         db.execute_batch(AGENT_DB_SCHEMA).unwrap();
         for (id, content) in [("m1", "one"), ("m2", "two"), ("m3", "three")] {
-            let entry = serde_json::json!({"kind":"message","id":id,"content":content});
+            let entry = serde_json::json!({"kind":"message","role":"user","id":id,"content":content});
             db.execute(
                 INSERT_TRANSCRIPT_ENTRY_SQL,
                 params![id, entry.to_string()],
