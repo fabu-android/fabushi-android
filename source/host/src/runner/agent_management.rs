@@ -2,7 +2,7 @@ use super::AndroidRoutedToolBridge;
 use crate::android_agent_roster::AndroidAgentRoster;
 use crate::messaging_service::AndroidMessagingService;
 use serde_json::{json, Map, Value};
-use std::{collections::BTreeMap, path::Path};
+use std::collections::BTreeMap;
 use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc, Mutex,
@@ -398,7 +398,7 @@ fn parse_images(value: Option<&Value>) -> Result<Vec<Value>, String> {
             .filter(|value| !value.is_empty())
             .ok_or_else(|| format!("images[{index}].url is required"))?;
         validate_image_url(url)
-            .map_err(|_| format!("images[{index}].url must include a valid file:// or https:// scheme"))?;
+            .map_err(|_| format!("images[{index}].url must use https:// or a canonical fabushi-attachment:// identity"))?;
         let alt = optional_field(object.get("alt"))?;
         images.push(match alt {
             Some(alt) => json!({"url":url,"alt":alt}),
@@ -417,9 +417,13 @@ fn validate_image_url(url: &str) -> Result<(), ()> {
             return Ok(());
         }
     }
-    if let Some(path) = url.strip_prefix("file://") {
-        if Path::new(path).is_absolute()
-            && !path.chars().any(|ch| ch == '\0' || ch == '\n' || ch == '\r')
+    if let Some(id) = url.strip_prefix("fabushi-attachment://") {
+        if !id.is_empty()
+            && !id.chars().any(|ch| {
+                ch.is_whitespace()
+                    || ch.is_control()
+                    || matches!(ch, '/' | '?' | '#')
+            })
         {
             return Ok(());
         }
@@ -769,10 +773,11 @@ mod tests {
     }
 
     #[test]
-    fn image_scheme_validation_accepts_https_and_absolute_file() {
+    fn image_scheme_validation_accepts_https_and_canonical_attachment_only() {
         assert!(validate_image_url("https://example.com/a.png").is_ok());
-        assert!(validate_image_url("file:///tmp/a.png").is_ok());
+        assert!(validate_image_url("fabushi-attachment://attachment-1").is_ok());
         assert!(validate_image_url("http://example.com/a.png").is_err());
-        assert!(validate_image_url("file://relative/a.png").is_err());
+        assert!(validate_image_url("file:///sdcard/secret.png").is_err());
+        assert!(validate_image_url("fabushi-attachment://attachment-1/extra").is_err());
     }
 }
