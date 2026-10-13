@@ -12,6 +12,7 @@ use crate::automation_id::stable_account_automation_id;
 use crate::automation_runtime::{run_json as automation_run_json, AutomationRuntime, AutomationSpec};
 use crate::auto_review_settings::{AutoReviewInstructions, DurableAutoReviewSettings};
 use crate::android_agent_roster::{AndroidAgentRoster, AndroidAgentRosterRecoveryOutcome};
+use crate::android_memory_runtime::AndroidMemoryOwner;
 use crate::android_process_metrics::AndroidProcessMetricsCollector;
 use crate::process_crash_guard::{AndroidUncleanExitKind, AndroidUncleanExitMarker};
 use crate::android_structured_log_spill::AndroidStructuredLogSpool;
@@ -858,6 +859,7 @@ pub struct AndroidJsonHost {
     auto_review_settings: Arc<Mutex<DurableAutoReviewSettings>>,
     transcript: Arc<Mutex<TranscriptStore>>,
     content_search: AndroidContentSearchIndex,
+    memory: AndroidMemoryOwner,
     send_acknowledgements: Arc<Mutex<DurableSendAcknowledgementOwner>>,
     composer_drafts: Arc<Mutex<DurableComposerDraftOwner>>,
     agent_attachments: Arc<Mutex<DurableAgentAttachmentOwner>>,
@@ -1463,6 +1465,7 @@ impl AndroidJsonHost {
             auto_review_settings,
             transcript,
             content_search,
+            memory: AndroidMemoryOwner::new(app_data_dir.join("memory")),
             send_acknowledgements,
             composer_drafts,
             agent_attachments,
@@ -2853,6 +2856,11 @@ impl AndroidJsonHost {
             "feature.crossUserSharing.removeAgent" => self.cross_user_remove_agent(params),
             "feature.crossUserSharing.leave" => self.cross_user_leave(params),
             "feature.crossUserSharing.typing" => self.cross_user_typing(params),
+            "feature.memory.list" => self.memory_list(params),
+            "feature.memory.recall" => self.memory_recall(params),
+            "feature.memory.add" => self.memory_add(params),
+            "feature.memory.remove" => self.memory_remove(params),
+            "feature.memory.clear" => self.memory_clear(params),
             "feature.agent.diskPressure.observe" => self.agent_disk_pressure_observe(params),
             "feature.agent.diskPressure.record" => self.agent_disk_pressure_record(params),
             "feature.agent.turn.reconcile" => self.agent_turn_reconcile(params),
@@ -5128,6 +5136,50 @@ impl AndroidJsonHost {
         }
         self.process_metrics_recent.push_back(projected.clone());
         Ok(projected)
+    }
+
+    fn memory_list(&self, params: &Value) -> Result<Value, String> {
+        let account_fence = self.current_turn_account_fence()?;
+        let agent_id = required_string(params, "agentId")?;
+        self.memory
+            .list(&account_fence, agent_id, params.get("limit").and_then(Value::as_u64))
+    }
+
+    fn memory_recall(&self, params: &Value) -> Result<Value, String> {
+        let account_fence = self.current_turn_account_fence()?;
+        let agent_id = required_string(params, "agentId")?;
+        self.memory.recall(
+            &account_fence,
+            agent_id,
+            params.get("recentLimit").and_then(Value::as_u64),
+        )
+    }
+
+    fn memory_add(&self, params: &Value) -> Result<Value, String> {
+        let account_fence = self.current_turn_account_fence()?;
+        let agent_id = required_string(params, "agentId")?;
+        let content = required_string(params, "content")?;
+        let kind = required_string(params, "kind")?;
+        self.memory.add(
+            &account_fence,
+            agent_id,
+            content,
+            kind,
+            i64::try_from(now_ms()).unwrap_or(i64::MAX),
+        )
+    }
+
+    fn memory_remove(&self, params: &Value) -> Result<Value, String> {
+        let account_fence = self.current_turn_account_fence()?;
+        let agent_id = required_string(params, "agentId")?;
+        let memory_id = required_string(params, "memoryId")?;
+        self.memory.remove(&account_fence, agent_id, memory_id)
+    }
+
+    fn memory_clear(&self, params: &Value) -> Result<Value, String> {
+        let account_fence = self.current_turn_account_fence()?;
+        let agent_id = required_string(params, "agentId")?;
+        self.memory.clear(&account_fence, agent_id)
     }
 
     fn agent_disk_pressure_observe(&mut self, params: &Value) -> Result<Value, String> {
