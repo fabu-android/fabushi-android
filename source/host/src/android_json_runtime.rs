@@ -1063,15 +1063,13 @@ impl AndroidJsonHost {
         };
         let cross_user_core = if mode == AndroidHostMode::Production {
             let env = android_xuser_environment(true, std::env::vars());
-            mcp_dashboard_backend.as_ref().map(|dashboard| {
+            mcp_dashboard_backend.as_ref().and_then(|dashboard| {
                 build_production_xuser_core(
                     dashboard.credential_provider(),
                     &env,
                     &app_data_dir,
                 )
-                .unwrap_or_else(|error| {
-                    panic!("failed to initialize production cross-user sharing runtime: {error}")
-                })
+                .ok()
             })
         } else {
             None
@@ -2579,102 +2577,32 @@ impl AndroidJsonHost {
                 "canonicalRoomManagerBound": false,
             })),
             "feature.crossUserSharing.state" | "feature.crossUserSharing.getSharingState" => {
-                self.reconcile_cross_user_feature_policy()?;
-                Ok(project_cross_user_state(self.cross_user_core.as_ref()))
+                self.cross_user_fenced(|core| Ok(project_cross_user_state(Some(core))))
             }
-            "feature.crossUserSharing.createRoomInvite" => {
-                self.reconcile_cross_user_feature_policy()?;
-                let room_id = required_string(params, "roomId")?;
-                let core = self
-                    .cross_user_core
-                    .as_ref()
-                    .ok_or("cross-user sharing runtime is unavailable")?;
-                core.service.create_room_invite(room_id)
-            }
-            "feature.crossUserSharing.respondToRoomJoinRequest" => {
-                self.reconcile_cross_user_feature_policy()?;
-                let request_id = required_string(params, "requestId")?;
-                let is_approved = params
-                    .get("isApproved")
-                    .and_then(Value::as_bool)
-                    .ok_or("cross-user sharing isApproved flag is required")?;
-                let core = self
-                    .cross_user_core
-                    .as_ref()
-                    .ok_or("cross-user sharing runtime is unavailable")?;
-                core.service
-                    .respond_to_join_request(&json!({
-                        "requestId": request_id,
-                        "isApproved": is_approved,
-                    }))
-                    .map(|_| project_cross_user_state(Some(core)))
-            }
-            "feature.crossUserSharing.addOwnAgentToSharedRoom" => {
-                self.reconcile_cross_user_feature_policy()?;
-                let room_id = required_string(params, "roomId")?;
-                let agent_id = required_string(params, "agentId")?;
-                let agent_name = required_string(params, "agentName")?;
-                let core = self
-                    .cross_user_core
-                    .as_ref()
-                    .ok_or("cross-user sharing runtime is unavailable")?;
-                core.service
-                    .add_own_agent(&json!({
-                        "roomId": room_id,
-                        "agentId": agent_id,
-                        "agentName": agent_name,
-                    }))
-                    .map(|_| project_cross_user_state(Some(core)))
-            }
+            "feature.crossUserSharing.createRoomInvite" => self.cross_user_invite(params),
+            "feature.crossUserSharing.respondToRoomJoinRequest" => self.cross_user_respond(params),
+            "feature.crossUserSharing.addOwnAgentToSharedRoom" => self.cross_user_add_agent(params),
             "feature.crossUserSharing.removeOwnAgentFromSharedRoom" => {
-                self.reconcile_cross_user_feature_policy()?;
-                let room_id = required_string(params, "roomId")?;
-                let agent_id = required_string(params, "agentId")?;
-                let core = self
-                    .cross_user_core
-                    .as_ref()
-                    .ok_or("cross-user sharing runtime is unavailable")?;
-                core.service
-                    .remove_own_agent(room_id, agent_id)
-                    .map(|_| project_cross_user_state(Some(core)))
+                self.cross_user_remove_agent(params)
             }
-            "feature.crossUserSharing.leaveSharedRoom" => {
-                self.reconcile_cross_user_feature_policy()?;
-                let room_id = required_string(params, "roomId")?;
-                let target_auth_id = params
-                    .get("targetAuthId")
-                    .and_then(Value::as_str)
-                    .map(str::trim)
-                    .filter(|value| !value.is_empty());
-                let core = self
-                    .cross_user_core
-                    .as_ref()
-                    .ok_or("cross-user sharing runtime is unavailable")?;
-                core.service
-                    .leave_shared_room(room_id, target_auth_id)
-                    .map(|_| project_cross_user_state(Some(core)))
-            }
+            "feature.crossUserSharing.leaveSharedRoom" => self.cross_user_leave(params),
             "feature.crossUserSharing.setEnabled" => {
                 let requested_enabled = params
                     .get("enabled")
                     .and_then(Value::as_bool)
                     .ok_or("cross-user sharing enabled flag is required")?;
-                let core = self
-                    .cross_user_core
-                    .as_ref()
-                    .ok_or("cross-user sharing runtime is unavailable")?;
-                let gate_enabled = self.experiments.check_feature_gate("sand_multiplayer");
-                let effective_enabled = requested_enabled && gate_enabled;
-                core.extension.apply_feature_policy(effective_enabled)?;
-                Ok(project_cross_user_state(Some(core)))
+                self.cross_user_fenced(|core| {
+                    let gate_enabled = self.experiments.check_feature_gate("sand_multiplayer");
+                    core.extension
+                        .apply_feature_policy(requested_enabled && gate_enabled)?;
+                    Ok(project_cross_user_state(Some(core)))
+                })
             }
             "feature.crossUserSharing.requestDrain" => {
-                let core = self
-                    .cross_user_core
-                    .as_ref()
-                    .ok_or("cross-user sharing runtime is unavailable")?;
-                core.extension.request_relay_drain();
-                Ok(json!({"accepted":true}))
+                self.cross_user_fenced(|core| {
+                    core.extension.request_relay_drain();
+                    Ok(json!({"accepted":true}))
+                })
             }
             "feature.crossUserSharing.reconcile" => self.cross_user_reconcile(),
             "feature.crossUserSharing.createFromAgent" => self.cross_user_create_from_agent(params),
@@ -4558,6 +4486,7 @@ impl AndroidJsonHost {
             .cross_user_core
             .as_ref()
             .ok_or("cross-user sharing runtime is unavailable")?;
+        core.refresh_self_auth_id()?;
         let gate_enabled = self.experiments.check_feature_gate("sand_multiplayer");
         core.apply_feature_policy(gate_enabled)?;
         let result = operation(core)?;
@@ -10111,6 +10040,39 @@ mod tests {
             )
             .is_err());
 }
+
+    #[test]
+    fn cross_user_compat_routes_do_not_bypass_account_fence() {
+        let root = tempfile::tempdir().unwrap();
+        let mut host = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+        host.logged_in = false;
+
+        for (method, params) in [
+            ("feature.crossUserSharing.state", json!({})),
+            ("feature.crossUserSharing.getSharingState", json!({})),
+            ("feature.crossUserSharing.createRoomInvite", json!({"roomId":"room-a"})),
+            (
+                "feature.crossUserSharing.respondToRoomJoinRequest",
+                json!({"requestId":"join-a","isApproved":true}),
+            ),
+            (
+                "feature.crossUserSharing.addOwnAgentToSharedRoom",
+                json!({"roomId":"room-a","agentId":"agent-a","agentName":"Agent"}),
+            ),
+            (
+                "feature.crossUserSharing.removeOwnAgentFromSharedRoom",
+                json!({"roomId":"room-a","agentId":"agent-a"}),
+            ),
+            ("feature.crossUserSharing.leaveSharedRoom", json!({"roomId":"room-a"})),
+            ("feature.crossUserSharing.setEnabled", json!({"enabled":true})),
+            ("feature.crossUserSharing.requestDrain", json!({})),
+        ] {
+            assert!(
+                host.dispatch(method, &params).is_err(),
+                "{method} must not bypass the current account fence"
+            );
+        }
+    }
 
     #[test]
     fn account_transition_cleanup_drops_old_account_secrets_and_fences_teach_recording() {
