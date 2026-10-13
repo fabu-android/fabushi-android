@@ -1,4 +1,5 @@
 use crate::extensions::content_search::android_search_index::AndroidContentSearchIndex;
+use crate::extensions::source_map::source_map_service::{SandSourceMap, SandSourceMode};
 use crate::extensions::experiments::{select_sand_experiment_turn_model, HostExperimentsExtension, StopGateSubscription};
 use crate::edge_failures::EdgeFailureBuffer;
 use crate::account_service::{AccountSessionMutation, AndroidAccountService};
@@ -871,6 +872,7 @@ pub struct AndroidJsonHost {
     auto_review_settings: Arc<Mutex<DurableAutoReviewSettings>>,
     transcript: Arc<Mutex<TranscriptStore>>,
     content_search: AndroidContentSearchIndex,
+    source_map: Arc<SandSourceMap>,
     memory: AndroidMemoryOwner,
     send_acknowledgements: Arc<Mutex<DurableSendAcknowledgementOwner>>,
     composer_drafts: Arc<Mutex<DurableComposerDraftOwner>>,
@@ -1167,6 +1169,8 @@ impl AndroidJsonHost {
             DurableAutoReviewSettings::open(app_data_dir.join("auto-review-settings.json"))
                 .unwrap_or_else(|error| panic!("failed to open durable Android Auto Review settings: {error}")),
         ));
+
+        let source_map = Arc::new(SandSourceMap::new(app_data_dir.join("source-map.json")));
 
         let (transcript_store, transcript_recovery) =
             TranscriptStore::open_recovering(app_data_dir.join("transcript.json"))
@@ -1519,6 +1523,7 @@ impl AndroidJsonHost {
             auto_review_settings,
             transcript,
             content_search,
+            source_map,
             memory: AndroidMemoryOwner::new(app_data_dir.join("memory")),
             send_acknowledgements,
             composer_drafts,
@@ -2822,6 +2827,9 @@ impl AndroidJsonHost {
             "feature.settings.autoReviewInstructions.set" => self.set_auto_review_instructions(params),
             "feature.settings.webAuthnProxy" => self.webauthn_proxy_setting(),
             "feature.settings.webAuthnProxy.set" => self.set_webauthn_proxy_setting(params),
+            "feature.sourceMap.getOrCreate" => self.source_map_get_or_create(params),
+            "feature.sourceMap.getOrCreateBoxStore" => self.source_map_get_or_create_box_store(),
+            "feature.sourceMap.setMode" => self.source_map_set_mode(params),
             "feature.remote.binding.status" => Ok(self.remote_binding_status()),
             "feature.teachRecording.status" => self.teach_recording_status(),
             "feature.onePassword.provisioning.status" => self.onepassword_provisioning_status(),
@@ -4620,6 +4628,40 @@ impl AndroidJsonHost {
             settled += 1;
         }
         Ok(settled)
+    }
+
+    fn source_map_get_or_create(&self, params: &Value) -> Result<Value, String> {
+        let agent_id = required_string(params, "agentId")?;
+        let entry = self
+            .source_map
+            .get_or_create(agent_id)
+            .map_err(|error| format!("failed to resolve Android source-map entry: {error}"))?;
+        serde_json::to_value(entry)
+            .map_err(|error| format!("failed to serialize Android source-map entry: {error}"))
+    }
+
+    fn source_map_get_or_create_box_store(&self) -> Result<Value, String> {
+        let entry = self
+            .source_map
+            .get_or_create_box_store()
+            .map_err(|error| format!("failed to resolve Android box-store source-map entry: {error}"))?;
+        serde_json::to_value(entry)
+            .map_err(|error| format!("failed to serialize Android box-store source-map entry: {error}"))
+    }
+
+    fn source_map_set_mode(&self, params: &Value) -> Result<Value, String> {
+        let agent_id = required_string(params, "agentId")?;
+        let mode = match required_string(params, "mode")? {
+            "local" => SandSourceMode::Local,
+            "agent-store" => SandSourceMode::AgentStore,
+            _ => return Err("source-map mode must be local or agent-store".into()),
+        };
+        let entry = self
+            .source_map
+            .set_mode(agent_id, mode)
+            .map_err(|error| format!("failed to persist Android source-map mode: {error}"))?;
+        serde_json::to_value(entry)
+            .map_err(|error| format!("failed to serialize Android source-map entry: {error}"))
     }
 
     fn inference_provider_setting(&self) -> Result<Value, String> {
@@ -15138,6 +15180,50 @@ mod local_tool_permission_dispatch_tests {
                 .unwrap()["permission"],
             "always",
         );
+    }
+}
+
+#[cfg(test)]
+mod source_map_dispatch_tests {
+    use super::*;
+
+    #[test]
+    fn source_map_routes_preserve_identity_across_mode_change_and_process_reopen() {
+        let root = tempfile::tempdir().unwrap();
+        let source_id;
+        {
+            let mut host = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+            let created = host
+                .dispatch("feature.sourceMap.getOrCreate", &json!({"agentId":"agent-a"}))
+                .unwrap();
+            source_id = created["sourceId"].as_str().unwrap().to_string();
+            assert_eq!(created["mode"], "local");
+            let changed = host
+                .dispatch(
+                    "feature.sourceMap.setMode",
+                    &json!({"agentId":"agent-a","mode":"agent-store"}),
+                )
+                .unwrap();
+            assert_eq!(changed["sourceId"], source_id);
+            assert_eq!(changed["mode"], "agent-store");
+            assert!(host
+                .dispatch(
+                    "feature.sourceMap.setMode",
+                    &json!({"agentId":"agent-a","mode":"invalid"}),
+                )
+                .is_err());
+        }
+
+        let mut reopened = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+        let restored = reopened
+            .dispatch("feature.sourceMap.getOrCreate", &json!({"agentId":"agent-a"}))
+            .unwrap();
+        assert_eq!(restored["sourceId"], source_id);
+        assert_eq!(restored["mode"], "agent-store");
+        let box_source = reopened
+            .dispatch("feature.sourceMap.getOrCreateBoxStore", &json!({}))
+            .unwrap();
+        assert!(box_source["sourceId"].as_str().is_some_and(|value| !value.is_empty()));
     }
 }
 
