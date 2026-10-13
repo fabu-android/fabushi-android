@@ -54,6 +54,7 @@ pub mod host_roster_bookkeeping;
 pub mod host_runner_composition;
 pub mod host_secret_store;
 pub mod human_call_runtime;
+pub mod human_remote_outbound;
 #[allow(special_module_name)]
 pub mod main;
 pub mod managed_team_rules;
