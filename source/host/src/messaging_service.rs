@@ -756,6 +756,182 @@ impl AndroidMessagingService {
         )])
     }
 
+    /// Derive forward-recipient candidates from canonical messaging truth.
+    ///
+    /// Presentation never supplies membership or permission facts. The source message and every
+    /// candidate destination are revalidated against this repository before a candidate is
+    /// projected.
+    pub fn search_forward_recipients(
+        &self,
+        authenticated_actor_id: &str,
+        source_conversation_id: &str,
+        source_message_id: &str,
+        query: &str,
+        limit: usize,
+        now_ms: i64,
+    ) -> Result<Vec<Value>, String> {
+        let actor_id = authenticated_actor_id.trim();
+        let source_conversation_id = source_conversation_id.trim();
+        let source_message_id = source_message_id.trim();
+        if actor_id.is_empty() || source_conversation_id.is_empty() || source_message_id.is_empty() {
+            return Err("recipient search requires actor, source conversation and source message".into());
+        }
+        self.require_conversation_access(source_conversation_id, actor_id)?;
+        let source = self.require_message(source_conversation_id, source_message_id)?;
+        if source.get("deleted").and_then(Value::as_bool).unwrap_or(false) {
+            return Err("recipient search source message is deleted".into());
+        }
+        if !matches!(
+            source.get("deliveryState").and_then(Value::as_str),
+            Some("sent" | "delivered" | "read")
+        ) {
+            return Err("recipient search source must be a settled canonical message".into());
+        }
+        if source
+            .get("protectedContent")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+        {
+            return Ok(Vec::new());
+        }
+        let content = source
+            .get("content")
+            .ok_or("recipient search source content is missing")?;
+        let normalized_query = query.trim().to_lowercase();
+        let bounded_limit = limit.clamp(1, 100);
+
+        let mut candidates = self
+            .state
+            .conversations
+            .values()
+            .filter(|conversation| conversation_has_access(conversation, actor_id))
+            .filter(|conversation| conversation_can_send(conversation, actor_id, content))
+            .filter(|conversation| {
+                let Some(participants) = conversation.get("participants").and_then(Value::as_array) else {
+                    return false;
+                };
+                let mut has_local_human = false;
+                let mut has_other_human = false;
+                for participant in participants {
+                    let Some(participant_id) =
+                        participant.get("actorId").and_then(Value::as_str)
+                    else {
+                        continue;
+                    };
+                    let is_human = self
+                        .state
+                        .actors
+                        .get(participant_id)
+                        .and_then(|actor| actor.get("kind"))
+                        .and_then(Value::as_str)
+                        == Some("human");
+                    if participant_id == actor_id && is_human {
+                        has_local_human = true;
+                    } else if is_human {
+                        has_other_human = true;
+                    }
+                }
+                has_local_human && has_other_human
+            })
+            .filter(|conversation| {
+                if normalized_query.is_empty() {
+                    return true;
+                }
+                let title_matches = conversation
+                    .get("title")
+                    .and_then(Value::as_str)
+                    .is_some_and(|title| title.to_lowercase().contains(&normalized_query));
+                let participant_matches = conversation
+                    .get("participants")
+                    .and_then(Value::as_array)
+                    .is_some_and(|participants| {
+                        participants.iter().any(|participant| {
+                            let Some(participant_id) =
+                                participant.get("actorId").and_then(Value::as_str)
+                            else {
+                                return false;
+                            };
+                            participant_id.to_lowercase().contains(&normalized_query)
+                                || self
+                                    .state
+                                    .actors
+                                    .get(participant_id)
+                                    .and_then(|actor| actor.get("displayName"))
+                                    .and_then(Value::as_str)
+                                    .is_some_and(|name| {
+                                        name.to_lowercase().contains(&normalized_query)
+                                    })
+                        })
+                    });
+                title_matches || participant_matches
+            })
+            .map(|conversation| {
+                let participant_ids = conversation
+                    .get("participants")
+                    .and_then(Value::as_array)
+                    .map(|participants| {
+                        participants
+                            .iter()
+                            .filter_map(|participant| {
+                                participant
+                                    .get("actorId")
+                                    .and_then(Value::as_str)
+                                    .map(str::to_string)
+                            })
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default();
+                json!({
+                    "id": conversation.get("id").cloned().unwrap_or(Value::Null),
+                    "kind": "human",
+                    "title": conversation.get("title").cloned().unwrap_or_else(|| Value::String("Human conversation".into())),
+                    "participantIds": participant_ids,
+                    "updatedAt": conversation
+                        .get("updatedAtMs")
+                        .cloned()
+                        .unwrap_or_else(|| json!(0)),
+                    "_sortUpdatedAtMs": conversation
+                        .get("updatedAtMs")
+                        .and_then(Value::as_i64)
+                        .unwrap_or(0),
+                    "_projected": self.project_conversation(conversation, actor_id, now_ms),
+                })
+            })
+            .collect::<Vec<_>>();
+        candidates.sort_by(|left, right| {
+            right
+                .get("_sortUpdatedAtMs")
+                .and_then(Value::as_i64)
+                .unwrap_or(0)
+                .cmp(
+                    &left
+                        .get("_sortUpdatedAtMs")
+                        .and_then(Value::as_i64)
+                        .unwrap_or(0),
+                )
+                .then_with(|| {
+                    left.get("title")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .cmp(right.get("title").and_then(Value::as_str).unwrap_or_default())
+                })
+                .then_with(|| {
+                    left.get("id")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .cmp(right.get("id").and_then(Value::as_str).unwrap_or_default())
+                })
+        });
+        candidates.truncate(bounded_limit);
+        for candidate in &mut candidates {
+            if let Some(object) = candidate.as_object_mut() {
+                object.remove("_sortUpdatedAtMs");
+                object.remove("_projected");
+            }
+        }
+        Ok(candidates)
+    }
+
     /// Durable Agent-to-Agent/group delivery through the canonical messaging owner.
     ///
     /// The caller owns tool-call argument idempotency. This repository owns the
