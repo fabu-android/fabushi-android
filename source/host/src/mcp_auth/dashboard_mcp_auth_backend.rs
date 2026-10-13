@@ -48,6 +48,9 @@ pub const DASHBOARD_EXECUTE_SAND_MCP_TOOL_PATH: &str =
     "/aiserver.v1.DashboardService/ExecuteSandMcpTool";
 pub const DASHBOARD_CLIENT_ACTION_PATH: &str =
     "/aiserver.v1.DashboardService/ClientAction";
+pub const DASHBOARD_RECORD_SAND_AUDIT_EVENTS_PATH: &str =
+    "/aiserver.v1.DashboardService/RecordSandAuditEvents";
+pub const ACTION_AUDIT_BACKEND_TIMEOUT_MS: u64 = 10_000;
 pub const ANALYTICS_SUBMIT_LOGS_PATH: &str =
     "/aiserver.v1.AnalyticsService/SubmitLogs";
 pub const ANALYTICS_TRACK_EVENTS_PATH: &str =
@@ -770,6 +773,22 @@ impl CursorDashboardMcpAuthBackend {
             Err(ureq::Error::Status(status, _)) => Err(feedback_error_for_status(status)),
             Err(ureq::Error::Transport(_)) => Err(FeedbackSubmitBackendError::Unavailable),
         }
+    }
+
+    pub fn submit_action_audit_events(&self, encoded_request: &[u8]) -> Result<(), String> {
+        if encoded_request.is_empty() {
+            return Ok(());
+        }
+        let credentials = self.credentials.credentials()?;
+        let ghost_mode = self.resolve_ghost_mode(&credentials);
+        self.send_unary(
+            &credentials,
+            DASHBOARD_RECORD_SAND_AUDIT_EVENTS_PATH,
+            encoded_request,
+            ACTION_AUDIT_BACKEND_TIMEOUT_MS,
+            ghost_mode,
+        )
+        .map(|_| ())
     }
 
     pub fn submit_account_telemetry(
