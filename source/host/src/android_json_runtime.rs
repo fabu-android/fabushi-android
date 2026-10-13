@@ -13627,6 +13627,7 @@ impl Drop for AndroidJsonHost {
             tracing.flush();
             tracing.dispose();
         }
+        crate::send_trace_host::set_turn_trace_host_bundle_version(None);
 
         for cancelled in self.turn_cancellations.values() {
             cancelled.store(true, Ordering::Release);
