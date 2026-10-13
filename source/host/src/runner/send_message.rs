@@ -4,7 +4,7 @@ use crate::runner::ProductionTurnLifecycleStore;
 use serde_json::{json, Map, Value};
 use std::collections::VecDeque;
 use std::sync::{
-    atomic::{AtomicBool, Ordering},
+    atomic::{AtomicBool, AtomicUsize, Ordering},
     Arc, Mutex,
 };
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -26,6 +26,7 @@ pub struct SendMessageRoutedTools {
     turn_generation: u64,
     process_epoch: u64,
     cancelled: Arc<AtomicBool>,
+    committed_send_count: Arc<AtomicUsize>,
 }
 
 impl SendMessageRoutedTools {
@@ -43,6 +44,7 @@ impl SendMessageRoutedTools {
         turn_generation: u64,
         process_epoch: u64,
         cancelled: Arc<AtomicBool>,
+        committed_send_count: Arc<AtomicUsize>,
     ) -> Self {
         Self {
             delegate,
@@ -57,6 +59,7 @@ impl SendMessageRoutedTools {
             turn_generation,
             process_epoch,
             cancelled,
+            committed_send_count,
         }
     }
 
@@ -168,6 +171,11 @@ impl SendMessageRoutedTools {
             }
         }
 
+        // Count only a newly committed canonical SendMessage. Idempotent replays return
+        // before this point, while widget state failures roll the transcript entry back.
+        // A cancellation/account switch racing after commit is still a real committed
+        // side effect and must remain visible to revival reconciliation.
+        self.committed_send_count.fetch_add(1, Ordering::AcqRel);
         self.assert_post_commit(tool_call_id)?;
         self.events
             .lock()
@@ -242,6 +250,39 @@ pub fn with_send_message_tools(
     process_epoch: u64,
     cancelled: Arc<AtomicBool>,
 ) -> Arc<dyn AndroidRoutedToolBridge> {
+    with_send_message_tools_counted(
+        delegate,
+        transcript,
+        lifecycle,
+        events,
+        live_account_fence,
+        account_fence,
+        agent_id,
+        request_id,
+        operation_id,
+        turn_generation,
+        process_epoch,
+        cancelled,
+        Arc::new(AtomicUsize::new(0)),
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn with_send_message_tools_counted(
+    delegate: Arc<dyn AndroidRoutedToolBridge>,
+    transcript: Arc<Mutex<TranscriptStore>>,
+    lifecycle: Arc<Mutex<ProductionTurnLifecycleStore>>,
+    events: Arc<Mutex<VecDeque<Value>>>,
+    live_account_fence: Arc<Mutex<Option<String>>>,
+    account_fence: &str,
+    agent_id: &str,
+    request_id: &str,
+    operation_id: &str,
+    turn_generation: u64,
+    process_epoch: u64,
+    cancelled: Arc<AtomicBool>,
+    committed_send_count: Arc<AtomicUsize>,
+) -> Arc<dyn AndroidRoutedToolBridge> {
     Arc::new(SendMessageRoutedTools::new(
         delegate,
         transcript,
@@ -255,6 +296,7 @@ pub fn with_send_message_tools(
         turn_generation,
         process_epoch,
         cancelled,
+        committed_send_count,
     ))
 }
 
@@ -564,6 +606,43 @@ mod tests {
             Arc::new(AtomicBool::new(false)),
         );
         (tools, transcript, lifecycle, events, live, root)
+    }
+
+    #[test]
+    fn committed_send_counter_counts_canonical_side_effect_once() {
+        let root = tempfile::Builder::new()
+            .prefix("fabushi-send-message-counted-")
+            .tempdir()
+            .unwrap();
+        let transcript = Arc::new(Mutex::new(
+            TranscriptStore::open(root.path().join("transcript.json")).unwrap(),
+        ));
+        let lifecycle = Arc::new(Mutex::new(
+            ProductionTurnLifecycleStore::open(root.path().join("turn-lifecycle.json"), 1).unwrap(),
+        ));
+        let process_epoch = lifecycle.lock().unwrap().process_epoch();
+        let events = Arc::new(Mutex::new(VecDeque::new()));
+        let live = Arc::new(Mutex::new(Some("acct:a".into())));
+        let count = Arc::new(AtomicUsize::new(0));
+        let tools = with_send_message_tools_counted(
+            Arc::new(EmptyTools),
+            Arc::clone(&transcript),
+            Arc::clone(&lifecycle),
+            events,
+            live,
+            "acct:a",
+            "agent-a",
+            "request-a",
+            "operation-a",
+            1,
+            process_epoch,
+            Arc::new(AtomicBool::new(false)),
+            Arc::clone(&count),
+        );
+        let args = json!({"type":"text","content":"hello"});
+        tools.call_tool(SEND_MESSAGE_TOOL_NAME, args.clone(), "call-1").unwrap();
+        tools.call_tool(SEND_MESSAGE_TOOL_NAME, args, "call-1").unwrap();
+        assert_eq!(count.load(Ordering::Acquire), 1);
     }
 
     #[test]
