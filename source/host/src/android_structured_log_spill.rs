@@ -20,13 +20,16 @@ const ALLOWED_EVENTS: &[&str] = &[
     "sand.agent.open",
     "sand.agents_unreachable",
     "sand.attachment.edge_failed",
+    "sand.automation.lifecycle",
     "sand.box_dns_diagnostic",
+    "sand.box.log_ship",
     "sand.box_reachability",
     "sand.box_migration_watch",
     "sand.box_rebuild_escalation",
     "sand.box_rebuild_pending_stall",
     "sand.box_rebuild_stage",
     "sand.box_recreate_visible",
+    "sand.box.recreate_decided",
     "sand.box_secrets.push",
     "sand.box_setup_visible",
     "sand.connector_auth",
@@ -544,6 +547,44 @@ mod tests {
         let snapshot = spool.snapshot();
         assert_eq!(snapshot.checkpoint.records.len(), 1);
         assert_eq!(snapshot.checkpoint.records[0].message, "sand.agent.error");
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn spill_accepts_restored_automation_and_box_telemetry_contracts() {
+        let root = root("restored-telemetry");
+        let path = root.join("spill.json");
+        let mut spool =
+            AndroidStructuredLogSpool::open(&path, "account-a", "counter-a", 1_000).unwrap();
+        for (index, event) in [
+            "sand.automation.lifecycle",
+            "sand.box.log_ship",
+            "sand.box.recreate_decided",
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            spool
+                .record(
+                    "info",
+                    event,
+                    BTreeMap::from([("kind".into(), "bounded".into())]),
+                    1_001 + index as u64,
+                )
+                .unwrap();
+        }
+        assert_eq!(
+            spool
+                .batch()
+                .iter()
+                .map(|record| record.message.as_str())
+                .collect::<Vec<_>>(),
+            vec![
+                "sand.automation.lifecycle",
+                "sand.box.log_ship",
+                "sand.box.recreate_decided",
+            ]
+        );
         let _ = fs::remove_dir_all(root);
     }
 
