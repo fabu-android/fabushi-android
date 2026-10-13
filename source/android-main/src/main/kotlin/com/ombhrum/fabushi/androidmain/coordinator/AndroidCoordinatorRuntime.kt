@@ -44,6 +44,8 @@ import com.ombhrum.fabushi.androidpreload.runtime.AndroidEntrypointAvailabilityS
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidMandatoryUpdatePolicy
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidUpdateTrackPolicy
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidTimeZoneSettings
+import com.ombhrum.fabushi.androidpreload.runtime.AndroidLocalToolPermission
+import com.ombhrum.fabushi.androidpreload.runtime.AndroidLocalToolPermissionSettings
 import com.ombhrum.fabushi.AndroidBackendUpdateSignal
 import com.ombhrum.fabushi.AndroidMandatoryUpdateFacts
 import com.ombhrum.fabushi.AndroidMandatoryUpdateOwner
@@ -655,8 +657,10 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
         AndroidLocalToolPermissionSettings(
             permission = AndroidLocalToolPermission.fromWire(projection.getString("permission")),
             preference = AndroidLocalToolPermission.fromWire(projection.getString("preference")),
-            ceiling = projection.optString("ceiling")
-                .takeIf(String::isNotBlank)
+            ceiling = projection.opt("ceiling")
+                ?.takeUnless { it === JSONObject.NULL }
+                ?.toString()
+                ?.takeIf(String::isNotBlank)
                 ?.let(AndroidLocalToolPermission::fromWire),
             settledPendingRemoteApprovals =
                 projection.optInt("settledPendingRemoteApprovals", 0).coerceAtLeast(0),
