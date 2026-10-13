@@ -419,8 +419,8 @@ impl AndroidAccountService {
             }
         }
         let mut bytes = Vec::with_capacity(expected_size as usize);
-        let reader = response.into_reader();
-        let mut limited = reader.take(MAX_RESOURCE_BYTES + 1);
+        let mut reader = response.into_reader();
+        let mut limited = (&mut *reader).take(MAX_RESOURCE_BYTES + 1);
         limited.read_to_end(&mut bytes)
             .map_err(|error| format!("Fabushi Human attachment body could not be read: {error}"))?;
         if bytes.len() as u64 != expected_size || bytes.len() as u64 > MAX_RESOURCE_BYTES {
