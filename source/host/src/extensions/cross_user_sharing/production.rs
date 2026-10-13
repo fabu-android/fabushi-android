@@ -49,6 +49,21 @@ pub fn build_production_xuser_relay_client(
 }
 
 
+pub fn android_xuser_environment(
+    packaged: bool,
+    process_env: impl IntoIterator<Item = (String, String)>,
+) -> BTreeMap<String, String> {
+    let mut env = process_env.into_iter().collect::<BTreeMap<_, _>>();
+    if packaged {
+        // Desktop derives this from the packaged Host process environment. Android APK processes
+        // do not inherit that desktop variable, so the production composition must state the
+        // packaging fact explicitly. Test/dev composition never gets this implicit elevation.
+        env.insert("SAND_PACKAGED".into(), "1".into());
+        env.remove("SAND_HOST_DEV_ERROR_DETAIL");
+    }
+    env
+}
+
 /// Process-owned core composition for Android cross-user sharing.
 ///
 /// This intentionally stops short of Presentation or canonical room installation: those are bound
@@ -212,6 +227,30 @@ mod tests {
             self.tokens.lock().unwrap().push(token.to_string());
             Ok(json!({}))
         }
+    }
+
+    #[test]
+    fn android_packaged_environment_marks_only_production_as_packaged() {
+        let packaged = android_xuser_environment(
+            true,
+            vec![
+                ("SAND_HOST_DEV_ERROR_DETAIL".into(), "1".into()),
+                ("OTHER".into(), "value".into()),
+            ],
+        );
+        assert_eq!(packaged.get("SAND_PACKAGED").map(String::as_str), Some("1"));
+        assert!(!packaged.contains_key("SAND_HOST_DEV_ERROR_DETAIL"));
+        assert_eq!(packaged.get("OTHER").map(String::as_str), Some("value"));
+
+        let dev = android_xuser_environment(
+            false,
+            vec![("SAND_HOST_DEV_ERROR_DETAIL".into(), "1".into())],
+        );
+        assert!(!dev.contains_key("SAND_PACKAGED"));
+        assert_eq!(
+            dev.get("SAND_HOST_DEV_ERROR_DETAIL").map(String::as_str),
+            Some("1")
+        );
     }
 
     #[test]
