@@ -18483,6 +18483,80 @@
       "artifact": null,
       "verification_status": "not-verified",
       "notes": "Implemented source + shipping Host wiring. Keep not-verified until descendant exact-head CI and packaged/device evidence succeeds."
+    },
+    {
+      "responsibility_id": "AGENT-BOX-HANDOFF-RESUME-ANDROID-001",
+      "domain": "agent-box-handoff-resume",
+      "desktop_sources": [
+        {
+          "path": "source/host/src/extensions/transcript/box_handoff_resume.rs",
+          "blob_sha": "f4528b5b33432c63e1ac06b563299486251aee85",
+          "symbols": [
+            "build_box_handoff_resume_send_args",
+            "box_handoff_resume_prompt",
+            "settle_box_handoff_state",
+            "AwaitingStateSink"
+          ]
+        }
+      ],
+      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "responsibility": "Settle a completed Box handoff and continue the same Agent with one hidden, non-user-visible resume turn whose prompt depends on returned/dismissed/viewer-closed semantics; never duplicate the continuation after process death or stale callback.",
+      "source_owner": "Desktop transcript Box handoff settlement/resume owner",
+      "direct_callers": [
+        "Box handoff terminal callbacks",
+        "Host hidden-turn dispatch"
+      ],
+      "downstream_dependencies": [
+        "durable handoff state",
+        "durable turn journal",
+        "account bearer/session owner",
+        "Agent turn runtime"
+      ],
+      "state_owner": "AndroidBoxHandoffOwner owns pending handoff plus terminal resume obligation; DurableTurnJournal owns accepted continuation identity/outcome",
+      "persistent_state": [
+        "account-fenced pending handoff",
+        "terminal resume obligation until durable turn acceptance",
+        "durable hidden-turn request record"
+      ],
+      "protocol_wire_contract": [
+        "requestSource=handoff-resume",
+        "hidden=true",
+        "appendUserMessage=false",
+        "awaitTurn=false",
+        "skipAckObligation=true",
+        "directAddressedAcceptance=true",
+        "deterministic box-handoff-resume:<handoffRequestId>:<agentId>:<trigger> request identity"
+      ],
+      "visible_effect": "After the user returns, dismisses, or closes the remote Box viewer, the Agent continues from the correct uncertainty/decline context without adding a fake user message or silently losing continuation after process death.",
+      "failure_behavior": [
+        "stale account/request end is ignored without queuing a turn",
+        "token/provider/queue failure leaves the terminal resume obligation durable for later redrive",
+        "a journaled continuation is acknowledged rather than queued again after crash between queue and obligation acknowledgement"
+      ],
+      "cancellation_behavior": "The hidden resume turn is owned by the normal canonical turn lifecycle; handoff settlement does not create a second cancellation owner.",
+      "retry_semantics": "Only an unacknowledged terminal resume obligation may be retried. DurableTurnJournal presence fences duplicate continuation execution.",
+      "idempotency_semantics": "Repeated end for the same account/agent/request replays the same durable terminal obligation until acknowledged; deterministic request identity plus the journal prevents duplicate turn creation.",
+      "process_death_recovery": "AndroidBoxHandoffOwner reopens terminal resume obligations. feature.receive performs bounded redrive; if the deterministic turn request already exists, it retires the obligation without re-executing the continuation.",
+      "account_fencing": "Pending and terminal obligations persist accountFence and are listed/acknowledged/forgotten only within that account; stale end/snapshot cannot cross account sessions.",
+      "security_boundary": "Rust Host owns the hidden prompt, bearer usage, journal identity and redrive. Compose/JNI cannot fabricate or retry the continuation.",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "source/host/src/android_box_handoff.rs",
+        "source/host/src/android_json_runtime.rs",
+        "source/host/src/runner/durable_turn_journal.rs"
+      ],
+      "android_owner": "Rust AndroidBoxHandoffOwner + AndroidJsonHost hidden-turn orchestration + DurableTurnJournal idempotency authority",
+      "platform_delta": "Desktop settles ProductionSessionWorkers/roster transcript state and schedules a hidden send; Android uses its native durable handoff owner and durable turn journal, persisting a terminal resume obligation so Android process death/auth transients cannot lose the continuation.",
+      "implementation_status": "implemented",
+      "production_wiring": "b18d4d7b801fd6029b66252dbba321b7d72d2c15 persists/replays/acknowledges account-fenced terminal resume obligations; 35228dd989f4997fbc30c9daa351fae1e22d080c wires deterministic hidden resume commands, journal-before-redrive duplicate fencing, explicit Desktop-equivalent flags, acknowledgement only after durable queue acceptance, and feature.receive bounded redrive.",
+      "unit_test": "android_box_handoff tests cover duplicate terminal end replay, reopen, resume acknowledgement and account cleanup; exact-head Actions pending.",
+      "contract_test": "android_json_runtime::android_box_handoff_runtime_tests cover prompt semantics, durable queue acceptance, journaled crash-window acknowledgement without duplicate generation, stale request fencing; exact-head Actions pending.",
+      "integration_test": "Host handoff.start/status/attach/end -> hidden handoff-resume turn is production-wired; packaged/protected Remote Runner journey remains required.",
+      "packaged_test": "required on final exact-head APK/AAB",
+      "device_test": "required with authorized Remote Runner and process death between terminal handoff and continuation acceptance",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Implemented source and production wiring on descendant of b18d4d7/35228dd. Do not mark verified until one current exact HEAD passes Rust/Architecture/Full CI plus packaged/device process-death acceptance. Desktop MCP-auth/listener-connect resume helpers remain separate responsibilities."
     }
   ],
   "traceability": {
