@@ -3723,34 +3723,13 @@ impl AndroidJsonHost {
         if self.mode == AndroidHostMode::Test {
             return Err("remote Human message sync requires the production account transport".into());
         }
-        let contact_id = required_string(params, "contactId")?.trim();
-        if contact_id.is_empty() || contact_id.len() > 200 {
-            return Err("remote Human contactId is invalid".into());
-        }
+        let contact_id = required_string(params, "contactId")?;
         let limit = params
             .get("limit")
             .and_then(Value::as_u64)
-            .unwrap_or(100)
-            .clamp(1, 200);
-        let encoded_contact: String =
-            url::form_urlencoded::byte_serialize(contact_id.as_bytes()).collect();
-        let mut path = format!(
-            "/api/social/messages?contactId={encoded_contact}&limit={limit}"
-        );
-        if let Some(before) = params
-            .get("before")
-            .and_then(Value::as_str)
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-        {
-            if before.len() > 200 {
-                return Err("remote Human message cursor is invalid".into());
-            }
-            let encoded_before: String =
-                url::form_urlencoded::byte_serialize(before.as_bytes()).collect();
-            path.push_str("&before=");
-            path.push_str(&encoded_before);
-        }
+            .unwrap_or(100);
+        let before = params.get("before").and_then(Value::as_str);
+        let path = human_remote_messages_path(contact_id, before, limit)?;
         let (result, mutation) = self
             .account
             .authenticated_device_api_request("GET", &path, None)?;
@@ -10604,6 +10583,36 @@ fn mcp_auth_display_name(server_name: &str, account_key: &str) -> String {
     format!("{server_name} ({rendered})")
 }
 
+fn human_remote_messages_path(
+    contact_id: &str,
+    before: Option<&str>,
+    limit: u64,
+) -> Result<String, String> {
+    let contact_id = contact_id.trim();
+    if contact_id.is_empty() || contact_id.len() > 200 {
+        return Err("remote Human contactId is invalid".into());
+    }
+    let encoded_contact: String =
+        url::form_urlencoded::byte_serialize(contact_id.as_bytes()).collect();
+    let mut path = format!(
+        "/api/social/messages?contactId={encoded_contact}&limit={}",
+        limit.clamp(1, 200),
+    );
+    if let Some(before) = before
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        if before.len() > 200 {
+            return Err("remote Human message cursor is invalid".into());
+        }
+        let encoded_before: String =
+            url::form_urlencoded::byte_serialize(before.as_bytes()).collect();
+        path.push_str("&before=");
+        path.push_str(&encoded_before);
+    }
+    Ok(path)
+}
+
 fn validate_human_remote_envelope(value: &Value, operation: &str) -> Result<(), String> {
     let object = value
         .as_object()
@@ -15458,5 +15467,38 @@ mod android_box_handoff_runtime_tests {
             .unwrap()
             .is_null()
         );
+    }
+}
+
+#[cfg(test)]
+mod human_remote_sync_contract_tests {
+    use super::*;
+
+    #[test]
+    fn remote_message_sync_path_is_bounded_and_percent_encoded() {
+        assert_eq!(
+            human_remote_messages_path("human:a/b c", Some("cursor/with space"), 999).unwrap(),
+            "/api/social/messages?contactId=human%3Aa%2Fb%20c&limit=200&before=cursor%2Fwith%20space",
+        );
+        assert_eq!(
+            human_remote_messages_path("human:peer", None, 0).unwrap(),
+            "/api/social/messages?contactId=human%3Apeer&limit=1",
+        );
+        assert!(human_remote_messages_path("   ", None, 10).is_err());
+        assert!(human_remote_messages_path("human:peer", Some(&"x".repeat(201)), 10).is_err());
+    }
+
+    #[test]
+    fn remote_sync_rejects_backend_failure_envelopes() {
+        assert!(validate_human_remote_envelope(
+            &json!({"success":true,"data":{"friends":[]}}),
+            "contact sync",
+        ).is_ok());
+        let error = validate_human_remote_envelope(
+            &json!({"success":false,"error":"denied"}),
+            "contact sync",
+        ).unwrap_err();
+        assert!(error.contains("denied"));
+        assert!(validate_human_remote_envelope(&json!([]), "message sync").is_err());
     }
 }
