@@ -39,6 +39,7 @@ const ALLOWED_EVENTS: &[&str] = &[
     "sand.desktop.coordinator_lifecycle",
     "sand.desktop.edge_failed",
     "sand.desktop.event_loop",
+    "sand.host.event_loop",
     "sand.desktop.startup",
     "sand.desktop.process_crash",
     "sand.desktop.renderer_lifecycle",
