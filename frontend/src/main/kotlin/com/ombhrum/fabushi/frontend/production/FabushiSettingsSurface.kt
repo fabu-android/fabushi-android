@@ -3,6 +3,8 @@ package com.ombhrum.fabushi
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidAccountUsageSummary
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidAccountUpgradeCta
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidAutoReviewInstructionsSnapshot
+import com.ombhrum.fabushi.androidpreload.runtime.AndroidLocalToolPermission
+import com.ombhrum.fabushi.androidpreload.runtime.AndroidLocalToolPermissionSettings
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidTimeZoneSettings
 
 import android.graphics.Bitmap
@@ -245,6 +247,10 @@ internal fun FabushiSettingsSurface(
     timeZoneBusy: Boolean,
     timeZoneError: String?,
     onSaveTimeZoneOverride: (String?) -> Unit,
+    localToolPermissionSettings: AndroidLocalToolPermissionSettings?,
+    localToolPermissionBusy: Boolean,
+    localToolPermissionError: String?,
+    onSetLocalToolPermission: (AndroidLocalToolPermission) -> Unit,
     processMetricsLocalEnabled: Boolean,
     processMetricsBusy: Boolean,
     processMetricsError: String?,
@@ -530,6 +536,68 @@ internal fun FabushiSettingsSurface(
                                 modifier = Modifier.testTag("settings-time-zone-error"),
                             )
                         }
+                        Text("Computer tool permission")
+                        Text(
+                            "Controls Agent actions on the trusted Remote computer. " +
+                                "The Rust Host owns the durable preference and applies any managed team ceiling.",
+                            modifier = Modifier.testTag("settings-local-tool-permission-description"),
+                        )
+                        val localToolSettings = localToolPermissionSettings
+                        if (localToolSettings == null) {
+                            Text(
+                                if (localToolPermissionBusy) "Loading computer permission…" else "Computer permission unavailable",
+                                modifier = Modifier.testTag("settings-local-tool-permission-summary"),
+                            )
+                        } else {
+                            val ceilingLabel = localToolSettings.ceiling?.wireValue ?: "none"
+                            Text(
+                                "Effective: \${localToolSettings.permission.wireValue} · " +
+                                    "Preference: \${localToolSettings.preference.wireValue} · " +
+                                    "Managed ceiling: $ceilingLabel",
+                                modifier = Modifier.testTag("settings-local-tool-permission-summary"),
+                            )
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                AndroidLocalToolPermission.entries.forEach { option ->
+                                    val allowedByCeiling =
+                                        localToolSettings.ceiling?.let { option.ordinal <= it.ordinal } ?: true
+                                    TextButton(
+                                        onClick = { onSetLocalToolPermission(option) },
+                                        enabled = !localToolPermissionBusy && allowedByCeiling,
+                                        modifier = Modifier.testTag(
+                                            "settings-local-tool-permission-\${option.wireValue}",
+                                        ),
+                                    ) {
+                                        Text(
+                                            if (localToolSettings.preference == option) {
+                                                "✓ \${option.wireValue}"
+                                            } else {
+                                                option.wireValue
+                                            },
+                                        )
+                                    }
+                                }
+                            }
+                            if (localToolSettings.settledPendingRemoteApprovals > 0) {
+                                Text(
+                                    "Applied to \${localToolSettings.settledPendingRemoteApprovals} pending Remote request(s).",
+                                    modifier = Modifier.testTag("settings-local-tool-permission-settled"),
+                                )
+                            }
+                            localToolSettings.ceiling?.let { ceiling ->
+                                Text(
+                                    "Your organization limits this setting to \${ceiling.wireValue} or stricter.",
+                                    modifier = Modifier.testTag("settings-local-tool-permission-ceiling"),
+                                )
+                            }
+                        }
+                        localToolPermissionError?.takeIf(String::isNotBlank)?.let { error ->
+                            Text(
+                                error,
+                                color = MaterialTheme.colorScheme.error,
+                                modifier = Modifier.testTag("settings-local-tool-permission-error"),
+                            )
+                        }
+
                         Text("Performance diagnostics")
                         Text(
                             "Local process metrics are off by default. When enabled, Fabushi samples only " +

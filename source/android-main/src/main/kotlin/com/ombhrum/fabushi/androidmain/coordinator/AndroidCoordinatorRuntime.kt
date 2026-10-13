@@ -649,6 +649,34 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
                 .put("hasSeenOnboarding", hasSeenOnboarding),
         )
 
+    private fun localToolPermissionSettingsFromProjection(
+        projection: JSONObject,
+    ): AndroidLocalToolPermissionSettings =
+        AndroidLocalToolPermissionSettings(
+            permission = AndroidLocalToolPermission.fromWire(projection.getString("permission")),
+            preference = AndroidLocalToolPermission.fromWire(projection.getString("preference")),
+            ceiling = projection.optString("ceiling")
+                .takeIf(String::isNotBlank)
+                ?.let(AndroidLocalToolPermission::fromWire),
+            settledPendingRemoteApprovals =
+                projection.optInt("settledPendingRemoteApprovals", 0).coerceAtLeast(0),
+        )
+
+    override fun localToolPermissionSettings(): AndroidLocalToolPermissionSettings =
+        localToolPermissionSettingsFromProjection(
+            host.request("feature.settings.localToolPermission"),
+        )
+
+    override fun setLocalToolPermission(
+        permission: AndroidLocalToolPermission,
+    ): AndroidLocalToolPermissionSettings =
+        localToolPermissionSettingsFromProjection(
+            host.request(
+                "feature.settings.localToolPermission.set",
+                JSONObject().put("permission", permission.wireValue),
+            ),
+        )
+
     override fun processMetricsSettings(): JSONObject =
         host.request("feature.settings.processMetrics")
 

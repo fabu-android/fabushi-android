@@ -97,6 +97,12 @@ internal fun ProductionRenderer(
                 var timeZoneBusy by remember { mutableStateOf(false) }
                 var timeZoneError by remember { mutableStateOf<String?>(null) }
                 var timeZoneRequestGeneration by remember { mutableStateOf(0L) }
+                var localToolPermissionSettings by remember {
+                    mutableStateOf<AndroidLocalToolPermissionSettings?>(null)
+                }
+                var localToolPermissionBusy by remember { mutableStateOf(false) }
+                var localToolPermissionError by remember { mutableStateOf<String?>(null) }
+                var localToolPermissionRequestGeneration by remember { mutableStateOf(0L) }
                 var processMetricsLocalEnabled by remember { mutableStateOf(false) }
                 var processMetricsBusy by remember { mutableStateOf(false) }
                 var processMetricsError by remember { mutableStateOf<String?>(null) }
@@ -234,6 +240,44 @@ internal fun ProductionRenderer(
                     }
                 }
 
+                fun refreshLocalToolPermissionSettings() {
+                    val generation = localToolPermissionRequestGeneration + 1L
+                    localToolPermissionRequestGeneration = generation
+                    localToolPermissionBusy = true
+                    localToolPermissionError = null
+                    coroutineScope.launch {
+                        val result = withContext(Dispatchers.IO) {
+                            runCatching { coordinator.localToolPermissionSettings() }
+                        }
+                        if (generation != localToolPermissionRequestGeneration) return@launch
+                        localToolPermissionBusy = false
+                        result.onSuccess { localToolPermissionSettings = it }
+                            .onFailure {
+                                localToolPermissionError =
+                                    it.message ?: "Computer tool permission settings unavailable"
+                            }
+                    }
+                }
+
+                fun saveLocalToolPermission(value: AndroidLocalToolPermission) {
+                    val generation = localToolPermissionRequestGeneration + 1L
+                    localToolPermissionRequestGeneration = generation
+                    localToolPermissionBusy = true
+                    localToolPermissionError = null
+                    coroutineScope.launch {
+                        val result = withContext(Dispatchers.IO) {
+                            runCatching { coordinator.setLocalToolPermission(value) }
+                        }
+                        if (generation != localToolPermissionRequestGeneration) return@launch
+                        localToolPermissionBusy = false
+                        result.onSuccess { localToolPermissionSettings = it }
+                            .onFailure {
+                                localToolPermissionError =
+                                    it.message ?: "Computer tool permission was not saved"
+                            }
+                    }
+                }
+
                 fun refreshProcessMetricsSettings() {
                     val generation = processMetricsRequestGeneration + 1L
                     processMetricsRequestGeneration = generation
@@ -332,12 +376,17 @@ internal fun ProductionRenderer(
                     timeZoneSettings = null
                     timeZoneError = null
                     timeZoneBusy = false
+                    localToolPermissionRequestGeneration += 1L
+                    localToolPermissionSettings = null
+                    localToolPermissionError = null
+                    localToolPermissionBusy = false
                     processMetricsRequestGeneration += 1L
                     processMetricsLocalEnabled = false
                     processMetricsError = null
                     processMetricsBusy = false
                     if (showSettings) {
                         refreshTimeZoneSettings()
+                        refreshLocalToolPermissionSettings()
                         refreshProcessMetricsSettings()
                     }
                     if (showSettings && state.loggedIn) {
@@ -362,6 +411,10 @@ internal fun ProductionRenderer(
                         timeZoneBusy = timeZoneBusy,
                         timeZoneError = timeZoneError,
                         onSaveTimeZoneOverride = ::saveTimeZoneOverride,
+                        localToolPermissionSettings = localToolPermissionSettings,
+                        localToolPermissionBusy = localToolPermissionBusy,
+                        localToolPermissionError = localToolPermissionError,
+                        onSetLocalToolPermission = ::saveLocalToolPermission,
                         processMetricsLocalEnabled = processMetricsLocalEnabled,
                         processMetricsBusy = processMetricsBusy,
                         processMetricsError = processMetricsError,

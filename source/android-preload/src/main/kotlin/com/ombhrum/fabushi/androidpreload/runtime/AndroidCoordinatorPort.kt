@@ -171,6 +171,25 @@ data class AndroidTimeZoneSettings(
     val effectiveTimeZone: String get() = overrideTimeZone ?: detectedTimeZone
 }
 
+enum class AndroidLocalToolPermission(val wireValue: String) {
+    NEVER("never"),
+    ASK("ask"),
+    ALWAYS("always");
+
+    companion object {
+        fun fromWire(value: String): AndroidLocalToolPermission =
+            entries.firstOrNull { it.wireValue == value }
+                ?: error("Unsupported local tool permission: $value")
+    }
+}
+
+data class AndroidLocalToolPermissionSettings(
+    val permission: AndroidLocalToolPermission,
+    val preference: AndroidLocalToolPermission,
+    val ceiling: AndroidLocalToolPermission?,
+    val settledPendingRemoteApprovals: Int = 0,
+)
+
 data class AndroidAutoReviewInstructions(
     val isEnabled: Boolean = true,
     val allowInstructions: List<String> = emptyList(),
@@ -625,6 +644,12 @@ interface AndroidCoordinatorPort {
         error("Time zone settings are unavailable on this Coordinator port")
     fun setTimeZoneOverride(value: String?): AndroidTimeZoneSettings =
         error("Time zone mutation is unavailable on this Coordinator port")
+    fun localToolPermissionSettings(): AndroidLocalToolPermissionSettings =
+        error("Local computer tool permission settings are unavailable on this Coordinator port")
+    fun setLocalToolPermission(
+        permission: AndroidLocalToolPermission,
+    ): AndroidLocalToolPermissionSettings =
+        error("Local computer tool permission mutation is unavailable on this Coordinator port")
     fun processMetricsSettings(): JSONObject =
         error("Process metrics settings are unavailable on this Coordinator port")
     fun setProcessMetricsLocalEnabled(enabled: Boolean): JSONObject =
