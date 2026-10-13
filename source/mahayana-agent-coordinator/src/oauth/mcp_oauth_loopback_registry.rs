@@ -34,6 +34,10 @@ impl OAuthLoopbackRegistry {
         )
     }
 
+    pub fn registration(&mut self, state: &str) -> Option<McpOAuthPendingRegistration> {
+        self.pending.registration(now_ms(), state)
+    }
+
     pub fn consume(&mut self, state: &str) -> Option<McpOAuthPendingRegistration> {
         self.pending.consume_registration(now_ms(), state)
     }
