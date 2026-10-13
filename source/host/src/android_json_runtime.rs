@@ -54,6 +54,7 @@ use crate::extensions::telemetry::agent_error_telemetry::{
     agent_error_telemetry, AgentErrorReport,
 };
 use crate::extensions::telemetry::sand_error_tags::SandErrorValue;
+use crate::extensions::telemetry::box_recreate_decided_telemetry::box_recreate_decided_telemetry;
 use crate::extensions::telemetry::connector_auth_telemetry::{
     connector_auth_telemetry, ConnectorAuthReport,
 };
@@ -2832,6 +2833,19 @@ impl AndroidJsonHost {
         self.record_product_telemetry(message, event)
     }
 
+    fn box_recreate_decided_telemetry(&mut self, params: &Value) -> Result<Value, String> {
+        let trigger = required_string(params, "trigger")?;
+        if !matches!(trigger, "auto_update" | "hibernation_auto_update") {
+            return Err("unsupported box recreate decision trigger".into());
+        }
+        self.record_host_telemetry_projection(box_recreate_decided_telemetry(BTreeMap::from([
+            ("trigger".into(), trigger.to_string()),
+            ("mode".into(), "pod_recreate".into()),
+            ("preserved".into(), "true".into()),
+        ])));
+        Ok(json!({"recorded":true}))
+    }
+
     fn recovery_telemetry(&mut self, params: &Value) -> Result<Value, String> {
         let kind = required_string(params, "kind")?;
         let (message, event) = match kind {
@@ -3275,6 +3289,7 @@ impl AndroidJsonHost {
             "feature.telemetry.clientFailure" => self.client_failure_telemetry(params),
             "feature.telemetry.render" => self.render_telemetry(params),
             "feature.telemetry.recovery" => self.recovery_telemetry(params),
+            "feature.telemetry.boxRecreateDecided" => self.box_recreate_decided_telemetry(params),
             "feature.diagnostics.edgeFailures.snapshot" => serde_json::to_value(self.edge_failures.snapshot()).map_err(|error| format!("failed to serialize edge failure snapshot: {error}")),
             "feature.diagnostics.edgeFailures.report" => {
                 let area = required_string(params, "area")?;
@@ -13381,6 +13396,23 @@ mod tests {
             project_fabushi_sand_access(false),
             json!({"state":"unknown","reason":"unspecified"})
         );
+    }
+
+    #[test]
+    fn box_recreate_decided_route_fixes_metadata_and_rejects_manual_trigger() {
+        let root = tempfile::tempdir().unwrap();
+        let mut host = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+        host.dispatch("feature.telemetry.boxRecreateDecided", &json!({"trigger":"auto_update"}))
+            .expect("automatic recreate decision telemetry");
+        let records = host.structured_log_spool.lock().unwrap().batch();
+        let record = records.iter().find(|record| record.message == "sand.box.recreate_decided")
+            .expect("recreate decision record");
+        assert_eq!(record.level, "info");
+        assert_eq!(record.metadata.get("trigger").map(String::as_str), Some("auto_update"));
+        assert_eq!(record.metadata.get("mode").map(String::as_str), Some("pod_recreate"));
+        assert_eq!(record.metadata.get("preserved").map(String::as_str), Some("true"));
+        assert!(host.dispatch("feature.telemetry.boxRecreateDecided", &json!({"trigger":"manual_reset"}))
+            .unwrap_err().contains("unsupported box recreate decision trigger"));
     }
 
     #[test]
