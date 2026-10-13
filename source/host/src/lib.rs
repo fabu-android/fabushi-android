@@ -6,6 +6,7 @@
 pub mod agent_isolation;
 pub mod agents;
 pub mod android_agent_roster;
+pub mod android_session_projection;
 pub mod agent_attachment;
 pub mod android_sidebar_sections;
 pub mod android_user_settings;
