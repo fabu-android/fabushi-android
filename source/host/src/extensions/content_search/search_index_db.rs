@@ -27,7 +27,7 @@ CREATE TRIGGER IF NOT EXISTS media_fts_insert AFTER INSERT ON media BEGIN INSERT
 CREATE TRIGGER IF NOT EXISTS media_fts_delete AFTER DELETE ON media BEGIN INSERT INTO media_fts(media_fts, rowid, file_name) VALUES ('delete', old.id, old.file_name); END;
 CREATE TRIGGER IF NOT EXISTS media_fts_update AFTER UPDATE ON media BEGIN INSERT INTO media_fts(media_fts, rowid, file_name) VALUES ('delete', old.id, old.file_name); INSERT INTO media_fts(rowid, file_name) VALUES (new.id, new.file_name); END;"#;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 pub enum AttachmentKind {
     Image,
     Video,
@@ -61,7 +61,7 @@ impl AttachmentKind {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct MessageSearchResult {
     pub agent_id: String,
     pub entry_id: String,
@@ -70,7 +70,7 @@ pub struct MessageSearchResult {
     pub snippet: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct MediaSearchResult {
     pub agent_id: String,
     pub entry_id: String,

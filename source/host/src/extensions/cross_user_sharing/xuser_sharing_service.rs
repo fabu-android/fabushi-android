@@ -223,7 +223,7 @@ impl SandXuserSharingService {
             return Ok(self.get_state());
         }
         if let Some((departures, relay)) = self.departure_binding() {
-            departures.drain(relay.as_ref())?;
+            departures.drain(relay.as_ref()).map_err(|error| format!("failed to drain xuser departure obligations: {error}"))?;
         }
         if let Err(error) = self.reconcile_share_state() {
             self.started.store(false, Ordering::Release);
@@ -330,15 +330,15 @@ impl SandXuserSharingService {
                 .unwrap_or_else(|| Value::Array(vec![])),
         )
         .map_err(|e| e.to_string())?;
-        let self_auth_id = remote_self_auth_id
-            .as_deref()
-            .or(current.self_auth_id.as_deref());
+        let effective_self_auth_id =
+            remote_self_auth_id.clone().or_else(|| current.self_auth_id.clone());
+        let self_auth_id = effective_self_auth_id.as_deref();
         let result = reconcile_rooms(&current.rooms, remote, self_auth_id);
         let rooms = result.rooms.clone();
         let revoked_room_ids = result.revoked_room_ids.clone();
         {
             let mut s = self.state.lock().unwrap_or_else(|p| p.into_inner());
-            s.self_auth_id = remote_self_auth_id.or_else(|| current.self_auth_id.clone());
+            s.self_auth_id = effective_self_auth_id.clone();
             s.pending_join_requests = pending;
             s.rooms = result.rooms;
         }
@@ -583,8 +583,8 @@ impl SandXuserSharingService {
                     room_id.to_string(),
                     local_agent_id,
                     system_now_ms() as u64,
-                )?;
-                let _ = departures.drain(relay.as_ref())?;
+                ).map_err(|error| format!("failed to persist xuser leave obligation: {error}"))?;
+                let _ = departures.drain(relay.as_ref()).map_err(|error| format!("failed to drain xuser leave obligation: {error}"))?;
                 self.state
                     .lock()
                     .unwrap_or_else(|p| p.into_inner())
@@ -593,7 +593,7 @@ impl SandXuserSharingService {
 
                 // A transport failure leaves the durable obligation in place. Do not immediately
                 // fetch remote state and resurrect a room that is still owed a leave side effect.
-                if departures.is_departure_owed(room_id, current.self_auth_id.as_deref())? {
+                if departures.is_departure_owed(room_id, current.self_auth_id.as_deref()).map_err(|error| format!("failed to read xuser leave obligation: {error}"))? {
                     return Ok(self.get_state());
                 }
                 let _ = self.reconcile_share_state();
@@ -618,8 +618,8 @@ impl SandXuserSharingService {
             return Ok(());
         }
         if let Some((departures, relay)) = self.departure_binding() {
-            departures.record_agent_removal(self.get_state().self_auth_id, agent_id.to_string())?;
-            let _ = departures.drain(relay.as_ref())?;
+            departures.record_agent_removal(self.get_state().self_auth_id, agent_id.to_string()).map_err(|error| format!("failed to persist xuser agent-removal obligation: {error}"))?;
+            let _ = departures.drain(relay.as_ref()).map_err(|error| format!("failed to drain xuser agent-removal obligation: {error}"))?;
             // Reconcile only after the durable removal has settled; otherwise preserve the local
             // projection until the obligation can be retried after reconnect/process restart.
             let pending = departures

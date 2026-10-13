@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::io;
 use std::path::Path;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use serde_json::{json, Value};
 use uuid::Uuid;

@@ -985,14 +985,18 @@ impl RemoteRoutedTools {
     }
 
     fn local_tool_permission(&self) -> Result<LocalToolPermission, String> {
+        let account_fence = self
+            .live_account_fence
+            .lock()
+            .map_err(|_| "live account fence lock poisoned".to_string())?
+            .clone()
+            .ok_or_else(|| "trusted Remote tool requires an active account fence".to_string())?;
         self.user_settings
             .lock()
-            .map_err(|_| "Android user settings lock poisoned".to_string())
-            .map(|settings| {
-                settings
-                    .local_tool_permission()
-                    .clamp_to_ceiling(self.local_tool_permission_ceiling)
-            })
+            .map_err(|_| "Android user settings lock poisoned".to_string())?
+            .local_tool_permission_for(&account_fence)
+            .map(|permission| permission.clamp_to_ceiling(self.local_tool_permission_ceiling))
+            .map_err(|error| format!("failed to read Android Remote tool permission: {error}"))
     }
 
     fn current_binding(&self) -> Result<RemoteDispatchBinding, String> {
@@ -1832,7 +1836,7 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let mut settings =
             AndroidUserSettings::open(root.path().join("user-settings.json")).unwrap();
-        settings.set_local_tool_permission("never").unwrap();
+        settings.set_local_tool_permission_for("acct", "never").unwrap();
         let tools = RemoteRoutedTools {
             delegate: Arc::new(NeverCalledDelegate),
             broker: SharedCapabilityBroker::open(root.path().join("broker.json"), 1).unwrap(),
@@ -1841,7 +1845,7 @@ mod tests {
             approvals: RemoteApprovalRegistry::default(),
             user_settings: Arc::new(Mutex::new(settings)),
             local_tool_permission_ceiling: None,
-            live_account_fence: Arc::new(Mutex::new(None)),
+            live_account_fence: Arc::new(Mutex::new(Some("acct".into()))),
             events: Arc::new(Mutex::new(VecDeque::new())),
             parent_operation_id: "parent-operation".into(),
             parent_request_id: "parent-request".into(),

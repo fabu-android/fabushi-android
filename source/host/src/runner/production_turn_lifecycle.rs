@@ -690,6 +690,7 @@ fn profile_key(account_fence: &str, agent_id: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::extensions::forever_box::disk_pressure_guard::GIB;
 
     fn path(label: &str) -> PathBuf {
         std::env::temp_dir().join(format!(

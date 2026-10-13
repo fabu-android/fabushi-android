@@ -6,7 +6,7 @@ use crate::{
     extensions::memory::{
         memory_service::{
             get_project_dir, get_project_memory_shard_dir, get_user_memory_shard_dir,
-            project_dir_exists, FileMemoryStore, MemoryKind, MemoryRecord, MEMORY_NOTE_PREFIX,
+            project_dir_exists, FileMemoryStore, MemoryKind, MemoryRecord,
         },
         memory_synthesis_service::{
             parse_json_object, synthesis_request_json, synthesis_system_prompt,
@@ -20,6 +20,7 @@ use crate::{
     sha256::sha256_hex,
 };
 
+const MEMORY_NOTE_PREFIX: &str = "Note: ";
 const DEFAULT_LIST_LIMIT: usize = 200;
 const MAX_LIST_LIMIT: usize = 500;
 const DEFAULT_RECENT_LIMIT: usize = 32;
@@ -631,6 +632,7 @@ mod tests {
                 AndroidInferenceMode::Test,
                 None,
                 Arc::new(AtomicBool::new(false)),
+                None,
             )
             .unwrap();
 

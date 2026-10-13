@@ -199,11 +199,14 @@ pub fn open_existing_session(
     }
     let session_state = read_persisted_agent_serde_snapshot(&db_path, busy_timeout_ms)?;
     let name = read_persisted_agent_name(&db_path, busy_timeout_ms)?;
-    let profile_path = ensure_profile_file(
-        &db_path,
-        name.as_deref(),
-        &session_state.profile.description,
-    )?;
+    let recovery_profile = SandAgentProfile {
+        name: name.clone().unwrap_or_else(|| "Grok".to_string()),
+        description: session_state.profile.description.trim().to_string(),
+        title: String::new(),
+        avatar_shape: String::new(),
+        avatar_color: String::new(),
+    };
+    let profile_path = ensure_profile_file(&db_path, &recovery_profile)?;
     let _settings_path = ensure_settings_file(&db_path)?;
     let profile = read_sand_profile_file(&profile_path).unwrap_or_else(|| SandAgentProfile {
         name: name.unwrap_or_else(|| "Grok".to_string()),

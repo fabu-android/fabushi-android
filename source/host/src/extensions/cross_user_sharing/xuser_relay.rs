@@ -83,7 +83,8 @@ impl XuserRelayTransport for UreqXuserRelayTransport {
             "DELETE" => ureq::delete(url),
             _ => ureq::post(url),
         }
-        .timeout_connect(15_000)
+        // ureq 2.x exposes the per-request total timeout here; connection setup is included in
+        // that bound. Do not call the AgentBuilder-only timeout_connect API on Request.
         .timeout(Duration::from_secs(30))
         .set("Authorization", &format!("Bearer {token}"))
         .set("Content-Type", "application/json")

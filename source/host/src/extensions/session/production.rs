@@ -11,7 +11,6 @@ use crate::agent_isolation::{
     create_production_agent_store_worker_backend,
 };
 use crate::agents::agent_profile::SandAgentProfile;
-use crate::storage::agent_paths::get_sand_agents_root_dir;
 
 use super::agent_db::{
     AgentDbSerdeSnapshot, SandAgentDb, add_persisted_conversation_partner,
@@ -162,14 +161,15 @@ pub struct ProductionSessionWorkers {
 }
 
 impl ProductionSessionWorkers {
-    pub fn production() -> Self {
-        Self::production_with_user_time_zone_resolver(Arc::new(|| None))
+    pub fn production(agents_root: impl Into<PathBuf>) -> Self {
+        Self::production_with_user_time_zone_resolver(agents_root, Arc::new(|| None))
     }
 
     pub fn production_with_user_time_zone_resolver(
+        agents_root: impl Into<PathBuf>,
         user_time_zone_resolver: UserTimeZoneResolver,
     ) -> Self {
-        let agents_root = get_sand_agents_root_dir(None);
+        let agents_root = agents_root.into();
         let memory_service = Arc::new(MemoryService::new(agents_root.clone()));
         Self::with_agents_root_and_dependencies(
             agents_root,
@@ -180,13 +180,20 @@ impl ProductionSessionWorkers {
     }
 
     pub fn production_with_dependencies(
+        agents_root: impl Into<PathBuf>,
         user_time_zone_resolver: UserTimeZoneResolver,
         memory_service: Arc<MemoryService>,
     ) -> Self {
-        Self::production_with_identity_and_dependencies(None, user_time_zone_resolver, memory_service)
+        Self::production_with_identity_and_dependencies(
+            agents_root,
+            None,
+            user_time_zone_resolver,
+            memory_service,
+        )
     }
 
     pub fn production_with_identity_and_dependencies(
+        agents_root: impl Into<PathBuf>,
         local_human_id: Option<String>,
         user_time_zone_resolver: UserTimeZoneResolver,
         memory_service: Arc<MemoryService>,
@@ -203,7 +210,7 @@ impl ProductionSessionWorkers {
             (None, None)
         };
         Self::with_agents_root_identity_messaging_and_dependencies(
-            get_sand_agents_root_dir(None),
+            agents_root,
             PRODUCTION_BLOB_BUSY_TIMEOUT_MS,
             local_human_id,
             native_messaging,
@@ -1225,7 +1232,7 @@ impl ProductionSessionWorkers {
     }
 
     pub fn connector_secret_store(&self) -> SandConnectorSecretStore {
-        SandConnectorSecretStore::new(get_connector_secrets_root(Some(&self.agents_root)))
+        SandConnectorSecretStore::new(get_connector_secrets_root(&self.agents_root))
     }
 
     pub fn open_channel_store(&self, agent_id: &str) -> Result<FileChannelStore, String> {
@@ -2492,7 +2499,7 @@ impl ProductionSessionWorkers {
         {
             return Err("recipient search source must be a settled canonical message".into());
         }
-        let requirements = fabushi_messaging_core::RecipientSearchRequirements {
+        let requirements = crate::fabushi_messaging_core::RecipientSearchRequirements {
             require_media: source_entry
                 .get("attachments")
                 .and_then(serde_json::Value::as_array)
@@ -2501,7 +2508,7 @@ impl ProductionSessionWorkers {
                 .get("protectedContent")
                 .and_then(serde_json::Value::as_bool)
                 .unwrap_or(false),
-            ..fabushi_messaging_core::RecipientSearchRequirements::default()
+            ..crate::fabushi_messaging_core::RecipientSearchRequirements::default()
         };
         let local_human_id = self.local_human_id()?;
         let normalized_query = query.trim().to_lowercase();
@@ -2515,8 +2522,8 @@ impl ProductionSessionWorkers {
                     .is_some_and(|ids| {
                         ids.iter().any(|id| id.as_str() == Some(local_human_id))
                     });
-                if !fabushi_messaging_core::recipient_search_authorized(
-                    fabushi_messaging_core::RecipientAuthorizationInput::direct_default(
+                if !crate::fabushi_messaging_core::recipient_search_authorized(
+                    crate::fabushi_messaging_core::RecipientAuthorizationInput::direct_default(
                         sender_is_participant,
                     ),
                     requirements,
@@ -2640,7 +2647,7 @@ impl ProductionSessionWorkers {
             return Err("forwardHumanMessage source has no forwardable content".into());
         }
 
-        let privacy = fabushi_messaging_core::ForwardPrivacy {
+        let privacy = crate::fabushi_messaging_core::ForwardPrivacy {
             drop_sender_names,
             drop_captions,
         }

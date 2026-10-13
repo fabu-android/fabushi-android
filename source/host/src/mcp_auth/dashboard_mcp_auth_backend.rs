@@ -10,7 +10,7 @@ use sha2::{Digest, Sha256};
 use std::env;
 use std::io::Read;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use url::Url;
 

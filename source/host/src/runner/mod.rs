@@ -52,7 +52,8 @@ pub use android_host_inference::{
 pub use send_message::{with_send_message_tools, SEND_MESSAGE_TOOL_NAME};
 
 pub use agent_management::{
-    with_agent_management_tools, AgentTurnInterruptionRegistry, CREATE_AGENT_TOOL_NAME,
+    with_agent_management_tools, with_agent_management_tools_and_transcript,
+    AgentTurnInterruptionRegistry, CREATE_AGENT_TOOL_NAME,
     SEND_TO_AGENT_TOOL_NAME, UPDATE_AGENT_TOOL_NAME,
 };
 

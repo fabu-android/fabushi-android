@@ -109,12 +109,15 @@ pub fn load_agent_db_extras(
     let mut state = read_persisted_agent_serde_snapshot(db_path, busy_timeout_ms)
         .map_err(|error| error.to_string())?;
 
-    let _ = ensure_profile_file(
-        db_path,
-        Some(&metadata.agent_id),
-        &state.profile.description,
-    )
-    .map_err(|error| error.to_string())?;
+    let recovery_profile = SandAgentProfile {
+        name: metadata.agent_id.clone(),
+        description: state.profile.description.trim().to_string(),
+        title: String::new(),
+        avatar_shape: String::new(),
+        avatar_color: String::new(),
+    };
+    let _ = ensure_profile_file(db_path, &recovery_profile)
+        .map_err(|error| error.to_string())?;
 
     if let Some(seed) = seed_activity_from_mtime_value(
         state.unread_state.last_activity_at,

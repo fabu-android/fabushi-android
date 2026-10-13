@@ -6,6 +6,7 @@ pub mod experiments;
 pub mod forever_box;
 pub mod host_upgrade;
 pub mod managed_setup;
+pub mod mcp;
 pub mod memory;
 pub mod telemetry;
 pub mod session;

@@ -67,6 +67,16 @@ struct ExperimentsState {
 type GateListener = Arc<dyn Fn(bool) + Send + Sync>;
 pub type StopGateSubscription = Box<dyn Fn() + Send + Sync + 'static>;
 
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ExperimentDiagnostic {
+    pub kind: String,
+    pub stage: Option<String>,
+    pub reason: Option<String>,
+    pub error_class: Option<String>,
+    pub gates_on_count: Option<i64>,
+    pub authenticated: Option<bool>,
+}
+
 pub struct HostExperimentsExtension {
     state: Mutex<ExperimentsState>,
     gate_listeners: Arc<Mutex<BTreeMap<String, BTreeMap<u64, GateListener>>>>,

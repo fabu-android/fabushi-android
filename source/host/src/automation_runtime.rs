@@ -423,8 +423,9 @@ impl AutomationRuntime {
         }
         state.paused_automation_ids.sort();
         state.paused_automation_ids.dedup();
+        let paused_ids = state.paused_automation_ids.clone();
         self.persist()?;
-        Ok(state.paused_automation_ids.clone())
+        Ok(paused_ids)
     }
 
     pub fn apply_spend_guard_answer(

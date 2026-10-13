@@ -7,7 +7,8 @@ use std::{
 };
 
 pub const ANDROID_STRUCTURED_LOG_SPILL_MAX_BYTES: usize = 1024 * 1024;
-// Preserve Desktop STRUCTURED_LOG_REPLAY_MAX_AGE: recovered telemetry older than 17h is stale.\npub const ANDROID_STRUCTURED_LOG_SPILL_MAX_AGE_MS: u64 = 17 * 60 * 60 * 1_000;
+// Preserve Desktop STRUCTURED_LOG_REPLAY_MAX_AGE: recovered telemetry older than 17h is stale.
+pub const ANDROID_STRUCTURED_LOG_SPILL_MAX_AGE_MS: u64 = 17 * 60 * 60 * 1_000;
 pub const ANDROID_STRUCTURED_LOG_SPILL_MAX_ENTRIES: usize = 1_000;
 pub const ANDROID_STRUCTURED_LOG_BATCH_SIZE: usize = 128;
 pub const ANDROID_STRUCTURED_LOG_RECOVERY_ID_CAP: usize = 256;

@@ -266,7 +266,7 @@ fn run_android_event_loop_sampler(
 
         let now = Instant::now();
         if let Ok(mut profiler) = pressure_profiler.lock() {
-            match profiler.on_tick(now_ms()) {
+            match profiler.on_tick(i64::try_from(now_ms()).unwrap_or(i64::MAX)) {
                 Ok(Some(path)) => {
                     let artifact_name = path
                         .file_name()
@@ -326,7 +326,7 @@ fn run_android_event_loop_sampler(
             && window_index % ANDROID_EVENT_LOOP_HEARTBEAT_WINDOWS == 0;
         if pressure {
             if let Ok(mut profiler) = pressure_profiler.lock() {
-                profiler.on_pressure(now_ms());
+                profiler.on_pressure(i64::try_from(now_ms()).unwrap_or(i64::MAX));
             }
         }
         if pressure || heartbeat {
@@ -3146,6 +3146,7 @@ impl AndroidJsonHost {
             .lock()
             .map_err(|_| "Android structured-log spool lock poisoned".to_string())?
             .rotate_account(account_slot, counter_id)
+            .map(|_| ())
             .map_err(|error| format!("failed to rotate Android structured telemetry: {error}"))
     }
 
@@ -6984,7 +6985,7 @@ impl AndroidJsonHost {
         let marketplace = self
             .mcp_dashboard_backend
             .as_ref()
-            .ok_or("managed skills Dashboard backend is unavailable")
+            .ok_or_else(|| "managed skills Dashboard backend is unavailable".to_string())
             .and_then(|backend| {
                 fetch_skill_catalog(backend.as_ref()).map_err(|error| error.to_string())
             })?;
@@ -7277,7 +7278,7 @@ impl AndroidJsonHost {
             agent_id: agent_id.to_string(),
             trigger_description,
             enabled: params.get("enabled").and_then(Value::as_bool).unwrap_or(true),
-            account_fence,
+            account_fence: account_fence.clone(),
             created_at_ms: params.get("createdAtMs").and_then(Value::as_u64).unwrap_or_else(now_ms),
             last_run_at_ms: params.get("lastRunAtMs").and_then(Value::as_u64),
             next_run_at_ms: None,
@@ -7832,7 +7833,13 @@ impl AndroidJsonHost {
         self.client_side_tool_v2 = ClientSideToolV2Producer::new();
 
         record_failure(&mut failures, "agent-turns", self.fence_turns_for_account_change(previous_fence, reason));
-        record_failure(&mut failures, "human-calls", self.human_calls.fence_account(previous_fence, reason, now_ms()));
+        record_failure(
+            &mut failures,
+            "human-calls",
+            self.human_calls
+                .fence_account(previous_fence, reason, now_ms())
+                .map(|_| ()),
+        );
 
         match self.teach_recording.lock() {
             Ok(owner) => {
@@ -7907,7 +7914,8 @@ impl AndroidJsonHost {
             self.box_handoff
                 .lock()
                 .map_err(|_| "Android box handoff lock poisoned".to_string())
-                .and_then(|mut owner| owner.forget_account(previous_fence)),
+                .and_then(|mut owner| owner.forget_account(previous_fence))
+                .map(|_| ()),
         );
 
         self.experiments.clear_account_scope();
@@ -7972,11 +7980,7 @@ impl AndroidJsonHost {
 
     fn cross_user_create_from_agent(&self, params: &Value) -> Result<Value, String> {
         let agent_id = required_string(params, "agentId")?;
-        let agent_name = required_string(params, "agentName")?;
-        let avatar_data_url = params.get("avatarDataUrl").and_then(Value::as_str);
-        self.cross_user_fenced(|core| {
-            core.service.create_room_from_agent(agent_id, agent_name, avatar_data_url)
-        })
+        self.cross_user_fenced(|core| core.service.create_room_from_agent(agent_id))
     }
 
     fn cross_user_invite(&self, params: &Value) -> Result<Value, String> {
@@ -8307,11 +8311,8 @@ impl AndroidJsonHost {
 
     fn contact_group_projection_inputs(
         &mut self,
-    ) -> Result<(BTreeSet<String>, BTreeSet<String>), String> {
+    ) -> Result<(BTreeSet<String>, BTreeSet<String>, Option<AccountSessionMutation>), String> {
         let (actor_id, mutation) = self.current_messaging_identity()?;
-        if let Some(mutation) = mutation {
-            self.handle_account_session_mutation(mutation);
-        }
         let messaging = self
             .messaging
             .lock()
@@ -8319,6 +8320,7 @@ impl AndroidJsonHost {
         Ok((
             messaging.canonical_contact_ids(),
             messaging.pinned_contact_ids(&actor_id),
+            mutation,
         ))
     }
 
@@ -8329,18 +8331,22 @@ impl AndroidJsonHost {
             .get("searchActive")
             .and_then(Value::as_bool)
             .unwrap_or(false);
-        let (known_peer_ids, pinned_peer_ids) = self.contact_group_projection_inputs()?;
+        let (known_peer_ids, pinned_peer_ids, session_mutation) =
+            self.contact_group_projection_inputs()?;
         let snapshot = self
             .contact_groups
             .lock()
             .map_err(|_| "canonical Android contact groups lock poisoned".to_string())?
             .get_snapshot(&account_scope, &known_peer_ids, &pinned_peer_ids, search_active);
-        Ok(json!({
-            "accountFence":snapshot.account_fence,
-            "sessionFence":session_fence,
-            "revision":snapshot.revision,
-            "groups":snapshot.groups,
-        }))
+        Ok(with_account_session_mutation(
+            json!({
+                "accountFence":snapshot.account_fence,
+                "sessionFence":session_fence,
+                "revision":snapshot.revision,
+                "groups":snapshot.groups,
+            }),
+            session_mutation,
+        ))
     }
 
     fn messaging_contact_groups_set(&mut self, params: &Value) -> Result<Value, String> {
@@ -15507,7 +15513,15 @@ fn build_send_acceptance_seeded_agent_name(prompt: &str) -> String {
     String::from_utf16_lossy(&utf16)
 }
 
-fn now_ms() -> u64 {
+fn remote_human_identity_text(value: Option<&Value>, label: &str) -> Result<String, String> {
+    match value {
+        Some(Value::String(value)) if !value.trim().is_empty() => Ok(value.trim().to_string()),
+        Some(Value::Number(value)) => Ok(value.to_string()),
+        _ => Err(format!("Fabushi Human {label} is missing or invalid")),
+    }
+}
+
+pub(crate) fn now_ms() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()

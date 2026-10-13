@@ -24,12 +24,12 @@ impl From<&crate::host_event_bus::HostEventFailure> for HostEventFailureReport {
 }
 
 pub fn host_event_bus_telemetry(report: &HostEventFailure) -> HostTelemetryProjection {
-    let mut metadata = BTreeMap::from([
-        ("kind".into(), report.kind.clone()),
-        ("error_class".into(), report.error_class.clone()),
+    let mut metadata: BTreeMap<String, String> = BTreeMap::from([
+        ("kind".into(), report.kind.to_string()),
+        ("error_class".into(), report.error_class.to_string()),
     ]);
     if let Some(topic) = report.topic.as_ref() {
-        metadata.insert("topic".into(), topic.clone());
+        metadata.insert("topic".into(), topic.to_string());
     }
     HostTelemetryProjection {
         level: Some("error"),

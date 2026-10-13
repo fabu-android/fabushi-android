@@ -599,7 +599,7 @@ mod tests {
         std::fs::create_dir_all(&root).unwrap();
         let settings_path = root.join("settings.json");
         let mut settings = AndroidUserSettings::open(&settings_path).unwrap();
-        settings.set_local_tool_permission(LocalToolPermission::Never).unwrap();
+        settings.set_local_tool_permission_for("acct", "never").unwrap();
         let broker = SharedCapabilityBroker::open(root.join("broker.json"), now_ms()).unwrap();
         let bridge = with_local_file_tools(
             Arc::new(EmptyBridge),
@@ -625,7 +625,7 @@ mod tests {
         std::fs::create_dir_all(&root).unwrap();
         let settings_path = root.join("settings.json");
         let mut settings = AndroidUserSettings::open(&settings_path).unwrap();
-        settings.set_local_tool_permission(LocalToolPermission::Always).unwrap();
+        settings.set_local_tool_permission_for("acct", "always").unwrap();
         let broker = SharedCapabilityBroker::open(root.join("broker.json"), now_ms()).unwrap();
         let events = Arc::new(Mutex::new(VecDeque::new()));
         let bridge = with_local_file_tools(
@@ -668,7 +668,7 @@ mod tests {
         std::fs::create_dir_all(&root).unwrap();
         let settings_path = root.join("settings.json");
         let mut settings = AndroidUserSettings::open(&settings_path).unwrap();
-        settings.set_local_tool_permission(LocalToolPermission::Always).unwrap();
+        settings.set_local_tool_permission_for("acct", "always").unwrap();
         let broker = SharedCapabilityBroker::open(root.join("broker.json"), now_ms()).unwrap();
         let bridge = with_local_file_tools(
             Arc::new(EmptyBridge),

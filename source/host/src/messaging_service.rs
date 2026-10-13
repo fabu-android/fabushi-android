@@ -4542,6 +4542,31 @@ mod tests {
         ))
     }
 
+    fn remote_message(
+        id: &str,
+        sender: &str,
+        recipient: &str,
+        client_request_id: Option<&str>,
+        text: &str,
+        created_at: &str,
+    ) -> Value {
+        json!({
+            "id": id,
+            "senderUserId": sender,
+            "senderUsername": "sender",
+            "recipientUserId": recipient,
+            "recipientUsername": "recipient",
+            "text": text,
+            "clientRequestId": client_request_id,
+            "createdAt": created_at,
+            "readAt": Value::Null,
+            "isOutgoing": sender == "owner",
+            "replyToMessageId": Value::Null,
+            "attachments": [],
+            "reactions": [],
+        })
+    }
+
     fn envelope(request_id: &str, actor_id: &str, command: Value) -> Value {
         json!({
             "requestId":request_id,
@@ -5115,7 +5140,7 @@ mod tests {
 
     #[test]
     fn remote_human_attachment_download_and_import_are_canonical_and_durable() {
-        let root = remote_root("remote-attachment-download");
+        let root = temp_root("remote-attachment-download");
         let owner = "human:owner";
         let peer = "human:peer";
         let conversation_id = stable_human_direct_conversation_id(owner, peer);
