@@ -11723,6 +11723,18 @@ impl AndroidJsonHost {
             self.active_operations.remove(&operation_id);
             self.agent_turn_interruptions.unregister_operation(&operation_id);
             self.visible_ack_obligations
+                .rollback_redrive_attempt_if_unchanged(
+                    &account_fence,
+                    &obligation.agent_id,
+                    &obligation,
+                    &prepared,
+                )
+                .map_err(|rollback_error| {
+                    format!(
+                        "failed to restore visible acknowledgement redrive budget after dispatch failure: {rollback_error}"
+                    )
+                })?;
+            self.visible_ack_obligations
                 .schedule_after_idle(&account_fence, &obligation.agent_id, now);
             return Err(error);
         }
