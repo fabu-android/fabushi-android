@@ -252,6 +252,7 @@ data class MobileBotUiState(
     val historyError: String? = null,
     val historyPrependRevision: Long = 0L,
     val transcriptThread: MobileTranscriptThreadState = MobileTranscriptThreadState(),
+    val transcriptThreadSummaries: Map<String, Int> = emptyMap(),
     val transcriptLoadError: Boolean = false,
     val busy: Boolean = false,
     val operationId: String? = null,
@@ -1552,6 +1553,7 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
                     mutableState.value.copy(
                         messages = merged.messages,
                         findEntries = merged.findEntries,
+                        transcriptThreadSummaries = merged.threadCounts,
                         historyBeforeSeq = merged.nextBeforeSeq,
                         historyHasMore = merged.nextBeforeSeq != null,
                         historyLoadingOlder = false,
@@ -1772,6 +1774,7 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
                 draft = "",
                 messages = emptyList(),
                 findEntries = emptyList(),
+                transcriptThreadSummaries = emptyMap(),
                 historyBeforeSeq = null,
                 historyHasMore = false,
                 historyLoadingOlder = false,
@@ -3189,6 +3192,7 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
         val messages: List<MobileChatMessage>,
         val findEntries: List<AndroidFindInChatEntry>,
         val nextBeforeSeq: Long?,
+        val threadCounts: Map<String, Int>,
     )
 
     private fun loadCanonicalAgentTranscriptPage(
@@ -3209,6 +3213,7 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
             ),
             findEntries = parseAndroidFindInChatEntries(page.entries, agentId),
             nextBeforeSeq = page.nextBeforeSeq,
+            threadCounts = page.threadCounts,
         )
     }
 
@@ -3269,6 +3274,7 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
                     current.copy(
                         messages = merged,
                         findEntries = mergedFind,
+                        transcriptThreadSummaries = older.threadCounts + current.transcriptThreadSummaries,
                         historyBeforeSeq = older.nextBeforeSeq,
                         historyHasMore = older.nextBeforeSeq != null,
                         historyLoadingOlder = false,
@@ -3337,6 +3343,8 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
                 messages = merged,
                 findEntries = (preservedOlderFind + durable.findEntries)
                     .distinctBy(AndroidFindInChatEntry::entryId),
+                transcriptThreadSummaries =
+                    current.transcriptThreadSummaries + durable.threadCounts,
                 historyBeforeSeq = if (historyOlderEntryIds.isEmpty()) {
                     durable.nextBeforeSeq
                 } else {
