@@ -1,5 +1,5 @@
 use super::xuser_entry_publisher::SandXuserEntryPublisher;
-use super::xuser_relay::{SandXuserRelayClient, SandXuserRelayDriver};
+use super::xuser_relay::{XuserRelayClient, XuserRelayDriver};
 use super::xuser_state_reconcile::{XuserRoom, reconcile_rooms};
 use serde_json::Value;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -99,8 +99,8 @@ impl SandXuserManagerDelegate {
 }
 
 pub struct SandXuserSharingService {
-    relay: Arc<SandXuserRelayClient>,
-    relay_driver: Mutex<Option<Arc<SandXuserRelayDriver>>>,
+    relay: Arc<XuserRelayClient>,
+    relay_driver: Mutex<Option<Arc<XuserRelayDriver>>>,
     entry_publisher: Mutex<Option<Arc<SandXuserEntryPublisher>>>,
     manager: Mutex<Option<Arc<dyn XuserSharingManager>>>,
     state: Mutex<SandSharingState>,
@@ -108,7 +108,7 @@ pub struct SandXuserSharingService {
     started: AtomicBool,
 }
 impl SandXuserSharingService {
-    pub fn new(relay: Arc<SandXuserRelayClient>) -> Self {
+    pub fn new(relay: Arc<XuserRelayClient>) -> Self {
         Self {
             relay,
             relay_driver: Mutex::new(None),
@@ -119,7 +119,7 @@ impl SandXuserSharingService {
             started: AtomicBool::new(false),
         }
     }
-    pub fn bind_relay_driver(&self, driver: Arc<SandXuserRelayDriver>) {
+    pub fn bind_relay_driver(&self, driver: Arc<XuserRelayDriver>) {
         let mut slot = self.relay_driver.lock().unwrap_or_else(|p| p.into_inner());
         if let Some(previous) = slot.replace(driver) {
             previous.stop();
@@ -759,7 +759,7 @@ fn system_now_ms() -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use super::super::xuser_relay::{SandXuserRelayHttpError, XuserRelayTransport};
+    use super::super::xuser_relay::{XuserRelayHttpError, XuserRelayTransport};
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     struct FakeRelayTransport {
@@ -773,7 +773,7 @@ mod tests {
             url: &str,
             _token: &str,
             _body: Option<&Value>,
-        ) -> Result<Value, SandXuserRelayHttpError> {
+        ) -> Result<Value, XuserRelayHttpError> {
             self.requests.fetch_add(1, Ordering::SeqCst);
             if url.ends_with("/sand/share-state") {
                 return Ok(serde_json::json!({
@@ -790,7 +790,7 @@ mod tests {
         let transport = Arc::new(FakeRelayTransport {
             requests: AtomicUsize::new(0),
         });
-        let relay = Arc::new(SandXuserRelayClient::new(
+        let relay = Arc::new(XuserRelayClient::new(
             "https://relay.example.invalid".into(),
             Arc::new(|| Ok("token".to_string())),
             transport.clone(),
