@@ -1,6 +1,7 @@
 package com.ombhrum.fabushi
 
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidAccountUsageSummary
+import com.ombhrum.fabushi.androidpreload.runtime.AndroidAccountUpgradeCta
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidAutoReviewInstructionsSnapshot
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidTimeZoneSettings
 
@@ -268,6 +269,7 @@ internal fun FabushiSettingsSurface(
     onRefreshAccountPrivacyMode: () -> Unit,
     onRefreshAccountUsage: () -> Unit,
     onCancelSandTrial: () -> Unit,
+    onAccountUpgradeCta: (AndroidAccountUpgradeCta) -> Unit,
     onCheckUpdate: () -> Unit,
     onInstallUpdate: () -> Unit,
     onOpenFeedback: () -> Unit,
@@ -362,11 +364,26 @@ internal fun FabushiSettingsSurface(
                                     "Usage: $percent",
                                     modifier = Modifier.testTag("settings-account-usage"),
                                 )
+                                if (usage.isEnterprise) {
+                                    Text(
+                                        "Enterprise account",
+                                        modifier = Modifier.testTag("settings-account-enterprise"),
+                                    )
+                                }
                                 usage.onDemand?.let { onDemand ->
                                     Text(
                                         "On-demand: ${onDemand.usedCents} / ${onDemand.limitCents} cents",
                                         modifier = Modifier.testTag("settings-account-on-demand"),
                                     )
+                                }
+                                usage.upgradeCta?.let { cta ->
+                                    Button(
+                                        onClick = { onAccountUpgradeCta(cta) },
+                                        enabled = !accountUsageBusy && !cta.disabled,
+                                        modifier = Modifier.testTag("settings-account-upgrade"),
+                                    ) {
+                                        Text(cta.label)
+                                    }
                                 }
                                 if (usage.isSandTrial) {
                                     Text("Trial active", modifier = Modifier.testTag("settings-account-trial"))
