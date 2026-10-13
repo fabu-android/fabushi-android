@@ -332,15 +332,14 @@ fn channel_platform_display_name(address: &Value) -> String {
     let platform = address
         .get("platform")
         .and_then(Value::as_str)
+        .map(str::to_string)
         .or_else(|| {
             address
                 .as_str()
-                .and_then(|raw| parse_channel_address(raw))
+                .and_then(parse_channel_address)
                 .map(|parsed| parsed.platform)
-                .as_deref()
         })
-        .unwrap_or_default()
-        .to_string();
+        .unwrap_or_default();
     match platform.as_str() {
         "slack" => "Slack".into(),
         "discord" => "Discord".into(),
