@@ -29,3 +29,5 @@ pub mod session_materialization;
 pub mod session_summaries;
 pub mod session_mutations;
 pub mod session_profile_files;
+pub mod session_store_factories;
+pub mod session_roster;
