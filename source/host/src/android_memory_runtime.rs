@@ -243,7 +243,9 @@ impl AndroidMemoryOwner {
             );
             write_atomic(&project_dir.join("project.md"), body.as_bytes())?;
         }
-        let joined = self.membership(&account_root, &agent_key).join(slug)?;
+        let joined = self.membership(&account_root, &agent_key)
+            .join(slug)
+            .map_err(|error| format!("failed to persist memory project membership: {error}"))?;
         Ok(json!({"project":slug,"created":!existed,"joined":joined || existed}))
     }
 
@@ -261,7 +263,9 @@ impl AndroidMemoryOwner {
         if !project_dir_exists(&account_root, slug) {
             return Err(format!("memory project {slug:?} does not exist"));
         }
-        let joined = self.membership(&account_root, &agent_key).join(slug)?;
+        let joined = self.membership(&account_root, &agent_key)
+            .join(slug)
+            .map_err(|error| format!("failed to persist memory project membership: {error}"))?;
         Ok(json!({"project":slug,"joined":joined}))
     }
 
@@ -276,7 +280,9 @@ impl AndroidMemoryOwner {
         if !is_safe_project_slug(slug) {
             return Err("memory project slug is invalid".into());
         }
-        let left = self.membership(&account_root, &agent_key).leave(slug)?;
+        let left = self.membership(&account_root, &agent_key)
+            .leave(slug)
+            .map_err(|error| format!("failed to persist memory project membership: {error}"))?;
         Ok(json!({"project":slug,"left":left}))
     }
 
