@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::fs;
+use std::io::Write;
 use std::path::PathBuf;
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -511,13 +512,30 @@ impl RemoteExecutionJournal {
     }
 
     fn persist(&self) -> Result<(), String> {
-        if let Some(parent) = self.path.parent() {
-            fs::create_dir_all(parent).map_err(|error| error.to_string())?;
-        }
+        let parent = self
+            .path
+            .parent()
+            .ok_or_else(|| "remote execution journal has no parent directory".to_string())?;
+        fs::create_dir_all(parent).map_err(|error| error.to_string())?;
         let bytes = serde_json::to_vec_pretty(&self.state).map_err(|error| error.to_string())?;
         let temp = self.path.with_extension("tmp");
-        fs::write(&temp, bytes).map_err(|error| error.to_string())?;
-        fs::rename(&temp, &self.path).map_err(|error| error.to_string())
+
+        let result = (|| -> std::io::Result<()> {
+            let mut file = fs::File::create(&temp)?;
+            file.write_all(&bytes)?;
+            file.sync_all()?;
+            fs::rename(&temp, &self.path)?;
+            // Android/Linux require the directory entry itself to be durable before a maybe-sent
+            // Remote side effect can cross the process boundary. Without this sync, a process or
+            // device crash could lose the Sent marker and make recovery incorrectly look retryable.
+            #[cfg(unix)]
+            fs::File::open(parent)?.sync_all()?;
+            Ok(())
+        })();
+        if result.is_err() {
+            let _ = fs::remove_file(&temp);
+        }
+        result.map_err(|error| error.to_string())
     }
 }
 
@@ -695,6 +713,10 @@ mod tests {
                 .mark_sent("op-sent", "account-a:epoch-7", 7, "grant-1", 2)
                 .unwrap();
         }
+        assert!(
+            !path.with_extension("tmp").exists(),
+            "a settled journal write must not leave a temporary durability file behind",
+        );
         let reopened = RemoteExecutionJournal::open(&path, 99).unwrap();
         assert_eq!(
             reopened.record("op-prepared").unwrap().state,
