@@ -3907,7 +3907,8 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
         val accountEpoch = accountAccessOwner.currentProjection().accountEpoch
         require(accountEpoch > 0L) { "Computer rebuild requires a settled account epoch" }
         val requestId = "android-rebuild-$processGeneration-" + UUID.randomUUID().toString()
-        computerRebuildOwner.reserveRequest(accountEpoch, requestId)
+        val requestedKind = if (forceRecreate || !preserveData) ComputerRebuildKind.RESET else ComputerRebuildKind.UPDATE
+        computerRebuildOwner.reserveRequest(accountEpoch, requestId, requestedKind)
         return dispatchComputerRebuildRequest(
             accountEpoch = accountEpoch,
             requestId = requestId,
@@ -3925,7 +3926,7 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
             "Computer rebuild episode is not settled"
         }
         val requestId = "android-rebuild-$processGeneration-" + UUID.randomUUID().toString()
-        computerRebuildOwner.reserveRequest(accountEpoch, requestId)
+        computerRebuildOwner.reserveRequest(accountEpoch, requestId, ComputerRebuildKind.UPDATE)
         return dispatchComputerRebuildRequest(
             accountEpoch = accountEpoch,
             requestId = requestId,
@@ -3958,6 +3959,11 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
     ): JSONObject {
         require(!(forceRecreate && forceUpdate)) {
             "Computer rebuild cannot force update and force recreate simultaneously"
+        }
+        val requestedKind = if (forceRecreate || !preserveData) {
+            ComputerRebuildKind.RESET
+        } else {
+            ComputerRebuildKind.UPDATE
         }
         val reply = try {
             host.requestComputerRebuild(
@@ -3994,26 +4000,26 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
         }
         val operationId = reply.optString("operationId").trim()
         if (operationId.isEmpty()) {
-            computerRebuildOwner.markRequestOutcomeUnknown(accountEpoch, requestId)
+            computerRebuildOwner.acceptStartedUntrackable(accountEpoch, requestId, requestedKind)
             reportComputerRebuildDecisionTelemetry(
                 requestId = requestId,
-                decision = "outcome-unknown",
+                decision = "accepted-untrackable",
                 preserveData = preserveData,
                 forceRecreate = forceRecreate,
                 forceUpdate = forceUpdate,
                 hasOperationId = false,
             )
-            error("Computer rebuild started without a stable operation identity")
+            resumeComputerRebuildMigrationIfNeeded()
+            return JSONObject(reply.toString())
+                .put("requestId", requestId)
+                .put("accepted", true)
+                .put("trackable", false)
         }
         computerRebuildOwner.acceptRequest(
             accountEpoch = accountEpoch,
             requestId = requestId,
             operationId = operationId,
-            kind = if (forceRecreate || !preserveData) {
-                ComputerRebuildKind.RESET
-            } else {
-                ComputerRebuildKind.UPDATE
-            },
+            kind = requestedKind,
         )
         reportComputerRebuildDecisionTelemetry(
             requestId = requestId,
@@ -4065,6 +4071,8 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
             .put("accountEpoch", snapshot.accountEpoch)
             .put("processGeneration", snapshot.processGeneration)
             .put("requestId", snapshot.requestId ?: JSONObject.NULL)
+            .put("requestedKind", snapshot.requestedKind?.name?.lowercase() ?: JSONObject.NULL)
+            .put("acceptedUntrackable", snapshot.acceptedUntrackable)
             .put("queuedWhenIdle", snapshot.queuedWhenIdle)
             .put("operationId", snapshot.operationId ?: JSONObject.NULL)
             .put("migrationOffsetKey", snapshot.migrationOffsetKey)
@@ -4524,32 +4532,35 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
     private fun startComputerRebuildEventPump() {
         computerRebuildEventExecutor.execute {
             while (!closed.get()) {
+                val expectedEpoch = accountAccessOwner.currentProjection().accountEpoch
                 val event = try {
                     computerRebuildEventHost.request(
                         "feature.receive",
                         JSONObject().put("timeoutMs", 250),
                     ).also {
-                        observeComputerRebuildTransport(connected = true)
+                        observeComputerRebuildTransport(expectedEpoch, connected = true)
                     }
                 } catch (_: Throwable) {
-                    observeComputerRebuildTransport(connected = false)
+                    observeComputerRebuildTransport(expectedEpoch, connected = false)
                     Thread.sleep(100)
                     continue
                 }
+                if (accountAccessOwner.currentProjection().accountEpoch != expectedEpoch) continue
                 if (event.optString("type").isNotBlank()) {
-                    observeComputerRebuildEvent(event)
+                    observeComputerRebuildEvent(expectedEpoch, event)
                 }
             }
         }
     }
 
-    private fun observeComputerRebuildTransport(connected: Boolean) {
-        val epoch = accountAccessOwner.currentProjection().accountEpoch
-        runCatching { computerRebuildOwner.observeConnection(epoch, connected) }
+    private fun observeComputerRebuildTransport(accountEpoch: Long, connected: Boolean) {
+        if (accountAccessOwner.currentProjection().accountEpoch != accountEpoch) return
+        runCatching { computerRebuildOwner.observeConnection(accountEpoch, connected) }
     }
 
-    private fun observeComputerRebuildEvent(event: JSONObject) {
-        val epoch = accountAccessOwner.currentProjection().accountEpoch
+    private fun observeComputerRebuildEvent(accountEpoch: Long, event: JSONObject) {
+        if (accountAccessOwner.currentProjection().accountEpoch != accountEpoch) return
+        val epoch = accountEpoch
         when (event.optString("type")) {
             "forever-box" -> {
                 val box = projectForeverBoxRebuildEvent(event) ?: return
@@ -4669,7 +4680,13 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
     private fun resumeComputerRebuildMigrationIfNeeded() {
         val accountEpoch = accountAccessOwner.currentProjection().accountEpoch
         val snapshot = runCatching { computerRebuildOwner.snapshot(accountEpoch) }.getOrNull() ?: return
-        if (snapshot.operationId == null || snapshot.requestId == null || snapshot.kind == null) return
+        if (
+            snapshot.requestId == null ||
+            (
+                snapshot.operationId == null &&
+                    !(snapshot.acceptedUntrackable && snapshot.outcomeUnknown)
+            )
+        ) return
         if (!computerRebuildMigrationRunning.compareAndSet(false, true)) return
         val expectedEpoch = accountEpoch
         val expectedGeneration = processGeneration
@@ -4682,9 +4699,11 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
                     val current = runCatching { computerRebuildOwner.snapshot(expectedEpoch) }.getOrNull() ?: break
                     if (
                         current.processGeneration != expectedGeneration ||
-                        current.operationId == null ||
                         current.requestId == null ||
-                        current.kind == null
+                        (
+                            current.operationId == null &&
+                                !(current.acceptedUntrackable && current.outcomeUnknown)
+                        )
                     ) {
                         break
                     }
@@ -4718,7 +4737,7 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
                         offsetKey,
                     )
                     yieldedAfterResume = true
-                    if (operationId != current.operationId) continue
+                    if (current.operationId != null && operationId != current.operationId) continue
                     val phase = parseComputerRebuildMigrationPhase(event.optString("phase")) ?: continue
                     val after = computerRebuildOwner.observeMigration(expectedEpoch, operationId, phase)
                     if (phase == ComputerRebuildMigrationPhase.DONE && after.terminalMigration) {
@@ -4731,7 +4750,13 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
                 computerRebuildMigrationRunning.set(false)
                 val epoch = accountAccessOwner.currentProjection().accountEpoch
                 val pending = runCatching { computerRebuildOwner.snapshot(epoch) }.getOrNull()
-                if (pending?.operationId != null && pending.kind != null) {
+                if (
+                    pending?.requestId != null &&
+                    (
+                        pending.operationId != null ||
+                            (pending.acceptedUntrackable && pending.outcomeUnknown)
+                    )
+                ) {
                     resumeComputerRebuildMigrationIfNeeded()
                 }
             }

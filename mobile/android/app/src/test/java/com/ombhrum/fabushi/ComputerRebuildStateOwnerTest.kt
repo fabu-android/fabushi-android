@@ -659,6 +659,58 @@ class ComputerRebuildStateOwnerTest {
     }
 
 
+    @Test
+    fun startedUntrackableRequestSurvivesProcessDeathAndBindsWithoutReplay() {
+        val store = MemoryStore()
+        val owner = ComputerRebuildStateOwner(store, processGeneration = 130)
+        owner.observeAccount(130)
+        owner.reserveRequest(130, "request-130", ComputerRebuildKind.RESET)
+        val accepted = owner.acceptStartedUntrackable(
+            accountEpoch = 130,
+            requestId = "request-130",
+            kind = ComputerRebuildKind.RESET,
+        )
+
+        assertTrue(accepted.outcomeUnknown)
+        assertTrue(accepted.acceptedUntrackable)
+        assertEquals(ComputerRebuildKind.RESET, accepted.requestedKind)
+        assertNull(accepted.operationId)
+
+        val reopened = ComputerRebuildStateOwner(store, processGeneration = 131)
+        val recovered = reopened.snapshot(130)
+        assertTrue(recovered.outcomeUnknown)
+        assertTrue(recovered.acceptedUntrackable)
+        assertEquals("request-130", recovered.requestId)
+
+        val rebound = reopened.observeMigration(
+            130,
+            "operation-130",
+            ComputerRebuildMigrationPhase.CREATING,
+        )
+        assertEquals(ComputerRebuildKind.RESET, rebound.kind)
+        assertEquals("operation-130", rebound.operationId)
+        assertFalse(rebound.outcomeUnknown)
+        assertFalse(rebound.acceptedUntrackable)
+        assertTrue(rebound.acknowledged)
+    }
+
+    @Test
+    fun unknownRequestWithNoStartedAckDoesNotTrustAnonymousMigration() {
+        val owner = ComputerRebuildStateOwner(MemoryStore(), processGeneration = 140)
+        owner.observeAccount(140)
+        owner.reserveRequest(140, "request-140", ComputerRebuildKind.UPDATE)
+        owner.markRequestOutcomeUnknown(140, "request-140")
+
+        val anonymous = owner.observeMigration(
+            140,
+            null,
+            ComputerRebuildMigrationPhase.CREATING,
+        )
+        assertTrue(anonymous.outcomeUnknown)
+        assertNull(anonymous.kind)
+        assertNull(anonymous.operationId)
+    }
+
 }
 
 class AndroidStartupTelemetryTrackerTest {

@@ -20,6 +20,8 @@ internal data class ComputerRebuildSnapshot(
     val kind: ComputerRebuildKind? = null,
     val operationId: String? = null,
     val requestId: String? = null,
+    val requestedKind: ComputerRebuildKind? = null,
+    val acceptedUntrackable: Boolean = false,
     val queuedWhenIdle: Boolean = false,
     val migrationOffsetKey: String = "",
     val source: ComputerRebuildSource? = null,
@@ -61,6 +63,8 @@ internal class SharedPreferencesComputerRebuildStateStore(context: Context) : Co
                 kind = value.optString("kind").takeIf(String::isNotBlank)?.let { ComputerRebuildKind.valueOf(it) },
                 operationId = value.optString("operationId").takeIf(String::isNotBlank),
                 requestId = value.optString("requestId").takeIf(String::isNotBlank),
+                requestedKind = value.optString("requestedKind").takeIf(String::isNotBlank)?.let { ComputerRebuildKind.valueOf(it) },
+                acceptedUntrackable = value.optBoolean("acceptedUntrackable", false),
                 queuedWhenIdle = value.optBoolean("queuedWhenIdle", false),
                 migrationOffsetKey = value.optString("migrationOffsetKey"),
                 source = value.optString("source").takeIf(String::isNotBlank)?.let { ComputerRebuildSource.valueOf(it) },
@@ -106,6 +110,8 @@ internal class SharedPreferencesComputerRebuildStateStore(context: Context) : Co
             .put("kind", snapshot.kind?.name ?: "")
             .put("operationId", snapshot.operationId ?: "")
             .put("requestId", snapshot.requestId ?: "")
+            .put("requestedKind", snapshot.requestedKind?.name ?: "")
+            .put("acceptedUntrackable", snapshot.acceptedUntrackable)
             .put("queuedWhenIdle", snapshot.queuedWhenIdle)
             .put("migrationOffsetKey", snapshot.migrationOffsetKey)
             .put("source", snapshot.source?.name ?: "")
@@ -258,7 +264,11 @@ internal class ComputerRebuildStateOwner(
     }
 
     @Synchronized
-    fun reserveRequest(accountEpoch: Long, requestId: String): ComputerRebuildSnapshot {
+    fun reserveRequest(
+        accountEpoch: Long,
+        requestId: String,
+        requestedKind: ComputerRebuildKind? = null,
+    ): ComputerRebuildSnapshot {
         requireCurrentAccount(accountEpoch)
         val normalized = requestId.trim()
         require(normalized.isNotEmpty() && normalized.length <= 240 && normalized.none(Char::isISOControl)) {
@@ -275,11 +285,15 @@ internal class ComputerRebuildStateOwner(
         return persist(
             current.copy(
                 requestId = normalized,
+                requestedKind = requestedKind,
+                acceptedUntrackable = false,
                 migrationOffsetKey = "",
                 pending = true,
                 acknowledged = false,
                 outcomeUnknown = false,
                 lastResolution = null,
+                episodeStartedAtMs = current.episodeStartedAtMs ?: nowMs(),
+                stageStartedAtMs = current.stageStartedAtMs ?: nowMs(),
             ),
         )
     }
@@ -326,11 +340,15 @@ internal class ComputerRebuildStateOwner(
             current.copy(
                 queuedWhenIdle = false,
                 requestId = normalized,
+                requestedKind = ComputerRebuildKind.UPDATE,
+                acceptedUntrackable = false,
                 migrationOffsetKey = "",
                 pending = true,
                 acknowledged = false,
                 outcomeUnknown = false,
                 lastResolution = null,
+                episodeStartedAtMs = current.episodeStartedAtMs ?: nowMs(),
+                stageStartedAtMs = current.stageStartedAtMs ?: nowMs(),
             ),
         )
     }
@@ -352,7 +370,43 @@ internal class ComputerRebuildStateOwner(
         require(normalizedOperation.isNotEmpty()) { "computer rebuild backend omitted operation identity" }
         begin(accountEpoch, kind, normalizedOperation, ComputerRebuildSource.REQUEST)
         acknowledge(accountEpoch, normalizedOperation)
-        return persist(requireSnapshot(accountEpoch).copy(pending = false, outcomeUnknown = false))
+        return persist(
+            requireSnapshot(accountEpoch).copy(
+                requestedKind = kind,
+                acceptedUntrackable = false,
+                pending = false,
+                outcomeUnknown = false,
+            ),
+        )
+    }
+
+    @Synchronized
+    fun acceptStartedUntrackable(
+        accountEpoch: Long,
+        requestId: String,
+        kind: ComputerRebuildKind,
+    ): ComputerRebuildSnapshot {
+        requireCurrentAccount(accountEpoch)
+        require(kind == ComputerRebuildKind.UPDATE || kind == ComputerRebuildKind.RESET) {
+            "backend request may start only update/reset rebuild"
+        }
+        val current = requireSnapshot(accountEpoch)
+        require(current.requestId == requestId) { "stale computer rebuild request identity" }
+        val startedAt = current.episodeStartedAtMs ?: nowMs()
+        return persist(
+            current.copy(
+                requestedKind = kind,
+                acceptedUntrackable = true,
+                kind = kind,
+                source = if (kind == ComputerRebuildKind.UPDATE) ComputerRebuildSource.REQUEST else null,
+                pending = false,
+                acknowledged = true,
+                outcomeUnknown = true,
+                lastResolution = null,
+                episodeStartedAtMs = startedAt,
+                stageStartedAtMs = current.stageStartedAtMs ?: startedAt,
+            ),
+        )
     }
 
     @Synchronized
@@ -559,8 +613,29 @@ internal class ComputerRebuildStateOwner(
         var current = requireSnapshot(accountEpoch)
         val normalized = operationId?.trim()?.takeIf(String::isNotEmpty)
         if (current.operationId != null && current.operationId != normalized) return current
-        if (current.outcomeUnknown && normalized != null) {
-            current = persist(current.copy(outcomeUnknown = false))
+        if (current.operationId == null && current.outcomeUnknown && current.requestId != null) {
+            if (!current.acceptedUntrackable) {
+                // A transport exception only proves that the command outcome is unknown. The
+                // migration stream is account-wide, so do not guess that an unrelated operation
+                // belongs to this request without an explicit "started" acknowledgement.
+                return current
+            }
+            if (normalized != null) {
+                val requestedKind = current.requestedKind ?: current.kind ?: return current
+                current = persist(
+                    current.copy(
+                        kind = requestedKind,
+                        operationId = normalized,
+                        source = if (requestedKind == ComputerRebuildKind.UPDATE) ComputerRebuildSource.REQUEST else null,
+                        pending = false,
+                        acknowledged = true,
+                        outcomeUnknown = false,
+                        acceptedUntrackable = false,
+                    ),
+                )
+            }
+        } else if (current.outcomeUnknown && normalized != null) {
+            current = persist(current.copy(outcomeUnknown = false, acceptedUntrackable = false))
         }
         fun appendPhase(snapshot: ComputerRebuildSnapshot): ComputerRebuildSnapshot {
             val changed = snapshot.migrationPhases.lastOrNull() != phase
@@ -597,6 +672,12 @@ internal class ComputerRebuildStateOwner(
             if (current.operationId != null && current.operationId != normalized) return current
             val withPhase = appendPhase(current)
             return persist(withPhase.copy(terminalMigration = true, leftHealthy = true, outcomeUnknown = false))
+        }
+        if (current.acceptedUntrackable && current.operationId == null && normalized == null) {
+            // Desktop permits started-untrackable and continues the account-wide migration
+            // stream with a null operation id. Keep the persisted request intent as the owner;
+            // never manufacture or resend a side-effecting request merely to obtain an id.
+            return appendPhase(current)
         }
         if (phase == ComputerRebuildMigrationPhase.WIPING) {
             return appendPhase(begin(accountEpoch, ComputerRebuildKind.RESET, normalized, null))
@@ -668,6 +749,8 @@ internal class ComputerRebuildStateOwner(
             kind = null,
             operationId = null,
             requestId = null,
+            requestedKind = null,
+            acceptedUntrackable = false,
             queuedWhenIdle = false,
             migrationOffsetKey = "",
             source = null,

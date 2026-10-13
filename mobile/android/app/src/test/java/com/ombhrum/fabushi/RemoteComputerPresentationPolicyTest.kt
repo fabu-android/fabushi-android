@@ -278,4 +278,25 @@ class RemoteComputerPresentationPolicyTest {
         assertEquals(2.0 / 6.0, projection.progress, 0.0001)
     }
 
+
+    @Test
+    fun rebuildProgressKeepsOutcomeUnknownEpisodeVisible() {
+        val projection = requireNotNull(
+            ComputerRebuildProgressPolicy.project(
+                JSONObject()
+                    .put("accountEpoch", 15)
+                    .put("processGeneration", 9)
+                    .put("episodeStartedAtMs", 12345L)
+                    .put("requestId", "request-15")
+                    .put("kind", "update")
+                    .put("outcomeUnknown", true)
+                    .put("migrationPhases", JSONArray()),
+            ),
+        )
+        assertEquals("update", projection.kind)
+        assertTrue(projection.outcomeUnknown)
+        assertTrue(projection.episodeKey.contains("request-15"))
+    }
+
+
 }

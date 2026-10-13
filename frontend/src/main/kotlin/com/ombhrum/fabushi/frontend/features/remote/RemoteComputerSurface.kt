@@ -57,6 +57,7 @@ internal data class ComputerRebuildProgressProjection(
     val episodeKey: String,
     val elapsedMs: Long,
     val isStalled: Boolean,
+    val outcomeUnknown: Boolean,
     val reconnectVariant: String? = null,
 ) {
     val active: Boolean get() = kind.isNotBlank()
@@ -102,6 +103,7 @@ internal object ComputerRebuildProgressPolicy {
             kind,
         ).joinToString(":")
         val isStalled = status.optBoolean("isStalled", false)
+        val outcomeUnknown = status.optBoolean("outcomeUnknown", false)
         if (kind == "reconnecting") {
             val boxPhase = status.optString("boxPhase")
             val connected = status.optBoolean("connected", true)
@@ -123,6 +125,7 @@ internal object ComputerRebuildProgressPolicy {
                 episodeKey = episodeKey,
                 elapsedMs = elapsedMs,
                 isStalled = isStalled,
+                outcomeUnknown = outcomeUnknown,
                 reconnectVariant = variant,
             )
         }
@@ -205,6 +208,7 @@ internal object ComputerRebuildProgressPolicy {
             episodeKey = episodeKey,
             elapsedMs = elapsedMs,
             isStalled = isStalled,
+            outcomeUnknown = outcomeUnknown,
         )
     }
 }
@@ -670,6 +674,12 @@ private fun RemoteComputerNativePanel(
                         verticalArrangement = Arrangement.spacedBy(6.dp),
                     ) {
                         Text(projection.title, style = MaterialTheme.typography.labelMedium)
+                        if (projection.outcomeUnknown) {
+                            Text(
+                                "正在核对这次重建是否已由后端接受；系统只恢复迁移观察，不会重新发送重建请求。",
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                        }
                         if (projection.isStalled) {
                             Text(
                                 "这次重建耗时比预期更久。系统会继续核对当前请求，不会自动重发可能有副作用的重建。",
