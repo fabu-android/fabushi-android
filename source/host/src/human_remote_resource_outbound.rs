@@ -159,7 +159,10 @@ impl DurableHumanRemoteResourceOutboundOwner {
         self.transition(
             source,
             HumanRemoteResourcePhase::Failed,
-            &[HumanRemoteResourcePhase::Pending],
+            &[
+                HumanRemoteResourcePhase::Pending,
+                HumanRemoteResourcePhase::Dispatching,
+            ],
             None,
             Some(reason.into()),
         )
@@ -422,6 +425,30 @@ mod tests {
             .unwrap();
         assert_eq!(restored.phase, HumanRemoteResourcePhase::Uploaded);
         assert_eq!(restored.resource.unwrap()["id"], "resource-a");
+    }
+
+    #[test]
+    fn proven_backend_rejection_can_settle_dispatching_as_failed() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut owner =
+            DurableHumanRemoteResourceOutboundOwner::open(dir.path().join("human-resource-outbound.json")).unwrap();
+        let pending = owner
+            .begin(
+                None,
+                "session:a",
+                "human:self",
+                "client-a",
+                "blob-a",
+                "a.txt",
+                5,
+            )
+            .unwrap();
+        let dispatching = owner.mark_dispatching(&pending).unwrap();
+        let failed = owner
+            .mark_failed(&dispatching, "backend rejected upload")
+            .unwrap();
+        assert_eq!(failed.phase, HumanRemoteResourcePhase::Failed);
+        assert_eq!(failed.reason.as_deref(), Some("backend rejected upload"));
     }
 
     #[test]
