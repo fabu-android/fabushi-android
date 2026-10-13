@@ -219,6 +219,246 @@ impl AndroidMessagingService {
         Ok(normalized.len())
     }
 
+    /// Reconcile a server-authoritative page of Human direct messages into the canonical
+    /// Android messaging repository. Backend user ids are namespaced at this boundary so the
+    /// rest of Android keeps one actor-id contract, while remote message identity remains stable.
+    pub fn reconcile_remote_human_messages(
+        &mut self,
+        authenticated_actor_id: &str,
+        peer_actor_id: &str,
+        messages: &[Value],
+    ) -> Result<usize, String> {
+        let authenticated_actor_id = authenticated_actor_id.trim();
+        let peer_actor_id = peer_actor_id.trim();
+        if !valid_actor_id(authenticated_actor_id)
+            || !authenticated_actor_id.starts_with("human:")
+            || !valid_actor_id(peer_actor_id)
+            || !peer_actor_id.starts_with("human:")
+            || authenticated_actor_id == peer_actor_id
+        {
+            return Err("remote Human message reconciliation actor identity is invalid".into());
+        }
+
+        let previous = self.state.clone();
+        let conversation_id =
+            stable_human_direct_conversation_id(authenticated_actor_id, peer_actor_id);
+        let now_ms = current_messaging_time_ms();
+        let peer = self
+            .state
+            .actors
+            .get(peer_actor_id)
+            .cloned()
+            .unwrap_or_else(|| {
+                json!({
+                    "id":peer_actor_id,
+                    "kind":"human",
+                    "displayName":peer_actor_id.trim_start_matches("human:")
+                })
+            });
+        self.state
+            .actors
+            .entry(peer_actor_id.to_string())
+            .or_insert(peer);
+        self.state.contact_ids.insert(peer_actor_id.to_string());
+        self.state
+            .actors
+            .entry(authenticated_actor_id.to_string())
+            .or_insert_with(|| {
+                json!({
+                    "id":authenticated_actor_id,
+                    "kind":"human",
+                    "displayName":authenticated_actor_id.trim_start_matches("human:")
+                })
+            });
+
+        let conversation = self
+            .state
+            .conversations
+            .entry(conversation_id.clone())
+            .or_insert_with(|| {
+                json!({
+                    "id":conversation_id,
+                    "kind":"direct",
+                    "title":self.state.actors
+                        .get(peer_actor_id)
+                        .and_then(|actor| actor.get("displayName"))
+                        .and_then(Value::as_str)
+                        .unwrap_or(peer_actor_id),
+                    "ownerId":authenticated_actor_id,
+                    "participants":[
+                        {"actorId":authenticated_actor_id,"role":"owner","joinedAtMs":now_ms},
+                        {"actorId":peer_actor_id,"role":"member","joinedAtMs":now_ms}
+                    ],
+                    "permissions":{
+                        "canSendMessages":true,
+                        "canSendMedia":true,
+                        "canSendPolls":true,
+                        "canPinMessages":true
+                    },
+                    "createdAtMs":now_ms,
+                    "updatedAtMs":now_ms
+                })
+            })
+            .clone();
+        if !conversation_has_access(&conversation, authenticated_actor_id)
+            || !conversation_has_access(&conversation, peer_actor_id)
+        {
+            self.state = previous;
+            return Err("remote Human conversation membership conflicts with canonical state".into());
+        }
+
+        let mut changed = 0usize;
+        let mut newest: Option<(i64, String)> = None;
+        for remote in messages {
+            let remote = remote
+                .as_object()
+                .ok_or("remote Human message must be an object")?;
+            let remote_id = remote_human_identity_text(remote.get("id"), "message id")?;
+            let sender_id = canonical_remote_human_actor_id(
+                remote.get("senderUserId"),
+                "sender user id",
+            )?;
+            let recipient_id = canonical_remote_human_actor_id(
+                remote.get("recipientUserId"),
+                "recipient user id",
+            )?;
+            let belongs = (sender_id == authenticated_actor_id && recipient_id == peer_actor_id)
+                || (sender_id == peer_actor_id && recipient_id == authenticated_actor_id);
+            if !belongs {
+                self.state = previous;
+                return Err("remote Human message does not belong to the requested conversation".into());
+            }
+            let text = remote
+                .get("text")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string();
+            let created_at = required_non_empty(remote.get("createdAt"), "remote Human createdAt")?;
+            let created_at_ms = chrono::DateTime::parse_from_rfc3339(created_at)
+                .map_err(|error| format!("remote Human message timestamp is invalid: {error}"))?
+                .timestamp_millis();
+            let message_id = format!("human-server-message:{remote_id}");
+            let client_message_id = remote
+                .get("clientRequestId")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_string);
+            let reply_to = remote
+                .get("replyToMessageId")
+                .filter(|value| !value.is_null())
+                .map(|value| remote_human_identity_text(Some(value), "reply message id"))
+                .transpose()?
+                .map(|value| format!("human-server-message:{value}"));
+            let delivery_state = if remote.get("readAt").and_then(Value::as_str).is_some() {
+                "read"
+            } else {
+                "delivered"
+            };
+            let reactions = project_remote_human_reactions(
+                remote.get("reactions"),
+                authenticated_actor_id,
+                peer_actor_id,
+            )?;
+            let attachments = project_remote_human_attachments(remote.get("attachments"))?;
+            let content = if attachments.is_empty() {
+                json!({"type":"text","data":{"text":{"text":text,"entities":[]}}})
+            } else {
+                json!({
+                    "type":"document",
+                    "data":{
+                        "text":{"text":text,"entities":[]},
+                        "remoteAttachments":attachments
+                    }
+                })
+            };
+            let projected = json!({
+                "id":message_id,
+                "clientMessageId":client_message_id,
+                "remoteMessageId":remote_id,
+                "conversationId":conversation_id,
+                "senderId":sender_id,
+                "content":content,
+                "replyToMessageId":reply_to,
+                "threadRootMessageId":Value::Null,
+                "createdAtMs":created_at_ms,
+                "editedAtMs":Value::Null,
+                "scheduledAtMs":Value::Null,
+                "silent":false,
+                "protectedContent":false,
+                "deliveryState":delivery_state,
+                "reactions":reactions,
+                "pinned":false,
+                "deleted":false
+            });
+
+            let messages_for_conversation =
+                self.state.messages.entry(conversation_id.clone()).or_default();
+            match messages_for_conversation.get(&message_id) {
+                Some(current) if current == &projected => {}
+                Some(current) => {
+                    if current
+                        .get("remoteMessageId")
+                        .and_then(Value::as_str)
+                        != projected.get("remoteMessageId").and_then(Value::as_str)
+                    {
+                        self.state = previous;
+                        return Err("remote Human message identity conflicts with canonical state".into());
+                    }
+                    messages_for_conversation.insert(message_id.clone(), projected);
+                    changed += 1;
+                }
+                None => {
+                    if let Some(client_message_id) = client_message_id.as_deref() {
+                        let settlement_key = stable_message_id(authenticated_actor_id, client_message_id);
+                        if let Some(local) = messages_for_conversation.remove(&settlement_key) {
+                            if local.get("senderId").and_then(Value::as_str)
+                                != Some(authenticated_actor_id)
+                            {
+                                self.state = previous;
+                                return Err("remote Human clientRequestId conflicts with another sender".into());
+                            }
+                        }
+                    }
+                    messages_for_conversation.insert(message_id.clone(), projected);
+                    changed += 1;
+                }
+            }
+            if newest
+                .as_ref()
+                .is_none_or(|(timestamp, _)| created_at_ms >= *timestamp)
+            {
+                newest = Some((created_at_ms, message_id));
+            }
+        }
+
+        if changed == 0 {
+            self.state = previous;
+            return Ok(0);
+        }
+        if let Some((updated_at_ms, last_message_id)) = newest {
+            if let Some(conversation) = self
+                .state
+                .conversations
+                .get_mut(&conversation_id)
+                .and_then(Value::as_object_mut)
+            {
+                conversation.insert("lastMessageId".into(), Value::String(last_message_id));
+                conversation.insert("updatedAtMs".into(), json!(updated_at_ms));
+            }
+        }
+        self.bump_cursor();
+        self.state.event_journal.clear();
+        self.state.journal_floor_cursor = self.state.cursor;
+        if let Err(error) = self.persist() {
+            self.state = previous;
+            return Err(format!(
+                "failed to persist canonical Android remote Human messages: {error}"
+            ));
+        }
+        Ok(changed)
+    }
+
     pub fn execute(
         &mut self,
         params: &Value,
@@ -3406,6 +3646,124 @@ fn optional_u32(value: Option<&Value>) -> Result<Option<u32>, String> {
             .map(Some)
             .ok_or_else(|| "conversation child pagination count is invalid".to_string()),
     }
+}
+
+fn remote_human_identity_text(value: Option<&Value>, label: &str) -> Result<String, String> {
+    let value = value.ok_or_else(|| format!("remote Human {label} is required"))?;
+    let rendered = match value {
+        Value::String(value) => value.trim().to_string(),
+        Value::Number(value) => value.to_string(),
+        _ => return Err(format!("remote Human {label} has an unsupported type")),
+    };
+    if rendered.is_empty() || rendered.len() > 160 {
+        return Err(format!("remote Human {label} is invalid"));
+    }
+    Ok(rendered)
+}
+
+fn canonical_remote_human_actor_id(
+    value: Option<&Value>,
+    label: &str,
+) -> Result<String, String> {
+    let raw = remote_human_identity_text(value, label)?;
+    if raw.starts_with("human:") {
+        Ok(raw)
+    } else {
+        Ok(format!("human:{raw}"))
+    }
+}
+
+fn stable_human_direct_conversation_id(left: &str, right: &str) -> String {
+    let mut participant_ids = [left, right];
+    participant_ids.sort_unstable();
+    let mut identity = Vec::new();
+    for participant_id in participant_ids {
+        identity.extend_from_slice(&(participant_id.len() as u64).to_be_bytes());
+        identity.extend_from_slice(participant_id.as_bytes());
+    }
+    format!("human-direct-{}", crate::sha256::sha256_hex(&identity))
+}
+
+fn project_remote_human_reactions(
+    value: Option<&Value>,
+    local_actor_id: &str,
+    peer_actor_id: &str,
+) -> Result<Vec<Value>, String> {
+    let Some(value) = value.filter(|value| !value.is_null()) else {
+        return Ok(Vec::new());
+    };
+    let reactions = value
+        .as_array()
+        .ok_or("remote Human reactions must be an array")?;
+    let mut projected = Vec::new();
+    for reaction in reactions {
+        let reaction = reaction
+            .as_object()
+            .ok_or("remote Human reaction must be an object")?;
+        let emoji = required_non_empty(reaction.get("emoji"), "remote Human reaction emoji")?;
+        if emoji.len() > 64 {
+            return Err("remote Human reaction emoji is invalid".into());
+        }
+        let count = reaction.get("count").and_then(Value::as_u64).unwrap_or(0);
+        let reacted_by_me = reaction
+            .get("reactedByMe")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        if reacted_by_me {
+            projected.push(json!({"reaction":emoji,"actorId":local_actor_id}));
+        }
+        for _ in 0..count.saturating_sub(u64::from(reacted_by_me)).min(64) {
+            projected.push(json!({"reaction":emoji,"actorId":peer_actor_id}));
+        }
+    }
+    Ok(projected)
+}
+
+fn project_remote_human_attachments(value: Option<&Value>) -> Result<Vec<Value>, String> {
+    let Some(value) = value.filter(|value| !value.is_null()) else {
+        return Ok(Vec::new());
+    };
+    let attachments = value
+        .as_array()
+        .ok_or("remote Human attachments must be an array")?;
+    if attachments.len() > 32 {
+        return Err("remote Human attachment list is too large".into());
+    }
+    attachments
+        .iter()
+        .map(|attachment| {
+            let attachment = attachment
+                .as_object()
+                .ok_or("remote Human attachment must be an object")?;
+            let resource_id =
+                required_non_empty(attachment.get("resourceId"), "remote Human resource id")?;
+            if resource_id.len() > 200 {
+                return Err("remote Human resource id is invalid".into());
+            }
+            let name = required_non_empty(attachment.get("name"), "remote Human attachment name")?;
+            let size = attachment
+                .get("size")
+                .and_then(Value::as_u64)
+                .filter(|size| *size > 0 && *size <= 32 * 1024 * 1024)
+                .ok_or("remote Human attachment size is invalid")?;
+            Ok(json!({
+                "resourceId":resource_id,
+                "name":name,
+                "contentType":attachment.get("contentType").cloned().unwrap_or(Value::Null),
+                "size":size,
+                "createdAt":attachment.get("createdAt").cloned().unwrap_or(Value::Null)
+            }))
+        })
+        .collect()
+}
+
+fn current_messaging_time_ms() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis()
+        .try_into()
+        .unwrap_or(i64::MAX)
 }
 
 fn valid_actor_id(value: &str) -> bool {
