@@ -20234,6 +20234,11 @@ mod process_metrics_recent_dispatch_tests {
     fn process_metrics_recent_sink_is_bounded_ordered_and_process_local() {
         let root = tempfile::tempdir().unwrap();
         let mut host = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+        host.dispatch(
+            "feature.settings.processMetrics.set",
+            &json!({"localEnabled":true}),
+        )
+        .unwrap();
         for index in 0..40_u64 {
             host.dispatch(
                 "feature.telemetry.processMetrics.observe",

@@ -1,5 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::sync::{Arc, Mutex, mpsc};
+use std::sync::atomic::{AtomicBool, Ordering as AtomicOrdering};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -71,6 +72,7 @@ pub struct AndroidProductAnalyticsRuntime {
     model_experiment_scopes: Mutex<BTreeSet<String>>,
     base_properties: BTreeMap<String, Value>,
     disabled: bool,
+    gate_enabled: AtomicBool,
 }
 
 impl AndroidProductAnalyticsRuntime {
@@ -118,6 +120,7 @@ impl AndroidProductAnalyticsRuntime {
                 ("host_in_box".into(), Value::Bool(false)),
             ]),
             disabled,
+            gate_enabled: AtomicBool::new(enabled),
         });
         if disabled {
             return runtime;
@@ -127,6 +130,7 @@ impl AndroidProductAnalyticsRuntime {
             SAND_PRODUCT_ANALYTICS_GATE,
             Arc::new(move |enabled| {
                 if let Some(runtime) = weak.upgrade() {
+                    runtime.gate_enabled.store(enabled, AtomicOrdering::Release);
                     let _ = runtime.tx.send(WorkerCommand::Gate(enabled));
                 }
             }),
@@ -136,7 +140,7 @@ impl AndroidProductAnalyticsRuntime {
     }
 
     pub fn can_record_events(&self) -> bool {
-        !self.disabled
+        !self.disabled && self.gate_enabled.load(AtomicOrdering::Acquire)
     }
 
     pub fn track(
@@ -384,7 +388,7 @@ mod tests {
     }
 
     fn wait_until(predicate: impl Fn() -> bool) {
-        for _ in 0..100 {
+        for _ in 0..((ANALYTICS_FLUSH_INTERVAL_MS / 10) + 100) {
             if predicate() {
                 return;
             }
