@@ -321,14 +321,13 @@ impl CapabilityBroker {
         Ok(resolved)
     }
 
-    pub fn consume_approval_for_dispatch(
-        &mut self,
+    pub fn approval_for_dispatch(
+        &self,
         approval_id: &str,
         operation_id: &str,
         request_id: &str,
         capability: &str,
         current_account_fence: &str,
-        now_ms: u64,
     ) -> Result<PendingCapabilityApproval, String> {
         validate_identity("approval", approval_id)?;
         validate_identity("operation", operation_id)?;
@@ -338,7 +337,7 @@ impl CapabilityBroker {
         let approval = self
             .state
             .approvals
-            .get_mut(approval_id)
+            .get(approval_id)
             .ok_or("approval is unknown, stale, cancelled, or already consumed")?;
         if approval.state != "allowed_once" {
             return Err(format!("approval is not dispatchable from state {}", approval.state));
@@ -352,6 +351,30 @@ impl CapabilityBroker {
         if approval.account_fence != current_account_fence {
             return Err("stale approval fenced by account identity".into());
         }
+        Ok(approval.clone())
+    }
+
+    pub fn consume_approval_for_dispatch(
+        &mut self,
+        approval_id: &str,
+        operation_id: &str,
+        request_id: &str,
+        capability: &str,
+        current_account_fence: &str,
+        now_ms: u64,
+    ) -> Result<PendingCapabilityApproval, String> {
+        self.approval_for_dispatch(
+            approval_id,
+            operation_id,
+            request_id,
+            capability,
+            current_account_fence,
+        )?;
+        let approval = self
+            .state
+            .approvals
+            .get_mut(approval_id)
+            .expect("preflighted approval remains present");
         approval.state = "consumed".into();
         approval.resolved_at_ms = Some(now_ms);
         let consumed = approval.clone();
@@ -728,6 +751,23 @@ impl SharedCapabilityBroker {
             approved,
             current_account_fence,
             now_ms,
+        )
+    }
+
+    pub fn approval_for_dispatch(
+        &self,
+        approval_id: &str,
+        operation_id: &str,
+        request_id: &str,
+        capability: &str,
+        current_account_fence: &str,
+    ) -> Result<PendingCapabilityApproval, String> {
+        self.lock()?.approval_for_dispatch(
+            approval_id,
+            operation_id,
+            request_id,
+            capability,
+            current_account_fence,
         )
     }
 
