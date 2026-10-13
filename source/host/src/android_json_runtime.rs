@@ -1023,6 +1023,8 @@ impl XuserEntryPublisherHost for AndroidXuserEntryPublisherHost {
 fn schedule_authenticated_experiments_refresh(
     experiments: Arc<HostExperimentsExtension>,
     backend: Option<Arc<CursorDashboardMcpAuthBackend>>,
+    analytics: Option<Arc<AndroidProductAnalyticsRuntime>>,
+    account_scope: Option<String>,
 ) {
     let Some(backend) = backend else { return; };
     let generation = experiments.begin_authenticated_refresh();
@@ -1030,7 +1032,20 @@ fn schedule_authenticated_experiments_refresh(
         .name("android-statsig-bootstrap".into())
         .spawn(move || {
             let Ok(config) = backend.fetch_statsig_bootstrap() else { return; };
-            let _ = experiments.hydrate_authenticated_statsig_if_current(generation, &config);
+            let Ok(true) = experiments.hydrate_authenticated_statsig_if_current(generation, &config) else {
+                return;
+            };
+            let Some(state) = experiments.sand_model_experiment_state().filter(|state| state.active) else {
+                return;
+            };
+            let (Some(analytics), Some(account_scope)) = (analytics, account_scope) else {
+                return;
+            };
+            let arm = match state.arm {
+                crate::extensions::experiments::SandModelExperimentArm::Control => "control",
+                crate::extensions::experiments::SandModelExperimentArm::Treatment => "treatment",
+            };
+            let _ = analytics.track_model_experiment_exposure(&account_scope, arm);
         });
 }
 
@@ -1829,6 +1844,8 @@ impl AndroidJsonHost {
             schedule_authenticated_experiments_refresh(
                 Arc::clone(&experiments),
                 mcp_dashboard_backend.as_ref().cloned(),
+                product_analytics.as_ref().cloned(),
+                account.account_storage_scope(),
             );
         }
         if mode == AndroidHostMode::Production {
@@ -8352,6 +8369,8 @@ impl AndroidJsonHost {
             schedule_authenticated_experiments_refresh(
                 Arc::clone(&self.experiments),
                 self.mcp_dashboard_backend.as_ref().cloned(),
+                self.product_analytics.as_ref().cloned(),
+                self.account.account_storage_scope(),
             );
         }
         self.report_signin_poll_result(&result);
