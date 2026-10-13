@@ -3287,6 +3287,8 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
 
     override fun messagingAccessIssue(params: JSONObject) = host.request("feature.messaging.access.issue", params)
     override fun messagingBlobRead(params: JSONObject) = host.request("feature.messaging.blob.read", params)
+    override fun messagingForwardRecipients(params: JSONObject) =
+        host.request("feature.messaging.forwardRecipients", params)
     override fun messagingExecute(params: JSONObject) = host.request("feature.messaging.execute", params)
 
     override fun rootNotificationTrays(): JSONArray =
