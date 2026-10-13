@@ -151,3 +151,87 @@ pub fn forward_host_upgrade_marker_with(
     delete_if_unchanged(deps, &raw)?;
     Ok(HostUpgradeMarkerForwardOutcome::Emitted)
 }
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Mutex;
+
+    struct Deps {
+        raw: Mutex<Option<String>>,
+        emitted: Mutex<bool>,
+        forwarded: Mutex<bool>,
+        allow_emit: bool,
+    }
+
+    impl Deps {
+        fn new(allow_emit: bool) -> Self {
+            Self {
+                raw: Mutex::new(Some(
+                    r#"{"outcome":"applied","fromVersion":"1","toVersion":"2","issuedAtMs":10,"appliedAtMs":20}"#
+                        .to_string(),
+                )),
+                emitted: Mutex::new(false),
+                forwarded: Mutex::new(false),
+                allow_emit,
+            }
+        }
+    }
+
+    impl HostUpgradeMarkerForwardDeps for Deps {
+        fn read_raw(&self) -> Result<Option<String>, String> {
+            Ok(self.raw.lock().unwrap().clone())
+        }
+
+        fn delete_marker(&self) -> Result<(), String> {
+            *self.raw.lock().unwrap() = None;
+            Ok(())
+        }
+
+        fn emit(&self, _metadata: &BTreeMap<String, String>) -> Result<bool, String> {
+            *self.emitted.lock().unwrap() = true;
+            Ok(self.allow_emit)
+        }
+
+        fn warn(&self, _message: &str) {}
+
+        fn now(&self, _raw: &str) -> f64 {
+            30.0
+        }
+
+        fn was_forwarded(&self, _raw: &str) -> bool {
+            *self.forwarded.lock().unwrap()
+        }
+
+        fn mark_forwarded(&self, _raw: &str) {
+            *self.forwarded.lock().unwrap() = true;
+        }
+
+        fn on_forwarded(&self, _marker: &HostUpgradeMarker) {}
+    }
+
+    #[test]
+    fn deferred_marker_is_not_consumed() {
+        let deps = Deps::new(false);
+        assert_eq!(
+            forward_host_upgrade_marker_with(&deps).unwrap(),
+            HostUpgradeMarkerForwardOutcome::Deferred,
+        );
+        assert!(deps.raw.lock().unwrap().is_some());
+        assert!(!*deps.forwarded.lock().unwrap());
+        assert!(*deps.emitted.lock().unwrap());
+    }
+
+    #[test]
+    fn emitted_marker_is_fenced_before_delete() {
+        let deps = Deps::new(true);
+        assert_eq!(
+            forward_host_upgrade_marker_with(&deps).unwrap(),
+            HostUpgradeMarkerForwardOutcome::Emitted,
+        );
+        assert!(*deps.forwarded.lock().unwrap());
+        assert!(deps.raw.lock().unwrap().is_none());
+        assert!(*deps.emitted.lock().unwrap());
+    }
+}
