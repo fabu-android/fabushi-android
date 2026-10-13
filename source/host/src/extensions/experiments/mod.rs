@@ -1,5 +1,8 @@
+pub mod cache;
 pub mod extension;
 pub mod model_selection;
+
+pub use cache::{CachedStatsigBootstrap, StatsigBootstrapCache, BOOTSTRAP_CACHE_FILENAME};
 
 pub use extension::{
     HostExperimentsExtension, HostExperimentsOptions, SAND_PRODUCT_FEATURE_GATE_DEFAULTS_ENV, SAND_AUTOMATIONS_MODEL_CONFIG_NAME, SAND_BROWSER_USE_CONFIG_NAME,
