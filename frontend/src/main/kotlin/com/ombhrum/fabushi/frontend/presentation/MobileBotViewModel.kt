@@ -84,11 +84,12 @@ data class PendingAgentApproval(
 
 internal fun projectPendingAgentApproval(
     event: JSONObject,
-    currentOperationId: String,
+    currentOperationId: String?,
 ): PendingAgentApproval? {
     if (event.optString("type") != "approval.requested") return null
     val operationId = event.optString("operationId")
-    if (operationId.isBlank() || operationId != currentOperationId) return null
+    val liveOperationId = currentOperationId?.trim().orEmpty()
+    if (liveOperationId.isEmpty() || operationId.isBlank() || operationId != liveOperationId) return null
     val approvalId = event.optString("approvalId")
     if (approvalId.isBlank()) return null
     val expiresAtMs = if (!event.has("expiresAtMs") || event.isNull("expiresAtMs")) {
