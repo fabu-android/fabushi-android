@@ -3,6 +3,50 @@ use super::run_scheduler::{
     WatchdogEvent, WatchdogStage,
 };
 
+pub fn classify_send_dispatch(
+    request_source: Option<&str>,
+    ack_redrive: bool,
+) -> (RunLane, &'static str) {
+    let is_handoff_resume = request_source == Some("handoff-resume");
+    let is_automation = request_source == Some("automation");
+    let is_upgrade_resume = request_source == Some("upgrade-resume");
+    let is_event = request_source == Some("event");
+    let is_group_member = request_source == Some("group-member");
+    let is_agent_inbound = request_source == Some("agent-inbound");
+    let is_human_handoff = request_source == Some("human-handoff");
+    let is_kickstart = request_source == Some("kickstart");
+    (
+        if is_handoff_resume || is_automation || is_upgrade_resume || is_event {
+            RunLane::Background
+        } else if is_agent_inbound {
+            RunLane::Agent
+        } else {
+            RunLane::User
+        },
+        if ack_redrive && is_handoff_resume {
+            "ack-redrive"
+        } else if is_handoff_resume {
+            "handoff-resume"
+        } else if is_automation {
+            "automation"
+        } else if is_upgrade_resume {
+            "upgrade-resume"
+        } else if is_event {
+            "event"
+        } else if is_agent_inbound {
+            "agent-inbound"
+        } else if is_human_handoff {
+            "human-handoff"
+        } else if is_group_member {
+            "group-member"
+        } else if is_kickstart {
+            "kickstart"
+        } else {
+            "turn"
+        },
+    )
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UserTurnTicket {
     pub agent_id: String,
@@ -145,6 +189,16 @@ impl ProductionTurnDispatch {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn dispatch_classification_matches_desktop_lanes_and_sources() {
+        assert_eq!(classify_send_dispatch(Some("automation"), false), (RunLane::Background, "automation"));
+        assert_eq!(classify_send_dispatch(Some("handoff-resume"), true), (RunLane::Background, "ack-redrive"));
+        assert_eq!(classify_send_dispatch(Some("agent-inbound"), false), (RunLane::Agent, "agent-inbound"));
+        assert_eq!(classify_send_dispatch(Some("group-member"), false), (RunLane::User, "group-member"));
+        assert_eq!(classify_send_dispatch(Some("human-handoff"), false), (RunLane::User, "human-handoff"));
+        assert_eq!(classify_send_dispatch(None, false), (RunLane::User, "turn"));
+    }
 
     #[test]
     fn user_turn_preempts_waiting_background_after_active_settles() {
