@@ -236,4 +236,34 @@ class AgentProfileEditorTest {
         assertEquals("#1084FE", DESKTOP_AGENT_AVATAR_COLORS[normalizeAgentAvatarColor("blue")])
     }
 
+    @Test
+    fun avatarExportDecodesOnlyBoundedImageDataUrls() {
+        val payload = byteArrayOf(1, 2, 3, 4)
+        val encoded = java.util.Base64.getEncoder().encodeToString(payload)
+        assertTrue(
+            decodeAgentAvatarExportBytes("data:image/png;base64,$encoded")
+                .contentEquals(payload),
+        )
+    }
+
+    @Test
+    fun avatarExportRejectsNonImageAndMalformedPayloads() {
+        assertTrue(
+            runCatching {
+                decodeAgentAvatarExportBytes("data:text/plain;base64,SGVsbG8=")
+            }.isFailure,
+        )
+        assertTrue(
+            runCatching {
+                decodeAgentAvatarExportBytes("data:image/png;base64,%%%")
+            }.isFailure,
+        )
+        val oversized = java.util.Base64.getEncoder().encodeToString(ByteArray(4_000_001))
+        assertTrue(
+            runCatching {
+                decodeAgentAvatarExportBytes("data:image/png;base64,$oversized")
+            }.isFailure,
+        )
+    }
+
 }
