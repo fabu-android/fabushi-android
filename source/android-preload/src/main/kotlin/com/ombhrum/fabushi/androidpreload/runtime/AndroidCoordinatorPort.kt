@@ -886,6 +886,16 @@ interface AndroidCoordinatorPort {
     ): JSONObject =
         error("Per-Agent automation enablement is unavailable on this Coordinator port")
     fun automationStart(params: JSONObject): JSONObject
+    fun automationEventEnqueue(params: JSONObject): JSONObject =
+        error("Automation event enqueue is unavailable on this Coordinator port")
+    fun automationEventClaim(params: JSONObject): JSONObject? =
+        error("Automation event claim is unavailable on this Coordinator port")
+    fun automationEventStart(params: JSONObject): JSONObject? =
+        error("Automation event start is unavailable on this Coordinator port")
+    fun automationEventSettle(params: JSONObject): JSONObject =
+        error("Automation event settlement is unavailable on this Coordinator port")
+    fun automationEventReconcile(params: JSONObject): JSONObject =
+        error("Automation event reconciliation is unavailable on this Coordinator port")
     fun automationAdvanceStep(params: JSONObject): JSONObject
     fun automationAwaitApproval(params: JSONObject): JSONObject
     fun automationResolveApproval(params: JSONObject): JSONObject
