@@ -1,5 +1,6 @@
 pub mod ack_obligations;
 pub mod async_task_union;
+pub mod agent_lifecycle;
 pub mod agent_run_error;
 pub mod channel_delivery_unregistered_error;
 pub mod pending_wake_rearm;
