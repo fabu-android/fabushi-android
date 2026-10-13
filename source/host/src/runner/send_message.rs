@@ -516,4 +516,127 @@ mod tests {
         assert!(normalize_message(&json!({"type":"widget","widget":{"prompt":"x","options":[]}})).is_err());
         assert!(normalize_message(&json!({"type":"attachment","url":"fabushi-attachment://a"})).is_ok());
     }
+
+    struct EmptyTools;
+    impl AndroidRoutedToolBridge for EmptyTools {
+        fn list_tools(&self) -> Result<Vec<Value>, String> {
+            Ok(Vec::new())
+        }
+
+        fn call_tool(&self, name: &str, _args: Value, _tool_call_id: &str) -> Result<Value, String> {
+            Err(format!("unexpected delegated tool: {name}"))
+        }
+    }
+
+    fn fixture(label: &str) -> (
+        Arc<dyn AndroidRoutedToolBridge>,
+        Arc<Mutex<TranscriptStore>>,
+        Arc<Mutex<ProductionTurnLifecycleStore>>,
+        Arc<Mutex<VecDeque<Value>>>,
+        Arc<Mutex<Option<String>>>,
+        tempfile::TempDir,
+    ) {
+        let root = tempfile::Builder::new()
+            .prefix(&format!("fabushi-send-message-{label}-"))
+            .tempdir()
+            .unwrap();
+        let transcript = Arc::new(Mutex::new(
+            TranscriptStore::open(root.path().join("transcript.json")).unwrap(),
+        ));
+        let lifecycle = Arc::new(Mutex::new(
+            ProductionTurnLifecycleStore::open(root.path().join("turn-lifecycle.json"), 1).unwrap(),
+        ));
+        let process_epoch = lifecycle.lock().unwrap().process_epoch();
+        let events = Arc::new(Mutex::new(VecDeque::new()));
+        let live = Arc::new(Mutex::new(Some("acct:a".into())));
+        let tools = with_send_message_tools(
+            Arc::new(EmptyTools),
+            Arc::clone(&transcript),
+            Arc::clone(&lifecycle),
+            Arc::clone(&events),
+            Arc::clone(&live),
+            "acct:a",
+            "agent-a",
+            "request-a",
+            "operation-a",
+            1,
+            process_epoch,
+            Arc::new(AtomicBool::new(false)),
+        );
+        (tools, transcript, lifecycle, events, live, root)
+    }
+
+    #[test]
+    fn text_send_is_durable_idempotent_and_emits_one_visible_event() {
+        let (tools, transcript, _lifecycle, events, _live, _root) = fixture("text");
+        let args = json!({"type":"text","content":"hello"});
+        let first = tools.call_tool(SEND_MESSAGE_TOOL_NAME, args.clone(), "call-1").unwrap();
+        assert_eq!(first["sent"], true);
+        assert_eq!(first["deduped"], false);
+        let second = tools.call_tool(SEND_MESSAGE_TOOL_NAME, args, "call-1").unwrap();
+        assert_eq!(second["deduped"], true);
+        let entries = transcript.lock().unwrap().get_transcript();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0]["message"]["content"], "hello");
+        assert_eq!(events.lock().unwrap().len(), 1);
+        assert!(tools
+            .call_tool(
+                SEND_MESSAGE_TOOL_NAME,
+                json!({"type":"text","content":"different"}),
+                "call-1",
+            )
+            .unwrap_err()
+            .contains("different arguments"));
+    }
+
+    #[test]
+    fn widget_establishes_durable_awaiting_user_and_blocks_followup_send() {
+        let (tools, transcript, lifecycle, _events, _live, _root) = fixture("widget");
+        tools
+            .call_tool(
+                SEND_MESSAGE_TOOL_NAME,
+                json!({
+                    "type":"widget",
+                    "widget":{
+                        "prompt":"Choose",
+                        "options":[{"label":"Alpha","value":"a"}],
+                        "allowCustom":false
+                    }
+                }),
+                "call-widget",
+            )
+            .unwrap();
+        assert!(lifecycle
+            .lock()
+            .unwrap()
+            .awaiting_user_projection("acct:a", "agent-a")
+            .is_some());
+        assert_eq!(transcript.lock().unwrap().get_transcript().len(), 1);
+        assert_eq!(
+            tools
+                .call_tool(
+                    SEND_MESSAGE_TOOL_NAME,
+                    json!({"type":"text","content":"should not send"}),
+                    "call-after-widget",
+                )
+                .unwrap_err(),
+            AWAITING_USER_BLOCKED
+        );
+        assert_eq!(transcript.lock().unwrap().get_transcript().len(), 1);
+    }
+
+    #[test]
+    fn stale_account_fails_before_transcript_side_effect() {
+        let (tools, transcript, _lifecycle, _events, live, _root) = fixture("stale");
+        *live.lock().unwrap() = Some("acct:b".into());
+        assert!(tools
+            .call_tool(
+                SEND_MESSAGE_TOOL_NAME,
+                json!({"type":"text","content":"blocked"}),
+                "stale-call",
+            )
+            .unwrap_err()
+            .contains("stale account epoch"));
+        assert!(transcript.lock().unwrap().get_transcript().is_empty());
+    }
 }
