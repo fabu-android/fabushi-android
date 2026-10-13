@@ -3048,6 +3048,7 @@ impl AndroidJsonHost {
             "feature.receive" => self.feature_receive(),
             "feature.interrupt" => self.feature_interrupt(params),
             "feature.approval.resolve" => self.feature_approval_resolve(params),
+            "feature.approval.status" => self.feature_approval_status(params),
             "feature.marketplace.browse" => self.marketplace_browse(params),
             "feature.marketplace.release" => self.marketplace_release(params),
             "feature.plugin.install" => self.plugin_install(params),
@@ -9163,6 +9164,23 @@ impl AndroidJsonHost {
         Ok(json!({"operationId":operation_id,"status":"interrupted"}))
     }
 
+    fn feature_approval_status(&self, params: &Value) -> Result<Value, String> {
+        let approval_id = required_string(params, "approvalId")?;
+        let account_fence = self.current_turn_account_fence()?;
+        let remote_pending = self
+            .remote_approvals
+            .is_pending_for_account(approval_id, &account_fence)?;
+        let subagent_pending = self.subagent_review_approvals.contains(approval_id);
+        let generic_pending = self
+            .pending_approvals
+            .get(approval_id)
+            .is_some_and(|operation_id| self.active_operations.contains(operation_id));
+        Ok(json!({
+            "approvalId": approval_id,
+            "pending": remote_pending || subagent_pending || generic_pending,
+        }))
+    }
+
     fn feature_approval_resolve(&mut self, params: &Value) -> Result<Value, String> {
         let (approval_id, decision) = parse_android_approval_resolution(params)?;
         let account_fence = self.current_turn_account_fence()?;
@@ -11212,6 +11230,34 @@ mod tests {
     }
 
     #[test]
+    #[test]
+    fn approval_status_retires_pre_restart_cards() {
+        let root = tempfile::tempdir().unwrap();
+        let mut first = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+        let accepted = first.dispatch(
+            "feature.execute",
+            &json!({"command":{
+                "type":"capability.request",
+                "requestId":"approval-status-restart",
+                "capability":"camera"
+            }}),
+        ).unwrap();
+        let operation_id = accepted["operationId"].as_str().unwrap().to_string();
+        let approval_id = format!("approval-{operation_id}");
+        assert_eq!(
+            first.dispatch("feature.approval.status", &json!({"approvalId":approval_id})).unwrap()["pending"],
+            true
+        );
+        drop(first);
+
+        let mut reopened = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+        assert_eq!(
+            reopened.dispatch("feature.approval.status", &json!({"approvalId":approval_id})).unwrap()["pending"],
+            false,
+            "Host restart cancels durable one-time approvals and the projection must retire stale cards"
+        );
+    }
+
     fn deterministic_test_journey_covers_auth_stream_approval_and_interrupt() {
         let app_data = tempfile::tempdir().unwrap();
         let mut host = AndroidJsonHost::new(app_data.path(), AndroidHostMode::Test);
