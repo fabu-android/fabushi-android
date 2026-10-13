@@ -1,6 +1,7 @@
 //! Remote/Box Runner boundary for work that should not execute in the Android app process.
 
 pub mod box_store_sync_backend;
+pub mod box_disk_pressure_backend;
 pub mod box_store_manifest_format;
 pub mod box_store_hydration;
 pub mod box_store_diagnostics;
@@ -39,6 +40,10 @@ pub use box_store_sync_backend::{
     BoxStoreSyncRequest, BOX_STORE_SYNC_CAPABILITY,
 };
 pub use box_store_backend::{RemoteBoxStoreBackend, RemoteBoxStoreBackendConfig};
+pub use box_disk_pressure_backend::{
+    open_box_disk_pressure_service, BoxDiskPressureSampleRequest, RemoteBoxDiskPressureBackend,
+    RemoteBoxDiskPressureConfig, RemoteDiskVolumeRoot, BOX_DISK_PRESSURE_SAMPLE_CAPABILITY,
+};
 
 /// Compose the dedicated box.store.sync Remote Runner service with the real bounded
 /// filesystem/object-store backend. Android never calls this inside the APK; an explicitly
