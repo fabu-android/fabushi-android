@@ -605,6 +605,9 @@ impl AndroidMessagingService {
             "sync" => self.sync_response(command, actor_id, now_ms),
             "upsertProfile" => self.upsert_profile(command, actor_id, now_ms),
             "createConversation" => self.create_conversation(command, actor_id, now_ms),
+            "ensureDirectConversation" => {
+                self.ensure_direct_human_conversation(command, actor_id, now_ms)
+            }
             "sendMessage" => self.send_message(command, actor_id, now_ms),
             "beginBlobUpload" => self.begin_blob_upload(command, actor_id),
             "appendBlobChunk" => self.append_blob_chunk(command, actor_id),
@@ -906,6 +909,88 @@ impl AndroidMessagingService {
         self.bump_cursor();
         Ok(vec![self.server_envelope(
             json!({"type":"actorChanged","actor":Value::Object(actor)}),
+            now_ms,
+        )])
+    }
+
+    fn ensure_direct_human_conversation(
+        &mut self,
+        command: &Map<String, Value>,
+        actor_id: &str,
+        now_ms: i64,
+    ) -> Result<Vec<Value>, String> {
+        let peer_actor_id =
+            required_non_empty(command.get("peerActorId"), "direct Human peer actor id")?;
+        if !valid_actor_id(actor_id)
+            || !actor_id.starts_with("human:")
+            || !valid_actor_id(peer_actor_id)
+            || !peer_actor_id.starts_with("human:")
+            || peer_actor_id == actor_id
+        {
+            return Err("direct Human conversation actor identity is invalid".into());
+        }
+        if !self.state.contact_ids.contains(peer_actor_id) {
+            return Err("direct Human conversation peer is not in the canonical contact roster".into());
+        }
+        let actor = self
+            .state
+            .actors
+            .get(actor_id)
+            .ok_or("authenticated Human actor is missing from canonical messaging state")?;
+        if actor.get("kind").and_then(Value::as_str) != Some("human") {
+            return Err("authenticated messaging actor is not Human".into());
+        }
+        let peer = self
+            .state
+            .actors
+            .get(peer_actor_id)
+            .ok_or("direct Human peer actor is missing from canonical messaging state")?;
+        if peer.get("kind").and_then(Value::as_str) != Some("human") {
+            return Err("direct Human peer actor is not Human".into());
+        }
+        let conversation_id = stable_human_direct_conversation_id(actor_id, peer_actor_id);
+        if let Some(existing) = self.state.conversations.get(&conversation_id).cloned() {
+            if conversation_kind(&existing) != Some("direct")
+                || !conversation_has_access(&existing, actor_id)
+                || !conversation_has_access(&existing, peer_actor_id)
+            {
+                return Err("canonical direct Human conversation identity conflicts with stored membership".into());
+            }
+            return Ok(vec![self.server_envelope(
+                json!({"type":"conversationChanged","conversation":existing}),
+                now_ms,
+            )]);
+        }
+        let peer_display_name = peer
+            .get("displayName")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .unwrap_or(peer_actor_id.trim_start_matches("human:"));
+        let conversation = json!({
+            "id":conversation_id,
+            "kind":"direct",
+            "title":peer_display_name,
+            "ownerId":actor_id,
+            "participants":[
+                {"actorId":actor_id,"role":"owner","joinedAtMs":now_ms},
+                {"actorId":peer_actor_id,"role":"member","joinedAtMs":now_ms}
+            ],
+            "permissions":{
+                "canSendMessages":true,
+                "canSendMedia":true,
+                "canSendPolls":true,
+                "canPinMessages":true
+            },
+            "createdAtMs":now_ms,
+            "updatedAtMs":now_ms
+        });
+        self.state
+            .conversations
+            .insert(conversation_id, conversation.clone());
+        self.bump_cursor();
+        Ok(vec![self.server_envelope(
+            json!({"type":"conversationChanged","conversation":conversation}),
             now_ms,
         )])
     }
@@ -4191,6 +4276,57 @@ mod tests {
         assert!(service
             .execute(&request, "human:new-account", 100)
             .is_err());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn ensure_direct_human_conversation_is_stable_contact_owned_and_idempotent() {
+        let root = temp_root("ensure-direct-human");
+        let actor = "human:self";
+        let peer = "human:peer";
+        let mut service = AndroidMessagingService::open(&root).unwrap();
+        execute(
+            &mut service,
+            "self-profile",
+            actor,
+            json!({"type":"upsertProfile","actor":{"id":actor,"kind":"human","displayName":"Self"}}),
+        )
+        .unwrap();
+        service
+            .reconcile_remote_human_contacts(&[
+                json!({"id":peer,"kind":"human","displayName":"Peer"})
+            ])
+            .unwrap();
+
+        let first = execute(
+            &mut service,
+            "ensure-direct-1",
+            actor,
+            json!({"type":"ensureDirectConversation","peerActorId":peer}),
+        )
+        .unwrap();
+        let first_conversation = &first["envelopes"][0]["event"]["conversation"];
+        let expected = stable_human_direct_conversation_id(actor, peer);
+        assert_eq!(first_conversation["id"], expected);
+        assert_eq!(first_conversation["kind"], "direct");
+
+        let second = execute(
+            &mut service,
+            "ensure-direct-2",
+            actor,
+            json!({"type":"ensureDirectConversation","peerActorId":peer}),
+        )
+        .unwrap();
+        assert_eq!(second["envelopes"][0]["event"]["conversation"]["id"], expected);
+        assert_eq!(service.state.conversations.len(), 1);
+
+        assert!(execute(
+            &mut service,
+            "ensure-outsider",
+            actor,
+            json!({"type":"ensureDirectConversation","peerActorId":"human:not-a-contact"}),
+        )
+        .is_err());
         let _ = fs::remove_dir_all(root);
     }
 
