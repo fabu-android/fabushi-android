@@ -119,6 +119,7 @@ impl Drop for AckSendGuard {
 
 pub struct AckObligations {
     store: SandAckObligationStore,
+    mutation_guard: Mutex<()>,
     reservations: Mutex<HashMap<String, ReservationState>>,
     redrive_schedules: Mutex<HashMap<(String, String), AckRedriveSchedule>>,
 }
@@ -127,6 +128,7 @@ impl AckObligations {
     pub fn new(root_dir: impl AsRef<Path>) -> Self {
         Self {
             store: SandAckObligationStore::new(root_dir),
+            mutation_guard: Mutex::new(()),
             reservations: Mutex::new(HashMap::new()),
             redrive_schedules: Mutex::new(HashMap::new()),
         }
@@ -155,6 +157,10 @@ impl AckObligations {
     }
 
     pub fn record_send(&self, account_fence: &str, agent_id: &str, at_ms: f64) -> io::Result<RecordSendOutcome> {
+        let _mutation = self
+            .mutation_guard
+            .lock()
+            .map_err(|_| io::Error::other("ack obligation mutation lock poisoned"))?;
         self.clear_redrive_timer(account_fence, agent_id);
         self.store.record_send(account_fence, agent_id, at_ms)
     }
@@ -165,6 +171,10 @@ impl AckObligations {
         agent_id: &str,
         at_ms: f64,
     ) -> io::Result<AckReservation> {
+        let _mutation = self
+            .mutation_guard
+            .lock()
+            .map_err(|_| io::Error::other("ack obligation mutation lock poisoned"))?;
         self.clear_redrive_timer(account_fence, agent_id);
         let previous = self.store.get(account_fence, agent_id);
         let outcome = self.store.record_send(account_fence, agent_id, at_ms)?;
@@ -193,6 +203,10 @@ impl AckObligations {
         account_fence: &str,
         agent_id: &str,
     ) -> io::Result<Option<String>> {
+        let _mutation = self
+            .mutation_guard
+            .lock()
+            .map_err(|_| io::Error::other("ack obligation mutation lock poisoned"))?;
         let Some(recorded) = self.store.get(account_fence, agent_id) else {
             return Ok(None);
         };
@@ -221,6 +235,10 @@ impl AckObligations {
         agent_id: &str,
         ack_token: &str,
     ) -> io::Result<bool> {
+        let _mutation = self
+            .mutation_guard
+            .lock()
+            .map_err(|_| io::Error::other("ack obligation mutation lock poisoned"))?;
         let reservation = {
             let mut reservations = self
                 .reservations
@@ -247,6 +265,10 @@ impl AckObligations {
         agent_id: &str,
         ack_token: &str,
     ) -> io::Result<bool> {
+        let _mutation = self
+            .mutation_guard
+            .lock()
+            .map_err(|_| io::Error::other("ack obligation mutation lock poisoned"))?;
         let reservation = {
             let mut reservations = self
                 .reservations
@@ -292,11 +314,19 @@ impl AckObligations {
     /// Reserved for externally reconciled transcript proof. Live turn completion
     /// must use fulfill_ack_obligation with the turn's token.
     pub fn fulfill_reconciled(&self, account_fence: &str, agent_id: &str) -> io::Result<bool> {
+        let _mutation = self
+            .mutation_guard
+            .lock()
+            .map_err(|_| io::Error::other("ack obligation mutation lock poisoned"))?;
         self.clear_redrive_timer(account_fence, agent_id);
         self.store.clear(account_fence, agent_id)
     }
 
     pub fn record_interrupt(&self, account_fence: &str, agent_id: &str, at_ms: f64) -> io::Result<bool> {
+        let _mutation = self
+            .mutation_guard
+            .lock()
+            .map_err(|_| io::Error::other("ack obligation mutation lock poisoned"))?;
         self.store.record_interrupt(account_fence, agent_id, at_ms)
     }
 
@@ -307,6 +337,42 @@ impl AckObligations {
         now_ms: u64,
     ) -> io::Result<bool> {
         let pending = self.record_interrupt(account_fence, agent_id, now_ms as f64)?;
+        if pending {
+            self.schedule_after_idle(account_fence, agent_id, now_ms);
+        }
+        Ok(pending)
+    }
+
+    pub fn defer_unfulfilled_for_token(
+        &self,
+        account_fence: &str,
+        agent_id: &str,
+        ack_token: &str,
+        now_ms: u64,
+    ) -> io::Result<bool> {
+        let _mutation = self
+            .mutation_guard
+            .lock()
+            .map_err(|_| io::Error::other("ack obligation mutation lock poisoned"))?;
+        let reservation = {
+            let mut reservations = self
+                .reservations
+                .lock()
+                .map_err(|_| io::Error::other("ack reservation registry poisoned"))?;
+            let Some(reservation) = reservations.get(ack_token) else {
+                return Ok(false);
+            };
+            if reservation.account_fence != account_fence || reservation.agent_id != agent_id {
+                return Ok(false);
+            }
+            reservations.remove(ack_token).expect("reservation existed")
+        };
+        if self.store.get(account_fence, agent_id).as_ref() != Some(&reservation.recorded) {
+            return Ok(false);
+        }
+        let pending = self
+            .store
+            .record_interrupt(account_fence, agent_id, now_ms as f64)?;
         if pending {
             self.schedule_after_idle(account_fence, agent_id, now_ms);
         }
@@ -352,6 +418,10 @@ impl AckObligations {
     }
 
     pub fn prepare_redrive(&self, account_fence: &str, agent_id: &str, agent_exists: bool) -> io::Result<AckRedrivePreparation> {
+        let _mutation = self
+            .mutation_guard
+            .lock()
+            .map_err(|_| io::Error::other("ack obligation mutation lock poisoned"))?;
         let Some(obligation) = self.store.get(account_fence, agent_id) else {
             return Ok(AckRedrivePreparation::Missing);
         };
@@ -377,6 +447,10 @@ impl AckObligations {
         previous: &AckObligation,
         prepared: &AckObligation,
     ) -> io::Result<bool> {
+        let _mutation = self
+            .mutation_guard
+            .lock()
+            .map_err(|_| io::Error::other("ack obligation mutation lock poisoned"))?;
         if previous.account_fence != account_fence
             || previous.agent_id != agent_id
             || prepared.account_fence != account_fence
@@ -604,6 +678,54 @@ mod tests {
                 .unwrap()
         );
         assert_eq!(owner.pending_for_account("acct-a")[0], newer);
+    }
+
+    #[test]
+    fn token_defer_cannot_interrupt_a_newer_coalesced_obligation() {
+        let root = tempfile::tempdir().unwrap();
+        let owner = AckObligations::new(root.path());
+        let first = owner
+            .record_send_and_mint_token("acct-a", "agent-a", 1.0)
+            .unwrap();
+        owner.record_send("acct-a", "agent-a", 2.0).unwrap();
+        assert!(
+            !owner
+                .defer_unfulfilled_for_token(
+                    "acct-a",
+                    "agent-a",
+                    &first.ack_token,
+                    3,
+                )
+                .unwrap()
+        );
+        let current = owner.pending_for_account("acct-a")[0].clone();
+        assert_eq!(current.coalesced_count, 2.0);
+        assert_eq!(current.last_interrupt_at_ms, None);
+    }
+
+    #[test]
+    fn token_defer_marks_only_its_exact_snapshot_and_schedules_redrive() {
+        let root = tempfile::tempdir().unwrap();
+        let owner = AckObligations::new(root.path());
+        let reserved = owner
+            .record_send_and_mint_token("acct-a", "agent-a", 1.0)
+            .unwrap();
+        assert!(
+            owner
+                .defer_unfulfilled_for_token(
+                    "acct-a",
+                    "agent-a",
+                    &reserved.ack_token,
+                    10,
+                )
+                .unwrap()
+        );
+        let current = owner.pending_for_account("acct-a")[0].clone();
+        assert_eq!(current.last_interrupt_at_ms, Some(10.0));
+        assert_eq!(
+            owner.take_due_redrive("acct-a", "agent-a", 5_010),
+            Some(AckRedriveTrigger::Idle)
+        );
     }
 
     #[test]
