@@ -598,6 +598,8 @@ interface AndroidCoordinatorPort {
         error("MCP team popularity is unavailable on this Coordinator port")
     fun availableModelCatalog(): JSONObject =
         error("Available model catalog is unavailable on this Coordinator port")
+    fun managedSkillsCatalog(): JSONObject =
+        error("Managed skills catalog is unavailable on this Coordinator port")
     fun mcpServerTools(serverId: String): JSONArray =
         error("MCP server tool catalog is unavailable on this Coordinator port")
     fun mcpServerCustomInstructions(serverId: String): String? =
