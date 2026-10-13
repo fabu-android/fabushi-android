@@ -12,8 +12,10 @@ pub struct HostTelemetryProjection {
     pub metadata: BTreeMap<String, String>,
 }
 pub mod agent_open_telemetry;
+pub mod agent_error_telemetry;
 pub mod auto_review_approval_telemetry;
 pub mod automation_fire_telemetry;
+pub mod automation_lifecycle_telemetry;
 #[cfg(test)]
 mod android_projection_tests;
 pub mod disk_pressure_telemetry;
