@@ -1,5 +1,5 @@
 use crate::extensions::content_search::android_search_index::AndroidContentSearchIndex;
-use crate::extensions::experiments::{HostExperimentsExtension, StopGateSubscription};
+use crate::extensions::experiments::{select_sand_experiment_turn_model, HostExperimentsExtension, StopGateSubscription};
 use crate::edge_failures::EdgeFailureBuffer;
 use crate::account_service::{AccountSessionMutation, AndroidAccountService};
 use crate::account_telemetry::{
@@ -7511,13 +7511,36 @@ impl AndroidJsonHost {
             }
         }
 
-        let model = AndroidHostInferenceProvider::resolve_model_id(
-            command
-                .get("model")
-                .and_then(Value::as_str)
-                .filter(|value| !value.trim().is_empty())
-                .unwrap_or("default"),
+        let request_source = command
+            .get("requestSource")
+            .and_then(Value::as_str)
+            .filter(|value| !value.trim().is_empty())
+            .map(str::to_string);
+        let requested_model = command
+            .get("model")
+            .and_then(Value::as_str)
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or("default");
+        let experiment_state = self.experiments.sand_model_experiment_state();
+        let experiment_selection = select_sand_experiment_turn_model(
+            experiment_state.as_ref(),
+            request_source.as_deref(),
+            || self.experiments.configured_default_model(),
+            || self.experiments.configured_automations_model(),
         );
+        let env_model_override = std::env::var("SAND_AGENT_MODEL")
+            .ok()
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty());
+        let model = if requested_model != "default" {
+            AndroidHostInferenceProvider::resolve_model_id(requested_model)
+        } else if let Some(model) = env_model_override.as_deref() {
+            AndroidHostInferenceProvider::resolve_model_id(model)
+        } else if let Some(selection) = experiment_selection.as_ref() {
+            AndroidHostInferenceProvider::resolve_model_id(&selection.model_id)
+        } else {
+            AndroidHostInferenceProvider::resolve_model_id("default")
+        };
         let account_fence = self.current_turn_account_fence()?;
         let turn_generation = self
             .turn_journal
@@ -7661,11 +7684,6 @@ impl AndroidJsonHost {
             privacy_mode: frozen_privacy_label,
             summarization_binding_id: "android-host-inference:same-provider".into(),
         };
-        let request_source = command
-            .get("requestSource")
-            .and_then(Value::as_str)
-            .filter(|value| !value.trim().is_empty())
-            .map(str::to_string);
         let subagent_review_expiry_policy =
             subagent_review_approval_expiry_policy(request_source.as_deref());
 

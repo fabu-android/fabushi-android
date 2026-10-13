@@ -1,5 +1,6 @@
 use serde_json::Value;
 use std::collections::BTreeMap;
+use super::model_selection::{configured_model_from_config, read_sand_model_experiment_process_override, SandAgentModelSelection, SandModelExperimentArm, SandModelExperimentState};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, Weak};
 
@@ -30,11 +31,20 @@ impl HostExperimentsOptions {
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]
+struct StatsigExperimentAssignment {
+    value: BTreeMap<String, Value>,
+    group_name: Option<String>,
+    rule_id: Option<String>,
+    secondary_exposures: Vec<Value>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq)]
 struct ExperimentsState {
     options: HostExperimentsOptions,
     settings_overrides: BTreeMap<String, bool>,
     network_feature_gates: BTreeMap<String, bool>,
     network_dynamic_configs: BTreeMap<String, BTreeMap<String, Value>>,
+    network_experiments: BTreeMap<String, StatsigExperimentAssignment>,
     hydrated_user_id: Option<String>,
     authenticated_bootstrap: bool,
 }
@@ -190,11 +200,30 @@ impl HostExperimentsExtension {
         let mut state = self.state.lock().map_err(|_| "experiments state lock poisoned".to_string())?;
         state.network_feature_gates = parsed.feature_gates;
         state.network_dynamic_configs = parsed.dynamic_configs;
+        state.network_experiments = parsed.experiments;
         state.hydrated_user_id = Some(user_id);
         state.authenticated_bootstrap = true;
         drop(state);
         self.notify_gate_listeners();
         Ok(())
+    }
+
+    pub fn sand_model_experiment_state(&self) -> Option<SandModelExperimentState> {
+        if let Some(override_state) = read_sand_model_experiment_process_override() { return Some(override_state); }
+        let state = self.state.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        if !state.authenticated_bootstrap || state.hydrated_user_id.as_deref().is_none_or(str::is_empty) { return None; }
+        let assignment = state.network_experiments.get(SAND_MODEL_EXPERIMENT_NAME)?;
+        assignment.group_name.as_deref()?;
+        let enabled = assignment.value.get("enabled").and_then(Value::as_bool).unwrap_or(false);
+        Some(SandModelExperimentState { active: true, arm: if enabled { SandModelExperimentArm::Treatment } else { SandModelExperimentArm::Control } })
+    }
+
+    pub fn configured_default_model(&self) -> Option<SandAgentModelSelection> {
+        configured_model_from_config(self.dynamic_config(SAND_DEFAULT_MODEL_CONFIG_NAME), self.has_authenticated_bootstrap())
+    }
+
+    pub fn configured_automations_model(&self) -> Option<SandAgentModelSelection> {
+        configured_model_from_config(self.dynamic_config(SAND_AUTOMATIONS_MODEL_CONFIG_NAME), self.has_authenticated_bootstrap())
     }
 
     pub fn has_authenticated_bootstrap(&self) -> bool {
@@ -218,6 +247,7 @@ impl HostExperimentsExtension {
         let mut state = self.state.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         state.network_feature_gates.clear();
         state.network_dynamic_configs.clear();
+        state.network_experiments.clear();
         state.hydrated_user_id = None;
         state.authenticated_bootstrap = false;
         drop(state);
@@ -229,6 +259,7 @@ struct ParsedBootstrap {
     hydrated_user_id: Option<String>,
     feature_gates: BTreeMap<String, bool>,
     dynamic_configs: BTreeMap<String, BTreeMap<String, Value>>,
+    experiments: BTreeMap<String, StatsigExperimentAssignment>,
 }
 
 fn parse_statsig_bootstrap(config: &str) -> Result<ParsedBootstrap, String> {
@@ -254,31 +285,24 @@ fn parse_statsig_bootstrap(config: &str) -> Result<ParsedBootstrap, String> {
         })
         .unwrap_or_default();
 
-    let dynamic_configs = parsed
-        .get("dynamic_configs")
-        .and_then(Value::as_object)
-        .map(|configs| {
-            configs
-                .iter()
-                .filter_map(|(name, raw)| {
-                    let values = raw.get("value")?.as_object()?;
-                    Some((
-                        name.clone(),
-                        values
-                            .iter()
-                            .map(|(key, value)| (key.clone(), value.clone()))
-                            .collect(),
-                    ))
-                })
-                .collect()
-        })
-        .unwrap_or_default();
+    let mut dynamic_configs = BTreeMap::new();
+    let mut experiments = BTreeMap::new();
+    if let Some(configs) = parsed.get("dynamic_configs").and_then(Value::as_object) {
+        for (name, raw) in configs {
+            let values = raw.get("value").and_then(Value::as_object).map(|values| {
+                values.iter().map(|(key, value)| (key.clone(), value.clone())).collect::<BTreeMap<_, _>>()
+            }).unwrap_or_default();
+            dynamic_configs.insert(name.clone(), values.clone());
+            experiments.insert(name.clone(), StatsigExperimentAssignment {
+                value: values,
+                group_name: raw.get("group_name").and_then(Value::as_str).map(str::to_string),
+                rule_id: raw.get("rule_id").and_then(Value::as_str).map(str::to_string),
+                secondary_exposures: raw.get("secondary_exposures").and_then(Value::as_array).cloned().unwrap_or_default(),
+            });
+        }
+    }
 
-    Ok(ParsedBootstrap {
-        hydrated_user_id,
-        feature_gates,
-        dynamic_configs,
-    })
+    Ok(ParsedBootstrap { hydrated_user_id, feature_gates, dynamic_configs, experiments })
 }
 
 fn statsig_gate_value(value: &Value) -> Option<bool> {
@@ -473,6 +497,25 @@ mod tests {
             .unwrap();
         experiments.clear_account_scope();
         assert_eq!(*seen.lock().unwrap(), vec![true, false]);
+    }
+
+    #[test]
+    fn authenticated_model_experiment_requires_group_and_preserves_assignment() {
+        let experiments = HostExperimentsExtension::new();
+        let payload = serde_json::json!({
+            "user":{"userID":"user-a"},
+            "dynamic_configs":{
+                SAND_MODEL_EXPERIMENT_NAME:{"value":{"enabled":true},"group_name":"treatment","rule_id":"rule-1"},
+                SAND_DEFAULT_MODEL_CONFIG_NAME:{"value":{"modelId":"model-treatment","maxMode":false,"parameters":[]}},
+                SAND_AUTOMATIONS_MODEL_CONFIG_NAME:{"value":{"modelId":"automation-treatment","maxMode":false,"parameters":[]}}
+            }
+        }).to_string();
+        experiments.hydrate_authenticated_statsig(&payload).unwrap();
+        assert_eq!(experiments.sand_model_experiment_state(), Some(SandModelExperimentState { active:true, arm:SandModelExperimentArm::Treatment }));
+        assert_eq!(experiments.configured_default_model().unwrap().model_id, "model-treatment");
+        assert_eq!(experiments.configured_automations_model().unwrap().model_id, "automation-treatment");
+        experiments.clear_account_scope();
+        assert_eq!(experiments.sand_model_experiment_state(), None);
     }
 
     #[test]
