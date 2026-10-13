@@ -12795,7 +12795,8 @@
       ],
       "state_owner": "Rust Host security policy and CapabilityBroker must own durable permission and approval truth; Compose only renders snapshots/actions.",
       "persistent_state": [
-        "effective user permission by account",
+        "standing Never/Ask/Always preference keyed by the current account/session fence",
+        "device/organization managed permission ceiling",
         "one-time exact action/target approvals",
         "audit/reconciliation state"
       ],
@@ -12817,7 +12818,7 @@
       "retry_semantics": "permission reads may refresh on reconnect; unknown side effects are never retried because permission changed.",
       "idempotency_semantics": "approval IDs/action/target identity must be stable and duplicate/consumed approvals rejected.",
       "process_death_recovery": "durable permission reloads; unresolved one-time approval does not auto-authorize after restart and must reconcile/cancel.",
-      "account_fencing": "all policy/grant records bind to current account fence/epoch.",
+      "account_fencing": "Standing Never/Always preferences are keyed by the current account/session fence; Account A cannot authorize Account B. Legacy pre-fence global permission is accepted only for schema compatibility and fails closed to Ask instead of being promoted into any account. One-time grants remain bound to account/epoch/device/operation identity.",
       "security_boundary": "Presentation cannot grant itself execution. Effective policy must be enforced in Host/CapabilityBroker immediately before bounded Local or Authorized Remote Runner dispatch.",
       "android_disposition": "android-adapted",
       "android_target": [
@@ -12835,16 +12836,16 @@
       "android_owner": "Rust CapabilityBroker + outbound Runner execution boundary, with native Compose prompt as a projection",
       "platform_delta": "Android replaces arbitrary Desktop-local execution with bounded Local/Authorized Remote Runner execution while preserving always/ask/never, managed ceiling, exact one-shot approval and the 10-minute ask lifetime. Desktop direction epochs are adapted to Android's durable per-user-turn requestId/operationId identity: retries inside one turn share the refusal scope, while each new user turn gets a new identity. Standing Always remains a durable user preference; stale old-turn callbacks are fenced by operation/account/device identity and turn cancellation.",
       "implementation_status": "implemented",
-      "production_wiring": "Host durably owns Never/Ask/Always plus managed ceiling, refreshes the Dashboard ceiling per production turn, freezes/clamps it in RemoteRoutedTools before authorization and immediately before dispatch, and consumes exact account/epoch/device-fenced grants in CapabilityBroker. Standing-policy persistence failure degrades only the current prompt (Always->allow-once, Never->deny) and surfaces effectiveDecision/persistenceDegraded. Ask waits 10 minutes. Refusal memory uses the durable parent operation (requestId-backed user-turn identity), so same-turn retries are blocked while later turns are not. feature.approval.status projects canonical pending state after Host restore and MobileBotViewModel retires stale cards during durable projection refresh.",
-      "unit_test": "AndroidUserSettings covers default Ask, persistence and ceiling clamp. CapabilityBroker covers duplicate/account/epoch/device fencing, process-restart cancellation and durable exact-action refusal. RemoteRoutedTools covers Never fail-closed, same-turn denied-action memory and the 10-minute TTL contract. AndroidJsonHost covers standing-policy persistence-failure one-shot fallback and approval status becoming non-pending after Host reopen.",
+      "production_wiring": "Host durably owns account-fenced Never/Ask/Always plus a device/organization managed ceiling, refreshes the Dashboard ceiling per production turn, freezes/clamps it in RemoteRoutedTools before authorization and immediately before dispatch, and consumes exact account/epoch/device-fenced grants in CapabilityBroker. feature.settings.localToolPermission reads/writes with current_turn_account_fence(); standing Always/Never approval mutations reuse the pending approval's account fence. Standing-policy persistence failure degrades only the current prompt and surfaces effectiveDecision/persistenceDegraded.",
+      "unit_test": "AndroidUserSettings covers Account A/B isolation, default Ask, restart persistence, global ceiling clamp, and fail-closed migration of legacy global Always. CapabilityBroker covers duplicate/account/epoch/device fencing, process-restart cancellation and durable exact-action refusal. RemoteRoutedTools covers Never fail-closed, same-turn denied-action memory and 10-minute TTL. AndroidJsonHost covers standing-policy mutation and approval projection.",
       "contract_test": "Desktop current-main local-tool store/view/shared machinery were re-read. Android preserves four-way UI decisions, never<ask<always rank/managed ceiling, mutation-failure downgrade, exact action/target one-shot authority, 10-minute ask lifetime, reconnect/turn refresh and fail-closed stale callbacks. Android's durable per-turn operation identity is the documented platform replacement for Desktop direction epoch.",
       "integration_test": "Production composition now includes ask -> allow once/deny, always/never persistence, team ceiling clamp, per-turn refresh, account switch clear, process-death cancellation, stale-card reconciliation, exact one-shot grant consumption and outbound Runner revalidation. Same-final-head Actions and protected real Runner/device acceptance remain required.",
       "packaged_test": "required on final githubRelease APK/AAB",
       "device_test": "required with real Authorized Remote Runner/bounded Local Runner",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Implementation closure reached; verification remains open. Do not mark verified until a descendant exact HEAD passes Rust/Android/package/device gates with real Authorized Remote Runner or bounded Local Runner evidence.",
-      "android_head_at_update": "b960629f7794746a258cbe6256ddbad9543c20cc"
+      "notes": "Account-fence hardening implemented by 477d9b32e6c27790fe0ae2921bf2b1ff89e9559d and 4d5c4bde06f8214146b25da20178d1d456c27ed2: standing grants no longer cross accounts; legacy global grants fail closed to Ask. Implementation remains not-verified until a descendant exact HEAD passes Rust/Android/package/device gates with a real Authorized Remote Runner or bounded Local Runner.",
+      "android_head_at_update": "242d5b2efc5f1f7eaf6c4bad26ba571f5a0f827c"
     },
     {
       "responsibility_id": "PLUGIN-OVERLAY-PRESENTATION-ANDROID-001",
