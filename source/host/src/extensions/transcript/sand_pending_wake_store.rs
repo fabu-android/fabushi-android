@@ -275,11 +275,15 @@ impl SandPendingWakeStore {
         }
     }
 
-    pub fn clear_agent(&self, account_fence: &str, agent_id: &str) -> usize {
+    pub fn clear_agent(
+        &self,
+        account_fence: &str,
+        agent_id: &str,
+    ) -> std::io::Result<usize> {
         let account_fence = account_fence.trim();
         let agent_id = agent_id.trim();
         if account_fence.is_empty() || agent_id.is_empty() {
-            return 0;
+            return Ok(0);
         }
         let _guard = self.lock.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         let existing = self.read_pending_unlocked();
@@ -292,14 +296,14 @@ impl SandPendingWakeStore {
             .collect::<Vec<_>>();
         let cleared = existing.len().saturating_sub(remaining.len());
         if cleared == 0 {
-            return 0;
+            return Ok(0);
         }
-        let committed = if remaining.is_empty() {
-            self.delete_unlocked()
+        if remaining.is_empty() {
+            self.delete_unlocked()?;
         } else {
-            self.write_unlocked(&remaining)
-        };
-        if committed.is_ok() { cleared } else { 0 }
+            self.write_unlocked(&remaining)?;
+        }
+        Ok(cleared)
     }
 
     pub fn clear_account(&self, account_fence: &str) {
@@ -524,11 +528,11 @@ mod tests {
         assert!(store.mark_pending(marker("acct-a", "agent-2", PendingWakeKind::Shell, "shell-2")));
         assert!(store.mark_pending(marker("acct-b", "agent-1", PendingWakeKind::Shell, "shell-3")));
 
-        assert_eq!(store.clear_agent("acct-a", "agent-1"), 2);
+        assert_eq!(store.clear_agent("acct-a", "agent-1").unwrap(), 2);
         assert!(store.list_pending_for("acct-a", "agent-1").is_empty());
         assert_eq!(store.list_pending_for("acct-a", "agent-2").len(), 1);
         assert_eq!(store.list_pending_for("acct-b", "agent-1").len(), 1);
-        assert_eq!(store.clear_agent("acct-a", "agent-1"), 0);
+        assert_eq!(store.clear_agent("acct-a", "agent-1").unwrap(), 0);
         let _ = fs::remove_dir_all(root);
     }
 
