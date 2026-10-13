@@ -1,4 +1,6 @@
+use chrono::{SecondsFormat, Utc};
 use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
 use std::{
     collections::BTreeMap,
     fs,
@@ -8,6 +10,24 @@ use std::{
 
 const TIME_ZONE_MAX_CHARS: usize = 128;
 const MODEL_ID_MAX_CHARS: usize = 256;
+const INFERENCE_PROVIDERS: [&str; 5] = ["fabushi", "cursor", "claude-code", "codex", "openrouter"];
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+struct InferenceProviderUsage {
+    #[serde(default)]
+    requests: u64,
+    #[serde(default)]
+    input_tokens: u64,
+    #[serde(default)]
+    output_tokens: u64,
+    #[serde(default)]
+    cache_read_tokens: u64,
+    #[serde(default)]
+    cache_write_tokens: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    last_used_at: Option<String>,
+}
 
 #[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
@@ -80,6 +100,10 @@ struct PersistedAndroidUserSettings {
     agent_default_model_by_account: BTreeMap<String, String>,
     #[serde(default)]
     computer_use_model_by_account: BTreeMap<String, String>,
+    #[serde(default)]
+    inference_provider: Option<String>,
+    #[serde(default)]
+    inference_router_usage: BTreeMap<String, InferenceProviderUsage>,
 }
 
 /// Canonical Host-owned Android user settings that must survive Activity/process recreation.
@@ -257,6 +281,91 @@ impl AndroidUserSettings {
         Ok(value)
     }
 
+    pub fn inference_provider(&self) -> &str {
+        self.state
+            .inference_provider
+            .as_deref()
+            .filter(|provider| INFERENCE_PROVIDERS.contains(provider))
+            .unwrap_or("cursor")
+    }
+
+    pub fn set_inference_provider(&mut self, value: &str) -> io::Result<String> {
+        let value = value.trim();
+        if !INFERENCE_PROVIDERS.contains(&value) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "inference provider is not supported",
+            ));
+        }
+        if self.inference_provider() == value
+            && self.state.inference_provider.as_deref() == Some(value)
+        {
+            return Ok(value.to_string());
+        }
+        let mut next = self.state.clone();
+        next.inference_provider = Some(value.to_string());
+        write_atomic_json(&self.path, &next)?;
+        self.state = next;
+        Ok(value.to_string())
+    }
+
+    pub fn inference_router_usage(&self) -> Value {
+        let providers = INFERENCE_PROVIDERS
+            .iter()
+            .map(|provider| {
+                let usage = self
+                    .state
+                    .inference_router_usage
+                    .get(*provider)
+                    .cloned()
+                    .unwrap_or_default();
+                (
+                    (*provider).to_string(),
+                    json!({
+                        "requests": usage.requests,
+                        "inputTokens": usage.input_tokens,
+                        "outputTokens": usage.output_tokens,
+                        "cacheReadTokens": usage.cache_read_tokens,
+                        "cacheWriteTokens": usage.cache_write_tokens,
+                        "lastUsedAt": usage.last_used_at,
+                    }),
+                )
+            })
+            .collect::<serde_json::Map<String, Value>>();
+        json!({"providers": providers})
+    }
+
+    pub fn record_inference_usage(
+        &mut self,
+        provider: &str,
+        input_tokens: Option<f64>,
+        output_tokens: Option<f64>,
+        cache_read_tokens: Option<f64>,
+        cache_write_tokens: Option<f64>,
+    ) -> io::Result<Value> {
+        let provider = provider.trim();
+        if !INFERENCE_PROVIDERS.contains(&provider) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "inference provider is not supported",
+            ));
+        }
+        let mut next = self.state.clone();
+        let usage = next
+            .inference_router_usage
+            .entry(provider.to_string())
+            .or_default();
+        usage.requests = usage.requests.saturating_add(1);
+        usage.input_tokens = usage.input_tokens.saturating_add(safe_usage(input_tokens));
+        usage.output_tokens = usage.output_tokens.saturating_add(safe_usage(output_tokens));
+        usage.cache_read_tokens = usage.cache_read_tokens.saturating_add(safe_usage(cache_read_tokens));
+        usage.cache_write_tokens = usage.cache_write_tokens.saturating_add(safe_usage(cache_write_tokens));
+        usage.last_used_at = Some(Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true));
+        write_atomic_json(&self.path, &next)?;
+        self.state = next;
+        Ok(self.inference_router_usage())
+    }
+
     pub fn process_metrics_local_enabled(&self) -> bool {
         self.state.process_metrics_local_enabled
     }
@@ -380,6 +489,13 @@ fn normalize_time_zone(value: Option<&str>) -> io::Result<Option<String>> {
     Ok(Some(value.to_string()))
 }
 
+fn safe_usage(value: Option<f64>) -> u64 {
+    value
+        .filter(|value| value.is_finite() && *value >= 0.0)
+        .map(|value| value.round().min(u64::MAX as f64) as u64)
+        .unwrap_or(0)
+}
+
 fn write_atomic_json(path: &Path, state: &PersistedAndroidUserSettings) -> io::Result<()> {
     let parent = path.parent().ok_or_else(|| {
         io::Error::new(io::ErrorKind::InvalidInput, "settings path has no parent")
@@ -415,6 +531,32 @@ mod tests {
                 .unwrap_or_default()
                 .as_nanos(),
         ))
+    }
+
+    #[test]
+    fn inference_provider_and_usage_are_durable_and_bounded() {
+        let path = test_path("inference-routing");
+        let mut settings = AndroidUserSettings::open(&path).unwrap();
+        assert_eq!(settings.inference_provider(), "cursor");
+        assert!(settings.set_inference_provider("unknown").is_err());
+        assert_eq!(settings.set_inference_provider("codex").unwrap(), "codex");
+
+        let usage = settings
+            .record_inference_usage("codex", Some(1.4), Some(2.6), Some(-1.0), Some(f64::NAN))
+            .unwrap();
+        assert_eq!(usage["providers"]["codex"]["requests"], 1);
+        assert_eq!(usage["providers"]["codex"]["inputTokens"], 1);
+        assert_eq!(usage["providers"]["codex"]["outputTokens"], 3);
+        assert_eq!(usage["providers"]["codex"]["cacheReadTokens"], 0);
+        assert_eq!(usage["providers"]["codex"]["cacheWriteTokens"], 0);
+        assert!(usage["providers"]["codex"]["lastUsedAt"].is_string());
+
+        drop(settings);
+        let reopened = AndroidUserSettings::open(&path).unwrap();
+        assert_eq!(reopened.inference_provider(), "codex");
+        assert_eq!(reopened.inference_router_usage()["providers"]["codex"]["requests"], 1);
+        assert_eq!(reopened.inference_router_usage()["providers"]["cursor"]["requests"], 0);
+        let _ = fs::remove_file(path);
     }
 
     #[test]
