@@ -1310,6 +1310,7 @@ mod tests {
         assert_eq!(status["result"]["activeRequestCount"], 1);
 
         let mut terminal_sequence = 0;
+        let mut terminal_family = None;
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
         while std::time::Instant::now() < deadline {
             let event = call(
@@ -1317,8 +1318,13 @@ mod tests {
                 json!({"method":"feature.receive","params":{}}),
             );
             let result = &event["result"];
-            if result["type"] == "operation.completed" {
+            let family = result["type"].as_str().unwrap_or_default();
+            if matches!(
+                family,
+                "operation.completed" | "operation.failed" | "operation.interrupted"
+            ) {
                 terminal_sequence = result["_coordinator"]["sequence"].as_u64().unwrap();
+                terminal_family = Some(family.to_string());
                 break;
             }
             std::thread::sleep(std::time::Duration::from_millis(10));
@@ -1326,6 +1332,13 @@ mod tests {
         assert!(
             terminal_sequence > 0,
             "streaming operation did not emit a terminal event before the 5 second deadline"
+        );
+        assert!(
+            matches!(
+                terminal_family.as_deref(),
+                Some("operation.completed" | "operation.failed" | "operation.interrupted")
+            ),
+            "terminal delivery must use the same bounded family set as record_received_event"
         );
 
         let settled = call(&mut runtime, json!({"method":"coordinator.status","params":{}}));
