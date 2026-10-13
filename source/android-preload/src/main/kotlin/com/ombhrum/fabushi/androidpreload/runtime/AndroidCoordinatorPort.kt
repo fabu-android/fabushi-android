@@ -188,12 +188,12 @@ data class AndroidAccountUsageSummary(
     val hasAvailableUsage: Boolean,
     val hasNonZeroIncludedLimit: Boolean,
     val usesPooledEnterpriseAllowance: Boolean,
-    val isEnterprise: Boolean,
-    val upgradeCta: AndroidAccountUpgradeCta?,
     val isSandTrial: Boolean,
     val hasEndedSandTrial: Boolean,
     val canCancelSandTrial: Boolean,
     val onDemand: AndroidOnDemandUsage?,
+    val isEnterprise: Boolean = false,
+    val upgradeCta: AndroidAccountUpgradeCta? = null,
 )
 
 enum class AndroidSendAcknowledgementPhase(val wireName: String) {
