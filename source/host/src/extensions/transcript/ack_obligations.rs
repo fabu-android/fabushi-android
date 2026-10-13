@@ -80,6 +80,43 @@ pub fn build_ack_redrive_send_args(
 /// This is intentionally separate from DurableSendAcknowledgementOwner. That owner proves the
 /// user's outgoing message reached canonical transcript storage. This owner begins after that
 /// durable user echo exists and ends only after a visible Agent message is durably appended.
+pub struct AckSendGuard {
+    obligations: Arc<AckObligations>,
+    account_fence: String,
+    agent_id: String,
+    accepted_at_ms: f64,
+    armed: bool,
+}
+
+impl AckSendGuard {
+    pub fn disarm(&mut self) {
+        self.armed = false;
+    }
+
+    pub fn is_armed(&self) -> bool {
+        self.armed
+    }
+}
+
+impl Drop for AckSendGuard {
+    fn drop(&mut self) {
+        if !self.armed
+            || self
+                .obligations
+                .store
+                .get(&self.account_fence, &self.agent_id)
+                .is_some()
+        {
+            return;
+        }
+        let _ = self.obligations.record_send(
+            &self.account_fence,
+            &self.agent_id,
+            self.accepted_at_ms,
+        );
+    }
+}
+
 pub struct AckObligations {
     store: SandAckObligationStore,
     reservations: Mutex<HashMap<String, ReservationState>>,
@@ -92,6 +129,28 @@ impl AckObligations {
             store: SandAckObligationStore::new(root_dir),
             reservations: Mutex::new(HashMap::new()),
             redrive_schedules: Mutex::new(HashMap::new()),
+        }
+    }
+
+    /// Arm only after the canonical user transcript echo is durable.
+    ///
+    /// This closes the process-death/error window between transcript persistence and
+    /// acknowledgement-obligation persistence. If the normal record_send call succeeds,
+    /// callers disarm the guard. If it fails or unwinds, Drop recreates the missing
+    /// obligation best-effort without coalescing an already-persisted obligation.
+    pub fn arm_send_guard(
+        self: &Arc<Self>,
+        account_fence: &str,
+        agent_id: &str,
+        accepted_at_ms: f64,
+        owes_ack: bool,
+    ) -> AckSendGuard {
+        AckSendGuard {
+            obligations: Arc::clone(self),
+            account_fence: account_fence.to_string(),
+            agent_id: agent_id.to_string(),
+            accepted_at_ms,
+            armed: owes_ack,
         }
     }
 
@@ -363,6 +422,56 @@ impl AckObligations {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn send_guard_recovers_missing_obligation_after_durable_user_echo() {
+        let root = tempfile::tempdir().unwrap();
+        let owner = Arc::new(AckObligations::new(root.path()));
+        {
+            let guard = owner.arm_send_guard("acct-a", "agent-a", 10.0, true);
+            assert!(guard.is_armed());
+            assert!(owner.store.get("acct-a", "agent-a").is_none());
+        }
+        let recovered = owner
+            .store
+            .get("acct-a", "agent-a")
+            .expect("armed guard must restore the missing durable obligation");
+        assert_eq!(recovered.account_fence, "acct-a");
+        assert_eq!(recovered.agent_id, "agent-a");
+        assert!(owner.store.get("acct-b", "agent-a").is_none());
+    }
+
+    #[test]
+    fn send_guard_disarm_or_existing_obligation_never_double_counts() {
+        let root = tempfile::tempdir().unwrap();
+        let owner = Arc::new(AckObligations::new(root.path()));
+
+        {
+            let mut guard = owner.arm_send_guard("acct-a", "agent-a", 10.0, true);
+            owner.record_send("acct-a", "agent-a", 10.0).unwrap();
+            guard.disarm();
+        }
+        assert_eq!(
+            owner
+                .store
+                .get("acct-a", "agent-a")
+                .expect("normal send must persist obligation")
+                .coalesced_count,
+            1.0
+        );
+
+        {
+            let _guard = owner.arm_send_guard("acct-a", "agent-a", 20.0, true);
+        }
+        assert_eq!(
+            owner
+                .store
+                .get("acct-a", "agent-a")
+                .expect("existing obligation must survive guard drop")
+                .coalesced_count,
+            1.0
+        );
+    }
 
     #[test]
     fn obligation_survives_reopen_and_is_account_fenced() {
