@@ -1062,11 +1062,16 @@ impl AndroidJsonHost {
         };
         let cross_user_core = if mode == AndroidHostMode::Production {
             let env = std::env::vars().collect::<BTreeMap<_, _>>();
-            mcp_dashboard_backend
-                .as_ref()
-                .and_then(|dashboard| {
-                    build_production_xuser_core(dashboard.credential_provider(), &env).ok()
+            mcp_dashboard_backend.as_ref().map(|dashboard| {
+                build_production_xuser_core(
+                    dashboard.credential_provider(),
+                    &env,
+                    &app_data_dir,
+                )
+                .unwrap_or_else(|error| {
+                    panic!("failed to initialize production cross-user sharing runtime: {error}")
                 })
+            })
         } else {
             None
         };
