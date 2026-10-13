@@ -21086,7 +21086,7 @@ mod default_model_settings_dispatch_tests {
         assert!(host
             .dispatch(
                 "feature.settings.agentDefaultModel.set",
-                &json!({"expectedAccountScope":scope,"model":{"modelId":"not-in-catalog","maxMode":true,"parameters":[]}}),
+                &json!({"expectedAccountScope":scope,"model":"not-in-catalog"}),
             )
             .unwrap_err()
             .contains("available model catalog backend is unavailable"));
@@ -21100,6 +21100,7 @@ mod default_model_settings_dispatch_tests {
     fn stale_default_model_mutation_is_account_fenced_before_persistence() {
         let root = tempfile::tempdir().unwrap();
         let mut host = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+        sign_in_test_account(&mut host);
         assert!(host
             .dispatch(
                 "feature.settings.agentDefaultModel.set",
@@ -21144,6 +21145,7 @@ mod computer_use_model_settings_dispatch_tests {
     fn stale_computer_use_model_mutation_is_fenced_before_persistence() {
         let root = tempfile::tempdir().unwrap();
         let mut host = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+        sign_in_test_account(&mut host);
         assert!(host
             .dispatch(
                 "feature.settings.computerUseModel.set",
@@ -22531,6 +22533,7 @@ mod user_message_received_telemetry_wiring_tests {
         };
         {
             let mut host = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+            sign_in_test_account(&mut host);
             host.prompt_acceptance
                 .record_pending(
                     account_fence,
@@ -22543,6 +22546,7 @@ mod user_message_received_telemetry_wiring_tests {
         }
 
         let mut reopened = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+        sign_in_test_account(&mut reopened);
         let error = reopened
             .queue_chat_turn(
                 "pending-op",
@@ -22587,6 +22591,7 @@ mod user_message_received_telemetry_wiring_tests {
         )
         .unwrap();
         let mut host = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+        sign_in_test_account(&mut host);
         let error = host
             .queue_chat_turn(
                 "degraded-op",
@@ -22625,6 +22630,7 @@ mod user_message_received_telemetry_wiring_tests {
             attachment_names: Vec::new(),
         };
         let mut host = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+        sign_in_test_account(&mut host);
         host.prompt_acceptance
             .record_pending(
                 account_fence,
