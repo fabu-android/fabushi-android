@@ -179,8 +179,8 @@ impl TranscriptStore {
         if agent_id.is_empty() {
             return Err(io::Error::new(io::ErrorKind::InvalidInput, "transcript page agent id is required"));
         }
-        if limit == 0 || limit > 500 {
-            return Err(io::Error::new(io::ErrorKind::InvalidInput, "transcript page limit must be between 1 and 500"));
+        if limit == 0 || limit > 5_000 {
+            return Err(io::Error::new(io::ErrorKind::InvalidInput, "transcript page limit must be between 1 and 5000"));
         }
         if since_ms.is_some_and(|value| !value.is_finite()) || until_ms.is_some_and(|value| !value.is_finite()) {
             return Err(io::Error::new(io::ErrorKind::InvalidInput, "transcript page time bounds must be finite"));
@@ -888,6 +888,8 @@ mod tests {
         );
         assert_eq!(exhausted, None);
         assert!(reopened.page_for_agent("agent-b", None, 0).is_err());
+        assert!(reopened.page_for_agent("agent-b", None, 5_000).is_ok());
+        assert!(reopened.page_for_agent("agent-b", None, 5_001).is_err());
         assert!(reopened.page_for_agent("", None, 2).is_err());
 
         let _ = fs::remove_dir_all(path.parent().unwrap());
