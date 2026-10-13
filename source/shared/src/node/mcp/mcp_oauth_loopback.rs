@@ -304,6 +304,17 @@ impl McpOAuthPendingStateRegistry {
         Ok(())
     }
 
+    pub fn registration(
+        &mut self,
+        now_ms: u64,
+        state: &str,
+    ) -> Option<McpOAuthPendingRegistration> {
+        self.expire(now_ms);
+        self.pending
+            .get(state)
+            .map(|(registration, _)| registration.clone())
+    }
+
     pub fn consume(&mut self, now_ms: u64, state: &str) -> Option<String> {
         self.consume_registration(now_ms, state).map(|value| value.provider)
     }
@@ -476,6 +487,13 @@ mod tests {
         registry
             .register(10, "0123456789abcdef", "drive")
             .unwrap();
+        assert_eq!(registry.pending_count(), 1);
+        assert_eq!(
+            registry
+                .registration(19, "0123456789abcdef")
+                .map(|value| value.provider),
+            Some("drive".to_string())
+        );
         assert_eq!(registry.pending_count(), 1);
         assert_eq!(registry.consume(20, "0123456789abcdef").as_deref(), Some("drive"));
         assert_eq!(registry.consume(21, "0123456789abcdef"), None);
