@@ -294,6 +294,11 @@ impl DurableTurnJournal {
             file.write_all(&bytes).map_err(|e| e.to_string())?;
             file.sync_all().map_err(|e| e.to_string())?;
             fs::rename(&tmp, &self.path).map_err(|e| e.to_string())?;
+            if let Some(parent) = self.path.parent() {
+                fs::File::open(parent)
+                    .and_then(|directory| directory.sync_all())
+                    .map_err(|e| e.to_string())?;
+            }
             Ok(())
         })();
         if result.is_err() {
@@ -358,6 +363,35 @@ mod tests {
         assert_eq!(record.checkpoint_attempt, Some(3));
         assert_eq!(record.checkpoint_emitted_chunks, Some(7));
         assert_eq!(record.checkpointed_at_ms, Some(4));
+    }
+
+    #[test]
+    fn terminal_state_reopens_after_atomic_directory_synced_replace() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("turns.json");
+        let mut journal = DurableTurnJournal::open(&path, 1).unwrap();
+        let generation = journal.begin("r1", "o1", "acct:a", 2).unwrap();
+        journal
+            .settle(
+                "r1",
+                "o1",
+                "acct:a",
+                generation,
+                DurableTurnState::Completed,
+                Some("durable".into()),
+                3,
+            )
+            .unwrap();
+        drop(journal);
+        let reopened = DurableTurnJournal::open(&path, 4).unwrap();
+        assert_eq!(
+            reopened.record("r1").unwrap().state,
+            DurableTurnState::Completed
+        );
+        assert_eq!(
+            reopened.record("r1").unwrap().reason.as_deref(),
+            Some("durable")
+        );
     }
 
     #[test]
