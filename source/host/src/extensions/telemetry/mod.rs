@@ -15,6 +15,7 @@ pub struct HostTelemetryProjection {
 }
 pub mod agent_open_telemetry;
 pub mod agent_error_telemetry;
+pub mod gateway_command_telemetry;
 pub mod auto_review_approval_telemetry;
 pub mod automation_fire_telemetry;
 pub mod automation_lifecycle_telemetry;
