@@ -13600,6 +13600,14 @@ impl Drop for AndroidJsonHost {
         self.sync_structured_log_account_slot();
         self.schedule_structured_log_ship();
         self.schedule_account_telemetry_ship();
+        if let Some(tracing) = self._host_tracing.as_ref() {
+            // Desktop HostTracing flushes before shutdown. Preserve that lifecycle contract on
+            // Android so completed spans are offered to the authenticated OTLP exporter before
+            // nativeDestroy releases the provider. Export failure is diagnostic-only; it must
+            // never mutate canonical product state or block process teardown indefinitely.
+            tracing.flush();
+            tracing.dispose();
+        }
 
         for cancelled in self.turn_cancellations.values() {
             cancelled.store(true, Ordering::Release);
