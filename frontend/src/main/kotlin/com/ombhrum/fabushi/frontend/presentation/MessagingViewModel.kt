@@ -309,13 +309,11 @@ internal class MessagingViewModel(application: Application) : AndroidViewModel(a
         viewModelScope.launch {
             runCatching { withContext(Dispatchers.IO) {
                 ensureIdentity()
-                val now = System.currentTimeMillis()
-                val id = "direct:${UUID.randomUUID()}"
-                val participants = JSONArray()
-                    .put(JSONObject().put("actorId", actorId).put("role", "owner").put("joinedAtMs", now).put("mutedUntilMs", JSONObject.NULL))
-                    .put(JSONObject().put("actorId", contact.id).put("role", "member").put("joinedAtMs", now).put("mutedUntilMs", JSONObject.NULL))
-                val conversation = baseConversation(id, ConversationKind.DIRECT, contact.displayName, "", participants, now)
-                execute(JSONObject().put("type", "createConversation").put("conversation", conversation))
+                execute(
+                    JSONObject()
+                        .put("type", "ensureDirectConversation")
+                        .put("peerActorId", contact.id),
+                )
             }}.onFailure { mutableState.value = mutableState.value.copy(error = it.message) }
         }
     }
