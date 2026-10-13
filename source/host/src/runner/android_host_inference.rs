@@ -361,6 +361,11 @@ impl AndroidHostInferenceProvider {
         let mut first_token_delay_ms = None;
         let mut previous_response_id: Option<String> = None;
         let mut next_input = Value::String(input.prompt.clone());
+        // Provider retries are only safe while no externally routed tool dispatch has started.
+        // A tool bridge error can represent an outcome-unknown side effect, so count the attempt
+        // itself as progress before invoking the bridge. This keeps StreamAttemptHost from blindly
+        // replaying the whole Responses turn when a later provider/tool/network leg fails.
+        let mut routed_tool_dispatch_started = false;
 
         for _tool_step in 0..8 {
             if self.cancelled.load(Ordering::Acquire) {
@@ -368,7 +373,7 @@ impl AndroidHostInferenceProvider {
                     message: "cancelled".into(),
                     retry_after_ms: None,
                     first_token_stall: false,
-                    stream_output_produced: !all_chunks.is_empty(),
+                    stream_output_produced: !all_chunks.is_empty() || routed_tool_dispatch_started,
                 });
             }
             let mut body = Map::new();
@@ -398,7 +403,7 @@ impl AndroidHostInferenceProvider {
                         message,
                         retry_after_ms,
                         first_token_stall: false,
-                        stream_output_produced: !all_chunks.is_empty(),
+                        stream_output_produced: !all_chunks.is_empty() || routed_tool_dispatch_started,
                     });
                 }
                 Err(ureq::Error::Transport(error)) => {
@@ -406,7 +411,7 @@ impl AndroidHostInferenceProvider {
                         message: format!("network error: {}", safe_transport_kind(&error)),
                         retry_after_ms: None,
                         first_token_stall: false,
-                        stream_output_produced: !all_chunks.is_empty(),
+                        stream_output_produced: !all_chunks.is_empty() || routed_tool_dispatch_started,
                     });
                 }
             };
@@ -423,7 +428,7 @@ impl AndroidHostInferenceProvider {
                         message: "cancelled".into(),
                         retry_after_ms: None,
                         first_token_stall: false,
-                        stream_output_produced: !all_chunks.is_empty(),
+                        stream_output_produced: !all_chunks.is_empty() || routed_tool_dispatch_started,
                     });
                 }
                 line.clear();
@@ -431,7 +436,7 @@ impl AndroidHostInferenceProvider {
                     message: "network error: stream read failed".into(),
                     retry_after_ms: None,
                     first_token_stall: false,
-                    stream_output_produced: !all_chunks.is_empty(),
+                    stream_output_produced: !all_chunks.is_empty() || routed_tool_dispatch_started,
                 })?;
                 if bytes == 0 {
                     break;
@@ -458,7 +463,7 @@ impl AndroidHostInferenceProvider {
                             message,
                             retry_after_ms: None,
                             first_token_stall: false,
-                            stream_output_produced: !all_chunks.is_empty(),
+                            stream_output_produced: !all_chunks.is_empty() || routed_tool_dispatch_started,
                         })?;
                         all_chunks.push(delta);
                     }
@@ -478,7 +483,7 @@ impl AndroidHostInferenceProvider {
                             message,
                             retry_after_ms: None,
                             first_token_stall: false,
-                            stream_output_produced: !all_chunks.is_empty(),
+                            stream_output_produced: !all_chunks.is_empty() || routed_tool_dispatch_started,
                         });
                     }
                     Ok(ProviderSseEvent::Ignore) => {}
@@ -487,16 +492,19 @@ impl AndroidHostInferenceProvider {
                             message,
                             retry_after_ms: None,
                             first_token_stall: false,
-                            stream_output_produced: !all_chunks.is_empty(),
+                            stream_output_produced: !all_chunks.is_empty() || routed_tool_dispatch_started,
                         });
                     }
                 }
             }
 
             if !completed && all_chunks.is_empty() && tool_calls.is_empty() {
-                return Err(ProviderFailure::new(
-                    "network error: provider stream closed before output",
-                ));
+                return Err(ProviderFailure {
+                    message: "network error: provider stream closed before output".into(),
+                    retry_after_ms: None,
+                    first_token_stall: false,
+                    stream_output_produced: routed_tool_dispatch_started,
+                });
             }
             if tool_calls.is_empty() {
                 return Ok(StreamGeneration {
@@ -515,9 +523,15 @@ impl AndroidHostInferenceProvider {
                 if self.cancelled.load(Ordering::Acquire) {
                     return Err(ProviderFailure::new("cancelled"));
                 }
+                routed_tool_dispatch_started = true;
                 let result = bridge
                     .call_tool(&name, arguments, &call_id)
-                    .map_err(ProviderFailure::new)?;
+                    .map_err(|message| ProviderFailure {
+                        message,
+                        retry_after_ms: None,
+                        first_token_stall: false,
+                        stream_output_produced: true,
+                    })?;
                 outputs.push(json!({
                     "type":"function_call_output",
                     "call_id":call_id,
@@ -528,15 +542,21 @@ impl AndroidHostInferenceProvider {
                     }
                 }));
             }
-            previous_response_id = Some(response_id.ok_or_else(|| {
-                ProviderFailure::new("provider tool call response omitted response identity")
+            previous_response_id = Some(response_id.ok_or_else(|| ProviderFailure {
+                message: "provider tool call response omitted response identity".into(),
+                retry_after_ms: None,
+                first_token_stall: false,
+                stream_output_produced: routed_tool_dispatch_started,
             })?);
             next_input = Value::Array(outputs);
         }
 
-        Err(ProviderFailure::new(
-            "provider exceeded routed tool-call step limit",
-        ))
+        Err(ProviderFailure {
+            message: "provider exceeded routed tool-call step limit".into(),
+            retry_after_ms: None,
+            first_token_stall: false,
+            stream_output_produced: routed_tool_dispatch_started || !all_chunks.is_empty(),
+        })
     }
 }
 
@@ -972,6 +992,44 @@ mod tests {
             .unwrap();
         assert!(output.chunks.concat().contains("\"echo\":\"ok\""));
         assert_eq!(live, output.chunks.concat());
+    }
+
+    #[test]
+    fn routed_tool_failure_is_marked_as_non_retryable_progress() {
+        struct FailingTools;
+        impl AndroidRoutedToolBridge for FailingTools {
+            fn list_tools(&self) -> Result<Vec<Value>, String> {
+                Ok(vec![json!({
+                    "type":"function",
+                    "name":"Mutate",
+                    "parameters":{"type":"object"}
+                })])
+            }
+
+            fn call_tool(
+                &self,
+                _name: &str,
+                _args: Value,
+                _tool_call_id: &str,
+            ) -> Result<Value, String> {
+                Err("outcome unknown".into())
+            }
+        }
+
+        let mut provider = AndroidHostInferenceProvider::new(AndroidInferenceMode::Test)
+            .with_routed_tools(Arc::new(FailingTools));
+        // The deterministic test transport calls the bridge directly; failure must be surfaced
+        // without being converted into a successful generation.
+        let error = provider
+            .start_stream(
+                &StreamAttemptInput {
+                    prompt: "[[tool:Mutate]] {}".into(),
+                    ..input()
+                },
+                1,
+            )
+            .unwrap_err();
+        assert!(error.message.contains("outcome unknown"));
     }
 
     #[test]
