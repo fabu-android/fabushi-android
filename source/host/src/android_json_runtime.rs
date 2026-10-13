@@ -6973,6 +6973,14 @@ impl AndroidJsonHost {
         }
 
         record(
+            "mcp-server-settings",
+            self.mcp_server_tool_settings
+                .lock()
+                .map_err(|_| "MCP server tool settings lock poisoned".to_string())
+                .and_then(|mut settings| settings.clear_account(previous_fence)),
+        );
+
+        record(
             "box-handoff",
             self.box_handoff
                 .lock()
@@ -8131,7 +8139,13 @@ impl AndroidJsonHost {
             && previous_fence != current_fence
         {
             if let Some(previous_fence) = previous_fence.as_deref() {
-                self.prepare_account_transition_cleanup(previous_fence, "account-switch")?;
+                if let Err(error) =
+                    self.prepare_account_transition_cleanup(previous_fence, "account-switch")
+                {
+                    self.edge_failures
+                        .report("account", "transition_cleanup", "cleanup_failed");
+                    eprintln!("[fabushi:account] account transition cleanup incomplete: {error}");
+                }
             }
         }
         self.arm_visible_ack_redrives_for_session_change(
