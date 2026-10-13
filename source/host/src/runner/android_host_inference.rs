@@ -313,7 +313,12 @@ impl AndroidHostInferenceProvider {
                         };
                         let result = bridge
                             .call_tool(name.trim(), args, "test-tool-call-1")
-                            .map_err(ProviderFailure::new)?;
+                            .map_err(|message| ProviderFailure {
+                                message,
+                                retry_after_ms: None,
+                                first_token_stall: false,
+                                stream_output_produced: true,
+                            })?;
                         let text = format!("tool_result:{}", result);
                         on_chunk(&text).map_err(ProviderFailure::new)?;
                         return Ok(StreamGeneration {
@@ -1031,6 +1036,10 @@ mod tests {
             )
             .unwrap_err();
         assert!(error.message.contains("outcome unknown"));
+        assert!(
+            error.stream_output_produced,
+            "a routed tool dispatch attempt must suppress blind provider retry",
+        );
     }
 
     #[test]
