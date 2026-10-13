@@ -916,11 +916,56 @@ class AndroidUpdateViewModel(application: Application) : AndroidViewModel(applic
         val requested = markerFor(release, AndroidUpdateApplyPhase.REQUESTED)
         when (
             prepareAndroidUpdateInstallerHandoff(
+                isHostIdle = { coordinator.isUpdateHostIdle() },
                 setQuiescing = ::setHostUpgradeQuiescing,
                 persistRequested = { applyStore.write(requested) },
             )
         ) {
             AndroidUpdateHandoffPreparation.READY -> Unit
+            AndroidUpdateHandoffPreparation.HOST_NOT_IDLE -> {
+                updaterTelemetry.record(
+                    AndroidUpdaterTelemetryEvent(
+                        category = "apply",
+                        action = "host_idle",
+                        result = "busy",
+                        trigger = "manual",
+                        track = _trackPolicy.value.effectiveTrack,
+                        currentVersion = currentVersion,
+                        targetVersion = release.version,
+                    ),
+                )
+                _state.value = AndroidUpdateUiState(
+                    phase = AndroidUpdatePhase.ERROR,
+                    currentVersion = currentVersion,
+                    currentVersionCode = currentVersionCode,
+                    availableVersion = release.version,
+                    availableVersionCode = release.versionCode,
+                    message = "Host 仍有任务在收尾；安装器未启动。任务空闲后可再次继续更新。",
+                )
+                return
+            }
+            AndroidUpdateHandoffPreparation.HOST_NOT_IDLE_RESUME_FAILED -> {
+                updaterTelemetry.record(
+                    AndroidUpdaterTelemetryEvent(
+                        category = "apply",
+                        action = "host_idle_resume",
+                        result = "failed",
+                        trigger = "manual",
+                        track = _trackPolicy.value.effectiveTrack,
+                        currentVersion = currentVersion,
+                        targetVersion = release.version,
+                    ),
+                )
+                _state.value = AndroidUpdateUiState(
+                    phase = AndroidUpdatePhase.ERROR,
+                    currentVersion = currentVersion,
+                    currentVersionCode = currentVersionCode,
+                    availableVersion = release.version,
+                    availableVersionCode = release.versionCode,
+                    message = "Host 在升级栅栏建立期间重新变忙，且无法恢复接收新任务；安装器未启动，请重启 Fabushi 后重试。",
+                )
+                return
+            }
             AndroidUpdateHandoffPreparation.HOST_QUIESCE_FAILED -> {
                 updaterTelemetry.record(
                     AndroidUpdaterTelemetryEvent(
