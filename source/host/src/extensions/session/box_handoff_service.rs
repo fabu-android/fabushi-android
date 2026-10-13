@@ -364,3 +364,99 @@ pub fn decide_box_hand_back(
 fn truncate(value: &str) -> String {
     value.chars().take(MAX_DOMAIN_LENGTH).collect()
 }
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    fn request(agent_id: &str) -> HandoffRequest {
+        HandoffRequest {
+            agent_id: agent_id.into(),
+            instruction: "Continue in Human takeover".into(),
+            telemetry: HandoffTelemetry::default(),
+        }
+    }
+
+    #[test]
+    fn duplicate_start_reuses_existing_request_and_terminal_end_consumes_once() {
+        let service = BoxHandoffService::new(BoxHandoffDeps::default());
+        let first = service.start(request("agent-a"));
+        let first_id = match first {
+            HandoffStartResult::Started { request_id } => request_id,
+            other => panic!("unexpected first result: {other:?}"),
+        };
+        let duplicate = service.start(request("agent-a"));
+        assert_eq!(
+            duplicate,
+            HandoffStartResult::AlreadyPending {
+                request_id: first_id.clone(),
+                instruction: "Continue in Human takeover".into(),
+            }
+        );
+        assert_eq!(service.pending_count(), 1);
+        assert!(service
+            .end("agent-a", HandoffTrigger::Name("cancel".into()))
+            .unwrap());
+        assert_eq!(service.pending_count(), 0);
+        assert!(!service
+            .end("agent-a", HandoffTrigger::Name("cancel".into()))
+            .unwrap());
+    }
+
+    #[test]
+    fn clear_all_fences_late_snapshot_completion() {
+        let started = Arc::new(AtomicUsize::new(0));
+        let started_for_grab = Arc::clone(&started);
+        let deps = BoxHandoffDeps {
+            grab_screenshot: Some(Arc::new(move |_| {
+                started_for_grab.store(1, Ordering::Release);
+                std::thread::sleep(Duration::from_millis(30));
+                Ok(Some(ScreenshotPayload::Bytes(vec![1, 2, 3])))
+            })),
+            timeout_ms: Some(250),
+            ..BoxHandoffDeps::default()
+        };
+        let service = BoxHandoffService::new(deps);
+        assert!(matches!(
+            service.start(request("agent-a")),
+            HandoffStartResult::Started { .. }
+        ));
+        for _ in 0..100 {
+            if started.load(Ordering::Acquire) == 1 {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        service.clear_all();
+        std::thread::sleep(Duration::from_millis(60));
+        assert!(
+            service.get("agent-a").is_none(),
+            "a snapshot worker from the old request must not resurrect cleared handoff state"
+        );
+    }
+
+    #[test]
+    fn detailed_end_preserves_explicit_resolution_and_trigger() {
+        let pending = PendingHandoff {
+            request_id: "request-a".into(),
+            instruction: "take over".into(),
+            snapshot_data_url: None,
+        };
+        assert_eq!(
+            decide_box_hand_back(
+                Some(&pending),
+                &HandoffTrigger::Detailed {
+                    resolution: Some("failed".into()),
+                    trigger: Some("remote-disconnect".into()),
+                },
+            ),
+            HandoffDecision::End(EndHandoffDecision {
+                request_id: "request-a".into(),
+                resolution: "failed".into(),
+                trigger: "remote-disconnect".into(),
+            })
+        );
+    }
+}
