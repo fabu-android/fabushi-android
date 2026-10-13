@@ -3793,6 +3793,124 @@ impl AndroidJsonHost {
         ))
     }
 
+    fn sync_remote_human_history(
+        &mut self,
+        actor_id: &str,
+        contacts: &[Value],
+        account_fence: &str,
+        account_mutation: &mut Option<AccountSessionMutation>,
+    ) -> Result<Value, String> {
+        const PAGE_LIMIT: u64 = 200;
+        const MAX_GAP_PAGES: usize = 32;
+        let mut peers_synced = 0usize;
+        let mut reconciled_messages = 0usize;
+        let mut pages_read = 0usize;
+
+        for contact in contacts {
+            let peer_actor_id = contact
+                .get("id")
+                .and_then(Value::as_str)
+                .ok_or("normalized Human contact omitted actor id")?;
+            let backend_contact_id = peer_actor_id
+                .strip_prefix("human:")
+                .ok_or("normalized Human contact id is outside the Human namespace")?;
+            let mut before: Option<String> = None;
+            let mut unseen_pages: Vec<Vec<Value>> = Vec::new();
+
+            for page_index in 0..MAX_GAP_PAGES {
+                let path = human_remote_messages_path(
+                    backend_contact_id,
+                    before.as_deref(),
+                    PAGE_LIMIT,
+                )?;
+                let (result, mutation) = self
+                    .account
+                    .authenticated_device_api_request("GET", &path, None)?;
+                if mutation.is_some() {
+                    *account_mutation = mutation;
+                }
+                if self.current_turn_account_fence()? != account_fence {
+                    return Err("Human message sync became stale after the account changed.".into());
+                }
+                validate_human_remote_envelope(&result, "message sync")?;
+                let rows = human_remote_message_rows(&result)?;
+                pages_read = pages_read.saturating_add(1);
+                if rows.is_empty() {
+                    break;
+                }
+
+                let overlap_at = {
+                    let messaging = self
+                        .messaging
+                        .lock()
+                        .map_err(|_| "canonical Android messaging owner lock poisoned".to_string())?;
+                    let mut overlap = None;
+                    for (index, remote) in rows.iter().enumerate().rev() {
+                        let remote_id = human_remote_value_identity(
+                            remote.get("id"),
+                            "message id",
+                        )?;
+                        if messaging.has_remote_human_message(
+                            actor_id,
+                            peer_actor_id,
+                            &remote_id,
+                        ) {
+                            overlap = Some(index);
+                            break;
+                        }
+                    }
+                    overlap
+                };
+                let unseen_start = overlap_at.map_or(0, |index| index + 1);
+                if unseen_start < rows.len() {
+                    unseen_pages.push(rows[unseen_start..].to_vec());
+                }
+
+                if overlap_at.is_some() || rows.len() < PAGE_LIMIT as usize {
+                    break;
+                }
+                if page_index + 1 >= MAX_GAP_PAGES {
+                    return Err(format!(
+                        "Fabushi Human message reconnect gap exceeded the bounded recovery window of {} messages",
+                        PAGE_LIMIT as usize * MAX_GAP_PAGES,
+                    ));
+                }
+                let next_before = rows
+                    .first()
+                    .and_then(|message| message.get("createdAt"))
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .ok_or("Fabushi Human message sync page omitted its oldest timestamp")?
+                    .to_string();
+                if before.as_deref() == Some(next_before.as_str()) {
+                    return Err(
+                        "Fabushi Human message sync cursor did not advance; refusing an unbounded retry"
+                            .into(),
+                    );
+                }
+                before = Some(next_before);
+            }
+
+            for page in unseen_pages.into_iter().rev() {
+                reconciled_messages = reconciled_messages.saturating_add(
+                    self.messaging
+                        .lock()
+                        .map_err(|_| "canonical Android messaging owner lock poisoned".to_string())?
+                        .reconcile_remote_human_messages(actor_id, peer_actor_id, &page)?,
+                );
+            }
+            peers_synced = peers_synced.saturating_add(1);
+        }
+
+        Ok(json!({
+            "status":"synced",
+            "peerCount":peers_synced,
+            "pageCount":pages_read,
+            "reconciledMessageCount":reconciled_messages,
+        }))
+    }
+
     fn human_remote_contacts(&mut self) -> Result<Value, String> {
         if self.mode == AndroidHostMode::Test {
             return Err("remote Human contacts require the production account transport".into());
@@ -3945,10 +4063,25 @@ impl AndroidJsonHost {
                         .lock()
                         .map_err(|_| "canonical Android messaging owner lock poisoned".to_string())?
                         .reconcile_remote_human_contacts(&contacts)?;
+                    let history = match self.sync_remote_human_history(
+                        &actor_id,
+                        &contacts,
+                        &fence_before_network,
+                        &mut account_mutation,
+                    ) {
+                        Ok(history) => history,
+                        Err(error) => {
+                            if self.current_turn_account_fence()? != fence_before_network {
+                                return Err("Human message sync became stale after the account changed.".into());
+                            }
+                            json!({"status":"unavailable","error":error})
+                        }
+                    };
                     remote_human_sync = Some(json!({
                         "status":"synced",
                         "contactCount":contacts.len(),
                         "reconciledCount":reconciled,
+                        "history":history,
                     }));
                 }
                 Err(error) => {
@@ -10961,6 +11094,19 @@ fn normalize_human_remote_contacts(
         }));
     }
     Ok(normalized)
+}
+
+fn human_remote_value_identity(value: Option<&Value>, label: &str) -> Result<String, String> {
+    let value = value.ok_or_else(|| format!("remote Human {label} is required"))?;
+    let value = match value {
+        Value::String(value) => value.trim().to_string(),
+        Value::Number(value) => value.to_string(),
+        _ => return Err(format!("remote Human {label} has an unsupported type")),
+    };
+    if value.is_empty() || value.len() > 160 {
+        return Err(format!("remote Human {label} is invalid"));
+    }
+    Ok(value)
 }
 
 fn canonical_human_actor_id(value: &str) -> Result<String, String> {
