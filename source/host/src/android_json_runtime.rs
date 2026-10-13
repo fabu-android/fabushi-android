@@ -52,7 +52,8 @@ use crate::extensions::telemetry::agent_error_telemetry::{
 };
 use crate::extensions::telemetry::sand_error_tags::SandErrorValue;
 use crate::extensions::telemetry::product_events::{
-    access_blocked_event, agent_load_event, agents_unreachable_event, client_persistence_event,
+    access_blocked_event, agent_load_event, agents_unreachable_event, automation_lifecycle_event,
+    automation_run_event, client_persistence_event,
     client_resource_event, connector_auth_clicked_event, entrypoint_error_event,
     event_loop_pressure_event, onboarding_step_event, reaction_ack_event, render_stream_event,
     render_ttfr_event, renderer_boundary_caught_event, renderer_unhandled_event, send_ack_event,
@@ -5583,6 +5584,61 @@ impl AndroidJsonHost {
         serde_json::to_value(session).map_err(|error| error.to_string())
     }
 
+    fn automation_is_group(&self, agent_id: &str) -> bool {
+        if agent_id == "mahayana-assistant" { return false; }
+        self.agents.lock().ok().and_then(|agents| agents.get(agent_id)).is_some_and(|agent| agent.is_group)
+    }
+
+    fn record_automation_terminal_telemetry(
+        &mut self,
+        automation_id: &str,
+        account_fence: &str,
+        started_at_ms: u64,
+        updated_at_ms: u64,
+        outcome: &str,
+    ) {
+        let Some(spec) = self.automation_runtime.spec_for_account(automation_id, account_fence) else {
+            self.edge_failures.report("automation-runtime", "terminal-telemetry", "MissingSpec");
+            return;
+        };
+        let event = automation_run_event(
+            &spec.agent_id,
+            automation_id,
+            "schedule",
+            outcome,
+            self.automation_is_group(&spec.agent_id),
+            updated_at_ms.saturating_sub(started_at_ms) as f64,
+            None,
+        );
+        if event.and_then(|event| self.record_product_telemetry("sand.automation.run", event).map(|_| ())).is_err() {
+            self.edge_failures.report("structured-log-spill", "automation-run-telemetry", "StorageError");
+        }
+    }
+
+    fn record_automation_lifecycle_telemetry(
+        &mut self,
+        automation_id: &str,
+        account_fence: &str,
+        action: &str,
+    ) {
+        let Some(spec) = self.automation_runtime.spec_for_account(automation_id, account_fence) else {
+            self.edge_failures.report("automation-runtime", "lifecycle-telemetry", "MissingSpec");
+            return;
+        };
+        let event = automation_lifecycle_event(
+            &spec.agent_id,
+            automation_id,
+            action,
+            "android",
+            "schedule",
+            now_ms().saturating_sub(spec.created_at_ms) as f64,
+            self.automation_runtime.run_count_for_automation(automation_id, account_fence),
+        );
+        if event.and_then(|event| self.record_product_telemetry("sand.automation.lifecycle", event).map(|_| ())).is_err() {
+            self.edge_failures.report("structured-log-spill", "automation-lifecycle-telemetry", "StorageError");
+        }
+    }
+
     fn automation_upsert(&mut self, params: &Value) -> Result<Value, String> {
         let account_fence = self.current_turn_account_fence()?;
         let agent_id = required_string(params, "agentId")?.trim();
@@ -5604,6 +5660,7 @@ impl AndroidJsonHost {
             .to_string();
         let local_id = required_string(params, "id")?.to_string();
         let id = stable_account_automation_id(&account_fence, agent_id, &local_id);
+        let existed = self.automation_runtime.has_owned_spec(&id, &account_fence, agent_id);
         let spec = AutomationSpec {
             id: id.clone(),
             name: required_string(params, "name")?.to_string(),
@@ -5619,6 +5676,7 @@ impl AndroidJsonHost {
         };
         let time_zone = self.effective_time_zone()?;
         self.automation_runtime.upsert_spec(spec, time_zone.as_deref())?;
+        self.record_automation_lifecycle_telemetry(&id, &account_fence, if existed { "updated" } else { "created" });
         Ok(json!({"id":id,"localId":local_id,"stored":true}))
     }
 
@@ -5666,13 +5724,19 @@ impl AndroidJsonHost {
             .and_then(Value::as_bool)
             .ok_or("enabled is required")?;
         let time_zone = self.effective_time_zone()?;
+        let automation_id = required_string(params, "automationId")?;
         let spec = self.automation_runtime.set_agent_workflow_enabled(
             &account_fence,
             agent_id,
-            required_string(params, "automationId")?,
+            automation_id,
             enabled,
             time_zone.as_deref(),
         )?;
+        self.record_automation_lifecycle_telemetry(
+            automation_id,
+            &account_fence,
+            if enabled { "enabled" } else { "disabled" },
+        );
         serde_json::to_value(spec).map_err(|error| error.to_string())
     }
 
@@ -5737,6 +5801,9 @@ impl AndroidJsonHost {
             params.get("reason").and_then(Value::as_str).unwrap_or("cancelled"),
             now_ms(),
         )?;
+        self.record_automation_terminal_telemetry(
+            &run.automation_id, &account_fence, run.started_at_ms, run.updated_at_ms, "cancelled",
+        );
         Ok(automation_run_json(&run))
     }
 
@@ -5753,6 +5820,13 @@ impl AndroidJsonHost {
             now_ms(),
             time_zone.as_deref(),
         )?;
+        self.record_automation_terminal_telemetry(
+            &run.automation_id,
+            &account_fence,
+            run.started_at_ms,
+            run.updated_at_ms,
+            if succeeded { "ok" } else { "failed" },
+        );
         Ok(automation_run_json(&run))
     }
 
