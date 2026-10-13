@@ -7555,7 +7555,7 @@
       "android_owner": "Rust Host foundation now owns deterministic shared-room wire normalization and room reconciliation. Canonical sharing service/relay/durable room store and Coordinator/native presentation remain missing.",
       "platform_delta": "React provider/dialog should become typed Coordinator-backed native Compose UI while retaining service canonical ownership, lifecycle/account fencing and Android accessibility/focus semantics.",
       "implementation_status": "mapped",
-      "production_wiring": "Android Host now contains direct Rust ports of Desktop xuser wire normalization and deterministic room-state reconciliation, including bounded inline images/turn messages, strict mirror entry identities, stable room de-dup/order, self-membership filtering and added/revoked diffs. These modules are deliberately not exposed directly to Compose. The shipping getSharingState/createRoomInvite/respond/add/remove/leave service, relay, persistent room binding, Coordinator event transport and native management surface are still absent, so the responsibility remains mapped/not-verified. Durable pending departure + account-scoped room tombstone recovery stores are now implemented and tested; canonical sharing service/relay/Coordinator/native management surface are still absent, so this aggregate responsibility remains mapped/not-verified.",
+      "production_wiring": "Android Host now composes one ProductionCrossUserCore from the dedicated Sand credential provider, exposes capability/state plus experiment-gated enable/drain commands, quiesces it for upgrade, and keeps relay/service/extension ownership out of Compose. Rust ports cover relay transport, sharing service, state reconcile, remote-turn normalization/admission/dedupe, durable departure/tombstone recovery and group/xuser prompt contracts. Canonical room-manager binding, typed invite/join/member/Agent mutation commands through Coordinator, full remote-turn execution integration, and the native accessible shared-room management surface remain open, so this aggregate responsibility stays mapped/not-verified.",
       "unit_test": "Rust Host unit tests cover image count/MIME fallback, mirror entry identity/content validation, guest-name normalization, 24-message cap, duplicate room resolution, stable ordering, self-membership/host visibility and added/revoked diff semantics. Frontend projection/permission/pending/reconnect tests plus service integration remain required. Durable recovery tests cover reopen/dedupe, account-scoped tombstones, and successful drain retaining tombstones.",
       "contract_test": "Desktop shared-room.contract.test.ts@c9e6241a48ff2f8ab71496c6fdc11122801c088f now reverse-linked to this responsibility; it proves whole-state malformed nested row rejection, invite projection, SharedRoom agent projection, the closed RPC method set, and identity/reply validation. Android direct Rust normalization/reconciliation remains partial; shipping service/relay/persistence/Coordinator events/native management surface are still missing.",
       "integration_test": "missing canonical sharing service/Coordinator/native UI integration",
@@ -7563,7 +7563,50 @@
       "device_test": "required for invite/join approval/add-remove/leave/reconnect/account switch/process death/accessibility",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "The first strict source-inventory unreviewed row is now genuinely audited and mapped to this responsibility. Do not advance implementation_status beyond mapped until the missing shipping shared-room service and native management surface are production-wired and tested."
+      "notes": "Source/runtime closure has advanced beyond the earlier relay/service absence. Account-switch fencing is now implemented separately by AGENT-SHARED-ROOM-ACCOUNT-FENCE-ANDROID-001. Do not advance this aggregate beyond mapped until canonical manager + typed mutation + native management + same-final-head package/device evidence close."
+    },
+    {
+      "responsibility_id": "AGENT-SHARED-ROOM-ACCOUNT-FENCE-ANDROID-001",
+      "domain": "agent-collaboration-recovery",
+      "desktop_sources": [
+        {
+          "path": "source/host/src/extensions/cross_user_sharing/extension.rs",
+          "blob_sha": "541253847ca0c628e9fc9f2780513e49dfbcb19a",
+          "symbols": [
+            "CrossUserSharingExtension::stop",
+            "CrossUserSharingExtension::prepare_for_upgrade"
+          ]
+        },
+        {
+          "path": "source/host/src/extensions/cross_user_sharing/xuser_sharing_service.rs",
+          "blob_sha": "bd8aa6c1d710bd85dcac2ebdd9f57b294522308b",
+          "symbols": [
+            "SandXuserSharingService::set_enabled",
+            "SandXuserSharingService::stop"
+          ]
+        }
+      ],
+      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "responsibility": "Fence all account-scoped cross-user room, pending-join, typing and self-auth state when Android switches accounts so stale collaboration truth cannot survive into the next account; stop the relay owner before new account policy/reconciliation can resume it.",
+      "source_owner": "Desktop CrossUserSharing lifecycle plus Android account/process lifecycle adaptation",
+      "visible_effect": "After logout/account switch the next account cannot see or act on the previous account's shared-room state, typing users or join requests.",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "source/host/src/extensions/cross_user_sharing/extension.rs",
+        "source/host/src/android_json_runtime.rs"
+      ],
+      "android_owner": "Rust CrossUserSharingExtension invoked by AndroidJsonHost account-transition owner",
+      "platform_delta": "Desktop process lifecycle only stops the sharing service; Android adds an explicit account-transition fence because process reuse/account switching must clear account-scoped in-memory projections before a new account is admitted.",
+      "implementation_status": "implemented",
+      "production_wiring": "CrossUserSharingExtension::fence_account_transition clears selfAuthId and disables the canonical sharing service, which clears rooms/pending joins/typing and stops its background owner. AndroidJsonHost::prepare_account_transition_cleanup calls that hook before MCP/account cleanup completes.",
+      "unit_test": "cross_user_sharing::extension::tests::account_transition_fence_clears_account_scoped_state_and_stops_owner; exact-head GitHub Actions pending",
+      "contract_test": "Host account-transition wiring is production code; same-final-head Rust/architecture gate pending",
+      "integration_test": "required: enable sharing under account A, switch to B, prove A room/join/typing projections are absent and B reconciles independently",
+      "packaged_test": "required on final exact-head APK/AAB",
+      "device_test": "required in protected multi-account/device acceptance",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Implementation commits 88d8599dd6fdd5ccc74f5229ca112d6b8be8d646 and 66aee607003d5737ac8e16a5464a63165ee597e0. Keep not-verified until descendant exact-head CI/package/device evidence succeeds."
     },
     {
       "responsibility_id": "AGENT-SHARED-ROOM-DEPARTURE-RECOVERY-ANDROID-001",
