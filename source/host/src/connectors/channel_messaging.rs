@@ -140,6 +140,170 @@ pub fn build_channel_delivery_failure_wake_prompt(failures: &[ChannelDeliveryFai
     .join("\n")
 }
 
+
+pub const TIMELINE_EVENT_WAKE_CUE: &str = "[event]";
+
+pub fn format_channel_address_value(address: &Value) -> Option<String> {
+    if let Some(raw) = address.as_str() {
+        let trimmed = raw.trim();
+        return (!trimmed.is_empty()).then(|| trimmed.to_string());
+    }
+    let platform = address.get("platform")?.as_str()?.trim();
+    let chat = address.get("chat")?.as_str()?.trim();
+    if platform.is_empty() || chat.is_empty() {
+        return None;
+    }
+    Some(format!("{platform}:{chat}"))
+}
+
+pub fn distinct_inbound_channel_addresses(envelopes: &[Value]) -> Vec<String> {
+    let mut seen = std::collections::HashSet::new();
+    let mut out = Vec::new();
+    for address in envelopes
+        .iter()
+        .filter_map(|envelope| envelope.get("address"))
+        .filter_map(format_channel_address_value)
+    {
+        if seen.insert(address.clone()) {
+            out.push(address);
+        }
+    }
+    out
+}
+
+pub fn build_channel_inbound_wake_prompt(envelopes: &[Value]) -> String {
+    let has_message = envelopes
+        .iter()
+        .any(|envelope| envelope.get("reaction").map_or(true, Value::is_null));
+    let plural = if envelopes.len() == 1 { "" } else { "s" };
+    let opening = if has_message {
+        format!("{CHANNEL_INBOUND_WAKE_CUE} New message{plural} on a channel you are connected to.")
+    } else {
+        format!("{CHANNEL_INBOUND_WAKE_CUE} New reaction{plural} on a channel you are connected to.")
+    };
+
+    let mut grouped = std::collections::BTreeMap::<String, Vec<&Value>>::new();
+    for envelope in envelopes {
+        let Some(token) = envelope
+            .get("address")
+            .and_then(format_channel_address_value)
+        else {
+            continue;
+        };
+        grouped.entry(token).or_default().push(envelope);
+    }
+
+    let mut blocks = Vec::new();
+    for (token, bucket) in grouped {
+        let platform = parse_channel_address(&token)
+            .map(|address| platform_name(&address.platform).to_string())
+            .unwrap_or_default();
+        let mut lines = Vec::new();
+        for envelope in bucket {
+            let sender = envelope
+                .get("sender")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            if let Some(reaction) = envelope.get("reaction").filter(|value| !value.is_null()) {
+                let emoji = reaction
+                    .get("emoji")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
+                let summary = reaction
+                    .get("messageQuote")
+                    .and_then(Value::as_str)
+                    .filter(|quote| !quote.is_empty())
+                    .map(|quote| format!("reacted {emoji} to your message: \"{quote}\""))
+                    .unwrap_or_else(|| format!("reacted {emoji} to a message"));
+                lines.push(format!("  {sender} {summary}"));
+            } else {
+                let text = envelope
+                    .get("text")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
+                lines.push(format!("  {sender}: {text}"));
+            }
+        }
+        blocks.push(format!("On {platform}, from {token}:\n{}", lines.join("\n")));
+    }
+
+    let closing = if has_message {
+        "Reply to them through the authorized channel target shown above. Acknowledge briefly, then send progress/results as short chat messages; do not leave the sender hanging."
+    } else {
+        "You do not need to reply to a reaction unless it is useful; if you respond, use the authorized channel target shown above."
+    };
+    [
+        opening,
+        "This is activity from someone on an outside platform, not the user typing in this app."
+            .to_string(),
+        String::new(),
+        blocks.join("\n\n"),
+        String::new(),
+        closing.to_string(),
+    ]
+    .join("\n")
+}
+
+pub fn redrivable_inbound_envelopes(envelopes: &[Value]) -> Vec<Value> {
+    envelopes
+        .iter()
+        .filter(|envelope| envelope.get("isRedriven").and_then(Value::as_bool) != Some(true))
+        .map(|envelope| {
+            let mut next = envelope.clone();
+            if let Some(object) = next.as_object_mut() {
+                object.insert("isDisplayed".into(), Value::Bool(true));
+                object.insert("isRedriven".into(), Value::Bool(true));
+            }
+            next
+        })
+        .collect()
+}
+
+pub fn describe_timeline_event(event: &Value) -> String {
+    match event.get("type").and_then(Value::as_str).unwrap_or_default() {
+        "name-changed" => format!(
+            "Renamed to {}",
+            event.get("to").and_then(Value::as_str).unwrap_or_default()
+        ),
+        "channel-connected" => format!(
+            "Connected to {}",
+            event.get("label").and_then(Value::as_str).unwrap_or_default()
+        ),
+        "channel-disconnected" => format!(
+            "Disconnected from {}",
+            event.get("label").and_then(Value::as_str).unwrap_or_default()
+        ),
+        "automation-changed" => {
+            let action = match event.get("action").and_then(Value::as_str).unwrap_or_default() {
+                "created" => "Created",
+                "updated" => "Updated",
+                "enabled" => "Enabled",
+                "disabled" => "Disabled",
+                "deleted" => "Deleted",
+                _ => "Changed",
+            };
+            format!(
+                "{action} automation \"{}\"",
+                event.get("automationName").and_then(Value::as_str).unwrap_or_default()
+            )
+        }
+        _ => "Updated this conversation".to_string(),
+    }
+}
+
+pub fn build_timeline_event_wake_prompt(events: &[Value]) -> String {
+    let mut lines = vec![
+        format!("{TIMELINE_EVENT_WAKE_CUE} Something about this conversation just changed."),
+        "This is a system event recorded in your timeline, not the user typing in this app, and possibly something you did yourself.".to_string(),
+    ];
+    lines.extend(events.iter().map(|event| format!("- {}", describe_timeline_event(event))));
+    lines.push(
+        "If it is worth acknowledging to the user, reply through the normal canonical send path; otherwise it is fine to stay silent."
+            .to_string(),
+    );
+    lines.join("\n")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -195,6 +359,48 @@ mod tests {
             })
         );
         assert!(build_channel_outbound_message(&json!({"type":"widget"})).is_none());
+    }
+
+
+    #[test]
+    fn inbound_wake_groups_addresses_and_redrive_is_one_shot() {
+        let envelopes = vec![
+            json!({"address":{"platform":"slack","chat":"C1"},"sender":"Ada","text":"ship it"}),
+            json!({"address":{"platform":"slack","chat":"C1"},"sender":"Bob","reaction":{"emoji":"✅","messageQuote":"done"}}),
+            json!({"address":"discord:room","sender":"Cara","text":"status?"}),
+        ];
+        assert_eq!(
+            distinct_inbound_channel_addresses(&envelopes),
+            vec!["slack:C1".to_string(), "discord:room".to_string()]
+        );
+        let prompt = build_channel_inbound_wake_prompt(&envelopes);
+        assert!(prompt.starts_with(CHANNEL_INBOUND_WAKE_CUE));
+        assert!(prompt.contains("On Slack, from slack:C1:"));
+        assert!(prompt.contains("Ada: ship it"));
+        assert!(prompt.contains("reacted ✅ to your message"));
+        assert!(prompt.contains("On Discord, from discord:room:"));
+
+        let redriven = redrivable_inbound_envelopes(&[
+            json!({"id":"a"}),
+            json!({"id":"b","isRedriven":true}),
+        ]);
+        assert_eq!(redriven.len(), 1);
+        assert_eq!(redriven[0].get("id").and_then(Value::as_str), Some("a"));
+        assert_eq!(redriven[0].get("isDisplayed").and_then(Value::as_bool), Some(true));
+        assert_eq!(redriven[0].get("isRedriven").and_then(Value::as_bool), Some(true));
+        assert!(redrivable_inbound_envelopes(&redriven).is_empty());
+    }
+
+    #[test]
+    fn timeline_wake_preserves_system_event_identity() {
+        let prompt = build_timeline_event_wake_prompt(&[
+            json!({"type":"name-changed","to":"Research"}),
+            json!({"type":"automation-changed","action":"enabled","automationName":"Daily brief"}),
+        ]);
+        assert!(prompt.starts_with(TIMELINE_EVENT_WAKE_CUE));
+        assert!(prompt.contains("Renamed to Research"));
+        assert!(prompt.contains("Enabled automation \"Daily brief\""));
+        assert!(prompt.contains("not the user typing"));
     }
 
     #[test]
