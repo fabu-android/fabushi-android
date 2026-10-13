@@ -6829,7 +6829,7 @@ impl AndroidJsonHost {
             .mcp_auth_watches
             .lock()
             .map_err(|_| "MCP auth watch manager lock poisoned".to_string())?
-            .cancel_all()?;
+            .reset_for_account_transition()?;
         for completion in cancelled_watches {
             self.events.push_back(json!({
                 "type":"mcp.auth.watch.settled",
