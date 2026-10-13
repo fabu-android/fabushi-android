@@ -405,6 +405,9 @@ impl ProductionTurnLifecycleStore {
         validate_identity(claim_id, "disk-pressure claim id")?;
         let key = conversation_key(account_fence, conversation_id);
         if let Some(active) = self.state.active_disk_pressure.get(account_fence).cloned() {
+            if active.level == ProductionDiskPressureLevel::Hard {
+                return Err("hard disk pressure blocks new turn".into());
+            }
             let should_seed = match self.state.disk_pressure.get(&key) {
                 None => true,
                 Some(existing) => {
@@ -873,6 +876,36 @@ mod tests {
             ),
             ProductionDiskPressureLevel::Soft
         );
+    }
+
+    #[test]
+    fn hard_platform_pressure_blocks_new_turn_without_consuming_reminder_claim() {
+        let path = path("platform-hard-pressure");
+        let mut store = ProductionTurnLifecycleStore::open(&path, 1).unwrap();
+        let observed = store
+            .observe_disk_pressure_sample("acct:a", 100 * GIB, 4 * GIB, 2)
+            .unwrap();
+        assert_eq!(observed.level, ProductionDiskPressureLevel::Hard);
+        assert!(observed.episode_id.is_some());
+
+        let error = store
+            .claim_disk_pressure("acct:a", "agent-a", "op-hard", 3)
+            .unwrap_err();
+        assert_eq!(error, "hard disk pressure blocks new turn");
+        assert!(
+            store.state.disk_pressure.is_empty(),
+            "hard pressure must reject before creating or consuming a reminder claim"
+        );
+
+        let softened = store
+            .observe_disk_pressure_sample("acct:a", 100 * GIB, 9 * GIB, 4)
+            .unwrap();
+        assert_eq!(softened.level, ProductionDiskPressureLevel::Soft);
+        assert!(store
+            .claim_disk_pressure("acct:a", "agent-a", "op-soft", 5)
+            .unwrap()
+            .is_some());
+        let _ = fs::remove_file(path);
     }
 
     #[test]
