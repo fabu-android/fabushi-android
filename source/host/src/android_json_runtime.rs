@@ -75,6 +75,9 @@ use crate::extensions::telemetry::gateway_command_telemetry::{
 use crate::extensions::telemetry::analytics_service::{
     automation_run_product_analytics_event, AndroidProductAnalyticsRuntime, ProductAnalyticsSender,
 };
+use crate::extensions::telemetry::host_tracing::{
+    init_production_host_tracing, HostTracing,
+};
 use crate::extensions::telemetry::automation_fire_telemetry::{
     automation_run_telemetry, AutomationRunReport,
 };
@@ -1104,6 +1107,7 @@ pub struct AndroidJsonHost {
     mcp_dashboard_backend: Option<Arc<CursorDashboardMcpAuthBackend>>,
     action_audit: Option<Arc<SandActionAuditor>>,
     product_analytics: Option<Arc<AndroidProductAnalyticsRuntime>>,
+    _host_tracing: Option<Arc<HostTracing>>,
     managed_skills: Option<Arc<SandManagedSkillsService>>,
     managed_team_rules: Arc<crate::managed_team_rules::ManagedTeamRulesResolver>,
     cross_user_core: Option<ProductionCrossUserCore>,
@@ -1573,6 +1577,29 @@ impl AndroidJsonHost {
         } else {
             None
         };
+        let host_tracing = if mode == AndroidHostMode::Production {
+            mcp_dashboard_backend.as_ref().and_then(|dashboard| {
+                let credential_provider = dashboard.credential_provider();
+                let configuration = credential_provider.configuration();
+                let token_provider = Arc::clone(&credential_provider);
+                crate::send_trace_host::set_turn_trace_host_bundle_version(Some(
+                    &configuration.client_version,
+                ));
+                init_production_host_tracing(
+                    configuration.backend_url,
+                    Arc::new(move || {
+                        token_provider
+                            .credentials()
+                            .ok()
+                            .map(|credentials| credentials.access_token)
+                    }),
+                    Some(&configuration.client_version),
+                )
+            })
+        } else {
+            crate::send_trace_host::set_turn_trace_host_bundle_version(None);
+            None
+        };
         if let (Some(analytics), Some(account_scope)) = (
             product_analytics.as_ref(),
             account.account_storage_scope(),
@@ -1877,6 +1904,7 @@ impl AndroidJsonHost {
             mcp_dashboard_backend,
             action_audit,
             product_analytics,
+            _host_tracing: host_tracing,
             managed_skills,
             managed_team_rules,
             cross_user_core,

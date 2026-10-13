@@ -4,8 +4,6 @@ use std::sync::{Arc, Mutex, OnceLock, Weak};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use prost::Message;
-use reqwest::blocking::Client;
-use reqwest::header::{HeaderName, HeaderValue};
 use serde_json::{Value, json};
 
 use crate::send_trace_host::{
@@ -813,7 +811,6 @@ pub fn encode_otlp_trace_request(
 pub struct ProductionOtlpHttpSpanExporter {
     options: SpanExporterOptions,
     resource: HostTracingResource,
-    client: Client,
 }
 
 impl ProductionOtlpHttpSpanExporter {
@@ -821,15 +818,10 @@ impl ProductionOtlpHttpSpanExporter {
         options: SpanExporterOptions,
         resource: HostTracingResource,
     ) -> Result<Self, String> {
-        let client = Client::builder()
-            .danger_accept_invalid_certs(!options.reject_unauthorized)
-            .build()
-            .map_err(|error| error.to_string())?;
-        Ok(Self {
-            options,
-            resource,
-            client,
-        })
+        if !options.reject_unauthorized {
+            return Err("Android Host tracing refuses insecure backend TLS".into());
+        }
+        Ok(Self { options, resource })
     }
 }
 
@@ -841,22 +833,20 @@ impl SpanExporter for ProductionOtlpHttpSpanExporter {
         let Ok(body) = encode_otlp_trace_request(spans, &self.resource) else {
             return ExportResultCode::Failed;
         };
-        let mut request = self
-            .client
+        let agent = ureq::AgentBuilder::new()
+            .timeout_connect(std::time::Duration::from_secs(10))
+            .timeout_read(std::time::Duration::from_millis(2_500))
+            .timeout_write(std::time::Duration::from_millis(2_500))
+            .redirects(0)
+            .build();
+        let mut request = agent
             .post(&self.options.url)
-            .header("content-type", OTLP_PROTOBUF_CONTENT_TYPE)
-            .body(body);
+            .set("content-type", OTLP_PROTOBUF_CONTENT_TYPE);
         for (key, value) in &self.options.headers {
-            let Ok(name) = HeaderName::from_bytes(key.as_bytes()) else {
-                return ExportResultCode::Failed;
-            };
-            let Ok(value) = HeaderValue::from_str(value) else {
-                return ExportResultCode::Failed;
-            };
-            request = request.header(name, value);
+            request = request.set(key, value);
         }
-        match request.send() {
-            Ok(response) if response.status().is_success() => ExportResultCode::Success,
+        match request.send_bytes(&body) {
+            Ok(response) if (200..300).contains(&response.status()) => ExportResultCode::Success,
             _ => ExportResultCode::Failed,
         }
     }
