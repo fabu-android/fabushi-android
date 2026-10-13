@@ -10,7 +10,10 @@ use crate::account_telemetry::{
 use crate::account_telemetry_spill::DurableAccountTelemetryOutbox;
 use crate::capability_broker::{CapabilityDecision, PendingCapabilityCall, SharedCapabilityBroker};
 use crate::automation_id::stable_account_automation_id;
-use crate::automation_runtime::{run_json as automation_run_json, AutomationRuntime, AutomationSpec};
+use crate::automation_runtime::{
+    run_json as automation_run_json, AutomationRuntime, AutomationSpec,
+    AutomationSpendGuardDecision,
+};
 use crate::auto_review_settings::{AutoReviewInstructions, DurableAutoReviewSettings};
 use crate::android_agent_roster::{AndroidAgentRoster, AndroidAgentRosterRecoveryOutcome};
 use crate::android_box_handoff::{AndroidBoxHandoffOwner, AndroidHandoffStart};
@@ -6983,17 +6986,171 @@ impl AndroidJsonHost {
         serde_json::to_value(spec).map_err(|error| error.to_string())
     }
 
+    fn issue_automation_spend_guard_card(
+        &mut self,
+        agent_id: &str,
+        account_fence: &str,
+        paused: bool,
+        observed_at_ms: u64,
+    ) -> Result<String, String> {
+        let (prompt, options) = if paused {
+            (
+                "I paused all your routines while you were away to avoid wasted spend. Want me to start them back up?",
+                json!([
+                    {"label":"Resume routines","value":"spend-guard:resume","style":"primary"},
+                    {"label":"Keep them paused","value":"spend-guard:stay-paused"}
+                ]),
+            )
+        } else {
+            (
+                "You've been away for a bit — keep my routines running?",
+                json!([
+                    {"label":"Keep them running","value":"spend-guard:keep","style":"primary"},
+                    {"label":"Pause them all","value":"spend-guard:pause"},
+                    {"label":"Keep running, don't ask again","value":"spend-guard:never-ask"}
+                ]),
+            )
+        };
+        let entry_id = format!(
+            "automation-spend-guard:{agent_id}:{}:{observed_at_ms}",
+            if paused { "paused" } else { "nudge" }
+        );
+        let entry = json!({
+            "id":entry_id,
+            "kind":"send-message",
+            "agentId":agent_id,
+            "accountFence":account_fence,
+            "timestampMs":observed_at_ms,
+            "message":{
+                "type":"widget",
+                "widget":{
+                    "prompt":prompt,
+                    "options":options
+                }
+            }
+        });
+        self.transcript
+            .lock()
+            .map_err(|_| "transcript lock poisoned".to_string())?
+            .append_entry(entry)
+            .map_err(|error| format!("failed to persist automation spend guard card: {error}"))?;
+        self.agents
+            .lock()
+            .map_err(|_| "canonical Android Agent roster lock poisoned".to_string())?
+            .mark_activity(agent_id, observed_at_ms)
+            .map_err(|error| format!("failed to mark spend guard activity: {error}"))?;
+        Ok(entry_id)
+    }
+
+    fn prepare_automation_spend_guard(
+        &mut self,
+        automation_id: &str,
+        account_fence: &str,
+        observed_at_ms: u64,
+    ) -> Result<(), String> {
+        let spec = self
+            .automation_runtime
+            .spec_for_account(automation_id, account_fence)
+            .ok_or("automation not found")?;
+        // The root assistant currently uses the separate assistant read-marker projection rather
+        // than AndroidAgentRoster. Do not fabricate a second last-viewed owner here.
+        if spec.agent_id == "mahayana-assistant" {
+            return Ok(());
+        }
+        let agent = self
+            .agents
+            .lock()
+            .map_err(|_| "canonical Android Agent roster lock poisoned".to_string())?
+            .get(&spec.agent_id)
+            .ok_or("automation Agent owner not found")?;
+        let (decision, _evaluation) = self.automation_runtime.evaluate_spend_guard(
+            account_fence,
+            &spec.agent_id,
+            agent.last_viewed_at,
+            agent.unread_count,
+            observed_at_ms,
+        )?;
+        match decision {
+            AutomationSpendGuardDecision::Nudge => {
+                let entry_id = self.issue_automation_spend_guard_card(
+                    &spec.agent_id,
+                    account_fence,
+                    false,
+                    observed_at_ms,
+                )?;
+                self.automation_runtime.record_spend_guard_nudge(
+                    account_fence,
+                    &spec.agent_id,
+                    &entry_id,
+                    observed_at_ms,
+                )?;
+            }
+            AutomationSpendGuardDecision::Pause => {
+                let time_zone = self.effective_time_zone()?;
+                let paused = self.automation_runtime.pause_agent_automations_for_spend_guard(
+                    account_fence,
+                    &spec.agent_id,
+                    time_zone.as_deref(),
+                )?;
+                if !paused.is_empty() {
+                    let entry_id = self.issue_automation_spend_guard_card(
+                        &spec.agent_id,
+                        account_fence,
+                        true,
+                        observed_at_ms,
+                    )?;
+                    self.automation_runtime.set_spend_guard_card_entry(
+                        account_fence,
+                        &spec.agent_id,
+                        &entry_id,
+                    )?;
+                }
+                return Err("automation spend guard paused routines while the user is away".into());
+            }
+            AutomationSpendGuardDecision::OptedOut
+            | AutomationSpendGuardDecision::UserActive
+            | AutomationSpendGuardDecision::Snoozed
+            | AutomationSpendGuardDecision::AwaitingAck
+            | AutomationSpendGuardDecision::BelowThresholds => {}
+        }
+        Ok(())
+    }
+
+    fn spend_guard_answer_reminder(value: &str) -> Option<&'static str> {
+        match value {
+            "spend-guard:keep" => Some(
+                "<system_reminder>The app already kept the routines running and snoozed this spend check for a month. Acknowledge the user's choice in one short line; do not edit automation state.</system_reminder>",
+            ),
+            "spend-guard:pause" => Some(
+                "<system_reminder>The app already paused this Agent's routines. Acknowledge the user's choice in one short line; do not edit automation state.</system_reminder>",
+            ),
+            "spend-guard:never-ask" => Some(
+                "<system_reminder>The app already kept the routines running and opted this Agent out of future spend-guard prompts. Acknowledge the user's choice in one short line; do not edit automation state.</system_reminder>",
+            ),
+            "spend-guard:resume" => Some(
+                "<system_reminder>The app already resumed only the routines previously paused by spend guard. Acknowledge the user's choice in one short line; do not edit automation state.</system_reminder>",
+            ),
+            "spend-guard:stay-paused" => Some(
+                "<system_reminder>The app already left the spend-guard-paused routines disabled. Acknowledge the user's choice in one short line; do not edit automation state.</system_reminder>",
+            ),
+            _ => None,
+        }
+    }
+
     fn automation_start(&mut self, params: &Value) -> Result<Value, String> {
         if self.turn_upgrade_quiescing.load(Ordering::Acquire) {
             return Err("automation wakes are quiesced for upgrade".into());
         }
         let account_fence = self.current_turn_account_fence()?;
+        let automation_id = required_string(params, "automationId")?;
+        let observed_at_ms = now_ms();
+        self.prepare_automation_spend_guard(automation_id, &account_fence, observed_at_ms)?;
         let run = self.automation_runtime.begin_run(
-            required_string(params, "automationId")?,
+            automation_id,
             required_string(params, "requestId")?,
             required_string(params, "runId")?,
             &account_fence,
-            now_ms(),
+            observed_at_ms,
         )?;
         Ok(automation_run_json(&run))
     }
@@ -9859,12 +10016,32 @@ impl AndroidJsonHost {
             .get("entry")
             .cloned()
             .ok_or("accepted widget response is missing canonical entry")?;
+        let mut continuation_text = value.to_string();
+        if value.starts_with("spend-guard:") {
+            let time_zone = self.effective_time_zone()?;
+            let applied = self.automation_runtime.apply_spend_guard_answer(
+                &account_fence,
+                agent_id,
+                entry_id,
+                value,
+                now_ms(),
+                time_zone.as_deref(),
+            )?;
+            if !applied {
+                self.rollback_widget_response(entry_id, agent_id)?;
+                return Err("spend guard response is stale or not Host-issued".into());
+            }
+            continuation_text = Self::spend_guard_answer_reminder(value)
+                .ok_or("unknown spend guard response")?
+                .to_string();
+        }
+
         let request_id = format!("widget-response:{agent_id}:{entry_id}:{generation}");
         let mut command = json!({
             "type":"chat.send",
             "requestId":request_id,
             "agentId":agent_id,
-            "text":value,
+            "text":continuation_text,
             "hidden":true,
             "appendUserMessage":false,
             "awaitTurn":false,
@@ -19860,5 +20037,96 @@ mod turn_interrupt_telemetry_wiring_tests {
             .records
             .iter()
             .all(|entry| entry.message != "sand.turn.interrupt"));
+    }
+}
+
+#[cfg(test)]
+mod automation_spend_guard_wiring_tests {
+    use super::*;
+    use crate::automation_runtime::{SPEND_GUARD_IDLE_TTL_MS, SPEND_GUARD_SNOOZE_MS};
+
+    #[test]
+    fn production_automation_start_issues_guard_card_and_widget_answer_snoozes() {
+        let root = tempfile::tempdir().unwrap();
+        let mut host = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+        let created = host
+            .dispatch(
+                "createAgent",
+                &json!({"name":"Routine Agent","isIntroductionSuppressed":true}),
+            )
+            .unwrap();
+        let agent_id = created["agent"]["id"].as_str().unwrap().to_string();
+
+        let now = now_ms();
+        let old = now.saturating_sub(SPEND_GUARD_IDLE_TTL_MS + 10_000);
+        {
+            let mut agents = host.agents.lock().unwrap();
+            agents.mark_unread(&agent_id, old).unwrap();
+            for offset in 1..=15 {
+                agents.mark_activity(&agent_id, old + offset).unwrap();
+            }
+            let agent = agents.get(&agent_id).unwrap();
+            assert!(agent.unread_count >= 15);
+            assert!(now.saturating_sub(agent.last_viewed_at) >= SPEND_GUARD_IDLE_TTL_MS);
+        }
+
+        let stored = host
+            .dispatch(
+                "feature.automation.upsert",
+                &json!({
+                    "id":"routine",
+                    "agentId":agent_id,
+                    "name":"Routine",
+                    "prompt":"Do useful work",
+                    "schedule":"@every 5m",
+                    "enabled":true
+                }),
+            )
+            .unwrap();
+        let automation_id = stored["id"].as_str().unwrap().to_string();
+        let started = host
+            .dispatch(
+                "feature.automation.start",
+                &json!({
+                    "automationId":automation_id,
+                    "requestId":"guard-start-1",
+                    "runId":"guard-run-1"
+                }),
+            )
+            .unwrap();
+        assert_eq!(started["state"], "running");
+
+        let transcript = host
+            .dispatch("feature.transcript.snapshot", &json!({}))
+            .unwrap();
+        let card = transcript
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|entry| {
+                entry["agentId"] == agent_id
+                    && entry["message"]["widget"]["prompt"]
+                        == "You've been away for a bit — keep my routines running?"
+            })
+            .expect("spend guard nudge must be persisted in canonical transcript");
+        let entry_id = card["id"].as_str().unwrap().to_string();
+
+        let response = host
+            .dispatch(
+                "feature.widget.respond",
+                &json!({
+                    "agentId":agent_id,
+                    "entryId":entry_id,
+                    "value":"spend-guard:keep",
+                    "generation":1
+                }),
+            )
+            .unwrap();
+        assert_eq!(response["accepted"], true);
+        let account_fence = host.current_turn_account_fence().unwrap();
+        let state = host.automation_runtime.spend_guard_state(&account_fence, &agent_id);
+        assert!(state
+            .snoozed_until_ms
+            .is_some_and(|until| until >= now.saturating_add(SPEND_GUARD_SNOOZE_MS)));
     }
 }
