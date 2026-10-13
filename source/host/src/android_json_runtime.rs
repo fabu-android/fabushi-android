@@ -15819,6 +15819,116 @@ mod tests {
         assert!(host.dispatch("arbitrary.renderer.method", &json!({})).is_err());
     }
     #[test]
+    fn presentation_delete_cleans_agent_scoped_runtime_state_without_cross_agent_damage() {
+        use crate::extensions::transcript::sand_pending_wake_store::{
+            DurablePendingWakeMarker, PendingWakeKind,
+        };
+        use crate::runner::{SubagentLineage, SubagentStatus};
+
+        let root = std::env::temp_dir().join(format!(
+            "fabushi-json-host-agent-delete-cleanup-{}-{}",
+            std::process::id(),
+            now_ms()
+        ));
+        let mut host = AndroidJsonHost::new(&root, AndroidHostMode::Test);
+        let target = host
+            .dispatch("createAgent", &json!({"name":"Delete me","description":"target"}))
+            .unwrap();
+        let survivor = host
+            .dispatch("createAgent", &json!({"name":"Keep me","description":"survivor"}))
+            .unwrap();
+        let target_id = target["agent"]["id"].as_str().unwrap().to_string();
+        let survivor_id = survivor["agent"]["id"].as_str().unwrap().to_string();
+        let account_fence = "session:test:android";
+
+        let wake = |agent_id: &str, work_id: &str| DurablePendingWakeMarker {
+            account_fence: account_fence.into(),
+            agent_id: agent_id.into(),
+            kind: PendingWakeKind::Shell,
+            work_id: work_id.into(),
+            marked_at_ms: 10,
+            quiet_origin: None,
+            title: None,
+            subagent_type: None,
+            interrupted_by_recreate: false,
+        };
+        assert!(host.pending_wake_store.mark_pending(wake(&target_id, "target-work")));
+        assert!(host.pending_wake_store.mark_pending(wake(&survivor_id, "survivor-work")));
+        host.visible_ack_obligations
+            .record_send(account_fence, &target_id, 10.0)
+            .unwrap();
+        host.visible_ack_obligations
+            .record_send(account_fence, &survivor_id, 11.0)
+            .unwrap();
+
+        let target_cancelled = Arc::new(AtomicBool::new(false));
+        host.agent_turn_interruptions
+            .register(
+                &target_id,
+                "delete-target-operation",
+                account_fence,
+                true,
+                Arc::clone(&target_cancelled),
+            )
+            .unwrap();
+
+        let launched_subagent_id = {
+            let mut owner = host.subagent_owner.lock().unwrap();
+            owner.launch(
+                &target_id,
+                SubagentLineage {
+                    parent_request_id: Some("delete-parent-request".into()),
+                    root_parent_request_id: Some("delete-root-request".into()),
+                    parent_agent_tool_call_id: None,
+                },
+                "box-delete-test",
+                "general-purpose",
+                "delete-subagent-tool-call",
+                "work until parent deletion",
+                account_fence,
+                None,
+                SubagentFrozenTurnConfig {
+                    provider_id: "android-host-inference".into(),
+                    model_id: "default".into(),
+                    tool_names: Vec::new(),
+                    allowed_subagent_types: vec!["general-purpose".into()],
+                    privacy_mode: "no-storage".into(),
+                    summarization_binding_id: "android-host-inference:same-provider".into(),
+                },
+                now_ms(),
+            ).unwrap().record.subagent_id
+        };
+
+        let deleted = host.dispatch(
+            "feature.agent.rosterMutation",
+            &json!({
+                "operationId":"delete-cleanup-operation",
+                "accountFence":account_fence,
+                "mutation":{"kind":"delete","ids":[target_id]},
+            }),
+        ).unwrap();
+        assert_eq!(deleted["status"], "completed");
+        assert!(target_cancelled.load(Ordering::Acquire));
+        assert!(host.pending_wake_store.list_pending_for(account_fence, &target_id).is_empty());
+        assert_eq!(host.pending_wake_store.list_pending_for(account_fence, &survivor_id).len(), 1);
+        let pending_acks = host.visible_ack_obligations.pending_for_account(account_fence);
+        assert!(!pending_acks.iter().any(|row| row.agent_id == target_id));
+        assert!(pending_acks.iter().any(|row| row.agent_id == survivor_id));
+        assert!(host.agents.lock().unwrap().get(&target_id).is_none());
+        assert!(host.agents.lock().unwrap().get(&survivor_id).is_some());
+
+        let subagent = host
+            .subagent_owner
+            .lock()
+            .unwrap()
+            .get(&launched_subagent_id)
+            .cloned()
+            .unwrap();
+        assert_eq!(subagent.status, SubagentStatus::Aborted);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn canonical_agent_roster_drives_direct_and_bot_surfaces() {
         let root = std::env::temp_dir().join(format!(
             "fabushi-json-host-roster-{}-{}",
