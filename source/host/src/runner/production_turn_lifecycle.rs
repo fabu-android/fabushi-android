@@ -1,19 +1,12 @@
+use crate::extensions::forever_box::disk_pressure_guard::{
+    classify_disk_pressure, DiskPressureLevel,
+};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeMap,
     fs,
     path::PathBuf,
 };
-
-const GIB: u64 = 1024 * 1024 * 1024;
-const SOFT_AVAILABLE_BYTES: u64 = 8 * GIB;
-const HARD_AVAILABLE_BYTES: u64 = 2 * GIB;
-const SOFT_RECOVERY_BYTES: u64 = 10 * GIB;
-const HARD_RECOVERY_BYTES: u64 = 3 * GIB;
-const SOFT_AVAILABLE_RATIO: f64 = 0.15;
-const HARD_AVAILABLE_RATIO: f64 = 0.05;
-const SOFT_RECOVERY_RATIO: f64 = 0.20;
-const HARD_RECOVERY_RATIO: f64 = 0.08;
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -43,27 +36,16 @@ pub fn classify_production_disk_pressure(
     available_bytes: u64,
     previous: ProductionDiskPressureLevel,
 ) -> ProductionDiskPressureLevel {
-    if total_bytes == 0 {
-        return ProductionDiskPressureLevel::Healthy;
+    let previous = match previous {
+        ProductionDiskPressureLevel::Healthy => DiskPressureLevel::Healthy,
+        ProductionDiskPressureLevel::Soft => DiskPressureLevel::Soft,
+        ProductionDiskPressureLevel::Hard => DiskPressureLevel::Hard,
+    };
+    match classify_disk_pressure(total_bytes, available_bytes, previous) {
+        DiskPressureLevel::Healthy => ProductionDiskPressureLevel::Healthy,
+        DiskPressureLevel::Soft => ProductionDiskPressureLevel::Soft,
+        DiskPressureLevel::Hard => ProductionDiskPressureLevel::Hard,
     }
-    let ratio = available_bytes as f64 / total_bytes as f64;
-    if available_bytes <= HARD_AVAILABLE_BYTES || ratio <= HARD_AVAILABLE_RATIO {
-        return ProductionDiskPressureLevel::Hard;
-    }
-    if previous == ProductionDiskPressureLevel::Hard
-        && (available_bytes <= HARD_RECOVERY_BYTES || ratio <= HARD_RECOVERY_RATIO)
-    {
-        return ProductionDiskPressureLevel::Hard;
-    }
-    if available_bytes <= SOFT_AVAILABLE_BYTES || ratio <= SOFT_AVAILABLE_RATIO {
-        return ProductionDiskPressureLevel::Soft;
-    }
-    if previous == ProductionDiskPressureLevel::Soft
-        && (available_bytes <= SOFT_RECOVERY_BYTES || ratio <= SOFT_RECOVERY_RATIO)
-    {
-        return ProductionDiskPressureLevel::Soft;
-    }
-    ProductionDiskPressureLevel::Healthy
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
