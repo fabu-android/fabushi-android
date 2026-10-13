@@ -3138,6 +3138,8 @@ impl AndroidJsonHost {
             "feature.messaging.access.issue" => self.messaging_access_issue(params),
             "feature.messaging.blob.read" => self.messaging_blob_read(params),
             "feature.messaging.execute" => self.messaging_execute(params),
+            "feature.humanRemote.contacts" => self.human_remote_contacts(),
+            "feature.humanRemote.messages" => self.human_remote_messages(params),
             "feature.transcript.snapshot" => Ok(Value::Array(
                 self.current_account_transcript_entries()?,
             )),
@@ -3702,6 +3704,58 @@ impl AndroidJsonHost {
             }),
             mutation,
         ))
+    }
+
+    fn human_remote_contacts(&mut self) -> Result<Value, String> {
+        if self.mode == AndroidHostMode::Test {
+            return Err("remote Human contacts require the production account transport".into());
+        }
+        let (result, mutation) = self.account.authenticated_device_api_request(
+            "GET",
+            "/api/social/friends",
+            None,
+        )?;
+        validate_human_remote_envelope(&result, "contact sync")?;
+        Ok(with_account_session_mutation(result, mutation))
+    }
+
+    fn human_remote_messages(&mut self, params: &Value) -> Result<Value, String> {
+        if self.mode == AndroidHostMode::Test {
+            return Err("remote Human message sync requires the production account transport".into());
+        }
+        let contact_id = required_string(params, "contactId")?.trim();
+        if contact_id.is_empty() || contact_id.len() > 200 {
+            return Err("remote Human contactId is invalid".into());
+        }
+        let limit = params
+            .get("limit")
+            .and_then(Value::as_u64)
+            .unwrap_or(100)
+            .clamp(1, 200);
+        let encoded_contact: String =
+            url::form_urlencoded::byte_serialize(contact_id.as_bytes()).collect();
+        let mut path = format!(
+            "/api/social/messages?contactId={encoded_contact}&limit={limit}"
+        );
+        if let Some(before) = params
+            .get("before")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            if before.len() > 200 {
+                return Err("remote Human message cursor is invalid".into());
+            }
+            let encoded_before: String =
+                url::form_urlencoded::byte_serialize(before.as_bytes()).collect();
+            path.push_str("&before=");
+            path.push_str(&encoded_before);
+        }
+        let (result, mutation) = self
+            .account
+            .authenticated_device_api_request("GET", &path, None)?;
+        validate_human_remote_envelope(&result, "message sync")?;
+        Ok(with_account_session_mutation(result, mutation))
     }
 
     fn messaging_execute(&mut self, params: &Value) -> Result<Value, String> {
@@ -10548,6 +10602,22 @@ fn mcp_auth_display_name(server_name: &str, account_key: &str) -> String {
         utf16_units += next;
     }
     format!("{server_name} ({rendered})")
+}
+
+fn validate_human_remote_envelope(value: &Value, operation: &str) -> Result<(), String> {
+    let object = value
+        .as_object()
+        .ok_or_else(|| format!("Fabushi Human {operation} response must be an object"))?;
+    if object.get("success").and_then(Value::as_bool) != Some(true) {
+        let detail = object
+            .get("error")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .unwrap_or("backend rejected the request");
+        return Err(format!("Fabushi Human {operation} failed: {detail}"));
+    }
+    Ok(())
 }
 
 fn with_account_session_mutation(
