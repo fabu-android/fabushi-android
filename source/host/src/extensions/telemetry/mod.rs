@@ -39,6 +39,7 @@ pub mod experiments_diagnostic_telemetry;
 pub mod host_extension_diagnostic_telemetry;
 pub mod host_event_bus_telemetry;
 pub mod turn_empty_delivery_telemetry;
+pub mod turn_telemetry_mappers;
 pub mod sand_error_tags;
 pub mod session_diagnostic_telemetry;
 pub mod invariant_violation_telemetry;
