@@ -135,6 +135,13 @@ impl SandManagedSkillsService {
         self.has_cached_skill(id)
     }
 
+    pub fn cached_skills(&self) -> Vec<ManagedSkill> {
+        self.active_cache_dir()
+            .and_then(read_managed_skills_cache)
+            .map(|cache| cache.skills)
+            .unwrap_or_default()
+    }
+
     pub fn dispose(&self) {
         let mut state = self.state.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         state.disposed = true;
