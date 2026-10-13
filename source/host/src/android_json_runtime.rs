@@ -59,7 +59,7 @@ use crate::extensions::telemetry::connector_auth_telemetry::{
 };
 use crate::extensions::telemetry::HostTelemetryProjection;
 use crate::extensions::telemetry::analytics_service::{
-    product_analytics_event, AndroidProductAnalyticsRuntime, ProductAnalyticsSender,
+    automation_run_product_analytics_event, AndroidProductAnalyticsRuntime, ProductAnalyticsSender,
 };
 use crate::extensions::telemetry::automation_fire_telemetry::{
     automation_run_telemetry, AutomationRunReport,
@@ -2484,23 +2484,18 @@ impl AndroidJsonHost {
             TelemetryLevel::Warn => "warn",
             TelemetryLevel::Error => "error",
         };
-        let analytics_properties = event.metadata.clone();
         self.record_structured_log(level, message, event.metadata, now_ms())
             .map_err(|error| format!("failed to persist Android product telemetry: {error}"))?;
 
-        // Backend Product Analytics is observational. The local durable spool remains the
-        // primary record and a network failure must never alter or replay the user action.
-        if let (Some(analytics), Ok(account_scope)) = (
-            self.product_analytics.as_ref(),
-            self.current_sidebar_account_scope(),
-        ) {
-            if message == "sand.send" {
+        // Product Analytics is an explicit allowlisted channel, never a mirror of all
+        // structured telemetry. User send activity only advances the daily active marker.
+        if message == "sand.send" {
+            if let (Some(analytics), Ok(account_scope)) = (
+                self.product_analytics.as_ref(),
+                self.current_sidebar_account_scope(),
+            ) {
                 let _ = analytics.mark_active(&account_scope, "user_action");
             }
-            let _ = analytics.track(
-                &account_scope,
-                product_analytics_event(message, &analytics_properties),
-            );
         }
         Ok(json!({"recorded":true}))
     }
@@ -2509,6 +2504,8 @@ impl AndroidJsonHost {
         let Some(event) = projection.event else {
             return;
         };
+        let automation_analytics = (event == "sand.automation.run")
+            .then(|| automation_run_product_analytics_event(&projection.metadata));
         self.sync_structured_log_account_slot();
         if self.record_structured_log(
                 projection.level.unwrap_or("info"),
@@ -2525,6 +2522,14 @@ impl AndroidJsonHost {
                 "connector-auth-telemetry",
                 "StorageError",
             );
+            return;
+        }
+        if let (Some(analytics_event), Some(analytics), Ok(account_scope)) = (
+            automation_analytics,
+            self.product_analytics.as_ref(),
+            self.current_sidebar_account_scope(),
+        ) {
+            let _ = analytics.track(&account_scope, analytics_event);
         }
     }
 

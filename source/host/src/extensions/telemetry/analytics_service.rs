@@ -22,14 +22,32 @@ pub struct ProductAnalyticsEvent {
     pub properties: BTreeMap<String, Value>,
 }
 
-pub fn product_analytics_event(name: &str, properties: &BTreeMap<String, String>) -> ProductAnalyticsEvent {
-    ProductAnalyticsEvent {
-        name: name.to_string(),
-        properties: properties
-            .iter()
-            .map(|(key, value)| (key.clone(), Value::String(value.clone())))
-            .collect(),
+pub fn product_analytics_event(name: &str, properties: &Value) -> ProductAnalyticsEvent {
+    let mut clean = BTreeMap::new();
+    if let Some(object) = properties.as_object() {
+        for (key, value) in object {
+            if matches!(value, Value::Bool(_) | Value::Number(_) | Value::String(_)) {
+                clean.insert(key.clone(), value.clone());
+            }
+        }
     }
+    ProductAnalyticsEvent { name: name.to_string(), properties: clean }
+}
+
+pub fn automation_run_product_analytics_event(
+    metadata: &BTreeMap<String, String>,
+) -> ProductAnalyticsEvent {
+    let sent_message_count = metadata.get("sent_message_count").and_then(|value| value.parse::<i64>().ok());
+    let is_group = metadata.get("is_group").and_then(|value| value.parse::<bool>().ok()).unwrap_or(false);
+    let mut properties = serde_json::Map::from_iter([
+        ("agent_id".into(), metadata.get("conversation_id").cloned().map(Value::String).unwrap_or(Value::Null)),
+        ("automation_id".into(), metadata.get("automation_id").cloned().map(Value::String).unwrap_or(Value::Null)),
+        ("trigger".into(), metadata.get("trigger").cloned().map(Value::String).unwrap_or(Value::Null)),
+        ("outcome".into(), metadata.get("outcome").cloned().map(Value::String).unwrap_or(Value::Null)),
+        ("is_group".into(), Value::Bool(is_group)),
+    ]);
+    if let Some(count) = sent_message_count { properties.insert("sent_message_count".into(), json!(count)); }
+    product_analytics_event("sand.automation.run", &Value::Object(properties))
 }
 
 #[derive(Debug, Clone)]
@@ -50,6 +68,7 @@ pub struct AndroidProductAnalyticsRuntime {
     gate_stop: Mutex<Option<StopGateSubscription>>,
     worker: Mutex<Option<JoinHandle<()>>>,
     active_day_keys: Mutex<BTreeMap<String, u64>>,
+    disabled: bool,
 }
 
 impl AndroidProductAnalyticsRuntime {
@@ -57,7 +76,9 @@ impl AndroidProductAnalyticsRuntime {
         experiments: Arc<HostExperimentsExtension>,
         sender: ProductAnalyticsSender,
     ) -> Arc<Self> {
-        let enabled = experiments.check_feature_gate(SAND_PRODUCT_ANALYTICS_GATE);
+        let opted_out = std::env::var("SAND_DISABLE_TELEMETRY").as_deref() == Ok("1")
+            || std::env::var("SAND_DISABLE_ANALYTICS").as_deref() == Ok("1");
+        let enabled = !opted_out && experiments.check_feature_gate(SAND_PRODUCT_ANALYTICS_GATE);
         let (tx, rx) = mpsc::channel();
         let worker = thread::Builder::new()
             .name("fabushi-product-analytics".into())
@@ -68,17 +89,18 @@ impl AndroidProductAnalyticsRuntime {
             gate_stop: Mutex::new(None),
             worker: Mutex::new(Some(worker)),
             active_day_keys: Mutex::new(BTreeMap::new()),
+            disabled: opted_out,
         });
-        let weak = Arc::downgrade(&runtime);
-        let stop = experiments.subscribe_gate(
-            SAND_PRODUCT_ANALYTICS_GATE,
-            Arc::new(move |enabled| {
-                if let Some(runtime) = weak.upgrade() {
-                    let _ = runtime.tx.send(WorkerCommand::Gate(enabled));
-                }
-            }),
-        );
-        *runtime.gate_stop.lock().unwrap_or_else(|p| p.into_inner()) = Some(stop);
+        if !opted_out {
+            let weak = Arc::downgrade(&runtime);
+            let stop = experiments.subscribe_gate(
+                SAND_PRODUCT_ANALYTICS_GATE,
+                Arc::new(move |enabled| {
+                    if let Some(runtime) = weak.upgrade() { let _ = runtime.tx.send(WorkerCommand::Gate(enabled)); }
+                }),
+            );
+            *runtime.gate_stop.lock().unwrap_or_else(|p| p.into_inner()) = Some(stop);
+        }
         runtime
     }
 
@@ -87,6 +109,7 @@ impl AndroidProductAnalyticsRuntime {
         account_scope: &str,
         event: ProductAnalyticsEvent,
     ) -> Result<(), String> {
+        if self.disabled { return Ok(()); }
         let account_scope = account_scope.trim();
         if account_scope.is_empty() {
             return Err("Product Analytics account scope is required".into());
@@ -104,6 +127,7 @@ impl AndroidProductAnalyticsRuntime {
     }
 
     pub fn mark_active(&self, account_scope: &str, reason: &str) -> Result<(), String> {
+        if self.disabled { return Ok(()); }
         let reason = reason.trim();
         if reason.is_empty() {
             return Err("Product Analytics active reason is required".into());
@@ -344,6 +368,26 @@ mod tests {
         let batch = batches.lock().unwrap()[0].clone();
         assert_eq!(batch["events"].as_array().unwrap().len(), 1);
         assert_eq!(batch["events"][0]["eventName"], "new");
+    }
+
+    #[test]
+    fn automation_run_analytics_uses_desktop_field_allowlist_and_scalar_types() {
+        let event = automation_run_product_analytics_event(&BTreeMap::from([
+            ("conversation_id".into(), "agent-a".into()),
+            ("automation_id".into(), "automation-a".into()),
+            ("trigger".into(), "schedule".into()),
+            ("outcome".into(), "ok".into()),
+            ("is_group".into(), "true".into()),
+            ("sent_message_count".into(), "3".into()),
+            ("duration_ms".into(), "999".into()),
+            ("sensitive_debug_detail".into(), "must-not-ship".into()),
+        ]));
+        assert_eq!(event.name, "sand.automation.run");
+        assert_eq!(event.properties.get("agent_id"), Some(&json!("agent-a")));
+        assert_eq!(event.properties.get("is_group"), Some(&json!(true)));
+        assert_eq!(event.properties.get("sent_message_count"), Some(&json!(3)));
+        assert!(!event.properties.contains_key("duration_ms"));
+        assert!(!event.properties.contains_key("sensitive_debug_detail"));
     }
 
     #[test]
