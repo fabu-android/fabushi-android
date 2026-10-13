@@ -10401,12 +10401,29 @@ impl AndroidJsonHost {
             .and_then(Value::as_bool)
             .unwrap_or(false);
         let owes_visible_ack = !hidden && !skip_ack_obligation;
-        let settles_visible_ack = owes_visible_ack || ack_redrive;
-        if owes_visible_ack {
+        let ack_run_token = if owes_visible_ack {
+            Some(
+                self.visible_ack_obligations
+                    .record_send_and_mint_token(
+                        &account_fence_for_attachment,
+                        &agent_id,
+                        now_ms() as f64,
+                    )
+                    .map_err(|error| {
+                        format!("failed to persist visible acknowledgement obligation: {error}")
+                    })?
+                    .ack_token,
+            )
+        } else if ack_redrive {
             self.visible_ack_obligations
-                .record_send(&account_fence_for_attachment, &agent_id, now_ms() as f64)
-                .map_err(|error| format!("failed to persist visible acknowledgement obligation: {error}"))?;
-        }
+                .mint_ack_run_token(&account_fence_for_attachment, &agent_id)
+                .map_err(|error| {
+                    format!("failed to reserve visible acknowledgement redrive: {error}")
+                })?
+        } else {
+            None
+        };
+        let settles_visible_ack = ack_run_token.is_some();
 
         let request_source = normalize_turn_request_source(command.get("requestSource"))?;
         let created_agent_kickstart = request_source.as_deref() == Some("agent-kickstart");
@@ -10499,6 +10516,7 @@ impl AndroidJsonHost {
         let memory_hidden = hidden;
         let memory_token = bearer_token.clone();
         let visible_ack_obligations = Arc::clone(&self.visible_ack_obligations);
+        let ack_run_token_owned = ack_run_token.clone();
         let turn_attachments = attachments.clone();
         let agent_attachment_root = self
             .agent_attachments
@@ -11221,11 +11239,19 @@ impl AndroidJsonHost {
                                     })?;
                                 let _ = persist;
                                 if settles_visible_ack {
-                                    visible_ack_obligations
-                                        .fulfill(&account_fence_owned, &conversation_id_owned)
-                                        .map_err(|error| {
-                                            format!("failed to settle visible acknowledgement obligation: {error}")
-                                        })?;
+                                    if let Some(ack_token) = ack_run_token_owned.as_deref() {
+                                        visible_ack_obligations
+                                            .fulfill_ack_obligation(
+                                                &account_fence_owned,
+                                                &conversation_id_owned,
+                                                ack_token,
+                                            )
+                                            .map_err(|error| {
+                                                format!(
+                                                    "failed to settle visible acknowledgement obligation: {error}"
+                                                )
+                                            })?;
+                                    }
                                 }
                                 agent_roster
                                     .lock()
@@ -11252,15 +11278,20 @@ impl AndroidJsonHost {
                             }
                             if final_text.is_empty() && settles_visible_ack {
                                 let observed = now_ms();
-                                visible_ack_obligations
-                                    .defer_unfulfilled_completion(
-                                        &account_fence_owned,
-                                        &conversation_id_owned,
-                                        observed,
-                                    )
-                                    .map_err(|error| {
-                                        format!("failed to defer unfulfilled visible acknowledgement: {error}")
-                                    })?;
+                                if let Some(ack_token) = ack_run_token_owned.as_deref() {
+                                    visible_ack_obligations
+                                        .defer_unfulfilled_for_token(
+                                            &account_fence_owned,
+                                            &conversation_id_owned,
+                                            ack_token,
+                                            observed,
+                                        )
+                                        .map_err(|error| {
+                                            format!(
+                                                "failed to defer unfulfilled visible acknowledgement: {error}"
+                                            )
+                                        })?;
+                                }
                             }
                             turn_journal
                                 .lock()
@@ -11320,20 +11351,20 @@ impl AndroidJsonHost {
                         ProductionTurnEvent::Failed { message } => {
                             if settles_visible_ack {
                                 let observed = now_ms();
-                                visible_ack_obligations
-                                    .record_interrupt(
-                                        &account_fence_owned,
-                                        &conversation_id_owned,
-                                        observed as f64,
-                                    )
-                                    .map_err(|error| {
-                                        format!("failed to persist visible acknowledgement interruption: {error}")
-                                    })?;
-                                visible_ack_obligations.schedule_after_idle(
-                                    &account_fence_owned,
-                                    &conversation_id_owned,
-                                    observed,
-                                );
+                                if let Some(ack_token) = ack_run_token_owned.as_deref() {
+                                    visible_ack_obligations
+                                        .defer_unfulfilled_for_token(
+                                            &account_fence_owned,
+                                            &conversation_id_owned,
+                                            ack_token,
+                                            observed,
+                                        )
+                                        .map_err(|error| {
+                                            format!(
+                                                "failed to persist visible acknowledgement interruption: {error}"
+                                            )
+                                        })?;
+                                }
                             }
                             turn_journal
                                 .lock()
@@ -11362,20 +11393,20 @@ impl AndroidJsonHost {
                         ProductionTurnEvent::Cancelled => {
                             if settles_visible_ack {
                                 let observed = now_ms();
-                                visible_ack_obligations
-                                    .record_interrupt(
-                                        &account_fence_owned,
-                                        &conversation_id_owned,
-                                        observed as f64,
-                                    )
-                                    .map_err(|error| {
-                                        format!("failed to persist visible acknowledgement interruption: {error}")
-                                    })?;
-                                visible_ack_obligations.schedule_after_idle(
-                                    &account_fence_owned,
-                                    &conversation_id_owned,
-                                    observed,
-                                );
+                                if let Some(ack_token) = ack_run_token_owned.as_deref() {
+                                    visible_ack_obligations
+                                        .defer_unfulfilled_for_token(
+                                            &account_fence_owned,
+                                            &conversation_id_owned,
+                                            ack_token,
+                                            observed,
+                                        )
+                                        .map_err(|error| {
+                                            format!(
+                                                "failed to persist visible acknowledgement interruption: {error}"
+                                            )
+                                        })?;
+                                }
                             }
                             let _ = turn_journal
                                 .lock()
@@ -11473,6 +11504,15 @@ impl AndroidJsonHost {
             self.turn_cancellations.remove(operation_id);
             self.agent_turn_interruptions.unregister_operation(operation_id);
             self.active_operations.remove(operation_id);
+            if settles_visible_ack {
+                self.visible_ack_obligations.retire_ack_run_token(
+                    &account_fence,
+                    &agent_id,
+                    ack_run_token.as_deref(),
+                );
+                self.visible_ack_obligations
+                    .schedule_after_idle(&account_fence, &agent_id, now_ms());
+            }
             let _ = self
                 .turn_journal
                 .lock()
