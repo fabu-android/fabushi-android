@@ -13051,11 +13051,13 @@ impl AndroidJsonHost {
                                             })?;
                                     }
                                 }
-                                agent_roster
-                                    .lock()
-                                    .map_err(|_| "canonical Android Agent roster lock poisoned".to_string())?
-                                    .mark_activity(&conversation_id_owned, now_ms())
-                                    .map_err(|error| format!("failed to persist Agent unread activity: {error}"))?;
+                                if conversation_id_owned != "mahayana-assistant" {
+                                    agent_roster
+                                        .lock()
+                                        .map_err(|_| "canonical Android Agent roster lock poisoned".to_string())?
+                                        .mark_activity(&conversation_id_owned, now_ms())
+                                        .map_err(|error| format!("failed to persist Agent unread activity: {error}"))?;
+                                }
                                 if created_agent_introduction_turn {
                                     agent_roster
                                         .lock()
@@ -17523,8 +17525,22 @@ mod tests {
             }),
         )
         .unwrap();
-        let profile_only = host.dispatch("feature.receive", &json!({})).unwrap();
-        assert_eq!(profile_only["type"], "agent.profile.changed");
+        let deadline = std::time::Instant::now() + Duration::from_secs(2);
+        let profile_only = loop {
+            let event = host.dispatch("feature.receive", &json!({})).unwrap();
+            if event["type"] == "agent.profile.changed" {
+                break event;
+            }
+            assert_eq!(
+                event["type"], "transcript.roster",
+                "only canonical roster bridge projections may precede the direct profile event",
+            );
+            assert_eq!(event["agentId"], agent.id);
+            assert!(
+                std::time::Instant::now() < deadline,
+                "profile event must remain ordered behind bounded roster projections",
+            );
+        };
         assert_eq!(profile_only["agentId"], agent.id);
         let _ = std::fs::remove_dir_all(root);
     }
@@ -19068,6 +19084,7 @@ export function apply(ctx) {
     fn created_agent_kickstart_is_hidden_and_settles_introduction_pending() {
         let root = tempfile::tempdir().unwrap();
         let mut host = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+        sign_in_test_account(&mut host);
         let created = host
             .dispatch(
                 "createAgent",
@@ -19251,7 +19268,7 @@ export function apply(ctx) {
         assert!(
             transcript.iter().any(|entry| {
                 entry.get("role").and_then(Value::as_str) == Some("assistant")
-                    && entry.get("text").and_then(Value::as_str).is_some_and(|text| !text.trim().is_empty())
+                    && entry.get("content").and_then(Value::as_str).is_some_and(|text| !text.trim().is_empty())
             }),
             "reply nudge must create one visible assistant delivery"
         );
