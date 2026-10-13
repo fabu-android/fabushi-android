@@ -41,6 +41,7 @@ pub mod host_lock;
 pub mod messaging_blob;
 pub mod messaging_child;
 pub mod messaging_service;
+pub mod miniapp_protocol_guard;
 pub mod host_paths;
 pub mod host_production_extensions;
 pub mod host_request_context;
