@@ -5593,3 +5593,206 @@ mod tests {
 
 
 }
+
+
+#[cfg(test)]
+mod remote_human_reconcile_tests {
+    use super::*;
+
+    fn remote_root(label: &str) -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "fabushi-remote-human-reconcile-{label}-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        ))
+    }
+
+    fn remote_message(
+        id: &str,
+        sender: &str,
+        recipient: &str,
+        client_request_id: Option<&str>,
+        text: &str,
+        created_at: &str,
+    ) -> Value {
+        json!({
+            "id":id,
+            "senderUserId":sender,
+            "senderUsername":"sender",
+            "recipientUserId":recipient,
+            "recipientUsername":"recipient",
+            "text":text,
+            "clientRequestId":client_request_id,
+            "createdAt":created_at,
+            "readAt":Value::Null,
+            "isOutgoing":sender == "owner",
+            "replyToMessageId":Value::Null,
+            "attachments":[],
+            "reactions":[{"emoji":"👍","count":1,"reactedByMe":sender == "owner"}]
+        })
+    }
+
+    #[test]
+    fn remote_human_message_reconcile_is_idempotent_durable_and_account_fenced() {
+        let root = remote_root("durable");
+        let owner = "human:owner";
+        let peer = "human:peer";
+        let conversation_id = stable_human_direct_conversation_id(owner, peer);
+        let messages = vec![
+            remote_message(
+                "remote-1",
+                "peer",
+                "owner",
+                None,
+                "hello",
+                "2026-10-13T00:00:00Z",
+            ),
+            remote_message(
+                "remote-2",
+                "owner",
+                "peer",
+                Some("server-known-nonce"),
+                "reply",
+                "2026-10-13T00:01:00Z",
+            ),
+        ];
+        {
+            let mut service = AndroidMessagingService::open(&root).unwrap();
+            service
+                .reconcile_remote_human_contacts(&[
+                    json!({"id":peer,"kind":"human","displayName":"Peer"})
+                ])
+                .unwrap();
+            assert_eq!(
+                service
+                    .reconcile_remote_human_messages(owner, peer, &messages)
+                    .unwrap(),
+                2
+            );
+            let cursor = service.state.cursor;
+            assert_eq!(
+                service
+                    .reconcile_remote_human_messages(owner, peer, &messages)
+                    .unwrap(),
+                0,
+                "same server page must be an idempotent replay"
+            );
+            assert_eq!(service.state.cursor, cursor);
+            assert_eq!(
+                service.state.conversations[&conversation_id]["lastMessageId"],
+                "human-server-message:remote-2"
+            );
+            let projected = service.project_message(
+                &service.state.messages[&conversation_id]["human-server-message:remote-1"],
+                owner,
+            );
+            assert_eq!(projected["reactions"][0]["reaction"], "👍");
+            assert_eq!(projected["reactions"][0]["count"], 1);
+
+            let before_foreign = service.state.clone();
+            let foreign = vec![remote_message(
+                "foreign",
+                "other",
+                "someone-else",
+                None,
+                "wrong account",
+                "2026-10-13T00:02:00Z",
+            )];
+            assert!(service
+                .reconcile_remote_human_messages(owner, peer, &foreign)
+                .is_err());
+            assert_eq!(service.state.cursor, before_foreign.cursor);
+            assert_eq!(service.state.messages, before_foreign.messages);
+        }
+
+        let reopened = AndroidMessagingService::open(&root).unwrap();
+        assert!(
+            reopened.state.messages[&conversation_id]
+                .contains_key("human-server-message:remote-1"),
+            "remote history must survive process death/reopen"
+        );
+        assert!(
+            reopened.state.messages[&conversation_id]
+                .contains_key("human-server-message:remote-2")
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn remote_human_client_request_id_settles_local_send_identity() {
+        let root = remote_root("settlement");
+        let owner = "human:owner";
+        let peer = "human:peer";
+        let conversation_id = stable_human_direct_conversation_id(owner, peer);
+        let mut service = AndroidMessagingService::open(&root).unwrap();
+        service
+            .reconcile_remote_human_contacts(&[
+                json!({"id":peer,"kind":"human","displayName":"Peer"})
+            ])
+            .unwrap();
+        service
+            .reconcile_remote_human_messages(
+                owner,
+                peer,
+                &[remote_message(
+                    "seed",
+                    "peer",
+                    "owner",
+                    None,
+                    "seed",
+                    "2026-10-13T00:00:00Z",
+                )],
+            )
+            .unwrap();
+
+        let local_request = json!({
+            "requestId":"local-send",
+            "envelope":{
+                "protocolVersion":2,
+                "context":{
+                    "requestId":"local-send",
+                    "deviceId":"android:test",
+                    "actorId":owner,
+                    "sessionId":"session:test",
+                    "sentAtMs":1
+                },
+                "command":{
+                    "type":"sendMessage",
+                    "conversationId":conversation_id,
+                    "clientMessageId":"settle-me",
+                    "content":{"type":"text","data":{"text":{"text":"settled","entities":[]}}}
+                }
+            }
+        });
+        service.execute(&local_request, owner, 100).unwrap();
+        let local_id = stable_message_id(owner, "settle-me");
+        assert!(service.state.messages[&conversation_id].contains_key(&local_id));
+
+        service
+            .reconcile_remote_human_messages(
+                owner,
+                peer,
+                &[remote_message(
+                    "server-settled",
+                    "owner",
+                    "peer",
+                    Some("settle-me"),
+                    "settled",
+                    "2026-10-13T00:03:00Z",
+                )],
+            )
+            .unwrap();
+        assert!(
+            !service.state.messages[&conversation_id].contains_key(&local_id),
+            "local optimistic identity must be replaced after server acknowledgement"
+        );
+        assert!(
+            service.state.messages[&conversation_id]
+                .contains_key("human-server-message:server-settled")
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+}
