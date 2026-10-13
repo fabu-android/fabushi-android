@@ -99,6 +99,9 @@ use crate::extensions::teach_recording::{DurableTeachRecordingOwner, TeachRecord
 use crate::extensions::trays::extension::{start_trays_extension, HostTraysExtension};
 use crate::extensions::trays::trays_service::{TrayEvent, TraySubscription};
 use crate::extensions::transcript::{AsyncTask, SandPendingWakeStore, TranscriptRecoveryOutcome, TranscriptStore, merge_async_tasks};
+use crate::extensions::transcript::ack_obligations::{
+    build_ack_redrive_send_args, AckObligations, AckRedrivePreparation,
+};
 use crate::extensions::transcript::pending_wake_rearm::PENDING_WAKE_STALE_MAX_AGE_MS;
 use crate::extensions::webauthn_proxy::{
     WebAuthnBridgeError, WebAuthnProxyExtension, WebAuthnProxyExtensionConfig,
@@ -1057,6 +1060,7 @@ pub struct AndroidJsonHost {
     source_map: Arc<SandSourceMap>,
     memory: AndroidMemoryOwner,
     send_acknowledgements: Arc<Mutex<DurableSendAcknowledgementOwner>>,
+    visible_ack_obligations: Arc<AckObligations>,
     human_remote_outbound: Arc<Mutex<DurableHumanRemoteOutboundOwner>>,
     human_remote_resources: Arc<Mutex<DurableHumanRemoteResourceOutboundOwner>>,
     composer_drafts: Arc<Mutex<DurableComposerDraftOwner>>,
@@ -1436,6 +1440,10 @@ impl AndroidJsonHost {
             );
         }
         let send_acknowledgements = Arc::new(Mutex::new(send_acknowledgement_owner));
+        let visible_ack_obligations = Arc::new(AckObligations::new(&app_data_dir));
+        if let Some(account_fence) = account.session_fence() {
+            visible_ack_obligations.arm_boot_redrives(&account_fence, now_ms());
+        }
         let human_remote_outbound = Arc::new(Mutex::new(
             DurableHumanRemoteOutboundOwner::open(app_data_dir.join("human-remote-outbound.json"))
                 .unwrap_or_else(|error| {
@@ -1762,6 +1770,7 @@ impl AndroidJsonHost {
             source_map,
             memory: AndroidMemoryOwner::new(app_data_dir.join("memory")),
             send_acknowledgements,
+            visible_ack_obligations,
             human_remote_outbound,
             human_remote_resources,
             composer_drafts,
@@ -7250,14 +7259,21 @@ impl AndroidJsonHost {
                 "timestampMs":now_ms(),
                 "reconciled":true,
             });
-            if let Some(agent_id) = agent_id {
-                assistant_entry["agentId"] = Value::String(agent_id);
+            if let Some(agent_id) = agent_id.as_ref() {
+                assistant_entry["agentId"] = Value::String(agent_id.clone());
             }
             transcript
                 .append_entry_if_absent(assistant_entry)
                 .map_err(|error| {
                     format!("failed to persist reconciled assistant transcript entry: {error}")
                 })?;
+            if let Some(agent_id) = agent_id.as_deref() {
+                self.visible_ack_obligations
+                    .fulfill(&account_fence, agent_id)
+                    .map_err(|error| {
+                        format!("failed to settle reconciled visible acknowledgement: {error}")
+                    })?;
+            }
         }
 
         let reconciled = self
@@ -9752,6 +9768,22 @@ impl AndroidJsonHost {
             }
         }
 
+        let skip_ack_obligation = command
+            .get("skipAckObligation")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        let ack_redrive = command
+            .get("ackRedrive")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        let owes_visible_ack = !hidden && !skip_ack_obligation;
+        let settles_visible_ack = owes_visible_ack || ack_redrive;
+        if owes_visible_ack {
+            self.visible_ack_obligations
+                .record_send(&account_fence_for_attachment, &agent_id, now_ms() as f64)
+                .map_err(|error| format!("failed to persist visible acknowledgement obligation: {error}"))?;
+        }
+
         let request_source = normalize_turn_request_source(command.get("requestSource"))?;
         let requested_model = command
             .get("model")
@@ -9837,6 +9869,7 @@ impl AndroidJsonHost {
         let mode = self.mode;
         let turn_events = self.turn_events.clone();
         let transcript = self.transcript.clone();
+        let visible_ack_obligations = Arc::clone(&self.visible_ack_obligations);
         let turn_attachments = attachments.clone();
         let agent_attachment_root = self
             .agent_attachments
@@ -10524,6 +10557,13 @@ impl AndroidJsonHost {
                                         format!("failed to persist assistant transcript entry: {error}")
                                     })?;
                                 let _ = persist;
+                                if settles_visible_ack {
+                                    visible_ack_obligations
+                                        .fulfill(&account_fence_owned, &conversation_id_owned)
+                                        .map_err(|error| {
+                                            format!("failed to settle visible acknowledgement obligation: {error}")
+                                        })?;
+                                }
                                 agent_roster
                                     .lock()
                                     .map_err(|_| "canonical Android Agent roster lock poisoned".to_string())?
@@ -10565,6 +10605,23 @@ impl AndroidJsonHost {
                             );
                         }
                         ProductionTurnEvent::Failed { message } => {
+                            if settles_visible_ack {
+                                let observed = now_ms();
+                                visible_ack_obligations
+                                    .record_interrupt(
+                                        &account_fence_owned,
+                                        &conversation_id_owned,
+                                        observed as f64,
+                                    )
+                                    .map_err(|error| {
+                                        format!("failed to persist visible acknowledgement interruption: {error}")
+                                    })?;
+                                visible_ack_obligations.schedule_after_idle(
+                                    &account_fence_owned,
+                                    &conversation_id_owned,
+                                    observed,
+                                );
+                            }
                             turn_journal
                                 .lock()
                                 .map_err(|_| "turn journal lock poisoned".to_string())?
@@ -10590,6 +10647,23 @@ impl AndroidJsonHost {
                             );
                         }
                         ProductionTurnEvent::Cancelled => {
+                            if settles_visible_ack {
+                                let observed = now_ms();
+                                visible_ack_obligations
+                                    .record_interrupt(
+                                        &account_fence_owned,
+                                        &conversation_id_owned,
+                                        observed as f64,
+                                    )
+                                    .map_err(|error| {
+                                        format!("failed to persist visible acknowledgement interruption: {error}")
+                                    })?;
+                                visible_ack_obligations.schedule_after_idle(
+                                    &account_fence_owned,
+                                    &conversation_id_owned,
+                                    observed,
+                                );
+                            }
                             let _ = turn_journal
                                 .lock()
                                 .map_err(|_| "turn journal lock poisoned".to_string())?
@@ -11037,9 +11111,83 @@ impl AndroidJsonHost {
         Ok(())
     }
 
+    fn drain_visible_ack_redrive_once(&mut self) -> Result<(), String> {
+        let account_fence = self.current_turn_account_fence()?;
+        let now = now_ms();
+        let due = self
+            .visible_ack_obligations
+            .pending_for_account(&account_fence)
+            .into_iter()
+            .find_map(|obligation| {
+                self.visible_ack_obligations
+                    .take_due_redrive(&account_fence, &obligation.agent_id, now)
+                    .map(|trigger| (obligation, trigger))
+            });
+        let Some((obligation, trigger)) = due else {
+            return Ok(());
+        };
+
+        let agent_exists = self
+            .agents
+            .lock()
+            .map_err(|_| "canonical Android Agent roster lock poisoned".to_string())?
+            .get(&obligation.agent_id)
+            .is_some();
+        if !agent_exists {
+            let _ = self
+                .visible_ack_obligations
+                .prepare_redrive(&account_fence, &obligation.agent_id, false)
+                .map_err(|error| format!("failed to retire deleted-Agent acknowledgement obligation: {error}"))?;
+            return Ok(());
+        }
+
+        let (bearer_token, _session_mutation) = match self.bearer_token_for_turn() {
+            Ok(value) => value,
+            Err(_) => {
+                self.visible_ack_obligations
+                    .schedule_after_idle(&account_fence, &obligation.agent_id, now);
+                return Ok(());
+            }
+        };
+        let prepared = self
+            .visible_ack_obligations
+            .prepare_redrive(&account_fence, &obligation.agent_id, true)
+            .map_err(|error| format!("failed to prepare visible acknowledgement redrive: {error}"))?;
+        let AckRedrivePreparation::Ready(prepared) = prepared else {
+            return Ok(());
+        };
+        let command = build_ack_redrive_send_args(
+            &obligation.agent_id,
+            &prepared,
+            trigger,
+            now,
+        );
+        let request_id = command
+            .get("requestId")
+            .and_then(Value::as_str)
+            .ok_or("ack redrive command is missing requestId")?
+            .to_string();
+        let operation_id = self.next_operation_id(&request_id);
+        self.active_operations.insert(operation_id.clone());
+        if let Err(error) = self.queue_chat_turn(
+            &operation_id,
+            &request_id,
+            &command,
+            bearer_token,
+        ) {
+            self.active_operations.remove(&operation_id);
+            self.agent_turn_interruptions.unregister_operation(&operation_id);
+            self.visible_ack_obligations
+                .schedule_after_idle(&account_fence, &obligation.agent_id, now);
+            return Err(error);
+        }
+        Ok(())
+    }
+
     fn feature_receive(&mut self) -> Result<Value, String> {
         self.drain_mcp_auth_owner_events()?;
         self.drain_agent_wake_once()?;
+        self.drain_visible_ack_redrive_once()?;
         if let Some(event) = self.events.pop_front() {
             return Ok(event);
         }
