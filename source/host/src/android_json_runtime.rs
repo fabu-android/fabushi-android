@@ -1355,6 +1355,20 @@ impl AndroidJsonHost {
                 "errorRetryable":false,
             }));
         }
+        let managed_team_rules = Arc::new(crate::managed_team_rules::ManagedTeamRulesResolver::default());
+        if mode == AndroidHostMode::Production {
+            if let (Some(account_fence), Some(backend)) = (
+                account.session_fence(),
+                mcp_dashboard_backend.as_ref().cloned(),
+            ) {
+                let resolver = Arc::clone(&managed_team_rules);
+                let _ = std::thread::Builder::new()
+                    .name("android-managed-team-rules-initial".into())
+                    .spawn(move || {
+                        let _ = resolver.resolve_with(&account_fence, || backend.resolve_sand_team_rules());
+                    });
+            }
+        }
         Self {
             mode,
             device_id: device_id.clone(),
@@ -1390,7 +1404,7 @@ impl AndroidJsonHost {
             mcp_auth_watches,
             mcp_auth_owner,
             mcp_dashboard_backend,
-            managed_team_rules: Arc::new(crate::managed_team_rules::ManagedTeamRulesResolver::default()),
+            managed_team_rules,
             cross_user_core,
             _cross_user_experiment_subscription: cross_user_experiment_subscription,
             mcp_server_tool_settings,
