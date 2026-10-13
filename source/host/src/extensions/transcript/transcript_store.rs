@@ -322,6 +322,30 @@ impl TranscriptStore {
             .cloned()
     }
 
+    pub fn user_entry_by_client_nonce(
+        &self,
+        agent_id: &str,
+        client_nonce: &str,
+        account_fence: &str,
+    ) -> Option<Value> {
+        let agent_id = agent_id.trim();
+        let client_nonce = client_nonce.trim();
+        let account_fence = account_fence.trim();
+        if agent_id.is_empty() || client_nonce.is_empty() || account_fence.is_empty() {
+            return None;
+        }
+        self.entries
+            .iter()
+            .find(|entry| {
+                entry.get("kind").and_then(Value::as_str) == Some("message")
+                    && entry.get("role").and_then(Value::as_str) == Some("user")
+                    && entry.get("agentId").and_then(Value::as_str) == Some(agent_id)
+                    && entry.get("clientNonce").and_then(Value::as_str) == Some(client_nonce)
+                    && entry.get("accountFence").and_then(Value::as_str) == Some(account_fence)
+            })
+            .cloned()
+    }
+
     pub fn set_transcript(&mut self, entries: &[Value]) -> io::Result<()> {
         validate_entries(entries)?;
         let previous = std::mem::replace(&mut self.entries, entries.to_vec());
@@ -1171,6 +1195,41 @@ mod tests {
         assert!(store.get_transcript().is_empty());
         assert!(TranscriptStore::open(&path).unwrap().get_transcript().is_empty());
         assert!(!temporary_path(&path).exists());
+        let _ = fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
+    fn client_nonce_lookup_is_agent_and_account_fenced() {
+        let path = temp_path();
+        let mut store = TranscriptStore::open(&path).unwrap();
+        store
+            .append_entry(json!({
+                "id":"request-a",
+                "kind":"message",
+                "role":"user",
+                "agentId":"agent-a",
+                "accountFence":"account-a",
+                "clientNonce":"nonce-a",
+                "content":"hello"
+            }))
+            .unwrap();
+        assert_eq!(
+            store
+                .user_entry_by_client_nonce("agent-a", "nonce-a", "account-a")
+                .unwrap()["id"],
+            "request-a"
+        );
+        assert!(store
+            .user_entry_by_client_nonce("agent-b", "nonce-a", "account-a")
+            .is_none());
+        assert!(store
+            .user_entry_by_client_nonce("agent-a", "nonce-a", "account-b")
+            .is_none());
+        drop(store);
+        let reopened = TranscriptStore::open(&path).unwrap();
+        assert!(reopened
+            .user_entry_by_client_nonce("agent-a", "nonce-a", "account-a")
+            .is_some());
         let _ = fs::remove_dir_all(path.parent().unwrap());
     }
 
