@@ -27,3 +27,4 @@ pub mod box_copy_in_telemetry;
 pub mod experiments_diagnostic_telemetry;
 pub mod host_extension_diagnostic_telemetry;
 pub mod turn_empty_delivery_telemetry;
+pub mod sand_error_tags;
