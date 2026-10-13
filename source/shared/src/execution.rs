@@ -1,5 +1,7 @@
 const MAX_EXECUTION_ID_BYTES: usize = 256;
 const MAX_EXECUTION_INPUT_JSON_BYTES: usize = 64 * 1024;
+const MAX_EXECUTION_OUTPUT_JSON_BYTES: usize = 64 * 1024;
+pub const MAX_ANDROID_LOCAL_EXECUTION_TIMEOUT_MS: u64 = 30_000;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ExecutionTarget {
@@ -28,10 +30,10 @@ impl ExecutionRequest {
     pub fn validate(&self) -> Result<(), ExecutionError> {
         validate_execution_identity("operation_id", &self.operation_id)?;
         validate_execution_identity("capability_id", &self.capability_id)?;
-        if self.timeout_ms == 0 {
-            return Err(ExecutionError::InvalidRequest(
-                "timeout_ms must be greater than zero".into(),
-            ));
+        if self.timeout_ms == 0 || self.timeout_ms > MAX_ANDROID_LOCAL_EXECUTION_TIMEOUT_MS {
+            return Err(ExecutionError::InvalidRequest(format!(
+                "timeout_ms must be between 1 and {MAX_ANDROID_LOCAL_EXECUTION_TIMEOUT_MS}"
+            )));
         }
         if self.input_json.len() > MAX_EXECUTION_INPUT_JSON_BYTES {
             return Err(ExecutionError::InvalidRequest(
@@ -60,6 +62,20 @@ fn validate_execution_identity(label: &str, value: &str) -> Result<(), Execution
 pub struct ExecutionResult {
     pub operation_id: String,
     pub output_json: String,
+}
+
+impl ExecutionResult {
+    pub fn validate(&self) -> Result<(), ExecutionError> {
+        validate_execution_identity("operation_id", &self.operation_id)?;
+        if self.output_json.len() > MAX_EXECUTION_OUTPUT_JSON_BYTES {
+            return Err(ExecutionError::InvalidRequest(
+                "output_json exceeds the bounded execution payload size".into(),
+            ));
+        }
+        serde_json::from_str::<serde_json::Value>(&self.output_json)
+            .map_err(|_| ExecutionError::InvalidRequest("output_json must be valid JSON".into()))?;
+        Ok(())
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -107,6 +123,36 @@ mod tests {
         invalid = request("{}".into());
         invalid.capability_id = "x".repeat(MAX_EXECUTION_ID_BYTES + 1);
         assert!(invalid.validate().is_err());
+    }
+
+    #[test]
+    fn execution_request_rejects_unbounded_local_timeout() {
+        let mut value = request("{}".into());
+        value.timeout_ms = MAX_ANDROID_LOCAL_EXECUTION_TIMEOUT_MS + 1;
+        assert!(matches!(
+            value.validate(),
+            Err(ExecutionError::InvalidRequest(message))
+                if message.contains("timeout_ms must be between")
+        ));
+    }
+
+    #[test]
+    fn execution_result_rejects_invalid_or_unbounded_json() {
+        let invalid = ExecutionResult {
+            operation_id: "operation-1".into(),
+            output_json: "{".into(),
+        };
+        assert!(invalid.validate().is_err());
+
+        let too_large = ExecutionResult {
+            operation_id: "operation-1".into(),
+            output_json: format!(r#"{{"value":"{}"}}"#, "x".repeat(MAX_EXECUTION_OUTPUT_JSON_BYTES)),
+        };
+        assert!(matches!(
+            too_large.validate(),
+            Err(ExecutionError::InvalidRequest(message))
+                if message.contains("bounded execution payload")
+        ));
     }
 
     #[test]
