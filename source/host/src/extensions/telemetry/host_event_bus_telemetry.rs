@@ -6,6 +6,23 @@ use super::HostTelemetryProjection;
 
 pub const HOST_EVENT_BUS_EVENT: &str = "sand.host.event_bus";
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HostEventFailureReport {
+    pub kind: String,
+    pub topic: Option<String>,
+    pub error_class: String,
+}
+
+impl From<&crate::host_event_bus::HostEventFailure> for HostEventFailureReport {
+    fn from(value: &crate::host_event_bus::HostEventFailure) -> Self {
+        Self {
+            kind: value.kind.to_string(),
+            topic: value.topic.clone(),
+            error_class: value.error_class.to_string(),
+        }
+    }
+}
+
 pub fn host_event_bus_telemetry(report: &HostEventFailure) -> HostTelemetryProjection {
     let mut metadata = BTreeMap::from([
         ("kind".into(), report.kind.clone()),
