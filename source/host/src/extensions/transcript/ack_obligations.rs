@@ -310,6 +310,29 @@ impl AckObligations {
         })
     }
 
+    /// Restore a redrive budget only if no newer durable mutation replaced the prepared row.
+    pub fn rollback_redrive_attempt_if_unchanged(
+        &self,
+        account_fence: &str,
+        agent_id: &str,
+        previous: &AckObligation,
+        prepared: &AckObligation,
+    ) -> io::Result<bool> {
+        if previous.account_fence != account_fence
+            || previous.agent_id != agent_id
+            || prepared.account_fence != account_fence
+            || prepared.agent_id != agent_id
+        {
+            return Ok(false);
+        }
+        if self.store.get(account_fence, agent_id).as_ref() != Some(prepared) {
+            return Ok(false);
+        }
+        self.store
+            .restore(Some(previous.clone()), account_fence, agent_id)?;
+        Ok(true)
+    }
+
     pub fn clear_account(&self, account_fence: &str) -> io::Result<usize> {
         if let Ok(mut schedules) = self.redrive_schedules.lock() {
             schedules.retain(|(fence, _), _| fence != account_fence);
@@ -396,6 +419,82 @@ mod tests {
             Some(AckRedriveTrigger::Idle),
         );
         assert_eq!(owner.pending_for_account("acct-a").len(), 1);
+    }
+
+    #[test]
+    fn failed_redrive_dispatch_restores_budget_only_if_prepared_snapshot_is_current() {
+        let root = tempfile::tempdir().unwrap();
+        let owner = AckObligations::new(root.path());
+        let previous = owner
+            .record_send("acct-a", "agent-a", 1.0)
+            .unwrap()
+            .obligation;
+        let prepared = match owner
+            .prepare_redrive("acct-a", "agent-a", true)
+            .unwrap()
+        {
+            AckRedrivePreparation::Ready(prepared) => prepared,
+            other => panic!("expected ready redrive, got {other:?}"),
+        };
+        assert_eq!(prepared.redrive_attempts, 1.0);
+        assert!(
+            owner
+                .rollback_redrive_attempt_if_unchanged(
+                    "acct-a",
+                    "agent-a",
+                    &previous,
+                    &prepared,
+                )
+                .unwrap()
+        );
+        assert_eq!(
+            owner.pending_for_account("acct-a")[0].redrive_attempts,
+            0.0
+        );
+    }
+
+    #[test]
+    fn redrive_rollback_never_overwrites_newer_or_foreign_account_state() {
+        let root = tempfile::tempdir().unwrap();
+        let owner = AckObligations::new(root.path());
+        let previous = owner
+            .record_send("acct-a", "agent-a", 1.0)
+            .unwrap()
+            .obligation;
+        let prepared = match owner
+            .prepare_redrive("acct-a", "agent-a", true)
+            .unwrap()
+        {
+            AckRedrivePreparation::Ready(prepared) => prepared,
+            other => panic!("expected ready redrive, got {other:?}"),
+        };
+        owner
+            .record_interrupt("acct-a", "agent-a", 2.0)
+            .unwrap();
+        assert!(
+            !owner
+                .rollback_redrive_attempt_if_unchanged(
+                    "acct-a",
+                    "agent-a",
+                    &previous,
+                    &prepared,
+                )
+                .unwrap()
+        );
+        let newer = owner.pending_for_account("acct-a")[0].clone();
+        assert_eq!(newer.redrive_attempts, 1.0);
+        assert_eq!(newer.last_interrupt_at_ms, Some(2.0));
+        assert!(
+            !owner
+                .rollback_redrive_attempt_if_unchanged(
+                    "acct-b",
+                    "agent-a",
+                    &previous,
+                    &prepared,
+                )
+                .unwrap()
+        );
+        assert_eq!(owner.pending_for_account("acct-a")[0], newer);
     }
 
     #[test]
