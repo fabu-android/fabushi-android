@@ -21,6 +21,8 @@ pub struct HumanRemoteOutboundRecord {
     pub client_request_id: String,
     pub text: String,
     pub reply_to_message_id: Option<String>,
+    #[serde(default)]
+    pub attachment_resource_ids: Vec<String>,
     pub phase: HumanRemoteOutboundPhase,
     pub generation: u64,
     pub server_message_id: Option<String>,
@@ -80,6 +82,29 @@ impl DurableHumanRemoteOutboundOwner {
         text: &str,
         reply_to_message_id: Option<&str>,
     ) -> Result<HumanRemoteOutboundRecord, String> {
+        self.begin_with_attachments(
+            account_slot,
+            account_fence,
+            actor_id,
+            peer_actor_id,
+            client_request_id,
+            text,
+            reply_to_message_id,
+            &[],
+        )
+    }
+
+    pub fn begin_with_attachments(
+        &mut self,
+        account_slot: Option<&str>,
+        account_fence: &str,
+        actor_id: &str,
+        peer_actor_id: &str,
+        client_request_id: &str,
+        text: &str,
+        reply_to_message_id: Option<&str>,
+        attachment_resource_ids: &[String],
+    ) -> Result<HumanRemoteOutboundRecord, String> {
         for (value, label) in [
             (account_fence, "account fence"),
             (actor_id, "actor id"),
@@ -91,8 +116,21 @@ impl DurableHumanRemoteOutboundOwner {
         if actor_id == peer_actor_id {
             return Err("Human remote outbound peer must differ from the sender".into());
         }
-        if text.is_empty() || text.len() > 2 * 1024 * 1024 {
-            return Err("Human remote outbound text is invalid".into());
+        if text.len() > 2 * 1024 * 1024 || (text.is_empty() && attachment_resource_ids.is_empty()) {
+            return Err("Human remote outbound requires text or attachments".into());
+        }
+        if attachment_resource_ids.len() > 32 {
+            return Err("Human remote outbound attachment list is too large".into());
+        }
+        for resource_id in attachment_resource_ids {
+            validate_identity(resource_id, "attachment resource id")?;
+            if resource_id.len() > 128
+                || resource_id.contains('/')
+                || resource_id.contains('\\')
+                || resource_id.chars().any(char::is_control)
+            {
+                return Err("attachment resource id is invalid".into());
+            }
         }
         if let Some(reply) = reply_to_message_id {
             validate_identity(reply, "reply message id")?;
@@ -102,6 +140,7 @@ impl DurableHumanRemoteOutboundOwner {
             if existing.peer_actor_id == peer_actor_id
                 && existing.text == text
                 && existing.reply_to_message_id.as_deref() == reply_to_message_id
+                && existing.attachment_resource_ids == attachment_resource_ids
             {
                 return Ok(existing.clone());
             }
@@ -115,6 +154,7 @@ impl DurableHumanRemoteOutboundOwner {
             client_request_id: client_request_id.to_string(),
             text: text.to_string(),
             reply_to_message_id: reply_to_message_id.map(str::to_string),
+            attachment_resource_ids: attachment_resource_ids.to_vec(),
             phase: HumanRemoteOutboundPhase::Pending,
             generation: self.state.generation,
             server_message_id: None,
@@ -344,6 +384,51 @@ mod tests {
                 "client-a",
                 "different",
                 None,
+            )
+            .is_err());
+    }
+
+    #[test]
+    fn attachment_resource_ids_are_part_of_idempotency_identity() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut owner =
+            DurableHumanRemoteOutboundOwner::open(dir.path().join("human-outbound.json")).unwrap();
+        let resources = vec!["resource-a".to_string()];
+        let first = owner
+            .begin_with_attachments(
+                Some("slot-a"),
+                "session:a",
+                "human:self",
+                "human:peer",
+                "client-a",
+                "",
+                None,
+                &resources,
+            )
+            .unwrap();
+        assert_eq!(first.attachment_resource_ids, resources);
+        assert!(owner
+            .begin_with_attachments(
+                Some("slot-a"),
+                "session:a",
+                "human:self",
+                "human:peer",
+                "client-a",
+                "",
+                None,
+                &["resource-b".to_string()],
+            )
+            .is_err());
+        assert!(owner
+            .begin_with_attachments(
+                Some("slot-a"),
+                "session:a",
+                "human:self",
+                "human:peer",
+                "client-b",
+                "",
+                None,
+                &[],
             )
             .is_err());
     }
