@@ -19,3 +19,7 @@ mod android_projection_tests;
 pub mod disk_pressure_telemetry;
 pub mod host_diagnostic_telemetry;
 pub mod search_index_health_telemetry;
+pub mod automation_shadow_prune_telemetry;
+pub mod bot_block_telemetry;
+pub mod conversation_gc_telemetry;
+pub mod mcp_discovery_telemetry;
