@@ -1,3 +1,4 @@
+use super::xuser_departure_obligations::XuserDepartureRelay;
 use crate::notify_drain_gate::NotifyDrainGate;
 use serde_json::Value;
 use std::collections::BTreeSet;
@@ -276,6 +277,25 @@ impl XuserRelayClient {
     pub fn remove_deleted_agent(&self, agent_id: &str) -> Result<Value, String> {
         self.remove_deleted_agent_raw(agent_id)
             .map_err(|error| describe_relay_error(&error))
+    }
+}
+
+impl XuserDepartureRelay for XuserRelayClient {
+    fn leave_room(&self, room_id: &str) -> Result<(), String> {
+        match self.leave_room_with_target_raw(room_id, None) {
+            Ok(_) => Ok(()),
+            // The desired remote state already exists; clearing the durable obligation is safe.
+            Err(error) if error.status == 404 => Ok(()),
+            Err(error) => Err(describe_relay_error(&error)),
+        }
+    }
+
+    fn remove_deleted_agent(&self, agent_id: &str) -> Result<(), String> {
+        match self.remove_deleted_agent_raw(agent_id) {
+            Ok(_) => Ok(()),
+            Err(error) if error.status == 404 => Ok(()),
+            Err(error) => Err(describe_relay_error(&error)),
+        }
     }
 }
 
