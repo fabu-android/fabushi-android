@@ -3860,10 +3860,26 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
             )
         } catch (error: Throwable) {
             runCatching { computerRebuildOwner.markRequestOutcomeUnknown(accountEpoch, requestId) }
+            reportComputerRebuildDecisionTelemetry(
+                requestId = requestId,
+                decision = "outcome-unknown",
+                preserveData = preserveData,
+                forceRecreate = forceRecreate,
+                forceUpdate = forceUpdate,
+                hasOperationId = false,
+            )
             throw error
         }
         if (!reply.optBoolean("started", false)) {
             computerRebuildOwner.rejectRequest(accountEpoch, requestId)
+            reportComputerRebuildDecisionTelemetry(
+                requestId = requestId,
+                decision = "rejected",
+                preserveData = preserveData,
+                forceRecreate = forceRecreate,
+                forceUpdate = forceUpdate,
+                hasOperationId = false,
+            )
             return JSONObject(reply.toString())
                 .put("requestId", requestId)
                 .put("accepted", false)
@@ -3871,6 +3887,14 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
         val operationId = reply.optString("operationId").trim()
         if (operationId.isEmpty()) {
             computerRebuildOwner.markRequestOutcomeUnknown(accountEpoch, requestId)
+            reportComputerRebuildDecisionTelemetry(
+                requestId = requestId,
+                decision = "outcome-unknown",
+                preserveData = preserveData,
+                forceRecreate = forceRecreate,
+                forceUpdate = forceUpdate,
+                hasOperationId = false,
+            )
             error("Computer rebuild started without a stable operation identity")
         }
         computerRebuildOwner.acceptRequest(
@@ -3883,10 +3907,46 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
                 ComputerRebuildKind.UPDATE
             },
         )
+        reportComputerRebuildDecisionTelemetry(
+            requestId = requestId,
+            decision = "accepted",
+            preserveData = preserveData,
+            forceRecreate = forceRecreate,
+            forceUpdate = forceUpdate,
+            hasOperationId = true,
+        )
         resumeComputerRebuildMigrationIfNeeded()
         return JSONObject(reply.toString())
             .put("requestId", requestId)
             .put("accepted", true)
+    }
+
+    private fun reportComputerRebuildDecisionTelemetry(
+        requestId: String,
+        decision: String,
+        preserveData: Boolean,
+        forceRecreate: Boolean,
+        forceUpdate: Boolean,
+        hasOperationId: Boolean,
+    ) {
+        val kind = when {
+            forceUpdate -> "update"
+            forceRecreate || !preserveData -> "reset"
+            else -> "update"
+        }
+        runCatching {
+            host.request(
+                "feature.telemetry.boxRecreateDecided",
+                JSONObject()
+                    .put("requestId", requestId)
+                    .put("decision", decision)
+                    .put("kind", kind)
+                    .put("preserveData", preserveData)
+                    .put("forceRecreate", forceRecreate)
+                    .put("forceUpdate", forceUpdate)
+                    .put("hasOperationId", hasOperationId),
+            )
+        }
     }
 
     override fun computerRebuildStatus(): JSONObject {
