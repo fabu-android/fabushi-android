@@ -115,6 +115,7 @@ use crate::extensions::transcript::{AsyncTask, SandPendingWakeStore, TranscriptR
 use crate::extensions::transcript::ack_obligations::{
     build_ack_redrive_send_args, AckObligations, AckRedrivePreparation,
 };
+use crate::extensions::transcript::agent_lifecycle::kickstart_prompt_for_purpose;
 use crate::extensions::transcript::pending_wake_rearm::PENDING_WAKE_STALE_MAX_AGE_MS;
 use crate::extensions::webauthn_proxy::{
     WebAuthnBridgeError, WebAuthnProxyExtension, WebAuthnProxyExtensionConfig,
@@ -3877,7 +3878,64 @@ impl AndroidJsonHost {
                         entry.get("agentId").and_then(Value::as_str) == Some(agent.id.as_str())
                     })
                     .collect::<Vec<_>>();
-                Ok(json!({"agent": agent.as_json(), "transcript": transcript}))
+                let kickstart_requested = params
+                    .get("isKickstartRequested")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false)
+                    && !introduction_suppressed;
+                let mut kickstart_operation_id = Value::Null;
+                if kickstart_requested {
+                    let request_id = format!("agent-kickstart:{}:{}", agent.id, agent.created_at);
+                    let operation_id = self.next_operation_id(&request_id);
+                    match self.bearer_token_for_turn() {
+                        Ok((bearer_token, _session_mutation)) => {
+                            self.active_operations.insert(operation_id.clone());
+                            let command = json!({
+                                "type":"chat.send",
+                                "requestId":request_id,
+                                "agentId":agent.id,
+                                "model":"default",
+                                "text":kickstart_prompt_for_purpose(agent.purpose.as_deref()),
+                                "hidden":true,
+                                "appendUserMessage":false,
+                                "awaitTurn":false,
+                                "requestSource":"agent-kickstart",
+                                "skipAckObligation":true
+                            });
+                            match self.queue_chat_turn(
+                                &operation_id,
+                                command.get("requestId").and_then(Value::as_str).unwrap_or_default(),
+                                &command,
+                                bearer_token,
+                            ) {
+                                Ok(()) => {
+                                    kickstart_operation_id = Value::String(operation_id);
+                                }
+                                Err(error) => {
+                                    self.active_operations.remove(&operation_id);
+                                    self.agent_turn_interruptions.unregister_operation(&operation_id);
+                                    self.events.push_back(json!({
+                                        "type":"agent.kickstart.deferred",
+                                        "agentId":agent.id,
+                                        "message":error,
+                                    }));
+                                }
+                            }
+                        }
+                        Err(error) => {
+                            self.events.push_back(json!({
+                                "type":"agent.kickstart.deferred",
+                                "agentId":agent.id,
+                                "message":error,
+                            }));
+                        }
+                    }
+                }
+                Ok(json!({
+                    "agent": agent.as_json(),
+                    "transcript": transcript,
+                    "kickstartOperationId": kickstart_operation_id,
+                }))
             }
             "createGroup" => {
                 let name = required_string(params, "name")?;
@@ -10323,6 +10381,7 @@ impl AndroidJsonHost {
         }
 
         let request_source = normalize_turn_request_source(command.get("requestSource"))?;
+        let created_agent_kickstart = request_source.as_deref() == Some("agent-kickstart");
         let requested_model = command
             .get("model")
             .and_then(Value::as_str)
@@ -11125,6 +11184,13 @@ impl AndroidJsonHost {
                                     .map_err(|_| "canonical Android Agent roster lock poisoned".to_string())?
                                     .mark_activity(&conversation_id_owned, now_ms())
                                     .map_err(|error| format!("failed to persist Agent unread activity: {error}"))?;
+                                if created_agent_kickstart {
+                                    agent_roster
+                                        .lock()
+                                        .map_err(|_| "canonical Android Agent roster lock poisoned".to_string())?
+                                        .set_introduction_pending(&conversation_id_owned, false)
+                                        .map_err(|error| format!("failed to settle Agent introduction: {error}"))?;
+                                }
                                 push_turn_event(
                                     &turn_events,
                                     json!({
