@@ -1,3 +1,7 @@
+use base64::{
+    engine::general_purpose::{URL_SAFE, URL_SAFE_NO_PAD},
+    Engine as _,
+};
 use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::Arc;
@@ -79,6 +83,16 @@ pub struct ProductionCrossUserCore {
 
 
 impl ProductionCrossUserCore {
+    /// Refresh the canonical shared-room human identity from the same dedicated
+    /// Sand credential owner used by the relay. Fabushi account bearers never
+    /// enter this boundary.
+    pub fn refresh_self_auth_id(&self) -> Result<Option<String>, String> {
+        let token = self.credentials.credentials()?.access_token;
+        let subject = jwt_subject_from_access_token(&token);
+        self.service.set_self_auth_id(subject.clone());
+        Ok(subject)
+    }
+
     pub fn sharing_state(&self) -> super::xuser_sharing_service::SandSharingState {
         self.extension.get_sharing_state()
     }
@@ -103,6 +117,7 @@ pub fn build_xuser_core(
     app_data_dir: &Path,
 ) -> Result<ProductionCrossUserCore, String> {
     let backend_url = credentials.configuration().backend_url;
+    let identity_credentials = Arc::clone(&credentials);
     let relay = build_xuser_relay_client(credentials, transport)?;
     let service = Arc::new(SandXuserSharingService::new(Arc::clone(&relay)));
     let weak_service = Arc::downgrade(&service);
@@ -136,13 +151,16 @@ pub fn build_xuser_core(
         &backend_url,
         env,
     ));
-    Ok(ProductionCrossUserCore {
+    let core = ProductionCrossUserCore {
+        credentials: identity_credentials,
         relay,
         service,
         relay_driver,
         extension,
         departures,
-    })
+    };
+    core.refresh_self_auth_id()?;
+    Ok(core)
 }
 
 pub fn build_production_xuser_core(
@@ -157,6 +175,21 @@ pub fn build_production_xuser_core(
         configuration.box_namespace,
     )?);
     build_xuser_core(credentials, transport, env, app_data_dir)
+}
+
+fn jwt_subject_from_access_token(token: &str) -> Option<String> {
+    let encoded = token.split('.').nth(1)?;
+    let payload = URL_SAFE_NO_PAD
+        .decode(encoded)
+        .or_else(|_| URL_SAFE.decode(encoded))
+        .ok()?;
+    serde_json::from_slice::<serde_json::Value>(&payload)
+        .ok()?
+        .get("sub")
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
 }
 
 fn system_now_ms() -> u64 {
@@ -336,6 +369,52 @@ mod tests {
             !core.extension.is_enabled() || !core.service.is_started(),
             "upgrade preparation must not restart sharing work"
         );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn core_refreshes_self_auth_id_from_dedicated_sand_jwt() {
+        struct JwtCredentials {
+            subject: Mutex<String>,
+        }
+        impl SandMcpCredentialProvider for JwtCredentials {
+            fn configuration(&self) -> crate::mcp_auth::dashboard_mcp_auth_backend::SandMcpBackendConfiguration {
+                crate::mcp_auth::dashboard_mcp_auth_backend::SandMcpBackendConfiguration {
+                    backend_url: "https://sand.example".into(),
+                    client_version: "1.0.0".into(),
+                    box_namespace: "prod".into(),
+                }
+            }
+
+            fn credentials(&self) -> Result<SandMcpBackendCredentials, String> {
+                let subject = self.subject.lock().unwrap().clone();
+                let payload = URL_SAFE_NO_PAD.encode(
+                    serde_json::to_vec(&json!({"sub":subject})).unwrap()
+                );
+                Ok(SandMcpBackendCredentials {
+                    backend_url: "https://sand.example".into(),
+                    access_token: format!("header.{payload}.signature"),
+                    machine_id: "machine-1".into(),
+                    client_version: "1.0.0".into(),
+                    box_namespace: "prod".into(),
+                })
+            }
+        }
+
+        let credentials = Arc::new(JwtCredentials {
+            subject: Mutex::new("auth-a".into()),
+        });
+        let provider: Arc<dyn SandMcpCredentialProvider> = credentials.clone();
+        let transport: Arc<dyn XuserRelayTransport> = Arc::new(CapturingTransport {
+            tokens: Mutex::new(Vec::new()),
+        });
+        let root = test_root("identity");
+        let core = build_xuser_core(provider, transport, &BTreeMap::new(), &root).unwrap();
+        assert_eq!(core.sharing_state().self_auth_id.as_deref(), Some("auth-a"));
+
+        *credentials.subject.lock().unwrap() = "auth-b".into();
+        assert_eq!(core.refresh_self_auth_id().unwrap().as_deref(), Some("auth-b"));
+        assert_eq!(core.sharing_state().self_auth_id.as_deref(), Some("auth-b"));
         let _ = std::fs::remove_dir_all(root);
     }
 
