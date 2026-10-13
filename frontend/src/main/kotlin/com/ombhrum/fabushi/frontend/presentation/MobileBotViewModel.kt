@@ -3010,6 +3010,28 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
+    private suspend fun reconcilePendingApprovalAfterHostRestore(
+        agentId: String,
+        accountSlot: String?,
+        scopeGeneration: Long,
+    ) {
+        if (!isCurrentSendScope(agentId, accountSlot, scopeGeneration)) return
+        val approval = mutableState.value.pendingApproval ?: return
+        val pending = withContext(Dispatchers.IO) {
+            runCatching { coordinator.featureApprovalStatus(approval.approvalId) }
+        }.getOrNull() ?: return
+        if (!isCurrentSendScope(agentId, accountSlot, scopeGeneration)) return
+        val current = mutableState.value
+        if (!pending && current.pendingApproval?.approvalId == approval.approvalId) {
+            commitState(
+                current.copy(
+                    pendingApproval = null,
+                    approvalCleanup = MobileApprovalCleanupState(),
+                ),
+            )
+        }
+    }
+
     private suspend fun refreshDurableSendProjection(
         agentId: String,
         accountSlot: String?,
@@ -3050,6 +3072,7 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
                 },
             ),
         )
+        reconcilePendingApprovalAfterHostRestore(agentId, accountSlot, scopeGeneration)
     }
 
     private fun sendMiniApp(pluginId: String, text: String, operationId: String) {
