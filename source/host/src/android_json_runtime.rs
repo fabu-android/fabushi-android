@@ -15989,6 +15989,7 @@ mod tests {
     fn client_side_tool_v2_producer_rotates_epoch_on_account_logout() {
         let root = tempfile::tempdir().unwrap();
         let mut host = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+        sign_in_test_account(&mut host);
         let first = host
             .client_side_tool_v2
             .publish(
@@ -16348,7 +16349,10 @@ mod tests {
         let prepared = host
             .plugin_variable_prepare(&json!({
                 "pluginId":"plugin-a",
-                "schema":{"fields":[{"key":"token","type":"string","secret":true}]},
+                "schema":{
+                    "properties":{"token":{"format":"password"}},
+                    "required":["token"]
+                },
                 "values":{"token":"old-account-secret"},
                 "teamConfigured":false
             }))
@@ -17872,12 +17876,19 @@ mod tests {
         let app_data = tempfile::tempdir().unwrap();
         let mut host = AndroidJsonHost::new(app_data.path(), AndroidHostMode::Test);
         sign_in_test_account(&mut host);
+        let agent = host
+            .dispatch(
+                "createAgent",
+                &json!({"name":"Calendar Agent","description":"resume MCP auth"}),
+            )
+            .unwrap();
+        let agent_id = agent["agent"]["id"].as_str().unwrap().to_string();
         let completion = McpAuthWatchCompletion {
             generation: 7,
             server_id: "17".into(),
             server_name: "Calendar".into(),
             account_key: "work".into(),
-            requesting_agent_id: Some("agent-a".into()),
+            requesting_agent_id: Some(agent_id.clone()),
             outcome: "completed",
         };
         host.queue_mcp_auth_resume_turn(&completion).unwrap();
@@ -18717,10 +18728,19 @@ export function apply(ctx) {
             None,
             "successful production owner must commit rather than release the reminder claim"
         );
+        let current_agent = host
+            .agents
+            .lock()
+            .unwrap()
+            .get(&agent.id)
+            .expect("completed turn keeps canonical Agent");
         let revision = crate::sha256::sha256_hex(
             format!(
                 "{}\n{}\n{}\n{}",
-                agent.id, agent.name, agent.description, agent.updated_at
+                current_agent.id,
+                current_agent.name,
+                current_agent.description,
+                current_agent.updated_at
             )
             .as_bytes(),
         );
@@ -22343,6 +22363,9 @@ mod automation_event_batch_wiring_tests {
             .unwrap();
         assert_eq!(duplicate["duplicate"], true);
 
+        thread::sleep(Duration::from_millis(
+            crate::automation_runtime::AUTOMATION_EVENT_DEBOUNCE_MS + 25,
+        ));
         let started = host
             .dispatch(
                 "feature.automation.event.start",
