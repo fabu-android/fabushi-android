@@ -2434,6 +2434,20 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
 
     override fun featureInterrupt(params: JSONObject) = host.request("feature.interrupt", params)
     override fun featureApprovalResolve(params: JSONObject) = host.request("feature.approval.resolve", params)
+    override fun featureApprovalStatus(approvalId: String): Boolean {
+        require(approvalId.isNotBlank()) { "Approval status requires a non-empty approval id" }
+        val reply = host.request(
+            "feature.approval.status",
+            JSONObject().put("approvalId", approvalId),
+        )
+        check(reply.optString("approvalId") == approvalId) {
+            "Approval status returned a mismatched approval identity"
+        }
+        check(reply.has("pending") && reply.opt("pending") is Boolean) {
+            "Approval status returned a malformed pending flag"
+        }
+        return reply.getBoolean("pending")
+    }
     override fun transcriptSnapshot(): JSONArray =
         host.requestValue("feature.transcript.snapshot") as? JSONArray ?: JSONArray()
 
