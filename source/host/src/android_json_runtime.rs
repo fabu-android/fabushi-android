@@ -865,6 +865,7 @@ pub struct AndroidJsonHost {
     experiments: Arc<HostExperimentsExtension>,
     _session_policy_bindings: AndroidSessionPolicyBindings,
     box_handoff: Arc<Mutex<AndroidBoxHandoffOwner>>,
+    agent_channels_root: PathBuf,
     detected_time_zone: Arc<Mutex<Option<String>>>,
     auto_review_settings: Arc<Mutex<DurableAutoReviewSettings>>,
     transcript: Arc<Mutex<TranscriptStore>>,
@@ -1509,6 +1510,7 @@ impl AndroidJsonHost {
             experiments,
             _session_policy_bindings: session_policy_bindings,
             box_handoff,
+            agent_channels_root: app_data_dir.join("agent-channels"),
             detected_time_zone: Arc::new(Mutex::new(None)),
             auto_review_settings,
             transcript,
@@ -2926,6 +2928,9 @@ impl AndroidJsonHost {
             "feature.agent.avatar.generate" => self.agent_avatar_generate(params),
             "feature.agent.rosterMutation" => self.agent_roster_mutation(params),
             "feature.agent.sidebarSections" => self.agent_sidebar_sections(),
+            "feature.agent.channels.listMetadata" => self.agent_channels_list_metadata(params),
+            "feature.agent.channels.writeMetadata" => self.agent_channels_write_metadata(params),
+            "feature.agent.channels.removeMetadata" => self.agent_channels_remove_metadata(params),
             "feature.agent.upgradeQuiesce" => self.agent_upgrade_quiesce(params),
             "feature.call.create" => self.human_call_create(params),
             "feature.call.list" => self.human_call_list(params),
@@ -5252,6 +5257,63 @@ impl AndroidJsonHost {
                 operation_id,
                 mutation,
             )
+    }
+
+    fn agent_channel_store(
+        &self,
+        account_fence: &str,
+        agent_id: &str,
+    ) -> Result<crate::extensions::session::channel_store::FileChannelStore, String> {
+        if self
+            .agents
+            .lock()
+            .map_err(|_| "canonical Android Agent roster lock poisoned".to_string())?
+            .get(agent_id)
+            .is_none()
+        {
+            return Err("agent not found".into());
+        }
+        let account_key = crate::sha256::sha256_hex(account_fence.as_bytes());
+        let agent_key = crate::sha256::sha256_hex(agent_id.as_bytes());
+        Ok(crate::extensions::session::channel_store::FileChannelStore::new(
+            self.agent_channels_root
+                .join(account_key)
+                .join(agent_key)
+                .join("channels"),
+        ))
+    }
+
+    fn agent_channels_list_metadata(&self, params: &Value) -> Result<Value, String> {
+        let account_fence = self.current_turn_account_fence()?;
+        let agent_id = required_string(params, "agentId")?;
+        serde_json::to_value(
+            self.agent_channel_store(&account_fence, agent_id)?
+                .list_connections(),
+        )
+        .map_err(|error| format!("failed to project Android Agent channel metadata: {error}"))
+    }
+
+    fn agent_channels_write_metadata(&self, params: &Value) -> Result<Value, String> {
+        let account_fence = self.current_turn_account_fence()?;
+        let agent_id = required_string(params, "agentId")?;
+        let platform = required_string(params, "platform")?;
+        let label = params.get("label").and_then(Value::as_str).unwrap_or("");
+        let written = self
+            .agent_channel_store(&account_fence, agent_id)?
+            .write_metadata(platform, label)
+            .map_err(|error| format!("failed to persist Android Agent channel metadata: {error}"))?;
+        Ok(json!({"written":written,"platform":platform}))
+    }
+
+    fn agent_channels_remove_metadata(&self, params: &Value) -> Result<Value, String> {
+        let account_fence = self.current_turn_account_fence()?;
+        let agent_id = required_string(params, "agentId")?;
+        let platform = required_string(params, "platform")?;
+        let removed = self
+            .agent_channel_store(&account_fence, agent_id)?
+            .remove(platform)
+            .map_err(|error| format!("failed to remove Android Agent channel metadata: {error}"))?;
+        Ok(json!({"removed":removed,"platform":platform}))
     }
 
     fn agent_sidebar_sections(&mut self) -> Result<Value, String> {
