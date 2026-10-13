@@ -295,7 +295,9 @@ impl FileAndroidStructuredLogSpill {
         }
 
         let normalized = state.normalize(now_ms);
-        if normalized.checkpoint.records.is_empty() && !normalized.has_pending_drops() {
+        if normalized.checkpoint.records.is_empty()
+            && !normalized.has_pending_drops()
+            && normalized.checkpoint.recovery_ids.is_empty() {
             self.clear()?;
             return Ok(SpillLoad::Empty);
         }
@@ -317,7 +319,9 @@ impl FileAndroidStructuredLogSpill {
             ));
         }
         let normalized = state.clone().normalize(now_ms);
-        if normalized.checkpoint.records.is_empty() && !normalized.has_pending_drops() {
+        if normalized.checkpoint.records.is_empty()
+            && !normalized.has_pending_drops()
+            && normalized.checkpoint.recovery_ids.is_empty() {
             self.clear()?;
             return Ok(None);
         }
