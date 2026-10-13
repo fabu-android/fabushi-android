@@ -602,7 +602,6 @@ fn now_ms_i64() -> i64 {
 mod tests {
     use super::*;
     use crate::messaging_service::AndroidMessagingService;
-    use crate::extensions::transcript::transcript_store::TranscriptStore;
     use std::fs;
 
     struct EmptyTools;
