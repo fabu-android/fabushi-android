@@ -2,7 +2,8 @@ use serde::{Deserialize, Serialize};
 use std::{
     fs::{self, File},
     io::{self, Write},
-    path::PathBuf,
+    path::{Path, PathBuf},
+    time::{SystemTime, UNIX_EPOCH},
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -283,13 +284,24 @@ impl ConversationChildStore {
     pub fn open(path: impl Into<PathBuf>) -> io::Result<Self> {
         let path = path.into();
         let state = match fs::read(&path) {
-            Ok(bytes) => serde_json::from_slice(&bytes).map_err(|error| {
-                io::Error::new(io::ErrorKind::InvalidData, format!("invalid conversation-child store: {error}"))
-            })?,
+            Ok(bytes) => match decode_child_state(&bytes) {
+                Ok(state) => state,
+                Err(primary_error) => {
+                    let quarantine = child_corrupt_path(&path);
+                    copy_child_file_durably(&path, &quarantine)?;
+                    let backup = child_backup_path(&path);
+                    let primary_kind = primary_error.kind();
+                    let primary_message = primary_error.to_string();
+                    let restore_error = || io::Error::new(primary_kind, primary_message.clone());
+                    let backup_bytes = fs::read(&backup).map_err(|_| restore_error())?;
+                    let recovered = decode_child_state(&backup_bytes).map_err(|_| restore_error())?;
+                    write_child_state_atomic(&path, &recovered)?;
+                    recovered
+                }
+            },
             Err(error) if error.kind() == io::ErrorKind::NotFound => PersistedChildState::default(),
             Err(error) => return Err(error),
         };
-        validate_persisted_child_state(&state)?;
         Ok(Self { path, state })
     }
 
@@ -357,25 +369,73 @@ impl ConversationChildStore {
     }
 
     fn persist(&self) -> io::Result<()> {
-        if let Some(parent) = self.path.parent() {
-            fs::create_dir_all(parent)?;
-        }
-        let temporary = self.path.with_extension("json.tmp");
-        let bytes = serde_json::to_vec(&self.state)
-            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
-        {
-            let mut file = File::create(&temporary)?;
-            file.write_all(&bytes)?;
-            file.sync_all()?;
-        }
-        fs::rename(&temporary, &self.path)?;
-        if let Some(parent) = self.path.parent() {
-            if let Ok(directory) = File::open(parent) {
-                let _ = directory.sync_all();
+        if let Ok(previous) = fs::read(&self.path) {
+            if decode_child_state(&previous).is_ok() {
+                let backup = child_backup_path(&self.path);
+                let temporary_backup = PathBuf::from(format!("{}.tmp", backup.display()));
+                fs::copy(&self.path, &temporary_backup)?;
+                File::open(&temporary_backup)?.sync_all()?;
+                fs::rename(&temporary_backup, &backup)?;
+                sync_child_parent(&backup)?;
             }
         }
-        Ok(())
+        write_child_state_atomic(&self.path, &self.state)
     }
+
+}
+
+fn decode_child_state(bytes: &[u8]) -> io::Result<PersistedChildState> {
+    let state: PersistedChildState = serde_json::from_slice(bytes).map_err(|error| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("invalid conversation-child store: {error}"),
+        )
+    })?;
+    validate_persisted_child_state(&state)?;
+    Ok(state)
+}
+
+fn child_backup_path(path: &Path) -> PathBuf {
+    path.with_extension("json.bak")
+}
+
+fn child_corrupt_path(path: &Path) -> PathBuf {
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    PathBuf::from(format!("{}.corrupt-{stamp}", path.display()))
+}
+
+fn write_child_state_atomic(path: &Path, state: &PersistedChildState) -> io::Result<()> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let temporary = path.with_extension("json.tmp");
+    let bytes = serde_json::to_vec(state)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+    {
+        let mut file = File::create(&temporary)?;
+        file.write_all(&bytes)?;
+        file.sync_all()?;
+    }
+    fs::rename(&temporary, path)?;
+    sync_child_parent(path)
+}
+
+fn copy_child_file_durably(source: &Path, destination: &Path) -> io::Result<()> {
+    fs::copy(source, destination)?;
+    File::open(destination)?.sync_all()?;
+    sync_child_parent(destination)
+}
+
+fn sync_child_parent(path: &Path) -> io::Result<()> {
+    if let Some(parent) = path.parent() {
+        if let Ok(directory) = File::open(parent) {
+            directory.sync_all()?;
+        }
+    }
+    Ok(())
 }
 
 fn validate_persisted_child_state(state: &PersistedChildState) -> io::Result<()> {
@@ -502,7 +562,44 @@ mod tests {
     }
 
     #[test]
-    fn corrupt_or_duplicate_persisted_state_fails_closed() {
+    fn corrupt_child_store_recovers_only_from_valid_last_known_good_snapshot() {
+        let root = std::env::temp_dir().join(format!(
+            "fabushi-android-child-store-recovery-{}",
+            std::process::id(),
+        ));
+        let path = root.join("children.json");
+        let _ = fs::remove_dir_all(&root);
+        {
+            let mut store = ConversationChildStore::open(&path).unwrap();
+            store
+                .upsert_with(destination(), "human:1", |state| {
+                    state.pinned = true;
+                    Ok(())
+                })
+                .unwrap();
+            store
+                .upsert_with(destination(), "human:2", |state| {
+                    state.marked_unread = true;
+                    Ok(())
+                })
+                .unwrap();
+        }
+        assert!(child_backup_path(&path).exists());
+        fs::write(&path, b"{broken-canonical").unwrap();
+
+        let restored = ConversationChildStore::open(&path).unwrap();
+        assert_eq!(restored.states_for_actor("human:1").len(), 1);
+        assert!(
+            fs::read_dir(&root)
+                .unwrap()
+                .filter_map(Result::ok)
+                .any(|entry| entry.file_name().to_string_lossy().starts_with("children.json.corrupt-"))
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn corrupt_or_duplicate_child_store_without_valid_backup_fails_closed() {
         let root = std::env::temp_dir().join(format!(
             "fabushi-android-child-store-corrupt-{}",
             std::process::id(),
@@ -515,6 +612,7 @@ mod tests {
             ConversationChildStore::open(&path).err().unwrap().kind(),
             io::ErrorKind::InvalidData
         );
+        assert_eq!(fs::read(&path).unwrap(), b"{broken");
 
         let child = ConversationChildRuntimeState::new(destination(), "human:1").unwrap();
         fs::write(
