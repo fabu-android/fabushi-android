@@ -4029,8 +4029,10 @@ impl AndroidJsonHost {
             .filter(|value| !value.trim().is_empty())
             .unwrap_or(schedule.as_str())
             .to_string();
+        let local_id = required_string(params, "id")?.to_string();
+        let id = stable_account_automation_id(&account_fence, agent_id, &local_id);
         let spec = AutomationSpec {
-            id: required_string(params, "id")?.to_string(),
+            id: id.clone(),
             name: required_string(params, "name")?.to_string(),
             prompt: required_string(params, "prompt")?.to_string(),
             schedule,
@@ -4042,7 +4044,6 @@ impl AndroidJsonHost {
             last_run_at_ms: params.get("lastRunAtMs").and_then(Value::as_u64),
             next_run_at_ms: None,
         };
-        let id = spec.id.clone();
         let time_zone = self.effective_time_zone()?;
         self.automation_runtime.upsert_spec(spec, time_zone.as_deref())?;
         Ok(json!({"id":id,"localId":local_id,"stored":true}))
