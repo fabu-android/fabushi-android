@@ -13,6 +13,9 @@ pub const ANDROID_STRUCTURED_LOG_SPILL_MAX_ENTRIES: usize = 1_000;
 const ALLOWED_EVENTS: &[&str] = &[
     "sand.access_blocked",
     "sand.agent_load",
+    "sand.agent.error",
+    "sand.agent.error.detail",
+    "sand.agent.open",
     "sand.agents_unreachable",
     "sand.attachment.edge_failed",
     "sand.box_dns_diagnostic",
@@ -520,6 +523,35 @@ mod tests {
     }
 
     #[test]
+    #[test]
+    fn spool_accepts_canonical_agent_error_and_open_events() {
+        let root = root("agent-events");
+        let path = root.join("spill.json");
+        let mut spool =
+            AndroidStructuredLogSpool::open(&path, "account-a", "counter-a", 1_000).unwrap();
+        for (index, event) in [
+            "sand.agent.error",
+            "sand.agent.error.detail",
+            "sand.agent.open",
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            spool
+                .record(
+                    if event.contains("error") { "error" } else { "info" },
+                    event,
+                    BTreeMap::from([("conversation_id".into(), "conversation-a".into())]),
+                    1_001 + index as u64,
+                )
+                .unwrap();
+        }
+        let reopened =
+            AndroidStructuredLogSpool::open(&path, "account-a", "ignored", 2_000).unwrap();
+        assert_eq!(reopened.snapshot().checkpoint.records.len(), 3);
+        let _ = fs::remove_dir_all(root);
+    }
+
     fn spool_rotates_account_and_reopens_durable_record() {
         let root = root("spool");
         let path = root.join("spill.json");
