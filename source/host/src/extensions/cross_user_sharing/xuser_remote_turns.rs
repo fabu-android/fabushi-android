@@ -469,3 +469,21 @@ fn non_empty_str(value: &Value, field: &str) -> Option<String> {
         .filter(|value| !value.is_empty())
         .map(ToOwned::to_owned)
 }
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn remote_turn_budget_is_bounded_and_recovers_after_window() {
+        let budget = RemoteTurnBudget::new(2, 1_000);
+        assert!(budget.accept(10));
+        assert!(budget.accept(20));
+        assert!(!budget.accept(30));
+        assert!(budget.accept(1_010));
+        assert!(!budget.accept(1_011));
+        budget.clear();
+        assert!(budget.accept(1_011));
+    }
+}
