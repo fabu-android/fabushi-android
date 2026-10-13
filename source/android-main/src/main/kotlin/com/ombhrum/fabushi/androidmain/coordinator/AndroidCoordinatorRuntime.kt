@@ -1700,6 +1700,9 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
         }
     }
 
+    override fun humanCallIceServers(): JSONObject =
+        host.request("feature.call.iceServers")
+
     override fun humanCallLease(
         callId: String,
         generation: Long,
