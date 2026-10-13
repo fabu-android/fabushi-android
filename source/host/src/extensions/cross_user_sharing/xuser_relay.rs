@@ -1,6 +1,5 @@
 use crate::notify_drain_gate::NotifyDrainGate;
-use reqwest::blocking::Client;
-use reqwest::header::{AUTHORIZATION, CONTENT_TYPE};
+use ureq::{Agent, AgentBuilder};
 use serde_json::Value;
 use std::collections::BTreeSet;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -33,13 +32,13 @@ pub trait XuserRelayTransport: Send + Sync {
     ) -> Result<Value, SandXuserRelayHttpError>;
 }
 
-pub struct ReqwestXuserRelayTransport {
-    client: Client,
+pub struct AndroidXuserRelayTransport {
+    client: Agent,
     client_type: String,
     client_version: String,
     box_namespace: String,
 }
-impl ReqwestXuserRelayTransport {
+impl AndroidXuserRelayTransport {
     pub fn new(
         client_type: impl Into<String>,
         client_version: impl Into<String>,
@@ -61,18 +60,19 @@ impl ReqwestXuserRelayTransport {
             }
         }
         Ok(Self {
-            client: Client::builder()
-                .connect_timeout(Duration::from_secs(15))
-                .timeout(Duration::from_secs(30))
-                .build()
-                .map_err(|e| e.to_string())?,
+            client: AgentBuilder::new()
+                .timeout_connect(Duration::from_secs(15))
+                .timeout_read(Duration::from_secs(30))
+                .timeout_write(Duration::from_secs(30))
+                .redirects(0)
+                .build(),
             client_type,
             client_version,
             box_namespace,
         })
     }
 }
-impl XuserRelayTransport for ReqwestXuserRelayTransport {
+impl XuserRelayTransport for AndroidXuserRelayTransport {
     fn request(
         &self,
         method: &str,
@@ -80,40 +80,34 @@ impl XuserRelayTransport for ReqwestXuserRelayTransport {
         token: &str,
         body: Option<&Value>,
     ) -> Result<Value, SandXuserRelayHttpError> {
-        let mut req = match method {
-            "GET" => self.client.get(url),
-            "POST" => self.client.post(url),
-            "DELETE" => self.client.delete(url),
-            _ => self.client.post(url),
+        let request = self
+            .client
+            .request(method, url)
+            .set("authorization", &format!("Bearer {token}"))
+            .set("content-type", "application/json")
+            .set("x-cursor-client-type", &self.client_type)
+            .set("x-cursor-client-version", &self.client_version)
+            .set("x-sand-box-namespace", &self.box_namespace);
+        let response = match body {
+            Some(body) => request.send_json(body.clone()),
+            None => request.call(),
         }
-        .header(AUTHORIZATION, format!("Bearer {token}"))
-        .header(CONTENT_TYPE, "application/json")
-        .header("x-cursor-client-type", &self.client_type)
-        .header("x-cursor-client-version", &self.client_version)
-        .header("x-sand-box-namespace", &self.box_namespace);
-        if let Some(body) = body {
-            req = req.json(body);
-        }
-        let response = req.send().map_err(|_| SandXuserRelayHttpError {
-            status: 0,
+        .map_err(|error| SandXuserRelayHttpError {
+            status: match error {
+                ureq::Error::Status(status, _) => status,
+                ureq::Error::Transport(_) => 0,
+            },
             path: url.into(),
         })?;
-        let status = response.status().as_u16();
-        if !(200..300).contains(&status) {
-            return Err(SandXuserRelayHttpError {
-                status,
-                path: url.into(),
-            });
-        }
+        let status = response.status();
         response
-            .json::<Value>()
+            .into_json::<Value>()
             .map_err(|_| SandXuserRelayHttpError {
                 status,
                 path: url.into(),
             })
     }
 }
-
 pub struct SandXuserRelayClient {
     backend_url: String,
     access_token: Arc<dyn Fn() -> Result<String, String> + Send + Sync>,
@@ -338,9 +332,7 @@ fn project_join_room_result(result: &Value) -> Value {
 
 type RelayClock = Arc<dyn Fn() -> u64 + Send + Sync>;
 type RelayBool = Arc<dyn Fn() -> bool + Send + Sync>;
-type RelayGateClock = Box<dyn Fn() -> u64 + Send + Sync>;
-type RelayGateBool = Box<dyn Fn() -> bool + Send + Sync>;
-type RelayNotifyGate = NotifyDrainGate<RelayGateClock, RelayGateBool, RelayGateBool>;
+type RelayNotifyGate = NotifyDrainGate;
 pub type XuserRelayEventHandler =
     Arc<dyn Fn(&Value) -> Result<bool, String> + Send + Sync>;
 
@@ -362,6 +354,8 @@ pub struct SandXuserRelayRuntime {
     client: Arc<SandXuserRelayClient>,
     on_event: XuserRelayEventHandler,
     now_ms: RelayClock,
+    is_notify_connected: RelayBool,
+    is_notify_safety_poll_enabled: RelayBool,
     gate: Mutex<RelayNotifyGate>,
     state: Mutex<RelayRuntimeState>,
 }
@@ -374,19 +368,13 @@ impl SandXuserRelayRuntime {
         is_notify_connected: RelayBool,
         is_notify_safety_poll_enabled: RelayBool,
     ) -> Self {
-        let gate_now = Arc::clone(&now_ms);
-        let gate_connected = Arc::clone(&is_notify_connected);
-        let gate_safety_poll = Arc::clone(&is_notify_safety_poll_enabled);
-        let gate: RelayNotifyGate = NotifyDrainGate::new(
-            Box::new(move || gate_now()) as RelayGateClock,
-            Box::new(move || gate_connected()) as RelayGateBool,
-            Box::new(move || gate_safety_poll()) as RelayGateBool,
-        );
         Self {
             client,
             on_event,
             now_ms,
-            gate: Mutex::new(gate),
+            is_notify_connected,
+            is_notify_safety_poll_enabled,
+            gate: Mutex::new(NotifyDrainGate::default()),
             state: Mutex::new(RelayRuntimeState::default()),
         }
     }
@@ -449,7 +437,12 @@ impl SandXuserRelayRuntime {
                 .gate
                 .lock()
                 .unwrap_or_else(|p| p.into_inner())
-                .should_drain(!state.pending_ack_ids.is_empty());
+                .should_drain(
+                    now,
+                    !state.pending_ack_ids.is_empty(),
+                    (self.is_notify_connected)(),
+                    (self.is_notify_safety_poll_enabled)(),
+                );
             if !should_drain {
                 return Ok(false);
             }
@@ -505,7 +498,7 @@ impl SandXuserRelayRuntime {
         self.gate
             .lock()
             .unwrap_or_else(|p| p.into_inner())
-            .record_poll();
+            .record_poll(now);
         Ok(true)
     }
 }
