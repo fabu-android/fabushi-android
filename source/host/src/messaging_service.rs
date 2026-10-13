@@ -17,7 +17,8 @@ use std::{
 };
 
 const MESSAGING_PROTOCOL_VERSION: u64 = 2;
-const MESSAGING_REPOSITORY_SCHEMA_VERSION: u32 = 2;
+const MESSAGING_REPOSITORY_SCHEMA_VERSION: u32 = 3;
+const PREVIOUS_MESSAGING_REPOSITORY_SCHEMA_VERSION: u32 = 2;
 const LEGACY_MESSAGING_REPOSITORY_SCHEMA_VERSION: u32 = 1;
 const MAX_REPLAY_RESULTS: usize = 512;
 const MESSAGING_EVENT_JOURNAL_LIMIT: usize = 10_000;
@@ -45,6 +46,8 @@ struct MessagingRepositoryState {
     cursor: u64,
     #[serde(default)]
     actors: BTreeMap<String, Value>,
+    #[serde(default)]
+    contact_ids: BTreeSet<String>,
     #[serde(default)]
     conversations: BTreeMap<String, Value>,
     #[serde(default)]
@@ -81,6 +84,7 @@ impl Default for MessagingRepositoryState {
             schema_version: MESSAGING_REPOSITORY_SCHEMA_VERSION,
             cursor: 0,
             actors: BTreeMap::new(),
+            contact_ids: BTreeSet::new(),
             conversations: BTreeMap::new(),
             messages: BTreeMap::new(),
             drafts: BTreeMap::new(),
@@ -153,6 +157,66 @@ impl AndroidMessagingService {
             service.persist()?;
         }
         Ok(service)
+    }
+
+    /// Reconcile the server-authoritative Human contact roster into the canonical Android
+    /// messaging repository. This is deliberately Host-only: Presentation cannot upsert an
+    /// arbitrary actor or manufacture friendship state.
+    pub fn reconcile_remote_human_contacts(
+        &mut self,
+        contacts: &[Value],
+    ) -> Result<usize, String> {
+        let previous = self.state.clone();
+        let mut next_contact_ids = BTreeSet::new();
+        let mut normalized = Vec::with_capacity(contacts.len());
+
+        for contact in contacts {
+            let actor = contact
+                .as_object()
+                .ok_or("remote Human contact must be an actor object")?;
+            let id = required_non_empty(actor.get("id"), "remote Human contact id")?;
+            if !valid_actor_id(id) || !id.starts_with("human:") {
+                return Err("remote Human contact id is invalid".into());
+            }
+            if required_non_empty(actor.get("kind"), "remote Human contact kind")? != "human" {
+                return Err("remote Human contact kind must be human".into());
+            }
+            let display_name =
+                required_non_empty(actor.get("displayName"), "remote Human contact displayName")?;
+            if display_name.trim().is_empty() || display_name.len() > 200 {
+                return Err("remote Human contact displayName is invalid".into());
+            }
+            if !next_contact_ids.insert(id.to_string()) {
+                return Err("remote Human contact roster contains a duplicate actor".into());
+            }
+            normalized.push((id.to_string(), Value::Object(actor.clone())));
+        }
+
+        let mut changed = self.state.contact_ids != next_contact_ids;
+        for (id, actor) in &normalized {
+            if self.state.actors.get(id) != Some(actor) {
+                self.state.actors.insert(id.clone(), actor.clone());
+                changed = true;
+            }
+        }
+        self.state.contact_ids = next_contact_ids;
+
+        if !changed {
+            return Ok(0);
+        }
+
+        // Contact membership has no UI-authored mutation journal. Invalidate previous deltas so
+        // every observer heals from one canonical snapshot instead of replaying incomplete state.
+        self.bump_cursor();
+        self.state.event_journal.clear();
+        self.state.journal_floor_cursor = self.state.cursor;
+        if let Err(error) = self.persist() {
+            self.state = previous;
+            return Err(format!(
+                "failed to persist canonical Android Human contact roster: {error}"
+            ));
+        }
+        Ok(normalized.len())
     }
 
     pub fn execute(
@@ -2610,6 +2674,7 @@ impl AndroidMessagingService {
             .iter()
             .filter(|(id, _)| {
                 *id == actor_id
+                    || self.state.contact_ids.contains(id.as_str())
                     || conversations.iter().any(|conversation| {
                         conversation
                             .get("participants")
@@ -3054,7 +3119,8 @@ fn decode_repository_state(bytes: &[u8]) -> io::Result<(MessagingRepositoryState
     })?;
     let migrated = match state.schema_version {
         MESSAGING_REPOSITORY_SCHEMA_VERSION => false,
-        LEGACY_MESSAGING_REPOSITORY_SCHEMA_VERSION => {
+        PREVIOUS_MESSAGING_REPOSITORY_SCHEMA_VERSION
+        | LEGACY_MESSAGING_REPOSITORY_SCHEMA_VERSION => {
             state.schema_version = MESSAGING_REPOSITORY_SCHEMA_VERSION;
             state.event_journal.clear();
             state.journal_floor_cursor = state.cursor;
@@ -3104,6 +3170,22 @@ fn sync_parent_directory(path: &Path) -> io::Result<()> {
 }
 
 fn validate_loaded_state(state: &MessagingRepositoryState) -> io::Result<()> {
+    for contact_id in &state.contact_ids {
+        let actor = state.actors.get(contact_id).ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                "messaging contact references a missing actor",
+            )
+        })?;
+        if actor.get("id").and_then(Value::as_str) != Some(contact_id.as_str())
+            || actor.get("kind").and_then(Value::as_str) != Some("human")
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "messaging contact actor is invalid",
+            ));
+        }
+    }
     let mut seen_requests = BTreeSet::new();
     if state.request_order.iter().any(|key| {
         !seen_requests.insert(key)
@@ -3552,7 +3634,133 @@ mod tests {
     }
 
     #[test]
-    fn legacy_repository_migrates_to_v2_and_forces_snapshot_reconcile() {
+    fn remote_human_contacts_are_durable_visible_and_invalidate_stale_delta() {
+        let root = temp_root("remote-contacts");
+        let owner = "human:owner";
+        {
+            let mut service = AndroidMessagingService::open(&root).unwrap();
+            execute(
+                &mut service,
+                "owner-profile",
+                owner,
+                json!({"type":"upsertProfile","actor":{"id":owner,"kind":"human","displayName":"Owner"}}),
+            )
+            .unwrap();
+            let before = service.state.cursor;
+            assert_eq!(
+                service
+                    .reconcile_remote_human_contacts(&[
+                        json!({"id":"human:friend-1","kind":"human","displayName":"Friend One","username":"friend1"}),
+                        json!({"id":"human:friend-2","kind":"human","displayName":"Friend Two","username":"friend2"})
+                    ])
+                    .unwrap(),
+                2
+            );
+            assert!(service.state.cursor > before);
+            let sync = execute(
+                &mut service,
+                "contact-sync",
+                owner,
+                json!({"type":"sync","cursor":before.to_string(),"limit":10}),
+            )
+            .unwrap();
+            let batch = &sync["envelopes"][0]["event"];
+            assert_eq!(batch["fullSnapshot"], true);
+            let ids = batch["actors"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter_map(|actor| actor["id"].as_str())
+                .collect::<BTreeSet<_>>();
+            assert!(ids.contains("human:friend-1"));
+            assert!(ids.contains("human:friend-2"));
+        }
+
+        let mut reopened = AndroidMessagingService::open(&root).unwrap();
+        let snapshot = execute(
+            &mut reopened,
+            "reopen-contact-sync",
+            owner,
+            json!({"type":"sync","limit":10}),
+        )
+        .unwrap();
+        let ids = snapshot["envelopes"][0]["event"]["actors"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|actor| actor["id"].as_str())
+            .collect::<BTreeSet<_>>();
+        assert!(ids.contains("human:friend-1"));
+        assert!(ids.contains("human:friend-2"));
+
+        // Server friendship removal drops contact membership without deleting an actor that may
+        // still be referenced by a durable conversation or historical message.
+        reopened
+            .reconcile_remote_human_contacts(&[
+                json!({"id":"human:friend-2","kind":"human","displayName":"Friend Two","username":"friend2"})
+            ])
+            .unwrap();
+        assert!(!reopened.state.contact_ids.contains("human:friend-1"));
+        assert!(reopened.state.actors.contains_key("human:friend-1"));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn remote_human_contact_reconcile_rejects_invalid_or_duplicate_roster() {
+        let root = temp_root("remote-contacts-invalid");
+        let mut service = AndroidMessagingService::open(&root).unwrap();
+        assert!(service
+            .reconcile_remote_human_contacts(&[
+                json!({"id":"agent:not-human","kind":"human","displayName":"Wrong prefix"})
+            ])
+            .is_err());
+        assert!(service
+            .reconcile_remote_human_contacts(&[
+                json!({"id":"human:dup","kind":"human","displayName":"One"}),
+                json!({"id":"human:dup","kind":"human","displayName":"Two"})
+            ])
+            .is_err());
+        assert!(service.state.contact_ids.is_empty());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn previous_v2_repository_migrates_to_v3_with_empty_contact_roster() {
+        let root = temp_root("legacy-v2");
+        fs::create_dir_all(&root).unwrap();
+        let previous = json!({
+            "schemaVersion":2,
+            "cursor":9,
+            "actors":{"human:owner":{"id":"human:owner","kind":"human","displayName":"Owner"}},
+            "conversations":{},
+            "messages":{},
+            "drafts":{},
+            "folders":{},
+            "conversationPreferences":{},
+            "reactionActors":{},
+            "pollVotes":{},
+            "requestResults":{},
+            "requestOrder":[],
+            "agentDeliveryCalls":{},
+            "agentDeliveryCallOrder":[],
+            "agentWakes":{},
+            "eventJournal":[],
+            "journalFloorCursor":0
+        });
+        fs::write(
+            root.join("messaging-repository.json"),
+            serde_json::to_vec(&previous).unwrap(),
+        )
+        .unwrap();
+        let service = AndroidMessagingService::open(&root).unwrap();
+        assert_eq!(service.state.schema_version, MESSAGING_REPOSITORY_SCHEMA_VERSION);
+        assert_eq!(service.state.journal_floor_cursor, 9);
+        assert!(service.state.contact_ids.is_empty());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn legacy_repository_migrates_to_v3_and_forces_snapshot_reconcile() {
         let root = temp_root("legacy-v1");
         fs::create_dir_all(&root).unwrap();
         let legacy = json!({
