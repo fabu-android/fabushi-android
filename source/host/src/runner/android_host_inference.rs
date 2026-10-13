@@ -1047,7 +1047,7 @@ mod tests {
         assert_eq!(SAND_AGENT_MAX_STEPS, 5_000);
         let source = include_str!("android_host_inference.rs");
         let production = source
-            .split_once("#[cfg(test)]")
+            .split_once("\n#[cfg(test)]\nmod tests {")
             .map(|(production, _)| production)
             .unwrap_or(source);
         assert!(production.contains("for _tool_step in 0..SAND_AGENT_MAX_STEPS {"));
