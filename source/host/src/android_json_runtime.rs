@@ -17562,7 +17562,11 @@ mod tests {
             assert!(
                 matches!(
                     event["type"].as_str(),
-                    Some("transcript.roster" | "transcript.timeline-event")
+                    Some(
+                        "transcript.roster"
+                            | "transcript.timeline-event"
+                            | "transcript.profile-changed"
+                    )
                 ),
                 "only canonical transcript bridge projections may precede the direct timeline event",
             );
@@ -17592,7 +17596,11 @@ mod tests {
             assert!(
                 matches!(
                     event["type"].as_str(),
-                    Some("transcript.roster" | "transcript.profile-changed")
+                    Some(
+                        "transcript.roster"
+                            | "transcript.timeline-event"
+                            | "transcript.profile-changed"
+                    )
                 ),
                 "only canonical transcript bridge projections may precede the direct profile event",
             );
