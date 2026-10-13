@@ -683,7 +683,7 @@ impl AndroidMessagingService {
             }
             return Ok(json!({
                 "blob":{
-                    "id":blob_id.0,
+                    "id":blob_id.0.clone(),
                     "fileName":current.file_name,
                     "mimeType":current.mime_type,
                     "sizeBytes":current.size_bytes,
@@ -698,7 +698,11 @@ impl AndroidMessagingService {
             .begin_upload(&metadata)
             .map_err(|error| format!("failed to begin remote Human blob import: {error}"))?;
         if !status.complete {
-            let mut offset = 0usize;
+            let mut offset = usize::try_from(status.uploaded_bytes)
+                .map_err(|_| "remote Human blob resume offset is invalid")?;
+            if offset > bytes.len() {
+                return Err("remote Human blob resume offset exceeds downloaded body".into());
+            }
             while offset < bytes.len() {
                 let end = (offset + MAX_BLOB_RANGE_BYTES as usize).min(bytes.len());
                 self.blobs
@@ -763,7 +767,7 @@ impl AndroidMessagingService {
         }
         Ok(json!({
             "blob":{
-                "id":blob_id.0,
+                "id":blob_id.0.clone(),
                 "fileName":metadata.file_name,
                 "mimeType":metadata.mime_type,
                 "sizeBytes":metadata.size_bytes,
