@@ -1,4 +1,6 @@
 package com.ombhrum.fabushi
+import com.ombhrum.fabushi.androidpreload.runtime.AndroidContactGroup
+import com.ombhrum.fabushi.androidpreload.runtime.AndroidContactGroupsSnapshot
 
 import java.io.File
 
@@ -194,6 +196,9 @@ fun FabushiMessagingSurface(
     onInstallUpdate: () -> Unit = {},
     messagingState: MessagingUiState = MessagingUiState(),
     messagingActorId: String = "",
+    contactGroupsSnapshot: AndroidContactGroupsSnapshot? = null,
+    onContactGroupsRefresh: () -> Unit = {},
+    onContactGroupsSave: (List<AndroidContactGroup>) -> Unit = {},
     onMessagingRefresh: () -> Unit = {},
     onHumanCallsRefresh: () -> Unit = {},
     onCreateDirect: (MessagingContact) -> Unit = {},
@@ -550,6 +555,9 @@ fun FabushiMessagingSurface(
             onSearchQueryChange = { homeSearchQuery = it },
             messagingState = messagingState,
             messagingActorId = messagingActorId,
+            contactGroupsSnapshot = contactGroupsSnapshot,
+            onContactGroupsRefresh = onContactGroupsRefresh,
+            onContactGroupsSave = onContactGroupsSave,
             onMessagingRefresh = onMessagingRefresh,
             onHumanCallsRefresh = onHumanCallsRefresh,
             onCreateDirect = onCreateDirect,

@@ -15,6 +15,7 @@ data class AndroidContactGroup(
 
 data class AndroidContactGroupsSnapshot(
     val accountFence: String,
+    val sessionFence: String,
     val revision: Long,
     val groups: List<AndroidContactGroup>,
 )
@@ -1169,7 +1170,6 @@ interface AndroidCoordinatorPort {
     fun agentSetPinned(ids: List<String>): List<String>
     fun messagingContactGroups(searchActive: Boolean = false): AndroidContactGroupsSnapshot
     fun messagingSetContactGroups(
-        presentationAccountFence: String,
         base: AndroidContactGroupsSnapshot,
         groups: List<AndroidContactGroup>,
         operationId: String,

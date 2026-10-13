@@ -6,6 +6,8 @@ import android.util.Base64
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidCoordinatorPort
+import com.ombhrum.fabushi.androidpreload.runtime.AndroidContactGroup
+import com.ombhrum.fabushi.androidpreload.runtime.AndroidContactGroupsSnapshot
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidHumanCallSession
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -253,6 +255,9 @@ data class MessagingUiState(
     val messagesByConversation: Map<String, List<ChatMessage>> = emptyMap(),
     val typingActorByConversation: Map<String, String> = emptyMap(),
     val callsByConversation: Map<String, List<AndroidHumanCallSession>> = emptyMap(),
+    val contactGroups: AndroidContactGroupsSnapshot? = null,
+    val contactGroupsBusy: Boolean = false,
+    val contactGroupsError: String? = null,
     val error: String? = null,
 )
 
@@ -342,6 +347,72 @@ internal class MessagingViewModel(application: Application) : AndroidViewModel(a
             }.onFailure { failure ->
                 mutableState.value = mutableState.value.copy(error = failure.message)
             }
+        }
+    }
+
+    fun refreshContactGroups(searchActive: Boolean = false) {
+        mutableState.value = mutableState.value.copy(contactGroupsBusy = true, contactGroupsError = null)
+        viewModelScope.launch {
+            val result = runCatching {
+                withContext(Dispatchers.IO) {
+                    ensureIdentity()
+                    coordinator.messagingContactGroups(searchActive)
+                }
+            }
+            result.fold(
+                onSuccess = { snapshot ->
+                    mutableState.value = mutableState.value.copy(
+                        contactGroups = snapshot,
+                        contactGroupsBusy = false,
+                        contactGroupsError = null,
+                    )
+                },
+                onFailure = { failure ->
+                    mutableState.value = mutableState.value.copy(
+                        contactGroupsBusy = false,
+                        contactGroupsError = failure.message ?: "Unable to load contact groups",
+                    )
+                },
+            )
+        }
+    }
+
+    fun saveContactGroups(groups: List<AndroidContactGroup>) {
+        val base = mutableState.value.contactGroups
+        if (base == null) {
+            refreshContactGroups()
+            mutableState.value = mutableState.value.copy(
+                contactGroupsError = "Contact groups changed before the editor was ready. Retry after refresh.",
+            )
+            return
+        }
+        mutableState.value = mutableState.value.copy(contactGroupsBusy = true, contactGroupsError = null)
+        viewModelScope.launch {
+            val result = runCatching {
+                withContext(Dispatchers.IO) {
+                    ensureIdentity()
+                    coordinator.messagingSetContactGroups(
+                        base = base,
+                        groups = groups,
+                        operationId = "android-contact-groups:" + UUID.randomUUID().toString(),
+                    )
+                }
+            }
+            result.fold(
+                onSuccess = { snapshot ->
+                    mutableState.value = mutableState.value.copy(
+                        contactGroups = snapshot,
+                        contactGroupsBusy = false,
+                        contactGroupsError = null,
+                    )
+                },
+                onFailure = { failure ->
+                    mutableState.value = mutableState.value.copy(
+                        contactGroupsBusy = false,
+                        contactGroupsError = failure.message ?: "Unable to save contact groups",
+                    )
+                },
+            )
         }
     }
 

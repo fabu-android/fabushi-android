@@ -3295,13 +3295,13 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
         )
         return AndroidContactGroupsSnapshot(
             accountFence = result.optString("accountFence"),
+            sessionFence = result.optString("sessionFence"),
             revision = result.optLong("revision", 0L),
             groups = parseContactGroups(result.optJSONArray("groups")),
         )
     }
 
     override fun messagingSetContactGroups(
-        presentationAccountFence: String,
         base: AndroidContactGroupsSnapshot,
         groups: List<AndroidContactGroup>,
         operationId: String,
@@ -3320,7 +3320,7 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
         val response = host.request(
             "feature.messaging.contactGroups.set",
             JSONObject()
-                .put("accountFence", presentationAccountFence)
+                .put("accountFence", base.sessionFence)
                 .put("accountScope", base.accountFence)
                 .put("operationId", operationId)
                 .put("expectedRevision", base.revision)
@@ -3329,6 +3329,7 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
         val result = response.optJSONObject("result") ?: response
         return AndroidContactGroupsSnapshot(
             accountFence = result.optString("accountFence", base.accountFence),
+            sessionFence = base.sessionFence,
             revision = result.optLong("revision", base.revision),
             groups = parseContactGroups(result.optJSONArray("groups")),
         )

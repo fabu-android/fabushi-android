@@ -8309,6 +8309,7 @@ impl AndroidJsonHost {
 
     fn messaging_contact_groups(&mut self, params: &Value) -> Result<Value, String> {
         let account_scope = self.current_sidebar_account_scope()?;
+        let session_fence = self.current_turn_account_fence()?;
         let search_active = params
             .get("searchActive")
             .and_then(Value::as_bool)
@@ -8321,6 +8322,7 @@ impl AndroidJsonHost {
             .get_snapshot(&account_scope, &known_peer_ids, &pinned_peer_ids, search_active);
         Ok(json!({
             "accountFence":snapshot.account_fence,
+            "sessionFence":session_fence,
             "revision":snapshot.revision,
             "groups":snapshot.groups,
         }))

@@ -1,4 +1,6 @@
 package com.ombhrum.fabushi
+import com.ombhrum.fabushi.androidpreload.runtime.AndroidContactGroup
+import com.ombhrum.fabushi.androidpreload.runtime.AndroidContactGroupsSnapshot
 
 import android.Manifest
 import android.annotation.SuppressLint
@@ -107,6 +109,47 @@ internal fun logoutConfirmationPolicy(busy: Boolean, error: String?): LogoutConf
         error = error?.trim()?.takeIf(String::isNotEmpty),
     )
 
+internal const val ANDROID_CONTACT_GROUP_PINNED_ID = "__pinned__"
+internal const val ANDROID_CONTACT_GROUP_UNASSIGNED_ID = "__unassigned__"
+
+internal fun editableContactGroups(snapshot: AndroidContactGroupsSnapshot?): List<AndroidContactGroup> =
+    snapshot?.groups.orEmpty().filterNot {
+        it.id == ANDROID_CONTACT_GROUP_PINNED_ID || it.id == ANDROID_CONTACT_GROUP_UNASSIGNED_ID
+    }
+
+internal fun assignContactToGroup(
+    groups: List<AndroidContactGroup>,
+    peerId: String,
+    targetGroupId: String?,
+): List<AndroidContactGroup> =
+    groups.map { group ->
+        val withoutPeer = group.peerIds.filterNot { it == peerId }
+        if (group.id == targetGroupId) {
+            group.copy(peerIds = (withoutPeer + peerId).distinct())
+        } else {
+            group.copy(peerIds = withoutPeer)
+        }
+    }
+
+internal fun searchedContactGroups(
+    groups: List<AndroidContactGroup>,
+    contacts: List<MessagingContact>,
+    query: String,
+): List<AndroidContactGroup> {
+    val normalized = query.trim()
+    if (normalized.isEmpty()) return groups
+    val matching = contacts
+        .filter { contact ->
+            contact.displayName.contains(normalized, ignoreCase = true) ||
+                contact.username?.contains(normalized, ignoreCase = true) == true
+        }
+        .mapTo(linkedSetOf(), MessagingContact::id)
+    return groups.mapNotNull { group ->
+        val peerIds = group.peerIds.filter(matching::contains)
+        if (peerIds.isEmpty()) null else group.copy(peerIds = peerIds, isCollapsed = false)
+    }
+}
+
 @Composable
 internal fun ConversationHome(
     updateState: AndroidUpdateUiState,
@@ -127,6 +170,9 @@ internal fun ConversationHome(
     onSearchQueryChange: (String) -> Unit,
     messagingState: MessagingUiState,
     messagingActorId: String,
+    contactGroupsSnapshot: AndroidContactGroupsSnapshot?,
+    onContactGroupsRefresh: () -> Unit,
+    onContactGroupsSave: (List<AndroidContactGroup>) -> Unit,
     onMessagingRefresh: () -> Unit,
     onHumanCallsRefresh: () -> Unit,
     onCreateDirect: (MessagingContact) -> Unit,
@@ -166,6 +212,10 @@ internal fun ConversationHome(
     onSemanticContextChanged: (AndroidMobileSection?, Boolean) -> Unit = { _, _ -> },
 ) {
     var showContactPicker by remember { mutableStateOf(false) }
+    var showContactGroups by remember { mutableStateOf(false) }
+    var contactGroupDraft by remember { mutableStateOf<List<AndroidContactGroup>>(emptyList()) }
+    var contactGroupName by remember { mutableStateOf("") }
+    var contactGroupSearch by remember { mutableStateOf("") }
     var pendingKind by remember { mutableStateOf<ConversationKind?>(null) }
     var composeName by remember { mutableStateOf("") }
     var composeDescription by remember { mutableStateOf("") }
@@ -339,6 +389,125 @@ internal fun ConversationHome(
 
     LaunchedEffect(Unit) { onMessagingRefresh() }
 
+    LaunchedEffect(showContactGroups, contactGroupsSnapshot?.revision) {
+        if (showContactGroups) {
+            contactGroupDraft = editableContactGroups(contactGroupsSnapshot)
+        }
+    }
+
+    if (showContactGroups) {
+        val projectedForSearch = searchedContactGroups(
+            contactGroupsSnapshot?.groups.orEmpty(),
+            messagingState.contacts,
+            contactGroupSearch,
+        )
+        AlertDialog(
+            onDismissRequest = { if (!messagingState.contactGroupsBusy) showContactGroups = false },
+            title = { Text("联系人分组") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(
+                        value = contactGroupSearch,
+                        onValueChange = { contactGroupSearch = it },
+                        singleLine = true,
+                        label = { Text("搜索联系人") },
+                    )
+                    if (contactGroupSearch.isNotBlank()) {
+                        projectedForSearch.forEach { group ->
+                            Text(group.name + ": " + group.peerIds.size, color = homeSecondaryText)
+                        }
+                    }
+                    messagingState.contactGroupsError?.let {
+                        Text(it, color = Color(0xFFFF6B6B))
+                    }
+                    contactGroupDraft.forEach { group ->
+                        Column(
+                            Modifier
+                                .fillMaxWidth()
+                                .border(1.dp, homeBorder, RoundedCornerShape(12.dp))
+                                .padding(10.dp),
+                            verticalArrangement = Arrangement.spacedBy(4.dp),
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(group.name, color = homePrimaryText, modifier = Modifier.weight(1f))
+                                TextButton(
+                                    enabled = !messagingState.contactGroupsBusy,
+                                    onClick = {
+                                        contactGroupDraft = contactGroupDraft.filterNot { it.id == group.id }
+                                    },
+                                ) { Text("删除") }
+                            }
+                            messagingState.contacts.forEach { contact ->
+                                val selected = contact.id in group.peerIds
+                                Row(
+                                    Modifier
+                                        .fillMaxWidth()
+                                        .clickable(enabled = !messagingState.contactGroupsBusy) {
+                                            contactGroupDraft = assignContactToGroup(
+                                                contactGroupDraft,
+                                                contact.id,
+                                                if (selected) null else group.id,
+                                            )
+                                        }
+                                        .padding(vertical = 2.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    Checkbox(
+                                        checked = selected,
+                                        enabled = !messagingState.contactGroupsBusy,
+                                        onCheckedChange = { checked ->
+                                            contactGroupDraft = assignContactToGroup(
+                                                contactGroupDraft,
+                                                contact.id,
+                                                if (checked) group.id else null,
+                                            )
+                                        },
+                                    )
+                                    Text(contact.displayName, color = homePrimaryText)
+                                }
+                            }
+                        }
+                    }
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        OutlinedTextField(
+                            value = contactGroupName,
+                            onValueChange = { contactGroupName = it.take(80) },
+                            modifier = Modifier.weight(1f),
+                            singleLine = true,
+                            label = { Text("新分组名称") },
+                        )
+                        TextButton(
+                            enabled = contactGroupName.isNotBlank() && !messagingState.contactGroupsBusy,
+                            onClick = {
+                                val name = contactGroupName.trim()
+                                val id = "android-" + java.util.UUID.randomUUID().toString()
+                                contactGroupDraft = contactGroupDraft + AndroidContactGroup(
+                                    id = id,
+                                    name = name,
+                                    peerIds = emptyList(),
+                                    isCollapsed = false,
+                                )
+                                contactGroupName = ""
+                            },
+                        ) { Text("添加") }
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    enabled = !messagingState.contactGroupsBusy && contactGroupsSnapshot != null,
+                    onClick = { onContactGroupsSave(contactGroupDraft) },
+                ) { Text(if (messagingState.contactGroupsBusy) "保存中…" else "保存") }
+            },
+            dismissButton = {
+                OutlinedButton(
+                    enabled = !messagingState.contactGroupsBusy,
+                    onClick = { showContactGroups = false },
+                ) { Text("关闭") }
+            },
+        )
+    }
+
     if (showContactPicker) {
         AlertDialog(
             onDismissRequest = { showContactPicker = false },
@@ -376,7 +545,15 @@ internal fun ConversationHome(
                     DropdownMenuItem(text = { Text("新消息", color = homePrimaryText) }, onClick = { onShowComposeMenuChange(false); showContactPicker = true })
                     DropdownMenuItem(text = { Text("新建群组", color = homePrimaryText) }, onClick = { onShowComposeMenuChange(false); pendingKind = ConversationKind.GROUP })
                     DropdownMenuItem(text = { Text("新建频道", color = homePrimaryText) }, onClick = { onShowComposeMenuChange(false); pendingKind = ConversationKind.CHANNEL })
-                    DropdownMenuItem(text = { Text("联系人分组", color = homePrimaryText) }, onClick = { onShowComposeMenuChange(false) })
+                    DropdownMenuItem(
+                        text = { Text("联系人分组", color = homePrimaryText) },
+                        onClick = {
+                            onShowComposeMenuChange(false)
+                            showContactGroups = true
+                            contactGroupSearch = ""
+                            onContactGroupsRefresh()
+                        },
+                    )
                 }
             }
         },
