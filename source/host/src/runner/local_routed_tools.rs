@@ -45,6 +45,36 @@ pub(crate) struct LocalApprovalResolution {
 }
 
 impl LocalApprovalRegistry {
+    pub(crate) fn is_pending_for_account(
+        &self,
+        approval_id: &str,
+        current_account_fence: &str,
+    ) -> Result<bool, String> {
+        let waits = self
+            .waits
+            .lock()
+            .map_err(|_| "local approval registry lock poisoned".to_string())?;
+        Ok(waits
+            .get(approval_id)
+            .is_some_and(|wait| wait.account_fence == current_account_fence))
+    }
+
+    pub(crate) fn pending_ids_for_account(
+        &self,
+        current_account_fence: &str,
+    ) -> Result<Vec<String>, String> {
+        let waits = self
+            .waits
+            .lock()
+            .map_err(|_| "local approval registry lock poisoned".to_string())?;
+        Ok(waits
+            .iter()
+            .filter_map(|(approval_id, wait)| {
+                (wait.account_fence == current_account_fence).then(|| approval_id.clone())
+            })
+            .collect())
+    }
+
     pub(crate) fn resolve_from_ui(
         &self,
         broker: &SharedCapabilityBroker,
@@ -416,10 +446,12 @@ pub(crate) fn with_local_file_tools(
 
 impl LocalRoutedTools {
     fn local_tool_permission(&self) -> Result<LocalToolPermission, String> {
+        let account_fence = self.current_account_fence()?;
         self.user_settings
             .lock()
-            .map_err(|_| "Android user settings lock poisoned".to_string())
-            .map(|settings| settings.local_tool_permission())
+            .map_err(|_| "Android user settings lock poisoned".to_string())?
+            .local_tool_permission_for(&account_fence)
+            .map_err(|error| format!("failed to read Android local tool permission: {error}"))
     }
 
     fn current_account_fence(&self) -> Result<String, String> {
