@@ -622,6 +622,89 @@
       "notes": "Umbrella remains mapped/not-verified. Current slice now includes frozen child identity, pre-mutation review ordering, type scoping, same-provider summarization, and a bounded provider tool/result loop; full Desktop tool graph breadth, auto-review classifier/approval parity, source closure, final APK/AAB provenance and protected device acceptance remain open. docs/fabu-agent-architecture-parity.md is an architecture/reference authority rather than shipping production code; it reinforces per-Agent ownership, bounded inference context over durable transcript, per-turn runner lifetime, independent subagent lineage and no renderer-global canonical run truth. Keep non-verified until the concrete shipping responsibilities and exact-head evidence close."
     },
     {
+      "responsibility_id": "AGENT-VISIBLE-ACK-ANDROID-001",
+      "domain": "agent-visible-acknowledgement-recovery",
+      "desktop_sources": [
+        {
+          "path": "source/host/src/extensions/transcript/ack_obligations.rs",
+          "blob_sha": "334d5f825331c8ab1d016c9731ca3e1723e5e83b",
+          "symbols": [
+            "AckObligations",
+            "AckSendGuard",
+            "MAX_ACK_REDRIVES",
+            "ACK_REDRIVE_IDLE_DELAY_MS"
+          ]
+        },
+        {
+          "path": "source/host/src/extensions/transcript/sand_ack_obligation_store.rs",
+          "blob_sha": "e51c66a6e7d585a1a53ca79a8af39a97e96a5c72",
+          "symbols": [
+            "SandAckObligationStore",
+            "AckObligation"
+          ]
+        }
+      ],
+      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "responsibility": "After a user message is durably accepted, retain an Agent-visible acknowledgement obligation across process death until a proven visible assistant delivery settles the matching run; coalesce repeated sends, fence stale run completions, preserve interrupts, and bound boot/idle redrive without duplicating the user's message.",
+      "source_owner": "Desktop transcript AckObligations + SandAckObligationStore",
+      "direct_callers": [
+        "chat.send durable user transcript acceptance",
+        "Agent turn completion/failure/cancellation",
+        "Host boot/idle receive loop",
+        "outcome-unknown reconciliation"
+      ],
+      "downstream_dependencies": [
+        "canonical transcript",
+        "Agent turn journal",
+        "account session fence",
+        "Agent roster",
+        "Host feature.receive loop"
+      ],
+      "state_owner": "Rust Host AckObligations; Compose/ViewModel never owns acknowledgement truth",
+      "persistent_state": [
+        "account-fenced pending acknowledgement obligations",
+        "coalesced send count",
+        "last interrupt timestamp",
+        "bounded redrive attempt count"
+      ],
+      "protocol_wire_contract": [
+        "redrive uses hidden chat.send with appendUserMessage=false/skipAckObligation=true/ackRedrive=true",
+        "only matching run reservation token may fulfill live acknowledgement",
+        "externally proven reconciliation uses reconciled-only fulfill"
+      ],
+      "visible_effect": "A user message cannot be silently lost when an Agent turn completes empty, fails, is cancelled, or the process dies; Fabushi re-drives the pending acknowledgement without showing the user message twice.",
+      "failure_behavior": [
+        "durable obligation write failure prevents blind turn progression",
+        "empty visible delivery remains pending",
+        "deleted Agent retires the obligation",
+        "max-redrive exhaustion retires without infinite retry"
+      ],
+      "cancellation_behavior": "cancel/interruption records durable interruption and schedules an idle redrive while preserving the original obligation",
+      "retry_semantics": "boot and idle redrive are Host-owned and bounded to three attempts; authentication unavailability defers rather than consuming a blind side effect retry",
+      "idempotency_semantics": "obligations are account+Agent keyed and coalesce repeated sends; redrive does not append a user transcript entry; stale reservation tokens cannot clear a newer obligation",
+      "process_death_recovery": "Host reopens fsync+atomic obligation storage, arms account-fenced boot redrives, and drives due recovery from feature.receive rather than relying on UI replay",
+      "account_fencing": "Android adaptation adds required accountFence because one app-private Host root survives account switches; unfenced legacy/global rows fail closed",
+      "security_boundary": "all recovery decisions stay in Rust Host; Presentation receives events only and cannot forge settlement or cross-account recovery",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "source/host/src/extensions/transcript/ack_obligations.rs",
+        "source/host/src/extensions/transcript/sand_ack_obligation_store.rs",
+        "source/host/src/android_json_runtime.rs"
+      ],
+      "android_owner": "Rust Host visible acknowledgement owner",
+      "platform_delta": "Desktop store is Agent-keyed inside desktop session composition. Android keeps the same product effect but adds account fencing, fsync+atomic file replacement, Host-owned process-death boot redrive, and single-Host receive-loop scheduling.",
+      "implementation_status": "implemented",
+      "production_wiring": "Visible user chat.send records the durable obligation after canonical transcript acceptance; assistant transcript settlement fulfills the matching reservation; failure/cancellation/empty completion preserve and schedule recovery; reconciled proven assistant text settles separately; feature.receive starts due boot/idle redrives.",
+      "unit_test": "ack_obligations module covers reopen/account fencing, bounded redrive, non-duplicating redrive command, reservation-token stale completion fencing and unfulfilled completion deferral; SandAckObligationStore covers legacy fail-closed, account-isolated reopen, interrupt/redrive/restore and account cleanup.",
+      "contract_test": "Rust Host production wiring and exact-head architecture/Rust gate required; queued at time of ledger update.",
+      "integration_test": "required/partially covered by Host chat.send/turn tests; exact-head process reopen + empty delivery redrive must pass in GitHub Actions.",
+      "packaged_test": "required on final exact-head APK/AAB",
+      "device_test": "required on authenticated process-death/device acceptance",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Source/production semantics implemented on the PR branch. Do not promote to verified until one descendant exact HEAD has green Rust/architecture plus packaged/device evidence."
+    },
+    {
       "responsibility_id": "AGENT-GENERATED-SUBAGENT-001",
       "domain": "agent",
       "desktop_sources": [
