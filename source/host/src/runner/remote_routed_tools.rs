@@ -22,6 +22,7 @@ const APPROVAL_WAIT_TIMEOUT: Duration = Duration::from_secs(120);
 const APPROVAL_POLL: Duration = Duration::from_millis(250);
 const MAX_SHELL_COMMAND: usize = 32 * 1024;
 const MAX_READ_PATH: usize = 4096;
+const MAX_WRITE_CONTENT: usize = 1024 * 1024;
 const REMOTE_BROWSER_EXECUTION_TIMEOUT_MS: u64 = 90_000;
 const REMOTE_CLOUD_AGENT_EXECUTION_TIMEOUT_MS: u64 = 120_000;
 const CLOUD_AGENT_TOOL_NAME: &str = "CloudAgent";
@@ -207,6 +208,7 @@ impl RemoteDispatchBinding {
         const ALLOWED_EXECUTORS: &[&str] = &[
             "shell",
             "read",
+            "write",
             "computer",
             "screenshot",
             "browser",
@@ -417,7 +419,7 @@ impl AndroidRoutedToolBridge for RemoteRoutedTools {
             };
             !matches!(
                 name,
-                "Shell" | "Read" | "Computer" | "Screenshot" | "ExternalShell" | "ExternalRead"
+                "Shell" | "Read" | "Write" | "Computer" | "Screenshot" | "ExternalShell" | "ExternalRead"
             ) && !is_remote_browser_tool(name)
         });
         if binding.supports("shell") {
@@ -452,6 +454,22 @@ impl AndroidRoutedToolBridge for RemoteRoutedTools {
                 }
             }
         }));
+        }
+        if binding.supports("write") {
+            tools.push(json!({
+                "type":"function",
+                "name":"Write",
+                "description":"Write bounded UTF-8 content to a file on the currently paired trusted Remote desktop. Requires one-time user approval before dispatch.",
+                "parameters":{
+                    "type":"object",
+                    "additionalProperties":false,
+                    "required":["path","content"],
+                    "properties":{
+                        "path":{"type":"string","minLength":1,"maxLength":4096},
+                        "content":{"type":"string","maxLength":1048576}
+                    }
+                }
+            }));
         }
         if binding.supports("computer") {
             tools.push(json!({
@@ -541,7 +559,7 @@ impl AndroidRoutedToolBridge for RemoteRoutedTools {
         let browser_tool = is_remote_browser_tool(name);
         if !matches!(
             name,
-            "Shell" | "Read" | "Computer" | "Screenshot" | "ExternalShell" | "ExternalRead" | CLOUD_AGENT_TOOL_NAME
+            "Shell" | "Read" | "Write" | "Computer" | "Screenshot" | "ExternalShell" | "ExternalRead" | CLOUD_AGENT_TOOL_NAME
         ) && !browser_tool {
             return self.delegate.call_tool(name, args, tool_call_id);
         }
@@ -577,6 +595,7 @@ impl AndroidRoutedToolBridge for RemoteRoutedTools {
         let capability = match name {
             "Shell" | "ExternalShell" => "remote.shell",
             "Read" | "ExternalRead" => "remote.read",
+            "Write" => "remote.write",
             "Computer" | "Screenshot" => "computer.use",
             CLOUD_AGENT_TOOL_NAME => "cloud.agent",
             _ if browser_tool => "browser.use",
@@ -590,6 +609,7 @@ impl AndroidRoutedToolBridge for RemoteRoutedTools {
         let required_executor = match name {
             "Shell" => "shell",
             "Read" => "read",
+            "Write" => "write",
             "Computer" => "computer",
             "Screenshot" => "screenshot",
             CLOUD_AGENT_TOOL_NAME => "cloud-agent",
@@ -960,6 +980,29 @@ fn validate_remote_tool_input(name: &str, args: &Value) -> Result<u64, String> {
                 if !(1..=1_048_576).contains(&limit) {
                     return Err("Remote Read limit is outside the bounded range".into());
                 }
+            }
+            Ok(30_000)
+        }
+        "Write" => {
+            const KEYS: &[&str] = &["path", "content"];
+            if let Some(key) = object.keys().find(|key| !KEYS.contains(&key.as_str())) {
+                return Err(format!("Remote Write argument is unsupported: {key}"));
+            }
+            let path = object
+                .get("path")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .ok_or("Remote Write path is required")?;
+            if path.len() > MAX_READ_PATH || path.chars().any(|c| c == '\0') {
+                return Err("Remote Write path is invalid or too large".into());
+            }
+            let content = object
+                .get("content")
+                .and_then(Value::as_str)
+                .ok_or("Remote Write content must be a string")?;
+            if content.len() > MAX_WRITE_CONTENT {
+                return Err("Remote Write content exceeds the bounded 1 MiB limit".into());
             }
             Ok(30_000)
         }
@@ -1686,6 +1729,36 @@ mod tests {
             "executors":["shell","read","computer","screenshot","external-shell","external-read"]
         }).to_string();
         assert!(RemoteDispatchBinding::parse(&plaintext).is_err());
+    }
+
+    #[test]
+    fn write_executor_is_bounded_and_explicitly_scoped() {
+        let binding = RemoteDispatchBinding::parse(&json!({
+            "credentialPlane":"authorized-remote-runner-v1",
+            "credentialId":"runner-credential-write",
+            "issuedAtMs":1,
+            "expiresAtMs":4102444800000_u64,
+            "endpoint":"https://remote.example.com",
+            "bearerCredential":"long-enough-credential",
+            "deviceId":"device-write",
+            "accountFence":"session:a",
+            "accountEpoch":7,
+            "executors":["write"]
+        }).to_string()).unwrap();
+        assert!(binding.supports("write"));
+        assert_eq!(
+            validate_remote_tool_input("Write", &json!({"path":"workspace/note.txt","content":"hello"})),
+            Ok(30_000),
+        );
+        assert!(validate_remote_tool_input("Write", &json!({"path":"","content":"hello"})).is_err());
+        assert!(validate_remote_tool_input(
+            "Write",
+            &json!({"path":"workspace/note.txt","content":"x".repeat(MAX_WRITE_CONTENT + 1)}),
+        ).is_err());
+        assert!(validate_remote_tool_input(
+            "Write",
+            &json!({"path":"workspace/note.txt","content":"hello","mode":"append"}),
+        ).is_err());
     }
 
     #[test]
