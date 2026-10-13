@@ -11481,6 +11481,31 @@ impl AndroidJsonHost {
         }
 
         if accepted_new_user_message {
+            self.turn_lifecycle
+                .lock()
+                .map_err(|_| "turn lifecycle lock poisoned".to_string())?
+                .clear_awaiting_user_for_agent_response(
+                    &account_fence_for_attachment,
+                    &agent_id,
+                )?;
+            {
+                let mut agents = self
+                    .agents
+                    .lock()
+                    .map_err(|_| "canonical Android Agent roster lock poisoned".to_string())?;
+                if agents
+                    .get(&agent_id)
+                    .is_some_and(|agent| !agent.is_group && agent.introduction_pending)
+                {
+                    agents
+                        .set_introduction_pending(&agent_id, false)
+                        .map_err(|error| {
+                            format!(
+                                "failed to settle Agent introduction after accepted user response: {error}"
+                            )
+                        })?;
+                }
+            }
             self.record_host_telemetry_projection(user_message_received_telemetry(
                 &UserMessageReceivedFields {
                     conversation_id: agent_id.clone(),
@@ -17713,6 +17738,64 @@ export function apply(ctx) {
             "relationship endpoint absent from the canonical roster must not be projected"
         );
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn accepted_visible_user_response_clears_waiting_and_introduction_before_turn_dispatch() {
+        let root = tempfile::tempdir().unwrap();
+        let mut host = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+        let created = host
+            .dispatch(
+                "createAgent",
+                &json!({
+                    "name":"Response Agent",
+                    "description":"wait for the user"
+                }),
+            )
+            .unwrap();
+        let agent_id = created["agent"]["id"].as_str().unwrap().to_string();
+        assert_eq!(created["agent"]["introductionPending"], true);
+        let account_fence = host.current_turn_account_fence().unwrap();
+        let process_epoch = host.turn_lifecycle.lock().unwrap().process_epoch();
+        host.turn_lifecycle
+            .lock()
+            .unwrap()
+            .mark_awaiting_user(
+                &account_fence,
+                &agent_id,
+                "old-request",
+                "old-operation",
+                1,
+                process_epoch,
+                "Waiting for your answer",
+                now_ms(),
+            )
+            .unwrap();
+
+        let accepted = host
+            .dispatch(
+                "feature.execute",
+                &json!({"command":{
+                    "type":"chat.send",
+                    "requestId":"response-request-1",
+                    "agentId":agent_id,
+                    "clientNonce":"response-nonce-1",
+                    "model":"default",
+                    "text":"Here is my answer"
+                }}),
+            )
+            .unwrap();
+        assert_eq!(accepted["accepted"], true);
+        assert!(host
+            .turn_lifecycle
+            .lock()
+            .unwrap()
+            .awaiting_user_projection(&account_fence, &agent_id)
+            .is_none());
+        assert_eq!(
+            host.agents.lock().unwrap().get(&agent_id).unwrap().introduction_pending,
+            false
+        );
     }
 
     #[test]
