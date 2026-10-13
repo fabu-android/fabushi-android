@@ -89,6 +89,13 @@ internal fun canonicalMessagingContacts(
     return canonical.values.toList()
 }
 
+data class ForwardRecipientCandidate(
+    val conversationId: String,
+    val title: String,
+    val participantIds: List<String>,
+    val updatedAtMs: Long,
+)
+
 data class ChatReaction(val reaction: String, val count: Int, val chosenByMe: Boolean)
 
 internal fun desiredReactionEnabled(message: ChatMessage, reaction: String): Boolean {
@@ -563,6 +570,60 @@ internal class MessagingViewModel(application: Application) : AndroidViewModel(a
             refresh()
         }
     }
+    fun searchForwardRecipients(
+        sourceConversationId: String,
+        sourceMessageId: String,
+        query: String,
+        limit: Int = 50,
+        onResult: (Result<List<ForwardRecipientCandidate>>) -> Unit,
+    ) {
+        viewModelScope.launch {
+            val result = runCatching {
+                withContext(Dispatchers.IO) {
+                    ensureIdentity()
+                    val response = coordinator.messagingForwardRecipients(
+                        JSONObject()
+                            .put("deviceId", deviceId)
+                            .put("sessionId", sessionId)
+                            .put("sourceConversationId", sourceConversationId)
+                            .put("sourceMessageId", sourceMessageId)
+                            .put("query", query)
+                            .put("limit", limit.coerceIn(1, 100)),
+                    )
+                    val rows = response.optJSONArray("recipients") ?: JSONArray()
+                    buildList {
+                        for (index in 0 until rows.length()) {
+                            val raw = rows.optJSONObject(index) ?: continue
+                            val id = raw.optString("id").trim()
+                            if (id.isEmpty()) continue
+                            val participantIds = raw.optJSONArray("participantIds")
+                                ?.let { array ->
+                                    buildList {
+                                        for (participantIndex in 0 until array.length()) {
+                                            array.optString(participantIndex)
+                                                .trim()
+                                                .takeIf(String::isNotEmpty)
+                                                ?.let(::add)
+                                        }
+                                    }
+                                }
+                                .orEmpty()
+                            add(
+                                ForwardRecipientCandidate(
+                                    conversationId = id,
+                                    title = raw.optString("title").ifBlank { "Human conversation" },
+                                    participantIds = participantIds,
+                                    updatedAtMs = raw.optLong("updatedAt"),
+                                ),
+                            )
+                        }
+                    }
+                }
+            }
+            onResult(result)
+        }
+    }
+
     fun forwardMessage(
         request: ForwardMessageBatchRequest,
         onSettled: (List<ForwardSettlement>) -> Unit,
