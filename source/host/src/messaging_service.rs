@@ -477,6 +477,25 @@ impl AndroidMessagingService {
         Ok(changed)
     }
 
+    pub fn has_remote_human_message(
+        &self,
+        authenticated_actor_id: &str,
+        peer_actor_id: &str,
+        remote_message_id: &str,
+    ) -> bool {
+        let remote_message_id = remote_message_id.trim();
+        if remote_message_id.is_empty() {
+            return false;
+        }
+        let conversation_id =
+            stable_human_direct_conversation_id(authenticated_actor_id, peer_actor_id);
+        let message_id = format!("human-server-message:{remote_message_id}");
+        self.state
+            .messages
+            .get(&conversation_id)
+            .is_some_and(|messages| messages.contains_key(&message_id))
+    }
+
     pub fn execute(
         &mut self,
         params: &Value,
