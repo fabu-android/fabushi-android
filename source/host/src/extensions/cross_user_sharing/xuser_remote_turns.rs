@@ -1,9 +1,11 @@
 use serde_json::{Value, json};
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex, mpsc};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread;
 use std::time::Duration;
 
+use crate::sha256::sha256_hex;
 use crate::groups::group_chat::{GroupDescription, GroupMember, GroupMessage};
 use crate::groups::xuser::{
     REMOTE_MEMBER_TURN_TIMEOUT_MS, XuserSpeakerKind, XuserTurnMessage,
@@ -377,7 +379,7 @@ impl SandXuserRemoteTurns {
             return Vec::new();
         }
 
-        let turn_nonce = uuid::Uuid::new_v4().to_string();
+        let turn_nonce = new_turn_nonce(&member.id, shared_room_id, self.host.now_ms());
         let (settle, receive) = mpsc::sync_channel(1);
         self.pending_remote_turns
             .lock()
@@ -465,6 +467,28 @@ impl SandXuserRemoteTurns {
             .get(member_id)
             .copied()
     }
+}
+
+static NEXT_TURN_NONCE: AtomicU64 = AtomicU64::new(1);
+
+fn new_turn_nonce(member_id: &str, room_id: &str, now_ms: u64) -> String {
+    let sequence = NEXT_TURN_NONCE.fetch_add(1, Ordering::Relaxed);
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    sha256_hex(
+        format!(
+            "{}\0{}\0{}\0{}\0{}\0{}",
+            std::process::id(),
+            sequence,
+            now_ms,
+            nanos,
+            member_id,
+            room_id,
+        )
+        .as_bytes(),
+    )
 }
 
 fn non_empty_str(value: &Value, field: &str) -> Option<String> {
