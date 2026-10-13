@@ -68,6 +68,11 @@ const ALLOWED_EVENTS: &[&str] = &[
     "sand.send_ack",
     "sand.send",
     "sand.send_journal.restore",
+    "sand.session.summary_build",
+    "sand.session.materialize",
+    "sand.session.maintenance",
+    "sand.session.store_db",
+    "sand.memory.synthesis",
     "sand.telemetry.sink_edge_failed",
     "sand.transport.stream_down",
     "sand.update.apply",
@@ -716,6 +721,35 @@ mod tests {
                 .unwrap();
         }
         assert_eq!(spool.batch().len(), 4);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn spill_accepts_memory_and_session_diagnostic_contracts() {
+        let root = root("memory-session-telemetry");
+        let path = root.join("spill.json");
+        let mut spool =
+            AndroidStructuredLogSpool::open(&path, "account-a", "counter-a", 1_000).unwrap();
+        for (index, event) in [
+            "sand.memory.synthesis",
+            "sand.session.store_db",
+            "sand.session.maintenance",
+            "sand.session.materialize",
+            "sand.session.summary_build",
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            spool
+                .record(
+                    "info",
+                    event,
+                    BTreeMap::from([("kind".into(), "bounded".into())]),
+                    1_001 + index as u64,
+                )
+                .unwrap();
+        }
+        assert_eq!(spool.batch().len(), 5);
         let _ = fs::remove_dir_all(root);
     }
 
