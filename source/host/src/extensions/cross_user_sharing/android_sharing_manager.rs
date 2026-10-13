@@ -425,8 +425,25 @@ impl XuserSharingManager for AndroidXuserSharingManager {
         let Some(agent_id) = self.mirror_agent_id(room_id)? else {
             return Ok(());
         };
-        let identity = serde_json::to_vec(event).map_err(|error| error.to_string())?;
-        let entry = json!({
+        let client_nonce = event
+            .get("clientNonce")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty());
+        if client_nonce.is_some_and(|nonce| {
+            self.transcript.lock().is_ok_and(|transcript| {
+                transcript.get_transcript().iter().any(|entry| {
+                    entry.get("agentId").and_then(Value::as_str) == Some(agent_id.as_str())
+                        && entry.get("clientNonce").and_then(Value::as_str) == Some(nonce)
+                })
+            })
+        }) {
+            return Ok(());
+        }
+        let identity = client_nonce
+            .map(|nonce| format!("{room_id}\n{nonce}").into_bytes())
+            .unwrap_or(serde_json::to_vec(event).map_err(|error| error.to_string())?);
+        let mut entry = json!({
             "id": format!("xuser-room-post-{}", sha256_hex(&identity)),
             "agentId": agent_id,
             "kind": "message",
@@ -441,6 +458,9 @@ impl XuserSharingManager for AndroidXuserSharingManager {
             "sharedRoomId": room_id,
             "xuserRemote": true,
         });
+        if let Some(client_nonce) = client_nonce {
+            entry["clientNonce"] = Value::String(client_nonce.to_string());
+        }
         self.append_entry_if_absent(entry)?;
         Ok(())
     }
@@ -448,7 +468,7 @@ impl XuserSharingManager for AndroidXuserSharingManager {
     fn append_mirror_room_entry(
         &self,
         event: &Value,
-        _self_auth_id: &str,
+        self_auth_id: &str,
     ) -> Result<bool, String> {
         let room_id = event
             .get("roomId")
@@ -463,6 +483,20 @@ impl XuserSharingManager for AndroidXuserSharingManager {
         let Some(normalized) = normalize_mirror_entry(wire, now_ms()) else {
             return Ok(true);
         };
+        let replay_nonce = match &normalized {
+            MirrorEntry::HumanMessage { client_nonce, .. } => client_nonce.as_deref(),
+            MirrorEntry::AgentMessage { .. } => None,
+        };
+        if replay_nonce.is_some_and(|nonce| {
+            self.transcript.lock().is_ok_and(|transcript| {
+                transcript.get_transcript().iter().any(|entry| {
+                    entry.get("agentId").and_then(Value::as_str) == Some(agent_id.as_str())
+                        && entry.get("clientNonce").and_then(Value::as_str) == Some(nonce)
+                })
+            })
+        }) {
+            return Ok(true);
+        }
         let local = match normalized {
             MirrorEntry::HumanMessage {
                 entry_id,
@@ -473,23 +507,28 @@ impl XuserSharingManager for AndroidXuserSharingManager {
                 images,
                 client_nonce,
                 timestamp_ms,
-            } => json!({
-                "id": format!("xuser:{room_id}:{entry_id}"),
-                "agentId": agent_id,
-                "kind": "message",
-                "role": "user",
-                "content": text,
-                "fromUser": {
-                    "authId": author_auth_id,
-                    "name": author_name,
-                    "avatarUrl": author_avatar_url,
-                },
-                "images": images_json(images),
-                "clientNonce": client_nonce,
-                "timestampMs": timestamp_ms,
-                "sharedRoomId": room_id,
-                "xuserRemote": true,
-            }),
+            } => {
+                let mut value = json!({
+                    "id": format!("xuser:{room_id}:{entry_id}"),
+                    "agentId": agent_id,
+                    "kind": "message",
+                    "role": "user",
+                    "content": text,
+                    "images": images_json(images),
+                    "clientNonce": client_nonce,
+                    "timestampMs": timestamp_ms,
+                    "sharedRoomId": room_id,
+                    "xuserRemote": true,
+                });
+                if author_auth_id != self_auth_id {
+                    value["fromUser"] = json!({
+                        "authId": author_auth_id,
+                        "name": author_name,
+                        "avatarUrl": author_avatar_url,
+                    });
+                }
+                value
+            },
             MirrorEntry::AgentMessage {
                 entry_id,
                 agent_owner_auth_id,
@@ -688,6 +727,75 @@ mod tests {
         let revoked =
             crate::groups::remote_room_store::read_sand_remote_room_config(&mirror_dir).unwrap();
         assert_eq!(revoked.is_revoked, Some(true));
+    }
+
+    #[test]
+    fn guest_room_posts_dedupe_by_client_nonce_across_relay_rewrites() {
+        let root = tempdir().unwrap();
+        let (_, transcript, manager) = open_manager(root.path());
+        manager.install_room(&room(), Some("self-a")).unwrap();
+        let first = json!({
+            "kind":"room-post",
+            "roomId":"room-a",
+            "authorAuthId":"guest-a",
+            "authorName":"Guest",
+            "text":"hello",
+            "clientNonce":"nonce-a",
+            "timestampMs":42
+        });
+        let mut replay = first.clone();
+        replay["timestampMs"] = json!(84);
+        replay["authorName"] = json!("Guest renamed");
+        manager.post_shared_room_guest_message(&first).unwrap();
+        manager.post_shared_room_guest_message(&replay).unwrap();
+        let rows = transcript.lock().unwrap().get_transcript();
+        let matching = rows.iter().filter(|row| {
+            row.get("clientNonce").and_then(Value::as_str) == Some("nonce-a")
+        }).collect::<Vec<_>>();
+        assert_eq!(matching.len(), 1);
+        assert_eq!(matching[0].get("timestampMs"), Some(&json!(42.0)));
+    }
+
+    #[test]
+    fn mirror_human_replay_uses_nonce_and_self_messages_have_no_remote_author() {
+        let root = tempdir().unwrap();
+        let (_, transcript, manager) = open_manager(root.path());
+        manager.install_room(&room(), Some("self-a")).unwrap();
+        let first = json!({
+            "kind":"room-entry",
+            "roomId":"room-a",
+            "entry":{
+                "kind":"human-message",
+                "entryId":"entry-self-a",
+                "authorAuthId":"self-a",
+                "authorName":"Me",
+                "text":"hello",
+                "clientNonce":"self-nonce-a",
+                "timestampMs":42
+            }
+        });
+        let replay = json!({
+            "kind":"room-entry",
+            "roomId":"room-a",
+            "entry":{
+                "kind":"human-message",
+                "entryId":"entry-self-b",
+                "authorAuthId":"self-a",
+                "authorName":"Me",
+                "text":"hello",
+                "clientNonce":"self-nonce-a",
+                "timestampMs":84
+            }
+        });
+        assert!(manager.append_mirror_room_entry(&first, "self-a").unwrap());
+        assert!(manager.append_mirror_room_entry(&replay, "self-a").unwrap());
+        let rows = transcript.lock().unwrap().get_transcript();
+        let matching = rows.iter().filter(|row| {
+            row.get("clientNonce").and_then(Value::as_str) == Some("self-nonce-a")
+        }).collect::<Vec<_>>();
+        assert_eq!(matching.len(), 1);
+        assert!(matching[0].get("fromUser").is_none());
+        assert_eq!(matching[0].get("id"), Some(&json!("xuser:room-a:entry-self-a")));
     }
 
     #[test]
