@@ -6,10 +6,10 @@ use std::thread;
 use std::time::Duration;
 
 use crate::sha256::sha256_hex;
-use crate::groups::group_chat::{GroupDescription, GroupMember, GroupMessage};
-use crate::groups::xuser::{
-    REMOTE_MEMBER_TURN_TIMEOUT_MS, XuserSpeakerKind, XuserTurnMessage,
-    build_remote_member_turn_prompts, clamp_guest_name, to_xuser_turn_messages,
+use super::xuser_remote_turn_contract::{
+    GroupDescription, GroupMember, GroupMessage, REMOTE_MEMBER_TURN_TIMEOUT_MS,
+    XuserSpeakerKind, XuserTurnMessage, build_remote_member_turn_prompts,
+    clamp_guest_name, to_xuser_turn_messages,
 };
 
 use super::xuser_entry_publisher::parse_remote_agent_id;
