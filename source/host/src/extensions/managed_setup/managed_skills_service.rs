@@ -2,6 +2,8 @@ use std::sync::{Arc, Condvar, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 use std::{path::PathBuf, thread};
 
+use crate::sha256::sha256_hex;
+
 use super::managed_skills_cache::{ManagedSkill, read_managed_skills_cache, write_managed_skills_cache};
 use super::sand_managed_skills::{FetchedManagedSkill, fetched_managed_skill_to_sand_skill};
 
@@ -39,10 +41,12 @@ struct RefreshState {
     disposed: bool,
     refreshing: bool,
     pending_trigger: Option<ManagedSkillsRefreshTrigger>,
+    account_scope: Option<String>,
+    scope_epoch: u64,
 }
 
 pub struct SandManagedSkillsService {
-    cache_dir: PathBuf,
+    cache_root: PathBuf,
     fetch: ManagedSkillsFetch,
     report: Option<ManagedSkillsReport>,
     state: Mutex<RefreshState>,
@@ -51,17 +55,54 @@ pub struct SandManagedSkillsService {
 
 impl SandManagedSkillsService {
     pub fn new(
-        cache_dir: PathBuf,
+        cache_root: PathBuf,
         fetch: ManagedSkillsFetch,
         report: Option<ManagedSkillsReport>,
     ) -> Self {
         Self {
-            cache_dir,
+            cache_root,
             fetch,
             report,
             state: Mutex::new(RefreshState::default()),
             wake: Condvar::new(),
         }
+    }
+
+    pub fn set_account_scope(&self, account_scope: Option<&str>) -> Result<(), String> {
+        let normalized = account_scope
+            .map(str::trim)
+            .filter(|scope| !scope.is_empty())
+            .map(str::to_string);
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| "managed skills state lock poisoned".to_string())?;
+        if state.account_scope != normalized {
+            state.account_scope = normalized;
+            state.scope_epoch = state.scope_epoch.saturating_add(1);
+            state.pending_trigger = None;
+            self.wake.notify_all();
+        }
+        Ok(())
+    }
+
+    pub fn account_scope(&self) -> Option<String> {
+        self.state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .account_scope
+            .clone()
+    }
+
+    fn cache_dir_for_scope(&self, account_scope: &str) -> PathBuf {
+        self.cache_root
+            .join("accounts")
+            .join(sha256_hex(account_scope.as_bytes()))
+    }
+
+    fn active_cache_dir(&self) -> Option<PathBuf> {
+        self.account_scope()
+            .map(|scope| self.cache_dir_for_scope(&scope))
     }
 
     pub fn start(self: &Arc<Self>) {
@@ -103,7 +144,7 @@ impl SandManagedSkillsService {
 
     pub fn refresh(&self, trigger: ManagedSkillsRefreshTrigger) {
         let mut state = self.state.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-        if state.disposed {
+        if state.disposed || state.account_scope.is_none() {
             return;
         }
         if state.refreshing {
@@ -130,7 +171,13 @@ impl SandManagedSkillsService {
                 break;
             }
 
-            self.run_one_refresh(current_trigger);
+            let scope_snapshot = {
+                let state = self.state.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+                state.account_scope.clone().map(|scope| (scope, state.scope_epoch))
+            };
+            if let Some((account_scope, scope_epoch)) = scope_snapshot {
+                self.run_one_refresh(current_trigger, &account_scope, scope_epoch);
+            }
 
             let mut state = self.state.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
             if state.disposed {
@@ -145,8 +192,22 @@ impl SandManagedSkillsService {
         self.wake.notify_all();
     }
 
-    fn run_one_refresh(&self, _trigger: ManagedSkillsRefreshTrigger) {
+    fn run_one_refresh(
+        &self,
+        _trigger: ManagedSkillsRefreshTrigger,
+        account_scope: &str,
+        scope_epoch: u64,
+    ) {
         let result = (self.fetch)().and_then(|fetched| {
+            {
+                let state = self.state.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+                if state.disposed
+                    || state.scope_epoch != scope_epoch
+                    || state.account_scope.as_deref() != Some(account_scope)
+                {
+                    return Err("managed skills account scope changed during refresh".into());
+                }
+            }
             let skills: Vec<ManagedSkill> = fetched
                 .iter()
                 .filter_map(fetched_managed_skill_to_sand_skill)
@@ -155,8 +216,12 @@ impl SandManagedSkillsService {
                 .duration_since(UNIX_EPOCH)
                 .map(|duration| duration.as_secs_f64() * 1000.0)
                 .unwrap_or_default();
-            write_managed_skills_cache(&self.cache_dir, &skills, fetched_at)
-                .map_err(|error| error.to_string())
+            write_managed_skills_cache(
+                self.cache_dir_for_scope(account_scope),
+                &skills,
+                fetched_at,
+            )
+            .map_err(|error| error.to_string())
         });
 
         if let Err(error) = result {
@@ -171,7 +236,8 @@ impl SandManagedSkillsService {
     }
 
     fn has_cached_skill(&self, id: &str) -> bool {
-        read_managed_skills_cache(&self.cache_dir)
+        self.active_cache_dir()
+            .and_then(read_managed_skills_cache)
             .is_some_and(|cache| cache.skills.iter().any(|skill| skill.id == id))
     }
 }
@@ -196,8 +262,30 @@ mod android_parity_tests {
         let seen = Arc::clone(&calls);
         let fetch: ManagedSkillsFetch = Arc::new(move || { seen.fetch_add(1, Ordering::SeqCst); Ok(vec![FetchedManagedSkill { id: "managed".into(), description: "Managed".into(), content: "body".into(), enabled: true }]) });
         let service = SandManagedSkillsService::new(root.path().to_path_buf(), fetch, None);
+        service.set_account_scope(Some("account:a")).unwrap();
         assert!(service.ensure_skill("managed"));
         assert!(service.ensure_skill("managed"));
         assert_eq!(calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn cached_skills_are_account_fenced() {
+        let root = tempfile::tempdir().unwrap();
+        let fetch: ManagedSkillsFetch = Arc::new(|| Ok(vec![FetchedManagedSkill {
+            id: "managed".into(),
+            description: "Managed".into(),
+            content: "body".into(),
+            enabled: true,
+        }]));
+        let service = SandManagedSkillsService::new(root.path().to_path_buf(), fetch, None);
+        service.set_account_scope(Some("account:a")).unwrap();
+        assert!(service.ensure_skill("managed"));
+        service.set_account_scope(Some("account:b")).unwrap();
+        assert!(!service.has_cached_skill("managed"));
+        assert!(service.ensure_skill("managed"));
+        service.set_account_scope(Some("account:a")).unwrap();
+        assert!(service.has_cached_skill("managed"));
+        service.set_account_scope(None).unwrap();
+        assert!(!service.has_cached_skill("managed"));
     }
 }
