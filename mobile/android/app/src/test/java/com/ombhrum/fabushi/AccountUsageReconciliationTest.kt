@@ -1,10 +1,89 @@
 package com.ombhrum.fabushi
 
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidAccountUsageSummary
+import com.ombhrum.fabushi.androidpreload.runtime.AndroidAccountUpgradeCta
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
 class AccountUsageReconciliationTest {
+    private fun upgradeCta(
+        disabled: Boolean = false,
+        kind: String = "dashboard-action",
+        action: String? = "requestLimitIncrease",
+    ) = AndroidAccountUpgradeCta(
+        label = "Upgrade",
+        disabled = disabled,
+        kind = kind,
+        dashboardAction = action,
+    )
+
+    @Test
+    fun upgradeCtaPolicyAllowsOnlySettledAccountExactDashboardAction() {
+        assertEquals(
+            true,
+            shouldPerformAccountUpgradeCta(
+                loggedIn = true,
+                accountAuthId = "account-a",
+                accountUsageBusy = false,
+                cta = upgradeCta(),
+            ),
+        )
+        assertEquals(
+            false,
+            shouldPerformAccountUpgradeCta(
+                loggedIn = false,
+                accountAuthId = "account-a",
+                accountUsageBusy = false,
+                cta = upgradeCta(),
+            ),
+        )
+        assertEquals(
+            false,
+            shouldPerformAccountUpgradeCta(
+                loggedIn = true,
+                accountAuthId = "",
+                accountUsageBusy = false,
+                cta = upgradeCta(),
+            ),
+        )
+        assertEquals(
+            false,
+            shouldPerformAccountUpgradeCta(
+                loggedIn = true,
+                accountAuthId = "account-a",
+                accountUsageBusy = true,
+                cta = upgradeCta(),
+            ),
+        )
+        assertEquals(
+            false,
+            shouldPerformAccountUpgradeCta(
+                loggedIn = true,
+                accountAuthId = "account-a",
+                accountUsageBusy = false,
+                cta = upgradeCta(disabled = true),
+            ),
+        )
+        assertEquals(
+            false,
+            shouldPerformAccountUpgradeCta(
+                loggedIn = true,
+                accountAuthId = "account-a",
+                accountUsageBusy = false,
+                cta = upgradeCta(kind = "open-url", action = null),
+            ),
+        )
+        assertEquals(
+            false,
+            shouldPerformAccountUpgradeCta(
+                loggedIn = true,
+                accountAuthId = "account-a",
+                accountUsageBusy = false,
+                cta = upgradeCta(action = "deleteEverything"),
+            ),
+        )
+    }
+
     private fun activeTrial(canCancel: Boolean = true) = AndroidAccountUsageSummary(
         sandUsagePercent = 42.5,
         sandUsageResetTimestampMs = 2_000_000_000_000L,
