@@ -39,8 +39,7 @@ pub fn open_remote_box_store_execution_service<A: RemoteExecutionAuthorizer>(
     config: RemoteBoxStoreBackendConfig,
     now_ms: u64,
 ) -> Result<RemoteExecutionService<A, RemoteBoxStoreBackend>, ExecutionError> {
-    let backend = RemoteBoxStoreBackend::open(config)?;
-    RemoteExecutionService::open(journal_path, authorizer, backend, now_ms)
+    crate::open_production_box_store_sync_service(journal_path, authorizer, config, now_ms)
 }
 
 #[cfg(test)]
