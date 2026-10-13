@@ -7,6 +7,7 @@ use std::{
 };
 
 const TIME_ZONE_MAX_CHARS: usize = 128;
+const MODEL_ID_MAX_CHARS: usize = 256;
 
 #[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
@@ -73,6 +74,10 @@ struct PersistedAndroidUserSettings {
     onboarding_seen_by_account: BTreeMap<String, bool>,
     #[serde(default)]
     process_metrics_local_enabled: bool,
+    #[serde(default)]
+    agent_default_model_by_account: BTreeMap<String, String>,
+    #[serde(default)]
+    computer_use_model_by_account: BTreeMap<String, String>,
 }
 
 /// Canonical Host-owned Android user settings that must survive Activity/process recreation.
@@ -170,6 +175,71 @@ impl AndroidUserSettings {
         Ok(self.local_tool_permission())
     }
 
+    pub fn agent_default_model(&self, account_scope: &str) -> Option<&str> {
+        self.state
+            .agent_default_model_by_account
+            .get(account_scope)
+            .map(String::as_str)
+    }
+
+    pub fn set_agent_default_model(
+        &mut self,
+        account_scope: &str,
+        value: Option<&str>,
+    ) -> io::Result<Option<String>> {
+        self.set_account_model(account_scope, value, true)
+    }
+
+    pub fn computer_use_model(&self, account_scope: &str) -> Option<&str> {
+        self.state
+            .computer_use_model_by_account
+            .get(account_scope)
+            .map(String::as_str)
+    }
+
+    pub fn set_computer_use_model(
+        &mut self,
+        account_scope: &str,
+        value: Option<&str>,
+    ) -> io::Result<Option<String>> {
+        self.set_account_model(account_scope, value, false)
+    }
+
+    fn set_account_model(
+        &mut self,
+        account_scope: &str,
+        value: Option<&str>,
+        agent_default: bool,
+    ) -> io::Result<Option<String>> {
+        validate_account_scope(account_scope)?;
+        let normalized = normalize_model_id(value)?;
+        let current = if agent_default {
+            self.agent_default_model(account_scope)
+        } else {
+            self.computer_use_model(account_scope)
+        };
+        if current == normalized.as_deref() {
+            return Ok(normalized);
+        }
+        let mut next = self.state.clone();
+        let target = if agent_default {
+            &mut next.agent_default_model_by_account
+        } else {
+            &mut next.computer_use_model_by_account
+        };
+        match normalized.as_ref() {
+            Some(model) => {
+                target.insert(account_scope.to_string(), model.clone());
+            }
+            None => {
+                target.remove(account_scope);
+            }
+        }
+        write_atomic_json(&self.path, &next)?;
+        self.state = next;
+        Ok(normalized)
+    }
+
     pub fn process_metrics_local_enabled(&self) -> bool {
         self.state.process_metrics_local_enabled
     }
@@ -246,6 +316,30 @@ fn read_state(path: &Path) -> io::Result<PersistedAndroidUserSettings> {
         }
         Err(error) => Err(error),
     }
+}
+
+fn validate_account_scope(value: &str) -> io::Result<()> {
+    let value = value.trim();
+    if value.is_empty() || value.len() > 1024 || value.chars().any(char::is_control) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "account scope must be bounded and non-empty",
+        ));
+    }
+    Ok(())
+}
+
+fn normalize_model_id(value: Option<&str>) -> io::Result<Option<String>> {
+    let Some(value) = value.map(str::trim).filter(|value| !value.is_empty()) else {
+        return Ok(None);
+    };
+    if value.chars().count() > MODEL_ID_MAX_CHARS || value.chars().any(char::is_control) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "model id must be bounded and contain no control characters",
+        ));
+    }
+    Ok(Some(value.to_string()))
 }
 
 fn normalize_time_zone(value: Option<&str>) -> io::Result<Option<String>> {
@@ -402,6 +496,55 @@ mod tests {
         assert!(!reopened.onboarding_seen("account-device:a"));
         assert!(reopened.set_onboarding_seen("", true).is_err());
 
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn model_preferences_are_account_scoped_durable_and_clearable() {
+        let path = test_path("models");
+        let mut settings = AndroidUserSettings::open(&path).unwrap();
+        assert_eq!(settings.agent_default_model("account:a"), None);
+        assert_eq!(settings.computer_use_model("account:a"), None);
+
+        assert_eq!(
+            settings
+                .set_agent_default_model("account:a", Some("  claude-4-sonnet  "))
+                .unwrap(),
+            Some("claude-4-sonnet".into()),
+        );
+        assert_eq!(
+            settings
+                .set_computer_use_model("account:a", Some("computer-use-v2"))
+                .unwrap(),
+            Some("computer-use-v2".into()),
+        );
+        assert_eq!(settings.agent_default_model("account:b"), None);
+        drop(settings);
+
+        let mut reopened = AndroidUserSettings::open(&path).unwrap();
+        assert_eq!(
+            reopened.agent_default_model("account:a"),
+            Some("claude-4-sonnet"),
+        );
+        assert_eq!(
+            reopened.computer_use_model("account:a"),
+            Some("computer-use-v2"),
+        );
+        assert!(reopened
+            .set_agent_default_model("", Some("model"))
+            .is_err());
+        assert!(reopened
+            .set_agent_default_model("account:a", Some(&"x".repeat(MODEL_ID_MAX_CHARS + 1)))
+            .is_err());
+        assert_eq!(
+            reopened.set_agent_default_model("account:a", None).unwrap(),
+            None,
+        );
+        assert_eq!(reopened.agent_default_model("account:a"), None);
+        assert_eq!(
+            reopened.computer_use_model("account:a"),
+            Some("computer-use-v2"),
+        );
         let _ = fs::remove_file(path);
     }
 
