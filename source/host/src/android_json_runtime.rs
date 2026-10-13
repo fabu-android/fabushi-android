@@ -4957,6 +4957,10 @@ impl AndroidJsonHost {
                 .set_account_scope(None)
                 .map_err(|error| format!("failed to clear managed skills account scope during transition: {error}"))?;
         }
+        self.box_handoff
+            .lock()
+            .map_err(|_| "Android box handoff lock poisoned".to_string())?
+            .forget_account(previous_fence)?;
         self.experiments.clear_account_scope();
         if let Some(core) = self.cross_user_core.as_ref() {
             core.fence_account_transition()?;
