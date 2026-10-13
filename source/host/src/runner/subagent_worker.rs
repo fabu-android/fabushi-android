@@ -2,7 +2,7 @@ use super::{
     AndroidRoutedToolBridge, DurableSubagentOwner, ProductionTurnAgentBuildBindings,
     ProductionTurnAgentOwner,
     ProductionTurnAgentStaticConfig, ProductionTurnEvent, ProductionTurnInput,
-    ProductionTurnPrivacyMode, SubagentLaunch, SubagentRunOutcome,
+    ProductionTurnPrivacyMode, DurableSubagentRecord, SubagentLaunch, SubagentRunOutcome,
     SubagentSessionSnapshot, SubagentToolBridge, SubagentToolContext, SAND_AGENT_TOKEN_LIMIT,
 };
 use crate::android_json_runtime::{AndroidHostMode, now_ms};
@@ -15,6 +15,9 @@ use std::sync::{
 };
 use std::thread;
 
+pub type SubagentCompletionWakeSink =
+    Arc<dyn Fn(&DurableSubagentRecord) -> Result<(), String> + Send + Sync>;
+
 struct ParentSubagentRoutedTools {
     mode: AndroidHostMode,
     bearer_token: Option<String>,
@@ -22,6 +25,7 @@ struct ParentSubagentRoutedTools {
     bridge: SubagentToolBridge,
     context: SubagentToolContext,
     events: Arc<Mutex<VecDeque<Value>>>,
+    completion_wake_sink: SubagentCompletionWakeSink,
     allowed_names: BTreeSet<String>,
 }
 
@@ -80,6 +84,7 @@ impl AndroidRoutedToolBridge for ParentSubagentRoutedTools {
             Arc::clone(&self.owner),
             self.bridge.clone(),
             Arc::clone(&self.events),
+            Arc::clone(&self.completion_wake_sink),
             launch.clone(),
         ) {
             let epoch = self
@@ -99,7 +104,7 @@ impl AndroidRoutedToolBridge for ParentSubagentRoutedTools {
                     now_ms(),
                 )?;
             if !settlement.ignored_stale_callback {
-                publish_settlement(&self.events, settlement);
+                publish_settlement(&self.events, &self.completion_wake_sink, settlement);
             }
             return Err(error);
         }
@@ -113,6 +118,7 @@ pub fn build_parent_subagent_routed_tools(
     owner: Arc<Mutex<DurableSubagentOwner>>,
     bridge: SubagentToolBridge,
     events: Arc<Mutex<VecDeque<Value>>>,
+    completion_wake_sink: SubagentCompletionWakeSink,
     context: SubagentToolContext,
 ) -> Arc<dyn AndroidRoutedToolBridge> {
     // The durable frozen tool projection describes the child turn, not the
@@ -138,6 +144,7 @@ pub fn build_parent_subagent_routed_tools(
         bridge,
         context,
         events,
+        completion_wake_sink,
         allowed_names,
     })
 }
@@ -148,6 +155,7 @@ pub fn spawn_generated_subagent(
     owner: Arc<Mutex<DurableSubagentOwner>>,
     subagent_tools: SubagentToolBridge,
     events: Arc<Mutex<VecDeque<Value>>>,
+    completion_wake_sink: SubagentCompletionWakeSink,
     launch: SubagentLaunch,
 ) -> Result<(), String> {
     let record = launch.record;
@@ -201,6 +209,7 @@ pub fn spawn_generated_subagent(
                             settle_and_publish(
                                 &owner,
                                 &events,
+                                &completion_wake_sink,
                                 &subagent_id,
                                 &account_fence,
                                 callback_epoch,
@@ -214,6 +223,7 @@ pub fn spawn_generated_subagent(
                                 settle_and_publish(
                                     &owner,
                                     &events,
+                                    &completion_wake_sink,
                                     &subagent_id,
                                     &account_fence,
                                     callback_epoch,
@@ -337,7 +347,7 @@ pub fn spawn_generated_subagent(
                     prompt = continuation.prompt;
                     continue;
                 }
-                publish_settlement(&events, settlement);
+                publish_settlement(&events, &completion_wake_sink, settlement);
                 return;
             }
         })
@@ -348,6 +358,7 @@ pub fn spawn_generated_subagent(
 fn settle_and_publish(
     owner: &Arc<Mutex<DurableSubagentOwner>>,
     events: &Arc<Mutex<VecDeque<Value>>>,
+    completion_wake_sink: &SubagentCompletionWakeSink,
     subagent_id: &str,
     account_fence: &str,
     callback_epoch: u64,
@@ -359,17 +370,36 @@ fn settle_and_publish(
             .ok()
     });
     if let Some(settlement) = settlement {
-        publish_settlement(events, settlement);
+        publish_settlement(events, completion_wake_sink, settlement);
     }
 }
 
 fn publish_settlement(
     events: &Arc<Mutex<VecDeque<Value>>>,
+    completion_wake_sink: &SubagentCompletionWakeSink,
     settlement: super::SubagentSettlement,
 ) {
     let Some(record) = settlement.completion else {
         return;
     };
+    if matches!(
+        record.status,
+        super::SubagentStatus::Completed | super::SubagentStatus::Failed
+    ) {
+        if let Err(error) = completion_wake_sink(&record) {
+            // The DurableSubagentOwner deliberately keeps pending_wake=true when this handoff
+            // fails. Surface the storage failure, but never pretend the parent revival was
+            // accepted or clear the canonical obligation.
+            if let Ok(mut queue) = events.lock() {
+                queue.push_back(json!({
+                    "type":"subagent.revival.persist-failed",
+                    "subagentId":record.subagent_id,
+                    "parentAgentId":record.parent_agent_id,
+                    "message":error,
+                }));
+            }
+        }
+    }
     let family = match record.status {
         super::SubagentStatus::Completed => "subagent.completed",
         super::SubagentStatus::Failed => "subagent.failed",
@@ -468,6 +498,7 @@ mod tests {
             Arc::clone(&owner),
             bridge.clone(),
             Arc::new(Mutex::new(VecDeque::new())),
+            Arc::new(|_record| Ok(())),
             context.clone(),
         );
         let parent_names = parent
