@@ -830,6 +830,8 @@ interface AndroidCoordinatorPort {
     ): AndroidHumanCallSession = error("Human call runtime is unavailable on this Coordinator port")
     fun humanCallList(scopeId: String, limit: Int = 20): List<AndroidHumanCallSession> =
         error("Human call runtime is unavailable on this Coordinator port")
+    fun humanCallIceServers(): JSONObject =
+        error("Human call ICE configuration is unavailable on this Coordinator port")
     fun humanCallLease(
         callId: String,
         generation: Long,
