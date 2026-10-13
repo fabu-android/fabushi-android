@@ -94,6 +94,8 @@ struct AndroidAgentRosterFile {
     next_id: u64,
     #[serde(default)]
     pinned_agent_ids: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    active_agent_id: Option<String>,
     #[serde(default)]
     agents: Vec<AndroidAgentRecord>,
     #[serde(default)]
@@ -108,6 +110,7 @@ impl Default for AndroidAgentRosterFile {
             schema_version: ROSTER_SCHEMA_VERSION,
             next_id: 0,
             pinned_agent_ids: Vec::new(),
+            active_agent_id: None,
             agents: Vec::new(),
             management_calls: std::collections::BTreeMap::new(),
             management_call_order: Vec::new(),
@@ -908,6 +911,9 @@ impl AndroidAgentRoster {
             return Ok(Vec::new());
         }
         next.pinned_agent_ids.retain(|id| !targets.contains(id));
+        if next.active_agent_id.as_ref().is_some_and(|id| targets.contains(id)) {
+            next.active_agent_id = None;
+        }
         for agent in &mut next.agents {
             if agent.is_group {
                 agent.member_ids.retain(|member_id| !targets.contains(member_id));
@@ -947,6 +953,33 @@ impl AndroidAgentRoster {
 
     pub fn pinned_agent_ids(&self) -> Vec<String> {
         self.state.pinned_agent_ids.clone()
+    }
+
+    pub fn active_agent_id(&self) -> Option<String> {
+        self.state.active_agent_id.clone()
+    }
+
+    pub fn set_active_agent(&mut self, id: Option<&str>) -> io::Result<Option<String>> {
+        let normalized = id.map(str::trim).filter(|value| !value.is_empty());
+        if let Some(id) = normalized {
+            let agent = self.state.agents.iter()
+                .find(|agent| agent.id == id)
+                .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "agent not found"))?;
+            if agent.is_group {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "active Agent must not be a group",
+                ));
+            }
+        }
+        let next_id = normalized.map(str::to_string);
+        if self.state.active_agent_id == next_id {
+            return Ok(next_id);
+        }
+        let mut next = self.state.clone();
+        next.active_agent_id = next_id.clone();
+        self.commit(next)?;
+        Ok(next_id)
     }
 
     fn mutate_agent(
@@ -1064,6 +1097,9 @@ fn normalize_state(state: &mut AndroidAgentRosterFile) {
         .filter(|agent| !agent.is_group)
         .map(|agent| agent.id.clone())
         .collect::<BTreeSet<_>>();
+    if state.active_agent_id.as_ref().is_some_and(|id| !non_group_ids.contains(id)) {
+        state.active_agent_id = None;
+    }
     for agent in &mut state.agents {
         agent.is_pinned = pinned.contains(&agent.id);
         if agent.origin != "dev" { agent.origin = default_agent_origin(); }
@@ -1391,6 +1427,30 @@ mod tests {
         let _ = fs::remove_file(path);
         let _ = fs::remove_file(backup);
         let _ = fs::remove_file(recovery.quarantine_path);
+    }
+
+    #[test]
+    fn active_agent_runtime_pointer_is_durable_validated_and_cleared_on_delete() {
+        let path = temp_path("active-agent");
+        let mut roster = AndroidAgentRoster::open(&path).unwrap();
+        let first = roster.create("First", "").unwrap();
+        let second = roster.create("Second", "").unwrap();
+        let group = roster.create_group("Team", "", std::slice::from_ref(&first.id)).unwrap();
+
+        assert_eq!(roster.set_active_agent(Some(&second.id)).unwrap(), Some(second.id.clone()));
+        assert!(roster.set_active_agent(Some(&group.id)).is_err());
+        assert!(roster.set_active_agent(Some("missing-agent")).is_err());
+        drop(roster);
+
+        let mut reopened = AndroidAgentRoster::open(&path).unwrap();
+        assert_eq!(reopened.active_agent_id().as_deref(), Some(second.id.as_str()));
+        reopened.delete(std::slice::from_ref(&second.id)).unwrap();
+        assert!(reopened.active_agent_id().is_none());
+        drop(reopened);
+
+        let reopened = AndroidAgentRoster::open(&path).unwrap();
+        assert!(reopened.active_agent_id().is_none());
+        let _ = fs::remove_file(path);
     }
 
     #[test]
