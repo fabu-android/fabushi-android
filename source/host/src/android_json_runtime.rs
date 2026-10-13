@@ -13641,6 +13641,7 @@ const ANDROID_TURN_REQUEST_SOURCES: &[&str] = &[
     "widget-response",
     "mcp-auth-resume",
     "agent-message",
+    "agent-kickstart",
 ];
 
 fn normalize_turn_request_source(value: Option<&Value>) -> Result<Option<String>, String> {
