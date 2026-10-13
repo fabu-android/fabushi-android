@@ -75,7 +75,7 @@ impl CrossUserSharingExtension {
 mod tests {
     use super::*;
     use crate::extensions::cross_user_sharing::xuser_relay::{
-        SandXuserRelayClient, XuserRelayTransport, SandXuserRelayHttpError,
+        XuserRelayClient, XuserRelayTransport, XuserRelayHttpError,
     };
     use serde_json::{json, Value};
 
@@ -87,13 +87,13 @@ mod tests {
             _url: &str,
             _token: &str,
             _body: Option<&Value>,
-        ) -> Result<Value, SandXuserRelayHttpError> {
+        ) -> Result<Value, XuserRelayHttpError> {
             Ok(json!({"rooms":[],"pendingJoinRequests":[]}))
         }
     }
 
     fn service() -> Arc<SandXuserSharingService> {
-        let relay = Arc::new(SandXuserRelayClient::new(
+        let relay = Arc::new(XuserRelayClient::new(
             "https://api.example.test".into(),
             Arc::new(|| Ok("test-token".into())),
             Arc::new(NoopTransport),
