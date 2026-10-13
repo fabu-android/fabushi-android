@@ -1015,6 +1015,20 @@ impl XuserEntryPublisherHost for AndroidXuserEntryPublisherHost {
     }
 }
 
+fn schedule_authenticated_experiments_refresh(
+    experiments: Arc<HostExperimentsExtension>,
+    backend: Option<Arc<CursorDashboardMcpAuthBackend>>,
+) {
+    let Some(backend) = backend else { return; };
+    let generation = experiments.begin_authenticated_refresh();
+    let _ = std::thread::Builder::new()
+        .name("android-statsig-bootstrap".into())
+        .spawn(move || {
+            let Ok(config) = backend.fetch_statsig_bootstrap() else { return; };
+            let _ = experiments.hydrate_authenticated_statsig_if_current(generation, &config);
+        });
+}
+
 fn project_cross_user_state(
     core: Option<&ProductionCrossUserCore>,
 ) -> Value {
@@ -1780,6 +1794,12 @@ impl AndroidJsonHost {
             }));
         }
         let managed_team_rules = Arc::new(crate::managed_team_rules::ManagedTeamRulesResolver::default());
+        if mode == AndroidHostMode::Production && account.session_fence().is_some() {
+            schedule_authenticated_experiments_refresh(
+                Arc::clone(&experiments),
+                mcp_dashboard_backend.as_ref().cloned(),
+            );
+        }
         if mode == AndroidHostMode::Production {
             if let (Some(account_fence), Some(backend)) = (
                 account.session_fence(),
@@ -8244,6 +8264,12 @@ impl AndroidJsonHost {
             current_fence.as_deref(),
             now_ms(),
         );
+        if current_fence.is_some() && previous_fence != current_fence {
+            schedule_authenticated_experiments_refresh(
+                Arc::clone(&self.experiments),
+                self.mcp_dashboard_backend.as_ref().cloned(),
+            );
+        }
         self.report_signin_poll_result(&result);
         Ok(with_account_session_mutation(result, mutation))
     }
