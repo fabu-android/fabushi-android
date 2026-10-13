@@ -1,3 +1,4 @@
+use super::xuser_departure_obligations::{SandXuserDepartureObligations, XuserDepartureRelay};
 use super::xuser_entry_publisher::SandXuserEntryPublisher;
 use super::xuser_relay::{XuserRelayClient, XuserRelayDriver};
 use super::xuser_state_reconcile::{XuserRoom, reconcile_rooms};
@@ -105,6 +106,7 @@ pub struct SandXuserSharingService {
     relay_driver: Mutex<Option<Arc<XuserRelayDriver>>>,
     entry_publisher: Mutex<Option<Arc<SandXuserEntryPublisher>>>,
     manager: Mutex<Option<Arc<dyn XuserSharingManager>>>,
+    departures: Mutex<Option<(SandXuserDepartureObligations, Arc<dyn XuserDepartureRelay>)>>,
     state: Mutex<SandSharingState>,
     room_mint_lock: Mutex<()>,
     started: AtomicBool,
@@ -116,6 +118,7 @@ impl SandXuserSharingService {
             relay_driver: Mutex::new(None),
             entry_publisher: Mutex::new(None),
             manager: Mutex::new(None),
+            departures: Mutex::new(None),
             state: Mutex::new(SandSharingState::default()),
             room_mint_lock: Mutex::new(()),
             started: AtomicBool::new(false),
@@ -140,6 +143,27 @@ impl SandXuserSharingService {
             .manager
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(manager);
+    }
+
+    pub fn bind_departure_obligations(
+        &self,
+        departures: SandXuserDepartureObligations,
+        relay: Arc<dyn XuserDepartureRelay>,
+    ) {
+        *self
+            .departures
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some((departures, relay));
+    }
+
+    fn departure_binding(
+        &self,
+    ) -> Option<(SandXuserDepartureObligations, Arc<dyn XuserDepartureRelay>)> {
+        self.departures
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .as_ref()
+            .cloned()
     }
 
     fn manager(&self) -> Option<Arc<dyn XuserSharingManager>> {
@@ -177,6 +201,9 @@ impl SandXuserSharingService {
         }
         if self.started.swap(true, Ordering::AcqRel) {
             return Ok(self.get_state());
+        }
+        if let Some((departures, relay)) = self.departure_binding() {
+            departures.drain(relay.as_ref())?;
         }
         if let Err(error) = self.reconcile_share_state() {
             self.started.store(false, Ordering::Release);
@@ -501,8 +528,42 @@ impl SandXuserSharingService {
         if !current.is_enabled {
             return Ok(current);
         }
+        let is_self_departure =
+            target_auth_id.is_none() || target_auth_id == current.self_auth_id.as_deref();
+
+        if is_self_departure {
+            if let Some((departures, relay)) = self.departure_binding() {
+                let local_agent_id = self
+                    .manager()
+                    .map(|manager| manager.find_room_agent_id(room_id))
+                    .transpose()?
+                    .flatten()
+                    .unwrap_or_default();
+                departures.record_leave(
+                    current.self_auth_id.clone(),
+                    room_id.to_string(),
+                    local_agent_id,
+                    system_now_ms() as u64,
+                )?;
+                let _ = departures.drain(relay.as_ref())?;
+                self.state
+                    .lock()
+                    .unwrap_or_else(|p| p.into_inner())
+                    .rooms
+                    .retain(|room| room.room_id != room_id);
+
+                // A transport failure leaves the durable obligation in place. Do not immediately
+                // fetch remote state and resurrect a room that is still owed a leave side effect.
+                if departures.is_departure_owed(room_id, current.self_auth_id.as_deref())? {
+                    return Ok(self.get_state());
+                }
+                let _ = self.reconcile_share_state();
+                return Ok(self.get_state());
+            }
+        }
+
         let _ = self.relay.leave_room_with_target(room_id, target_auth_id)?;
-        if target_auth_id.is_none() || target_auth_id == current.self_auth_id.as_deref() {
+        if is_self_departure {
             self.state
                 .lock()
                 .unwrap_or_else(|p| p.into_inner())
@@ -515,6 +576,27 @@ impl SandXuserSharingService {
 
     pub fn note_agent_deleted(&self, agent_id: &str) -> Result<(), String> {
         if !self.get_state().is_enabled {
+            return Ok(());
+        }
+        if let Some((departures, relay)) = self.departure_binding() {
+            departures.record_agent_removal(self.get_state().self_auth_id, agent_id.to_string())?;
+            let _ = departures.drain(relay.as_ref())?;
+            // Reconcile only after the durable removal has settled; otherwise preserve the local
+            // projection until the obligation can be retried after reconnect/process restart.
+            let still_pending = departures
+                .list_pending()?
+                .iter()
+                .any(|departure| matches!(
+                    departure,
+                    super::xuser_pending_departure_store::XuserDeparture::RemoveAgent {
+                        agent_id: pending_agent_id,
+                        ..
+                    } if pending_agent_id == agent_id
+                ));
+            if still_pending {
+                return Ok(());
+            }
+            let _ = self.reconcile_share_state();
             return Ok(());
         }
         let _ = self.relay.remove_deleted_agent(agent_id)?;
