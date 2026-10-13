@@ -55,6 +55,9 @@ pub const ANALYTICS_SUBMIT_LOGS_PATH: &str =
     "/aiserver.v1.AnalyticsService/SubmitLogs";
 pub const ANALYTICS_TRACK_EVENTS_PATH: &str =
     "/aiserver.v1.AnalyticsService/TrackEvents";
+pub const ANALYTICS_BOOTSTRAP_STATSIG_PATH: &str =
+    "/aiserver.v1.AnalyticsService/BootstrapStatsig";
+pub const STATSIG_BOOTSTRAP_TIMEOUT_MS: u64 = 30_000;
 pub const PRODUCT_ANALYTICS_SUBMIT_TIMEOUT_MS: u64 = 2_500;
 pub const ACCOUNT_TELEMETRY_SUBMIT_TIMEOUT_MS: u64 = 15_000;
 pub const FEEDBACK_SUBMIT_PATH: &str = "/sand/feedback";
@@ -412,6 +415,21 @@ impl FeedbackSubmitBackendError {
     }
 }
 
+fn decode_statsig_bootstrap_response(bytes: &[u8]) -> Result<String, String> {
+    let parsed: Value = serde_json::from_slice(bytes)
+        .map_err(|error| format!("Statsig bootstrap response was invalid JSON: {error}"))?;
+    let config = parsed
+        .get("config")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or("Statsig bootstrap response returned no config")?;
+    if config.len() > MAX_RPC_RESPONSE_BYTES {
+        return Err("Statsig bootstrap config exceeds bounded size".into());
+    }
+    Ok(config.to_string())
+}
+
 fn feedback_error_for_status(status: u16) -> FeedbackSubmitBackendError {
     match status {
         400 => FeedbackSubmitBackendError::InvalidFeedback,
@@ -514,6 +532,53 @@ impl CursorDashboardMcpAuthBackend {
             return Err("MCP backend RPC response exceeds bounded size".into());
         }
         Ok(bytes)
+    }
+
+    /// Fetch the authenticated Statsig bootstrap through the canonical Sand credential and
+    /// installation identity. This is intentionally a single allowlisted JSON endpoint rather
+    /// than a generic HTTP escape hatch for callers.
+    pub(crate) fn fetch_statsig_bootstrap(&self) -> Result<String, String> {
+        let credentials = self.credentials.credentials()?;
+        let base = Url::parse(&credentials.backend_url)
+            .map_err(|error| format!("invalid Statsig backend URL: {error}"))?;
+        let url = base
+            .join(ANALYTICS_BOOTSTRAP_STATSIG_PATH)
+            .map_err(|error| format!("invalid Statsig bootstrap URL: {error}"))?;
+        let timeout = Duration::from_millis(STATSIG_BOOTSTRAP_TIMEOUT_MS);
+        let agent = ureq::AgentBuilder::new()
+            .timeout_connect(Duration::from_secs(10))
+            .timeout_read(timeout)
+            .timeout_write(timeout)
+            .redirects(0)
+            .build();
+        let authorization = format!("Bearer {}", credentials.access_token);
+        let checksum = create_cursor_checksum(&credentials.machine_id, system_now_ms());
+        let request_id = next_request_id();
+        let ghost_mode = self.resolve_ghost_mode(&credentials);
+        let response = agent
+            .post(url.as_str())
+            .set("content-type", "application/json")
+            .set("accept", "application/json")
+            .set("authorization", &authorization)
+            .set("x-cursor-checksum", &checksum)
+            .set("x-cursor-client-type", SAND_CLIENT_TYPE)
+            .set("x-cursor-client-version", &credentials.client_version)
+            .set("x-sand-box-namespace", &credentials.box_namespace)
+            .set("x-ghost-mode", ghost_mode)
+            .set("x-request-id", &request_id)
+            .send_json(json!({}))
+            .map_err(|error| format!("Statsig bootstrap transport failed: {error}"))?;
+        let mut reader = response.into_reader();
+        let mut bytes = Vec::new();
+        reader
+            .by_ref()
+            .take(MAX_RPC_RESPONSE_BYTES as u64 + 1)
+            .read_to_end(&mut bytes)
+            .map_err(|error| format!("Statsig bootstrap response read failed: {error}"))?;
+        if bytes.len() > MAX_RPC_RESPONSE_BYTES {
+            return Err("Statsig bootstrap response exceeds bounded size".into());
+        }
+        decode_statsig_bootstrap_response(&bytes)
     }
 
     /// Send one bounded Product Analytics batch through the canonical Sand credential,
@@ -3379,6 +3444,19 @@ fn decode_web_fetch_response(input: &[u8]) -> Result<Value, String> {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn statsig_bootstrap_response_requires_non_empty_bounded_config() {
+        assert_eq!(
+            decode_statsig_bootstrap_response(br#"{"config":"{\"user\":{\"userID\":\"u\"}}"}"#)
+                .unwrap(),
+            "{\"user\":{\"userID\":\"u\"}}"
+        );
+        assert!(decode_statsig_bootstrap_response(br#"{}"#).is_err());
+        assert!(decode_statsig_bootstrap_response(br#"{"config":""}"#).is_err());
+        assert!(decode_statsig_bootstrap_response(b"not-json").is_err());
+    }
+
     use super::*;
 
     fn len_field(field: u32, payload: &[u8]) -> Vec<u8> {
