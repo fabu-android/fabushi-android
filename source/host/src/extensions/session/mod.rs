@@ -28,4 +28,3 @@ pub mod session_projection;
 pub mod session_materialization;
 pub mod session_summaries;
 pub mod session_mutations;
-pub mod android_session_lifecycle;
