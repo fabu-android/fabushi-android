@@ -78,29 +78,57 @@ impl AndroidProductAnalyticsRuntime {
     ) -> Arc<Self> {
         let opted_out = std::env::var("SAND_DISABLE_TELEMETRY").as_deref() == Ok("1")
             || std::env::var("SAND_DISABLE_ANALYTICS").as_deref() == Ok("1");
-        let enabled = !opted_out && experiments.check_feature_gate(SAND_PRODUCT_ANALYTICS_GATE);
+        Self::start_with_opt_out(experiments, sender, opted_out)
+    }
+
+    fn start_with_opt_out(
+        experiments: Arc<HostExperimentsExtension>,
+        sender: ProductAnalyticsSender,
+        disabled: bool,
+    ) -> Arc<Self> {
+        let enabled = !disabled && experiments.check_feature_gate(SAND_PRODUCT_ANALYTICS_GATE);
         let (tx, rx) = mpsc::channel();
         let worker = thread::Builder::new()
             .name("fabushi-product-analytics".into())
             .spawn(move || run_worker(rx, sender, enabled))
             .expect("failed to start Product Analytics worker");
+        let flavor = std::env::var("SAND_BOX_NAMESPACE")
+            .ok()
+            .filter(|value| !value.trim().is_empty())
+            .map(|value| match value.as_str() {
+                "dev" => "sand-dev".to_string(),
+                "lab" => "sand-lab".to_string(),
+                _ => "sand".to_string(),
+            })
+            .unwrap_or_else(|| "sand".to_string());
         let runtime = Arc::new(Self {
             tx,
             gate_stop: Mutex::new(None),
             worker: Mutex::new(Some(worker)),
             active_day_keys: Mutex::new(BTreeMap::new()),
-            disabled: opted_out,
+            base_properties: BTreeMap::from([
+                ("client".into(), Value::String("sand".into())),
+                ("sand_version".into(), Value::String(env!("CARGO_PKG_VERSION").into())),
+                ("flavor".into(), Value::String(flavor)),
+                ("os".into(), Value::String(std::env::consts::OS.into())),
+                ("arch".into(), Value::String(std::env::consts::ARCH.into())),
+                ("host_in_box".into(), Value::Bool(false)),
+            ]),
+            disabled,
         });
-        if !opted_out {
-            let weak = Arc::downgrade(&runtime);
-            let stop = experiments.subscribe_gate(
-                SAND_PRODUCT_ANALYTICS_GATE,
-                Arc::new(move |enabled| {
-                    if let Some(runtime) = weak.upgrade() { let _ = runtime.tx.send(WorkerCommand::Gate(enabled)); }
-                }),
-            );
-            *runtime.gate_stop.lock().unwrap_or_else(|p| p.into_inner()) = Some(stop);
+        if disabled {
+            return runtime;
         }
+        let weak = Arc::downgrade(&runtime);
+        let stop = experiments.subscribe_gate(
+            SAND_PRODUCT_ANALYTICS_GATE,
+            Arc::new(move |enabled| {
+                if let Some(runtime) = weak.upgrade() {
+                    let _ = runtime.tx.send(WorkerCommand::Gate(enabled));
+                }
+            }),
+        );
+        *runtime.gate_stop.lock().unwrap_or_else(|p| p.into_inner()) = Some(stop);
         runtime
     }
 
@@ -117,6 +145,13 @@ impl AndroidProductAnalyticsRuntime {
         if event.name.trim().is_empty() {
             return Err("Product Analytics event name is required".into());
         }
+        if self.disabled {
+            return Ok(());
+        }
+        let mut event = event;
+        let mut enriched = self.base_properties.clone();
+        enriched.append(&mut event.properties);
+        event.properties = enriched;
         self.tx
             .send(WorkerCommand::Event(ScopedQueuedEvent {
                 account_scope: account_scope.to_string(),
@@ -416,4 +451,33 @@ mod tests {
         wait_until(|| attempts.load(Ordering::SeqCst) > 0);
         assert!(runtime.mark_active("account-a", "user_action").is_ok());
     }
+
+    #[test]
+    fn explicit_privacy_opt_out_never_delivers_or_reactivates() {
+        let experiments = test_experiments(true);
+        let attempts = Arc::new(AtomicUsize::new(0));
+        let sink = Arc::clone(&attempts);
+        let runtime = AndroidProductAnalyticsRuntime::start_with_opt_out(
+            Arc::clone(&experiments),
+            Arc::new(move |_| {
+                sink.fetch_add(1, Ordering::SeqCst);
+                Ok(())
+            }),
+            true,
+        );
+        runtime
+            .track(
+                "account-a",
+                ProductAnalyticsEvent {
+                    name: "sand.private".into(),
+                    properties: BTreeMap::new(),
+                },
+            )
+            .unwrap();
+        experiments.set_settings_override(SAND_PRODUCT_ANALYTICS_GATE, Some(false));
+        experiments.set_settings_override(SAND_PRODUCT_ANALYTICS_GATE, Some(true));
+        std::thread::sleep(Duration::from_millis(30));
+        assert_eq!(attempts.load(Ordering::SeqCst), 0);
+    }
+
 }
