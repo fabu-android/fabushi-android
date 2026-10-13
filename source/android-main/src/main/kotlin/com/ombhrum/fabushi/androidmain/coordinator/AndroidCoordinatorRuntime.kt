@@ -2514,7 +2514,30 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
         } else {
             null
         }
-        return AndroidTranscriptHistoryPage(entries = entries, nextBeforeSeq = nextBeforeSeq)
+        val entryIds = buildSet {
+            for (index in 0 until entries.length()) {
+                entries.optJSONObject(index)?.optString("id")?.trim()
+                    ?.takeIf(String::isNotEmpty)
+                    ?.let(::add)
+            }
+        }
+        val threadCountsObject = value.optJSONObject("threadCounts") ?: JSONObject()
+        val threadCounts = buildMap<String, Int> {
+            val keys = threadCountsObject.keys()
+            while (keys.hasNext()) {
+                val rootId = keys.next().trim()
+                val count = threadCountsObject.optInt(rootId, 0)
+                check(rootId.isNotEmpty() && count > 0 && rootId in entryIds) {
+                    "Transcript page returned an invalid thread summary"
+                }
+                put(rootId, count)
+            }
+        }
+        return AndroidTranscriptHistoryPage(
+            entries = entries,
+            nextBeforeSeq = nextBeforeSeq,
+            threadCounts = threadCounts,
+        )
     }
 
     override fun transcriptThread(
