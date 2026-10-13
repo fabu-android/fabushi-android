@@ -350,6 +350,13 @@ impl DurableTurnJournal {
         self.state.records.get(request_id)
     }
 
+    pub fn record_by_operation(&self, operation_id: &str) -> Option<&DurableTurnRecord> {
+        self.state
+            .records
+            .values()
+            .find(|record| record.operation_id == operation_id)
+    }
+
     fn persist(&self) -> Result<(), String> {
         if let Some(parent) = self.path.parent() {
             fs::create_dir_all(parent).map_err(|e| e.to_string())?;
@@ -378,6 +385,30 @@ impl DurableTurnJournal {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn operation_lookup_returns_canonical_running_turn_context() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut journal = DurableTurnJournal::open(dir.path().join("turns.json"), 1).unwrap();
+        journal
+            .begin_with_context(
+                "request-a",
+                "operation-a",
+                "acct:a",
+                Some("turn"),
+                Some("agent-a"),
+                2,
+            )
+            .unwrap();
+
+        let record = journal
+            .record_by_operation("operation-a")
+            .expect("operation lookup must recover canonical turn context");
+        assert_eq!(record.request_id, "request-a");
+        assert_eq!(record.agent_id.as_deref(), Some("agent-a"));
+        assert_eq!(record.state, DurableTurnState::Running);
+        assert!(journal.record_by_operation("missing-operation").is_none());
+    }
 
     #[test]
     fn request_source_is_durable_when_owned_by_the_turn_journal() {
