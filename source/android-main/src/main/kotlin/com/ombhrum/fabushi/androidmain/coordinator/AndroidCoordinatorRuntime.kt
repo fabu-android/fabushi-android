@@ -39,6 +39,8 @@ import com.ombhrum.fabushi.androidpreload.runtime.AccountTruthState
 import com.ombhrum.fabushi.androidpreload.runtime.RootConnectionResilienceProjection
 import com.ombhrum.fabushi.androidpreload.runtime.RootConnectionTransportState
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidCoordinatorPort
+import com.ombhrum.fabushi.androidpreload.runtime.AndroidCrossUserSharingCapability
+import com.ombhrum.fabushi.androidpreload.runtime.AndroidCrossUserSharingState
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidEntrypointAvailabilitySnapshot
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidMandatoryUpdatePolicy
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidUpdateTrackPolicy
@@ -1844,6 +1846,55 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
             ?: return RemoteBoxCapabilitySnapshot.Unavailable
         return RemoteBoxCapabilitySnapshot.fromBindingStatus(status)
     }
+
+    private fun parseCrossUserSharingState(value: JSONObject): AndroidCrossUserSharingState {
+        check(value.has("available") && value.has("enabled") && value.has("canonicalRoomManagerBound")) {
+            "Cross-user sharing state is missing required lifecycle fields"
+        }
+        return AndroidCrossUserSharingState(
+            available = value.getBoolean("available"),
+            enabled = value.getBoolean("enabled"),
+            selfAuthId = value.optString("selfAuthId").trim().takeIf(String::isNotEmpty),
+            pendingJoinRequests = value.optJSONArray("pendingJoinRequests")
+                ?: error("Cross-user sharing state is missing pendingJoinRequests"),
+            rooms = value.optJSONArray("rooms")
+                ?: error("Cross-user sharing state is missing rooms"),
+            typingUsers = value.optJSONArray("typingUsers")
+                ?: error("Cross-user sharing state is missing typingUsers"),
+            canonicalRoomManagerBound = value.getBoolean("canonicalRoomManagerBound"),
+        )
+    }
+
+    override fun crossUserSharingCapability(): AndroidCrossUserSharingCapability {
+        val value = host.request("feature.crossUserSharing.capability")
+        check(
+            value.has("available") &&
+                value.has("environmentAllowed") &&
+                value.has("enabled") &&
+                value.has("canonicalRoomManagerBound"),
+        ) { "Cross-user sharing capability projection is incomplete" }
+        return AndroidCrossUserSharingCapability(
+            available = value.getBoolean("available"),
+            environmentAllowed = value.getBoolean("environmentAllowed"),
+            enabled = value.getBoolean("enabled"),
+            canonicalRoomManagerBound = value.getBoolean("canonicalRoomManagerBound"),
+        )
+    }
+
+    override fun crossUserSharingState(): AndroidCrossUserSharingState =
+        parseCrossUserSharingState(host.request("feature.crossUserSharing.state"))
+
+    override fun crossUserSharingSetEnabled(enabled: Boolean): AndroidCrossUserSharingState =
+        parseCrossUserSharingState(
+            host.request(
+                "feature.crossUserSharing.setEnabled",
+                JSONObject().put("enabled", enabled),
+            ),
+        )
+
+    override fun crossUserSharingRequestDrain(): Boolean =
+        host.request("feature.crossUserSharing.requestDrain")
+            .optBoolean("accepted", false)
 
     override fun featureExecute(params: JSONObject) =
         host.request(
