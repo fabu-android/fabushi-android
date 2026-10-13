@@ -874,6 +874,26 @@ impl SharedCapabilityBroker {
         )
     }
 
+    pub fn local_tool_refusal_reason(
+        &self,
+        agent_id: &str,
+        direction_epoch: u64,
+        action: &str,
+        target: &Value,
+    ) -> Result<Option<String>, String> {
+        self.lock()?.local_tool_refusal_reason(agent_id, direction_epoch, action, target)
+    }
+
+    pub fn remember_local_tool_refusal(
+        &self,
+        agent_id: &str,
+        direction_epoch: u64,
+        action: &str,
+        target: &Value,
+    ) -> Result<(), String> {
+        self.lock()?.remember_local_tool_refusal(agent_id, direction_epoch, action, target)
+    }
+
     pub fn needs_reconciliation(&self, request_id: &str) -> bool {
         self.lock()
             .map(|broker| broker.needs_reconciliation(request_id))

@@ -341,6 +341,12 @@ impl RemoteApprovalRegistry {
         }
         if !approved {
             self.remember_refused(wait.refusal_id.clone())?;
+            broker.remember_local_tool_refusal(
+                &wait.parent_operation_id,
+                1,
+                "remote-tool",
+                &json!({"refusalId": wait.refusal_id}),
+            )?;
         }
         let (state, condvar) = &*wait.signal;
         let mut state = state
@@ -660,7 +666,14 @@ impl AndroidRoutedToolBridge for RemoteRoutedTools {
         if permission_at_authorization == LocalToolPermission::Never {
             return Err("local computer tools are disabled by the current Host permission policy".into());
         }
-        if self.approvals.was_refused(&refusal_id)? {
+        if self.approvals.was_refused(&refusal_id)?
+            || self.broker.local_tool_refusal_reason(
+                &self.parent_operation_id,
+                1,
+                "remote-tool",
+                &json!({"refusalId": refusal_id.clone()}),
+            )?.is_some()
+        {
             return Err(
                 "remote tool action was already denied in this turn; do not retry it".into(),
             );
@@ -2015,6 +2028,26 @@ mod tests {
         assert!(!resolved.approved);
         assert!(registry.was_refused("turn-a:shell:echo-no").unwrap());
         assert!(!registry.was_refused("turn-b:shell:echo-no").unwrap());
+        assert!(broker
+            .local_tool_refusal_reason(
+                "turn-a",
+                1,
+                "remote-tool",
+                &json!({"refusalId":"turn-a:shell:echo-no"}),
+            )
+            .unwrap()
+            .is_some());
+        drop(broker);
+        let reopened = SharedCapabilityBroker::open(root.path().join("broker.json"), 3).unwrap();
+        assert!(reopened
+            .local_tool_refusal_reason(
+                "turn-a",
+                1,
+                "remote-tool",
+                &json!({"refusalId":"turn-a:shell:echo-no"}),
+            )
+            .unwrap()
+            .is_some());
 
         // Repeated inserts are idempotent and bounded so Host lifetime cannot grow this memory
         // without limit.
