@@ -16166,9 +16166,9 @@
         "source/host/src/android_json_runtime.rs"
       ],
       "android_owner": "Rust Host canonical TranscriptStore search projection",
-      "platform_delta": "Android replaces Desktop SQLite FTS query execution with a direct read-only scan of the canonical durable transcript to avoid a second canonical owner; durable FTS worker parity remains separately open.",
+      "platform_delta": "Linear UI-side transcript scans have been removed from production search. Android uses a Host-owned rebuildable FTS projection while preserving canonical transcript ownership.",
       "implementation_status": "implemented",
-      "production_wiring": "AndroidJsonHost routes feature.contentSearch.messages/media through current account fence into TranscriptStore.search_content/search_media.",
+      "production_wiring": "Canonical TranscriptStore remains unique owner; UI message/media palette queries route through typed Coordinator to AndroidJsonHost, which account-fences transcript entries before derived-index search. Media open metadata is rejoined from canonical transcript.",
       "unit_test": "TranscriptStore content search + media search cold-reopen tests; exact-head Actions pending",
       "contract_test": "Host production routes/result serialization present; exact-head Rust/architecture gate pending",
       "integration_test": "required same-head bridge search on recovered account transcript",
@@ -16176,7 +16176,7 @@
       "device_test": "required final device search surface acceptance",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Implemented semantic/user-visible search at Android head 6fe7a346047245d3d27ca9dba8078b25bf97b4e5; intentionally does not claim Desktop FTS index worker/rebuild parity."
+      "notes": "Implemented source/wiring; exact-head packaged/device evidence remains open."
     },
     {
       "responsibility_id": "SEARCH-DURABLE-INDEX-ANDROID-001",
@@ -16262,28 +16262,23 @@
       "security_boundary": "index contains derived searchable content only and must remain app-private; UI cannot mutate it directly.",
       "android_disposition": "android-adapted",
       "android_target": [
-        "source/host/src/extensions/content_search/search_index_db.rs",
-        "source/host/src/extensions/content_search/search_index_service.rs",
-        "source/host/src/extensions/content_search/search_index_worker.rs",
-        "source/host/src/extensions/content_search/search_index_writer.rs",
         "source/host/src/extensions/content_search/android_search_index.rs",
-        "source/host/src/android_json_runtime.rs",
-        "source/android-preload/src/main/kotlin/com/ombhrum/fabushi/androidpreload/runtime/AndroidCoordinatorPort.kt",
-        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/coordinator/AndroidCoordinatorRuntime.kt",
-        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/presentation/MobileBotViewModel.kt"
+        "source/host/src/extensions/content_search/search_index_db.rs",
+        "source/host/src/extensions/transcript/transcript_store.rs",
+        "source/host/src/android_json_runtime.rs"
       ],
       "android_owner": "Rust Host AndroidContentSearchIndex backed by the Desktop search-index schema/query primitives",
-      "platform_delta": "Desktop uses a long-lived mutation worker/service with respawn. Android keeps the derived FTS DB in the Host process and lazily reconciles from the current-account canonical transcript fingerprint before search; restart reopens it and schema/corrupt state recreates DB sidecars. No second transcript owner is introduced.",
+      "platform_delta": "Desktop background service/worker/writer over per-agent store.db is replaced by an Android Host derived FTS index reconciled from canonical TranscriptStore. The derived index may be discarded/rebuilt on corruption and never becomes transcript truth.",
       "implementation_status": "implemented",
-      "production_wiring": "AndroidJsonHost constructs AndroidContentSearchIndex in app-private Host storage. feature.contentSearch.messages/media filter canonical transcript rows to the current account and search the durable index; media hits join back to canonical entry identity for path/size metadata. Typed AndroidCoordinatorRuntime and MobileBotViewModel command-palette searches use those production methods.",
-      "unit_test": "AndroidContentSearchIndex persistent_index_reconciles_content_and_media_and_survives_reopen; changed_canonical_transcript_rebuilds_and_corrupt_database_is_recovered; exact-head Actions pending",
+      "production_wiring": "AndroidJsonHost owns AndroidContentSearchIndex at app-private search-index.db. feature.search.global, feature.contentSearch.messages and feature.contentSearch.media first fence canonical TranscriptStore entries to the current account, reconcile FTS by canonical fingerprint, query the derived index, and enrich media from canonical transcript.",
+      "unit_test": "AndroidContentSearchIndex tests cover canonical rebuild, changed fingerprint reconcile, cold reopen and corruption recreation; Host content-search tests cover account-fenced message/media behavior. Exact-head Actions pending.",
       "contract_test": "Host current-account contentSearch messages/media use the durable index; typed Coordinator validates result identity/kinds; command-palette message/file focused tests cover projection/fail-closed semantics; exact-head Actions pending",
       "integration_test": "Host production tests cover persistent search, account fencing and transcript-change reconcile; same-final-head full CI still required",
       "packaged_test": "required on final exact-head APK/AAB",
       "device_test": "required: command-palette message/media search, process-death recovery and performance on supported device/API",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Source and production wiring are implemented. Android intentionally replaces Desktop worker respawn with process-owned lazy canonical reconcile. Do not mark verified until final exact-head Rust/Android/package/device/performance evidence succeeds."
+      "notes": "Implemented in production source. Do not mark verified until descendant exact-head Rust/Android/package/device/performance evidence succeeds."
     }
   ],
   "traceability": {
