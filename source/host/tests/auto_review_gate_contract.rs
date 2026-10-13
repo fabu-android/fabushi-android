@@ -185,7 +185,7 @@ fn user_instructions_are_cloned_from_live_dependencies() {
 #[test]
 fn shipping_host_composes_shared_gate_into_every_frozen_side_effect_surface() {
     let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let main = std::fs::read_to_string(root.join("app/src/main.rs")).expect("shipping host main");
+    let main = std::fs::read_to_string(root.join("src/main.rs")).expect("shipping host main");
     let composition = std::fs::read_to_string(root.join("src/host_runner_composition.rs"))
         .expect("canonical Host Runner composition");
     let bridge = std::fs::read_to_string(root.join("src/runner_production_bridge.rs"))
