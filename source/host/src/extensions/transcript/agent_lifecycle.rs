@@ -20,6 +20,11 @@ pub const SAND_DISK_SAVER_REAUDIT_PROMPT: &str = concat!(
     "Deliver the fresh findings with SendMessage even if they match your last audit. Don't mention this cue."
 );
 
+pub const REPLY_NUDGE_PROMPT: &str = concat!(
+    "[first run retry] Your first hidden kickstart completed without a user-visible reply. ",
+    "Send one concise useful message to the user now. Do not mention this retry cue, and do not fabricate a user message."
+);
+
 pub fn kickstart_prompt_for_purpose(purpose: Option<&str>) -> &'static str {
     if purpose == Some("disk-saver") {
         SAND_DISK_SAVER_KICKSTART_PROMPT
@@ -44,6 +49,12 @@ mod tests {
         assert!(SAND_DISK_SAVER_REAUDIT_PROMPT.contains("read-only inspection"));
         assert!(SAND_DISK_SAVER_REAUDIT_PROMPT.contains("Delete or modify nothing"));
         assert!(SAND_DISK_SAVER_REAUDIT_PROMPT.contains("Deliver the fresh findings"));
+    }
+
+    #[test]
+    fn reply_nudge_requires_one_real_user_visible_delivery() {
+        assert!(REPLY_NUDGE_PROMPT.contains("without a user-visible reply"));
+        assert!(REPLY_NUDGE_PROMPT.contains("do not fabricate a user message"));
     }
 
     #[test]
