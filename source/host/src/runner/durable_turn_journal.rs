@@ -25,6 +25,8 @@ pub struct DurableTurnRecord {
     #[serde(default)]
     pub request_source: Option<String>,
     #[serde(default)]
+    pub agent_id: Option<String>,
+    #[serde(default)]
     pub checkpoint_attempt: Option<usize>,
     #[serde(default)]
     pub checkpoint_emitted_chunks: Option<usize>,
@@ -89,6 +91,28 @@ impl DurableTurnJournal {
         request_source: Option<&str>,
         now_ms: u64,
     ) -> Result<u64, String> {
+        self.begin_with_context(
+            request_id,
+            operation_id,
+            account_fence,
+            request_source,
+            None,
+            now_ms,
+        )
+    }
+
+    pub fn begin_with_context(
+        &mut self,
+        request_id: &str,
+        operation_id: &str,
+        account_fence: &str,
+        request_source: Option<&str>,
+        agent_id: Option<&str>,
+        now_ms: u64,
+    ) -> Result<u64, String> {
+        if agent_id.is_some_and(|agent_id| agent_id.trim().is_empty()) {
+            return Err("durable turn agent id must be non-empty when provided".into());
+        }
         if let Some(existing) = self.state.records.get(request_id) {
             return match existing.state {
                 DurableTurnState::OutcomeUnknown => Err(format!(
@@ -123,6 +147,7 @@ impl DurableTurnJournal {
                 updated_at_ms: now_ms,
                 reason: None,
                 request_source: request_source.map(str::to_string),
+                agent_id: agent_id.map(str::to_string),
                 checkpoint_attempt: None,
                 checkpoint_emitted_chunks: None,
                 checkpointed_at_ms: None,
@@ -237,6 +262,34 @@ impl DurableTurnJournal {
         self.persist()
     }
 
+    pub fn mark_agents_outcome_unknown(
+        &mut self,
+        account_fence: &str,
+        agent_ids: &std::collections::BTreeSet<String>,
+        reason: &str,
+        now_ms: u64,
+    ) -> Result<Vec<DurableTurnRecord>, String> {
+        let mut fenced = Vec::new();
+        for record in self.state.records.values_mut() {
+            if record.state == DurableTurnState::Running
+                && record.account_fence == account_fence
+                && record
+                    .agent_id
+                    .as_ref()
+                    .is_some_and(|agent_id| agent_ids.contains(agent_id))
+            {
+                record.state = DurableTurnState::OutcomeUnknown;
+                record.reason = Some(reason.to_string());
+                record.updated_at_ms = now_ms;
+                fenced.push(record.clone());
+            }
+        }
+        if !fenced.is_empty() {
+            self.persist()?;
+        }
+        Ok(fenced)
+    }
+
     pub fn mark_account_outcome_unknown(
         &mut self,
         account_fence: &str,
@@ -340,6 +393,49 @@ mod tests {
         let record = reopened.record("r1").unwrap();
         assert_eq!(record.request_source.as_deref(), Some("automation"));
         assert_eq!(record.state, DurableTurnState::OutcomeUnknown);
+    }
+
+    #[test]
+    fn agent_identity_is_durable_and_delete_fencing_only_targets_matching_running_turns() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("turns.json");
+        let mut journal = DurableTurnJournal::open(&path, 1).unwrap();
+        journal
+            .begin_with_context(
+                "r-a",
+                "o-a",
+                "acct:a",
+                Some("turn"),
+                Some("agent-a"),
+                2,
+            )
+            .unwrap();
+        journal
+            .begin_with_context(
+                "r-b",
+                "o-b",
+                "acct:a",
+                Some("turn"),
+                Some("agent-b"),
+                3,
+            )
+            .unwrap();
+        let targets = std::collections::BTreeSet::from(["agent-a".to_string()]);
+        let fenced = journal
+            .mark_agents_outcome_unknown("acct:a", &targets, "agent deleted", 4)
+            .unwrap();
+        assert_eq!(fenced.len(), 1);
+        assert_eq!(fenced[0].agent_id.as_deref(), Some("agent-a"));
+        assert_eq!(
+            journal.record("r-a").unwrap().state,
+            DurableTurnState::OutcomeUnknown
+        );
+        assert_eq!(journal.record("r-b").unwrap().state, DurableTurnState::Running);
+        drop(journal);
+
+        let reopened = DurableTurnJournal::open(&path, 5).unwrap();
+        assert_eq!(reopened.record("r-a").unwrap().agent_id.as_deref(), Some("agent-a"));
+        assert_eq!(reopened.record("r-b").unwrap().agent_id.as_deref(), Some("agent-b"));
     }
 
     #[test]
