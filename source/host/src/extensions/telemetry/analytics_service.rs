@@ -538,6 +538,17 @@ mod tests {
                 .unwrap(),
             false
         );
+        wait_until(|| {
+            batches
+                .lock()
+                .unwrap()
+                .iter()
+                .flat_map(|batch| batch["events"].as_array().into_iter().flatten())
+                .any(|event| {
+                    event["eventName"] == "sand.model_experiment.exposure"
+                        && event["eventData"]["arm"]["stringValue"] == "treatment"
+                })
+        });
         assert_eq!(
             runtime
                 .track_model_experiment_exposure("account-b", "control")
