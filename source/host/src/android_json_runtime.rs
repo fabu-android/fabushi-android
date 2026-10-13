@@ -4263,10 +4263,14 @@ impl AndroidJsonHost {
             }
         }
 
-        let scoped = self
+        let all_agent_entries = self
             .current_account_transcript_entries()?
             .into_iter()
             .filter(|entry| entry.get("agentId").and_then(Value::as_str) == Some(agent_id))
+            .collect::<Vec<_>>();
+        let scoped = all_agent_entries
+            .iter()
+            .cloned()
             .filter(|entry| {
                 let timestamp = entry.get("timestampMs").and_then(Value::as_f64);
                 let lower_ok = since_ms.map_or(true, |lower| {
@@ -4282,10 +4286,13 @@ impl AndroidJsonHost {
         let start = end.saturating_sub(limit);
         let entries = scoped[start..end].to_vec();
         let next_before_seq = (start > 0).then_some(start);
+        let thread_counts =
+            android_transcript_thread_counts_for_page(&all_agent_entries, &entries);
 
         Ok(json!({
             "entries": entries,
             "nextBeforeSeq": next_before_seq,
+            "threadCounts": thread_counts,
         }))
     }
 
@@ -13261,6 +13268,35 @@ fn normalize_turn_request_source(value: Option<&Value>) -> Result<Option<String>
     Ok(Some(source.to_string()))
 }
 
+fn android_transcript_thread_counts_for_page(
+    all_agent_entries: &[Value],
+    page_entries: &[Value],
+) -> BTreeMap<String, usize> {
+    let branched_by_id = all_agent_entries
+        .iter()
+        .filter(|entry| entry.get("branched").and_then(Value::as_bool) == Some(true))
+        .filter_map(|entry| Some((
+            entry.get("id")?.as_str()?.to_string(),
+            entry,
+        )))
+        .collect::<BTreeMap<_, _>>();
+    let mut all_counts = BTreeMap::<String, usize>::new();
+    for entry in branched_by_id.values() {
+        let Some(root_id) = resolve_android_transcript_branch_root(entry, &branched_by_id) else {
+            continue;
+        };
+        *all_counts.entry(root_id).or_default() += 1;
+    }
+    page_entries
+        .iter()
+        .filter_map(|entry| {
+            let id = entry.get("id")?.as_str()?;
+            all_counts.get(id).copied().map(|count| (id.to_string(), count))
+        })
+        .filter(|(_, count)| *count > 0)
+        .collect()
+}
+
 fn resolve_android_transcript_branch_root(
     entry: &Value,
     branched_by_id: &BTreeMap<String, &Value>,
@@ -13724,6 +13760,58 @@ mod tests {
 
         let reopened = AndroidAgentRoster::open(root.path().join("agents.json")).unwrap();
         assert!(!reopened.get(&agent_id).unwrap().notify_on_updates_enabled);
+    }
+
+    #[test]
+    fn transcript_page_projects_full_thread_counts_only_for_roots_in_the_page() {
+        let root = tempfile::tempdir().unwrap();
+        let mut host = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+        {
+            let mut transcript = host.transcript.lock().unwrap();
+            for entry in [
+                json!({"id":"root-old","agentId":"agent-a","kind":"message","role":"user","content":"old"}),
+                json!({"id":"old-reply","agentId":"agent-a","kind":"message","role":"assistant","content":"old reply","branched":true,"replyTo":"root-old"}),
+                json!({"id":"root-new","agentId":"agent-a","kind":"message","role":"user","content":"new"}),
+                json!({"id":"new-reply-1","agentId":"agent-a","kind":"message","role":"assistant","content":"first","branched":true,"replyTo":"root-new"}),
+                json!({"id":"new-reply-2","agentId":"agent-a","kind":"message","role":"assistant","content":"nested","branched":true,"replyTo":"new-reply-1"}),
+                json!({"id":"cross-agent","agentId":"agent-b","kind":"message","role":"assistant","content":"other","branched":true,"replyTo":"root-new"}),
+            ] {
+                transcript.append_entry(entry).unwrap();
+            }
+        }
+
+        let latest = host
+            .dispatch(
+                "feature.transcript.page",
+                &json!({"agentId":"agent-a","limit":3}),
+            )
+            .unwrap();
+        assert_eq!(latest["threadCounts"], json!({"root-new":2}));
+        assert!(
+            latest["threadCounts"].get("root-old").is_none(),
+            "roots outside the current page must not be exposed in page summaries",
+        );
+
+        let full = host
+            .dispatch(
+                "feature.transcript.page",
+                &json!({"agentId":"agent-a","limit":20}),
+            )
+            .unwrap();
+        assert_eq!(full["threadCounts"], json!({"root-new":2,"root-old":1}));
+
+        drop(host);
+        let mut reopened = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+        assert_eq!(
+            reopened
+                .dispatch(
+                    "feature.transcript.page",
+                    &json!({"agentId":"agent-a","limit":20}),
+                )
+                .unwrap()["threadCounts"],
+            json!({"root-new":2,"root-old":1}),
+            "thread summary counts must recover from canonical transcript after Host reopen",
+        );
     }
 
     #[test]
