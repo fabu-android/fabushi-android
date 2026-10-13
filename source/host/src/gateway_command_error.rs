@@ -32,10 +32,10 @@ impl GatewayCommandError {
     pub fn status(&self) -> u16 {
         match self.kind {
             GatewayCommandErrorKind::BadRequest => 400,
-            GatewayCommandErrorKind::Unauthorized => 401,
+            GatewayCommandErrorKind::Unauthorized => 403,
             GatewayCommandErrorKind::NotFound => 404,
             GatewayCommandErrorKind::Conflict => 409,
-            GatewayCommandErrorKind::Busy => 503,
+            GatewayCommandErrorKind::Busy => 429,
             GatewayCommandErrorKind::Internal => 500,
         }
     }
