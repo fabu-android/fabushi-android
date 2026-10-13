@@ -17,3 +17,5 @@ pub mod xuser_remote_turns;
 
 // Android lifecycle replacement for Desktop experiments/NotifyBus wiring.
 pub mod extension;
+
+pub mod android_sharing_manager;
