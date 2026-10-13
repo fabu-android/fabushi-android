@@ -6907,15 +6907,20 @@ impl AndroidJsonHost {
         previous_fence: &str,
         reason: &str,
     ) -> Result<(), String> {
-        let mut failures = Vec::new();
-        let mut record = |owner: &str, result: Result<(), String>| {
+        fn record_failure(
+            failures: &mut Vec<String>,
+            owner: &str,
+            result: Result<(), String>,
+        ) {
             if let Err(error) = result {
                 failures.push(format!("{owner}: {error}"));
             }
-        };
+        }
 
-        record("agent-turns", self.fence_turns_for_account_change(previous_fence, reason));
-        record("human-calls", self.human_calls.fence_account(previous_fence, reason, now_ms()));
+        let mut failures = Vec::new();
+
+        record_failure(&mut failures, "agent-turns", self.fence_turns_for_account_change(previous_fence, reason));
+        record_failure(&mut failures, "human-calls", self.human_calls.fence_account(previous_fence, reason, now_ms()));
 
         match self.teach_recording.lock() {
             Ok(owner) => {
@@ -6924,7 +6929,8 @@ impl AndroidJsonHost {
                 if identity.phase != TeachRecordingPhase::Idle
                     && identity.account_fence.as_deref() == Some(previous_fence)
                 {
-                    record(
+                    record_failure(
+                        &mut failures,
                         "teach-recording",
                         self.teach_recording
                             .lock()
@@ -6947,7 +6953,8 @@ impl AndroidJsonHost {
                         | DurableProvisioningPhase::OutcomeUnknown
                 ) && identity.account_fence.as_deref() == Some(previous_fence)
                 {
-                    record(
+                    record_failure(
+                        &mut failures,
                         "onepassword-provisioning",
                         self.onepassword_provisioning
                             .lock()
@@ -6964,7 +6971,8 @@ impl AndroidJsonHost {
         self.pending_plugin_variable_writes.clear();
 
         if let Some(service) = self.managed_skills.as_ref() {
-            record(
+            record_failure(
+                &mut failures,
                 "managed-skills",
                 service.set_account_scope(None).map_err(|error| {
                     format!("failed to clear managed skills account scope during transition: {error}")
@@ -6972,7 +6980,8 @@ impl AndroidJsonHost {
             );
         }
 
-        record(
+        record_failure(
+            &mut failures,
             "mcp-server-settings",
             self.mcp_server_tool_settings
                 .lock()
@@ -6980,7 +6989,8 @@ impl AndroidJsonHost {
                 .and_then(|mut settings| settings.clear_account(previous_fence)),
         );
 
-        record(
+        record_failure(
+            &mut failures,
             "box-handoff",
             self.box_handoff
                 .lock()
@@ -6991,15 +7001,17 @@ impl AndroidJsonHost {
         self.experiments.clear_account_scope();
 
         if let Some(core) = self.cross_user_core.as_ref() {
-            record("cross-user", core.fence_account_transition());
+            record_failure(&mut failures, "cross-user", core.fence_account_transition());
         }
 
-        record(
+        record_failure(
+            &mut failures,
             "mcp-auth-watches",
             self.cancel_mcp_auth_watches_for_account_change(reason),
         );
 
-        record(
+        record_failure(
+            &mut failures,
             "user-settings",
             self.user_settings
                 .lock()
