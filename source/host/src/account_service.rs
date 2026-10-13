@@ -188,6 +188,18 @@ impl AndroidAccountService {
         Some(format!("session:{}", crate::sha256::sha256_hex(&encoded)))
     }
 
+    pub fn auth_id(&self) -> Option<String> {
+        let session = self.session.as_ref()?;
+        match &session.user_id {
+            Value::String(value) => {
+                let value = value.trim();
+                (!value.is_empty()).then(|| value.to_string())
+            }
+            Value::Number(value) => Some(value.to_string()),
+            _ => None,
+        }
+    }
+
     pub fn account_storage_scope(&self) -> Option<String> {
         let session = self.session.as_ref()?;
         let material = json!({
@@ -967,6 +979,18 @@ mod tests {
     }
 
 
+
+    #[test]
+    fn canonical_auth_id_projection_accepts_string_and_number_ids() {
+        let raw = durable_session().to_string();
+        let service = AndroidAccountService::new("device-1", Some(&raw)).unwrap();
+        assert_eq!(service.auth_id().as_deref(), Some("user-1"));
+
+        let mut numeric = durable_session();
+        numeric["userId"] = json!(42);
+        let service = AndroidAccountService::new("device-1", Some(&numeric.to_string())).unwrap();
+        assert_eq!(service.auth_id().as_deref(), Some("42"));
+    }
 
     #[test]
     fn profile_display_name_validation_is_bounded_before_network_dispatch() {
