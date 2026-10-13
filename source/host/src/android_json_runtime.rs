@@ -120,7 +120,7 @@ use crate::extensions::transcript::{AsyncTask, SandPendingWakeStore, TranscriptR
 use crate::extensions::transcript::ack_obligations::{
     build_ack_redrive_send_args, AckObligations, AckRedrivePreparation,
 };
-use crate::extensions::transcript::agent_lifecycle::kickstart_prompt_for_purpose;
+use crate::extensions::transcript::agent_lifecycle::{kickstart_prompt_for_purpose, REPLY_NUDGE_PROMPT};
 use crate::extensions::transcript::pending_wake_rearm::PENDING_WAKE_STALE_MAX_AGE_MS;
 use crate::extensions::webauthn_proxy::{
     WebAuthnBridgeError, WebAuthnProxyExtension, WebAuthnProxyExtensionConfig,
@@ -10627,6 +10627,10 @@ impl AndroidJsonHost {
 
         let request_source = normalize_turn_request_source(command.get("requestSource"))?;
         let created_agent_kickstart = request_source.as_deref() == Some("agent-kickstart");
+        let created_agent_kickstart_nudge =
+            request_source.as_deref() == Some("agent-kickstart-nudge");
+        let created_agent_introduction_turn =
+            created_agent_kickstart || created_agent_kickstart_nudge;
         let requested_model = command
             .get("model")
             .and_then(Value::as_str)
@@ -11481,7 +11485,7 @@ impl AndroidJsonHost {
                                     .map_err(|_| "canonical Android Agent roster lock poisoned".to_string())?
                                     .mark_activity(&conversation_id_owned, now_ms())
                                     .map_err(|error| format!("failed to persist Agent unread activity: {error}"))?;
-                                if created_agent_kickstart {
+                                if created_agent_introduction_turn {
                                     agent_roster
                                         .lock()
                                         .map_err(|_| "canonical Android Agent roster lock poisoned".to_string())?
@@ -12202,6 +12206,106 @@ impl AndroidJsonHost {
         Ok(())
     }
 
+    fn drain_created_agent_kickstart_nudge_once(&mut self) -> Result<(), String> {
+        let agents = self
+            .agents
+            .lock()
+            .map_err(|_| "canonical Android Agent roster lock poisoned".to_string())?
+            .list();
+
+        for agent in agents {
+            if agent.is_group || !agent.introduction_pending {
+                continue;
+            }
+            let transcript = self
+                .transcript
+                .lock()
+                .map_err(|_| "transcript lock poisoned".to_string())?
+                .get_transcript()
+                .into_iter()
+                .filter(|entry| {
+                    entry.get("agentId").and_then(Value::as_str) == Some(agent.id.as_str())
+                })
+                .collect::<Vec<_>>();
+            let has_user_message = transcript
+                .iter()
+                .any(|entry| entry.get("role").and_then(Value::as_str) == Some("user"));
+            let has_visible_assistant_message = transcript.iter().any(|entry| {
+                entry.get("role").and_then(Value::as_str) == Some("assistant")
+                    && entry
+                        .get("text")
+                        .and_then(Value::as_str)
+                        .is_some_and(|text| !text.trim().is_empty())
+            });
+            if has_user_message || has_visible_assistant_message {
+                self.agents
+                    .lock()
+                    .map_err(|_| "canonical Android Agent roster lock poisoned".to_string())?
+                    .set_introduction_pending(&agent.id, false)
+                    .map_err(|error| {
+                        format!("failed to settle Agent introduction after transcript delivery: {error}")
+                    })?;
+                continue;
+            }
+
+            let kickstart_request_id =
+                format!("agent-kickstart:{}:{}", agent.id, agent.created_at);
+            let nudge_request_id =
+                format!("agent-kickstart-nudge:{}:{}", agent.id, agent.created_at);
+            let should_nudge = {
+                let journal = self
+                    .turn_journal
+                    .lock()
+                    .map_err(|_| "turn journal lock poisoned".to_string())?;
+                journal.record(&nudge_request_id).is_none()
+                    && journal
+                        .record(&kickstart_request_id)
+                        .is_some_and(|record| record.state == DurableTurnState::Completed)
+            };
+            if !should_nudge {
+                continue;
+            }
+
+            let operation_id = self.next_operation_id(&nudge_request_id);
+            let (bearer_token, _session_mutation) = match self.bearer_token_for_turn() {
+                Ok(value) => value,
+                Err(_) => return Ok(()),
+            };
+            self.active_operations.insert(operation_id.clone());
+            let command = json!({
+                "type":"chat.send",
+                "requestId":nudge_request_id,
+                "agentId":agent.id,
+                "model":"default",
+                "text":REPLY_NUDGE_PROMPT,
+                "hidden":true,
+                "appendUserMessage":false,
+                "awaitTurn":false,
+                "requestSource":"agent-kickstart-nudge",
+                "skipAckObligation":true
+            });
+            if let Err(error) = self.queue_chat_turn(
+                &operation_id,
+                command
+                    .get("requestId")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default(),
+                &command,
+                bearer_token,
+            ) {
+                self.active_operations.remove(&operation_id);
+                self.agent_turn_interruptions.unregister_operation(&operation_id);
+                self.events.push_back(json!({
+                    "type":"agent.kickstart.deferred",
+                    "agentId":agent.id,
+                    "message":error,
+                }));
+            }
+            return Ok(());
+        }
+        Ok(())
+    }
+
     fn publish_host_event_projection(&self, event: &Value) {
         let family = event
             .get("type")
@@ -12228,6 +12332,7 @@ impl AndroidJsonHost {
         self.drain_mcp_auth_owner_events()?;
         self.drain_agent_wake_once()?;
         self.drain_visible_ack_redrive_once()?;
+        self.drain_created_agent_kickstart_nudge_once()?;
         if let Some(event) = self.events.pop_front() {
             self.publish_host_event_projection(&event);
             return Ok(event);
@@ -13732,6 +13837,7 @@ const ANDROID_TURN_REQUEST_SOURCES: &[&str] = &[
     "mcp-auth-resume",
     "agent-message",
     "agent-kickstart",
+    "agent-kickstart-nudge",
 ];
 
 fn normalize_turn_request_source(value: Option<&Value>) -> Result<Option<String>, String> {
@@ -17629,6 +17735,8 @@ mod turn_request_source_contract_tests {
             "widget-response",
             "mcp-auth-resume",
             "agent-message",
+            "agent-kickstart",
+            "agent-kickstart-nudge",
         ] {
             assert_eq!(
                 normalize_turn_request_source(Some(&Value::String(source.into()))).unwrap(),
