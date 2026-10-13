@@ -15327,6 +15327,96 @@
       "notes": "Implemented by aa6c3056, 980478b5, 785be088, e4dd06b8, 7ed8720f, 367dc893, 44c1a7d4. This does not claim full local-exec parity."
     },
     {
+      "responsibility_id": "AGENT-SESSION-DB-CONTRACTS-ANDROID-001",
+      "domain": "agent-session-storage",
+      "desktop_sources": [
+        {
+          "path": "source/host/src/extensions/session/agent_db_schema.rs",
+          "blob_sha": "3d381c12c55d8444caac81f61b64bd81efa5e2bd",
+          "symbols": [
+            "AGENT_DB_SCHEMA",
+            "PREPARED_STATEMENT_SQL",
+            "LIST_TRANSCRIPT_PAGE_SQL",
+            "LIST_TRANSCRIPT_WINDOW_SQL"
+          ]
+        },
+        {
+          "path": "source/host/src/extensions/session/agent_db_serde.rs",
+          "blob_sha": "02e78b03594a0c3b1b957dba051b4edb042d1cb0",
+          "symbols": [
+            "parse_transcript_entry",
+            "parse_request_records",
+            "parse_awaiting_state",
+            "resolve_spend_guard_state"
+          ]
+        },
+        {
+          "path": "source/host/src/extensions/session/agent_db_transcript_pages.rs",
+          "blob_sha": "a7bf6b9a24b84ee6b3be4163d44da02f22758e40",
+          "symbols": [
+            "read_transcript_page",
+            "read_transcript_window",
+            "read_transcript_tail"
+          ]
+        }
+      ],
+      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "responsibility": "Preserve the platform-independent Agent session database schema, bounded/validated state decoding, and resumable transcript paging/window contracts as Rust foundations for the canonical Android Host session owner.",
+      "source_owner": "Desktop Rust Host Session extension",
+      "direct_callers": [
+        "SandAgentDb",
+        "ProductionSessionWorkers",
+        "SandAgentSessionStore"
+      ],
+      "downstream_dependencies": [
+        "rusqlite",
+        "serde_json",
+        "Agent session recovery/materialization"
+      ],
+      "state_owner": "No new production owner yet; these modules define contracts consumed by the future Rust Host Agent session owner.",
+      "persistent_state": [
+        "kv",
+        "legacy blobs for adoption/salvage",
+        "transcript_entries"
+      ],
+      "protocol_wire_contract": [
+        "validated transcript entry kinds",
+        "bounded request source enum",
+        "bounded transcript page/window cursor semantics"
+      ],
+      "visible_effect": "Foundation for restoring Agent transcript/session state with stable ordering and bounded pagination without moving canonical state into Compose/Kotlin.",
+      "failure_behavior": [
+        "malformed transcript rows are dropped from projection",
+        "invalid request-source values do not gain authority",
+        "SQLite errors propagate to the calling session owner"
+      ],
+      "cancellation_behavior": "Pure storage/query contract; no external side effect to cancel.",
+      "retry_semantics": "Paging is cursor-resumable; database retry/recovery is owned by the adjacent recovery responsibility and is not claimed here.",
+      "idempotency_semantics": "Schema is CREATE IF NOT EXISTS; transcript reads are side-effect free; decoding is deterministic.",
+      "process_death_recovery": "Designed for durable SQLite reopen, but Android production reopen wiring is still open under adjacent session responsibilities.",
+      "account_fencing": "Not yet production-wired; future caller must bind Agent/session root to canonical account scope before use.",
+      "security_boundary": "Rust Host only; no raw SQLite handle or unvalidated row is exposed to Presentation.",
+      "android_disposition": "direct-port",
+      "android_target": [
+        "source/host/src/extensions/session/agent_db_schema.rs",
+        "source/host/src/extensions/session/agent_db_serde.rs",
+        "source/host/src/extensions/session/agent_db_transcript_pages.rs",
+        "source/host/src/extensions/session/mod.rs"
+      ],
+      "android_owner": "Rust Host Session extension contract layer",
+      "platform_delta": "None for these three platform-independent modules. Android-specific production composition and filesystem/account fencing remain separate work.",
+      "implementation_status": "mapped",
+      "production_wiring": "Compiled into the Android Host Session namespace at 519f58025923ba38f9b944803fd2ba1b1371a887. No production SandAgentDb/ProductionSessionWorkers owner is wired yet, so this responsibility intentionally remains mapped.",
+      "unit_test": "agent_db_serde focused validation tests plus agent_db_transcript_pages bounded/resumable paging tests added on the current descendant chain; GitHub Actions pending.",
+      "contract_test": "Rust compile/test through Android Parity Full CI and Grok Android Architecture required on a descendant exact HEAD.",
+      "integration_test": "Open: wire canonical Agent session database owner and prove account/process-death recovery.",
+      "packaged_test": "Open: final APK/AAB process-death/reopen acceptance.",
+      "device_test": "Open: protected device Agent session recovery/paging acceptance.",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Foundation only. Presence of these modules is not treated as Desktop parity; agent_db_recovery, SandAgentDb, ProductionSessionWorkers and the production session route remain unreviewed/open."
+    },
+    {
       "responsibility_id": "AGENT-ISOLATION-BLOB-WORKER-ANDROID-001",
       "domain": "agent-runtime-storage",
       "desktop_path": "source/host/src/agent_isolation/**",
