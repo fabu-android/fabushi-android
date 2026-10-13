@@ -159,6 +159,33 @@ impl AndroidMessagingService {
         Ok(service)
     }
 
+    pub fn canonical_contact_ids(&self) -> BTreeSet<String> {
+        self.state.contact_ids.clone()
+    }
+
+    pub fn pinned_contact_ids(&self, actor_id: &str) -> BTreeSet<String> {
+        let mut pinned = BTreeSet::new();
+        for conversation in self.state.conversations.values() {
+            if conversation.get("kind").and_then(Value::as_str) != Some("direct")
+                || conversation.get("pinned").and_then(Value::as_bool) != Some(true)
+            {
+                continue;
+            }
+            let Some(participants) = conversation.get("participants").and_then(Value::as_array) else {
+                continue;
+            };
+            for participant in participants {
+                let Some(peer) = participant.get("actorId").and_then(Value::as_str) else {
+                    continue;
+                };
+                if peer != actor_id && self.state.contact_ids.contains(peer) {
+                    pinned.insert(peer.to_string());
+                }
+            }
+        }
+        pinned
+    }
+
     /// Reconcile the server-authoritative Human contact roster into the canonical Android
     /// messaging repository. This is deliberately Host-only: Presentation cannot upsert an
     /// arbitrary actor or manufacture friendship state.

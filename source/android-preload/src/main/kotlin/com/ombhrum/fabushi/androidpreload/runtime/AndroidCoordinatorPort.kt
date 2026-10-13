@@ -6,6 +6,19 @@ import android.view.View
 import org.json.JSONArray
 import org.json.JSONObject
 
+data class AndroidContactGroup(
+    val id: String,
+    val name: String,
+    val peerIds: List<String>,
+    val isCollapsed: Boolean = false,
+)
+
+data class AndroidContactGroupsSnapshot(
+    val accountFence: String,
+    val revision: Long,
+    val groups: List<AndroidContactGroup>,
+)
+
 data class AndroidSidebarSection(
     val id: String,
     val name: String,
@@ -1154,6 +1167,13 @@ interface AndroidCoordinatorPort {
     fun agentDelete(id: String): JSONObject
     fun agentPinnedIds(): List<String>
     fun agentSetPinned(ids: List<String>): List<String>
+    fun messagingContactGroups(searchActive: Boolean = false): AndroidContactGroupsSnapshot
+    fun messagingSetContactGroups(
+        presentationAccountFence: String,
+        base: AndroidContactGroupsSnapshot,
+        groups: List<AndroidContactGroup>,
+        operationId: String,
+    ): AndroidContactGroupsSnapshot
     fun agentSidebarSections(): AndroidSidebarSectionsSnapshot
     fun agentSetSidebarSections(
         base: AndroidSidebarSectionsSnapshot,

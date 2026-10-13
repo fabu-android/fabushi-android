@@ -67,6 +67,8 @@ import com.ombhrum.fabushi.androidpreload.runtime.AndroidSendAcknowledgement
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidSendAcknowledgementDispatch
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidSendAcknowledgementEntry
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidSendAcknowledgementPhase
+import com.ombhrum.fabushi.androidpreload.runtime.AndroidContactGroup
+import com.ombhrum.fabushi.androidpreload.runtime.AndroidContactGroupsSnapshot
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidSidebarSection
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidSidebarSectionsSnapshot
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidWidgetActionResult
@@ -3282,6 +3284,77 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
         return buildList {
             for (index in 0 until settled.length()) {
                 settled.optString(index).takeIf(String::isNotBlank)?.let(::add)
+            }
+        }
+    }
+
+    override fun messagingContactGroups(searchActive: Boolean): AndroidContactGroupsSnapshot {
+        val result = host.request(
+            "feature.messaging.contactGroups",
+            JSONObject().put("searchActive", searchActive),
+        )
+        return AndroidContactGroupsSnapshot(
+            accountFence = result.optString("accountFence"),
+            revision = result.optLong("revision", 0L),
+            groups = parseContactGroups(result.optJSONArray("groups")),
+        )
+    }
+
+    override fun messagingSetContactGroups(
+        presentationAccountFence: String,
+        base: AndroidContactGroupsSnapshot,
+        groups: List<AndroidContactGroup>,
+        operationId: String,
+    ): AndroidContactGroupsSnapshot {
+        fun encode(values: List<AndroidContactGroup>): JSONArray = JSONArray().also { array ->
+            values.forEach { group ->
+                array.put(
+                    JSONObject()
+                        .put("id", group.id)
+                        .put("name", group.name)
+                        .put("peerIds", JSONArray(group.peerIds))
+                        .put("isCollapsed", group.isCollapsed),
+                )
+            }
+        }
+        val response = host.request(
+            "feature.messaging.contactGroups.set",
+            JSONObject()
+                .put("accountFence", presentationAccountFence)
+                .put("accountScope", base.accountFence)
+                .put("operationId", operationId)
+                .put("expectedRevision", base.revision)
+                .put("groups", encode(groups)),
+        )
+        val result = response.optJSONObject("result") ?: response
+        return AndroidContactGroupsSnapshot(
+            accountFence = result.optString("accountFence", base.accountFence),
+            revision = result.optLong("revision", base.revision),
+            groups = parseContactGroups(result.optJSONArray("groups")),
+        )
+    }
+
+    private fun parseContactGroups(values: JSONArray?): List<AndroidContactGroup> {
+        if (values == null) return emptyList()
+        return buildList {
+            for (index in 0 until values.length()) {
+                val group = values.optJSONObject(index) ?: continue
+                val id = group.optString("id").trim()
+                if (id.isBlank()) continue
+                val peers = buildList {
+                    val raw = group.optJSONArray("peerIds") ?: JSONArray()
+                    for (peerIndex in 0 until raw.length()) {
+                        raw.optString(peerIndex).trim().takeIf(String::isNotBlank)?.let(::add)
+                    }
+                }
+                add(
+                    AndroidContactGroup(
+                        id = id,
+                        name = group.optString("name"),
+                        peerIds = peers,
+                        isCollapsed = group.optBoolean("isCollapsed", false),
+                    ),
+                )
             }
         }
     }

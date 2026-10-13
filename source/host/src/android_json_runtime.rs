@@ -26,6 +26,7 @@ use crate::agent_attachment::{
     prompt_with_agent_attachments, with_agent_attachment_tools, AgentAttachment,
     DurableAgentAttachmentOwner, COMPOSER_ATTACHMENT_LIMIT,
 };
+use crate::android_contact_groups::{AndroidContactGroup, AndroidContactGroups};
 use crate::android_sidebar_sections::{AndroidSidebarSection, AndroidSidebarSections};
 use crate::android_session_projection::project_agent_session;
 use crate::android_user_settings::{AndroidUserSettings, LocalToolPermission};
@@ -1310,6 +1311,7 @@ pub struct AndroidJsonHost {
     unclean_exit: AndroidUncleanExitMarker,
     agents: Arc<Mutex<AndroidAgentRoster>>,
     sidebar_sections: Arc<Mutex<AndroidSidebarSections>>,
+    contact_groups: Arc<Mutex<AndroidContactGroups>>,
     user_settings: Arc<Mutex<AndroidUserSettings>>,
     experiments: Arc<HostExperimentsExtension>,
     model_experiment_exposure: ModelExperimentExposureLatch,
@@ -1629,6 +1631,10 @@ impl AndroidJsonHost {
         let sidebar_sections = Arc::new(Mutex::new(
             AndroidSidebarSections::open(app_data_dir.join("sidebar-sections.json"))
                 .unwrap_or_else(|error| panic!("failed to open canonical Android sidebar sections: {error}")),
+        ));
+        let contact_groups = Arc::new(Mutex::new(
+            AndroidContactGroups::open(app_data_dir.join("contact-groups.json"))
+                .unwrap_or_else(|error| panic!("failed to open canonical Android contact groups: {error}")),
         ));
         let user_settings = Arc::new(Mutex::new(
             AndroidUserSettings::open_migrating(
@@ -2134,6 +2140,7 @@ impl AndroidJsonHost {
             unclean_exit,
             agents,
             sidebar_sections,
+            contact_groups,
             user_settings,
             experiments,
             model_experiment_exposure: ModelExperimentExposureLatch::new(),
@@ -4128,6 +4135,8 @@ impl AndroidJsonHost {
             "feature.agent.avatar.generate" => self.agent_avatar_generate(params),
             "feature.agent.rosterMutation" => self.agent_roster_mutation(params),
             "feature.agent.sidebarSections" => self.agent_sidebar_sections(),
+            "feature.messaging.contactGroups" => self.messaging_contact_groups(params),
+            "feature.messaging.contactGroups.set" => self.messaging_contact_groups_set(params),
             "feature.agent.channels.listMetadata" => self.agent_channels_list_metadata(params),
             "feature.agent.channels.writeMetadata" => self.agent_channels_write_metadata(params),
             "feature.agent.channels.removeMetadata" => self.agent_channels_remove_metadata(params),
@@ -8191,6 +8200,81 @@ impl AndroidJsonHost {
             .remove(platform)
             .map_err(|error| format!("failed to remove Android Agent channel metadata: {error}"))?;
         Ok(json!({"removed":removed,"platform":platform}))
+    }
+
+    fn contact_group_projection_inputs(
+        &mut self,
+    ) -> Result<(BTreeSet<String>, BTreeSet<String>), String> {
+        let (actor_id, mutation) = self.current_messaging_identity()?;
+        if let Some(mutation) = mutation {
+            self.handle_account_session_mutation(mutation);
+        }
+        let messaging = self
+            .messaging
+            .lock()
+            .map_err(|_| "canonical Android messaging lock poisoned".to_string())?;
+        Ok((
+            messaging.canonical_contact_ids(),
+            messaging.pinned_contact_ids(&actor_id),
+        ))
+    }
+
+    fn messaging_contact_groups(&mut self, params: &Value) -> Result<Value, String> {
+        let account_scope = self.current_sidebar_account_scope()?;
+        let search_active = params
+            .get("searchActive")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        let (known_peer_ids, pinned_peer_ids) = self.contact_group_projection_inputs()?;
+        let snapshot = self
+            .contact_groups
+            .lock()
+            .map_err(|_| "canonical Android contact groups lock poisoned".to_string())?
+            .get_snapshot(&account_scope, &known_peer_ids, &pinned_peer_ids, search_active);
+        Ok(json!({
+            "accountFence":snapshot.account_fence,
+            "revision":snapshot.revision,
+            "groups":snapshot.groups,
+        }))
+    }
+
+    fn messaging_contact_groups_set(&mut self, params: &Value) -> Result<Value, String> {
+        let presentation_fence = required_string(params, "accountFence")?;
+        let current_fence = self.current_turn_account_fence()?;
+        if presentation_fence != current_fence {
+            return Err("contact-group mutation is fenced to a stale account".into());
+        }
+        let account_scope = self.current_sidebar_account_scope()?;
+        let requested_scope = required_string(params, "accountScope")?;
+        if requested_scope != account_scope {
+            return Err("stale contact-group account scope".into());
+        }
+        let operation_id = required_string(params, "operationId")?;
+        let expected_revision = params
+            .get("expectedRevision")
+            .and_then(Value::as_u64)
+            .ok_or("contact-group expected revision is required")?;
+        let groups = params
+            .get("groups")
+            .and_then(Value::as_array)
+            .ok_or("contact groups array is required")?
+            .iter()
+            .cloned()
+            .map(serde_json::from_value::<AndroidContactGroup>)
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| format!("invalid contact-group payload: {error}"))?;
+        let (known_peer_ids, pinned_peer_ids) = self.contact_group_projection_inputs()?;
+        self.contact_groups
+            .lock()
+            .map_err(|_| "canonical Android contact groups lock poisoned".to_string())?
+            .set(
+                &account_scope,
+                operation_id,
+                expected_revision,
+                &groups,
+                &known_peer_ids,
+                &pinned_peer_ids,
+            )
     }
 
     fn agent_sidebar_sections(&mut self) -> Result<Value, String> {
