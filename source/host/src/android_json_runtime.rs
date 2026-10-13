@@ -75,6 +75,7 @@ use crate::extensions::telemetry::gateway_command_telemetry::{
 use crate::extensions::telemetry::analytics_service::{
     automation_run_product_analytics_event, AndroidProductAnalyticsRuntime, ProductAnalyticsSender,
 };
+use crate::extensions::telemetry::model_experiment_exposure::ModelExperimentExposureLatch;
 use crate::extensions::telemetry::host_tracing::{
     init_production_host_tracing, HostTracing,
 };
@@ -1131,6 +1132,7 @@ pub struct AndroidJsonHost {
     sidebar_sections: Arc<Mutex<AndroidSidebarSections>>,
     user_settings: Arc<Mutex<AndroidUserSettings>>,
     experiments: Arc<HostExperimentsExtension>,
+    model_experiment_exposure: ModelExperimentExposureLatch,
     _session_policy_bindings: AndroidSessionPolicyBindings,
     box_handoff: Arc<Mutex<AndroidBoxHandoffOwner>>,
     agent_channels_root: PathBuf,
@@ -1948,6 +1950,7 @@ impl AndroidJsonHost {
             sidebar_sections,
             user_settings,
             experiments,
+            model_experiment_exposure: ModelExperimentExposureLatch::new(),
             _session_policy_bindings: session_policy_bindings,
             box_handoff,
             agent_channels_root: app_data_dir.join("agent-channels"),
@@ -10698,22 +10701,28 @@ impl AndroidJsonHost {
             AndroidHostInferenceProvider::resolve_model_id("default")
         };
         if experiment_model_used {
-            // A network assignment is attributable only after the real Statsig provider exposure
-            // has been scheduled. Desktop permits Product Analytics without provider exposure only
-            // for an explicit process override; hydration by itself is never counted as exposure.
+            // The telemetry module is the single one-shot exposure owner. Provider exposure still
+            // belongs to HostExperimentsExtension; Product Analytics is only an allowed fallback
+            // for an explicit process override, and only while an account-scoped analytics owner
+            // can actually accept the event.
             let provider_exposed = self.experiments.log_sand_model_experiment_exposure();
             let explicit_override = self.experiments.has_sand_model_experiment_process_override();
-            if provider_exposed || explicit_override {
-                if let (Some(analytics), Some(account_scope), Some(state)) = (
-                    self.product_analytics.as_ref(),
-                    self.account.account_storage_scope(),
-                    experiment_state.as_ref().filter(|state| state.active),
-                ) {
-                    let arm = match state.arm {
-                        crate::extensions::experiments::SandModelExperimentArm::Control => "control",
-                        crate::extensions::experiments::SandModelExperimentArm::Treatment => "treatment",
-                    };
-                    let _ = analytics.track_model_experiment_exposure(&account_scope, arm);
+            let account_scope = self.account.account_storage_scope();
+            let analytics_can_record = self
+                .product_analytics
+                .as_ref()
+                .is_some_and(|analytics| analytics.can_record_events())
+                && account_scope.is_some();
+            if let Some(decision) = self.model_experiment_exposure.note(
+                experiment_state.as_ref(),
+                explicit_override,
+                provider_exposed,
+                analytics_can_record,
+            ) {
+                if let (Some(analytics), Some(account_scope)) =
+                    (self.product_analytics.as_ref(), account_scope.as_deref())
+                {
+                    let _ = analytics.track_model_experiment_exposure(account_scope, decision.arm);
                 }
             }
         }
