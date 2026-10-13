@@ -4772,7 +4772,75 @@
       "device_test": "required on real/protected Android Keystore device path",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "User-visible Vault surface is now implemented without status inflation. Core/UI commits: f7264a259052a52bbce174a72356c36bef5df772, 5e3bc6d35683d2f0c4b95b1048e36a221d3096be, 5f4d0f385d81984824671028215984c56a1267d5, aae09bd2f24b8c760da0a0b2e2d17015fd249400, 01cd5438c02f7cff52cdb6c86fd5bdfc8a49e341, d232b0d4512cc3f9394c0a132f79e29aff98ac19, 38ff8207998c56b5d013ae7c1c18534db01ddb66, e95a344a728df0c27daccc7fbcbeba97b306b45d, ab24ee33f285ce9dd241ecc781067f2cbc430178. Keep mapped/not-verified until actual consumer plus current exact-head Actions/package/device evidence close."
+      "notes": "User-visible Vault surface is now implemented without status inflation. Core/UI commits: f7264a259052a52bbce174a72356c36bef5df772, 5e3bc6d35683d2f0c4b95b1048e36a221d3096be, 5f4d0f385d81984824671028215984c56a1267d5, aae09bd2f24b8c760da0a0b2e2d17015fd249400, 01cd5438c02f7cff52cdb6c86fd5bdfc8a49e341, d232b0d4512cc3f9394c0a132f79e29aff98ac19, 38ff8207998c56b5d013ae7c1c18534db01ddb66, e95a344a728df0c27daccc7fbcbeba97b306b45d, ab24ee33f285ce9dd241ecc781067f2cbc430178. Keep mapped/not-verified until actual consumer plus current exact-head Actions/package/device evidence close. Desktop connector_secret_store.rs (d304c7cb153a03d0c07a9f310aa01a81e533edba) was re-audited: its plaintext per-agent/platform JSON secret file is forbidden on Android. Production replacement is AndroidCredentialVaultStore (Keystore AES-GCM, noBackup, account fence, origin binding, no reveal), invoked by MahayanaHost credentialVaultRequest/credentialForOrigin and Coordinator typed mutation APIs. Agent channel facade integration remains open, so this source responsibility is mapped rather than claimed implemented."
+    },
+    {
+      "responsibility_id": "AGENT-CONNECTOR-SECRET-ANDROID-001",
+      "domain": "agent-connectors-security",
+      "desktop_sources": [
+        {
+          "path": "source/host/src/extensions/session/connector_secret_store.rs",
+          "blob_sha": "d304c7cb153a03d0c07a9f310aa01a81e533edba",
+          "symbols": [
+            "SandConnectorSecretStore",
+            "set_secret",
+            "get_secret",
+            "remove_agent_platform"
+          ]
+        }
+      ],
+      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "responsibility": "Preserve Agent connector credential persistence and revocation without exposing credential plaintext outside the authorized execution boundary.",
+      "source_owner": "Desktop Rust file-based SandConnectorSecretStore",
+      "direct_callers": [
+        "SandAgentSessionStore::store_connector_credential",
+        "Agent channel connection/disconnect flow"
+      ],
+      "downstream_dependencies": [
+        "channel metadata store",
+        "connector execution boundary"
+      ],
+      "state_owner": "AndroidCredentialVaultStore is the only durable secret owner; Rust Session stores only metadata/reference state.",
+      "persistent_state": [
+        "account-scoped encrypted credential records",
+        "allowed-origin binding",
+        "connector secret reference metadata"
+      ],
+      "protocol_wire_contract": [
+        "typed list/upsert/rotate/revoke metadata operations",
+        "execution-boundary secret resolution by reference and origin"
+      ],
+      "visible_effect": "Users can configure/revoke Agent connector credentials and reconnect channels after process death without storing raw connector secrets in ordinary app files.",
+      "failure_behavior": [
+        "unreadable/tampered vault fails closed",
+        "invalid account/ref/origin rejected",
+        "revoked or missing reference cannot resolve"
+      ],
+      "cancellation_behavior": "credential mutation is a single atomic Keystore-backed document replacement; no partial plaintext file is accepted.",
+      "retry_semantics": "caller may retry rejected/non-committed mutation; unknown execution-boundary effects are not auto-retried.",
+      "idempotency_semantics": "revoke missing reference is false/no-op; upsert settles one named account-scoped record; rotate requires existing record.",
+      "process_death_recovery": "encrypted noBackup vault is reopened under Android Keystore; channel/session metadata must resolve the same reference after cold start.",
+      "account_fencing": "every vault operation derives the current Host account fence; cross-account records are isolated.",
+      "security_boundary": "Android Keystore AES-GCM + noBackup encrypted document; secret values are not returned through Presentation/Coordinator list APIs and resolve only for normalized authorized origins.",
+      "android_disposition": "not-applicable-with-replacement",
+      "android_target": [
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/security/AndroidCredentialVaultStore.kt",
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/core/MahayanaHost.kt",
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/coordinator/AndroidCoordinatorRuntime.kt",
+        "source/host/src/extensions/session/channel_store.rs"
+      ],
+      "android_owner": "AndroidCredentialVaultStore + Host execution-boundary resolver",
+      "platform_delta": "Desktop stores connector secrets in per-agent/platform JSON files. Android forbids that mechanism and replaces it with account-scoped Keystore encryption and reference/origin-bound execution access; Rust retains non-secret channel metadata only.",
+      "implementation_status": "mapped",
+      "production_wiring": "Generic Credential Vault is production-wired through MahayanaHost and Coordinator, but SandAgentSessionStore/channel connector calls are not yet adapted to use vault references, so this replacement remains mapped.",
+      "unit_test": "Existing AndroidCredentialVaultStore tests cover encrypted round trip, no-reveal metadata, origin validation/revocation; Agent-channel reference integration test remains open.",
+      "contract_test": "Open: channel connector uses only secret refs and never writes plaintext connector secret files.",
+      "integration_test": "Open: configure connector -> process death -> reconnect by reference -> revoke -> execution fails closed.",
+      "packaged_test": "Open on final exact-head APK/AAB.",
+      "device_test": "Open on protected Android device with real connector credential.",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Do not port connector_secret_store.rs literally. The replacement preserves the user capability with a stronger Android security mechanism; user-visible difference is no secret-file path/reveal surface."
     },
     {
       "responsibility_id": "UI-AVATAR-MOTION-ANDROID-001",
