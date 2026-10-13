@@ -8374,8 +8374,9 @@ impl AndroidJsonHost {
             .map(serde_json::from_value::<AndroidContactGroup>)
             .collect::<Result<Vec<_>, _>>()
             .map_err(|error| format!("invalid contact-group payload: {error}"))?;
-        let (known_peer_ids, pinned_peer_ids) = self.contact_group_projection_inputs()?;
-        self.contact_groups
+        let (known_peer_ids, pinned_peer_ids, session_mutation) =
+            self.contact_group_projection_inputs()?;
+        let projection = self.contact_groups
             .lock()
             .map_err(|_| "canonical Android contact groups lock poisoned".to_string())?
             .set(
@@ -8385,7 +8386,8 @@ impl AndroidJsonHost {
                 &groups,
                 &known_peer_ids,
                 &pinned_peer_ids,
-            )
+            )?;
+        Ok(with_account_session_mutation(projection, session_mutation))
     }
 
     fn agent_sidebar_sections(&mut self) -> Result<Value, String> {
@@ -13169,7 +13171,7 @@ impl AndroidJsonHost {
                     ProductionTurnInput {
                         operation_id: operation_id_owned.clone(),
                         request_id: request_id_owned.clone(),
-                        agent_id,
+                        agent_id: queue_agent_id.clone(),
                         model,
                         prompt,
                         resume_checkpoint_available: false,

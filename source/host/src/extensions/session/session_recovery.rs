@@ -1,4 +1,5 @@
 use serde_json::{json, Value};
+use crate::agents::agent_profile::SandAgentProfile;
 use std::{
     collections::HashMap,
     fmt,
@@ -123,6 +124,16 @@ where
 pub trait RecoveryProfileSource {
     fn name(&self) -> Option<String>;
     fn description(&self) -> Option<String>;
+}
+
+impl RecoveryProfileSource for SandAgentProfile {
+    fn name(&self) -> Option<String> {
+        Some(self.name.clone())
+    }
+
+    fn description(&self) -> Option<String> {
+        Some(self.description.clone())
+    }
 }
 
 fn atomic_write_json(path: &Path, value: &Value) -> io::Result<()> {

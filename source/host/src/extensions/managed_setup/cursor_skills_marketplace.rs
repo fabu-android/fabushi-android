@@ -46,7 +46,7 @@ pub struct MarketplacePlugin {
     pub skills: Vec<MarketplaceSkill>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct SkillCatalogEntry {
     pub id: String,
     pub name: String,
