@@ -18342,6 +18342,73 @@
       "artifact": null,
       "verification_status": "not-verified",
       "notes": "Implemented source + production wiring. Do not mark verified until a descendant exact HEAD passes Rust/architecture/full CI and packaged/device evidence."
+    },
+    {
+      "responsibility_id": "OBSERVABILITY-USER-MESSAGE-RECEIVED-001",
+      "domain": "observability-turn-lifecycle",
+      "desktop_sources": [
+        {
+          "path": "source/host/src/extensions/telemetry/turn_telemetry_mappers.rs",
+          "blob_sha": "f94320a65ed2417bbfdb5bde49ec95d94ae95d4c",
+          "symbols": [
+            "UserMessageReceivedFields",
+            "user_message_received_telemetry",
+            "USER_MESSAGE_RECEIVED_EVENT"
+          ]
+        }
+      ],
+      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "responsibility": "Emit sand.user_message.received exactly once for a newly durably accepted visible user message, preserving truthful conversation identity and whether a prior account-fenced Agent turn was already in flight; nonce replay must not double-count.",
+      "source_owner": "Desktop turn telemetry mapper + user-message acceptance producer",
+      "direct_callers": [
+        "AndroidJsonHost::queue_chat_turn"
+      ],
+      "downstream_dependencies": [
+        "TranscriptStore clientNonce dedupe",
+        "AgentTurnInterruptionRegistry",
+        "AndroidStructuredLogSpool",
+        "SubmitLogs shipper"
+      ],
+      "state_owner": "TranscriptStore owns accepted user-message truth; AgentTurnInterruptionRegistry owns live in-flight projection; telemetry owns neither.",
+      "persistent_state": [
+        "canonical user transcript entry",
+        "durable structured telemetry spool"
+      ],
+      "protocol_wire_contract": [
+        "event=sand.user_message.received",
+        "conversation_id",
+        "was_in_flight"
+      ],
+      "visible_effect": "No direct UI effect; telemetry distinguishes fresh user sends from nonce replay and captures whether the user wrote while an Agent turn was in progress.",
+      "failure_behavior": [
+        "nonce digest mismatch fails before telemetry",
+        "duplicate accepted input emits no second received event",
+        "telemetry persistence failure cannot roll back or duplicate canonical transcript acceptance"
+      ],
+      "cancellation_behavior": "Event observes accepted input and prior live-turn state only; it does not cancel, retry, or settle a run.",
+      "retry_semantics": "ClientNonce dedupe keeps user-message acceptance idempotent; telemetry ships through durable retrying structured-log transport.",
+      "idempotency_semantics": "Only append_entry_if_absent=true emits; duplicate clientNonce paths do not emit a second event.",
+      "process_death_recovery": "Canonical transcript remains durable; unsent event remains in bounded structured-log spill; replaying the same clientNonce after restart does not create a second acceptance event.",
+      "account_fencing": "was_in_flight is read from AgentTurnInterruptionRegistry for the same agent + current account fence.",
+      "security_boundary": "No user text or attachment content is included; only conversation identifier and boolean in-flight state are projected.",
+      "android_disposition": "direct-port",
+      "android_target": [
+        "source/host/src/extensions/telemetry/turn_telemetry_mappers.rs",
+        "source/host/src/android_structured_log_spill.rs",
+        "source/host/src/android_json_runtime.rs"
+      ],
+      "android_owner": "Rust Host transcript acceptance + diagnostic structured telemetry boundary",
+      "platform_delta": "Desktop producer semantics are wired directly into Android Host durable transcript acceptance; Compose does not own or emit analytics truth.",
+      "implementation_status": "implemented",
+      "production_wiring": "e954c109de11bf25a540673edcdf6799558eb900 admits the event contract to the durable spool; a0a4acfec0e2dcbe51119329a8be51bc8eed7d4e records the event only after a new visible transcript entry is durably accepted and captures pre-existing account-fenced active-turn state.",
+      "unit_test": "user_message_received_telemetry_wiring_tests::newly_persisted_user_message_emits_once_with_truthful_in_flight_state plus AndroidStructuredLogSpool::spill_accepts_desktop_turn_telemetry_contracts; exact-head Actions pending.",
+      "contract_test": "Desktop mapper remains exact Rust-to-Rust blob f94320a65ed2417bbfdb5bde49ec95d94ae95d4c; exact-head Rust/architecture gate pending.",
+      "integration_test": "queue_chat_turn integration test covers durable transcript acceptance, in-flight projection and clientNonce dedupe; exact-head Actions pending.",
+      "packaged_test": "required on final exact-head APK/AAB",
+      "device_test": "required on protected device acceptance by sending a user message while an Agent turn is in flight and checking no duplicate on replay",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Implemented source + shipping Host wiring. Keep not-verified until descendant exact-head CI and packaged/device evidence succeeds."
     }
   ],
   "traceability": {
