@@ -2913,6 +2913,23 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
         return host.requestValue("listAgents") as? JSONArray ?: JSONArray()
     }
 
+    override fun agentChannels(agentId: String): JSONArray =
+        host.agentChannels(agentId)
+
+    override fun agentChannelConnect(
+        agentId: String,
+        platform: String,
+        label: String,
+        token: String,
+    ): JSONObject =
+        host.agentChannelConnect(agentId, platform, label, token)
+
+    override fun agentChannelDisconnect(agentId: String, platform: String): JSONObject =
+        host.agentChannelDisconnect(agentId, platform)
+
+    override fun agentChannelsRefresh(agentId: String): JSONArray =
+        host.agentChannelsRefresh(agentId)
+
     override fun isUpdateHostIdle(): Boolean =
         runCatching {
             val agents = agentList()
