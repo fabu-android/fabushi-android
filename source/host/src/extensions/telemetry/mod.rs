@@ -28,3 +28,5 @@ pub mod experiments_diagnostic_telemetry;
 pub mod host_extension_diagnostic_telemetry;
 pub mod turn_empty_delivery_telemetry;
 pub mod sand_error_tags;
+pub mod journal_outcome_telemetry;
+pub mod connector_auth_telemetry;
