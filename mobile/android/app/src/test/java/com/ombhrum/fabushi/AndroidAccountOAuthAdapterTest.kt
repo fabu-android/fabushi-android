@@ -7,7 +7,7 @@ import org.junit.Test
 
 class AndroidAccountOAuthAdapterTest {
     @Test
-    fun externalAuthAcceptsOnlyHttpsWithoutCredentialsOrFragments() {
+    fun externalAuthAcceptsOnlyExactOriginHttpsWithoutCredentials() {
         val accepted = AndroidAccountOAuthAdapter.validateExternalAuthUrl(
             "https://api.ombhrum.com/sign-in?state=opaque",
         )
@@ -18,6 +18,9 @@ class AndroidAccountOAuthAdapterTest {
         assertNull(AndroidAccountOAuthAdapter.validateExternalAuthUrl("javascript:alert(1)"))
         assertNull(AndroidAccountOAuthAdapter.validateExternalAuthUrl("https://user:pass@api.ombhrum.com"))
         assertNull(AndroidAccountOAuthAdapter.validateExternalAuthUrl("https://evil.example/oauth"))
-        assertNull(AndroidAccountOAuthAdapter.validateExternalAuthUrl("https://api.ombhrum.com/#token"))
+        assertEquals(
+            "https://api.ombhrum.com/#done",
+            AndroidAccountOAuthAdapter.validateExternalAuthUrl("https://api.ombhrum.com/#done")?.toASCIIString(),
+        )
     }
 }
