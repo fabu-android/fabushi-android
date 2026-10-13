@@ -711,3 +711,10 @@ mod tests {
         assert!(!runtime.tick().unwrap());
     }
 }
+
+// Desktop-compatible type names retained at the Rust responsibility boundary. Android swaps
+// only the HTTP transport implementation; relay/service semantics and callers stay source-stable.
+pub type SandXuserRelayClient = XuserRelayClient;
+pub type SandXuserRelayRuntime = XuserRelayRuntime;
+pub type SandXuserRelayDriver = XuserRelayDriver;
+pub type ReqwestXuserRelayTransport = UreqXuserRelayTransport;
