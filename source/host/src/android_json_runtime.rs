@@ -10603,19 +10603,19 @@ impl AndroidJsonHost {
         } else {
             AndroidHostInferenceProvider::resolve_model_id("default")
         };
-        if experiment_model_used
-            && std::env::var("SAND_MODEL_EXPERIMENT_OVERRIDE")
-                .ok()
-                .is_some_and(|value| !value.trim().is_empty())
-        {
-            // Desktop permits Product Analytics as a fallback only for an explicit process
-            // override. Network Statsig assignments require a real provider exposure signal;
-            // hydration alone must never be counted as exposure.
-            if let (Some(analytics), Some(account_scope), Some(state)) = (
-                self.product_analytics.as_ref(),
-                self.account.account_storage_scope(),
-                experiment_state.as_ref().filter(|state| state.active),
-            ) {
+        if experiment_model_used {
+            // A network assignment is attributable only after the real Statsig provider exposure
+            // has been scheduled. Desktop permits Product Analytics without provider exposure only
+            // for an explicit process override; hydration by itself is never counted as exposure.
+            let provider_exposed = self.experiments.log_sand_model_experiment_exposure();
+            let explicit_override = self.experiments.has_sand_model_experiment_process_override();
+            if (provider_exposed || explicit_override)
+                && let (Some(analytics), Some(account_scope), Some(state)) = (
+                    self.product_analytics.as_ref(),
+                    self.account.account_storage_scope(),
+                    experiment_state.as_ref().filter(|state| state.active),
+                )
+            {
                 let arm = match state.arm {
                     crate::extensions::experiments::SandModelExperimentArm::Control => "control",
                     crate::extensions::experiments::SandModelExperimentArm::Treatment => "treatment",
