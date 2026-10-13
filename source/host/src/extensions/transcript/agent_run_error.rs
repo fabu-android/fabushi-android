@@ -451,3 +451,76 @@ fn replace_reset_in_clause(detail: &str, relative: &str) -> String {
     }
     output
 }
+
+
+#[cfg(test)]
+mod android_parity_tests {
+    use super::*;
+
+    #[test]
+    fn android_agent_run_error_actions_are_bounded_and_safe() {
+        let buttons = vec![
+            json!({
+                "label":"Unsafe",
+                "action":{"case":"url","value":{"url":"javascript:alert(1)"}}
+            }),
+            json!({
+                "label":"Docs",
+                "action":{"case":"url","value":{"url":"https://example.com/docs"}}
+            }),
+            json!({
+                "label":"Switch",
+                "action":{"case":"switchModel","value":{}}
+            }),
+            json!({
+                "label":"Duplicate switch",
+                "action":{"case":"switchModel","value":{}}
+            }),
+            json!({
+                "label":"Limit",
+                "action":{
+                    "case":"dashboardAction",
+                    "value":{"action":"requestLimitIncrease","args":{"source":"tray"}}
+                }
+            }),
+            json!({
+                "label":"Overflow",
+                "action":{"case":"upgradeChoice","value":{}}
+            }),
+        ];
+        let actions = map_error_detail_buttons(&buttons);
+        assert_eq!(actions.len(), MAX_TRAY_ACTIONS);
+        assert_eq!(actions[0]["kind"], "open-url");
+        assert_eq!(actions[0]["url"], "https://example.com/docs");
+        assert_eq!(actions[1]["kind"], "switch-model");
+        assert_eq!(actions[2]["kind"], "dashboard-action");
+        assert!(
+            actions
+                .iter()
+                .all(|action| action.get("url").and_then(Value::as_str) != Some("javascript:alert(1)"))
+        );
+    }
+
+    #[test]
+    fn android_agent_run_error_included_limit_uses_relative_reset_without_auto_retry() {
+        let detail = BackendDetail {
+            title: Some("Usage limit reached".into()),
+            detail: Some("Included usage is exhausted. It resets at 2026-10-13T02:00:00Z.".into()),
+            buttons: Vec::new(),
+            additional_info: Some(BackendAdditionalInfo {
+                rate_limit_reason: Some(SAND_INCLUDED_LIMIT_REASON.into()),
+                next_reset_at: Some("2026-10-13T02:00:00Z".into()),
+            }),
+        };
+        let described = describe_agent_run_error(
+            "fallback",
+            Some(&detail),
+            DateTime::parse_from_rfc3339("2026-10-13T01:30:00Z")
+                .unwrap()
+                .timestamp_millis(),
+        );
+        assert_eq!(described.title.as_deref(), Some("Usage limit reached"));
+        assert!(described.detail.contains("It resets in 30 minutes."));
+        assert!(described.actions.is_empty());
+    }
+}
