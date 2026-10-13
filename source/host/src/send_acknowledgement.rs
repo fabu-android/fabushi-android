@@ -4,6 +4,7 @@ use serde_json::{json, Value};
 use std::{
     collections::BTreeMap,
     fs,
+    io::Write,
     path::{Path, PathBuf},
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -697,12 +698,18 @@ impl DurableSendAcknowledgementOwner {
             fs::create_dir_all(parent).map_err(|error| error.to_string())?;
         }
         let temporary = self.path.with_extension("json.tmp");
-        fs::write(
-            &temporary,
-            serde_json::to_vec_pretty(&self.state).map_err(|error| error.to_string())?,
-        )
-        .map_err(|error| error.to_string())?;
-        fs::rename(temporary, &self.path).map_err(|error| error.to_string())
+        let encoded =
+            serde_json::to_vec_pretty(&self.state).map_err(|error| error.to_string())?;
+        let result = (|| -> Result<(), String> {
+            let mut file = fs::File::create(&temporary).map_err(|error| error.to_string())?;
+            file.write_all(&encoded).map_err(|error| error.to_string())?;
+            file.sync_all().map_err(|error| error.to_string())?;
+            fs::rename(&temporary, &self.path).map_err(|error| error.to_string())
+        })();
+        if result.is_err() {
+            let _ = fs::remove_file(&temporary);
+        }
+        result
     }
 
     pub fn path(&self) -> &Path {
@@ -927,6 +934,34 @@ mod tests {
             .expect("retry remains durable");
         assert_eq!(durable.entered_at_ms, retried.entered_at_ms);
         assert_eq!(durable.dispatch_started_at_ms, None);
+    }
+
+    #[test]
+    fn durable_journal_flushes_temp_file_before_atomic_replace() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("send-acks.json");
+        let mut owner = DurableSendAcknowledgementOwner::open(&path, 1).unwrap();
+        owner
+            .begin(
+                Some("slot-a"),
+                "session:a",
+                "agent-a",
+                "fsync-a",
+                "hello",
+                message("fsync-a"),
+            )
+            .unwrap();
+        assert!(path.exists());
+        assert!(
+            !path.with_extension("json.tmp").exists(),
+            "successful durable replace must not leave a temporary journal behind"
+        );
+        let reopened = DurableSendAcknowledgementOwner::open(&path, 2).unwrap();
+        assert_eq!(
+            reopened.snapshot(Some("slot-a"), "session:a", "agent-a").len(),
+            1,
+            "fsynced journal must reopen with the pending send"
+        );
     }
 
     #[test]
