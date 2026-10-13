@@ -2,6 +2,21 @@ use fabushi_mahayana_host::android_json_runtime::{AndroidHostMode, AndroidJsonHo
 use serde_json::json;
 use std::{thread, time::Duration};
 
+fn sign_in_test_account(host: &mut AndroidJsonHost) {
+    let started = host
+        .dispatch("feature.auth.oauthStart", &json!({"provider":"google"}))
+        .expect("test OAuth start must succeed");
+    let attempt_id = started["attemptId"]
+        .as_str()
+        .expect("test OAuth start must return attemptId")
+        .to_string();
+    let completed = host
+        .dispatch("feature.auth.oauthPoll", &json!({"attemptId":attempt_id}))
+        .expect("test OAuth poll must succeed");
+    assert_eq!(completed["status"], "completed");
+    assert_eq!(completed["auth"]["loggedIn"], true);
+}
+
 fn settle(host: &mut AndroidJsonHost, operation_id: &str) -> serde_json::Value {
     for _ in 0..128 {
         let event = host.dispatch("feature.receive", &json!({})).unwrap();
@@ -26,6 +41,7 @@ fn accepted_client_nonce_survives_echo_reopen_and_rejects_payload_reuse() {
 
     {
         let mut host = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+    sign_in_test_account(&mut host);
         let accepted = host
             .dispatch(
                 "feature.execute",
@@ -48,6 +64,7 @@ fn accepted_client_nonce_survives_echo_reopen_and_rejects_payload_reuse() {
     }
 
     let mut reopened = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+    sign_in_test_account(&mut reopened);
     let replay = reopened
         .dispatch(
             "feature.execute",

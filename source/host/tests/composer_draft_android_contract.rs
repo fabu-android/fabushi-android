@@ -4,6 +4,21 @@ use fabushi_mahayana_host::{
 };
 use serde_json::json;
 
+fn sign_in_test_account(host: &mut AndroidJsonHost) {
+    let started = host
+        .dispatch("feature.auth.oauthStart", &json!({"provider":"google"}))
+        .expect("test OAuth start must succeed");
+    let attempt_id = started["attemptId"]
+        .as_str()
+        .expect("test OAuth start must return attemptId")
+        .to_string();
+    let completed = host
+        .dispatch("feature.auth.oauthPoll", &json!({"attemptId":attempt_id}))
+        .expect("test OAuth poll must succeed");
+    assert_eq!(completed["status"], "completed");
+    assert_eq!(completed["auth"]["loggedIn"], true);
+}
+
 #[test]
 fn composer_draft_survives_process_reopen_and_is_account_agent_fenced() {
     let root = tempfile::tempdir().unwrap();
@@ -61,6 +76,7 @@ fn host_contract_restores_draft_and_rejects_stale_clear_after_reopen() {
     let root = tempfile::tempdir().unwrap();
     let first_id = {
         let mut host = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+    sign_in_test_account(&mut host);
         host.dispatch(
             "feature.composerDraft.write",
             &json!({"accountSlot":"slot-a","agentId":"agent-a","prompt":"first"}),
@@ -71,6 +87,7 @@ fn host_contract_restores_draft_and_rejects_stale_clear_after_reopen() {
             .to_string()
     };
     let mut reopened = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+    sign_in_test_account(&mut reopened);
     assert_eq!(
         reopened
             .dispatch(
