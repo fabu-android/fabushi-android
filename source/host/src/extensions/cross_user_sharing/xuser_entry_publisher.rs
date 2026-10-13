@@ -349,3 +349,105 @@ pub fn build_publish_payload(entry: &Value, self_auth_id: &str) -> Option<Value>
         _ => None,
     }
 }
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+
+    struct FakeHost {
+        enabled: AtomicBool,
+        identity: Mutex<Option<String>>,
+        sends: AtomicUsize,
+        restamps: Mutex<Vec<(String, String, f64)>>,
+    }
+
+    impl FakeHost {
+        fn new(enabled: bool, identity: Option<&str>) -> Self {
+            Self {
+                enabled: AtomicBool::new(enabled),
+                identity: Mutex::new(identity.map(str::to_string)),
+                sends: AtomicUsize::new(0),
+                restamps: Mutex::new(Vec::new()),
+            }
+        }
+    }
+
+    impl XuserEntryPublisherHost for FakeHost {
+        fn relay_send(&self, _payload: &Value) -> Result<Value, String> {
+            self.sends.fetch_add(1, Ordering::SeqCst);
+            Ok(json!({"timestampMs": 42.0}))
+        }
+
+        fn restamp_room_entry(
+            &self,
+            room_id: &str,
+            entry_id: &str,
+            timestamp_ms: f64,
+        ) -> Result<(), String> {
+            self.restamps.lock().unwrap().push((
+                room_id.to_string(),
+                entry_id.to_string(),
+                timestamp_ms,
+            ));
+            Ok(())
+        }
+
+        fn now_ms(&self) -> u64 { 7 }
+        fn is_enabled(&self) -> bool { self.enabled.load(Ordering::SeqCst) }
+        fn self_auth_id(&self) -> Option<String> { self.identity.lock().unwrap().clone() }
+        fn resolve_attachment(
+            &self,
+            _url: &str,
+        ) -> Result<Option<ResolvedXuserAttachment>, String> {
+            Ok(None)
+        }
+    }
+
+    #[test]
+    fn entry_publisher_is_fail_closed_without_enabled_identity() {
+        let disabled = FakeHost::new(false, Some("auth-a"));
+        publish_entry_with_host(
+            &disabled,
+            "room-a",
+            &json!({"id":"entry-a","kind":"message","role":"user","content":"hello"}),
+        ).unwrap();
+        assert_eq!(disabled.sends.load(Ordering::SeqCst), 0);
+
+        let anonymous = FakeHost::new(true, None);
+        publish_entry_with_host(
+            &anonymous,
+            "room-a",
+            &json!({"id":"entry-a","kind":"message","role":"user","content":"hello"}),
+        ).unwrap();
+        assert_eq!(anonymous.sends.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn remote_agent_echo_is_not_republished() {
+        let host = FakeHost::new(true, Some("auth-a"));
+        let entry = json!({
+            "id":"entry-a",
+            "kind":"send-message",
+            "author":{"id":"sand-remote:owner/agent","name":"Remote"},
+            "message":{"type":"text","content":"remote reply"}
+        });
+        assert!(serialize_entry_with_host(&host, &entry, "auth-a").is_none());
+    }
+
+    #[test]
+    fn relay_timestamp_restamps_canonical_room_entry() {
+        let host = FakeHost::new(true, Some("auth-a"));
+        publish_entry_with_host(
+            &host,
+            "room-a",
+            &json!({"id":"entry-a","kind":"message","role":"user","content":"hello"}),
+        ).unwrap();
+        assert_eq!(host.sends.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            host.restamps.lock().unwrap().as_slice(),
+            &[("room-a".into(), "entry-a".into(), 42.0)]
+        );
+    }
+}
