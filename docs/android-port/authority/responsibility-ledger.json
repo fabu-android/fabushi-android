@@ -12682,21 +12682,23 @@
         "source/android-preload/src/main/kotlin/com/ombhrum/fabushi/androidpreload/runtime/AndroidCoordinatorPort.kt",
         "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/features/bots/GrokBotComponents.kt",
         "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/presentation/MobileBotViewModel.kt",
-        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/production/local-tool-permission-scope.kt"
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/production/local-tool-permission-scope.kt",
+        "source/host/src/android_user_settings.rs",
+        "source/host/src/mcp_auth/dashboard_mcp_auth_backend.rs"
       ],
       "android_owner": "Rust CapabilityBroker + outbound Runner execution boundary, with native Compose prompt as a projection",
-      "platform_delta": "Android cannot expose arbitrary desktop-local process execution. The user-facing local-computer policy must govern the explicit Android bounded Local Runner or Authorized Remote Runner replacement. Current Android has safe one-time approval but no complete durable always/ask/never + team ceiling policy.",
-      "implementation_status": "mapped",
-      "production_wiring": "Partial production implementation is now real: AndroidUserSettings durably owns Never/Ask/Always plus managed ceiling with atomic persistence; RemoteRoutedTools clamps/enforces effective policy before Authorized Remote dispatch; CapabilityBroker owns account/device-fenced one-time approvals and restart cancellation; durable same-turn exact-action refusal memory now survives Host process death. Still missing for full Desktop parity: explicit 10-minute ask TTL contract, complete per-agent direction-epoch/forgotten-agent lifecycle, standing-Always epoch fencing across old directions, and transcript stale-card retirement/boot sweep.",
-      "unit_test": "AndroidUserSettings tests cover default Ask, Never/Always persistence and managed-ceiling clamp. CapabilityBroker tests cover one-time approval duplicate/account/restart safety plus durable exact-action refusal across restart; RemoteRoutedTools tests cover Never fail-closed and same-turn denied-action memory. Focused TTL/direction/stale-card tests remain required.",
-      "contract_test": "Desktop extension/controller/resolution current-main sources are mapped to AndroidUserSettings + CapabilityBroker + RemoteRoutedTools. Same-turn denied-action retry fencing now matches a core Desktop invariant; remaining TTL/direction/transcript retirement semantics are explicitly open.",
-      "integration_test": "required: ask -> allow once/deny once, always/never persistence, ceiling clamp, reconnect, account switch, process death, exact outbound Runner enforcement",
+      "platform_delta": "Android replaces arbitrary Desktop-local execution with bounded Local/Authorized Remote Runner execution while preserving always/ask/never, managed ceiling, exact one-shot approval and the 10-minute ask lifetime. Desktop direction epochs are adapted to Android's durable per-user-turn requestId/operationId identity: retries inside one turn share the refusal scope, while each new user turn gets a new identity. Standing Always remains a durable user preference; stale old-turn callbacks are fenced by operation/account/device identity and turn cancellation.",
+      "implementation_status": "implemented",
+      "production_wiring": "Host durably owns Never/Ask/Always plus managed ceiling, refreshes the Dashboard ceiling per production turn, freezes/clamps it in RemoteRoutedTools before authorization and immediately before dispatch, and consumes exact account/epoch/device-fenced grants in CapabilityBroker. Standing-policy persistence failure degrades only the current prompt (Always->allow-once, Never->deny) and surfaces effectiveDecision/persistenceDegraded. Ask waits 10 minutes. Refusal memory uses the durable parent operation (requestId-backed user-turn identity), so same-turn retries are blocked while later turns are not. feature.approval.status projects canonical pending state after Host restore and MobileBotViewModel retires stale cards during durable projection refresh.",
+      "unit_test": "AndroidUserSettings covers default Ask, persistence and ceiling clamp. CapabilityBroker covers duplicate/account/epoch/device fencing, process-restart cancellation and durable exact-action refusal. RemoteRoutedTools covers Never fail-closed, same-turn denied-action memory and the 10-minute TTL contract. AndroidJsonHost covers standing-policy persistence-failure one-shot fallback and approval status becoming non-pending after Host reopen.",
+      "contract_test": "Desktop current-main local-tool store/view/shared machinery were re-read. Android preserves four-way UI decisions, never<ask<always rank/managed ceiling, mutation-failure downgrade, exact action/target one-shot authority, 10-minute ask lifetime, reconnect/turn refresh and fail-closed stale callbacks. Android's durable per-turn operation identity is the documented platform replacement for Desktop direction epoch.",
+      "integration_test": "Production composition now includes ask -> allow once/deny, always/never persistence, team ceiling clamp, per-turn refresh, account switch clear, process-death cancellation, stale-card reconciliation, exact one-shot grant consumption and outbound Runner revalidation. Same-final-head Actions and protected real Runner/device acceptance remain required.",
       "packaged_test": "required on final githubRelease APK/AAB",
       "device_test": "required with real Authorized Remote Runner/bounded Local Runner",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Keep mapped, not verified. Generic approval no longer represents the whole policy: persistent Never/Ask/Always, ceiling, one-time grant and durable refusal fencing are implemented, while TTL/direction lifecycle/transcript stale-card retirement still require production parity.",
-      "android_head_at_update": "f04d4f3067420306b2817e2a4b49a100fe702806"
+      "notes": "Implementation closure reached; verification remains open. Do not mark verified until a descendant exact HEAD passes Rust/Android/package/device gates with real Authorized Remote Runner or bounded Local Runner evidence.",
+      "android_head_at_update": "b960629f7794746a258cbe6256ddbad9543c20cc"
     },
     {
       "responsibility_id": "PLUGIN-OVERLAY-PRESENTATION-ANDROID-001",
