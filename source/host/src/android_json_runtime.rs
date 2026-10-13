@@ -1537,11 +1537,17 @@ impl AndroidJsonHost {
         };
         let product_analytics = if mode == AndroidHostMode::Production {
             mcp_dashboard_backend.as_ref().map(|dashboard| {
+                let configuration = dashboard.credential_provider().configuration();
                 let backend = Arc::clone(dashboard);
                 let sender: ProductAnalyticsSender = Arc::new(move |payload| {
                     backend.send_product_analytics_events(payload)
                 });
-                AndroidProductAnalyticsRuntime::start(Arc::clone(&experiments), sender)
+                AndroidProductAnalyticsRuntime::start(
+                    Arc::clone(&experiments),
+                    sender,
+                    configuration.client_version,
+                    configuration.box_namespace,
+                )
             })
         } else {
             None

@@ -68,6 +68,7 @@ pub struct AndroidProductAnalyticsRuntime {
     gate_stop: Mutex<Option<StopGateSubscription>>,
     worker: Mutex<Option<JoinHandle<()>>>,
     active_day_keys: Mutex<BTreeMap<String, u64>>,
+    base_properties: BTreeMap<String, Value>,
     disabled: bool,
 }
 
@@ -75,16 +76,20 @@ impl AndroidProductAnalyticsRuntime {
     pub fn start(
         experiments: Arc<HostExperimentsExtension>,
         sender: ProductAnalyticsSender,
+        client_version: String,
+        box_namespace: String,
     ) -> Arc<Self> {
         let opted_out = std::env::var("SAND_DISABLE_TELEMETRY").as_deref() == Ok("1")
             || std::env::var("SAND_DISABLE_ANALYTICS").as_deref() == Ok("1");
-        Self::start_with_opt_out(experiments, sender, opted_out)
+        Self::start_with_opt_out(experiments, sender, opted_out, client_version, box_namespace)
     }
 
     fn start_with_opt_out(
         experiments: Arc<HostExperimentsExtension>,
         sender: ProductAnalyticsSender,
         disabled: bool,
+        client_version: String,
+        box_namespace: String,
     ) -> Arc<Self> {
         let enabled = !disabled && experiments.check_feature_gate(SAND_PRODUCT_ANALYTICS_GATE);
         let (tx, rx) = mpsc::channel();
@@ -92,15 +97,11 @@ impl AndroidProductAnalyticsRuntime {
             .name("fabushi-product-analytics".into())
             .spawn(move || run_worker(rx, sender, enabled))
             .expect("failed to start Product Analytics worker");
-        let flavor = std::env::var("SAND_BOX_NAMESPACE")
-            .ok()
-            .filter(|value| !value.trim().is_empty())
-            .map(|value| match value.as_str() {
-                "dev" => "sand-dev".to_string(),
-                "lab" => "sand-lab".to_string(),
-                _ => "sand".to_string(),
-            })
-            .unwrap_or_else(|| "sand".to_string());
+        let flavor = match box_namespace.trim() {
+            "dev" => "sand-dev".to_string(),
+            "lab" => "sand-lab".to_string(),
+            _ => "sand".to_string(),
+        };
         let runtime = Arc::new(Self {
             tx,
             gate_stop: Mutex::new(None),
@@ -108,7 +109,7 @@ impl AndroidProductAnalyticsRuntime {
             active_day_keys: Mutex::new(BTreeMap::new()),
             base_properties: BTreeMap::from([
                 ("client".into(), Value::String("sand".into())),
-                ("sand_version".into(), Value::String(env!("CARGO_PKG_VERSION").into())),
+                ("sand_version".into(), Value::String(client_version)),
                 ("flavor".into(), Value::String(flavor)),
                 ("os".into(), Value::String(std::env::consts::OS.into())),
                 ("arch".into(), Value::String(std::env::consts::ARCH.into())),
@@ -144,9 +145,6 @@ impl AndroidProductAnalyticsRuntime {
         }
         if event.name.trim().is_empty() {
             return Err("Product Analytics event name is required".into());
-        }
-        if self.disabled {
-            return Ok(());
         }
         let mut event = event;
         let mut enriched = self.base_properties.clone();
@@ -356,6 +354,8 @@ mod tests {
                 sink.lock().unwrap().push(payload.clone());
                 Ok(())
             }),
+            "0.1.0-test".into(),
+            "dev".into(),
         );
         runtime
             .track(
@@ -386,6 +386,8 @@ mod tests {
                 sink.lock().unwrap().push(payload.clone());
                 Ok(())
             }),
+            "0.1.0-test".into(),
+            "dev".into(),
         );
         for (scope, name) in [("account-a", "old"), ("account-b", "new")] {
             runtime
@@ -436,6 +438,8 @@ mod tests {
                 sink.fetch_add(1, Ordering::SeqCst);
                 Err("offline".into())
             }),
+            "0.1.0-test".into(),
+            "dev".into(),
         );
         for index in 0..ANALYTICS_BUFFER_LIMIT {
             runtime
@@ -464,6 +468,8 @@ mod tests {
                 Ok(())
             }),
             true,
+            "0.1.0-test".into(),
+            "dev".into(),
         );
         runtime
             .track(
