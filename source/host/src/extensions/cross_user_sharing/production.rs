@@ -105,6 +105,16 @@ impl ProductionCrossUserCore {
         self.extension.request_relay_drain();
     }
 
+    /// Fence all account-scoped sharing state before the canonical account owner advances epoch.
+    ///
+    /// Installation-local experiment overrides intentionally survive account switches, so clearing
+    /// experiment network state alone is insufficient. The sharing service must be disabled and
+    /// its previous self identity cleared before a new account can ever re-enable the relay.
+    pub fn fence_account_transition(&self) {
+        self.service.set_enabled(false);
+        self.service.set_self_auth_id(None);
+    }
+
     pub fn prepare_for_upgrade(&self) {
         self.extension.prepare_for_upgrade();
     }
@@ -342,6 +352,38 @@ mod tests {
             core.departures.pending.file_path.parent(),
             Some(root.join("xuser-sharing").as_path())
         );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn account_transition_fence_stops_relay_and_clears_previous_identity() {
+        let credentials: Arc<dyn SandMcpCredentialProvider> = Arc::new(
+            RotatingSandCredentials {
+                calls: Mutex::new(0),
+            },
+        );
+        let transport: Arc<dyn XuserRelayTransport> = Arc::new(CapturingTransport {
+            tokens: Mutex::new(Vec::new()),
+        });
+        let env = BTreeMap::from([
+            ("SAND_DEV_XUSER_SHARING".to_string(), "1".to_string()),
+            ("SAND_PACKAGED".to_string(), "0".to_string()),
+        ]);
+        let root = test_root("account-fence");
+        let core = build_xuser_core(credentials, transport, &env, &root).unwrap();
+        core.service.set_self_auth_id(Some("old-account".into()));
+        core.apply_feature_policy(true).unwrap();
+        assert!(core.service.is_started());
+
+        core.fence_account_transition();
+
+        assert!(!core.service.is_started());
+        assert!(!core.extension.is_enabled());
+        // Re-enable the local state without starting/reconciling the relay to prove the old
+        // account identity was actually erased rather than merely hidden by disabled projection.
+        core.service.set_enabled(true);
+        assert_eq!(core.service.get_state().self_auth_id, None);
+        core.service.set_enabled(false);
         let _ = std::fs::remove_dir_all(root);
     }
 
