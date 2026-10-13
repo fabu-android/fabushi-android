@@ -1262,11 +1262,11 @@ mod tests {
             let read = stream.read(&mut buffer).unwrap();
             raw.extend_from_slice(&buffer[..read]);
             let request = String::from_utf8_lossy(&raw).to_string();
+            let request_lower = request.to_ascii_lowercase();
             assert!(request.starts_with("POST /api/social/message-resources "));
-            assert!(request
-                .to_ascii_lowercase()
+            assert!(request_lower
                 .contains("authorization: bearer abcdefghijklmnopqrstuvwxyz0123456789"));
-            assert!(request.contains("x-fabushi-device-id: device-1"));
+            assert!(request_lower.contains("x-fabushi-device-id: device-1"));
             assert!(request.contains("name=\"file\"; filename=\"hello.txt\""));
             assert!(raw.windows(b"hello".len()).any(|window| window == b"hello"));
             let body = r#"{"success":true,"resource":{"id":"resource-1","name":"hello.txt","size":5}}"#;
@@ -1284,9 +1284,10 @@ mod tests {
             let mut bytes = [0_u8; 4096];
             let read = stream.read(&mut bytes).unwrap();
             let request = String::from_utf8_lossy(&bytes[..read]).to_string();
+            let request_lower = request.to_ascii_lowercase();
             assert!(request.starts_with("GET /api/social/message-resources/resource-1 "));
-            assert!(request.contains("Accept: application/octet-stream"));
-            assert!(request.contains("x-fabushi-device-id: device-1"));
+            assert!(request_lower.contains("accept: application/octet-stream"));
+            assert!(request_lower.contains("x-fabushi-device-id: device-1"));
             write!(
                 stream,
                 "HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nContent-Length: 5\r\nConnection: close\r\n\r\nhello",
