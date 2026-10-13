@@ -210,6 +210,26 @@ data class MobileApprovalCleanupState(
     val error: String? = null,
 )
 
+enum class MobileTranscriptThreadStatus {
+    IDLE,
+    LOADING,
+    READY,
+    EMPTY,
+    FAILED,
+    UNAVAILABLE,
+}
+
+data class MobileTranscriptThreadState(
+    val status: MobileTranscriptThreadStatus = MobileTranscriptThreadStatus.IDLE,
+    val agentId: String? = null,
+    val rootId: String? = null,
+    val messages: List<MobileChatMessage> = emptyList(),
+    val error: String? = null,
+) {
+    val isOpen: Boolean
+        get() = rootId != null
+}
+
 data class MobileBotUiState(
     val bots: List<MobileBotSummaryAndroid> = emptyList(),
     val channelConnectionsByAgent: Map<String, List<AgentChannelConnection>> = emptyMap(),
@@ -231,6 +251,7 @@ data class MobileBotUiState(
     val historyLoadingOlder: Boolean = false,
     val historyError: String? = null,
     val historyPrependRevision: Long = 0L,
+    val transcriptThread: MobileTranscriptThreadState = MobileTranscriptThreadState(),
     val transcriptLoadError: Boolean = false,
     val busy: Boolean = false,
     val operationId: String? = null,
@@ -328,6 +349,8 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
     private var sendPresentationGeneration = 0L
     private var historyGeneration = 0L
     private var historyLoadJob: Job? = null
+    private var transcriptThreadGeneration = 0L
+    private var transcriptThreadLoadJob: Job? = null
     private var sidebarMutationGeneration = 0L
     private val historyOlderEntryIds = linkedSetOf<String>()
     private var asyncTasksGeneration = 0L
@@ -1428,6 +1451,7 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
         historyLoadJob?.cancel()
         historyLoadJob = null
         historyOlderEntryIds.clear()
+        resetTranscriptThread()
         draftScopeGeneration += 1
         draftWriteGeneration += 1
         draftWriteJob?.cancel()
@@ -1601,6 +1625,115 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
+    fun openTranscriptThread(rootId: String) {
+        val snapshot = mutableState.value
+        val bot = snapshot.activeBot
+        val accountSlot = rosterSelectionAccountSlot
+        val normalizedRootId = rootId.trim()
+        if (bot == null || bot.miniAppId != null || accountSlot.isNullOrBlank() || normalizedRootId.isEmpty()) {
+            transcriptThreadGeneration += 1
+            transcriptThreadLoadJob?.cancel()
+            transcriptThreadLoadJob = null
+            commitState(
+                snapshot.copy(
+                    transcriptThread = MobileTranscriptThreadState(
+                        status = MobileTranscriptThreadStatus.UNAVAILABLE,
+                        agentId = bot?.id,
+                        rootId = normalizedRootId.takeIf(String::isNotEmpty),
+                    ),
+                ),
+            )
+            return
+        }
+        val current = snapshot.transcriptThread
+        if (
+            transcriptThreadLoadJob?.isActive == true &&
+            current.agentId == bot.id &&
+            current.rootId == normalizedRootId &&
+            current.status == MobileTranscriptThreadStatus.LOADING
+        ) {
+            return
+        }
+
+        transcriptThreadGeneration += 1
+        transcriptThreadLoadJob?.cancel()
+        val generation = transcriptThreadGeneration
+        commitState(
+            snapshot.copy(
+                transcriptThread = MobileTranscriptThreadState(
+                    status = MobileTranscriptThreadStatus.LOADING,
+                    agentId = bot.id,
+                    rootId = normalizedRootId,
+                ),
+            ),
+        )
+        transcriptThreadLoadJob = viewModelScope.launch {
+            val result = withContext(Dispatchers.IO) {
+                runCatching {
+                    val projection = coordinator.transcriptThread(bot.id, normalizedRootId)
+                    canonicalMobileTranscriptForAgent(projection.entries, bot.id)
+                }
+            }
+            if (
+                generation != transcriptThreadGeneration ||
+                accountSlot != rosterSelectionAccountSlot ||
+                mutableState.value.activeBot?.id != bot.id ||
+                mutableState.value.transcriptThread.rootId != normalizedRootId
+            ) {
+                return@launch
+            }
+            result.onSuccess { messages ->
+                commitState(
+                    mutableState.value.copy(
+                        transcriptThread = MobileTranscriptThreadState(
+                            status = if (messages.isEmpty()) {
+                                MobileTranscriptThreadStatus.EMPTY
+                            } else {
+                                MobileTranscriptThreadStatus.READY
+                            },
+                            agentId = bot.id,
+                            rootId = normalizedRootId,
+                            messages = messages,
+                        ),
+                    ),
+                )
+            }.onFailure { error ->
+                commitState(
+                    mutableState.value.copy(
+                        transcriptThread = MobileTranscriptThreadState(
+                            status = MobileTranscriptThreadStatus.FAILED,
+                            agentId = bot.id,
+                            rootId = normalizedRootId,
+                            error = error.message ?: "Thread could not be loaded",
+                        ),
+                    ),
+                )
+            }
+            transcriptThreadLoadJob = null
+        }
+    }
+
+    fun retryTranscriptThread() {
+        val rootId = mutableState.value.transcriptThread.rootId ?: return
+        openTranscriptThread(rootId)
+    }
+
+    fun closeTranscriptThread() {
+        resetTranscriptThread()
+        if (mutableState.value.transcriptThread != MobileTranscriptThreadState()) {
+            commitState(mutableState.value.copy(transcriptThread = MobileTranscriptThreadState()))
+        }
+    }
+
+    private fun resetTranscriptThread() {
+        transcriptThreadGeneration += 1
+        transcriptThreadLoadJob?.cancel()
+        transcriptThreadLoadJob = null
+        if (mutableState.value.transcriptThread != MobileTranscriptThreadState()) {
+            commitState(mutableState.value.copy(transcriptThread = MobileTranscriptThreadState()))
+        }
+    }
+
     fun retryTranscriptLoad() {
         val bot = mutableState.value.activeBot ?: return
         openBot(bot, mutableState.value.messageTargetId)
@@ -1626,6 +1759,7 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
         historyLoadJob?.cancel()
         historyLoadJob = null
         historyOlderEntryIds.clear()
+        resetTranscriptThread()
         draftScopeGeneration += 1
         draftWriteGeneration += 1
         draftWriteJob?.cancel()
@@ -1668,6 +1802,7 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
         historyLoadJob?.cancel()
         historyLoadJob = null
         historyOlderEntryIds.clear()
+        resetTranscriptThread()
         cancelEditorSuggestionRequest()
         asyncTasksGeneration += 1
         asyncTasksJob?.cancel()
