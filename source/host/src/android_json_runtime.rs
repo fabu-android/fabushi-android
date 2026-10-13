@@ -7890,11 +7890,7 @@ impl AndroidJsonHost {
             }
         }
 
-        let request_source = command
-            .get("requestSource")
-            .and_then(Value::as_str)
-            .filter(|value| !value.trim().is_empty())
-            .map(str::to_string);
+        let request_source = normalize_turn_request_source(command.get("requestSource"))?;
         let requested_model = command
             .get("model")
             .and_then(Value::as_str)
@@ -7928,7 +7924,13 @@ impl AndroidJsonHost {
             .turn_journal
             .lock()
             .map_err(|_| "turn journal lock poisoned".to_string())?
-            .begin(request_id, operation_id, &account_fence, now_ms())?;
+            .begin_with_source(
+                request_id,
+                operation_id,
+                &account_fence,
+                request_source.as_deref(),
+                now_ms(),
+            )?;
 
         let profile = self.agents
             .lock()
@@ -10310,6 +10312,36 @@ fn has_existing_account_durable_data(app_data_dir: &std::path::Path) -> bool {
 
 fn required_u64(value: &Value, key: &str) -> Result<u64, String> {
     value.get(key).and_then(Value::as_u64).ok_or_else(|| format!("{key} is required"))
+}
+
+const ANDROID_TURN_REQUEST_SOURCES: &[&str] = &[
+    "turn",
+    "automation",
+    "notification",
+    "connector",
+    "event",
+    "handoff-resume",
+    "background-revival",
+    "web-search",
+    "web-fetch",
+    "widget-response",
+    "mcp-auth-resume",
+    "agent-message",
+];
+
+fn normalize_turn_request_source(value: Option<&Value>) -> Result<Option<String>, String> {
+    let Some(value) = value.filter(|value| !value.is_null()) else {
+        return Ok(None);
+    };
+    let source = value
+        .as_str()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| "requestSource must be a non-empty string".to_string())?;
+    if !ANDROID_TURN_REQUEST_SOURCES.contains(&source) {
+        return Err(format!("unsupported requestSource {source}"));
+    }
+    Ok(Some(source.to_string()))
 }
 
 fn optional_non_negative_transcript_time(value: &Value, key: &str) -> Result<Option<f64>, String> {
@@ -13584,6 +13616,37 @@ mod transcript_page_contract_tests {
 }
 
 
+
+#[cfg(test)]
+mod turn_request_source_contract_tests {
+    use super::*;
+
+    #[test]
+    fn request_source_allowlist_preserves_desktop_sources_and_android_continuations() {
+        for source in [
+            "turn",
+            "automation",
+            "notification",
+            "connector",
+            "event",
+            "handoff-resume",
+            "background-revival",
+            "web-search",
+            "web-fetch",
+            "widget-response",
+            "mcp-auth-resume",
+            "agent-message",
+        ] {
+            assert_eq!(
+                normalize_turn_request_source(Some(&Value::String(source.into()))).unwrap(),
+                Some(source.to_string())
+            );
+        }
+        assert!(normalize_turn_request_source(Some(&Value::String("unknown".into()))).is_err());
+        assert!(normalize_turn_request_source(Some(&Value::String("   ".into()))).is_err());
+        assert_eq!(normalize_turn_request_source(None).unwrap(), None);
+    }
+}
 
 #[cfg(test)]
 mod time_zone_settings_dispatch_tests {
