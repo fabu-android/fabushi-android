@@ -2971,16 +2971,30 @@ impl AndroidJsonHost {
             "createAgent" => {
                 let name = required_string(params, "name")?;
                 let description = params.get("description").and_then(Value::as_str).unwrap_or("");
-                let agent = self.agents
+                let origin = params.get("origin").and_then(Value::as_str).unwrap_or("user");
+                let purpose = params.get("purpose").and_then(Value::as_str);
+                let introduction_suppressed = params
+                    .get("isIntroductionSuppressed")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false);
+                let mut agents = self.agents
                     .lock()
-                    .map_err(|_| "canonical Android Agent roster lock poisoned".to_string())?
-                    .create_with_persona(
+                    .map_err(|_| "canonical Android Agent roster lock poisoned".to_string())?;
+                let mut agent = agents
+                    .create_materialized_with_persona(
                         name,
                         description,
                         params.get("avatarShape"),
                         params.get("avatarColor"),
+                        origin,
+                        purpose,
                     )
                     .map_err(|error| error.to_string())?;
+                if introduction_suppressed {
+                    agent = agents
+                        .set_introduction_pending(&agent.id, false)
+                        .map_err(|error| error.to_string())?;
+                }
                 Ok(json!({"agent": agent.as_json()}))
             }
             "createGroup" => {
@@ -13158,6 +13172,37 @@ export function apply(ctx) {
             .contains("unavailable for this turn"));
         assert!(host.subagent_owner.lock().unwrap().all_records().is_empty());
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn create_agent_preserves_materialization_origin_purpose_and_intro_suppression() {
+        let root = tempfile::tempdir().unwrap();
+        let mut host = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+        let created = host.dispatch(
+            "createAgent",
+            &json!({
+                "name":"Plugin Auth",
+                "origin":"dev",
+                "purpose":"plugin-auth",
+                "isIntroductionSuppressed":true
+            }),
+        ).unwrap();
+        assert_eq!(created["agent"]["origin"], "dev");
+        assert_eq!(created["agent"]["purpose"], "plugin-auth");
+        assert_eq!(created["agent"]["introductionPending"], false);
+
+        drop(host);
+        let mut reopened = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+        let agents = reopened.dispatch("listAgents", &json!({})).unwrap();
+        let special = agents.as_array().unwrap().iter()
+            .find(|agent| agent["purpose"] == "plugin-auth")
+            .expect("special-purpose Agent survives Host reopen");
+        assert_eq!(special["origin"], "dev");
+        assert_eq!(special["introductionPending"], false);
+        assert!(reopened.dispatch(
+            "createAgent",
+            &json!({"name":"Bad Purpose","purpose":"Plugin Auth"}),
+        ).unwrap_err().contains("agent purpose is invalid"));
     }
 
     #[test]
