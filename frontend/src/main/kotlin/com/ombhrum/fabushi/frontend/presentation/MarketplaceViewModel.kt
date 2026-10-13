@@ -437,6 +437,13 @@ data class MarketplaceUiState(
     val rootConnectionProjection: RootConnectionResilienceProjection = RootConnectionResilienceProjection.initial(),
 )
 
+internal fun signinBootGate(loggedIn: Boolean, onboardingStep: Int): String =
+    when {
+        !loggedIn -> "sign-in"
+        onboardingStep < 3 -> "onboarding"
+        else -> "shell"
+    }
+
 class MarketplaceViewModel(application: Application) : AndroidViewModel(application) {
     private val coordinator: AndroidCoordinatorPort = CoordinatorClient.presentation()
     private val miniApps = MiniAppPlatformBridge(coordinator)
@@ -451,6 +458,8 @@ class MarketplaceViewModel(application: Application) : AndroidViewModel(applicat
     private var mcpServerCatalogGeneration: Long = 0L
     private val mcpServerToolsProjectors = linkedMapOf<String, PluginServerToolsProjector>()
     private var mcpTeamPopularityGeneration: Long = 0L
+    // Telemetry-only edge memory. Canonical auth/onboarding truth remains in Host + UI state.
+    private var reportedSigninBootGate: String? = null
 
     init {
         featureEventSubscription = coordinator.addFeatureEventListener { event ->
@@ -482,6 +491,7 @@ class MarketplaceViewModel(application: Application) : AndroidViewModel(applicat
                     accountAuthId = result.optString("authId").ifBlank { user?.optString("id").orEmpty() },
                     accountAvatarUrl = user?.optString("profilePictureUrl").orEmpty(),
                 )
+                reportSigninBootGateIfChanged()
                 refreshAccountAccess()
                 refreshAccountPrivacyMode()
                 if (mutableState.value.loggedIn) {
@@ -500,15 +510,33 @@ class MarketplaceViewModel(application: Application) : AndroidViewModel(applicat
         val next = (mutableState.value.onboardingStep + 1).coerceAtMost(3)
         mutableState.value = mutableState.value.copy(onboardingStep = next)
         if (next == 3) getApplication<Application>().getSharedPreferences("fabushi.mobile", 0).edit().putBoolean("onboarding-complete", true).apply()
+        reportSigninBootGateIfChanged()
     }
 
     fun skipOnboarding() {
         mutableState.value = mutableState.value.copy(onboardingStep = 3)
         getApplication<Application>().getSharedPreferences("fabushi.mobile", 0).edit().putBoolean("onboarding-complete", true).apply()
+        reportSigninBootGateIfChanged()
     }
 
     fun retreatOnboarding() {
         mutableState.value = mutableState.value.copy(onboardingStep = (mutableState.value.onboardingStep - 1).coerceAtLeast(0))
+        reportSigninBootGateIfChanged()
+    }
+
+    private fun reportSigninBootGateIfChanged() {
+        val current = mutableState.value
+        if (!current.authResolved) return
+        val gate = signinBootGate(current.loggedIn, current.onboardingStep)
+        if (reportedSigninBootGate == gate) return
+        reportedSigninBootGate = gate
+        viewModelScope.launch {
+            runCatching {
+                withContext(Dispatchers.IO) {
+                    coordinator.reportSigninGate(gate = gate, consult = null)
+                }
+            }
+        }
     }
 
     fun beginBrowserLogin() {
