@@ -1,5 +1,6 @@
 use std::collections::{BTreeMap, VecDeque};
-use std::fs;
+use std::fs::{self, File};
+use std::io::Write;
 use std::path::PathBuf;
 
 use fabushi_android_internal::MonotonicSequence;
@@ -171,14 +172,25 @@ impl<H: HostPort> MahayanaCoordinator<H> {
             format!("failed to encode coordinator state: {error}"),
         ))?;
         let tmp = path.with_extension("json.tmp");
-        fs::write(&tmp, encoded).map_err(|error| CoordinatorFailure::new(
-            CoordinatorFailureCode::Internal,
-            format!("failed to write coordinator state: {error}"),
-        ))?;
-        fs::rename(&tmp, path).map_err(|error| CoordinatorFailure::new(
-            CoordinatorFailureCode::Internal,
-            format!("failed to replace coordinator state: {error}"),
-        ))
+        let write_result = (|| -> std::io::Result<()> {
+            let mut file = File::create(&tmp)?;
+            file.write_all(&encoded)?;
+            file.sync_all()?;
+            fs::rename(&tmp, path)?;
+            #[cfg(unix)]
+            if let Some(parent) = path.parent() {
+                File::open(parent)?.sync_all()?;
+            }
+            Ok(())
+        })();
+        if let Err(error) = write_result {
+            let _ = fs::remove_file(&tmp);
+            return Err(CoordinatorFailure::new(
+                CoordinatorFailureCode::Internal,
+                format!("failed to durably replace coordinator state: {error}"),
+            ));
+        }
+        Ok(())
     }
 
     pub fn generation(&self) -> u64 { self.generation }
@@ -584,6 +596,36 @@ mod tests {
         assert!(coordinator.resync(ResyncRequest { generation: 1, after_sequence: 0 }).is_err());
         let fresh = coordinator.resync(ResyncRequest { generation: 2, after_sequence: 0 }).unwrap();
         assert!(fresh.events.is_empty());
+    }
+
+    #[test]
+    fn persistent_state_is_atomically_replaced_without_exposing_temp_state() {
+        let root = std::env::temp_dir().join(format!(
+            "fabushi-coordinator-atomic-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
+        ));
+        let state = root.join("coordinator-state.json");
+        let temp = state.with_extension("json.tmp");
+        {
+            let mut coordinator = MahayanaCoordinator::with_generation_persistent(
+                FakeHost::default(), 3, 8, &state
+            ).unwrap();
+            coordinator.begin_request(&request("atomic-1")).unwrap();
+            coordinator.bind_operation("atomic-1", "operation-atomic-1").unwrap();
+            assert!(state.exists());
+            assert!(!temp.exists(), "a settled coordinator state must never expose its temporary file");
+        }
+        let reopened = MahayanaCoordinator::with_generation_persistent(
+            FakeHost::default(), 3, 8, &state
+        ).unwrap();
+        assert_eq!(reopened.generation(), 4);
+        let recovered = reopened.resync_since(0);
+        assert_eq!(recovered.events.len(), 1);
+        assert_eq!(recovered.events[0].family, "operation.outcome-unknown");
+        assert!(recovered.events[0].payload_json.contains("operation-atomic-1"));
+        assert!(!temp.exists());
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]
