@@ -14895,7 +14895,6 @@ mod tests {
     }
 
     #[test]
-    #[test]
     fn approval_status_retires_pre_restart_cards() {
         let root = tempfile::tempdir().unwrap();
         let mut first = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
@@ -18115,7 +18114,6 @@ mod process_metrics_settings_dispatch_tests {
 mod local_tool_permission_dispatch_tests {
     use super::*;
 
-    #[test]
     #[test]
     fn standing_policy_persistence_failure_degrades_to_one_shot_resolution() {
         assert_eq!(degraded_standing_policy_decision(AndroidApprovalDecision::Always), Some(("allow-once", true)));
