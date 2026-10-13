@@ -11506,9 +11506,6 @@ impl AndroidJsonHost {
                         return Err(error);
                     }
                 };
-                self.transcript_extension
-                    .event_bridge()
-                    .run_started(if request_id.is_empty() { &operation_id } else { request_id });
                 if let Err(error) = self.queue_chat_turn(
                     &operation_id,
                     request_id,
@@ -11518,6 +11515,9 @@ impl AndroidJsonHost {
                     self.active_operations.remove(&operation_id);
                     return Err(error);
                 }
+                self.transcript_extension
+                    .event_bridge()
+                    .run_started(if request_id.is_empty() { &operation_id } else { request_id });
                 private_session_mutation = session_mutation;
             }
             "marketplace.install" => {
@@ -22622,6 +22622,33 @@ mod user_message_received_telemetry_wiring_tests {
                 })
                 .count(),
             1,
+        );
+    }
+
+    #[test]
+    fn failed_chat_send_does_not_publish_transcript_run_started() {
+        let root = tempfile::tempdir().unwrap();
+        let mut host = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+        assert!(!host.logged_in);
+        let result = host.feature_execute(&json!({
+            "command":{
+                "type":"chat.send",
+                "requestId":"failed-before-admission",
+                "agentId":"agent-a",
+                "clientNonce":"failed-before-admission",
+                "text":"hello"
+            }
+        }));
+        assert!(result.is_err());
+        let projected = host
+            .transcript_projection_events
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|event| event.get("type").and_then(Value::as_str) == Some("transcript.run-started"));
+        assert!(
+            !projected,
+            "run-started must not be published before chat.send is durably admitted and queued"
         );
     }
 
