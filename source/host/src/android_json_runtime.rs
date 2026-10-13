@@ -15070,3 +15070,120 @@ mod upgrade_automation_quiesce_tests {
         assert_ne!(resumed, "automation wakes are quiesced for upgrade");
     }
 }
+
+
+#[cfg(test)]
+mod android_box_handoff_runtime_tests {
+    use super::*;
+
+    #[test]
+    fn durable_handoff_routes_survive_reopen_and_fence_late_results() {
+        let root = tempfile::tempdir().unwrap();
+        let request_id;
+        {
+            let mut host = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+            let started = host
+                .dispatch(
+                    "feature.agent.handoff.start",
+                    &json!({"agentId":"agent-handoff","instruction":"Complete the remote login"}),
+                )
+                .unwrap();
+            assert_eq!(started["status"], "started");
+            request_id = started["requestId"].as_str().unwrap().to_string();
+
+            let duplicate = host
+                .dispatch(
+                    "feature.agent.handoff.start",
+                    &json!({"agentId":"agent-handoff","instruction":"Different instruction"}),
+                )
+                .unwrap();
+            assert_eq!(duplicate["status"], "already-pending");
+            assert_eq!(duplicate["requestId"], request_id);
+            assert_eq!(duplicate["instruction"], "Complete the remote login");
+        }
+
+        {
+            let mut reopened = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+            let status = reopened
+                .dispatch(
+                    "feature.agent.handoff.status",
+                    &json!({"agentId":"agent-handoff"}),
+                )
+                .unwrap();
+            assert_eq!(status["requestId"], request_id);
+
+            let stale = reopened
+                .dispatch(
+                    "feature.agent.handoff.attachSnapshot",
+                    &json!({
+                        "agentId":"agent-handoff",
+                        "requestId":"stale-request",
+                        "snapshotDataUrl":"data:image/webp;base64,old"
+                    }),
+                )
+                .unwrap();
+            assert_eq!(stale["attached"], false);
+
+            let attached = reopened
+                .dispatch(
+                    "feature.agent.handoff.attachSnapshot",
+                    &json!({
+                        "agentId":"agent-handoff",
+                        "requestId":request_id,
+                        "snapshotDataUrl":"data:image/webp;base64,new"
+                    }),
+                )
+                .unwrap();
+            assert_eq!(attached["attached"], true);
+
+            let ended = reopened
+                .dispatch(
+                    "feature.agent.handoff.end",
+                    &json!({
+                        "agentId":"agent-handoff",
+                        "requestId":request_id,
+                        "resolution":"completed",
+                        "trigger":"user"
+                    }),
+                )
+                .unwrap();
+            assert_eq!(ended["ended"], true);
+        }
+
+        let mut after_end = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+        assert!(
+            after_end
+                .dispatch(
+                    "feature.agent.handoff.status",
+                    &json!({"agentId":"agent-handoff"}),
+                )
+                .unwrap()
+                .is_null(),
+            "terminal handoff must not resurrect after process reopen",
+        );
+    }
+
+    #[test]
+    fn account_transition_cleanup_forgets_only_the_previous_handoff_fence() {
+        let root = tempfile::tempdir().unwrap();
+        let mut host = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+        host.dispatch(
+            "feature.agent.handoff.start",
+            &json!({"agentId":"agent-old","instruction":"Old account work"}),
+        )
+        .unwrap();
+
+        host.prepare_account_transition_cleanup("session:test:android", "account-switch")
+            .unwrap();
+
+        assert_eq!(host.box_handoff.lock().unwrap().pending_count(), 0);
+        assert!(
+            host.dispatch(
+                "feature.agent.handoff.status",
+                &json!({"agentId":"agent-old"}),
+            )
+            .unwrap()
+            .is_null()
+        );
+    }
+}
