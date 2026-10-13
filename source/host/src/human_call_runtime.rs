@@ -74,6 +74,8 @@ struct DurableHumanCallState {
     request_to_call: BTreeMap<String, String>,
     owner_device_by_call: BTreeMap<String, String>,
     signals: BTreeMap<String, Vec<HumanCallSignal>>,
+    #[serde(default)]
+    remote_event_seq_by_call: BTreeMap<String, u64>,
 }
 
 pub struct HumanCallRuntime {
@@ -252,6 +254,9 @@ impl HumanCallRuntime {
         if terminal || reconnect_generation {
             self.state.owner_device_by_call.remove(call_id);
         }
+        if reconnect_generation {
+            self.state.remote_event_seq_by_call.remove(call_id);
+        }
         self.persist()?;
         Ok(copy)
     }
@@ -344,6 +349,99 @@ impl HumanCallRuntime {
                 signals.drain(0..drain);
             }
         }
+        self.persist()?;
+        Ok(signal)
+    }
+
+    pub fn remote_event_seq(
+        &self,
+        call_id: &str,
+        account_fence: &str,
+        generation: u64,
+    ) -> Result<u64, String> {
+        self.current(call_id, account_fence, generation)?;
+        Ok(self
+            .state
+            .remote_event_seq_by_call
+            .get(call_id)
+            .copied()
+            .unwrap_or_default())
+    }
+
+    pub fn receive_remote_signal(
+        &mut self,
+        call_id: &str,
+        account_fence: &str,
+        generation: u64,
+        event_seq: u64,
+        sender_device_id: &str,
+        kind: &str,
+        payload: Value,
+        now_ms: u64,
+    ) -> Result<HumanCallSignal, String> {
+        validate_id("remote sender device", sender_device_id)?;
+        if !matches!(kind, "offer" | "answer" | "candidate") || !payload.is_object() {
+            return Err("invalid remote Human call signal".into());
+        }
+        let current = self.current(call_id, account_fence, generation)?;
+        if current.state.terminal() || current.state == HumanCallState::OutcomeUnknown {
+            return Err("call cannot accept remote signaling from current state".into());
+        }
+
+        let accepted_event_seq = self
+            .state
+            .remote_event_seq_by_call
+            .get(call_id)
+            .copied()
+            .unwrap_or_default();
+        if event_seq <= accepted_event_seq {
+            let existing = self
+                .state
+                .signals
+                .get(call_id)
+                .and_then(|signals| {
+                    signals.iter().find(|signal| {
+                        signal.generation == generation && signal.seq == event_seq
+                    })
+                })
+                .cloned()
+                .ok_or("remote call event sequence is stale")?;
+            if existing.sender_device_id == sender_device_id
+                && existing.kind == kind
+                && existing.payload == payload
+            {
+                return Ok(existing);
+            }
+            return Err("remote call event sequence conflicts with previously accepted payload".into());
+        }
+
+        let signal = HumanCallSignal {
+            call_id: call_id.into(),
+            generation,
+            seq: event_seq,
+            sender_device_id: sender_device_id.into(),
+            kind: kind.into(),
+            payload,
+            created_at_ms: now_ms,
+        };
+        self.state
+            .signals
+            .entry(call_id.into())
+            .or_default()
+            .push(signal.clone());
+        if let Some(signals) = self.state.signals.get_mut(call_id) {
+            signals.sort_by_key(|signal| (signal.generation, signal.seq));
+            if signals.len() > 512 {
+                let drain = signals.len() - 512;
+                signals.drain(0..drain);
+            }
+        }
+        let session = self.current_mut(call_id, account_fence, generation)?;
+        session.signal_seq = session.signal_seq.max(event_seq);
+        session.updated_at_ms = now_ms;
+        self.state
+            .remote_event_seq_by_call
+            .insert(call_id.into(), event_seq);
         self.persist()?;
         Ok(signal)
     }
@@ -539,6 +637,191 @@ mod tests {
         assert!(reopened.transition("call-1", "acct-a", generation, "connect", None, 10).is_err());
         let reconciled = reopened.reconcile_unknown("call-1", "acct-a", generation, "ended", Some("remote session no longer active".into()), 11).unwrap();
         assert_eq!(reconciled.state, HumanCallState::Ended);
+    }
+
+    #[test]
+    fn remote_event_watermark_accepts_monotonic_gaps_and_rejects_conflicting_replay() {
+        let (_root, mut runtime) = runtime();
+        let call = runtime
+            .create(
+                "call-remote",
+                "req-remote",
+                "conversation-1",
+                "human-a",
+                vec!["human-a".into(), "human-b".into()],
+                "acct-a",
+                2,
+            )
+            .unwrap();
+        runtime
+            .transition("call-remote", "acct-a", call.generation, "accept", None, 3)
+            .unwrap();
+
+        let first = runtime
+            .receive_remote_signal(
+                "call-remote",
+                "acct-a",
+                call.generation,
+                4,
+                "remote-device",
+                "offer",
+                json!({"sdp":"remote"}),
+                4,
+            )
+            .unwrap();
+        assert_eq!(first.seq, 4);
+        assert_eq!(
+            runtime
+                .remote_event_seq("call-remote", "acct-a", call.generation)
+                .unwrap(),
+            4
+        );
+
+        let replay = runtime
+            .receive_remote_signal(
+                "call-remote",
+                "acct-a",
+                call.generation,
+                4,
+                "remote-device",
+                "offer",
+                json!({"sdp":"remote"}),
+                5,
+            )
+            .unwrap();
+        assert_eq!(replay, first);
+        assert!(runtime
+            .receive_remote_signal(
+                "call-remote",
+                "acct-a",
+                call.generation,
+                4,
+                "remote-device",
+                "offer",
+                json!({"sdp":"different"}),
+                6,
+            )
+            .unwrap_err()
+            .contains("conflicts"));
+        assert!(runtime
+            .receive_remote_signal(
+                "call-remote",
+                "acct-b",
+                call.generation,
+                5,
+                "remote-device",
+                "candidate",
+                json!({"candidate":"stale-account"}),
+                7,
+            )
+            .is_err());
+    }
+
+    #[test]
+    fn remote_event_watermark_is_durable_and_resets_on_reconnect_generation() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("human-calls.json");
+        let generation;
+        {
+            let mut runtime = HumanCallRuntime::open(&path, 1).unwrap();
+            let call = runtime
+                .create(
+                    "call-remote",
+                    "req-remote",
+                    "conversation-1",
+                    "human-a",
+                    vec!["human-a".into(), "human-b".into()],
+                    "acct-a",
+                    2,
+                )
+                .unwrap();
+            generation = call.generation;
+            runtime
+                .transition("call-remote", "acct-a", generation, "accept", None, 3)
+                .unwrap();
+            runtime
+                .receive_remote_signal(
+                    "call-remote",
+                    "acct-a",
+                    generation,
+                    9,
+                    "remote-device",
+                    "answer",
+                    json!({"sdp":"answer"}),
+                    4,
+                )
+                .unwrap();
+        }
+
+        let mut reopened = HumanCallRuntime::open(&path, 10).unwrap();
+        assert_eq!(
+            reopened
+                .remote_event_seq("call-remote", "acct-a", generation)
+                .unwrap(),
+            9
+        );
+        reopened
+            .reconcile_unknown(
+                "call-remote",
+                "acct-a",
+                generation,
+                "ended",
+                Some("recovered remote call no longer active".into()),
+                11,
+            )
+            .unwrap();
+
+        let second = reopened
+            .create(
+                "call-reconnect",
+                "req-reconnect",
+                "conversation-1",
+                "human-a",
+                vec!["human-a".into(), "human-b".into()],
+                "acct-a",
+                12,
+            )
+            .unwrap();
+        reopened
+            .transition("call-reconnect", "acct-a", second.generation, "accept", None, 13)
+            .unwrap();
+        reopened
+            .transition("call-reconnect", "acct-a", second.generation, "connected", None, 14)
+            .unwrap();
+        reopened
+            .receive_remote_signal(
+                "call-reconnect",
+                "acct-a",
+                second.generation,
+                7,
+                "remote-device",
+                "candidate",
+                json!({"candidate":"before-reconnect"}),
+                15,
+            )
+            .unwrap();
+        let reconnected = reopened
+            .transition("call-reconnect", "acct-a", second.generation, "reconnect", None, 16)
+            .unwrap();
+        assert_eq!(reconnected.generation, second.generation + 1);
+        assert_eq!(
+            reopened
+                .remote_event_seq("call-reconnect", "acct-a", reconnected.generation)
+                .unwrap(),
+            0
+        );
+        assert!(reopened
+            .receive_remote_signal(
+                "call-reconnect",
+                "acct-a",
+                second.generation,
+                8,
+                "remote-device",
+                "candidate",
+                json!({"candidate":"old-generation"}),
+                17,
+            )
+            .is_err());
     }
 
     #[test]
