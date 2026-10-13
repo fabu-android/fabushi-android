@@ -18,6 +18,7 @@ fabushi-android-box-exec-daemon = { path = "../box-exec-daemon" }
 fabushi-android-local-exec-daemon = { path = "../local-exec-daemon" }
 fabushi-constants = { path = "../packages/constants" }
 futures = "0.3"
+fs2 = "0.4"
 mahayana-plugin-runtime = { path = "../packages/mahayana-plugin-runtime" }
 mahayana-js-runtime = { path = "../packages/mahayana-js-runtime" }
 serde = { version = "1", features = ["derive"] }
