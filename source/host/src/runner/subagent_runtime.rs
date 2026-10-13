@@ -524,11 +524,14 @@ impl DurableSubagentOwner {
         }
 
         let record = self.state.records.get_mut(subagent_id).unwrap();
-        record.pending_wake = false;
         record.updated_at_ms = now_ms;
         match &outcome {
             SubagentRunOutcome::Completed(text) => {
                 record.status = SubagentStatus::Completed;
+                // A known terminal background result still owes its parent Agent one durable
+                // completion revival. Keep that obligation in the canonical subagent owner
+                // until SandPendingWakeStore has accepted it and the Host acknowledges it.
+                record.pending_wake = true;
                 record.completion_result = Some(if text.trim().is_empty() {
                     "(the task finished without producing any text output)".into()
                 } else {
@@ -538,11 +541,13 @@ impl DurableSubagentOwner {
             }
             SubagentRunOutcome::Failed(error) => {
                 record.status = SubagentStatus::Failed;
+                record.pending_wake = true;
                 record.completion_result = None;
                 record.completion_error = Some(error.clone());
             }
             SubagentRunOutcome::Aborted => {
                 record.status = SubagentStatus::Aborted;
+                record.pending_wake = false;
                 record.completion_result = None;
                 record.completion_error = Some("aborted".into());
             }
@@ -623,10 +628,12 @@ impl DurableSubagentOwner {
         }
         record.process_epoch = self.state.process_epoch;
         record.updated_at_ms = now_ms;
-        record.pending_wake = false;
         match outcome {
             SubagentRunOutcome::Completed(text) => {
                 record.status = SubagentStatus::Completed;
+                // Explicit reconciliation turns outcome-unknown into a known terminal result,
+                // so it may now safely owe the same durable parent revival as a live callback.
+                record.pending_wake = true;
                 record.completion_result = Some(if text.trim().is_empty() {
                     "(the task finished without producing any text output)".into()
                 } else {
@@ -636,11 +643,13 @@ impl DurableSubagentOwner {
             }
             SubagentRunOutcome::Failed(error) => {
                 record.status = SubagentStatus::Failed;
+                record.pending_wake = true;
                 record.completion_result = None;
                 record.completion_error = Some(error);
             }
             SubagentRunOutcome::Aborted => {
                 record.status = SubagentStatus::Aborted;
+                record.pending_wake = false;
                 record.completion_result = None;
                 record.completion_error = Some("aborted".into());
             }
@@ -648,6 +657,53 @@ impl DurableSubagentOwner {
         let result = record.clone();
         self.persist()?;
         Ok(result)
+    }
+
+    pub fn pending_completion_wakes_for_account(
+        &self,
+        account_fence: &str,
+    ) -> Vec<DurableSubagentRecord> {
+        let mut records = self
+            .state
+            .records
+            .values()
+            .filter(|record| {
+                record.account_fence == account_fence
+                    && record.pending_wake
+                    && matches!(record.status, SubagentStatus::Completed | SubagentStatus::Failed)
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        records.sort_by(|left, right| {
+            left.updated_at_ms
+                .cmp(&right.updated_at_ms)
+                .then_with(|| left.subagent_id.cmp(&right.subagent_id))
+        });
+        records
+    }
+
+    pub fn acknowledge_pending_wake(
+        &mut self,
+        subagent_id: &str,
+        account_fence: &str,
+    ) -> Result<bool, String> {
+        let record = self
+            .state
+            .records
+            .get_mut(subagent_id)
+            .ok_or("subagent is unknown")?;
+        if record.account_fence != account_fence {
+            return Err("subagent account fence is stale".into());
+        }
+        if !matches!(record.status, SubagentStatus::Completed | SubagentStatus::Failed) {
+            return Err("subagent has no known terminal completion wake".into());
+        }
+        if !record.pending_wake {
+            return Ok(false);
+        }
+        record.pending_wake = false;
+        self.persist()?;
+        Ok(true)
     }
 
     pub fn get(&self, subagent_id: &str) -> Option<&DurableSubagentRecord> {
@@ -991,4 +1047,100 @@ mod tests {
         assert_eq!(owner.get(&b).unwrap().status, SubagentStatus::Aborted);
         let _ = fs::remove_file(path);
     }
+    #[test]
+    fn known_terminal_completion_wake_survives_reopen_until_acknowledged() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("subagents.json");
+        let mut owner = DurableSubagentOwner::open(&path, 1).unwrap();
+        let launch = owner.launch(
+            "parent",
+            SubagentLineage::default(),
+            "box",
+            "general-purpose",
+            "tool-call",
+            "background work",
+            "account-a",
+            None,
+            SubagentFrozenTurnConfig {
+                provider_id: "android-host-inference".into(),
+                model_id: "default".into(),
+                tool_names: Vec::new(),
+                allowed_subagent_types: vec!["general-purpose".into()],
+                privacy_mode: "no-storage".into(),
+                summarization_binding_id: "android-host-inference:same-provider".into(),
+            },
+            2,
+        ).unwrap();
+        let epoch = owner.process_epoch();
+        owner.settle(
+            &launch.record.subagent_id,
+            "account-a",
+            epoch,
+            SubagentRunOutcome::Completed("done".into()),
+            3,
+        ).unwrap();
+        assert_eq!(owner.pending_completion_wakes_for_account("account-a").len(), 1);
+        drop(owner);
+
+        let mut reopened = DurableSubagentOwner::open(&path, 4).unwrap();
+        assert_eq!(
+            reopened.pending_completion_wakes_for_account("account-a").len(),
+            1,
+            "known terminal completion must survive process reopen until Host durably accepts its revival",
+        );
+        assert!(reopened
+            .acknowledge_pending_wake(&launch.record.subagent_id, "account-a")
+            .unwrap());
+        assert!(reopened.pending_completion_wakes_for_account("account-a").is_empty());
+        assert!(!reopened
+            .acknowledge_pending_wake(&launch.record.subagent_id, "account-a")
+            .unwrap());
+    }
+
+    #[test]
+    fn aborted_and_unresolved_process_death_do_not_create_replayable_completion_wakes() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("subagents.json");
+        let mut owner = DurableSubagentOwner::open(&path, 1).unwrap();
+        let make = |owner: &mut DurableSubagentOwner, tool: &str| {
+            owner.launch(
+                "parent",
+                SubagentLineage::default(),
+                "box",
+                "general-purpose",
+                tool,
+                "background work",
+                "account-a",
+                None,
+                SubagentFrozenTurnConfig {
+                    provider_id: "android-host-inference".into(),
+                    model_id: "default".into(),
+                    tool_names: Vec::new(),
+                    allowed_subagent_types: vec!["general-purpose".into()],
+                    privacy_mode: "no-storage".into(),
+                    summarization_binding_id: "android-host-inference:same-provider".into(),
+                },
+                2,
+            ).unwrap()
+        };
+        let aborted = make(&mut owner, "tool-aborted");
+        let epoch = owner.process_epoch();
+        owner.settle(
+            &aborted.record.subagent_id,
+            "account-a",
+            epoch,
+            SubagentRunOutcome::Aborted,
+            3,
+        ).unwrap();
+        assert!(owner.pending_completion_wakes_for_account("account-a").is_empty());
+
+        let _running = make(&mut owner, "tool-unknown");
+        drop(owner);
+        let reopened = DurableSubagentOwner::open(&path, 4).unwrap();
+        assert!(
+            reopened.pending_completion_wakes_for_account("account-a").is_empty(),
+            "process-death outcome-unknown must reconcile before any side-effecting parent revival",
+        );
+    }
+
 }
