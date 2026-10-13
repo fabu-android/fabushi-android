@@ -45,6 +45,10 @@ internal sealed interface RootShellNotificationAction {
         val args: JSONObject,
         val successMessage: String?,
     ) : RootShellNotificationAction
+
+    data class SwitchModel(
+        override val label: String = "Switch model",
+    ) : RootShellNotificationAction
 }
 
 internal data class RootShellNotificationAccountScope(
@@ -65,6 +69,11 @@ internal data class RootShellNotificationTray(
 
 internal fun projectRootShellNotificationAction(value: JSONObject): RootShellNotificationAction? {
     val kind = value.optString("kind").trim()
+    if (kind == "switch-model") {
+        return RootShellNotificationAction.SwitchModel(
+            label = value.optString("label").trim().ifBlank { "Switch model" },
+        )
+    }
     val label = value.optString("label").trim()
     if (label.isEmpty()) return null
     return when (kind) {
@@ -255,6 +264,7 @@ internal class RootShellNotificationController(
                                 ?: "Couldn’t complete the action — try again"
                         }
                     }
+                    is RootShellNotificationAction.SwitchModel -> null
                 }
             }.getOrElse { "Couldn’t complete the action — try again" }
             synchronized(this) {
@@ -300,6 +310,7 @@ internal class RootShellNotificationController(
         trayId + ":" + when (action) {
             is RootShellNotificationAction.OpenUrl -> "url:" + action.url
             is RootShellNotificationAction.DashboardAction -> "dashboard:" + action.action
+            is RootShellNotificationAction.SwitchModel -> "switch-model"
         }
 
     @Synchronized
@@ -326,6 +337,7 @@ internal fun RootShellNotificationHost(
     accountEpoch: Long,
     accountIdentity: String?,
     transport: RootConnectionTransportState,
+    onSwitchModel: () -> Unit,
 ) {
     val controller = remember(runtimePort) { RootShellNotificationController(runtimePort) }
     val trays by controller.trays.collectAsState()
@@ -377,7 +389,13 @@ internal fun RootShellNotificationHost(
                             val key = controller.actionKey(tray.id, action)
                             Button(
                                 enabled = key !in pending,
-                                onClick = { controller.runAction(tray.id, action) },
+                                onClick = {
+                                    if (action is RootShellNotificationAction.SwitchModel) {
+                                        onSwitchModel()
+                                    } else {
+                                        controller.runAction(tray.id, action)
+                                    }
+                                },
                             ) { Text(action.label) }
                             notices[key]?.let { Text(it) }
                         }

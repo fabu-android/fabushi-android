@@ -86,6 +86,7 @@ internal fun ProductionRenderer(
                 var commandPaletteInitialTab by remember { mutableStateOf(CommandPaletteTab.ALL) }
                 var showAbout by remember { mutableStateOf(false) }
                 var showSettings by remember { mutableStateOf(false) }
+                var showModelPicker by rememberSaveable { mutableStateOf(false) }
                 var showFeedback by rememberSaveable { mutableStateOf(false) }
                 var autoReviewSnapshot by remember {
                     mutableStateOf<AndroidAutoReviewInstructionsSnapshot?>(null)
@@ -185,7 +186,48 @@ internal fun ProductionRenderer(
                     accountEpoch = state.rootConnectionProjection.accountEpoch,
                     accountIdentity = state.rootConnectionProjection.accountIdentity,
                     transport = state.rootConnectionProjection.transport,
+                    onSwitchModel = {
+                        showModelPicker = true
+                        botModel.refreshAvailableModels()
+                    },
                 )
+                if (showModelPicker) {
+                    AlertDialog(
+                        onDismissRequest = { showModelPicker = false },
+                        title = { Text("Switch model") },
+                        text = {
+                            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                when {
+                                    botState.modelCatalog.loading -> Text("Loading available models…")
+                                    botState.modelCatalog.error != null -> Text(botState.modelCatalog.error!!)
+                                    botState.modelCatalog.models.isEmpty() -> Text("No models are available for this account.")
+                                    else -> botState.modelCatalog.models.forEach { available ->
+                                        TextButton(
+                                            onClick = {
+                                                botModel.selectAvailableModel(available.id)
+                                                showModelPicker = false
+                                            },
+                                        ) {
+                                            Text(
+                                                if (available.id == botState.modelCatalog.selectedModelId) {
+                                                    "✓ " + available.displayName
+                                                } else {
+                                                    available.displayName
+                                                },
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        },
+                        confirmButton = {
+                            TextButton(onClick = botModel::refreshAvailableModels) { Text("Refresh") }
+                        },
+                        dismissButton = {
+                            TextButton(onClick = { showModelPicker = false }) { Text("Close") }
+                        },
+                    )
+                }
                 RootShellStatusBadge(
                     loggedIn = state.loggedIn,
                     connection = state.rootConnectionProjection,

@@ -28,6 +28,15 @@ class RootShellNotificationHostTest {
         assertNull(projectRootShellNotificationTray(JSONObject().put("kind", "info").put("id", "x").put("title", "Info")))
     }
 
+
+    @Test fun projectsDesktopSwitchModelWithoutLabel() {
+        val action = projectRootShellNotificationAction(
+            JSONObject().put("kind", "switch-model"),
+        )
+        assertTrue(action is RootShellNotificationAction.SwitchModel)
+        assertEquals("Switch model", action!!.label)
+    }
+
     @Test fun reducerReplacesPushAndHandlesDismissAndClear() {
         val first = RootShellNotificationTray("one", "First")
         val replacement = JSONObject()
