@@ -17161,6 +17161,80 @@
       "verification_status": "not-verified",
       "notes": "Implemented source fact at commits f7fea62f0ed72d5d59c5416deb18a9d02c43b295, 957edc50b79e72201eed2b573ce02178c290509b, 4ec71adf0c044b5ae66c2aef8ae24fc8f2e85409 and 0190f9cafc657a89bd38efb79fd4faaeb9c6f9e7. Do not mark verified until descendant exact-head CI/package/device evidence succeeds. Broader Desktop createAgent gateway effects such as active-agent selection/transcript response remain separate gateway parity work.",
       "android_head_at_update": "0190f9cafc657a89bd38efb79fd4faaeb9c6f9e7"
+    },
+    {
+      "responsibility_id": "SOURCE-MAP-ANDROID-001",
+      "domain": "host-storage-source-identity",
+      "desktop_sources": [
+        {
+          "path": "source/host/src/extensions/source_map/extension.rs",
+          "blob_sha": "ebf369f1a230fdafcf9a412db46e7d017f19bbe8",
+          "symbols": [
+            "start_source_map_extension"
+          ]
+        },
+        {
+          "path": "source/host/src/extensions/source_map/source_map_service.rs",
+          "blob_sha": "f8203816e048122c7a58e662329af8d4930e249d",
+          "symbols": [
+            "SandSourceMap",
+            "SandSourceEntry",
+            "SandSourceMode",
+            "BOX_STORE_SOURCE_KEY"
+          ]
+        }
+      ],
+      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "responsibility": "Own one durable mapping from Agent/box-store identities to stable source IDs and source modes across process death, without Presentation or Remote Runner becoming a second source-identity owner.",
+      "source_owner": "Desktop SandSourceMap Host extension",
+      "direct_callers": [
+        "StateBackstop source resolver",
+        "BoxStore source identity consumers"
+      ],
+      "downstream_dependencies": [
+        "Remote BoxStore/StateBackstop responsibilities"
+      ],
+      "state_owner": "Rust Host SandSourceMap at explicit Android app-private Host root",
+      "persistent_state": [
+        "source-map.json: key -> sourceId/mode"
+      ],
+      "protocol_wire_contract": [
+        "SandSourceMode local|agent-store",
+        "reserved box-store source key",
+        "sourceId stability across mode changes"
+      ],
+      "visible_effect": "Durable Agent/box-store backend identity does not silently rotate after Android process death or mode changes.",
+      "failure_behavior": [
+        "invalid keys/source IDs fail closed",
+        "failed atomic replacement leaves prior canonical mapping intact",
+        "missing/corrupt JSON is not treated as a successful remote restore"
+      ],
+      "cancellation_behavior": "synchronous atomic Host state; no replayable external side effect",
+      "retry_semantics": "get-or-create reuses committed identity; failed persist can be retried without rotating a committed ID",
+      "idempotency_semantics": "get-or-create is idempotent after settlement; set-mode preserves sourceId",
+      "process_death_recovery": "Host reopens app-private source-map.json on cold start",
+      "account_fencing": "source identity is storage/Agent scoped; account-sensitive remote execution is separately fenced",
+      "security_boundary": "Host-only non-secret identifiers; no Compose/JNI projection and no credential storage",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "source/host/src/extensions/source_map/source_map_service.rs",
+        "source/host/src/extensions/source_map/extension.rs",
+        "source/host/src/extensions/source_map/mod.rs",
+        "source/host/src/extensions/mod.rs",
+        "source/host/src/android_json_runtime.rs"
+      ],
+      "android_owner": "Rust Host SourceMap extension",
+      "platform_delta": "Desktop derives SAND root; Android requires explicit app-private path and strengthens writes with fsync + atomic rename/input bounds.",
+      "implementation_status": "implemented",
+      "production_wiring": "AndroidJsonHost constructs exactly one SandSourceMap at app_data_dir/source-map.json during Host cold start.",
+      "unit_test": "source_map_service tests: stable reopen, mode change without rotation, reserved box-store identity, invalid input/no partial persist; exact-head Actions pending",
+      "contract_test": "required descendant exact-head Rust contract",
+      "integration_test": "required when StateBackstop/Remote BoxStore consumes canonical source IDs",
+      "packaged_test": "required on final exact-head APK/AAB",
+      "device_test": "required with Remote BoxStore/StateBackstop acceptance",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Implemented by b1747ffb8d5970e20d945511510e4e67a5802987, 9145eb7661495247915304b95e0acaa0dcaadaef, def2273492116dc06aceb69432e3d458e0667a7c, 8541a33099fd00bd2ab509bb97b29e48326ffca7 and faa4f8dea615bbbaa05fd7fb45e161d9b28be687. StateBackstop remains open because authorized object-store transport depends on unfinished Remote BoxStore execution."
     }
   ],
   "traceability": {
