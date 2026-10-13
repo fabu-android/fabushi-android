@@ -15321,18 +15321,18 @@
         "source/local-exec-daemon",
         "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/remote/AndroidRemoteComputerDataPlane.kt"
       ],
-      "android_owner": "Host Capability Broker + bounded Local Runner / future authorized outbound Remote Runner; Presentation owns no execution authority",
+      "android_owner": "Rust Host RemoteRoutedTools + CapabilityBroker + AuthenticatedRemoteHostRunner; bounded Local Runner remains separate; Presentation owns no execution authority",
       "platform_delta": "Desktop loopback/VNC/process-spawn/window mechanisms are forbidden as the Android local product architecture. Android may execute only bounded local actions or route to an explicitly enrolled Remote Runner with separate credentials and reconciliation.",
-      "implementation_status": "mapped",
-      "production_wiring": "Partial only. box-exec owns job lifecycle, local-exec owns generic registered actions, Remote Computer has an inbound Android-device data plane, and CapabilityBroker enforces grants. Existing AGENT-GENERATED-SUBAGENT-001 evidence confirms there is currently no Host-side outbound Remote Runner/desktop/browser/computer adapter registered, so the Desktop Box product closure is not complete.",
-      "unit_test": "required for capability/path/transfer/transport/retry contracts",
-      "contract_test": "required on same exact head for authorization, protected resources, stable request identity and outcome-unknown reconciliation",
-      "integration_test": "required with an enrolled outbound Runner and real Host tool registration",
+      "implementation_status": "implemented",
+      "production_wiring": "Implemented in the shipping Rust Host. AndroidJsonHost parses only protected authorized-remote-runner-v1 bindings, validates current account fence/epoch, expiry, HTTPS transport and explicit executor capabilities, constructs AuthenticatedRemoteHostRunner with the durable remote journal, and projects readiness from that bound runner. Root Agent turns wrap their real tool graph with with_remote_routed_tools only when the trusted turn capability projection reports remote_box_available. Remote tools request/consume durable CapabilityBroker approval before dispatch; side-effecting execute is sent exactly once and transport ambiguity becomes outcome-unknown followed only by idempotent reconcile/cancel, never blind replay. Shell/read/write/computer/screenshot/browser/external/cloud-agent executor scopes are explicit and unsupported scopes fail closed.",
+      "unit_test": "Focused Rust coverage in remote_routed_tools.rs and remote_execution.rs covers wrong account epoch, unrelated credential planes, expired/not-yet-active credentials, plaintext endpoint rejection, explicit executor scope, bounded write input, permission=never, approval identity/consumption, pre-dispatch grant cancellation, and outcome-unknown reconciliation. Same-final-head Actions are still required.",
+      "contract_test": "Production transport and Host composition implement separate authorized Remote Runner credentials, stable operation/request/grant/device/account identity, capability consumption, exactly-once side-effect dispatch and outcome-unknown reconciliation. Same exact-head GitHub Actions plus deployed executor compatibility remain required.",
+      "integration_test": "Client-side production composition is wired through AndroidJsonHost -> real turn tool graph -> RemoteRoutedTools -> AuthenticatedRemoteHostRunner -> AuthenticatedRemoteHttpTransport. Live integration still requires an externally enrolled authorized Runner and therefore remains not-verified.",
       "packaged_test": "required on final APK/AAB",
       "device_test": "required for pairing/revoke/reconnect/viewport/file-transfer/computer-use on supported Android devices",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Do not mark these Desktop Box rows not-applicable just because Android cannot host an Electron/VNC sandbox. The user capability requires a formal Local/Remote Runner replacement. One external Remote Runner enrollment blocker must not stop other source closure."
+      "notes": "Production Android client/Host execution path is implemented; the prior note claiming no outbound Remote Runner adapter was stale and has been removed. Do not mark verified until a real enrolled Runner proves shell/read/write/computer/browser/file/lifecycle behavior on the same exact Android HEAD, followed by packaged/device evidence. Release signing and protected-account blockers remain independent."
     },
     {
       "responsibility_id": "CLOUD-AGENT-RUNTIME-ANDROID-001",
