@@ -202,7 +202,7 @@ internal class SignedInOnboardingViewModel(application: Application) : AndroidVi
                         avatarShape = draft.shape,
                         avatarColor = draft.color,
                     )
-                    val markerError = runCatching {
+                    val onboardingSeenPersisted = runCatching {
                         val saved = coordinator.setOnboardingSeen(
                             expectedAccountScope = expectedAccountScope,
                             hasSeenOnboarding = true,
@@ -210,8 +210,8 @@ internal class SignedInOnboardingViewModel(application: Application) : AndroidVi
                         check(saved.optBoolean("hasSeenOnboarding", false)) {
                             "Host did not persist onboarding completion"
                         }
-                    }.exceptionOrNull()
-                    created to markerError
+                    }
+                    created to onboardingSeenPersisted.exceptionOrNull()
                 }
             }
             if (!operationFence.accepts(token, mutableState.value.accountSlot)) return@launch
