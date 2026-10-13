@@ -18353,7 +18353,7 @@
       "desktop_sources": [
         {
           "path": "source/host/src/extensions/telemetry/turn_telemetry_mappers.rs",
-          "blob_sha": "f94320a65ed2417bbfdb5bde49ec95d94ae95d4c",
+          "blob_sha": "f94320f53bca2134260ccfd98153916bc259a06d",
           "symbols": [
             "TurnInterruptFields",
             "turn_interrupt_telemetry",
@@ -18409,7 +18409,7 @@
       "implementation_status": "implemented",
       "production_wiring": "07a02616b9968d39d5689284b3f2886fd709b9ef adds canonical operation lookup; e954c109de11bf25a540673edcdf6799558eb900 admits Desktop turn telemetry events to the durable spool; d1afaa1f254fb7d92e2827b5e0c13f2b99688d4b wires cancel_operation to the mapper after canonical cancellation settlement.",
       "unit_test": "durable_turn_journal::operation_lookup_returns_canonical_running_turn_context; AndroidStructuredLogSpool::spill_accepts_desktop_turn_telemetry_contracts; turn_interrupt_telemetry_wiring_tests::{cancelling_running_turn_persists_interrupt_telemetry_after_canonical_settlement,cancelling_non_turn_operation_does_not_fabricate_turn_telemetry}.",
-      "contract_test": "Desktop mapper is exact blob match f94320a65ed2417bbfdb5bde49ec95d94ae95d4c; exact-head Rust/architecture CI pending.",
+      "contract_test": "Desktop mapper is exact blob match f94320f53bca2134260ccfd98153916bc259a06d; exact-head Rust/architecture CI pending.",
       "integration_test": "AndroidJsonHost cancellation integration test persists sand.turn.interrupt from a durable running turn and rejects generic non-turn projection; exact-head Actions pending.",
       "packaged_test": "required on final exact-head APK/AAB",
       "device_test": "required on protected device acceptance with an in-flight Agent turn interruption",
@@ -18423,7 +18423,7 @@
       "desktop_sources": [
         {
           "path": "source/host/src/extensions/telemetry/turn_telemetry_mappers.rs",
-          "blob_sha": "f94320a65ed2417bbfdb5bde49ec95d94ae95d4c",
+          "blob_sha": "f94320f53bca2134260ccfd98153916bc259a06d",
           "symbols": [
             "UserMessageReceivedFields",
             "user_message_received_telemetry",
@@ -18476,7 +18476,7 @@
       "implementation_status": "implemented",
       "production_wiring": "e954c109de11bf25a540673edcdf6799558eb900 admits the event contract to the durable spool; a0a4acfec0e2dcbe51119329a8be51bc8eed7d4e records the event only after a new visible transcript entry is durably accepted and captures pre-existing account-fenced active-turn state.",
       "unit_test": "user_message_received_telemetry_wiring_tests::newly_persisted_user_message_emits_once_with_truthful_in_flight_state plus AndroidStructuredLogSpool::spill_accepts_desktop_turn_telemetry_contracts; exact-head Actions pending.",
-      "contract_test": "Desktop mapper remains exact Rust-to-Rust blob f94320a65ed2417bbfdb5bde49ec95d94ae95d4c; exact-head Rust/architecture gate pending.",
+      "contract_test": "Desktop mapper remains exact Rust-to-Rust blob f94320f53bca2134260ccfd98153916bc259a06d; exact-head Rust/architecture gate pending.",
       "integration_test": "queue_chat_turn integration test covers durable transcript acceptance, in-flight projection and clientNonce dedupe; exact-head Actions pending.",
       "packaged_test": "required on final exact-head APK/AAB",
       "device_test": "required on protected device acceptance by sending a user message while an Agent turn is in flight and checking no duplicate on replay",
