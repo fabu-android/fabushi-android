@@ -4982,19 +4982,28 @@ impl AndroidJsonHost {
 
     fn local_tool_permission(&self) -> Result<Value, String> {
         self.sync_local_tool_permission_ceiling()?;
+        let account_fence = self.current_turn_account_fence()?;
         let settings = self
             .user_settings
             .lock()
             .map_err(|_| "Android user settings lock poisoned".to_string())?;
+        let permission = settings
+            .local_tool_permission_for(&account_fence)
+            .map_err(|error| format!("failed to read Android local tool permission: {error}"))?;
+        let preference = settings
+            .local_tool_permission_preference_for(&account_fence)
+            .map_err(|error| format!("failed to read Android local tool permission: {error}"))?;
         Ok(json!({
-            "permission": settings.local_tool_permission().as_str(),
-            "preference": settings.local_tool_permission_preference().as_str(),
+            "accountFence": account_fence,
+            "permission": permission.as_str(),
+            "preference": preference.as_str(),
             "ceiling": settings.local_tool_permission_ceiling().map(|value| value.as_str()),
         }))
     }
 
     fn set_local_tool_permission(&mut self, params: &Value) -> Result<Value, String> {
         self.sync_local_tool_permission_ceiling()?;
+        let account_fence = self.current_turn_account_fence()?;
         let requested = required_string(params, "permission")?;
         let (permission, preference, ceiling) = {
             let mut settings = self
@@ -5002,17 +5011,22 @@ impl AndroidJsonHost {
                 .lock()
                 .map_err(|_| "Android user settings lock poisoned".to_string())?;
             settings
-                .set_local_tool_permission(requested)
+                .set_local_tool_permission_for(&account_fence, requested)
                 .map_err(|error| format!("failed to persist Android local tool permission: {error}"))?;
             (
-                settings.local_tool_permission(),
-                settings.local_tool_permission_preference(),
+                settings
+                    .local_tool_permission_for(&account_fence)
+                    .map_err(|error| format!("failed to read Android local tool permission: {error}"))?,
+                settings
+                    .local_tool_permission_preference_for(&account_fence)
+                    .map_err(|error| format!("failed to read Android local tool permission: {error}"))?,
                 settings.local_tool_permission_ceiling(),
             )
         };
         let settled_pending_remote_approvals =
             self.settle_remote_pending_for_permission(permission, None)?;
         Ok(json!({
+            "accountFence": account_fence,
             "permission": permission.as_str(),
             "preference": preference.as_str(),
             "ceiling": ceiling.map(|value| value.as_str()),
@@ -10148,9 +10162,11 @@ impl AndroidJsonHost {
                 .user_settings
                 .lock()
                 .map_err(|_| "Android user settings lock poisoned".to_string())?;
-            match settings.set_local_tool_permission(requested) {
+            match settings.set_local_tool_permission_for(&account_fence, requested) {
                 Ok(_) => {
-                    let effective = settings.local_tool_permission();
+                    let effective = settings
+                        .local_tool_permission_for(&account_fence)
+                        .map_err(|error| format!("failed to read Android local tool permission: {error}"))?;
                     effective_local_tool_permission = Some(effective.as_str().to_string());
                     approved = match decision {
                         AndroidApprovalDecision::Always => effective != LocalToolPermission::Never,
