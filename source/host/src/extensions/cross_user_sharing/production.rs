@@ -17,8 +17,8 @@ pub fn build_xuser_relay_client(
     credentials: Arc<dyn SandMcpCredentialProvider>,
     transport: Arc<dyn XuserRelayTransport>,
 ) -> Result<Arc<SandXuserRelayClient>, String> {
-    let initial = credentials.credentials()?;
-    let backend_url = initial.backend_url.clone();
+    let configuration = credentials.configuration();
+    let backend_url = configuration.backend_url;
     let token_owner = Arc::clone(&credentials);
     Ok(Arc::new(SandXuserRelayClient::new(
         backend_url,
@@ -34,11 +34,11 @@ pub fn build_xuser_relay_client(
 pub fn build_production_xuser_relay_client(
     credentials: Arc<dyn SandMcpCredentialProvider>,
 ) -> Result<Arc<SandXuserRelayClient>, String> {
-    let initial = credentials.credentials()?;
+    let configuration = credentials.configuration();
     let transport: Arc<dyn XuserRelayTransport> = Arc::new(UreqXuserRelayTransport::new(
         "sand",
-        initial.client_version,
-        initial.box_namespace,
+        configuration.client_version,
+        configuration.box_namespace,
     )?);
     build_xuser_relay_client(credentials, transport)
 }
@@ -60,7 +60,7 @@ pub fn build_xuser_core(
     transport: Arc<dyn XuserRelayTransport>,
     env: &BTreeMap<String, String>,
 ) -> Result<ProductionCrossUserCore, String> {
-    let backend_url = credentials.credentials()?.backend_url;
+    let backend_url = credentials.configuration().backend_url;
     let relay = build_xuser_relay_client(credentials, transport)?;
     let service = Arc::new(SandXuserSharingService::new(Arc::clone(&relay)));
     let extension = Arc::new(CrossUserSharingExtension::new(
@@ -79,11 +79,11 @@ pub fn build_production_xuser_core(
     credentials: Arc<dyn SandMcpCredentialProvider>,
     env: &BTreeMap<String, String>,
 ) -> Result<ProductionCrossUserCore, String> {
-    let initial = credentials.credentials()?;
+    let configuration = credentials.configuration();
     let transport: Arc<dyn XuserRelayTransport> = Arc::new(UreqXuserRelayTransport::new(
         "sand",
-        initial.client_version,
-        initial.box_namespace,
+        configuration.client_version,
+        configuration.box_namespace,
     )?);
     build_xuser_core(credentials, transport, env)
 }
@@ -101,6 +101,14 @@ mod tests {
     }
 
     impl SandMcpCredentialProvider for RotatingSandCredentials {
+        fn configuration(&self) -> crate::mcp_auth::dashboard_mcp_auth_backend::SandMcpBackendConfiguration {
+            crate::mcp_auth::dashboard_mcp_auth_backend::SandMcpBackendConfiguration {
+                backend_url: "https://sand.example".into(),
+                client_version: "1.0.0".into(),
+                box_namespace: "prod".into(),
+            }
+        }
+
         fn credentials(&self) -> Result<SandMcpBackendCredentials, String> {
             let mut calls = self.calls.lock().unwrap();
             *calls += 1;
@@ -178,7 +186,7 @@ mod tests {
 
         assert_eq!(
             transport.tokens.lock().unwrap().as_slice(),
-            ["sand-token-2", "sand-token-3"]
+            ["sand-token-1", "sand-token-2"]
         );
     }
 }
