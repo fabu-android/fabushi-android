@@ -82,12 +82,37 @@ pub fn should_redrive_group_member_after_preemption(
 
 /// Desktop hides a member preview while the member may still be producing the PASS sentinel.
 /// Keep the same prefix behavior without importing Desktop session ownership.
-fn is_potential_pass_prefix(value: &str) -> bool {
-    const PASS: &str = "PASS";
-    let trimmed = value.trim();
-    !trimmed.is_empty()
-        && trimmed.len() <= PASS.len()
-        && PASS.starts_with(&trimmed.to_ascii_uppercase())
+fn normalized_pass_token(content: &str) -> String {
+    let mut value = content.trim().to_ascii_lowercase();
+    if value.ends_with('.') {
+        value.pop();
+        value = value.trim_end().to_string();
+    }
+    if value.starts_with('(') && value.ends_with(')') && value.len() >= 2 {
+        value = value[1..value.len() - 1].trim().to_string();
+    }
+    value
+}
+
+fn is_pass_content(content: &str) -> bool {
+    let trimmed = content.trim();
+    trimmed.is_empty() || normalized_pass_token(trimmed) == "pass"
+}
+
+fn is_potential_pass_prefix(text: &str) -> bool {
+    let trimmed = text.trim();
+    if trimmed.is_empty() || is_pass_content(trimmed) {
+        return true;
+    }
+    let mut value = trimmed.to_ascii_lowercase();
+    if value.starts_with('(') {
+        value.remove(0);
+    }
+    while value.ends_with('.') || value.ends_with(')') {
+        value.pop();
+    }
+    let value = value.trim();
+    "pass".starts_with(value) && value.chars().all(|ch| ch.is_ascii_lowercase())
 }
 
 #[cfg(test)]
@@ -97,7 +122,9 @@ mod tests {
     #[test]
     fn preview_stays_hidden_for_pass_prefix_then_projects_and_removes() {
         let mut preview = GroupMemberPreview::new("room-1", "agent-1", "A", "stream-1");
-        assert!(preview.on_text_delta("P").is_none());
+        for hidden in ["", "P", "(pa", "pass.", "(pass)"] {
+            assert!(preview.on_text_delta(hidden).is_none(), "{hidden:?} must stay hidden");
+        }
         let appended = preview.on_text_delta("Hello").unwrap();
         assert_eq!(appended["type"], "appended");
         assert_eq!(appended["entry"]["author"]["id"], "agent-1");
