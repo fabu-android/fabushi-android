@@ -881,7 +881,7 @@ mod tests {
             ("a-5", "agent-a"),
         ] {
             store
-                .append_entry(json!({"id":id,"agentId":agent_id,"kind":"message","content":id}))
+                .append_entry(json!({"id":id,"agentId":agent_id,"kind":"message","role":"user","content":id}))
                 .unwrap();
         }
 
@@ -1001,7 +1001,7 @@ mod tests {
         assert_eq!(all[0].path, "https://example.invalid/reports/Project-Alpha.pdf?download=1");
         assert_eq!(all[0].kind, "pdf");
         assert_eq!(all[1].file_name, "Próject Alpha.png");
-        assert_eq!(all[1].path, "content://files/Project%20Alpha.png");
+        assert_eq!(all[1].path, "content://files/Próject%20Alpha.png");
         assert_eq!(all[1].mime.as_deref(), Some("image/png"));
         assert_eq!(all[1].width, Some(640));
         assert_eq!(all[1].height, Some(481));
@@ -1082,9 +1082,10 @@ mod tests {
 
         let (store, recovery) = TranscriptStore::open_recovering(&path).unwrap();
         let recovery = recovery.expect("duplicate ids must be treated as canonical corruption");
-        assert_eq!(recovery.outcome, TranscriptRecoveryOutcome::ResetCorruptStore);
+        assert_eq!(recovery.outcome, TranscriptRecoveryOutcome::RecoveredSalvage);
         assert!(recovery.quarantine_path.unwrap().exists());
-        assert!(store.get_transcript().is_empty());
+        assert_eq!(store.get_transcript().len(), 1);
+        assert_eq!(store.get_transcript()[0]["id"], "duplicate");
 
         let mut store = TranscriptStore::open(&path).unwrap();
         store
