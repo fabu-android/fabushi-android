@@ -8,3 +8,5 @@ pub mod agent_db_serde;
 pub mod agent_db_transcript_pages;
 pub mod agent_db_recovery;
 pub mod agent_db;
+#[cfg(test)]
+mod agent_db_android_tests;
