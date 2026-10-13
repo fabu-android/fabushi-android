@@ -940,7 +940,7 @@ mod tests {
                 _token: &str,
                 _body: Option<&Value>,
             ) -> Result<Value, XuserRelayHttpError> {
-                if url.ends_with("/sand/xuser/share-state") {
+                if url.ends_with("/sand/share-state") {
                     return Ok(serde_json::json!({
                         "selfAuthId":"sand-self",
                         "rooms":[],
