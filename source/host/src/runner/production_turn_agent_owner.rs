@@ -227,6 +227,7 @@ pub enum ProductionTurnEvent {
 pub struct ProductionTurnResult {
     pub events: Vec<ProductionTurnEvent>,
     pub settlement: Option<TurnSettlement>,
+    pub first_token_delay_ms: Option<u64>,
 }
 
 pub struct ProductionTurnAgentOwner<P: TurnStreamProvider> {
@@ -451,6 +452,7 @@ impl<P: TurnStreamProvider> ProductionTurnAgentOwner<P> {
                 Ok(ProductionTurnResult {
                     events,
                     settlement: Some(settlement),
+                    first_token_delay_ms: Some(result.first_token_delay_ms),
                 })
             }
             Err(error) => {
@@ -461,6 +463,7 @@ impl<P: TurnStreamProvider> ProductionTurnAgentOwner<P> {
                 Ok(ProductionTurnResult {
                     events: vec![failed],
                     settlement: None,
+                    first_token_delay_ms: None,
                 })
             }
         }
