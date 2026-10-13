@@ -1,4 +1,7 @@
 use super::{
+    agent_error_telemetry::{
+        agent_error_telemetry, AgentErrorReport, AGENT_ERROR_EVENT,
+    },
     agent_open_telemetry::{agent_open_telemetry, AgentOpenReport, AGENT_OPEN_EVENT},
     auto_review_approval_telemetry::{
         auto_review_approval_telemetry, AutoReviewApprovalReport,
@@ -9,6 +12,37 @@ use super::{
         AUTOMATION_RUN_EVENT,
     },
 };
+
+#[test]
+fn agent_error_projection_preserves_desktop_error_tags() {
+    let projection = agent_error_telemetry(&AgentErrorReport {
+        source: "turn".into(),
+        conversation_id: "agent-a".into(),
+        request_id: Some("request-a".into()),
+        error: super::sand_error_tags::SandErrorValue::new("SAND-E0101")
+            .with_string("errno", "ECONNRESET"),
+        detail: None,
+    });
+    assert_eq!(projection.level, Some("error"));
+    assert_eq!(projection.event, Some(AGENT_ERROR_EVENT));
+    assert_eq!(projection.metadata.get("source").map(String::as_str), Some("turn"));
+    assert_eq!(
+        projection.metadata.get("conversation_id").map(String::as_str),
+        Some("agent-a")
+    );
+    assert_eq!(
+        projection.metadata.get("request_id").map(String::as_str),
+        Some("request-a")
+    );
+    assert_eq!(
+        projection.metadata.get("error_code").map(String::as_str),
+        Some("SAND-E0101")
+    );
+    assert_eq!(
+        projection.metadata.get("error_retryable").map(String::as_str),
+        Some("true")
+    );
+}
 
 #[test]
 fn agent_open_projection_preserves_desktop_contract() {
