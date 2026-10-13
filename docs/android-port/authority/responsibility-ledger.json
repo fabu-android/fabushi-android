@@ -17074,6 +17074,91 @@
       "artifact": null,
       "verification_status": "not-verified",
       "notes": "Implementation source and production Host route exist, but authorized Remote Runner screenshot capture plus exact-head package/device evidence remain open. Do not upgrade to verified from unit/Rust gates alone."
+    },
+    {
+      "responsibility_id": "AGENT-SESSION-MATERIALIZATION-ANDROID-001",
+      "domain": "agent-session-materialization",
+      "desktop_sources": [
+        {
+          "path": "source/host/src/extensions/session/session_materialization.rs",
+          "blob_sha": "d161dc4b86d1b08569e2a01fb1ca8a4abdbd69de",
+          "symbols": [
+            "MAX_AGENTS_PER_USER",
+            "SessionMintQueue",
+            "materialize_new_session",
+            "open_existing_session"
+          ]
+        },
+        {
+          "path": "source/host/src/extensions/session/agent_db.rs",
+          "blob_sha": "9f24fcebd3fe75248511e9e14fdc74759feffea0",
+          "symbols": [
+            "initialize_persisted_agent_record",
+            "get_agent_origin",
+            "get_agent_purpose",
+            "set_agent_purpose"
+          ]
+        }
+      ],
+      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "responsibility": "Materialize one durable Agent session with bounded per-user cardinality, stable identity, default profile/settings, durable origin/purpose/introduction metadata, failure-atomic persistence and process-reopen recovery without creating a second roster/transcript owner.",
+      "source_owner": "Desktop Rust Host Session extension",
+      "direct_callers": [
+        "ProductionSessionWorkers session creation/open",
+        "Agent session create/list/reopen paths"
+      ],
+      "downstream_dependencies": [
+        "Agent summary projection",
+        "plugin/special-purpose Agent lookup",
+        "Agent transcript/session recovery",
+        "notification defaults"
+      ],
+      "state_owner": "Android Rust Host canonical AndroidAgentRoster for roster/materialization metadata; transcript/run truth remains in their existing Rust owners.",
+      "persistent_state": [
+        "Agent identity",
+        "origin",
+        "purpose",
+        "introductionPending",
+        "createdAt",
+        "notifyOnAgentUpdates",
+        "profile/persona metadata"
+      ],
+      "protocol_wire_contract": [
+        "max 50 non-group Agents",
+        "purpose identifiers are lowercase stable tokens",
+        "new Agent defaults notifyOnAgentUpdates=true",
+        "duplicate must not clone special-purpose identity"
+      ],
+      "visible_effect": "New Android Agents obey Desktop capacity/defaults, retain stable materialization metadata across process death, and cannot accidentally duplicate a special-purpose Agent identity.",
+      "failure_behavior": [
+        "capacity overflow fails before mutation",
+        "invalid purpose fails before mutation",
+        "roster persistence failure leaves prior canonical state intact",
+        "corrupt roster follows existing quarantine/recovery path"
+      ],
+      "cancellation_behavior": "Materialization is a short atomic Host mutation; cancellation before dispatch creates no state and settled mutation is not rolled back by UI cancellation.",
+      "retry_semantics": "Presentation/tool callers use existing durable operation identities; process reopen reads settled canonical roster rather than creating another Agent.",
+      "idempotency_semantics": "Tool/presentation create paths retain their existing durable management-call replay; special-purpose lookup is stable after reopen.",
+      "process_death_recovery": "Canonical roster is atomically persisted and reopened; materialization metadata is serde-compatible with legacy records and createdAt is backfilled from updatedAt when absent.",
+      "account_fencing": "Tool/presentation mutations remain account-fenced by existing Host management-call keys; special-purpose internal creation still needs its shipping account-scoped caller before this responsibility can be complete.",
+      "security_boundary": "Compose cannot forge dev origin or arbitrary special purpose through createAgent; special materialization is an internal Rust Host API.",
+      "android_disposition": "direct-port",
+      "android_target": [
+        "source/host/src/android_agent_roster.rs",
+        "source/host/src/android_json_runtime.rs"
+      ],
+      "android_owner": "Rust Host canonical Agent roster/materialization owner",
+      "platform_delta": "Desktop stores each Agent in a dedicated session DB/directory; Android currently keeps roster/materialization metadata in one atomic app-private Rust Host roster while transcript/run owners remain separate. The semantic identity/default/cap/reopen contract is preserved; special-purpose production caller wiring remains open.",
+      "implementation_status": "mapped",
+      "production_wiring": "Ordinary createAgent, root Agent tool creation and presentation duplicate use AndroidAgentRoster in shipping Host. Commits f7fea62f0ed72d5d59c5416deb18a9d02c43b295 and 957edc50b79e72201eed2b573ce02178c290509b add the Desktop 50-Agent cap, notify default and durable origin/purpose/introduction/createdAt metadata. A shipping caller for non-default special purpose is still missing.",
+      "unit_test": "android_agent_roster tests cover notify default, 50-Agent cap, groups not consuming cap, ordinary/duplicate/tool-call overflow, purpose validation, process reopen metadata and special-purpose duplicate reset. Descendant exact-head Actions required.",
+      "contract_test": "Open: prove special-purpose caller lookup/reuse and no-purpose-forgery through production Host command boundary.",
+      "integration_test": "Open: production special-purpose creation/reuse plus process-death reopen; ordinary create/list is already wired.",
+      "packaged_test": "Required on final exact-head APK/AAB.",
+      "device_test": "Required on protected device acceptance.",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Do not promote to implemented/verified solely from roster fields. Remaining gap is the shipping special-purpose materialization caller and same-exact-head CI/package/device evidence."
     }
   ],
   "traceability": {
