@@ -26,6 +26,18 @@ class AndroidCoordinatorBridgeTest {
         } as AndroidCoordinatorPort
 
     @Test
+    fun exposesTypedSharedRoomLifecycleSurface() {
+        val methods = AndroidCoordinatorPort::class.java.methods.associateBy { it.name }
+        assertTrue(methods.containsKey("crossUserSharingCapability"))
+        assertTrue(methods.containsKey("crossUserSharingState"))
+        assertTrue(methods.containsKey("crossUserSharingSetEnabled"))
+        assertTrue(methods.containsKey("crossUserSharingRequestDrain"))
+        assertEquals(1, methods.getValue("crossUserSharingSetEnabled").parameterCount)
+        assertEquals(Boolean::class.javaPrimitiveType, methods.getValue("crossUserSharingSetEnabled").parameterTypes.single())
+        assertEquals(0, methods.getValue("crossUserSharingRequestDrain").parameterCount)
+    }
+
+    @Test
     fun exposesTypedIndexedGlobalMessageSearchSurface() {
         assertTrue(AndroidCoordinatorPort::class.java.methods.any { it.name == "globalContentSearchMessages" })
     }
