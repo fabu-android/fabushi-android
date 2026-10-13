@@ -17235,6 +17235,81 @@
       "artifact": null,
       "verification_status": "not-verified",
       "notes": "Implemented by b1747ffb8d5970e20d945511510e4e67a5802987, 9145eb7661495247915304b95e0acaa0dcaadaef, def2273492116dc06aceb69432e3d458e0667a7c, 8541a33099fd00bd2ab509bb97b29e48326ffca7 and faa4f8dea615bbbaa05fd7fb45e161d9b28be687. StateBackstop remains open because authorized object-store transport depends on unfinished Remote BoxStore execution."
+    },
+    {
+      "responsibility_id": "AGENT-STATE-BACKSTOP-ANDROID-001",
+      "domain": "agent-storage-recovery",
+      "desktop_sources": [
+        {
+          "path": "source/host/src/extensions/state_backstop/state_backstop_service.rs",
+          "blob_sha": "1b926b586363ca7667f033bcaf98043fd8f55ac3",
+          "symbols": [
+            "SandStateBackstop",
+            "StateBackstopOptions",
+            "read_store_db_bytes"
+          ]
+        },
+        {
+          "path": "source/host/src/extensions/state_backstop/extension.rs",
+          "blob_sha": "83c970c7a7cdb7e3645a2218e0852e7734a3fa47",
+          "symbols": [
+            "HostStateBackstopExtension",
+            "start_state_backstop_extension_with_gate"
+          ]
+        }
+      ],
+      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "responsibility": "Provide a bounded durable Agent store.db backstop with debounced snapshot scheduling, checkpointed reads, maximum-size enforcement, stable source/object-store routing, explicit enablement, readback, error reporting, and lifecycle disposal without making Presentation a storage owner.",
+      "source_owner": "Desktop StateBackstop extension",
+      "direct_callers": [
+        "Agent session/store mutation lifecycle",
+        "BoxStoreSync/source-map production composition"
+      ],
+      "downstream_dependencies": [
+        "SourceMap stable source identity",
+        "authorized object-store/BoxStoreSync transport"
+      ],
+      "state_owner": "Rust Host StateBackstop service; object-store backend remains an external authorized dependency",
+      "persistent_state": [
+        "remote state/store.db snapshot when enabled"
+      ],
+      "protocol_wire_contract": [
+        "SAND_STATE_BACKSTOP_REL_PATH=state/store.db",
+        "64 MiB default snapshot cap",
+        "5s default debounce"
+      ],
+      "visible_effect": "When explicitly enabled and a remote object-store provider is available, Android can preserve and recover a bounded durable Agent store snapshot after local loss without duplicate UI-owned state.",
+      "failure_behavior": [
+        "missing store skips",
+        "oversize store skips",
+        "checkpoint/read/upload errors remain explicit Error results",
+        "disabled gate is fail-closed"
+      ],
+      "cancellation_behavior": "dispose stops pending debounce workers and prevents future scheduled snapshots",
+      "retry_semantics": "subsequent mutations may reschedule after errors; no hidden retry of unknown remote side effects inside Presentation",
+      "idempotency_semantics": "latest debounced snapshot replaces the fixed state/store.db object for the same stable source identity",
+      "process_death_recovery": "service state is reconstructed from canonical source-map/object-store owners; local scheduling queues are intentionally process-local",
+      "account_fencing": "production provider must be account/source scoped; current service does not project credentials or account truth",
+      "security_boundary": "Android does not enable backstop from environment variables; production enablement/provider must be injected through typed Host composition",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "source/host/src/extensions/state_backstop/state_backstop_service.rs",
+        "source/host/src/extensions/state_backstop/extension.rs",
+        "source/host/src/extensions/state_backstop/mod.rs",
+        "source/host/src/extensions/source_map/source_map_service.rs"
+      ],
+      "android_owner": "Rust Host StateBackstop service",
+      "platform_delta": "Portable snapshot/debounce logic is Rust-to-Rust. Desktop environment-variable enablement is disabled on Android; typed Host policy must explicitly enable it. Android still lacks the production BoxStoreSync/object-store provider binding.",
+      "implementation_status": "implemented",
+      "production_wiring": "Core service and typed gate compile graph are wired under extensions::state_backstop. Shipping object-store/BoxStoreSync provider composition is still missing, so enabled production path is not closed.",
+      "unit_test": "state_backstop service Android gate test plus typed extension disabled-gate test; GitHub Actions evidence pending on descendant exact HEAD",
+      "contract_test": "required: stable SourceMap source id + authorized object-store put/get + max-size/disabled/error contracts",
+      "integration_test": "required: shipping Host composition schedules snapshot after canonical Agent durable mutation and reads it back after reopen",
+      "packaged_test": "required on final exact-head APK/AAB",
+      "device_test": "required with authorized remote object-store/runner",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Commits 205411aa5046500782f819e57767b9528aa0d3a5, 6fcc71a2a2c82558c5f039ce0534ea6f88214468, dad16c6665329e014469bc7ec98279e469cb1c81 and 1fa7b225d887d7530f2d41e192b9563033012a6a add the portable service, typed gate, module and compile-graph wiring. Do not mark verified until production BoxStoreSync/object-store composition and same-head CI/package/device evidence succeed."
     }
   ],
   "traceability": {
