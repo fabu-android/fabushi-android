@@ -19,7 +19,7 @@ fn pending_entry(
         "timestampMs":timestamp_ms,
         "message":{
             "type":message_type,
-            nested_key:{
+            (nested_key):{
                 "requestId":request_id,
                 "status":"pending"
             }
