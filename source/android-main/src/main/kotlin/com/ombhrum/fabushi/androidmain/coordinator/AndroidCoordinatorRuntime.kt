@@ -15,6 +15,7 @@ import android.os.Process
 import android.os.SystemClock
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidOnDemandUsage
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidAccountUsageSummary
+import com.ombhrum.fabushi.androidpreload.runtime.AndroidAccountUpgradeCta
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidPrReviewPreferences
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidAutoReviewInstructions
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidAutoReviewInstructionsSnapshot
@@ -1075,16 +1076,77 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
                 resetTimestampMs = optionalLong(value, "resetTimestampMs"),
             )
         }
+        val upgradeCta = projection.optJSONObject("upgradeCta")?.let { value ->
+            val label = value.optString("label").trim().takeIf(String::isNotEmpty) ?: return@let null
+            val action = value.optJSONObject("action") ?: return@let null
+            val kind = action.optString("kind").trim()
+            when (kind) {
+                "open-url" -> {
+                    val url = action.optString("url").trim().takeIf(String::isNotEmpty)
+                        ?: return@let null
+                    AndroidAccountUpgradeCta(
+                        label = label,
+                        disabled = value.optBoolean("disabled", false),
+                        kind = kind,
+                        url = url,
+                    )
+                }
+                "dashboard-action" -> {
+                    val dashboardAction = action.optString("action").trim()
+                    if (dashboardAction != "requestLimitIncrease") return@let null
+                    val argsJson = action.optJSONObject("args") ?: JSONObject()
+                    val args = buildMap {
+                        val keys = argsJson.keys()
+                        while (keys.hasNext()) {
+                            val key = keys.next()
+                            val argument = argsJson.optString(key, "")
+                            put(key, argument)
+                        }
+                    }
+                    AndroidAccountUpgradeCta(
+                        label = label,
+                        disabled = value.optBoolean("disabled", false),
+                        kind = kind,
+                        dashboardAction = dashboardAction,
+                        args = args,
+                        successMessage = action.optString("successMessage")
+                            .trim()
+                            .takeIf(String::isNotEmpty),
+                    )
+                }
+                else -> null
+            }
+        }
         return AndroidAccountUsageSummary(
             sandUsagePercent = optionalDouble(projection, "sandUsagePercent"),
             sandUsageResetTimestampMs = optionalLong(projection, "sandUsageResetTimestampMs"),
             hasAvailableUsage = projection.optBoolean("hasAvailableUsage", false),
             hasNonZeroIncludedLimit = projection.optBoolean("hasNonZeroIncludedLimit", false),
             usesPooledEnterpriseAllowance = projection.optBoolean("usesPooledEnterpriseAllowance", false),
+            isEnterprise = projection.optBoolean("isEnterprise", false),
+            upgradeCta = upgradeCta,
             isSandTrial = projection.optBoolean("isSandTrial", false),
             hasEndedSandTrial = projection.optBoolean("hasEndedSandTrial", false),
             canCancelSandTrial = projection.optBoolean("canCancelSandTrial", false),
             onDemand = onDemand,
+        )
+    }
+
+    override fun accountDashboardAction(
+        action: String,
+        args: Map<String, String>,
+    ): JSONObject {
+        require(action == "requestLimitIncrease") { "Unsupported account dashboard action" }
+        return host.request(
+            "feature.account.dashboardAction",
+            JSONObject()
+                .put("action", action)
+                .put(
+                    "args",
+                    JSONObject().apply {
+                        args.forEach { (key, value) -> put(key, value) }
+                    },
+                ),
         )
     }
 
