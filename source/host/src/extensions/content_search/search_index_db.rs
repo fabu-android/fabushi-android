@@ -62,6 +62,7 @@ impl AttachmentKind {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct MessageSearchResult {
     pub agent_id: String,
     pub entry_id: String,
@@ -71,6 +72,7 @@ pub struct MessageSearchResult {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct MediaSearchResult {
     pub agent_id: String,
     pub entry_id: String,
