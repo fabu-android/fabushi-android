@@ -1112,8 +1112,13 @@ impl AndroidJsonHost {
                     panic!("failed to recover canonical Android agent roster: {error}")
                 });
         if let Some(recovery) = agent_roster_recovery {
-            let outcome = match recovery.outcome {
-                AndroidAgentRosterRecoveryOutcome::ResetCorruptStore => "reset_corrupt_store",
+            let (level, outcome) = match recovery.outcome {
+                AndroidAgentRosterRecoveryOutcome::RecoveredLastKnownGood => {
+                    ("warn", "recovered_last_known_good")
+                }
+                AndroidAgentRosterRecoveryOutcome::ResetCorruptStore => {
+                    ("error", "reset_corrupt_store")
+                }
             };
             let metadata = BTreeMap::from([
                 ("component".to_string(), "agent_roster".to_string()),
@@ -1125,7 +1130,7 @@ impl AndroidJsonHost {
                 ),
             ]);
             let _ = structured_log_spool.record(
-                "error",
+                level,
                 "sand.recovery_action",
                 metadata,
                 now_ms(),
