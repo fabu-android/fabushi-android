@@ -274,6 +274,33 @@ impl SandPendingWakeStore {
         }
     }
 
+    pub fn clear_agent(&self, account_fence: &str, agent_id: &str) -> usize {
+        let account_fence = account_fence.trim();
+        let agent_id = agent_id.trim();
+        if account_fence.is_empty() || agent_id.is_empty() {
+            return 0;
+        }
+        let _guard = self.lock.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let existing = self.read_pending_unlocked();
+        let remaining = existing
+            .iter()
+            .filter(|entry| {
+                entry.account_fence != account_fence || entry.agent_id != agent_id
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        let cleared = existing.len().saturating_sub(remaining.len());
+        if cleared == 0 {
+            return 0;
+        }
+        let committed = if remaining.is_empty() {
+            self.delete_unlocked()
+        } else {
+            self.write_unlocked(&remaining)
+        };
+        if committed.is_ok() { cleared } else { 0 }
+    }
+
     pub fn clear_account(&self, account_fence: &str) {
         let _guard = self.lock.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         let existing = self.read_pending_unlocked();
@@ -478,6 +505,23 @@ mod tests {
     fn legacy_unfenced_rows_fail_closed() {
         let raw = r#"{"version":1,"pending":[{"agentId":"agent-1","kind":"shell","workId":"shell-1","markedAtMs":1}]}"#;
         assert!(parse_pending_wake_file(Some(raw)).is_empty());
+    }
+
+    #[test]
+    fn clear_agent_removes_only_the_target_agent_in_one_account() {
+        let root = root("clear-agent");
+        let store = SandPendingWakeStore::new(&root);
+        assert!(store.mark_pending(marker("acct-a", "agent-1", PendingWakeKind::Shell, "shell-1")));
+        assert!(store.mark_pending(marker("acct-a", "agent-1", PendingWakeKind::CloudAgent, "cloud-1")));
+        assert!(store.mark_pending(marker("acct-a", "agent-2", PendingWakeKind::Shell, "shell-2")));
+        assert!(store.mark_pending(marker("acct-b", "agent-1", PendingWakeKind::Shell, "shell-3")));
+
+        assert_eq!(store.clear_agent("acct-a", "agent-1"), 2);
+        assert!(store.list_pending_for("acct-a", "agent-1").is_empty());
+        assert_eq!(store.list_pending_for("acct-a", "agent-2").len(), 1);
+        assert_eq!(store.list_pending_for("acct-b", "agent-1").len(), 1);
+        assert_eq!(store.clear_agent("acct-a", "agent-1"), 0);
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
