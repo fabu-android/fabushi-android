@@ -5,7 +5,8 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde_json::{Value, json};
 
-use crate::extensions::experiments::{HostExperimentsExtension, StopGateSubscription};
+use crate::extensions::experiments::HostExperimentsExtension;
+use crate::extensions::experiments::extension::StopGateSubscription;
 
 pub const SAND_PRODUCT_ANALYTICS_GATE: &str = "sand_product_analytics";
 pub const MAX_DEFERRED_ANALYTICS_EVENTS: usize = 256;
