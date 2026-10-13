@@ -3,6 +3,21 @@ use serde_json::json;
 
 const TEST_ACCOUNT_FENCE: &str = "session:test:android";
 
+fn sign_in_test_account(host: &mut AndroidJsonHost) {
+    let started = host
+        .dispatch("feature.auth.oauthStart", &json!({"provider":"google"}))
+        .expect("test OAuth start must succeed");
+    let attempt_id = started["attemptId"]
+        .as_str()
+        .expect("test OAuth start must return attemptId")
+        .to_string();
+    let completed = host
+        .dispatch("feature.auth.oauthPoll", &json!({"attemptId":attempt_id}))
+        .expect("test OAuth poll must succeed");
+    assert_eq!(completed["status"], "completed");
+    assert_eq!(completed["auth"]["loggedIn"], true);
+}
+
 fn create_agent(host: &mut AndroidJsonHost, name: &str) -> String {
     host.dispatch("createAgent", &json!({"name":name,"description":""}))
         .unwrap()["agent"]["id"]
@@ -17,6 +32,7 @@ fn channel_metadata_is_agent_scoped_and_survives_reopen() {
     let (first_id, second_id);
     {
         let mut host = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+        sign_in_test_account(&mut host);
         first_id = create_agent(&mut host, "First");
         second_id = create_agent(&mut host, "Second");
 
@@ -48,6 +64,7 @@ fn channel_metadata_is_agent_scoped_and_survives_reopen() {
     }
 
     let mut reopened = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+    sign_in_test_account(&mut reopened);
     let restored = reopened
         .dispatch(
             "feature.agent.channels.listMetadata",
@@ -79,6 +96,7 @@ fn channel_metadata_is_agent_scoped_and_survives_reopen() {
 fn channel_metadata_rejects_unknown_agents_and_unsafe_platform_ids() {
     let root = tempfile::tempdir().unwrap();
     let mut host = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+    sign_in_test_account(&mut host);
     let agent_id = create_agent(&mut host, "Safe");
 
     let unknown = host.dispatch(
