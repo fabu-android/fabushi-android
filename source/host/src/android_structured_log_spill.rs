@@ -59,6 +59,7 @@ const ALLOWED_EVENTS: &[&str] = &[
     "sand.local_exec.exec_failed",
     "sand.local_exec.provider",
     "sand.mcp.desktop_edge_failed",
+    "sand.pending_wake",
     "sand.reaction.ack",
     "sand.recovery_action",
     "sand.render_stream",
@@ -761,6 +762,28 @@ mod tests {
                 .unwrap();
         }
         assert_eq!(spool.batch().len(), 4);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn spill_accepts_pending_wake_queue_contract() {
+        let root = root("pending-wake");
+        let path = root.join("spill.json");
+        let mut spool =
+            AndroidStructuredLogSpool::open(&path, "account-a", "counter-a", 1_000).unwrap();
+        spool
+            .record(
+                "warn",
+                "sand.pending_wake",
+                BTreeMap::from([
+                    ("conversation_id".into(), "agent-a".into()),
+                    ("outcome".into(), "pruned".into()),
+                    ("reason".into(), "stale".into()),
+                ]),
+                1_001,
+            )
+            .unwrap();
+        assert_eq!(spool.batch()[0].message, "sand.pending_wake");
         let _ = fs::remove_dir_all(root);
     }
 
