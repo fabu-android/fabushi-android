@@ -39,6 +39,15 @@ class ContactGroupProjectionTest {
     }
 
     @Test
+    fun collapseTogglePreservesMembershipAndTargetsOnlyOneGroup() {
+        val base = editableContactGroups(snapshot)
+        val next = toggleContactGroupCollapsed(base, "ops")
+        assertTrue(next.first { it.id == "ops" }.isCollapsed)
+        assertTrue(next.first { it.id == "qa" }.isCollapsed)
+        assertEquals(base.first { it.id == "ops" }.peerIds, next.first { it.id == "ops" }.peerIds)
+    }
+
+    @Test
     fun searchExpandsMatchesAndOmitsEmptyNamedGroups() {
         val next = searchedContactGroups(snapshot.groups, contacts, "car")
         assertEquals(listOf("qa"), next.map { it.id })

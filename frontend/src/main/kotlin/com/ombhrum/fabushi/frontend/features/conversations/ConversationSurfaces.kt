@@ -131,6 +131,14 @@ internal fun assignContactToGroup(
         }
     }
 
+internal fun toggleContactGroupCollapsed(
+    groups: List<AndroidContactGroup>,
+    groupId: String,
+): List<AndroidContactGroup> =
+    groups.map { group ->
+        if (group.id == groupId) group.copy(isCollapsed = !group.isCollapsed) else group
+    }
+
 internal fun searchedContactGroups(
     groups: List<AndroidContactGroup>,
     contacts: List<MessagingContact>,
@@ -433,37 +441,48 @@ internal fun ConversationHome(
                                 TextButton(
                                     enabled = !messagingState.contactGroupsBusy,
                                     onClick = {
+                                        contactGroupDraft = toggleContactGroupCollapsed(
+                                            contactGroupDraft,
+                                            group.id,
+                                        )
+                                    },
+                                ) { Text(if (group.isCollapsed) "展开" else "折叠") }
+                                TextButton(
+                                    enabled = !messagingState.contactGroupsBusy,
+                                    onClick = {
                                         contactGroupDraft = contactGroupDraft.filterNot { it.id == group.id }
                                     },
                                 ) { Text("删除") }
                             }
-                            messagingState.contacts.forEach { contact ->
-                                val selected = contact.id in group.peerIds
-                                Row(
-                                    Modifier
-                                        .fillMaxWidth()
-                                        .clickable(enabled = !messagingState.contactGroupsBusy) {
-                                            contactGroupDraft = assignContactToGroup(
-                                                contactGroupDraft,
-                                                contact.id,
-                                                if (selected) null else group.id,
-                                            )
-                                        }
-                                        .padding(vertical = 2.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                ) {
-                                    Checkbox(
-                                        checked = selected,
-                                        enabled = !messagingState.contactGroupsBusy,
-                                        onCheckedChange = { checked ->
-                                            contactGroupDraft = assignContactToGroup(
-                                                contactGroupDraft,
-                                                contact.id,
-                                                if (checked) group.id else null,
-                                            )
-                                        },
-                                    )
-                                    Text(contact.displayName, color = homePrimaryText)
+                            if (!group.isCollapsed) {
+                                messagingState.contacts.forEach { contact ->
+                                    val selected = contact.id in group.peerIds
+                                    Row(
+                                        Modifier
+                                            .fillMaxWidth()
+                                            .clickable(enabled = !messagingState.contactGroupsBusy) {
+                                                contactGroupDraft = assignContactToGroup(
+                                                    contactGroupDraft,
+                                                    contact.id,
+                                                    if (selected) null else group.id,
+                                                )
+                                            }
+                                            .padding(vertical = 2.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                    ) {
+                                        Checkbox(
+                                            checked = selected,
+                                            enabled = !messagingState.contactGroupsBusy,
+                                            onCheckedChange = { checked ->
+                                                contactGroupDraft = assignContactToGroup(
+                                                    contactGroupDraft,
+                                                    contact.id,
+                                                    if (checked) group.id else null,
+                                                )
+                                            },
+                                        )
+                                        Text(contact.displayName, color = homePrimaryText)
+                                    }
                                 }
                             }
                         }
