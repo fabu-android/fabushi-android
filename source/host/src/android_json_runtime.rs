@@ -1375,20 +1375,10 @@ impl AndroidJsonHost {
         let account_binding = EnvDescriptorAccountBinding::new(
             app_data_dir.join("account-environment-bindings.json"),
         );
-        let structured_log_account_slot = account
-            .account_storage_scope()
-            .unwrap_or_else(|| "logged-out".to_string());
-        let structured_log_counter_id =
-            format!("android:{}", crate::sha256::sha256_hex(device_id.as_bytes()));
-        let mut structured_log_spool = AndroidStructuredLogSpool::open(
-            app_data_dir.join("android-structured-log-spill.v1.json"),
-            &structured_log_account_slot,
-            &structured_log_counter_id,
-            now_ms(),
-        )
-        .unwrap_or_else(|error| {
-            panic!("failed to open durable Android structured-log spill: {error}")
-        });
+        // Settle the environment/account ownership boundary before opening any account-scoped
+        // durable owner. A restored session may point at durable data owned by another account
+        // environment; touching a scoped spool before this check would violate the same
+        // authorize-before-scope contract enforced by Desktop production-account-authorization.
         let mut account_binding_refusal = None;
         if let Some(account_slot) = account.account_storage_scope() {
             let descriptor = account.environment_descriptor_url();
@@ -1420,6 +1410,20 @@ impl AndroidJsonHost {
                 }
             }
         }
+        let structured_log_account_slot = account
+            .account_storage_scope()
+            .unwrap_or_else(|| "logged-out".to_string());
+        let structured_log_counter_id =
+            format!("android:{}", crate::sha256::sha256_hex(device_id.as_bytes()));
+        let mut structured_log_spool = AndroidStructuredLogSpool::open(
+            app_data_dir.join("android-structured-log-spill.v1.json"),
+            &structured_log_account_slot,
+            &structured_log_counter_id,
+            now_ms(),
+        )
+        .unwrap_or_else(|error| {
+            panic!("failed to open durable Android structured-log spill: {error}")
+        });
         let (agent_roster, agent_roster_recovery) =
             AndroidAgentRoster::open_recovering(app_data_dir.join("agents.json"))
                 .unwrap_or_else(|error| {
