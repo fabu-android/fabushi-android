@@ -61,11 +61,11 @@ internal fun projectAgentChannelRow(
     connection: AgentChannelConnection?,
 ): AgentChannelRowProjection {
     val kind = when {
-        manifest.availability == AgentChannelAvailability.COMING_SOON -> AgentChannelRowKind.COMING_SOON
         connection?.status == "connected" -> AgentChannelRowKind.CONNECTED
         connection?.status == "error" -> AgentChannelRowKind.ERROR
-        connection == null -> AgentChannelRowKind.AVAILABLE
-        else -> AgentChannelRowKind.CONNECTING
+        connection != null -> AgentChannelRowKind.CONNECTING
+        manifest.availability == AgentChannelAvailability.COMING_SOON -> AgentChannelRowKind.COMING_SOON
+        else -> AgentChannelRowKind.AVAILABLE
     }
     val statusLabel = when (kind) {
         AgentChannelRowKind.COMING_SOON -> "Soon"
