@@ -981,6 +981,93 @@ impl Drop for AndroidExplicitHostTracing {
 }
 
 #[cfg(test)]
+mod token_refreshing_exporter_tests {
+    use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    struct CountingExporter {
+        flushes: Arc<AtomicUsize>,
+        shutdowns: Arc<AtomicUsize>,
+    }
+
+    impl SpanExporter for CountingExporter {
+        fn export(&self, _spans: &[Value]) -> ExportResultCode {
+            ExportResultCode::Success
+        }
+
+        fn shutdown(&self) -> Result<(), String> {
+            self.shutdowns.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
+
+        fn force_flush(&self) -> Result<(), String> {
+            self.flushes.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn token_rotation_replaces_and_shuts_down_previous_exporter() {
+        let token = Arc::new(Mutex::new(Some("token-a".to_string())));
+        let created = Arc::new(Mutex::new(Vec::<(
+            String,
+            Arc<AtomicUsize>,
+            Arc<AtomicUsize>,
+        )>::new()));
+        let token_for_getter = Arc::clone(&token);
+        let created_for_factory = Arc::clone(&created);
+
+        let exporter = TokenRefreshingSpanExporter::new(
+            "https://api.example.invalid/v1/traces",
+            Arc::new(move || token_for_getter.lock().unwrap().clone()),
+            BTreeMap::new(),
+            false,
+            Arc::new(move |options| {
+                let authorization = options
+                    .headers
+                    .get("authorization")
+                    .cloned()
+                    .unwrap_or_default();
+                let flushes = Arc::new(AtomicUsize::new(0));
+                let shutdowns = Arc::new(AtomicUsize::new(0));
+                created_for_factory.lock().unwrap().push((
+                    authorization,
+                    Arc::clone(&flushes),
+                    Arc::clone(&shutdowns),
+                ));
+                Arc::new(CountingExporter { flushes, shutdowns })
+            }),
+        );
+
+        assert!(exporter.resolve_delegate().is_some());
+        assert!(exporter.resolve_delegate().is_some());
+        assert_eq!(created.lock().unwrap().len(), 1);
+
+        *token.lock().unwrap() = Some("token-b".to_string());
+        assert!(exporter.resolve_delegate().is_some());
+        {
+            let created = created.lock().unwrap();
+            assert_eq!(created.len(), 2);
+            assert_eq!(created[0].0, "Bearer token-a");
+            assert_eq!(created[1].0, "Bearer token-b");
+            assert_eq!(created[0].2.load(Ordering::SeqCst), 1);
+        }
+
+        exporter.force_flush();
+        {
+            let created = created.lock().unwrap();
+            assert_eq!(created[1].1.load(Ordering::SeqCst), 1);
+        }
+        exporter.shutdown();
+        exporter.shutdown();
+        {
+            let created = created.lock().unwrap();
+            assert_eq!(created[1].2.load(Ordering::SeqCst), 1);
+        }
+    }
+}
+
+#[cfg(test)]
 mod android_explicit_host_tracing_tests {
     use super::*;
     use crate::send_trace_host::begin_gateway_command_trace;
