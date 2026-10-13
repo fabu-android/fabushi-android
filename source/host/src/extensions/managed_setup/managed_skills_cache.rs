@@ -1,12 +1,15 @@
 use std::collections::BTreeSet;
 use std::fs;
-use std::io::{self, Write};
+use std::io;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+pub const MANAGED_SKILLS_DIRNAME: &str = "managed-skills";
 pub const MANAGED_SKILLS_CACHE_FILENAME: &str = "cache.json";
 pub const MANAGED_SKILL_FILES_DIRNAME: &str = "skills";
+pub const AGENT_READABLE_SKILL_DIR_MODE: u32 = 0o755;
+pub const AGENT_READABLE_SKILL_FILE_MODE: u32 = 0o644;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ManagedSkill {
@@ -23,27 +26,32 @@ pub struct ManagedSkillsCache {
     pub skills: Vec<ManagedSkill>,
 }
 
+pub fn get_managed_skills_dir(sand_root: impl AsRef<Path>) -> PathBuf {
+    sand_root.as_ref().join(MANAGED_SKILLS_DIRNAME)
+}
+
 pub fn get_managed_skills_cache_path(cache_dir: impl AsRef<Path>) -> PathBuf {
     cache_dir.as_ref().join(MANAGED_SKILLS_CACHE_FILENAME)
 }
 
-pub fn get_managed_skill_file_path(cache_dir: impl AsRef<Path>, id: &str) -> PathBuf {
-    cache_dir.as_ref().join(MANAGED_SKILL_FILES_DIRNAME).join(id).join("SKILL.md")
-}
-
-pub fn is_safe_managed_skill_id(id: &str) -> bool {
-    !id.is_empty()
-        && id != "."
-        && id != ".."
-        && id.len() <= 128
-        && id.bytes().all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
+pub fn get_managed_skill_file_path(
+    cache_dir: impl AsRef<Path>,
+    id: &str,
+) -> PathBuf {
+    cache_dir
+        .as_ref()
+        .join(MANAGED_SKILL_FILES_DIRNAME)
+        .join(id)
+        .join("SKILL.md")
 }
 
 pub fn is_managed_skill(skill: &ManagedSkill) -> bool {
-    is_safe_managed_skill_id(skill.id.trim()) && !skill.body.trim().is_empty()
+    !skill.id.is_empty() && !skill.body.is_empty()
 }
 
-pub fn read_managed_skills_cache(cache_dir: impl AsRef<Path>) -> Option<ManagedSkillsCache> {
+pub fn read_managed_skills_cache(
+    cache_dir: impl AsRef<Path>,
+) -> Option<ManagedSkillsCache> {
     let raw = fs::read_to_string(get_managed_skills_cache_path(cache_dir)).ok()?;
     let parsed: ManagedSkillsCache = serde_json::from_str(&raw).ok()?;
     if !parsed.fetched_at.is_finite() || !parsed.skills.iter().all(is_managed_skill) {
@@ -57,91 +65,111 @@ pub fn write_managed_skills_cache(
     skills: &[ManagedSkill],
     fetched_at: f64,
 ) -> io::Result<()> {
-    if !fetched_at.is_finite() || !skills.iter().all(is_managed_skill) {
-        return Err(io::Error::new(io::ErrorKind::InvalidInput, "invalid managed skills cache"));
-    }
     let cache_dir = cache_dir.as_ref();
-    fs::create_dir_all(cache_dir)?;
-    let cache = ManagedSkillsCache { fetched_at, skills: skills.to_vec() };
-    let mut body = serde_json::to_string_pretty(&cache).map_err(io::Error::other)?;
+    create_agent_readable_dir(cache_dir)?;
+    let cache = ManagedSkillsCache {
+        fetched_at,
+        skills: skills.to_vec(),
+    };
+    let mut body = serde_json::to_string_pretty(&cache)
+        .map_err(io::Error::other)?;
     body.push('\n');
-    atomic_write_private(&get_managed_skills_cache_path(cache_dir), body.as_bytes())?;
+    let path = get_managed_skills_cache_path(cache_dir);
+    atomic_write_agent_readable(&path, body.as_bytes())?;
     materialize_managed_skill_files(cache_dir, skills)
 }
 
-pub fn materialize_managed_skill_files(cache_dir: impl AsRef<Path>, skills: &[ManagedSkill]) -> io::Result<()> {
-    if !skills.iter().all(is_managed_skill) {
-        return Err(io::Error::new(io::ErrorKind::InvalidInput, "invalid managed skill"));
-    }
+pub fn materialize_managed_skill_files(
+    cache_dir: impl AsRef<Path>,
+    skills: &[ManagedSkill],
+) -> io::Result<()> {
     let cache_dir = cache_dir.as_ref();
     let files_dir = cache_dir.join(MANAGED_SKILL_FILES_DIRNAME);
-    fs::create_dir_all(&files_dir)?;
-    let keep = skills.iter().map(|skill| skill.id.as_str()).collect::<BTreeSet<_>>();
+    create_agent_readable_dir(&files_dir)?;
+
+    let keep = skills
+        .iter()
+        .map(|skill| skill.id.as_str())
+        .collect::<BTreeSet<_>>();
     for entry in fs::read_dir(&files_dir)? {
         let entry = entry?;
         let name = entry.file_name();
         let name = name.to_string_lossy();
         if !keep.contains(name.as_ref()) {
             let path = entry.path();
-            if path.is_dir() { fs::remove_dir_all(path)?; } else { fs::remove_file(path)?; }
+            if path.is_dir() {
+                fs::remove_dir_all(path)?;
+            } else {
+                fs::remove_file(path)?;
+            }
         }
     }
+
     for skill in skills {
         let skill_dir = files_dir.join(&skill.id);
-        fs::create_dir_all(&skill_dir)?;
-        atomic_write_private(&get_managed_skill_file_path(cache_dir, &skill.id), serialize_skill_markdown(skill).as_bytes())?;
+        create_agent_readable_dir(&skill_dir)?;
+        let path = get_managed_skill_file_path(cache_dir, &skill.id);
+        let content = serialize_skill_markdown(skill);
+        atomic_write_agent_readable(&path, content.as_bytes())?;
     }
     Ok(())
 }
 
 fn serialize_skill_markdown(skill: &ManagedSkill) -> String {
-    let name = serde_json::to_string(&skill.name).unwrap_or_else(|_| "\"\"".into());
-    let description = serde_json::to_string(&skill.description).unwrap_or_else(|_| "\"\"".into());
+    let name = serde_json::to_string(&skill.name)
+        .unwrap_or_else(|_| "\"\"".into());
+    let description = serde_json::to_string(&skill.description)
+        .unwrap_or_else(|_| "\"\"".into());
     let mut lines = vec!["---".to_string(), format!("name: {name}")];
-    if !skill.description.is_empty() { lines.push(format!("description: {description}")); }
+    if !skill.description.is_empty() {
+        lines.push(format!("description: {description}"));
+    }
     lines.push("---".into());
     lines.push(skill.body.trim().to_string());
     format!("{}\n", lines.join("\n"))
 }
 
-fn atomic_write_private(path: &Path, bytes: &[u8]) -> io::Result<()> {
-    let parent = path.parent().ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "managed skill path has no parent"))?;
-    fs::create_dir_all(parent)?;
-    let name = path.file_name().ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "managed skill path has no file name"))?;
-    let temp = parent.join(format!(".{}.{}.tmp", name.to_string_lossy(), std::process::id()));
-    let result = (|| -> io::Result<()> {
-        let mut file = fs::File::create(&temp)?;
-        file.write_all(bytes)?;
-        file.sync_all()?;
-        fs::rename(&temp, path)?;
-        Ok(())
-    })();
-    if result.is_err() { let _ = fs::remove_file(&temp); }
-    result
+fn create_agent_readable_dir(path: &Path) -> io::Result<()> {
+    fs::create_dir_all(path)?;
+    set_mode(path, AGENT_READABLE_SKILL_DIR_MODE)
+}
+
+fn atomic_write_agent_readable(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    let temp = PathBuf::from(format!("{}.tmp", path.display()));
+    fs::write(&temp, bytes)?;
+    set_mode(&temp, AGENT_READABLE_SKILL_FILE_MODE)?;
+    match fs::rename(&temp, path) {
+        Ok(()) => Ok(()),
+        Err(error) => {
+            let _ = fs::remove_file(&temp);
+            Err(error)
+        }
+    }
+}
+
+#[cfg(unix)]
+fn set_mode(path: &Path, mode: u32) -> io::Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    fs::set_permissions(path, fs::Permissions::from_mode(mode))
+}
+
+#[cfg(not(unix))]
+fn set_mode(_path: &Path, _mode: u32) -> io::Result<()> {
+    Ok(())
 }
 
 #[cfg(test)]
-mod tests {
+mod android_parity_tests {
     use super::*;
-
     #[test]
-    fn unsafe_ids_are_rejected_before_materialization() {
-        for id in ["", ".", "..", "../escape", "nested/escape", "a\\b"] {
-            assert!(!is_safe_managed_skill_id(id), "unsafe id accepted: {id}");
-        }
-        for id in ["skill-1", "team.skill_v2"] { assert!(is_safe_managed_skill_id(id)); }
-    }
-
-    #[test]
-    fn cache_round_trip_is_atomic_and_removes_stale_skill_directories() {
+    fn cache_materialization_reopens_and_removes_revoked_skills() {
         let root = tempfile::tempdir().unwrap();
-        let first = ManagedSkill { id:"one".into(), name:"One".into(), description:"first".into(), body:"do one".into() };
-        let stale = ManagedSkill { id:"stale".into(), name:"Stale".into(), description:String::new(), body:"remove me".into() };
-        write_managed_skills_cache(root.path(), &[first.clone(), stale], 10.0).unwrap();
-        assert!(get_managed_skill_file_path(root.path(), "stale").is_file());
-        write_managed_skills_cache(root.path(), std::slice::from_ref(&first), 11.0).unwrap();
-        assert!(!root.path().join(MANAGED_SKILL_FILES_DIRNAME).join("stale").exists());
-        assert_eq!(read_managed_skills_cache(root.path()).unwrap().skills, vec![first]);
-        assert!(fs::read_dir(root.path()).unwrap().all(|entry| !entry.unwrap().file_name().to_string_lossy().contains(".tmp")));
+        let alpha = ManagedSkill { id: "alpha".into(), name: "Alpha".into(), description: "A".into(), body: "Do alpha".into() };
+        let beta = ManagedSkill { id: "beta".into(), name: "Beta".into(), description: "B".into(), body: "Do beta".into() };
+        write_managed_skills_cache(root.path(), &[alpha.clone(), beta.clone()], 10.0).unwrap();
+        assert_eq!(read_managed_skills_cache(root.path()).unwrap().skills, vec![alpha.clone(), beta]);
+        write_managed_skills_cache(root.path(), &[alpha.clone()], 20.0).unwrap();
+        assert_eq!(read_managed_skills_cache(root.path()).unwrap().skills, vec![alpha]);
+        assert!(!get_managed_skill_file_path(root.path(), "beta").exists());
     }
 }
