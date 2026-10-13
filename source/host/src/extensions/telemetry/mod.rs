@@ -37,3 +37,4 @@ pub mod sand_error_tags;
 pub mod journal_outcome_telemetry;
 pub mod lifecycle_telemetry;
 pub mod connector_auth_telemetry;
+pub mod queue_telemetry_mappers;
