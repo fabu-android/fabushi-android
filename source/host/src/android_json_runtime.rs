@@ -130,6 +130,9 @@ use crate::extensions::teach_recording::{DurableTeachRecordingOwner, TeachRecord
 use crate::extensions::trays::extension::{start_trays_extension, HostTraysExtension};
 use crate::extensions::trays::trays_service::{TrayEvent, TraySubscription};
 use crate::extensions::transcript::{AsyncTask, SandPendingWakeStore, TranscriptRecoveryOutcome, TranscriptStore, merge_async_tasks};
+use crate::extensions::transcript::client_side_tool_v2_producer::{
+    ClientSideToolV2ProducedValue, ClientSideToolV2Producer,
+};
 use crate::extensions::transcript::ack_obligations::{
     build_ack_redrive_send_args, AckObligations, AckRedrivePreparation,
 };
@@ -1365,6 +1368,7 @@ pub struct AndroidJsonHost {
     turn_lifecycle: Arc<Mutex<ProductionTurnLifecycleStore>>,
     turn_upgrade_quiescing: Arc<AtomicBool>,
     live_account_fence: Arc<Mutex<Option<String>>>,
+    client_side_tool_v2: ClientSideToolV2Producer,
     agent_turn_interruptions: Arc<AgentTurnInterruptionRegistry>,
     agent_wake_operations: BTreeMap<String, String>,
     multitask_todos: Arc<Mutex<DurableMultitaskTodoStore>>,
@@ -2202,6 +2206,7 @@ impl AndroidJsonHost {
             )),
             turn_upgrade_quiescing: Arc::new(AtomicBool::new(false)),
             live_account_fence: Arc::new(Mutex::new(None)),
+            client_side_tool_v2: ClientSideToolV2Producer::new(),
             agent_turn_interruptions: Arc::new(AgentTurnInterruptionRegistry::default()),
             agent_wake_operations: BTreeMap::new(),
             multitask_todos,
@@ -7708,6 +7713,11 @@ impl AndroidJsonHost {
         }
 
         let mut failures = Vec::new();
+
+        // Client-side tool identities are account-scoped. Rotate the producer epoch before
+        // any transition cleanup can fail so an old-account result can never settle in the
+        // next account epoch.
+        self.client_side_tool_v2 = ClientSideToolV2Producer::new();
 
         record_failure(&mut failures, "agent-turns", self.fence_turns_for_account_change(previous_fence, reason));
         record_failure(&mut failures, "human-calls", self.human_calls.fence_account(previous_fence, reason, now_ms()));
@@ -15233,6 +15243,41 @@ mod tests {
     }
 
     use crate::runner::SubagentLineage;
+
+    #[test]
+    fn client_side_tool_v2_producer_rotates_epoch_on_account_logout() {
+        let root = tempfile::tempdir().unwrap();
+        let mut host = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+        let first = host
+            .client_side_tool_v2
+            .publish(
+                "agent-a",
+                ClientSideToolV2ProducedValue::call("tool-a", [1_u8, 2, 3]),
+            )
+            .expect("initial tool call");
+        assert_eq!(first.sequence, 1);
+
+        host.account_logout().expect("logout");
+        assert!(
+            host.client_side_tool_v2
+                .publish(
+                    "agent-a",
+                    ClientSideToolV2ProducedValue::result("tool-a", [4_u8]),
+                )
+                .is_none(),
+            "pre-logout open call must be fenced by the new producer epoch"
+        );
+
+        let next = host
+            .client_side_tool_v2
+            .publish(
+                "agent-a",
+                ClientSideToolV2ProducedValue::call("tool-b", [5_u8]),
+            )
+            .expect("post-logout call");
+        assert_eq!(next.sequence, 1);
+        assert_ne!(next.epoch, first.epoch);
+    }
 
     #[test]
     fn startup_account_binding_precedes_account_scoped_spool() {
