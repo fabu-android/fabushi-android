@@ -16322,6 +16322,43 @@
       "artifact": null,
       "verification_status": "not-verified",
       "notes": "Implemented in production source. Do not mark verified until descendant exact-head Rust/Android/package/device/performance evidence succeeds."
+    },
+    {
+      "responsibility_id": "RUNTIME-DISK-PRESSURE-ANDROID-001",
+      "domain": "runtime-resource-pressure",
+      "desktop_sources": [
+        {
+          "path": "source/host/src/extensions/forever_box/disk_pressure_guard.rs",
+          "blob_sha": "611736d4f753b65264d93a6a3f1cbba38465e0b1"
+        },
+        {
+          "path": "source/host/src/extensions/forever_box/disk_pressure.rs",
+          "blob_sha": "46c0ed1d24a497e62aff51ac55d1e546bae86d4c"
+        }
+      ],
+      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "responsibility": "Classify executor storage pressure with hysteresis, preserve durable pressure reminder episodes across process death, and surface pressure from the canonical execution boundary without duplicate warnings or unsafe retries.",
+      "source_owner": "Desktop ForeverBox disk-pressure guard/watch",
+      "visible_effect": "Low-storage execution environments are detected and pressure reminders are de-duplicated per episode.",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "source/host/src/extensions/forever_box/disk_pressure_guard.rs",
+        "source/host/src/extensions/forever_box/disk_pressure.rs",
+        "source/host/src/runner/remote_routed_tools.rs",
+        "source/host/src/remote_execution.rs"
+      ],
+      "android_owner": "Rust Host pressure classifier/reminder plus the authorized execution boundary that owns the pressured resource",
+      "platform_delta": "Android must not poll Desktop /workspace or recreate a desktop ForeverBox locally. Pure classifier/reminder state remains Rust; remote executor pressure must arrive through Authorized Remote Runner.",
+      "implementation_status": "mapped",
+      "production_wiring": "Classifier/reminder modules exist; actual Android/Remote Runner pressure signal wiring is still open.",
+      "unit_test": "Rust hysteresis/aggregation/reminder tests; exact-head CI pending",
+      "contract_test": "required: pressure report must not create a second canonical run owner",
+      "integration_test": "required: soft/hard/recovery from actual execution boundary",
+      "packaged_test": "required",
+      "device_test": "required",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Do not promote until real pressure transport and same-head CI/package/device evidence succeed."
     }
   ],
   "traceability": {
