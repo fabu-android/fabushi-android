@@ -62,6 +62,10 @@ pub struct SubagentSessionSnapshot {
     #[serde(default)]
     pub recent_activity: Vec<String>,
     pub transcript_path: Option<String>,
+    #[serde(default)]
+    pub turn_checkpoint_attempt: Option<usize>,
+    #[serde(default)]
+    pub turn_checkpoint_emitted_chunks: Option<usize>,
     pub computer_use_usage: Option<ComputerUseUsageSnapshot>,
     #[serde(default)]
     pub computer_use_action_counts: BTreeMap<String, u64>,

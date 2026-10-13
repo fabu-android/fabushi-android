@@ -1,6 +1,6 @@
 use super::{
     AndroidRoutedToolBridge, DurableSubagentOwner, ProductionTurnAgentBuildBindings,
-    ProductionTurnAgentOwner,
+    ProductionTurnAgentLifecycleBindings, ProductionTurnAgentOwner,
     ProductionTurnAgentStaticConfig, ProductionTurnEvent, ProductionTurnInput,
     ProductionTurnPrivacyMode, DurableSubagentRecord, SubagentLaunch, SubagentRunOutcome,
     SubagentSessionSnapshot, SubagentToolBridge, SubagentToolContext, SAND_AGENT_TOKEN_LIMIT,
@@ -284,7 +284,55 @@ pub fn spawn_generated_subagent(
                     summarization,
                 );
 
-                let mut turn = ProductionTurnAgentOwner::new(provider).with_build_bindings(build);
+                let checkpoint_owner = Arc::clone(&owner);
+                let checkpoint_subagent_id = subagent_id.clone();
+                let checkpoint_account_fence = account_fence.clone();
+                let lifecycle = ProductionTurnAgentLifecycleBindings::new(
+                    account_fence.clone(),
+                    subagent_id.clone(),
+                    subagent_id.clone(),
+                )
+                .with_checkpoint_persist(Arc::new(move |attempt, emitted_chunks| {
+                    let mut runtime = checkpoint_owner
+                        .lock()
+                        .map_err(|_| "subagent owner lock poisoned".to_string())?;
+                    let mut snapshot = runtime
+                        .get(&checkpoint_subagent_id)
+                        .map(|record| record.snapshot.clone())
+                        .ok_or_else(|| "generated subagent disappeared before checkpoint persistence".to_string())?;
+                    snapshot.turn_checkpoint_attempt = Some(attempt);
+                    snapshot.turn_checkpoint_emitted_chunks = Some(emitted_chunks);
+                    let accepted = runtime.update_snapshot(
+                        &checkpoint_subagent_id,
+                        &checkpoint_account_fence,
+                        callback_epoch,
+                        snapshot,
+                        now_ms(),
+                    )?;
+                    if !accepted {
+                        return Err("generated subagent checkpoint was fenced as stale".into());
+                    }
+                    Ok(())
+                }));
+
+                let mut turn = match ProductionTurnAgentOwner::new(provider)
+                    .with_build_bindings(build)
+                    .with_lifecycle_bindings(lifecycle)
+                {
+                    Ok(turn) => turn,
+                    Err(error) => {
+                        settle_and_publish(
+                            &owner,
+                            &events,
+                            &completion_wake_sink,
+                            &subagent_id,
+                            &account_fence,
+                            callback_epoch,
+                            SubagentRunOutcome::Failed(error.message),
+                        );
+                        return;
+                    }
+                };
                 let mut output = String::new();
                 let result = turn.run_with_event_sink(
                     ProductionTurnInput {
