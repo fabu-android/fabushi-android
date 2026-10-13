@@ -54,6 +54,13 @@ pub enum AccountSessionMutation {
     Clear,
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub struct AccountRefusalRevocation {
+    pub status: Value,
+    pub mutation: AccountSessionMutation,
+    pub remote_revoke_error: Option<String>,
+}
+
 impl AccountSessionMutation {
     pub fn as_private_projection(&self) -> Value {
         match self {
@@ -684,6 +691,38 @@ impl AndroidAccountService {
             }
         }
         Ok((json!({"loggedIn":false,"user":Value::Null}), AccountSessionMutation::Clear))
+    }
+
+    pub fn revoke_for_account_refusal(&mut self) -> AccountRefusalRevocation {
+        self.revoke_for_account_refusal_with(|service, session| {
+            let Some(refresh_token) = session.refresh_token.as_deref() else { return Ok(()); };
+            service.request_json(
+                "/api/auth/logout",
+                "POST",
+                Some(json!({"refreshToken":refresh_token,"deviceId":session.device_id})),
+                Some(&session.access_token),
+            ).map(|_| ())
+        })
+    }
+
+    fn revoke_for_account_refusal_with<F>(&mut self, revoke: F) -> AccountRefusalRevocation
+    where F: FnOnce(&mut Self, &FabushiAccountSession) -> Result<(), String> {
+        let rejected = self.session.take();
+        self.browser_attempt = None;
+        let mut errors = Vec::new();
+        if let Err(error) = self.persist_browser_attempt(None) {
+            errors.push(format!("failed to clear rejected browser attempt: {error}"));
+        }
+        if let Some(session) = rejected.as_ref() {
+            if let Err(error) = revoke(self, session) {
+                errors.push(format!("remote credential revocation was not confirmed: {error}"));
+            }
+        }
+        AccountRefusalRevocation {
+            status: json!({"loggedIn":false,"user":Value::Null}),
+            mutation: AccountSessionMutation::Clear,
+            remote_revoke_error: (!errors.is_empty()).then(|| errors.join("; ")),
+        }
     }
 
     fn refresh_if_needed(
@@ -1534,4 +1573,29 @@ mod tests {
         let service = AndroidAccountService::new("device-1", Some(&invalid)).unwrap();
         assert!(service.session.is_none());
     }
+    #[test]
+    fn account_refusal_revocation_clears_local_truth_when_remote_revoke_fails() {
+        let raw = durable_session().to_string();
+        let mut service = AndroidAccountService::new("device-1", Some(&raw)).unwrap();
+        assert!(service.session_fence().is_some());
+        let result = service.revoke_for_account_refusal_with(|_, session| {
+            assert_eq!(session.device_id, "device-1");
+            Err("network unavailable".into())
+        });
+        assert!(service.session_fence().is_none());
+        assert_eq!(result.mutation, AccountSessionMutation::Clear);
+        assert_eq!(result.status, json!({"loggedIn":false,"user":Value::Null}));
+        assert!(result.remote_revoke_error.as_deref().unwrap().contains("not confirmed"));
+    }
+
+    #[test]
+    fn account_refusal_revocation_reports_clean_remote_settlement() {
+        let raw = durable_session().to_string();
+        let mut service = AndroidAccountService::new("device-1", Some(&raw)).unwrap();
+        let result = service.revoke_for_account_refusal_with(|_, _| Ok(()));
+        assert!(service.session_fence().is_none());
+        assert_eq!(result.mutation, AccountSessionMutation::Clear);
+        assert!(result.remote_revoke_error.is_none());
+    }
+
 }

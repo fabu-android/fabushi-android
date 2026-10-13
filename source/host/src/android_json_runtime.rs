@@ -1113,17 +1113,23 @@ impl AndroidJsonHost {
             ) {
                 Ok(true) => {}
                 Ok(false) => {
-                    account.clear_local_session();
+                    let revocation = account.revoke_for_account_refusal();
                     account_binding_refusal = Some(
                         "Existing Android durable data is bound to a different account environment."
                             .to_string(),
                     );
+                    if let Some(error) = revocation.remote_revoke_error {
+                        account_binding_refusal = account_binding_refusal.map(|message| format!("{message}; {error}"));
+                    }
                 }
                 Err(error) => {
-                    account.clear_local_session();
+                    let revocation = account.revoke_for_account_refusal();
                     account_binding_refusal = Some(format!(
                         "Android account environment binding is invalid: {error}"
                     ));
+                    if let Some(revoke_error) = revocation.remote_revoke_error {
+                        account_binding_refusal = account_binding_refusal.map(|message| format!("{message}; {revoke_error}"));
+                    }
                 }
             }
         }
@@ -6892,16 +6898,22 @@ impl AndroidJsonHost {
                 Ok(())
             }
             Ok(false) => {
-                self.account.clear_local_session();
-                let message =
+                let revocation = self.account.revoke_for_account_refusal();
+                let mut message =
                     "Existing Android durable data belongs to another account environment."
                         .to_string();
+                if let Some(error) = revocation.remote_revoke_error {
+                    message = format!("{message}; {error}");
+                }
                 self.account_binding_refusal = Some(message.clone());
                 Err(message)
             }
             Err(error) => {
-                self.account.clear_local_session();
-                let message = format!("Android account environment binding failed: {error}");
+                let revocation = self.account.revoke_for_account_refusal();
+                let mut message = format!("Android account environment binding failed: {error}");
+                if let Some(revoke_error) = revocation.remote_revoke_error {
+                    message = format!("{message}; {revoke_error}");
+                }
                 self.account_binding_refusal = Some(message.clone());
                 Err(message)
             }
