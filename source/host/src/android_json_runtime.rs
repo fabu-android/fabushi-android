@@ -78,6 +78,7 @@ use crate::extensions::telemetry::analytics_service::{
 use crate::extensions::telemetry::host_tracing::{
     init_production_host_tracing, HostTracing,
 };
+use crate::extensions::telemetry::pressure_cpu_profiler::AndroidPressureCpuProfiler;
 use crate::extensions::telemetry::automation_fire_telemetry::{
     automation_run_telemetry, AutomationRunReport,
 };
@@ -186,11 +187,14 @@ struct AndroidEventLoopTelemetryRuntime {
 }
 
 impl AndroidEventLoopTelemetryRuntime {
-    fn start(spool: Arc<Mutex<AndroidStructuredLogSpool>>) -> Self {
+    fn start(
+        spool: Arc<Mutex<AndroidStructuredLogSpool>>,
+        pressure_profiler: Arc<Mutex<AndroidPressureCpuProfiler>>,
+    ) -> Self {
         let (stop_tx, stop_rx) = mpsc::channel();
         let worker = thread::Builder::new()
             .name("fabushi-android-host-event-loop-telemetry".into())
-            .spawn(move || run_android_event_loop_sampler(spool, stop_rx))
+            .spawn(move || run_android_event_loop_sampler(spool, pressure_profiler, stop_rx))
             .ok();
         Self { stop: stop_tx, worker }
     }
@@ -207,6 +211,7 @@ impl Drop for AndroidEventLoopTelemetryRuntime {
 
 fn run_android_event_loop_sampler(
     spool: Arc<Mutex<AndroidStructuredLogSpool>>,
+    pressure_profiler: Arc<Mutex<AndroidPressureCpuProfiler>>,
     stop: mpsc::Receiver<()>,
 ) {
     let resolution = Duration::from_millis(ANDROID_EVENT_LOOP_RESOLUTION_MS);
@@ -225,6 +230,39 @@ fn run_android_event_loop_sampler(
         }
 
         let now = Instant::now();
+        if let Ok(mut profiler) = pressure_profiler.lock() {
+            match profiler.on_tick(now_ms()) {
+                Ok(Some(path)) => {
+                    let artifact_name = path
+                        .file_name()
+                        .and_then(|value| value.to_str())
+                        .unwrap_or("android-pressure-profile")
+                        .to_string();
+                    if let Ok(mut spool) = spool.lock() {
+                        let _ = spool.record(
+                            "info",
+                            "sand.host.pressure_profile",
+                            BTreeMap::from([
+                                ("artifact".into(), artifact_name),
+                                ("kind".into(), "android-process-pressure-snapshot".into()),
+                            ]),
+                            now_ms(),
+                        );
+                    }
+                }
+                Ok(None) => {}
+                Err(error) => {
+                    if let Ok(mut spool) = spool.lock() {
+                        let _ = spool.record(
+                            "warn",
+                            "sand.host.pressure_profile_error",
+                            BTreeMap::from([("error_class".into(), error.kind().to_string())]),
+                            now_ms(),
+                        );
+                    }
+                }
+            }
+        }
         delays_ms.push(now.saturating_duration_since(next_tick).as_secs_f64() * 1_000.0);
         next_tick += resolution;
         if next_tick <= now {
@@ -251,6 +289,11 @@ fn run_android_event_loop_sampler(
         let pressure = p95_ms >= ANDROID_EVENT_LOOP_PRESSURE_P95_MS;
         let heartbeat = ANDROID_EVENT_LOOP_HEARTBEAT_WINDOWS != 0
             && window_index % ANDROID_EVENT_LOOP_HEARTBEAT_WINDOWS == 0;
+        if pressure {
+            if let Ok(mut profiler) = pressure_profiler.lock() {
+                profiler.on_pressure(now_ms());
+            }
+        }
         if pressure || heartbeat {
             let trigger = if pressure { "pressure" } else { "heartbeat" };
             let level = if pressure { "warn" } else { "info" };
@@ -1848,8 +1891,19 @@ impl AndroidJsonHost {
             }
         }
         let structured_log_spool = Arc::new(Mutex::new(structured_log_spool));
-        let event_loop_telemetry =
-            AndroidEventLoopTelemetryRuntime::start(Arc::clone(&structured_log_spool));
+        let pressure_cpu_profiler = Arc::new(Mutex::new(
+            AndroidPressureCpuProfiler::new(
+                app_data_dir.join("telemetry").join("pressure-profiles"),
+                Arc::clone(&experiments),
+            )
+            .unwrap_or_else(|error| {
+                panic!("failed to initialize Android pressure profiler: {error}")
+            }),
+        ));
+        let event_loop_telemetry = AndroidEventLoopTelemetryRuntime::start(
+            Arc::clone(&structured_log_spool),
+            pressure_cpu_profiler,
+        );
         let host_event_failure_spool = Arc::clone(&structured_log_spool);
         let host_event_bus = HostEventBus::with_failure_reporter(Arc::new(move |failure| {
             let projection = host_event_bus_telemetry(failure);
