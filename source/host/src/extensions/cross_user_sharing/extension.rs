@@ -54,6 +54,17 @@ impl CrossUserSharingExtension {
         self.service.stop();
     }
 
+    /// Android process/account lifecycle fence.
+    ///
+    /// Desktop can keep the process-scoped sharing extension alive while its account owner
+    /// changes. Android process death and account switching require a stronger boundary:
+    /// no room, join-request, typing or self-auth projection from the old account may survive
+    /// until the next account explicitly reapplies feature policy and reconciles from relay.
+    pub fn fence_account_transition(&self) {
+        self.service.set_self_auth_id(None);
+        self.service.set_enabled(false);
+    }
+
     pub fn is_enabled(&self) -> bool {
         self.service.get_state().is_enabled
     }
@@ -112,6 +123,45 @@ mod tests {
         extension.apply_feature_policy(true).unwrap();
         assert!(!extension.is_enabled());
         assert!(extension.reason().is_some());
+    }
+
+    #[test]
+    fn account_transition_fence_clears_account_scoped_state_and_stops_owner() {
+        let service = service();
+        let env = BTreeMap::from([
+            ("SAND_DEV_XUSER_SHARING".into(), "1".into()),
+            ("SAND_PACKAGED".into(), "0".into()),
+        ]);
+        let extension = CrossUserSharingExtension::new(
+            Arc::clone(&service),
+            "https://dev.example.test",
+            &env,
+        );
+        extension.apply_feature_policy(true).unwrap();
+        service.set_self_auth_id(Some("auth-old".into()));
+        service.handle_event(&json!({
+            "kind":"room-join-request",
+            "request":{
+                "requestId":"join-old",
+                "roomId":"room-old",
+                "roomName":"Old room",
+                "requesterAuthId":"auth-peer",
+                "requesterName":"Peer",
+                "createdAtMs":1
+            }
+        })).unwrap();
+        assert!(service.is_started());
+        assert_eq!(service.get_state().pending_join_requests.len(), 1);
+
+        extension.fence_account_transition();
+
+        assert!(!service.is_started());
+        let fenced = service.get_state();
+        assert!(!fenced.is_enabled);
+        assert!(fenced.rooms.is_empty());
+        assert!(fenced.pending_join_requests.is_empty());
+        assert!(fenced.typing_users.is_empty());
+        assert!(fenced.self_auth_id.is_none());
     }
 
     #[test]
