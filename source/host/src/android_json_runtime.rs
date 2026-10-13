@@ -56,7 +56,7 @@ use crate::mcp_auth::{
 };
 use crate::extensions::action_audit::action_audit_backend::create_sand_audit_batch_sender;
 use crate::extensions::action_audit::action_audit_service::{
-    SandActionAuditor, ACTION_AUDIT_FLUSH_INTERVAL_MS,
+    AuditAction, AuditRecord, SandActionAuditor, ACTION_AUDIT_FLUSH_INTERVAL_MS,
 };
 use crate::extensions::telemetry::agent_error_telemetry::{
     agent_error_telemetry, AgentErrorReport,
@@ -9597,6 +9597,48 @@ impl AndroidJsonHost {
         Ok(())
     }
 
+    fn record_mcp_action_audit(
+        &self,
+        command: &Value,
+        server_id: &str,
+        tool_name: &str,
+        tool_call_id: &str,
+        started_at_ms: u64,
+        finished_at_ms: u64,
+        status: &str,
+    ) {
+        let Some(auditor) = self.action_audit.as_ref() else {
+            return;
+        };
+        auditor.record(AuditRecord {
+            occurred_at_ms: started_at_ms,
+            agent_id: command
+                .get("agentId")
+                .and_then(Value::as_str)
+                .filter(|value| !value.trim().is_empty())
+                .unwrap_or("mahayana-assistant")
+                .to_string(),
+            turn_id: command
+                .get("turnId")
+                .or_else(|| command.get("requestId"))
+                .and_then(Value::as_str)
+                .map(str::to_string),
+            box_id: command.get("boxId").and_then(Value::as_str).map(str::to_string),
+            action: AuditAction::McpToolCall {
+                tool_call_id: tool_call_id.to_string(),
+                server_identifier: server_id.to_string(),
+                server_name: Some(server_id.to_string()),
+                tool_name: tool_name.to_string(),
+                // Android executes catalog MCP tools through the authenticated Dashboard HTTP
+                // backend. Desktop forwards only stdio MCP to RecordSandAuditEvents, so this
+                // value intentionally keeps the Android call local-audit-only.
+                transport: "streamable_http".into(),
+                status: status.to_string(),
+                duration_ms: finished_at_ms.saturating_sub(started_at_ms) as f64,
+            },
+        });
+    }
+
     fn mcp_routed_execute(
         &mut self,
         command: &Value,
@@ -9689,6 +9731,28 @@ impl AndroidJsonHost {
             command.get("agentId").and_then(Value::as_str),
         );
         let finished = now_ms();
+
+        let audit_status = match &execution {
+            Ok(McpToolExecutionBackendResult::Settled(result)) => {
+                if result.get("isError").and_then(Value::as_bool) == Some(true)
+                    || result.get("error").is_some()
+                {
+                    "error"
+                } else {
+                    "ok"
+                }
+            }
+            Ok(McpToolExecutionBackendResult::OutcomeUnknown { .. }) | Err(_) => "error",
+        };
+        self.record_mcp_action_audit(
+            command,
+            &server_id,
+            &tool_name,
+            &tool_call_id,
+            started,
+            finished,
+            audit_status,
+        );
 
         if self.current_turn_account_fence().as_deref() != Ok(account_fence.as_str()) {
             if self.capability_broker.assert_current(
