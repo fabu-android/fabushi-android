@@ -1,5 +1,6 @@
 pub mod content_search;
 pub mod cross_user_sharing;
+pub mod experiments;
 pub mod telemetry;
 pub mod session;
 pub mod webauthn_proxy;
