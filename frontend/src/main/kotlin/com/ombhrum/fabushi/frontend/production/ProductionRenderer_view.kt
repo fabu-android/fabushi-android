@@ -1177,6 +1177,7 @@ internal fun ProductionRenderer(
                         onSetMessagePinned = messagingModel::setMessagePinned,
                         onSetReaction = messagingModel::setReaction,
                         onForwardMessage = messagingModel::forwardMessage,
+                        onSearchForwardRecipients = messagingModel::searchForwardRecipients,
                         onStartTyping = messagingModel::startTyping,
                         onStopTyping = messagingModel::stopTyping,
                         onSetPinned = messagingModel::setPinned,
