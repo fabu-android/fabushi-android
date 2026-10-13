@@ -242,3 +242,85 @@ pub fn pending_wake_telemetry(report: &PendingWakeReport) -> HostTelemetryProjec
         metadata,
     }
 }
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn watchdog_late_settle_is_informational_but_stall_is_warning() {
+        let base = QueueWatchdogReport {
+            conversation_id: "agent-1".into(),
+            stage: "late_settle".into(),
+            active_lane: Some("user".into()),
+            active_source: Some("composer".into()),
+            active_runtime_ms: 12.6,
+            waiting_user_age_ms: Some(3.4),
+            interrupted: Some(false),
+        };
+        let settled = queue_watchdog_telemetry(&base);
+        assert_eq!(settled.level, Some("info"));
+        assert_eq!(settled.metadata.get("active_runtime_ms").map(String::as_str), Some("13"));
+        assert_eq!(settled.metadata.get("waiting_user_age_ms").map(String::as_str), Some("3"));
+
+        let mut stalled = base;
+        stalled.stage = "active_stall".into();
+        assert_eq!(queue_watchdog_telemetry(&stalled).level, Some("warn"));
+    }
+
+    #[test]
+    fn lost_ack_is_warning_and_preserves_bounded_optional_fields() {
+        let projection = ack_obligation_telemetry(&AckObligationReport {
+            conversation_id: "agent-2".into(),
+            outcome: "lost".into(),
+            age_ms: Some(9.6),
+            coalesced_count: Some(2),
+            redrive_attempts: Some(1),
+            time_to_first_visible_ack_ms: Some(12.2),
+            interrupt_to_replacement_ack_ms: None,
+            reason: Some("process_reopen".into()),
+        });
+        assert_eq!(projection.level, Some("warn"));
+        assert_eq!(projection.metadata.get("age_ms").map(String::as_str), Some("10"));
+        assert_eq!(projection.metadata.get("reason").map(String::as_str), Some("process_reopen"));
+        assert!(!projection.metadata.contains_key("interrupt_to_replacement_ack_ms"));
+    }
+
+    #[test]
+    fn pending_wake_failure_outcomes_are_warnings() {
+        for outcome in ["persist_failed", "rearm_failed", "pruned"] {
+            let projection = pending_wake_telemetry(&PendingWakeReport {
+                conversation_id: "agent-3".into(),
+                outcome: outcome.into(),
+                kind: Some("shell".into()),
+                work_id: Some("work-1".into()),
+                age_ms: None,
+                reason: None,
+                is_quiet_origin: Some(true),
+            });
+            assert_eq!(projection.level, Some("warn"), "{outcome}");
+            assert_eq!(projection.metadata.get("quiet_origin").map(String::as_str), Some("true"));
+        }
+    }
+
+    #[test]
+    fn send_dispatch_rounds_durations_and_omits_absent_tags() {
+        let projection = send_dispatch_telemetry(&SendDispatchReport {
+            conversation_id: "agent-4".into(),
+            dispatch_ms: Some(4.6),
+            host_dispatch_ms: 8.4,
+            skew: "none".into(),
+            skew_reason: None,
+            skew_bucket: None,
+            is_fork: false,
+            model_id: Some("model-a".into()),
+            trace_id: None,
+            span_id: None,
+        });
+        assert_eq!(projection.metadata.get("send_dispatch_ms").map(String::as_str), Some("5"));
+        assert_eq!(projection.metadata.get("send_dispatch_host_ms").map(String::as_str), Some("8"));
+        assert!(!projection.metadata.contains_key("trace_id"));
+        assert!(!projection.metadata.contains_key("span_id"));
+    }
+}
