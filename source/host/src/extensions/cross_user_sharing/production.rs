@@ -4,10 +4,11 @@ use base64::{
 };
 use std::collections::BTreeMap;
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use crate::mcp_auth::dashboard_mcp_auth_backend::SandMcpCredentialProvider;
 
+use super::android_sharing_manager::AndroidXuserSharingManager;
 use super::extension::CrossUserSharingExtension;
 use super::xuser_departure_obligations::{SandXuserDepartureObligations, XuserDepartureRelay};
 use super::xuser_pending_departure_store::SandXuserPendingDepartureStore;
@@ -16,7 +17,7 @@ use super::xuser_relay::{
     SandXuserRelayClient, UreqXuserRelayTransport, XuserRelayDriver, XuserRelayRuntime,
     XuserRelayTransport,
 };
-use super::xuser_sharing_service::SandXuserSharingService;
+use super::xuser_sharing_service::{SandXuserSharingService, XuserSharingManager};
 
 /// Build the Android shipping relay without creating a second account/token owner.
 ///
@@ -80,6 +81,7 @@ pub struct ProductionCrossUserCore {
     pub relay_driver: Arc<XuserRelayDriver>,
     pub extension: Arc<CrossUserSharingExtension>,
     pub departures: SandXuserDepartureObligations,
+    manager: Mutex<Option<Arc<AndroidXuserSharingManager>>>,
 }
 
 
@@ -92,6 +94,19 @@ impl ProductionCrossUserCore {
         let subject = jwt_subject_from_access_token(&token);
         self.service.set_self_auth_id(subject.clone());
         Ok(subject)
+    }
+
+    pub fn bind_manager(&self, manager: Arc<AndroidXuserSharingManager>) {
+        let service_manager: Arc<dyn XuserSharingManager> = manager.clone();
+        self.service.bind_manager(service_manager);
+        *self.manager.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(manager);
+    }
+
+    pub fn canonical_room_manager_bound(&self) -> bool {
+        self.manager
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .is_some()
     }
 
     pub fn sharing_state(&self) -> super::xuser_sharing_service::SandSharingState {
@@ -111,9 +126,18 @@ impl ProductionCrossUserCore {
     /// Installation-local experiment overrides intentionally survive account switches, so clearing
     /// experiment network state alone is insufficient. The sharing service must be disabled and
     /// its previous self identity cleared before a new account can ever re-enable the relay.
-    pub fn fence_account_transition(&self) {
-        self.service.set_enabled(false);
-        self.service.set_self_auth_id(None);
+    pub fn fence_account_transition(&self) -> Result<(), String> {
+        if let Some(manager) = self
+            .manager
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .as_ref()
+            .cloned()
+        {
+            manager.fence_account_transition()?;
+        }
+        self.extension.fence_account_transition();
+        Ok(())
     }
 
     pub fn prepare_for_upgrade(&self) {
@@ -169,6 +193,7 @@ pub fn build_xuser_core(
         relay_driver,
         extension,
         departures,
+        manager: Mutex::new(None),
     };
     core.refresh_self_auth_id()?;
     Ok(core)
