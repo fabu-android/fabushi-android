@@ -150,7 +150,7 @@ use crate::runner::{
     SubagentRunOutcome, SubagentSteerReview, SubagentTaskReviewCallback,
     SubagentSteerReviewCallback, SubagentToolBridge, SubagentToolContext,
     build_parent_subagent_routed_tools, spawn_generated_subagent,
-    with_agent_management_tools, with_agent_management_tools_and_transcript,
+    with_agent_management_tools_and_transcript,
     with_send_message_tools, with_multitask_todo_tools,
     with_local_file_tools, with_remote_routed_tools, with_web_routed_tools,
     AgentTurnInterruptionRegistry, LocalApprovalRegistry, RemoteApprovalRegistry, RemoteDispatchBinding,
