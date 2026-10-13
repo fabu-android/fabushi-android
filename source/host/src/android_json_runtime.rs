@@ -4742,6 +4742,11 @@ impl AndroidJsonHost {
             .ok_or("quiescing is required")?;
         self.turn_upgrade_quiescing
             .store(quiescing, Ordering::Release);
+        if quiescing {
+            if let Some(core) = self.cross_user_core.as_ref() {
+                core.prepare_for_upgrade();
+            }
+        }
         Ok(json!({"quiescing":quiescing}))
     }
 
