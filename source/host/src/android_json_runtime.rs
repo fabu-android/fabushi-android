@@ -30,6 +30,9 @@ use crate::host_secret_store::get_or_create_host_machine_id;
 use crate::onepassword_provisioning::{DurableOnePasswordProvisioningOwner, DurableProvisioningPhase};
 use crate::human_call_runtime::HumanCallRuntime;
 use crate::human_remote_outbound::DurableHumanRemoteOutboundOwner;
+use crate::human_remote_resource_outbound::{
+    DurableHumanRemoteResourceOutboundOwner, HumanRemoteResourcePhase,
+};
 use crate::env_descriptor_account_binding::EnvDescriptorAccountBinding;
 use crate::host_runner_composition::AuthenticatedRemoteHostRunner;
 use crate::messaging_service::AndroidMessagingService;
@@ -1055,6 +1058,7 @@ pub struct AndroidJsonHost {
     memory: AndroidMemoryOwner,
     send_acknowledgements: Arc<Mutex<DurableSendAcknowledgementOwner>>,
     human_remote_outbound: Arc<Mutex<DurableHumanRemoteOutboundOwner>>,
+    human_remote_resources: Arc<Mutex<DurableHumanRemoteResourceOutboundOwner>>,
     composer_drafts: Arc<Mutex<DurableComposerDraftOwner>>,
     agent_attachments: Arc<Mutex<DurableAgentAttachmentOwner>>,
     messaging: Arc<Mutex<AndroidMessagingService>>,
@@ -1438,6 +1442,14 @@ impl AndroidJsonHost {
                     panic!("failed to open durable Android Human remote outbound journal: {error}")
                 }),
         ));
+        let human_remote_resources = Arc::new(Mutex::new(
+            DurableHumanRemoteResourceOutboundOwner::open(
+                app_data_dir.join("human-remote-resource-outbound.json"),
+            )
+            .unwrap_or_else(|error| {
+                panic!("failed to open durable Android Human remote resource journal: {error}")
+            }),
+        ));
         let composer_drafts = Arc::new(Mutex::new(
             DurableComposerDraftOwner::open(app_data_dir.join("composer-drafts.json"), now_ms())
                 .unwrap_or_else(|error| panic!("failed to open durable Android composer draft owner: {error}")),
@@ -1745,6 +1757,7 @@ impl AndroidJsonHost {
             memory: AndroidMemoryOwner::new(app_data_dir.join("memory")),
             send_acknowledgements,
             human_remote_outbound,
+            human_remote_resources,
             composer_drafts,
             agent_attachments,
             messaging,
@@ -4750,12 +4763,21 @@ impl AndroidJsonHost {
         let peer_actor_id = required_string(&intent, "peerActorId")?.to_string();
         let target_user_id = required_string(&intent, "targetUserId")?.to_string();
         let client_request_id = required_string(&intent, "clientRequestId")?.to_string();
-        let text = required_string(&intent, "text")?.to_string();
+        let text = intent
+            .get("text")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string();
         let reply_to_message_id = intent
             .get("replyToMessageId")
             .and_then(Value::as_str)
             .map(str::to_string);
         let account_slot = self.account.account_storage_scope();
+        let local_attachments = intent
+            .get("attachments")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
 
         if let Some((_, server_message_id)) = self
             .messaging
@@ -4781,11 +4803,156 @@ impl AndroidJsonHost {
             return Ok(None);
         }
 
+        // Upload canonical local blobs before message dispatch. Every upload is a separate durable
+        // side effect: once marked Dispatching, a process death or transport ambiguity becomes
+        // OutcomeUnknown and automatic re-upload is forbidden.
+        let mut uploaded_resources = Vec::with_capacity(local_attachments.len());
+        let mut resource_account_mutation = None;
+        for attachment in &local_attachments {
+            let blob_id = required_string(attachment, "blobId")?.to_string();
+            let file_name = required_string(attachment, "fileName")?.to_string();
+            let expected_size = required_u64(attachment, "sizeBytes")?;
+            let record = self
+                .human_remote_resources
+                .lock()
+                .map_err(|_| "Human remote resource journal lock poisoned".to_string())?
+                .begin(
+                    account_slot.as_deref(),
+                    account_fence,
+                    actor_id,
+                    &client_request_id,
+                    &blob_id,
+                    &file_name,
+                    expected_size,
+                )?;
+
+            let resource = match record.phase {
+                HumanRemoteResourcePhase::Uploaded => record
+                    .resource
+                    .clone()
+                    .ok_or("uploaded Human resource journal omitted canonical resource")?,
+                HumanRemoteResourcePhase::Pending => {
+                    let (canonical_name, _mime_type, canonical_size, bytes) = self
+                        .messaging
+                        .lock()
+                        .map_err(|_| {
+                            "canonical Android messaging owner lock poisoned".to_string()
+                        })?
+                        .read_owned_blob_for_remote_transport(actor_id, &blob_id)?;
+                    if canonical_name != file_name || canonical_size != expected_size {
+                        return Err(
+                            "Human attachment intent no longer matches canonical blob metadata"
+                                .into(),
+                        );
+                    }
+                    let dispatching = self
+                        .human_remote_resources
+                        .lock()
+                        .map_err(|_| "Human remote resource journal lock poisoned".to_string())?
+                        .mark_dispatching(&record)?;
+                    let upload = self.account.authenticated_device_upload_resource(
+                        "/api/social/message-resources",
+                        &canonical_name,
+                        &bytes,
+                    );
+                    let (remote, mutation) = match upload {
+                        Ok(result) => result,
+                        Err(error) => {
+                            self.human_remote_resources
+                                .lock()
+                                .map_err(|_| {
+                                    "Human remote resource journal lock poisoned".to_string()
+                                })?
+                                .mark_outcome_unknown(
+                                    &dispatching,
+                                    format!(
+                                        "Human attachment upload transport ended without a proven server outcome: {error}"
+                                    ),
+                                )?;
+                            return Err(format!(
+                                "Human attachment upload outcome is unknown and will not be retried automatically: {error}"
+                            ));
+                        }
+                    };
+                    if self.current_turn_account_fence()? != account_fence {
+                        self.human_remote_resources
+                            .lock()
+                            .map_err(|_| {
+                                "Human remote resource journal lock poisoned".to_string()
+                            })?
+                            .mark_outcome_unknown(
+                                &dispatching,
+                                "account changed while Human attachment upload was in flight",
+                            )?;
+                        return Err(
+                            "Human attachment upload became stale after the account changed".into(),
+                        );
+                    }
+                    if remote.get("success").and_then(Value::as_bool) != Some(true) {
+                        let detail = remote
+                            .get("error")
+                            .and_then(Value::as_str)
+                            .unwrap_or("backend rejected the Human attachment upload");
+                        self.human_remote_resources
+                            .lock()
+                            .map_err(|_| {
+                                "Human remote resource journal lock poisoned".to_string()
+                            })?
+                            .mark_failed(&dispatching, detail.to_string())?;
+                        return Err(format!("Fabushi Human attachment upload failed: {detail}"));
+                    }
+                    let resource = remote
+                        .get("resource")
+                        .cloned()
+                        .ok_or("Fabushi Human attachment upload response omitted resource")?;
+                    let uploaded = self
+                        .human_remote_resources
+                        .lock()
+                        .map_err(|_| "Human remote resource journal lock poisoned".to_string())?
+                        .mark_uploaded(&dispatching, resource)?;
+                    resource_account_mutation = mutation.or(resource_account_mutation);
+                    uploaded
+                        .resource
+                        .ok_or("uploaded Human resource journal omitted canonical resource")?
+                }
+                HumanRemoteResourcePhase::Dispatching => {
+                    return Err(
+                        "Human attachment upload is already dispatching; duplicate upload is fenced"
+                            .into(),
+                    );
+                }
+                HumanRemoteResourcePhase::Failed => {
+                    return Err(
+                        "Human attachment upload has a proven failed outcome; explicit retry with a fresh clientRequestId is required"
+                            .into(),
+                    );
+                }
+                HumanRemoteResourcePhase::OutcomeUnknown => {
+                    return Err(
+                        "Human attachment upload outcome is unknown; automatic re-upload is forbidden"
+                            .into(),
+                    );
+                }
+            };
+            let resource_id = resource
+                .get("id")
+                .or_else(|| resource.get("resourceId"))
+                .and_then(Value::as_str)
+                .filter(|value| !value.trim().is_empty())
+                .ok_or("Fabushi Human uploaded resource omitted resource id")?
+                .to_string();
+            uploaded_resources.push(resource_id);
+        }
+
+        if text.is_empty() && uploaded_resources.is_empty() {
+            return Err("Human remote message requires text or an uploaded attachment".into());
+        }
+
         let record = self
             .human_remote_outbound
             .lock()
             .map_err(|_| "Human remote outbound journal lock poisoned".to_string())?
-            .begin(
+            .begin_with_attachments(
                 account_slot.as_deref(),
                 account_fence,
                 actor_id,
@@ -4793,6 +4960,7 @@ impl AndroidJsonHost {
                 &client_request_id,
                 &text,
                 reply_to_message_id.as_deref(),
+                &uploaded_resources,
             )?;
 
         match record.phase {
@@ -4848,7 +5016,7 @@ impl AndroidJsonHost {
                             &client_request_id,
                             &server_message_id,
                         )?;
-                    return Ok(mutation);
+                    return Ok(mutation.or(resource_account_mutation));
                 }
                 return Err(
                     "Human remote message outcome remains unknown; server reconciliation found no matching echo, so automatic resend is forbidden"
@@ -4863,12 +5031,16 @@ impl AndroidJsonHost {
             .map_err(|_| "Human remote outbound journal lock poisoned".to_string())?
             .mark_dispatching(&record)?;
 
+        let attachments = uploaded_resources
+            .iter()
+            .map(|resource_id| json!({"resourceId":resource_id}))
+            .collect::<Vec<_>>();
         let body = json!({
             "targetUserId":target_user_id,
             "text":text,
             "clientRequestId":client_request_id,
             "replyToMessageId":reply_to_message_id,
-            "attachments":[],
+            "attachments":attachments,
         });
         let remote_result = self
             .account
@@ -4903,8 +5075,7 @@ impl AndroidJsonHost {
             .get("message")
             .cloned()
             .ok_or("Fabushi Human message send response omitted message")?;
-        let returned_client_request_id =
-            required_string(&message, "clientRequestId")?;
+        let returned_client_request_id = required_string(&message, "clientRequestId")?;
         if returned_client_request_id != client_request_id {
             self.human_remote_outbound
                 .lock()
@@ -4915,10 +5086,7 @@ impl AndroidJsonHost {
                 )?;
             return Err("Fabushi Human message send returned a mismatched clientRequestId".into());
         }
-        let server_message_id = remote_human_identity_text(
-            message.get("id"),
-            "message id",
-        )?;
+        let server_message_id = remote_human_identity_text(message.get("id"), "message id")?;
         let accepted = self
             .human_remote_outbound
             .lock()
@@ -4939,7 +5107,7 @@ impl AndroidJsonHost {
                 &accepted.client_request_id,
                 &server_message_id,
             )?;
-        Ok(mutation)
+        Ok(mutation.or(resource_account_mutation))
     }
 
     fn messaging_blob_read(&mut self, params: &Value) -> Result<Value, String> {
@@ -12209,6 +12377,7 @@ fn has_existing_account_durable_data(app_data_dir: &std::path::Path) -> bool {
     [
         "messaging-repository.json",
         "human-remote-outbound.json",
+        "human-remote-resource-outbound.json",
         "transcript.json",
         "agents.json",
         "composer-drafts.json",
