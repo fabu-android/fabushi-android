@@ -2814,6 +2814,8 @@ impl AndroidJsonHost {
             "feature.settings.timeZone.set" => self.set_time_zone_settings(params),
             "feature.settings.agentDefaultModel" => self.agent_default_model_setting(),
             "feature.settings.agentDefaultModel.set" => self.set_agent_default_model_setting(params),
+            "feature.settings.computerUseModel" => self.computer_use_model_setting(),
+            "feature.settings.computerUseModel.set" => self.set_computer_use_model_setting(params),
             "feature.settings.inferenceProvider" => self.inference_provider_setting(),
             "feature.settings.inferenceProvider.set" => self.set_inference_provider_setting(params),
             "feature.settings.inferenceRouterUsage" => self.inference_router_usage(),
@@ -4743,6 +4745,44 @@ impl AndroidJsonHost {
             .map_err(|_| "canonical Android user settings lock poisoned".to_string())?
             .set_agent_default_model(&account_scope, validated.as_deref())
             .map_err(|error| format!("failed to persist Android default model: {error}"))?;
+        Ok(json!({
+            "accountScope": account_scope,
+            "model": saved,
+        }))
+    }
+
+    fn computer_use_model_setting(&self) -> Result<Value, String> {
+        let account_scope = self.current_sidebar_account_scope()?;
+        let model = self
+            .user_settings
+            .lock()
+            .map_err(|_| "canonical Android user settings lock poisoned".to_string())?
+            .computer_use_model(&account_scope)
+            .map(str::to_string);
+        Ok(json!({
+            "accountScope": account_scope,
+            "model": model,
+        }))
+    }
+
+    fn set_computer_use_model_setting(&mut self, params: &Value) -> Result<Value, String> {
+        let expected_scope = required_string(params, "expectedAccountScope")?;
+        let account_scope = self.current_sidebar_account_scope()?;
+        if expected_scope != account_scope {
+            return Err("computer use model account scope changed before mutation".into());
+        }
+        let requested = match params.get("model") {
+            None | Some(Value::Null) => None,
+            Some(Value::String(value)) => Some(value.as_str()),
+            Some(_) => return Err("computer use model must be a string or null".into()),
+        };
+        let validated = self.validate_available_model_selection(requested)?;
+        let saved = self
+            .user_settings
+            .lock()
+            .map_err(|_| "canonical Android user settings lock poisoned".to_string())?
+            .set_computer_use_model(&account_scope, validated.as_deref())
+            .map_err(|error| format!("failed to persist Android computer use model: {error}"))?;
         Ok(json!({
             "accountScope": account_scope,
             "model": saved,
@@ -15610,6 +15650,49 @@ mod default_model_settings_dispatch_tests {
             .contains("account scope changed"));
         assert!(host
             .dispatch("feature.settings.agentDefaultModel", &json!({}))
+            .unwrap()["model"]
+            .is_null());
+    }
+}
+
+#[cfg(test)]
+mod computer_use_model_settings_dispatch_tests {
+    use super::*;
+
+    #[test]
+    fn computer_use_model_setting_is_account_scoped_and_fails_closed_without_catalog() {
+        let root = tempfile::tempdir().unwrap();
+        let mut host = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+        let scope = host.current_sidebar_account_scope().unwrap();
+        assert!(host
+            .dispatch(
+                "feature.settings.computerUseModel.set",
+                &json!({"expectedAccountScope":scope,"model":"not-in-catalog"}),
+            )
+            .unwrap_err()
+            .contains("available model catalog backend is unavailable"));
+        assert!(host
+            .dispatch("feature.settings.computerUseModel", &json!({}))
+            .unwrap()["model"]
+            .is_null());
+    }
+
+    #[test]
+    fn stale_computer_use_model_mutation_is_fenced_before_persistence() {
+        let root = tempfile::tempdir().unwrap();
+        let mut host = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+        assert!(host
+            .dispatch(
+                "feature.settings.computerUseModel.set",
+                &json!({
+                    "expectedAccountScope":"account-device:stale",
+                    "model":Value::Null
+                }),
+            )
+            .unwrap_err()
+            .contains("account scope changed"));
+        assert!(host
+            .dispatch("feature.settings.computerUseModel", &json!({}))
             .unwrap()["model"]
             .is_null());
     }
