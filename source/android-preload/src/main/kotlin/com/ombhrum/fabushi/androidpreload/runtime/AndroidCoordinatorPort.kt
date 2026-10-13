@@ -1075,6 +1075,14 @@ interface AndroidCoordinatorPort {
         error("Agent async tasks are unavailable on this Coordinator port")
 
     fun agentList(): JSONArray
+    fun agentChannels(agentId: String): JSONArray =
+        error("Agent channel projection is unavailable on this Coordinator port")
+    fun agentChannelConnect(agentId: String, platform: String, label: String, token: String): JSONObject =
+        error("Agent channel connection is unavailable on this Coordinator port")
+    fun agentChannelDisconnect(agentId: String, platform: String): JSONObject =
+        error("Agent channel disconnect is unavailable on this Coordinator port")
+    fun agentChannelsRefresh(agentId: String): JSONArray =
+        error("Agent channel reconciliation is unavailable on this Coordinator port")
     fun agentCreate(name: String, description: String): JSONObject
     fun agentCreateWithPersona(
         name: String,
