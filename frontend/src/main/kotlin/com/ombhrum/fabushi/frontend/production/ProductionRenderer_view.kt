@@ -386,6 +386,12 @@ internal fun ProductionRenderer(
                         onRefreshAccountPrivacyMode = model::refreshAccountPrivacyMode,
                         onRefreshAccountUsage = model::refreshAccountUsageSummary,
                         onCancelSandTrial = model::cancelSandTrial,
+                        onAccountUpgradeCta = { cta ->
+                            when (cta.kind) {
+                                "open-url" -> cta.url?.let(runtimePort::launchExternalUrl)
+                                "dashboard-action" -> model.performAccountUpgradeCta(cta)
+                            }
+                        },
                         onCheckUpdate = { updateModel.checkForUpdates(force = true) },
                         onInstallUpdate = updateModel::downloadAndInstall,
                         onOpenFeedback = {
