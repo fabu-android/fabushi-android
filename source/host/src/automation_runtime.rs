@@ -1,4 +1,5 @@
 use crate::automation_schedule::{compute_next_run_at, normalize_schedule};
+use crate::automation_trigger::{parse_stored_trigger, trigger_matches_event, trigger_schedule};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
@@ -23,6 +24,8 @@ pub struct AutomationSpec {
     pub name: String,
     pub prompt: String,
     pub schedule: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trigger: Option<Value>,
     #[serde(default)]
     pub agent_id: String,
     #[serde(default)]
@@ -233,7 +236,20 @@ impl AutomationRuntime {
     }
 
     pub fn upsert_spec(&mut self, mut spec: AutomationSpec, fallback_time_zone: Option<&str>) -> Result<(), String> {
-        spec.schedule = normalize_schedule(&spec.schedule);
+        spec.trigger = match spec.trigger.take() {
+            Some(trigger) => Some(
+                parse_stored_trigger(&trigger)
+                    .ok_or_else(|| "automation trigger is invalid".to_string())?,
+            ),
+            None => None,
+        };
+        spec.schedule = if let Some(trigger) = spec.trigger.as_ref() {
+            trigger_schedule(trigger)
+                .map(|value| normalize_schedule(&value))
+                .unwrap_or_default()
+        } else {
+            normalize_schedule(&spec.schedule)
+        };
         validate_spec(&spec)?;
         spec.next_run_at_ms = canonical_next_run_ms(&spec, fallback_time_zone)?;
         if let Some(existing) = self.state.specs.get(&spec.id) {
@@ -246,7 +262,13 @@ impl AutomationRuntime {
     pub fn refresh_next_runs(&mut self, fallback_time_zone: Option<&str>) -> Result<(), String> {
         let mut changed = false;
         for spec in self.state.specs.values_mut() {
-            let normalized = normalize_schedule(&spec.schedule);
+            let normalized = if let Some(trigger) = spec.trigger.as_ref() {
+                trigger_schedule(trigger)
+                    .map(|value| normalize_schedule(&value))
+                    .unwrap_or_default()
+            } else {
+                normalize_schedule(&spec.schedule)
+            };
             if normalized != spec.schedule { spec.schedule = normalized; changed = true; }
             validate_spec(spec)?;
             let next = canonical_next_run_ms(spec, fallback_time_zone)?;
@@ -529,6 +551,34 @@ impl AutomationRuntime {
                 && batch.automation_id == automation_id
                 && batch.occurrence_ids.iter().any(|value| value == occurrence_id)
         })
+    }
+
+    pub fn enqueue_matching_event_fire(
+        &mut self,
+        automation_id: &str,
+        account_fence: &str,
+        occurrence_id: &str,
+        event: Value,
+        platform_matched: bool,
+        admit_missing_subject: bool,
+        now_ms: u64,
+    ) -> Result<AutomationEventEnqueueOutcome, String> {
+        let spec = self
+            .state
+            .specs
+            .get(automation_id)
+            .ok_or("automation not found")?;
+        if spec.account_fence != account_fence {
+            return Err("automation account fence mismatch".into());
+        }
+        let trigger = spec
+            .trigger
+            .as_ref()
+            .ok_or("automation is not configured for external events")?;
+        if !trigger_matches_event(trigger, &event, platform_matched, admit_missing_subject) {
+            return Err("automation event does not match the configured trigger".into());
+        }
+        self.enqueue_event_fire(automation_id, account_fence, occurrence_id, event, now_ms)
     }
 
     pub fn enqueue_event_fire(
@@ -1077,7 +1127,7 @@ impl AutomationRuntime {
 }
 
 fn canonical_next_run_ms(spec: &AutomationSpec, fallback_time_zone: Option<&str>) -> Result<Option<u64>, String> {
-    if !spec.enabled { return Ok(None); }
+    if !spec.enabled || spec.schedule.trim().is_empty() { return Ok(None); }
     let anchor = spec.last_run_at_ms.unwrap_or(spec.created_at_ms);
     let next = compute_next_run_at(&spec.schedule, anchor as f64, fallback_time_zone)
         .ok_or_else(|| "automation schedule is invalid or has no next run".to_string())?;
@@ -1095,8 +1145,11 @@ fn validate_spec(spec: &AutomationSpec) -> Result<(), String> {
     if spec.prompt.trim().is_empty() || spec.prompt.len() > 100_000 {
         return Err("automation prompt is invalid".into());
     }
-    if spec.schedule.trim().is_empty() || spec.schedule.len() > 512 {
+    if spec.schedule.len() > 512 {
         return Err("automation schedule is invalid".into());
+    }
+    if spec.trigger.is_none() && spec.schedule.trim().is_empty() {
+        return Err("automation requires a schedule or event trigger".into());
     }
     if spec.agent_id.trim().is_empty() || spec.agent_id.len() > 160 {
         return Err("automation agent owner is required".into());
@@ -1124,6 +1177,7 @@ mod tests {
             name: "Daily brief".into(),
             prompt: "Summarize updates".into(),
             schedule: "0 8 * * *".into(),
+            trigger: None,
             agent_id: "agent-a".into(),
             trigger_description: "Every day at 8:00 AM".into(),
             enabled: true,
@@ -1469,6 +1523,62 @@ mod tests {
         assert_eq!(disabled.next_run_at_ms, None);
         let enabled = runtime.set_agent_workflow_enabled("acct-a", "agent-a", "daily-brief", true, Some("UTC")).unwrap();
         assert!(enabled.next_run_at_ms.is_some());
+    }
+
+    #[test]
+    fn event_trigger_matching_rejects_unrelated_or_schedule_only_fires() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("automation.json");
+        let mut runtime = AutomationRuntime::open(&path, 1).unwrap();
+
+        let mut scheduled = spec("acct-a");
+        runtime.upsert_spec(scheduled.clone(), Some("UTC")).unwrap();
+        assert!(runtime
+            .enqueue_matching_event_fire(
+                "daily-brief",
+                "acct-a",
+                "scheduled-occurrence",
+                json!({"source":"github","repo":"owner/repo","kind":"pr-opened"}),
+                false,
+                false,
+                1_000,
+            )
+            .unwrap_err()
+            .contains("not configured for external events"));
+
+        scheduled.id = "github-routine".into();
+        scheduled.schedule.clear();
+        scheduled.trigger = Some(json!({
+            "type":"github",
+            "repo":"owner/repo",
+            "events":["pr-opened"]
+        }));
+        runtime.upsert_spec(scheduled, Some("UTC")).unwrap();
+        assert!(runtime
+            .enqueue_matching_event_fire(
+                "github-routine",
+                "acct-a",
+                "wrong-repo",
+                json!({"source":"github","repo":"other/repo","kind":"pr-opened"}),
+                false,
+                false,
+                2_000,
+            )
+            .unwrap_err()
+            .contains("does not match"));
+        let accepted = runtime
+            .enqueue_matching_event_fire(
+                "github-routine",
+                "acct-a",
+                "matching-repo",
+                json!({"source":"github","repo":"owner/repo","kind":"pr-opened"}),
+                false,
+                false,
+                2_001,
+            )
+            .unwrap();
+        assert!(accepted.accepted);
+        assert_eq!(runtime.spec_for_account("github-routine", "acct-a").unwrap().next_run_at_ms, None);
     }
 
     #[test]
