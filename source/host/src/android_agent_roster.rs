@@ -705,6 +705,14 @@ impl AndroidAgentRoster {
         self.mutate_agent(id, |agent| agent.is_hidden_from_sidebar = is_hidden)
     }
 
+    pub fn set_notify_on_updates(
+        &mut self,
+        id: &str,
+        is_enabled: bool,
+    ) -> io::Result<AndroidAgentRecord> {
+        self.mutate_agent(id, |agent| agent.notify_on_updates_enabled = is_enabled)
+    }
+
     pub fn mark_activity(&mut self, id: &str, at: u64) -> io::Result<AndroidAgentRecord> {
         let current = self
             .get(id)
@@ -1303,6 +1311,7 @@ mod tests {
             .unwrap();
         assert_eq!(renamed.name, "Renamed");
         roster.set_hidden(&created.id, true).unwrap();
+        roster.set_notify_on_updates(&created.id, false).unwrap();
         roster.set_unread(&created.id, true).unwrap();
         roster
             .set_pinned_agents(std::slice::from_ref(&created.id))
@@ -1312,6 +1321,7 @@ mod tests {
         let row = reopened.list().into_iter().next().unwrap();
         assert_eq!(row.name, "Renamed");
         assert!(row.is_hidden_from_sidebar);
+        assert!(!row.notify_on_updates_enabled);
         assert!(row.has_unread);
         assert!(row.is_manually_unread);
         assert_eq!(row.unread_count, 1);
