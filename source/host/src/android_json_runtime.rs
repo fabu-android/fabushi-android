@@ -83,6 +83,9 @@ use crate::extensions::telemetry::host_tracing::{
     init_production_host_tracing, HostTracing,
 };
 use crate::extensions::telemetry::pressure_cpu_profiler::AndroidPressureCpuProfiler;
+use crate::extensions::telemetry::queue_telemetry_mappers::{
+    ack_obligation_telemetry, AckObligationReport,
+};
 use crate::extensions::telemetry::automation_fire_telemetry::{
     automation_run_telemetry, AutomationRunReport,
 };
@@ -12196,6 +12199,28 @@ impl AndroidJsonHost {
         Ok(())
     }
 
+    fn record_visible_ack_obligation_telemetry(
+        &mut self,
+        obligation: &crate::extensions::transcript::sand_ack_obligation_store::AckObligation,
+        outcome: &str,
+        reason: Option<&str>,
+        observed_at_ms: u64,
+    ) {
+        let age_ms = (observed_at_ms as f64 - obligation.created_at_ms).max(0.0);
+        self.record_host_telemetry_projection(ack_obligation_telemetry(
+            &AckObligationReport {
+                conversation_id: obligation.agent_id.clone(),
+                outcome: outcome.to_string(),
+                age_ms: Some(age_ms),
+                coalesced_count: Some(obligation.coalesced_count.round() as i64),
+                redrive_attempts: Some(obligation.redrive_attempts.round() as i64),
+                time_to_first_visible_ack_ms: None,
+                interrupt_to_replacement_ack_ms: None,
+                reason: reason.map(str::to_string),
+            },
+        ));
+    }
+
     fn drain_visible_ack_redrive_once(&mut self) -> Result<(), String> {
         let account_fence = self.current_turn_account_fence()?;
         let now = now_ms();
@@ -12219,10 +12244,18 @@ impl AndroidJsonHost {
             .get(&obligation.agent_id)
             .is_some();
         if !agent_exists {
-            let _ = self
+            let retired = self
                 .visible_ack_obligations
                 .prepare_redrive(&account_fence, &obligation.agent_id, false)
                 .map_err(|error| format!("failed to retire deleted-Agent acknowledgement obligation: {error}"))?;
+            if let AckRedrivePreparation::LostAgentDeleted(retired) = retired {
+                self.record_visible_ack_obligation_telemetry(
+                    &retired,
+                    "lost",
+                    Some("agent_deleted"),
+                    now,
+                );
+            }
             return Ok(());
         }
 
@@ -12238,8 +12271,27 @@ impl AndroidJsonHost {
             .visible_ack_obligations
             .prepare_redrive(&account_fence, &obligation.agent_id, true)
             .map_err(|error| format!("failed to prepare visible acknowledgement redrive: {error}"))?;
-        let AckRedrivePreparation::Ready(prepared) = prepared else {
-            return Ok(());
+        let prepared = match prepared {
+            AckRedrivePreparation::Ready(prepared) => prepared,
+            AckRedrivePreparation::LostMaxRedrives(lost) => {
+                self.record_visible_ack_obligation_telemetry(
+                    &lost,
+                    "lost",
+                    Some("max_redrives"),
+                    now,
+                );
+                return Ok(());
+            }
+            AckRedrivePreparation::LostAgentDeleted(lost) => {
+                self.record_visible_ack_obligation_telemetry(
+                    &lost,
+                    "lost",
+                    Some("agent_deleted"),
+                    now,
+                );
+                return Ok(());
+            }
+            AckRedrivePreparation::Missing => return Ok(()),
         };
         let command = build_ack_redrive_send_args(
             &obligation.agent_id,
@@ -12278,6 +12330,12 @@ impl AndroidJsonHost {
                 .schedule_after_idle(&account_fence, &obligation.agent_id, now);
             return Err(error);
         }
+        self.record_visible_ack_obligation_telemetry(
+            &prepared,
+            "redrive",
+            Some(trigger.as_str()),
+            now,
+        );
         Ok(())
     }
 
