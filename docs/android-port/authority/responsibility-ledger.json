@@ -1817,6 +1817,75 @@
       "notes": "Keep mapped/not-verified. This closes a real native Settings entry plus durable theme preference slice only; it does not claim the still-open Settings domains or packaged/device accessibility."
     },
     {
+      "responsibility_id": "SETTINGS-DEFAULT-MODEL-ANDROID-001",
+      "domain": "settings-agent-inference",
+      "desktop_sources": [
+        {
+          "path": "source/host/src/extensions/settings/settings_service.rs",
+          "blob_sha": "f34a4d90ac1bf5a3b8208cc4d573ea97c9f8da72",
+          "symbols": [
+            "get_agent_default_model",
+            "set_agent_default_model",
+            "apply_account_scope"
+          ]
+        }
+      ],
+      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "responsibility": "Persist the account-sensitive default Agent model outside Presentation, restore it after process death, clear/fence it across account changes, validate every saved/used model against the current authenticated model catalog, and apply it when a send has no explicit model selection.",
+      "source_owner": "Desktop SettingsService account-sensitive Agent default model setting",
+      "direct_callers": [
+        "Agent model selector",
+        "Agent send acknowledgement path"
+      ],
+      "downstream_dependencies": [
+        "authenticated model catalog",
+        "Host send acknowledgement journal",
+        "provider/inference routing"
+      ],
+      "state_owner": "Rust AndroidUserSettings keyed by canonical account storage scope; Compose/ViewModel only projects and requests mutations",
+      "persistent_state": [
+        "agent default model by account storage scope"
+      ],
+      "protocol_wire_contract": [
+        "feature.settings.agentDefaultModel",
+        "feature.settings.agentDefaultModel.set(expectedAccountScope, model)",
+        "send acknowledgement model fallback"
+      ],
+      "visible_effect": "The selected Agent model remains selected after Activity/process restart for the same account and becomes the default for later sends unless a send explicitly selects another available model.",
+      "failure_behavior": [
+        "stale-account mutation is rejected",
+        "unavailable model is rejected before persistence",
+        "persist failure does not advance canonical setting",
+        "send revalidates a restored default against the current catalog and fails closed if stale"
+      ],
+      "cancellation_behavior": "model-setting mutation is atomic and has no replayable external side effect; Presentation discards stale callbacks by account/model-catalog generation",
+      "retry_semantics": "user may explicitly retry a failed setting mutation; sends never auto-retry provider side effects because of model-setting failure",
+      "idempotency_semantics": "setting the same normalized model is idempotent; clear removes only the current account preference",
+      "process_death_recovery": "AndroidUserSettings atomically restores the account-scoped model; send resolves it from Host after restart",
+      "account_fencing": "mutation carries expectedAccountScope and Host compares it to the live canonical account storage scope; preferences are keyed per account",
+      "security_boundary": "model identifier is non-secret Host state; bearer/catalog credentials stay in account/backend owners and are not projected to Compose",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "source/host/src/android_user_settings.rs",
+        "source/host/src/android_json_runtime.rs",
+        "source/android-preload/src/main/kotlin/com/ombhrum/fabushi/androidpreload/runtime/AndroidCoordinatorPort.kt",
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/coordinator/AndroidCoordinatorRuntime.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/presentation/MobileBotViewModel.kt"
+      ],
+      "android_owner": "Rust Host AndroidUserSettings with typed Coordinator projection",
+      "platform_delta": "Desktop stores a ModelSelection object including maxMode/parameters; the current Android shipping model picker exposes the authenticated catalog model identity. This responsibility closes durable default model identity only; max-mode/parameter parity remains open under broader settings/inference responsibilities.",
+      "implementation_status": "implemented",
+      "production_wiring": "MobileBotViewModel restores Host default before projecting the model catalog, persists selection through typed Coordinator calls, and Host send acknowledgement uses the durable default only when no explicit model is supplied.",
+      "unit_test": "android_user_settings::tests::model_preferences_are_account_scoped_durable_and_clearable plus android_json_runtime default-model negative/account-fence tests; exact-head Actions pending",
+      "contract_test": "Host setter validates current authenticated model catalog and expected account scope; typed Kotlin Coordinator methods preserve the contract",
+      "integration_test": "required exact-head test: select model -> process reopen -> send without explicit model uses restored model; stale account and removed catalog model fail closed",
+      "packaged_test": "required on final exact-head APK/AAB",
+      "device_test": "required on authenticated protected device",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Implemented by commits 1fcbf42ca9b5f5bfe6539624716b5810e41a4bd6, 7253d8b5417e4e42d1b1afe1ebff3fb15463dbc0, dd504085cbf4d9dcd78de13c4c576169208a426a, 7a10f35e0d6856d69ebed23bf46e960a21053bb4 and 7eba50b82ebcd413204482faa64fcc7280e5da55. Do not mark verified until descendant exact-head Rust/Kotlin/package/device evidence succeeds. Desktop maxMode/parameters and computer-use-model settings are still separate open responsibilities."
+    },
+    {
       "responsibility_id": "NOTIFICATION-OS-001",
       "domain": "notification",
       "desktop_sources": [
