@@ -1,4 +1,5 @@
 use chrono::{SecondsFormat, Utc};
+use chrono_tz::Tz;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::{
@@ -480,10 +481,11 @@ fn normalize_time_zone(value: Option<&str>) -> io::Result<Option<String>> {
         || !value.chars().all(|ch| {
             ch.is_ascii_alphanumeric() || matches!(ch, '/' | '_' | '-' | '+' | '.')
         })
+        || value.parse::<Tz>().is_err()
     {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
-            "time zone override must be a bounded IANA-style identifier",
+            "time zone override must be a valid bounded IANA time zone",
         ));
     }
     Ok(Some(value.to_string()))
@@ -823,6 +825,7 @@ mod tests {
 
         assert!(settings.set_time_zone_override(Some("../secret")).is_err());
         assert!(settings.set_time_zone_override(Some("America/Los Angeles")).is_err());
+        assert!(settings.set_time_zone_override(Some("Foo/Bar")).is_err());
         assert!(settings
             .set_time_zone_override(Some(&"a".repeat(TIME_ZONE_MAX_CHARS + 1)))
             .is_err());
