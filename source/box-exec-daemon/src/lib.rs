@@ -8,7 +8,6 @@ pub mod box_store_diagnostics;
 pub mod browser_ua_backend;
 pub mod cloud_agent_backend;
 pub mod cloud_agent_images;
-mod disk_pressure_backend;
 pub mod cloud_agent_transcript_dump;
 pub mod box_store_backend;
 pub mod cli;
@@ -26,10 +25,6 @@ pub use browser_ua_backend::{
 pub use cloud_agent_backend::{
     open_cloud_agent_service, CloudAgentAction, CloudAgentBackend, CloudAgentExecutor,
     CloudAgentImageRef, CloudAgentRequest, CLOUD_AGENT_CAPABILITY,
-};
-pub use disk_pressure_backend::{
-    DiskPressureBackend, DiskPressureRequest, DiskPressureRoot, DiskPressureSample,
-    DiskPressureSnapshot, BOX_DISK_PRESSURE_CAPABILITY,
 };
 pub use cloud_agent_images::{
     CloudAgentImageLoadError, LoadedCloudAgentImage, ScopedCloudAgentImageLoader,
