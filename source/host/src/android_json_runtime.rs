@@ -62,6 +62,7 @@ use crate::extensions::telemetry::agent_error_telemetry::{
     agent_error_telemetry, AgentErrorReport,
 };
 use crate::extensions::telemetry::sand_error_tags::SandErrorValue;
+use crate::extensions::telemetry::memory_synthesis_telemetry::memory_synthesis_service_telemetry;
 use crate::extensions::telemetry::box_recreate_decided_telemetry::box_recreate_decided_telemetry;
 use crate::extensions::telemetry::connector_auth_telemetry::{
     connector_auth_telemetry, ConnectorAuthReport,
@@ -10299,6 +10300,10 @@ impl AndroidJsonHost {
         let mode = self.mode;
         let turn_events = self.turn_events.clone();
         let transcript = self.transcript.clone();
+        let memory = self.memory.clone();
+        let memory_user_text = message_text.clone();
+        let memory_hidden = hidden;
+        let memory_token = bearer_token.clone();
         let visible_ack_obligations = Arc::clone(&self.visible_ack_obligations);
         let turn_attachments = attachments.clone();
         let agent_attachment_root = self
@@ -11045,6 +11050,37 @@ impl AndroidJsonHost {
                                     "attempts":attempts,
                                 }),
                             );
+                            if !memory_hidden && !final_text.is_empty() {
+                                let memory_owner = memory.clone();
+                                let memory_account = account_fence_owned.clone();
+                                let memory_agent = conversation_id_owned.clone();
+                                let memory_evidence = request_id_owned.clone();
+                                let memory_user = memory_user_text.clone();
+                                let memory_assistant = final_text.clone();
+                                let memory_bearer = memory_token.clone();
+                                let memory_events = Arc::clone(&turn_events);
+                                let thread_name = format!("sand-memory-synthesis-{}", operation_id_owned.chars().take(24).collect::<String>());
+                                let _ = thread::Builder::new().name(thread_name).spawn(move || {
+                                    let telemetry_events = Arc::clone(&memory_events);
+                                    let telemetry_account = memory_account.clone();
+                                    let reporter = Arc::new(move |report| {
+                                        let projection = memory_synthesis_service_telemetry(&report);
+                                        push_turn_event(&telemetry_events, json!({
+                                            "type":"internal.memory.synthesis.telemetry",
+                                            "accountFence":telemetry_account,
+                                            "level":projection.level.unwrap_or("info"),
+                                            "event":projection.event,
+                                            "metadata":projection.metadata,
+                                        }));
+                                    });
+                                    let _ = memory_owner.synthesize_settled_turn(
+                                        &memory_account, &memory_agent, Some(memory_evidence),
+                                        &memory_user, &memory_assistant, i64::try_from(now_ms()).unwrap_or(i64::MAX),
+                                        match mode { AndroidHostMode::Test => AndroidInferenceMode::Test, AndroidHostMode::Production => AndroidInferenceMode::Production },
+                                        memory_bearer, Arc::new(AtomicBool::new(false)), Some(reporter),
+                                    );
+                                });
+                            }
                         }
                         ProductionTurnEvent::Failed { message } => {
                             if settles_visible_ack {
@@ -11657,6 +11693,23 @@ impl AndroidJsonHost {
                 .map_err(|_| "turn event queue lock poisoned".to_string())?
                 .pop_front();
             if let Some(event) = event {
+                if event.get("type").and_then(Value::as_str) == Some("internal.memory.synthesis.telemetry") {
+                    let event_fence = event.get("accountFence").and_then(Value::as_str);
+                    let current_fence = self.current_turn_account_fence().ok();
+                    if current_fence.as_deref() == event_fence {
+                        let level = event.get("level").and_then(Value::as_str).unwrap_or("info");
+                        if let Some(message) = event.get("event").and_then(Value::as_str) {
+                            let metadata = event.get("metadata").and_then(Value::as_object).map(|object| {
+                                object.iter().filter_map(|(key,value)| value.as_str().map(|value|(key.clone(),value.to_string()))).collect::<BTreeMap<_,_>>()
+                            }).unwrap_or_default();
+                            self.sync_structured_log_account_slot();
+                            if self.record_structured_log(level,message,metadata,now_ms()).is_err() {
+                                self.edge_failures.report("structured-log-spill","memory-synthesis-telemetry","StorageError");
+                            }
+                        }
+                    }
+                    continue;
+                }
                 if event.get("type").and_then(Value::as_str) == Some("operation.failed") {
                     self.record_agent_turn_failure_telemetry(&event);
                     self.record_agent_turn_failure_tray(&event);

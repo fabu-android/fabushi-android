@@ -12,7 +12,7 @@ use crate::{
             parse_json_object, synthesis_request_json, synthesis_system_prompt,
             verification_request_json, verification_system_prompt, MemorySynthesisOptions,
             MemorySynthesisService, SynthesisCancelSignal, SynthesisProposalRequest,
-            SynthesisTarget, SynthesisVerificationRequest,
+            SynthesisReport, SynthesisTarget, SynthesisVerificationRequest,
         },
         project_membership::{is_safe_project_slug, AgentProjectMembership},
     },
@@ -204,6 +204,7 @@ impl AndroidMemoryOwner {
         mode: AndroidInferenceMode,
         bearer_token: Option<String>,
         cancelled: Arc<AtomicBool>,
+        report: Option<Arc<dyn Fn(SynthesisReport) + Send + Sync>>,
     ) -> Result<(), String> {
         let target = Arc::new(self.store(account_fence, agent_id)?);
         let list_target = Arc::clone(&target);
@@ -260,6 +261,7 @@ impl AndroidMemoryOwner {
 
         let mut options = MemorySynthesisOptions::new(list_targets, target_lookup, propose);
         options.verify = Some(verify);
+        options.report = report;
         let service = MemorySynthesisService::new(options);
         service.start();
         service.record_turn(agent_id, evidence_id, user, assistant, occurred_at_ms);
