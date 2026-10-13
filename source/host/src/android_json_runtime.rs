@@ -2808,6 +2808,8 @@ impl AndroidJsonHost {
             "feature.settings.onboardingSeen.set" => self.set_onboarding_seen(params),
             "feature.settings.autoReviewInstructions" => self.auto_review_instructions(),
             "feature.settings.autoReviewInstructions.set" => self.set_auto_review_instructions(params),
+            "feature.settings.webAuthnProxy" => self.webauthn_proxy_setting(),
+            "feature.settings.webAuthnProxy.set" => self.set_webauthn_proxy_setting(params),
             "feature.remote.binding.status" => Ok(self.remote_binding_status()),
             "feature.teachRecording.status" => self.teach_recording_status(),
             "feature.onePassword.provisioning.status" => self.onepassword_provisioning_status(),
@@ -3168,11 +3170,23 @@ impl AndroidJsonHost {
             "feature.experiments.dynamicConfig" => self.experiments_dynamic_config(params),
             "feature.assistant.projection" => self.assistant_projection(),
             "feature.assistant.markRead" => self.assistant_mark_read(),
-            "feature.webauthn.registerProvider" => self.webauthn_register_provider(),
+            "feature.webauthn.registerProvider" => {
+                self.ensure_webauthn_proxy_enabled()?;
+                self.webauthn_register_provider()
+            },
             "feature.webauthn.unregisterProvider" => self.webauthn_unregister_provider(params),
-            "feature.webauthn.pollRequest" => self.webauthn_poll_request(params),
-            "feature.webauthn.submitResponses" => self.webauthn_submit_responses(params),
-            "feature.webauthn.requestCeremony" => self.webauthn_request_ceremony(params),
+            "feature.webauthn.pollRequest" => {
+                self.ensure_webauthn_proxy_enabled()?;
+                self.webauthn_poll_request(params)
+            },
+            "feature.webauthn.submitResponses" => {
+                self.ensure_webauthn_proxy_enabled()?;
+                self.webauthn_submit_responses(params)
+            },
+            "feature.webauthn.requestCeremony" => {
+                self.ensure_webauthn_proxy_enabled()?;
+                self.webauthn_request_ceremony(params)
+            },
             "platform.request" => self.platform_request(params),
             other => Err(format!("unknown host method {other}")),
         };
@@ -4108,6 +4122,47 @@ impl AndroidJsonHost {
             format!("human:{raw_id}")
         };
         Ok((actor_id, mutation))
+    }
+
+    fn webauthn_proxy_setting(&self) -> Result<Value, String> {
+        let enabled = self
+            .user_settings
+            .lock()
+            .map_err(|_| "Android user settings lock poisoned".to_string())?
+            .webauthn_proxy_enabled();
+        Ok(json!({"enabled": enabled}))
+    }
+
+    fn set_webauthn_proxy_setting(&mut self, params: &Value) -> Result<Value, String> {
+        let enabled = params
+            .get("enabled")
+            .and_then(Value::as_bool)
+            .ok_or("WebAuthn proxy enabled boolean is required")?;
+        let enabled = self
+            .user_settings
+            .lock()
+            .map_err(|_| "Android user settings lock poisoned".to_string())?
+            .set_webauthn_proxy_enabled(enabled)
+            .map_err(|error| format!("failed to persist Android WebAuthn proxy setting: {error}"))?;
+        if !enabled {
+            // Existing providers may still unregister for cleanup, but disabling the setting must
+            // prevent queued or future ceremonies from crossing the Host boundary.
+            self.webauthn_provider_queues.clear();
+        }
+        Ok(json!({"enabled": enabled}))
+    }
+
+    fn ensure_webauthn_proxy_enabled(&self) -> Result<(), String> {
+        if self
+            .user_settings
+            .lock()
+            .map_err(|_| "Android user settings lock poisoned".to_string())?
+            .webauthn_proxy_enabled()
+        {
+            Ok(())
+        } else {
+            Err("WebAuthn proxy is disabled in Android settings".into())
+        }
     }
 
     fn webauthn_register_provider(&mut self) -> Result<Value, String> {
@@ -11994,6 +12049,62 @@ mod tests {
         let operation_id = long_task["operationId"].as_str().unwrap();
         let interrupted = host.dispatch("feature.interrupt", &json!({"operationId":operation_id})).unwrap();
         assert_eq!(interrupted["status"], "interrupted");
+    }
+
+    #[test]
+    fn webauthn_proxy_setting_is_durable_and_fails_closed_when_disabled() {
+        let root = tempfile::tempdir().unwrap();
+        let mut host = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+        assert_eq!(
+            host.dispatch("feature.settings.webAuthnProxy", &json!({}))
+                .unwrap()["enabled"],
+            true,
+        );
+
+        let provider = host
+            .dispatch("feature.webauthn.registerProvider", &json!({}))
+            .unwrap();
+        let provider_id = provider["providerId"].as_str().unwrap().to_string();
+        host.dispatch(
+            "feature.settings.webAuthnProxy.set",
+            &json!({"enabled":false}),
+        )
+        .unwrap();
+        assert!(host
+            .dispatch("feature.webauthn.registerProvider", &json!({}))
+            .unwrap_err()
+            .contains("disabled"));
+        assert!(host
+            .dispatch(
+                "feature.webauthn.pollRequest",
+                &json!({"providerId":provider_id}),
+            )
+            .unwrap_err()
+            .contains("disabled"));
+        // Cleanup remains possible while disabled.
+        host.dispatch(
+            "feature.webauthn.unregisterProvider",
+            &json!({"providerId":provider_id}),
+        )
+        .unwrap();
+
+        drop(host);
+        let mut reopened = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+        assert_eq!(
+            reopened
+                .dispatch("feature.settings.webAuthnProxy", &json!({}))
+                .unwrap()["enabled"],
+            false,
+        );
+        reopened
+            .dispatch(
+                "feature.settings.webAuthnProxy.set",
+                &json!({"enabled":true}),
+            )
+            .unwrap();
+        assert!(reopened
+            .dispatch("feature.webauthn.registerProvider", &json!({}))
+            .is_ok());
     }
 
     #[test]
