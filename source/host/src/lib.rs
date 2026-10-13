@@ -11,6 +11,7 @@ pub mod android_sidebar_sections;
 pub mod android_user_settings;
 pub mod android_json_runtime;
 pub mod android_memory_runtime;
+pub mod android_session_policy_runtime;
 pub mod android_box_handoff;
 pub mod android_process_metrics;
 pub mod android_structured_log_spill;
