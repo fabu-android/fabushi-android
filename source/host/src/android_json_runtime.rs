@@ -7964,11 +7964,12 @@ impl AndroidJsonHost {
             .turn_journal
             .lock()
             .map_err(|_| "turn journal lock poisoned".to_string())?
-            .begin_with_source(
+            .begin_with_context(
                 request_id,
                 operation_id,
                 &account_fence,
                 request_source.as_deref(),
+                Some(&agent_id),
                 now_ms(),
             )?;
 
