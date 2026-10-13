@@ -5038,11 +5038,11 @@
       "grok_size_bytes": 1161,
       "grok_responsibility": "Android platform-main responsibility corresponding to Grok electron-main/coordinator; source unit account-revoke.ts.",
       "evidence_anchor": "b-nnett/grok-bot-0.18-reconstructed@a9f633e09d49a85829b8236331b9e21f7e612634:source/electron-main/coordinator/account-revoke.ts#blob=751383358ea46f2a5adc89fda977806f9f95c7b9",
-      "android_target_path": "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/coordinator/AccountRevoke.kt",
+      "android_target_path": "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/coordinator/AndroidCoordinatorRuntime.kt",
       "target_language_runtime": "Kotlin / Android",
       "parity_class": "platform-adapted",
       "implementation_status": "implemented",
-      "test_evidence": "Android unit compile/tests in existing-android-regression plus CoordinatorArchitectureTest; exact-HEAD verification pending",
+      "test_evidence": "Current Android production Coordinator/account projection path is compiled and exercised by Android unit tests and architecture checks; final exact-head verification remains pending",
       "legacy_android_path_replaced_or_removed": "mobile/android/app/src/main/java/com/ombhrum/fabushi/MainActivity.kt and Android platform ViewModels/adapters"
     },
     {
@@ -5064,11 +5064,11 @@
       "grok_size_bytes": 13314,
       "grok_responsibility": "Android platform-main responsibility corresponding to Grok electron-main/coordinator; source unit coordinator-account-runtime.ts.",
       "evidence_anchor": "b-nnett/grok-bot-0.18-reconstructed@a9f633e09d49a85829b8236331b9e21f7e612634:source/electron-main/coordinator/coordinator-account-runtime.ts#blob=03d048882d1c282213f01a2a05f3420872cad6fd",
-      "android_target_path": "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/coordinator/CoordinatorAccountRuntime.kt",
+      "android_target_path": "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/coordinator/AccountAccessProjectionOwner.kt",
       "target_language_runtime": "Kotlin / Android",
       "parity_class": "platform-adapted",
       "implementation_status": "implemented",
-      "test_evidence": "Android unit compile/tests in existing-android-regression plus CoordinatorArchitectureTest; exact-HEAD verification pending",
+      "test_evidence": "Current Android production Coordinator/account projection path is compiled and exercised by Android unit tests and architecture checks; final exact-head verification remains pending",
       "legacy_android_path_replaced_or_removed": "mobile/android/app/src/main/java/com/ombhrum/fabushi/MainActivity.kt and Android platform ViewModels/adapters"
     },
     {
@@ -6959,11 +6959,11 @@
       "grok_size_bytes": 806,
       "grok_responsibility": "Typed Android bridge responsibility corresponding to Grok preload unit passkey-stall.ts.",
       "evidence_anchor": "b-nnett/grok-bot-0.18-reconstructed@a9f633e09d49a85829b8236331b9e21f7e612634:source/electron-preload/passkey-stall.ts#blob=688e9fc555a795a1bde57add4d6b13bafb53cf76",
-      "android_target_path": "source/android-preload/src/main/kotlin/com/ombhrum/fabushi/androidpreload/PasskeyStall.kt",
+      "android_target_path": "source/android-preload/src/main/kotlin/com/ombhrum/fabushi/androidpreload/runtime/AndroidCoordinatorPort.kt",
       "target_language_runtime": "Kotlin / typed Android bridge",
       "parity_class": "platform-adapted",
       "implementation_status": "implemented",
-      "test_evidence": "Android unit compile/tests in existing-android-regression plus CoordinatorArchitectureTest; exact-HEAD verification pending",
+      "test_evidence": "AndroidCoordinatorPort exposes typed WebAuthn provider/poll/submit bridge methods; WEBAUTHN-PROXY-ANDROID-001 contract tests plus existing Android unit compile/tests cover the replacement; final exact-head verification remains pending",
       "legacy_android_path_replaced_or_removed": "mobile/android/app/src/main/java/com/ombhrum/fabushi/core/MahayanaHost.kt; MiniAppPlatformBridge.kt"
     },
     {
