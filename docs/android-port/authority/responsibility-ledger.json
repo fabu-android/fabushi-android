@@ -3717,6 +3717,54 @@
       "notes": "Mapped rather than implemented/verified because Android still lacks final same-head packaged/device/performance closure equivalent to the full Desktop runtime confidence envelope; Desktop-only renderer/WASM/OS-specific mechanisms are platform deltas, not deleted product responsibilities."
     },
     {
+      "responsibility_id": "DISK-PRESSURE-ANDROID-001",
+      "domain": "runtime-resource-pressure",
+      "desktop_sources": [
+        {
+          "path": "source/host/src/extensions/forever_box/disk_pressure_guard.rs",
+          "blob_sha": "611736d4f753b65264d93a6a3f1cbba38465e0b1",
+          "symbols": [
+            "DiskPressureGuard",
+            "classify_disk_pressure",
+            "aggregate_disk_pressure_level",
+            "DiskPressureReport"
+          ]
+        },
+        {
+          "path": "source/host/src/extensions/forever_box/disk_pressure.rs",
+          "blob_sha": "46c0ed1d24a497e62aff51ac55d1e546bae86d4c",
+          "symbols": [
+            "DiskPressureReminderEpisodes",
+            "DiskPressureWatch",
+            "start_disk_pressure_watch"
+          ]
+        }
+      ],
+      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "responsibility": "Classify disk pressure with hysteresis, persist one reminder episode across restart, claim/release/commit reminders idempotently, and fence reminder lifecycle to the canonical account/turn owner.",
+      "source_owner": "Rust Host disk-pressure guard/watch and reminder ledger",
+      "visible_effect": "Agents receive bounded low-disk reminders without reminder storms; completed turns commit reminders while cancelled/failed/unknown outcomes remain explicitly recoverable.",
+      "android_disposition": "direct-port",
+      "android_target": [
+        "source/host/src/extensions/forever_box/disk_pressure_guard.rs",
+        "source/host/src/extensions/forever_box/disk_pressure.rs",
+        "source/host/src/android_json_runtime.rs",
+        "source/host/src/runner/production_turn_lifecycle.rs"
+      ],
+      "android_owner": "Rust Host ProductionTurnLifecycleStore plus ported disk-pressure primitives",
+      "platform_delta": "Pressure samples enter through the Android typed Host gateway instead of Desktop Forever Box process wiring; classification, hysteresis, durable episode semantics and turn settlement remain Rust-owned.",
+      "implementation_status": "implemented",
+      "production_wiring": "feature.agent.diskPressure.observe records account-fenced samples; feature.agent.diskPressure.record records conversation episodes; shipping chat turns claim/commit/release through ProductionTurnAgentLifecycleBindings and outcome-unknown reconciliation explicitly settles claims.",
+      "unit_test": "Guard tests cover hysteresis/aggregate severity; Android tests cover durable reopen, idempotent claim/release/commit and incomplete healthy samples.",
+      "contract_test": "AndroidJsonHost tests prove shipping turn lifecycle consumes reminders and account/outcome reconciliation is explicit.",
+      "integration_test": "Same-head GitHub Actions evidence required.",
+      "packaged_test": "Required on final exact-head APK/AAB.",
+      "device_test": "Required on supported Android storage-pressure journey.",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Android files retain Desktop current-main production logic and add focused tests. Do not mark verified until descendant exact-head Actions/package/device evidence succeeds."
+    },
+    {
       "responsibility_id": "SECURITY-EXTERNAL-URL-AUTH-CONTEXT-001",
       "domain": "security",
       "desktop_sources": [
