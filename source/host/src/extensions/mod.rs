@@ -1,3 +1,4 @@
+pub mod action_audit;
 pub mod content_search;
 pub mod extension_ids_generated;
 pub mod cross_user_sharing;
