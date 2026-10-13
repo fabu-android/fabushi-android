@@ -134,3 +134,73 @@ fn search_index_health_projection_warns_only_for_bounded_retry_kinds() {
     );
     assert_eq!(corrupt.level, Some("error"));
 }
+
+
+#[test]
+fn conversation_gc_unresolved_refs_remain_warning() {
+    let projection = super::conversation_gc_telemetry::conversation_gc_telemetry(
+        &super::conversation_gc_telemetry::ConversationGcReport::Skipped {
+            trigger: "soft-cap".into(),
+            agent_id: "agent-a".into(),
+            skip_reason: "unresolved-refs".into(),
+            unresolved_proto_refs: Some(2.4),
+        },
+    );
+    assert_eq!(projection.level, Some("warn"));
+    assert_eq!(projection.metadata.get("outcome").map(String::as_str), Some("skipped"));
+    assert_eq!(
+        projection.metadata.get("unresolved_proto_refs").map(String::as_str),
+        Some("2")
+    );
+}
+
+#[test]
+fn bot_block_summary_does_not_expose_blocked_url_but_detail_does() {
+    let report = super::bot_block_telemetry::BotBlockReport {
+        conversation_id: "agent-a".into(),
+        family: "navigation".into(),
+        confidence: "high".into(),
+        blocked_host: "example.invalid".into(),
+        blocked_url: "https://example.invalid/private".into(),
+    };
+    let summary = super::bot_block_telemetry::bot_block_telemetry(&report);
+    assert!(!summary.metadata.contains_key("blocked_url"));
+    let detail = super::bot_block_telemetry::bot_block_detail_telemetry(&report);
+    assert_eq!(
+        detail.metadata.get("blocked_url").map(String::as_str),
+        Some("https://example.invalid/private")
+    );
+}
+
+#[test]
+fn mcp_discovery_failure_preserves_stale_fallback_signal() {
+    let projection = super::mcp_discovery_telemetry::mcp_discovery_failed_telemetry(
+        &super::mcp_discovery_telemetry::McpDiscoveryFailedReport {
+            error_class: "timeout".into(),
+            elapsed_ms: 1499.6,
+            served_stale: true,
+        },
+    );
+    assert_eq!(projection.level, Some("warn"));
+    assert_eq!(projection.metadata.get("elapsed_ms").map(String::as_str), Some("1500"));
+    assert_eq!(projection.metadata.get("served_stale").map(String::as_str), Some("true"));
+}
+
+#[test]
+fn automation_shadow_prune_failure_is_warn() {
+    let projection =
+        super::automation_shadow_prune_telemetry::automation_shadow_prune_telemetry(
+            &super::automation_shadow_prune_telemetry::AutomationShadowPruneReport {
+                outcome: "failed".into(),
+                conversation_id: "agent-a".into(),
+                automation_id: "automation-a".into(),
+                local_definition_state: "present".into(),
+                local_definition_count: 1,
+                desired_count: 1,
+                remote_shadow_count: 2,
+                box_uptime_ms: Some(900),
+            },
+        );
+    assert_eq!(projection.level, Some("warn"));
+    assert_eq!(projection.metadata.get("remote_shadow_count").map(String::as_str), Some("2"));
+}
