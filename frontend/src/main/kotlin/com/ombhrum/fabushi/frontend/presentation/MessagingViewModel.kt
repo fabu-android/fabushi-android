@@ -61,7 +61,33 @@ data class MessagingContact(
     val displayName: String,
     val username: String?,
     val kind: String,
+    val isHidden: Boolean = false,
 )
+
+internal fun canonicalMessagingContacts(
+    array: JSONArray,
+    currentActorId: String,
+): List<MessagingContact> {
+    val canonical = linkedMapOf<String, MessagingContact>()
+    for (i in 0 until array.length()) {
+        val raw = array.optJSONObject(i) ?: continue
+        val id = raw.optString("id")
+        if (id.isBlank() || id == currentActorId) continue
+        val name = raw.optString("displayName")
+        if (name.isBlank()) continue
+        canonical[id] = MessagingContact(
+            id = id,
+            displayName = name,
+            username = raw.optString("username").takeIf { it.isNotBlank() },
+            kind = raw.optString("kind", "human"),
+            isHidden = when {
+                raw.has("isHidden") -> raw.optBoolean("isHidden")
+                else -> raw.optBoolean("hidden", false)
+            },
+        )
+    }
+    return canonical.values.toList()
+}
 
 data class ChatReaction(val reaction: String, val count: Int, val chosenByMe: Boolean)
 
@@ -693,14 +719,7 @@ internal class MessagingViewModel(application: Application) : AndroidViewModel(a
         val conversationIds = buildList { val ids = raw.optJSONArray("conversationIds") ?: JSONArray(); for (i in 0 until ids.length()) ids.optString(i).takeIf { it.isNotBlank() }?.let(::add) }
         return MessagingFolder(id, title, raw.optString("icon").takeIf { it.isNotBlank() }, conversationIds, raw.optBoolean("includeContacts"), raw.optBoolean("includeBots"), raw.optBoolean("includeGroups"), raw.optBoolean("includeChannels"), raw.optBoolean("excludeMuted"), raw.optBoolean("excludeRead"), raw.optBoolean("excludeArchived", true))
     }
-    private fun parseContacts(array: JSONArray) = buildList {
-        for (i in 0 until array.length()) {
-            val raw = array.optJSONObject(i) ?: continue
-            val id = raw.optString("id"); if (id.isBlank() || id == actorId) continue
-            val name = raw.optString("displayName"); if (name.isBlank()) continue
-            add(MessagingContact(id, name, raw.optString("username").takeIf { it.isNotBlank() }, raw.optString("kind", "human")))
-        }
-    }
+    private fun parseContacts(array: JSONArray) = canonicalMessagingContacts(array, actorId)
     private fun parseConversations(array: JSONArray) = buildList { for (i in 0 until array.length()) parseConversation(array.optJSONObject(i))?.let(::add) }
     private fun parseMessages(array: JSONArray) = buildList { for (i in 0 until array.length()) parseMessage(array.optJSONObject(i))?.let(::add) }
 
