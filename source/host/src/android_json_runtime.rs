@@ -131,6 +131,12 @@ use crate::extensions::teach_recording::{DurableTeachRecordingOwner, TeachRecord
 use crate::extensions::trays::extension::{start_trays_extension, HostTraysExtension};
 use crate::extensions::trays::trays_service::{TrayEvent, TraySubscription};
 use crate::extensions::transcript::{AsyncTask, SandPendingWakeStore, TranscriptRecoveryOutcome, TranscriptStore, merge_async_tasks};
+use crate::extensions::transcript::completion_revivals::{
+    build_subagent_revival_prompt, SubagentCompletion,
+};
+use crate::extensions::transcript::sand_pending_wake_store::{
+    DurablePendingWakeMarker, PendingWakeKind, QuietWakeOrigin,
+};
 use crate::extensions::transcript::client_side_tool_v2_producer::{
     ClientSideToolV2ProducedValue, ClientSideToolV2Producer,
 };
@@ -161,7 +167,7 @@ use crate::runner::{
     COORDINATOR_SUBAGENT_CAPABILITIES_FIELD, DurableSubagentOwner, SubagentFrozenTurnConfig,
     SubagentRunOutcome, SubagentSteerReview, SubagentTaskReviewCallback,
     SubagentSteerReviewCallback, SubagentToolBridge, SubagentToolContext,
-    build_parent_subagent_routed_tools, spawn_generated_subagent,
+    build_parent_subagent_routed_tools, spawn_generated_subagent, SubagentCompletionWakeSink,
     with_agent_management_tools_and_transcript,
     with_send_message_tools, with_multitask_todo_tools,
     with_local_file_tools, with_remote_routed_tools, with_web_routed_tools,
@@ -1469,6 +1475,37 @@ fn parse_android_approval_resolution(
         }
     };
     Ok((approval_id, decision))
+}
+
+fn subagent_completion_wake_sink(
+    pending_wake_store: SandPendingWakeStore,
+    subagent_owner: Arc<Mutex<DurableSubagentOwner>>,
+) -> SubagentCompletionWakeSink {
+    Arc::new(move |record| {
+        let quiet_origin = record
+            .quiet_origin
+            .as_ref()
+            .map(|_| QuietWakeOrigin { automation: None });
+        let marker = DurablePendingWakeMarker {
+            account_fence: record.account_fence.clone(),
+            agent_id: record.parent_agent_id.clone(),
+            kind: PendingWakeKind::Subagent,
+            work_id: record.subagent_id.clone(),
+            marked_at_ms: record.updated_at_ms,
+            quiet_origin,
+            title: Some(record.title.clone()),
+            subagent_type: Some(record.subagent_type.clone()),
+            interrupted_by_recreate: false,
+        };
+        if !pending_wake_store.mark_pending(marker) {
+            return Err("failed to persist subagent completion wake".into());
+        }
+        subagent_owner
+            .lock()
+            .map_err(|_| "durable subagent owner lock poisoned".to_string())?
+            .acknowledge_pending_wake(&record.subagent_id, &record.account_fence)?;
+        Ok(())
+    })
 }
 
 impl AndroidJsonHost {
@@ -8395,6 +8432,195 @@ impl AndroidJsonHost {
         }
     }
 
+    fn sync_subagent_completion_wakes(&mut self) -> Result<(), String> {
+        let account_fence = match self.current_turn_account_fence() {
+            Ok(value) => value,
+            Err(_) => return Ok(()),
+        };
+        let pending = self
+            .subagent_owner
+            .lock()
+            .map_err(|_| "durable subagent owner lock poisoned".to_string())?
+            .pending_completion_wakes_for_account(&account_fence);
+        if pending.is_empty() {
+            return Ok(());
+        }
+        let sink = subagent_completion_wake_sink(
+            self.pending_wake_store.clone(),
+            Arc::clone(&self.subagent_owner),
+        );
+        for record in pending {
+            sink(&record)?;
+        }
+        Ok(())
+    }
+
+    fn subagent_revival_request_id(agent_id: &str, work_ids: &[String]) -> String {
+        let mut work_ids = work_ids.to_vec();
+        work_ids.sort();
+        work_ids.dedup();
+        let material = format!("{agent_id}\n{}", work_ids.join("\n"));
+        format!(
+            "subagent-revival:{}:{}",
+            agent_id,
+            crate::sha256::sha256_hex(material.as_bytes())
+        )
+    }
+
+    fn queue_subagent_completion_revival(
+        &mut self,
+        account_fence: &str,
+        agent_id: &str,
+        completions: &[SubagentCompletion],
+        work_ids: &[String],
+    ) -> Result<Option<AccountSessionMutation>, String> {
+        if completions.is_empty() || work_ids.is_empty() {
+            return Ok(None);
+        }
+        let request_id = Self::subagent_revival_request_id(agent_id, work_ids);
+
+        // The journal is the idempotency authority. A crash after queue admission but before
+        // marker cleanup must converge on the existing turn rather than execute a second model
+        // continuation.
+        if self
+            .turn_journal
+            .lock()
+            .map_err(|_| "turn journal lock poisoned".to_string())?
+            .record(&request_id)
+            .is_some()
+        {
+            for work_id in work_ids {
+                self.pending_wake_store.clear_one(
+                    account_fence,
+                    agent_id,
+                    PendingWakeKind::Subagent,
+                    work_id,
+                );
+            }
+            return Ok(None);
+        }
+
+        let operation_id = self.next_operation_id(&request_id);
+        self.active_operations.insert(operation_id.clone());
+        let (bearer_token, session_mutation) = match self.bearer_token_for_turn() {
+            Ok(value) => value,
+            Err(error) => {
+                self.active_operations.remove(&operation_id);
+                return Err(error);
+            }
+        };
+        let command = json!({
+            "type":"chat.send",
+            "requestId":request_id,
+            "agentId":agent_id,
+            "text":build_subagent_revival_prompt(completions),
+            "hidden":true,
+            "appendUserMessage":false,
+            "awaitTurn":false,
+            "requestSource":"subagent-revival",
+            "skipAckObligation":true,
+            "directAddressedAcceptance":true,
+        });
+        if let Err(error) = self.queue_chat_turn(
+            &operation_id,
+            command.get("requestId").and_then(Value::as_str).unwrap_or_default(),
+            &command,
+            bearer_token,
+        ) {
+            self.active_operations.remove(&operation_id);
+            self.agent_turn_interruptions.unregister_operation(&operation_id);
+            return Err(error);
+        }
+        for work_id in work_ids {
+            self.pending_wake_store.clear_one(
+                account_fence,
+                agent_id,
+                PendingWakeKind::Subagent,
+                work_id,
+            );
+        }
+        Ok(session_mutation)
+    }
+
+    fn drain_subagent_completion_revival_once(&mut self) -> Result<(), String> {
+        self.sync_subagent_completion_wakes()?;
+        let account_fence = match self.current_turn_account_fence() {
+            Ok(value) => value,
+            Err(_) => return Ok(()),
+        };
+        let markers = self
+            .pending_wake_store
+            .list_pending_for_account(&account_fence);
+        let Some(first) = markers
+            .iter()
+            .find(|marker| marker.kind == PendingWakeKind::Subagent)
+            .cloned()
+        else {
+            return Ok(());
+        };
+        let agent_id = first.agent_id.clone();
+        let mut completions = Vec::new();
+        let mut work_ids = Vec::new();
+        {
+            let owner = self
+                .subagent_owner
+                .lock()
+                .map_err(|_| "durable subagent owner lock poisoned".to_string())?;
+            for marker in markers.into_iter().filter(|marker| {
+                marker.kind == PendingWakeKind::Subagent && marker.agent_id == agent_id
+            }) {
+                let Some(record) = owner.get(&marker.work_id).cloned() else {
+                    continue;
+                };
+                if record.account_fence != account_fence
+                    || !matches!(
+                        record.status,
+                        crate::runner::SubagentStatus::Completed
+                            | crate::runner::SubagentStatus::Failed
+                    )
+                {
+                    continue;
+                }
+                let status = if record.status == crate::runner::SubagentStatus::Failed {
+                    "error"
+                } else {
+                    "success"
+                };
+                let result = record
+                    .completion_result
+                    .clone()
+                    .or(record.completion_error.clone())
+                    .unwrap_or_else(|| "(the background task settled without detail)".into());
+                completions.push(SubagentCompletion {
+                    parent_agent_id: record.parent_agent_id.clone(),
+                    subagent_agent_id: record.subagent_id.clone(),
+                    title: record.title.clone(),
+                    subagent_type: record.subagent_type.clone(),
+                    status: status.into(),
+                    result,
+                    quiet_origin: record
+                        .quiet_origin
+                        .as_ref()
+                        .map(|_| QuietWakeOrigin { automation: None }),
+                });
+                work_ids.push(record.subagent_id);
+            }
+        }
+        if completions.is_empty() {
+            return Ok(());
+        }
+
+        // Transient auth/provider/queue failures retain every durable marker. The next receive
+        // cycle retries the same deterministic request id.
+        let _ = self.queue_subagent_completion_revival(
+            &account_fence,
+            &agent_id,
+            &completions,
+            &work_ids,
+        );
+        Ok(())
+    }
+
     fn queue_box_handoff_resume_turn(
         &mut self,
         account_fence: &str,
@@ -8965,12 +9191,17 @@ impl AndroidJsonHost {
         let Some(launch) = result.launch else {
             return Ok(with_account_session_mutation(result.value, mutation));
         };
+        let completion_wake_sink = subagent_completion_wake_sink(
+            self.pending_wake_store.clone(),
+            Arc::clone(&self.subagent_owner),
+        );
         if let Err(error) = spawn_generated_subagent(
             self.mode,
             bearer_token,
             Arc::clone(&self.subagent_owner),
             reviewed_tools,
             Arc::clone(&self.subagent_events),
+            completion_wake_sink,
             launch.clone(),
         ) {
             let epoch = self
@@ -11699,6 +11930,10 @@ impl AndroidJsonHost {
         let subagent_owner = Arc::clone(&self.subagent_owner);
         let subagent_events = Arc::clone(&self.subagent_events);
         let subagent_tools = self.subagent_tools.clone();
+        let subagent_completion_wake_sink = subagent_completion_wake_sink(
+            self.pending_wake_store.clone(),
+            Arc::clone(&self.subagent_owner),
+        );
         let subagent_review_process_epoch = self
             .subagent_owner
             .lock()
@@ -12072,6 +12307,7 @@ impl AndroidJsonHost {
                     Arc::clone(&subagent_owner),
                     reviewed_subagent_tools,
                     Arc::clone(&subagent_events),
+                    Arc::clone(&subagent_completion_wake_sink),
                     SubagentToolContext {
                         parent_agent_id: conversation_id_owned.clone(),
                         parent_request_id: request_id_owned.clone(),
@@ -13426,6 +13662,7 @@ impl AndroidJsonHost {
     fn feature_receive(&mut self) -> Result<Value, String> {
         self.drain_mcp_auth_owner_events()?;
         self.drain_box_handoff_resume_once()?;
+        self.drain_subagent_completion_revival_once()?;
         self.drain_agent_wake_once()?;
         self.drain_visible_ack_redrive_once()?;
         self.drain_created_agent_kickstart_nudge_once()?;
@@ -15920,6 +16157,93 @@ mod tests {
         assert_eq!(record.metadata.get("preserved").map(String::as_str), Some("true"));
         assert!(host.dispatch("feature.telemetry.boxRecreateDecided", &json!({"trigger":"manual_reset"}))
             .unwrap_err().contains("unsupported box recreate decision trigger"));
+    }
+
+    #[test]
+    fn subagent_completion_wake_moves_to_durable_store_and_journal_before_marker_clear() {
+        let root = tempfile::tempdir().unwrap();
+        let mut host = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+        let parent = host
+            .dispatch("createAgent", &json!({"name":"Parent","description":"revival parent"}))
+            .unwrap();
+        let parent_id = parent["agent"]["id"].as_str().unwrap().to_string();
+        let account_fence = host.current_turn_account_fence().unwrap();
+        let launch = host
+            .subagent_owner
+            .lock()
+            .unwrap()
+            .launch(
+                &parent_id,
+                SubagentLineage::default(),
+                "box",
+                "general-purpose",
+                "revival-tool-call",
+                "background work",
+                &account_fence,
+                Some("automation"),
+                SubagentFrozenTurnConfig {
+                    provider_id: "android-host-inference".into(),
+                    model_id: "default".into(),
+                    tool_names: Vec::new(),
+                    allowed_subagent_types: vec!["general-purpose".into()],
+                    privacy_mode: "no-storage".into(),
+                    summarization_binding_id: "android-host-inference:same-provider".into(),
+                },
+                10,
+            )
+            .unwrap();
+        let epoch = host.subagent_owner.lock().unwrap().process_epoch();
+        host.subagent_owner
+            .lock()
+            .unwrap()
+            .settle(
+                &launch.record.subagent_id,
+                &account_fence,
+                epoch,
+                SubagentRunOutcome::Completed("finished result".into()),
+                11,
+            )
+            .unwrap();
+        assert_eq!(
+            host.subagent_owner
+                .lock()
+                .unwrap()
+                .pending_completion_wakes_for_account(&account_fence)
+                .len(),
+            1
+        );
+
+        host.sync_subagent_completion_wakes().unwrap();
+        assert!(
+            host.subagent_owner
+                .lock()
+                .unwrap()
+                .pending_completion_wakes_for_account(&account_fence)
+                .is_empty(),
+            "canonical completion obligation is acknowledged only after durable marker acceptance",
+        );
+        let marker = host
+            .pending_wake_store
+            .list_pending_for(&account_fence, &parent_id);
+        assert_eq!(marker.len(), 1);
+        assert_eq!(marker[0].work_id, launch.record.subagent_id);
+        assert!(marker[0].quiet_origin.is_some());
+
+        let request_id = AndroidJsonHost::subagent_revival_request_id(
+            &parent_id,
+            &[launch.record.subagent_id.clone()],
+        );
+        host.drain_subagent_completion_revival_once().unwrap();
+        assert!(
+            host.turn_journal.lock().unwrap().record(&request_id).is_some(),
+            "durable turn journal must accept revival before wake marker is cleared",
+        );
+        assert!(
+            host.pending_wake_store
+                .list_pending_for(&account_fence, &parent_id)
+                .is_empty(),
+        );
+        let _ = std::fs::remove_dir_all(root.path());
     }
 
     #[test]
