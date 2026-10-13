@@ -2262,6 +2262,45 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
         return AndroidTranscriptHistoryPage(entries = entries, nextBeforeSeq = nextBeforeSeq)
     }
 
+    override fun globalContentSearchMessages(
+        query: String,
+        limit: Int,
+    ): List<AndroidContentSearchMessage> {
+        val normalized = query.trim()
+        require(normalized.isNotEmpty()) { "Global content search query must not be empty" }
+        require(limit in 1..50) { "Global content search limit must be between 1 and 50" }
+        val result = host.request(
+            "feature.search.global",
+            JSONObject()
+                .put("query", normalized)
+                .put("messageLimit", limit)
+                .put("mediaLimit", 0),
+        )
+        val rows = result.optJSONArray("messages")
+            ?: error("Global content search returned malformed messages")
+        return buildList(rows.length()) {
+            for (index in 0 until rows.length()) {
+                val row = rows.optJSONObject(index)
+                    ?: error("Global content search row $index is not an object")
+                val agentId = row.getString("agentId").trim()
+                val entryId = row.getString("entryId").trim()
+                val role = row.getString("role").trim()
+                check(agentId.isNotEmpty()) { "Global content search row is missing Agent identity" }
+                check(entryId.isNotEmpty()) { "Global content search row is missing entry identity" }
+                check(role == "user" || role == "assistant") {
+                    "Global content search row has an unsupported role"
+                }
+                add(AndroidContentSearchMessage(
+                    agentId = agentId,
+                    entryId = entryId,
+                    role = role,
+                    timestampMs = row.optLong("timestampMs", 0L),
+                    snippet = row.getString("snippet"),
+                ))
+            }
+        }
+    }
+
     override fun contentSearchMessages(
         query: String,
         limit: Int,
