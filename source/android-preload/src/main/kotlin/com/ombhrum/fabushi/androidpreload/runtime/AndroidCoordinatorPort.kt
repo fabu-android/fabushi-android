@@ -855,6 +855,29 @@ interface AndroidCoordinatorPort {
         error("Cross-user sharing lifecycle control is unavailable on this Coordinator port")
     fun crossUserSharingRequestDrain(): Boolean =
         error("Cross-user sharing relay control is unavailable on this Coordinator port")
+    fun crossUserSharingReconcile(): AndroidCrossUserSharingState =
+        error("Cross-user sharing reconciliation is unavailable on this Coordinator port")
+    fun crossUserSharingCreateFromAgent(
+        agentId: String,
+        agentName: String,
+        avatarDataUrl: String? = null,
+    ): JSONObject = error("Cross-user room creation is unavailable on this Coordinator port")
+    fun crossUserSharingCreateRoomInvite(roomId: String): JSONObject =
+        error("Cross-user room invites are unavailable on this Coordinator port")
+    fun crossUserSharingJoin(link: String): JSONObject =
+        error("Cross-user room join is unavailable on this Coordinator port")
+    fun crossUserSharingRespond(payload: JSONObject): AndroidCrossUserSharingState =
+        error("Cross-user room join decisions are unavailable on this Coordinator port")
+    fun crossUserSharingCreate(payload: JSONObject): JSONObject =
+        error("Cross-user room creation is unavailable on this Coordinator port")
+    fun crossUserSharingAddAgent(payload: JSONObject): AndroidCrossUserSharingState =
+        error("Cross-user room agent mutation is unavailable on this Coordinator port")
+    fun crossUserSharingRemoveAgent(roomId: String, agentId: String): AndroidCrossUserSharingState =
+        error("Cross-user room agent mutation is unavailable on this Coordinator port")
+    fun crossUserSharingLeave(roomId: String, targetAuthId: String? = null): AndroidCrossUserSharingState =
+        error("Cross-user room leave is unavailable on this Coordinator port")
+    fun crossUserSharingSetTyping(roomId: String, isTyping: Boolean): Boolean =
+        error("Cross-user room typing is unavailable on this Coordinator port")
 
     fun featureExecute(params: JSONObject): JSONObject
     fun sendAcknowledgementBegin(
