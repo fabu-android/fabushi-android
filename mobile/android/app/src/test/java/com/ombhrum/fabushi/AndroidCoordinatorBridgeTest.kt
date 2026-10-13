@@ -26,6 +26,11 @@ class AndroidCoordinatorBridgeTest {
         } as AndroidCoordinatorPort
 
     @Test
+    fun exposesTypedIndexedGlobalMessageSearchSurface() {
+        assertTrue(AndroidCoordinatorPort::class.java.methods.any { it.name == "globalContentSearchMessages" })
+    }
+
+    @Test
     fun concurrentInstallKeepsExactlyOneProcessOwner() {
         val first = fakePort()
         val second = fakePort()
