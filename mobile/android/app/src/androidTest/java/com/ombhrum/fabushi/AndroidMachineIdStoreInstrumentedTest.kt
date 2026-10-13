@@ -1,12 +1,15 @@
 package com.ombhrum.fabushi
 
+import android.content.Context
+import android.content.ContextWrapper
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.ombhrum.fabushi.androidmain.security.AndroidMachineIdStore
 import java.io.File
-import java.util.concurrent.TimeUnit
-import java.util.concurrent.Executors
+import java.util.UUID
 import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -18,47 +21,49 @@ import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
 class AndroidMachineIdStoreInstrumentedTest {
-    private val context = ApplicationProvider.getApplicationContext<android.content.Context>()
-    private val protectedFile = File(context.noBackupFilesDir, "fabushi-machine-id.v1")
-    private val legacyFile = File(context.filesDir, "machine-id")
+    private lateinit var root: File
+    private lateinit var context: Context
+    private val protectedFile get() = File(context.noBackupFilesDir, PROTECTED_FILE)
+    private val legacyFile get() = File(context.filesDir, LEGACY_FILE)
 
     @Before
-    fun resetFiles() {
-        protectedFile.delete()
-        legacyFile.delete()
+    fun setUp() {
+        val application = ApplicationProvider.getApplicationContext<Context>()
+        root = File(application.cacheDir, "machine-id-test-${UUID.randomUUID()}")
+        context = IsolatedContext(application, root)
     }
 
     @After
-    fun cleanup() {
-        protectedFile.delete()
-        legacyFile.delete()
+    fun tearDown() {
+        root.deleteRecursively()
     }
 
     @Test
     fun protectedMachineIdIsStableAndNeverStoredAsPlaintext() {
-        val store = AndroidMachineIdStore(context)
-        val first = store.getOrCreate()
-        val second = store.getOrCreate()
+        val first = AndroidMachineIdStore(context).getOrCreate()
+        val second = AndroidMachineIdStore(context).getOrCreate()
+
         assertEquals(first, second)
         assertTrue(first.isNotBlank())
-        assertTrue(protectedFile.exists())
+        assertTrue(protectedFile.isFile)
         assertFalse(protectedFile.readText().contains(first))
         assertFalse(legacyFile.exists())
     }
 
     @Test
     fun legacyPlaintextIdentityMigratesOnceAndIsRemoved() {
-        val legacy = "legacy-machine-id-123"
+        val legacy = "legacy-machine-id-${UUID.randomUUID()}"
         legacyFile.parentFile?.mkdirs()
         legacyFile.writeText(legacy)
+
         val resolved = AndroidMachineIdStore(context).getOrCreate()
+
         assertEquals(legacy, resolved)
         assertFalse(legacyFile.exists())
-        assertTrue(protectedFile.exists())
+        assertTrue(protectedFile.isFile)
         assertFalse(protectedFile.readText().contains(legacy))
         assertEquals(legacy, AndroidMachineIdStore(context).getOrCreate())
     }
-
 
     @Test
     fun concurrentStoreInstancesConvergeOnOneDurableMachineId() {
@@ -72,11 +77,12 @@ class AndroidMachineIdStoreInstrumentedTest {
                 }
             }
             start.countDown()
+
             val ids = futures.map { it.get(10, TimeUnit.SECONDS) }.toSet()
             assertEquals(1, ids.size)
             assertEquals(ids.single(), AndroidMachineIdStore(context).getOrCreate())
-            assertTrue(protectedFile.exists())
-            assertFalse(File(context.noBackupFilesDir, "fabushi-machine-id.v1.tmp").exists())
+            assertTrue(protectedFile.isFile)
+            assertFalse(File(context.noBackupFilesDir, "${PROTECTED_FILE}.tmp").exists())
         } finally {
             workers.shutdownNow()
         }
@@ -86,10 +92,29 @@ class AndroidMachineIdStoreInstrumentedTest {
     fun corruptProtectedIdentityFailsClosedInsteadOfRotating() {
         protectedFile.parentFile?.mkdirs()
         protectedFile.writeText("fabushi-machine-id-v1\nnot-base64\nstill-not-base64")
+
         assertThrows(IllegalStateException::class.java) {
             AndroidMachineIdStore(context).getOrCreate()
         }
         assertTrue(protectedFile.exists())
         assertFalse(legacyFile.exists())
+    }
+
+    private class IsolatedContext(
+        base: Context,
+        private val root: File,
+    ) : ContextWrapper(base) {
+        override fun getApplicationContext(): Context = this
+
+        override fun getFilesDir(): File =
+            File(root, "files").also { it.mkdirs() }
+
+        override fun getNoBackupFilesDir(): File =
+            File(root, "no-backup").also { it.mkdirs() }
+    }
+
+    private companion object {
+        const val PROTECTED_FILE = "fabushi-machine-id.v1"
+        const val LEGACY_FILE = "machine-id"
     }
 }
