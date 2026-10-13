@@ -3830,6 +3830,39 @@ impl AndroidJsonHost {
             )?;
 
         let command = envelope.get("command").and_then(Value::as_object);
+        let is_sync = command
+            .and_then(|command| command.get("type"))
+            .and_then(Value::as_str)
+            == Some("sync");
+        let mut account_mutation = mutation;
+        let mut remote_human_sync = None;
+        if is_sync && self.mode != AndroidHostMode::Test {
+            let fence_before_network = account_fence.clone();
+            match self.account.authenticated_device_api_request("GET", "/api/social/friends", None) {
+                Ok((remote, remote_mutation)) => {
+                    if remote_mutation.is_some() {
+                        account_mutation = remote_mutation;
+                    }
+                    if self.current_turn_account_fence()? != fence_before_network {
+                        return Err("Human contact sync became stale after the account changed.".into());
+                    }
+                    let contacts = normalize_human_remote_contacts(&remote, actor_id.as_str())?;
+                    let reconciled = self
+                        .messaging
+                        .lock()
+                        .map_err(|_| "canonical Android messaging owner lock poisoned".to_string())?
+                        .reconcile_remote_human_contacts(&contacts)?;
+                    remote_human_sync = Some(json!({
+                        "status":"synced",
+                        "contactCount":contacts.len(),
+                        "reconciledCount":reconciled,
+                    }));
+                }
+                Err(error) => {
+                    remote_human_sync = Some(json!({"status":"unavailable","error":error}));
+                }
+            }
+        }
         // Acknowledgement telemetry is owned at the canonical Host mutation boundary. Compose may
         // optimistically project UI state, but it cannot settle or retry messaging side effects.
         let reaction_telemetry = command
@@ -3961,7 +3994,13 @@ impl AndroidJsonHost {
         }
 
         self.report_signin_poll_result(&result);
-        Ok(with_account_session_mutation(result, mutation))
+        let mut result = result;
+        if let Some(remote_human_sync) = remote_human_sync {
+            if let Some(object) = result.as_object_mut() {
+                object.insert("remoteHumanSync".into(), remote_human_sync);
+            }
+        }
+        Ok(with_account_session_mutation(result, account_mutation))
     }
     fn messaging_blob_read(&mut self, params: &Value) -> Result<Value, String> {
         let (actor_id, mutation) = self.current_messaging_identity()?;
@@ -10637,6 +10676,73 @@ fn mcp_auth_display_name(server_name: &str, account_key: &str) -> String {
     format!("{server_name} ({rendered})")
 }
 
+fn normalize_human_remote_contacts(
+    value: &Value,
+    current_actor_id: &str,
+) -> Result<Vec<Value>, String> {
+    validate_human_remote_envelope(value, "contact sync")?;
+    let friends = value
+        .get("data")
+        .and_then(|data| data.get("friends"))
+        .and_then(Value::as_array)
+        .ok_or("Fabushi Human contact sync omitted data.friends")?;
+    if friends.len() > 10_000 {
+        return Err("Fabushi Human contact sync returned too many contacts".into());
+    }
+    let mut normalized = Vec::with_capacity(friends.len());
+    let mut seen = BTreeSet::new();
+    for friend in friends {
+        let object = friend.as_object().ok_or("Fabushi Human contact must be an object")?;
+        let raw_user_id = object
+            .get("userId")
+            .or_else(|| object.get("id"))
+            .ok_or("Fabushi Human contact omitted userId")?;
+        let raw_user_id = match raw_user_id {
+            Value::String(value) => value.trim().to_string(),
+            Value::Number(value) => value.to_string(),
+            _ => return Err("Fabushi Human contact userId has an unsupported type".into()),
+        };
+        if raw_user_id.is_empty() || raw_user_id.len() > 200 {
+            return Err("Fabushi Human contact userId is invalid".into());
+        }
+        let actor_id = if raw_user_id.starts_with("human:") {
+            raw_user_id
+        } else {
+            format!("human:{raw_user_id}")
+        };
+        if actor_id == current_actor_id {
+            continue;
+        }
+        if !seen.insert(actor_id.clone()) {
+            return Err("Fabushi Human contact sync returned a duplicate contact".into());
+        }
+        let display_name = object
+            .get("displayName")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty() && value.len() <= 200)
+            .ok_or("Fabushi Human contact displayName is invalid")?;
+        let username = object
+            .get("username")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty() && value.len() <= 320);
+        let avatar_url = object
+            .get("avatarUrl")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty() && value.len() <= 4096);
+        normalized.push(json!({
+            "id":actor_id,
+            "kind":"human",
+            "displayName":display_name,
+            "username":username,
+            "avatarUrl":avatar_url,
+        }));
+    }
+    Ok(normalized)
+}
+
 fn human_remote_messages_path(
     contact_id: &str,
     before: Option<&str>,
@@ -15558,6 +15664,28 @@ mod android_box_handoff_runtime_tests {
 #[cfg(test)]
 mod human_remote_sync_contract_tests {
     use super::*;
+
+    #[test]
+    fn remote_contact_normalization_is_account_safe_and_bounded() {
+        let contacts = normalize_human_remote_contacts(
+            &json!({"success":true,"data":{"friends":[
+                {"id":"friend-row","userId":"peer-1","username":"peer","displayName":"Peer"},
+                {"id":"self-row","userId":"self","username":"self","displayName":"Self"}
+            ]}}),
+            "human:self",
+        )
+        .unwrap();
+        assert_eq!(contacts.len(), 1);
+        assert_eq!(contacts[0]["id"], "human:peer-1");
+        assert!(normalize_human_remote_contacts(
+            &json!({"success":true,"data":{"friends":[
+                {"userId":"dup","displayName":"One"},
+                {"userId":"dup","displayName":"Two"}
+            ]}}),
+            "human:self",
+        )
+        .is_err());
+    }
 
     #[test]
     fn remote_message_sync_path_is_bounded_and_percent_encoded() {
