@@ -17563,7 +17563,7 @@ mod tests {
                 event["type"], "transcript.roster",
                 "only canonical roster bridge projections may precede the direct timeline event",
             );
-            assert_eq!(event["agentId"], agent.id);
+            assert_eq!(event["payload"]["agentId"], agent.id);
             assert!(
                 std::time::Instant::now() < deadline,
                 "timeline event must remain ordered behind bounded roster projections",
@@ -17590,7 +17590,7 @@ mod tests {
                 event["type"], "transcript.roster",
                 "only canonical roster bridge projections may precede the direct profile event",
             );
-            assert_eq!(event["agentId"], agent.id);
+            assert_eq!(event["payload"]["agentId"], agent.id);
             assert!(
                 std::time::Instant::now() < deadline,
                 "profile event must remain ordered behind bounded roster projections",
@@ -17621,7 +17621,7 @@ mod tests {
                 event["type"], "transcript.roster",
                 "only canonical roster bridge projections may precede the direct profile event",
             );
-            assert_eq!(event["agentId"], agent.id);
+            assert_eq!(event["payload"]["agentId"], agent.id);
             assert!(
                 std::time::Instant::now() < deadline,
                 "profile event must remain ordered behind bounded roster projections",
