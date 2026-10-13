@@ -1,10 +1,11 @@
-use std::collections::{BTreeMap, HashMap};
-use std::fmt;
-use std::panic::{catch_unwind, AssertUnwindSafe};
-use std::sync::{
-    atomic::{AtomicU64, Ordering},
-    mpsc::{self, Receiver, Sender},
-    Arc, Mutex, OnceLock, Weak,
+use std::{
+    collections::{BTreeMap, HashMap},
+    panic::{catch_unwind, AssertUnwindSafe},
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        mpsc::{self, Receiver, Sender},
+        Arc, Mutex, Weak,
+    },
 };
 
 use serde_json::Value;
@@ -17,34 +18,13 @@ pub struct HostEvent {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct HostEventFailureReport {
-    pub kind: String,
+pub struct HostEventFailure {
+    pub kind: &'static str,
     pub topic: Option<String>,
-    pub error_class: String,
+    pub error_class: &'static str,
 }
 
-pub type HostEventFailureReporter =
-    Arc<dyn Fn(&HostEventFailureReport) + Send + Sync + 'static>;
-
-static HOST_EVENT_FAILURE_REPORTER: OnceLock<Mutex<Option<HostEventFailureReporter>>> =
-    OnceLock::new();
-
-pub fn pin_host_event_failure_reporter(reporter: Option<HostEventFailureReporter>) {
-    let slot = HOST_EVENT_FAILURE_REPORTER.get_or_init(|| Mutex::new(None));
-    if let Ok(mut current) = slot.lock() {
-        *current = reporter;
-    }
-}
-
-fn report_pinned_host_event_failure(report: &HostEventFailureReport) {
-    let reporter = HOST_EVENT_FAILURE_REPORTER
-        .get()
-        .and_then(|slot| slot.lock().ok().and_then(|current| current.clone()));
-    if let Some(reporter) = reporter {
-        reporter(report);
-    }
-}
-
+pub type HostEventFailureReporter = Arc<dyn Fn(&HostEventFailure) + Send + Sync + 'static>;
 type HostEventListener = Arc<dyn Fn(&HostEvent) + Send + Sync + 'static>;
 type HostCapabilityHandler =
     Arc<dyn Fn(&Value) -> Result<(), String> + Send + Sync + 'static>;
@@ -55,23 +35,12 @@ pub enum HostEventFailureMode {
     Reject,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
+#[error("Host event handler failed for {topic}: {message}")]
 pub struct HostEventHandlerError {
     pub topic: String,
     pub message: String,
 }
-
-impl fmt::Display for HostEventHandlerError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            formatter,
-            "Host event handler failed for {}: {}",
-            self.topic, self.message
-        )
-    }
-}
-
-impl std::error::Error for HostEventHandlerError {}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum SubscriptionKind {
@@ -94,7 +63,7 @@ pub struct HostEventBus {
 
 impl Default for HostEventBus {
     fn default() -> Self {
-        Self::with_failure_reporter(Arc::new(report_pinned_host_event_failure))
+        Self::with_failure_reporter(Arc::new(|_| {}))
     }
 }
 
@@ -121,8 +90,8 @@ impl HostEventBus {
         receiver
     }
 
-    /// Shipping stream/listener fanout. A disconnected stream subscriber is normal disposal,
-    /// while a callback panic is isolated and reported without breaking other listeners.
+    /// Existing Android stream fan-out plus Desktop-equivalent callback listeners.
+    /// One faulty listener is fenced and cannot suppress delivery to later listeners.
     pub fn emit(&self, event: HostEvent) {
         self.state
             .stream_subscribers
@@ -138,10 +107,10 @@ impl HostEventBus {
             .unwrap_or_default();
         for listener in listeners {
             if catch_unwind(AssertUnwindSafe(|| listener(&event))).is_err() {
-                (self.state.report_failure)(&HostEventFailureReport {
-                    kind: "listener_failed".into(),
+                (self.state.report_failure)(&HostEventFailure {
+                    kind: "listener_failed",
                     topic: None,
-                    error_class: "panic".into(),
+                    error_class: "panic",
                 });
             }
         }
@@ -151,8 +120,8 @@ impl HostEventBus {
         self.state
             .stream_subscribers
             .lock()
-            .map(|subscribers| subscribers.len())
-            .unwrap_or_default()
+            .expect("host event subscribers lock poisoned")
+            .len()
     }
 
     pub fn subscribe_listener<F>(&self, listener: F) -> HostEventSubscription
@@ -194,8 +163,6 @@ impl HostEventBus {
         }
     }
 
-    /// Capability-topic dispatch matching Desktop Continue/Reject failure semantics.
-    /// Handler failures are always reported; Reject additionally returns the first failure.
     pub fn emit_topic(
         &self,
         topic: &str,
@@ -221,10 +188,10 @@ impl HostEventBus {
             let Some((message, error_class)) = failure else {
                 continue;
             };
-            (self.state.report_failure)(&HostEventFailureReport {
-                kind: "subscriber_failed".into(),
+            (self.state.report_failure)(&HostEventFailure {
+                kind: "subscriber_failed",
                 topic: Some(topic.to_string()),
-                error_class: error_class.into(),
+                error_class,
             });
             if failure_mode == HostEventFailureMode::Reject {
                 return Err(HostEventHandlerError {
@@ -245,12 +212,16 @@ pub struct HostEventSubscription {
 }
 
 impl HostEventSubscription {
-    pub fn unsubscribe(&mut self) {
+    pub fn unsubscribe(mut self) {
+        self.remove();
+    }
+
+    fn remove(&mut self) {
         if !self.active {
             return;
         }
-        self.active = false;
         let Some(state) = self.state.upgrade() else {
+            self.active = false;
             return;
         };
         match &self.kind {
@@ -261,21 +232,25 @@ impl HostEventSubscription {
             }
             SubscriptionKind::Topic(topic) => {
                 if let Ok(mut topics) = state.topic_handlers.lock() {
-                    if let Some(handlers) = topics.get_mut(topic) {
+                    let remove_topic = if let Some(handlers) = topics.get_mut(topic) {
                         handlers.remove(&self.id);
-                        if handlers.is_empty() {
-                            topics.remove(topic);
-                        }
+                        handlers.is_empty()
+                    } else {
+                        false
+                    };
+                    if remove_topic {
+                        topics.remove(topic);
                     }
                 }
             }
         }
+        self.active = false;
     }
 }
 
 impl Drop for HostEventSubscription {
     fn drop(&mut self) {
-        self.unsubscribe();
+        self.remove();
     }
 }
 
@@ -284,99 +259,124 @@ mod tests {
     use super::*;
     use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
 
-    fn event() -> HostEvent {
-        HostEvent {
-            family: "transcript".into(),
-            session_id: "s".into(),
-            payload_json: "{}".into(),
-        }
-    }
-
     #[test]
     fn fanout_is_not_competing_consumption() {
         let bus = HostEventBus::default();
         let a = bus.subscribe();
         let b = bus.subscribe();
-        let event = event();
+        let event = HostEvent {
+            family: "transcript".into(),
+            session_id: "s".into(),
+            payload_json: "{}".into(),
+        };
         bus.emit(event.clone());
         assert_eq!(a.recv().unwrap(), event);
         assert_eq!(b.recv().unwrap(), event);
     }
 
     #[test]
-    fn listener_panic_is_reported_and_does_not_break_other_listener() {
-        let failures = Arc::new(Mutex::new(Vec::new()));
-        let failure_sink = Arc::clone(&failures);
-        let bus = HostEventBus::with_failure_reporter(Arc::new(move |report| {
-            failure_sink.lock().unwrap().push(report.clone());
+    fn listener_panic_is_fenced_and_later_listener_still_runs() {
+        let failures = Arc::new(Mutex::new(Vec::<HostEventFailure>::new()));
+        let sink = Arc::clone(&failures);
+        let bus = HostEventBus::with_failure_reporter(Arc::new(move |failure| {
+            sink.lock().unwrap().push(failure.clone());
         }));
         let delivered = Arc::new(AtomicUsize::new(0));
-        let delivered_sink = Arc::clone(&delivered);
         let _panic = bus.subscribe_listener(|_| panic!("boom"));
+        let delivered_ref = Arc::clone(&delivered);
         let _healthy = bus.subscribe_listener(move |_| {
-            delivered_sink.fetch_add(1, AtomicOrdering::SeqCst);
+            delivered_ref.fetch_add(1, AtomicOrdering::SeqCst);
         });
 
-        bus.emit(event());
+        bus.emit(HostEvent {
+            family: "agent".into(),
+            session_id: "session-1".into(),
+            payload_json: "{}".into(),
+        });
 
         assert_eq!(delivered.load(AtomicOrdering::SeqCst), 1);
         assert_eq!(
             failures.lock().unwrap().as_slice(),
-            &[HostEventFailureReport {
-                kind: "listener_failed".into(),
+            &[HostEventFailure {
+                kind: "listener_failed",
                 topic: None,
-                error_class: "panic".into(),
+                error_class: "panic",
             }]
         );
     }
 
     #[test]
-    fn topic_failure_continue_reports_but_reject_returns_first_error() {
-        let failures = Arc::new(Mutex::new(Vec::new()));
-        let failure_sink = Arc::clone(&failures);
-        let bus = HostEventBus::with_failure_reporter(Arc::new(move |report| {
-            failure_sink.lock().unwrap().push(report.clone());
+    fn topic_failure_mode_controls_rejection_without_hiding_failures() {
+        let failures = Arc::new(Mutex::new(Vec::<HostEventFailure>::new()));
+        let sink = Arc::clone(&failures);
+        let bus = HostEventBus::with_failure_reporter(Arc::new(move |failure| {
+            sink.lock().unwrap().push(failure.clone());
         }));
-        let _failed = bus.on("tool", |_| Err("denied".into()));
-        let _ok = bus.on("tool", |_| Ok(()));
+        let calls = Arc::new(AtomicUsize::new(0));
+        let first_calls = Arc::clone(&calls);
+        let _first = bus.on("tool.result", move |_| {
+            first_calls.fetch_add(1, AtomicOrdering::SeqCst);
+            Err("rejected".into())
+        });
+        let second_calls = Arc::clone(&calls);
+        let _second = bus.on("tool.result", move |_| {
+            second_calls.fetch_add(1, AtomicOrdering::SeqCst);
+            Ok(())
+        });
 
         assert!(bus
-            .emit_topic("tool", &serde_json::json!({}), HostEventFailureMode::Continue)
+            .emit_topic(
+                "tool.result",
+                &serde_json::json!({"ok": true}),
+                HostEventFailureMode::Continue,
+            )
             .is_ok());
-        let rejected = bus
-            .emit_topic("tool", &serde_json::json!({}), HostEventFailureMode::Reject)
+        assert_eq!(calls.load(AtomicOrdering::SeqCst), 2);
+
+        calls.store(0, AtomicOrdering::SeqCst);
+        let error = bus
+            .emit_topic(
+                "tool.result",
+                &serde_json::json!({"ok": true}),
+                HostEventFailureMode::Reject,
+            )
             .unwrap_err();
-        assert_eq!(rejected.topic, "tool");
-        assert_eq!(rejected.message, "denied");
+        assert_eq!(error.topic, "tool.result");
+        assert_eq!(calls.load(AtomicOrdering::SeqCst), 1);
         assert_eq!(failures.lock().unwrap().len(), 2);
     }
 
     #[test]
-    fn subscription_drop_unregisters_listener_and_topic_handler() {
+    fn dropping_subscription_unregisters_callback_and_topic_handler() {
         let bus = HostEventBus::default();
-        let calls = Arc::new(AtomicUsize::new(0));
-        let calls_listener = Arc::clone(&calls);
+        let listener_calls = Arc::new(AtomicUsize::new(0));
         {
-            let _listener = bus.subscribe_listener(move |_| {
-                calls_listener.fetch_add(1, AtomicOrdering::SeqCst);
+            let listener_calls_ref = Arc::clone(&listener_calls);
+            let _subscription = bus.subscribe_listener(move |_| {
+                listener_calls_ref.fetch_add(1, AtomicOrdering::SeqCst);
             });
-            bus.emit(event());
         }
-        bus.emit(event());
-        assert_eq!(calls.load(AtomicOrdering::SeqCst), 1);
+        bus.emit(HostEvent {
+            family: "agent".into(),
+            session_id: "session-1".into(),
+            payload_json: "{}".into(),
+        });
+        assert_eq!(listener_calls.load(AtomicOrdering::SeqCst), 0);
 
         let topic_calls = Arc::new(AtomicUsize::new(0));
-        let topic_sink = Arc::clone(&topic_calls);
         {
-            let _topic = bus.on("tool", move |_| {
-                topic_sink.fetch_add(1, AtomicOrdering::SeqCst);
+            let topic_calls_ref = Arc::clone(&topic_calls);
+            let _subscription = bus.on("agent.stop", move |_| {
+                topic_calls_ref.fetch_add(1, AtomicOrdering::SeqCst);
                 Ok(())
             });
-            bus.emit_topic("tool", &serde_json::json!({}), HostEventFailureMode::Continue)
-                .unwrap();
         }
-        bus.emit_topic("tool", &serde_json::json!({}), HostEventFailureMode::Continue)
-            .unwrap();
-        assert_eq!(topic_calls.load(AtomicOrdering::SeqCst), 1);
+        bus.emit_topic(
+            "agent.stop",
+            &serde_json::json!({}),
+            HostEventFailureMode::Continue,
+        )
+        .unwrap();
+        assert_eq!(topic_calls.load(AtomicOrdering::SeqCst), 0);
     }
 }
