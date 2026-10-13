@@ -1138,6 +1138,9 @@ fn normalize_agent_origin(value: &str) -> String {
 }
 
 fn valid_agent_purpose(value: &str) -> bool {
+    if value.is_empty() || value.len() > 96 {
+        return false;
+    }
     let mut chars = value.chars();
     let Some(first) = chars.next() else { return false; };
     first.is_ascii_lowercase()
@@ -1514,6 +1517,17 @@ mod tests {
         assert!(duplicate.introduction_pending);
         assert!(reopened
             .create_materialized_with_persona("Bad", "", None, None, "user", Some("Plugin Auth"))
+            .is_err());
+        let oversized_purpose = format!("a{}", "b".repeat(96));
+        assert!(reopened
+            .create_materialized_with_persona(
+                "Too Long",
+                "",
+                None,
+                None,
+                "user",
+                Some(&oversized_purpose),
+            )
             .is_err());
         let _ = fs::remove_file(path);
     }
