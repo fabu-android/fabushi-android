@@ -3105,6 +3105,8 @@ impl AndroidJsonHost {
                 self.current_account_transcript_entries()?,
             )),
             "feature.transcript.page" => self.transcript_page(params),
+            "feature.transcript.window" => self.transcript_window(params, false),
+            "feature.transcript.tail" => self.transcript_window(params, true),
             "feature.search.agentContent" => self.agent_content_search(params),
             "feature.contentSearch.messages" => self.content_search_messages(params),
             "feature.contentSearch.media" => self.content_search_media(params),
@@ -3316,6 +3318,44 @@ impl AndroidJsonHost {
             "entries": entries,
             "nextBeforeSeq": next_before_seq,
         }))
+    }
+
+    fn transcript_window(&self, params: &Value, include_all_entries: bool) -> Result<Value, String> {
+        let agent_id = required_string(params, "agentId")?.trim();
+        if agent_id.is_empty() {
+            return Err("transcript window agent id is required".into());
+        }
+        let requested = params.get("limit").and_then(Value::as_u64).unwrap_or(500);
+        let limit = if requested == 0 {
+            500usize
+        } else {
+            usize::try_from(requested)
+                .map_err(|_| "transcript window limit is out of range".to_string())?
+                .min(5_000)
+        };
+        let before_seq = params
+            .get("beforeSeq")
+            .filter(|value| !value.is_null())
+            .and_then(Value::as_u64)
+            .map(usize::try_from)
+            .transpose()
+            .map_err(|_| "transcript window cursor is out of range".to_string())?;
+
+        let scoped = self
+            .current_account_transcript_entries()?
+            .into_iter()
+            .filter(|entry| entry.get("agentId").and_then(Value::as_str) == Some(agent_id))
+            .filter(|entry| {
+                include_all_entries
+                    || (entry.get("kind").and_then(Value::as_str) != Some("tool-call")
+                        && entry.get("branched").and_then(Value::as_bool) != Some(true))
+            })
+            .collect::<Vec<_>>();
+        let end = before_seq.unwrap_or(scoped.len()).min(scoped.len());
+        let start = end.saturating_sub(limit);
+        let entries = scoped[start..end].to_vec();
+        let next_before_seq = (start > 0).then_some(start);
+        Ok(json!({"entries":entries,"nextBeforeSeq":next_before_seq}))
     }
 
     fn content_search_messages(&mut self, params: &Value) -> Result<Value, String> {
@@ -13428,6 +13468,92 @@ mod transcript_page_contract_tests {
         assert_eq!(page["entries"].as_array().unwrap().len(), 1);
         assert_eq!(page["entries"][0]["id"], "current-account");
         assert_eq!(page["nextBeforeSeq"], Value::Null);
+    }
+
+    #[test]
+    fn host_transcript_window_and_tail_match_desktop_session_bounds() {
+        let root = tempfile::tempdir().unwrap();
+        let mut host = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+        {
+            let mut transcript = host.transcript.lock().unwrap();
+            for index in 0..6 {
+                transcript
+                    .append_entry(json!({
+                        "id":format!("m-{index}"),
+                        "agentId":"agent-a",
+                        "kind":"message",
+                        "content":format!("message-{index}")
+                    }))
+                    .unwrap();
+            }
+            transcript
+                .append_entry(json!({"id":"tool","agentId":"agent-a","kind":"tool-call","name":"x"}))
+                .unwrap();
+            transcript
+                .append_entry(json!({"id":"branch","agentId":"agent-a","kind":"message","content":"branch","branched":true}))
+                .unwrap();
+            transcript
+                .append_entry(json!({"id":"other","agentId":"agent-b","kind":"message","content":"other"}))
+                .unwrap();
+        }
+
+        let window = host
+            .dispatch(
+                "feature.transcript.window",
+                &json!({"agentId":"agent-a","limit":3}),
+            )
+            .unwrap();
+        assert_eq!(
+            window["entries"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|entry| entry["id"].as_str().unwrap())
+                .collect::<Vec<_>>(),
+            vec!["m-3", "m-4", "m-5"],
+        );
+        assert_eq!(window["nextBeforeSeq"], 3);
+
+        let older = host
+            .dispatch(
+                "feature.transcript.window",
+                &json!({"agentId":"agent-a","limit":3,"beforeSeq":3}),
+            )
+            .unwrap();
+        assert_eq!(
+            older["entries"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|entry| entry["id"].as_str().unwrap())
+                .collect::<Vec<_>>(),
+            vec!["m-0", "m-1", "m-2"],
+        );
+        assert!(older["nextBeforeSeq"].is_null());
+
+        let tail = host
+            .dispatch(
+                "feature.transcript.tail",
+                &json!({"agentId":"agent-a","limit":0}),
+            )
+            .unwrap();
+        let tail_ids = tail["entries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|entry| entry["id"].as_str().unwrap())
+            .collect::<Vec<_>>();
+        assert!(tail_ids.contains(&"tool"));
+        assert!(tail_ids.contains(&"branch"));
+        assert!(!tail_ids.contains(&"other"));
+
+        let clamped = host
+            .dispatch(
+                "feature.transcript.window",
+                &json!({"agentId":"agent-a","limit":5001}),
+            )
+            .unwrap();
+        assert_eq!(clamped["entries"].as_array().unwrap().len(), 6);
     }
 
     #[test]
