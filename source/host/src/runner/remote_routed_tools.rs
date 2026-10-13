@@ -305,6 +305,22 @@ impl RemoteApprovalRegistry {
         Ok(true)
     }
 
+    pub(crate) fn pending_ids_for_account(
+        &self,
+        current_account_fence: &str,
+    ) -> Result<Vec<String>, String> {
+        let waits = self
+            .waits
+            .lock()
+            .map_err(|_| "remote approval registry lock poisoned".to_string())?;
+        Ok(waits
+            .iter()
+            .filter_map(|(approval_id, wait)| {
+                (wait.account_fence == current_account_fence).then(|| approval_id.clone())
+            })
+            .collect())
+    }
+
     pub(crate) fn resolve_from_ui(
         &self,
         broker: &SharedCapabilityBroker,
@@ -1745,6 +1761,35 @@ mod tests {
         fn call_tool(&self, _name: &str, _args: Value, _tool_call_id: &str) -> Result<Value, String> {
             panic!("policy-gated Remote tools must not fall through to the delegate")
         }
+    }
+
+    #[test]
+    fn pending_ids_are_account_fenced() {
+        let registry = RemoteApprovalRegistry::default();
+        let make_wait = |account_fence: &str, suffix: &str| RemoteApprovalWait {
+            parent_operation_id: format!("parent-{suffix}"),
+            remote_operation_id: format!("remote-{suffix}"),
+            request_id: format!("request-{suffix}"),
+            capability: "remote.shell".into(),
+            refusal_id: format!("refusal-{suffix}"),
+            account_fence: account_fence.into(),
+            account_epoch: 7,
+            device_id: "device-a".into(),
+            signal: Arc::new((Mutex::new(None), Condvar::new())),
+        };
+        registry.register("approval-a1", make_wait("account-a", "a1")).unwrap();
+        registry.register("approval-b1", make_wait("account-b", "b1")).unwrap();
+        registry.register("approval-a2", make_wait("account-a", "a2")).unwrap();
+
+        assert_eq!(
+            registry.pending_ids_for_account("account-a").unwrap(),
+            vec!["approval-a1".to_string(), "approval-a2".to_string()],
+        );
+        assert_eq!(
+            registry.pending_ids_for_account("account-b").unwrap(),
+            vec!["approval-b1".to_string()],
+        );
+        assert!(registry.pending_ids_for_account("account-c").unwrap().is_empty());
     }
 
     #[test]

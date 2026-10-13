@@ -4100,6 +4100,51 @@ impl AndroidJsonHost {
         Ok(())
     }
 
+    fn settle_remote_pending_for_permission(
+        &mut self,
+        permission: LocalToolPermission,
+        exclude_approval_id: Option<&str>,
+    ) -> Result<usize, String> {
+        if permission == LocalToolPermission::Ask {
+            return Ok(0);
+        }
+        let account_fence = self.current_turn_account_fence()?;
+        let approval_ids = self
+            .remote_approvals
+            .pending_ids_for_account(&account_fence)?;
+        let approved = permission == LocalToolPermission::Always;
+        let decision = if approved { "always" } else { "never" };
+        let mut settled = 0usize;
+        for approval_id in approval_ids {
+            if exclude_approval_id == Some(approval_id.as_str()) {
+                continue;
+            }
+            let Some(resolution) = self.remote_approvals.resolve_from_ui(
+                &self.capability_broker,
+                &approval_id,
+                approved,
+                &account_fence,
+                now_ms(),
+            )? else {
+                continue;
+            };
+            self.events.push_back(json!({
+                "type":"approval.resolved",
+                "approvalId":approval_id,
+                "operationId":resolution.remote_operation_id,
+                "parentOperationId":resolution.parent_operation_id,
+                "capability":resolution.capability,
+                "approved":approved,
+                "decision":decision,
+                "remoteDispatch":true,
+                "policyChanged":true,
+                "effectiveLocalToolPermission":permission.as_str(),
+            }));
+            settled += 1;
+        }
+        Ok(settled)
+    }
+
     fn local_tool_permission(&self) -> Result<Value, String> {
         self.sync_local_tool_permission_ceiling()?;
         let settings = self
@@ -4116,17 +4161,27 @@ impl AndroidJsonHost {
     fn set_local_tool_permission(&mut self, params: &Value) -> Result<Value, String> {
         self.sync_local_tool_permission_ceiling()?;
         let requested = required_string(params, "permission")?;
-        let mut settings = self
-            .user_settings
-            .lock()
-            .map_err(|_| "Android user settings lock poisoned".to_string())?;
-        settings
-            .set_local_tool_permission(requested)
-            .map_err(|error| format!("failed to persist Android local tool permission: {error}"))?;
+        let (permission, preference, ceiling) = {
+            let mut settings = self
+                .user_settings
+                .lock()
+                .map_err(|_| "Android user settings lock poisoned".to_string())?;
+            settings
+                .set_local_tool_permission(requested)
+                .map_err(|error| format!("failed to persist Android local tool permission: {error}"))?;
+            (
+                settings.local_tool_permission(),
+                settings.local_tool_permission_preference(),
+                settings.local_tool_permission_ceiling(),
+            )
+        };
+        let settled_pending_remote_approvals =
+            self.settle_remote_pending_for_permission(permission, None)?;
         Ok(json!({
-            "permission": settings.local_tool_permission().as_str(),
-            "preference": settings.local_tool_permission_preference().as_str(),
-            "ceiling": settings.local_tool_permission_ceiling().map(|value| value.as_str()),
+            "permission": permission.as_str(),
+            "preference": preference.as_str(),
+            "ceiling": ceiling.map(|value| value.as_str()),
+            "settledPendingRemoteApprovals": settled_pending_remote_approvals,
         }))
     }
 
@@ -9018,6 +9073,18 @@ impl AndroidJsonHost {
                 "remoteDispatch":true,
                 "effectiveLocalToolPermission":effective_local_tool_permission,
             }));
+            let settled_pending_remote_approvals =
+                match effective_local_tool_permission.as_deref() {
+                    Some("always") => self.settle_remote_pending_for_permission(
+                        LocalToolPermission::Always,
+                        Some(&approval_id),
+                    )?,
+                    Some("never") => self.settle_remote_pending_for_permission(
+                        LocalToolPermission::Never,
+                        Some(&approval_id),
+                    )?,
+                    _ => 0,
+                };
             return Ok(json!({
                 "status":"resolved",
                 "approved":approved,
@@ -9027,6 +9094,7 @@ impl AndroidJsonHost {
                 "capability":resolution.capability,
                 "execution": if approved { "dispatch-unlocked" } else { "denied" },
                 "effectiveLocalToolPermission":effective_local_tool_permission,
+                "settledPendingRemoteApprovals":settled_pending_remote_approvals,
             }));
         }
         let operation_id = self
