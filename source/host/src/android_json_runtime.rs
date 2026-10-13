@@ -6865,6 +6865,25 @@ impl AndroidJsonHost {
         Ok(())
     }
 
+    fn arm_visible_ack_redrives_for_session_change(
+        &self,
+        previous_fence: Option<&str>,
+        current_fence: Option<&str>,
+        observed_at_ms: u64,
+    ) -> usize {
+        let Some(current_fence) = current_fence
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        else {
+            return 0;
+        };
+        if previous_fence == Some(current_fence) {
+            return 0;
+        }
+        self.visible_ack_obligations
+            .arm_boot_redrives(current_fence, observed_at_ms)
+    }
+
     fn prepare_account_transition_cleanup(
         &mut self,
         previous_fence: &str,
@@ -8097,6 +8116,11 @@ impl AndroidJsonHost {
                 self.prepare_account_transition_cleanup(previous_fence, "account-switch")?;
             }
         }
+        self.arm_visible_ack_redrives_for_session_change(
+            previous_fence.as_deref(),
+            current_fence.as_deref(),
+            now_ms(),
+        );
         self.report_signin_poll_result(&result);
         Ok(with_account_session_mutation(result, mutation))
     }
@@ -8801,6 +8825,11 @@ impl AndroidJsonHost {
                 self.prepare_account_transition_cleanup(previous_fence, "account-switch")?;
             }
         }
+        self.arm_visible_ack_redrives_for_session_change(
+            previous_fence.as_deref(),
+            current_fence.as_deref(),
+            now_ms(),
+        );
         self.report_signin_poll_result(&result);
         Ok(with_account_session_mutation(result, mutation))
     }
@@ -15551,6 +15580,24 @@ export function apply(ctx) {
             .lock()
             .unwrap()
             .profile_announcement_needed(&account_fence, &agent.id, &revision));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn settled_session_rearms_persisted_visible_ack_obligations_without_crossing_accounts() {
+        let root = std::env::temp_dir().join(format!(
+            "fabushi-visible-ack-session-rearm-{}-{}",
+            std::process::id(),
+            now_ms()
+        ));
+        let host = AndroidJsonHost::new(&root, AndroidHostMode::Test);
+        host.visible_ack_obligations
+            .record_send("session:relogin", "mahayana-assistant", 1.0)
+            .unwrap();
+        assert_eq!(host.arm_visible_ack_redrives_for_session_change(None, Some("session:relogin"), 10), 1);
+        assert_eq!(host.visible_ack_obligations.take_due_redrive("session:other", "mahayana-assistant", 10_000), None);
+        assert!(host.visible_ack_obligations.take_due_redrive("session:relogin", "mahayana-assistant", 5_010).is_some());
+        assert_eq!(host.arm_visible_ack_redrives_for_session_change(Some("session:relogin"), Some("session:relogin"), 20_000), 0);
         let _ = std::fs::remove_dir_all(root);
     }
 
