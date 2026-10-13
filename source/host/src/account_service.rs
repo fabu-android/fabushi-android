@@ -1267,10 +1267,25 @@ mod tests {
         let server = std::thread::spawn(move || {
             // Upload.
             let (mut stream, _) = listener.accept().unwrap();
+            stream
+                .set_read_timeout(Some(std::time::Duration::from_secs(2)))
+                .unwrap();
             let mut raw = Vec::new();
             let mut buffer = [0_u8; 4096];
-            let read = stream.read(&mut buffer).unwrap();
-            raw.extend_from_slice(&buffer[..read]);
+            while raw.len() < 64 * 1024 {
+                let read = stream.read(&mut buffer).unwrap();
+                if read == 0 {
+                    break;
+                }
+                raw.extend_from_slice(&buffer[..read]);
+                let request = String::from_utf8_lossy(&raw);
+                let has_disposition =
+                    request.contains("name=\"file\"; filename=\"hello.txt\"");
+                let has_body = raw.windows(b"hello".len()).any(|window| window == b"hello");
+                if has_disposition && has_body {
+                    break;
+                }
+            }
             let request = String::from_utf8_lossy(&raw).to_string();
             let request_lower = request.to_ascii_lowercase();
             assert!(request.starts_with("POST /api/social/message-resources "));
