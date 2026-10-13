@@ -147,7 +147,8 @@ use fabushi_android_shared::webauthn_gateway::{
     WebAuthnCeremony, WebAuthnRequestFrame, WebAuthnResponseFrame, WebAuthnStage,
     WebAuthnStageOutcome,
 };
-use mahayana_js_runtime::{DeepSeekJsHost, HostEvent};
+use mahayana_js_runtime::{DeepSeekJsHost, HostEvent as JsHostEvent};
+use crate::host_event_bus::{HostEvent as AndroidHostEvent, HostEventBus};
 use fabushi_android_box_exec_daemon::{AuthenticatedRemoteHttpTransport, RemoteTransportPolicy};
 use mahayana_plugin_runtime::{
     ExternalReleaseManifest, PermissionManager, PluginInstaller,
@@ -1104,6 +1105,7 @@ pub struct AndroidJsonHost {
     oauth_attempts: BTreeSet<String>,
     browser_attempts: BTreeMap<String, String>,
     events: VecDeque<Value>,
+    host_event_bus: HostEventBus,
     active_operations: BTreeSet<String>,
     pending_approvals: BTreeMap<String, String>,
     remote_approvals: RemoteApprovalRegistry,
@@ -1792,6 +1794,24 @@ impl AndroidJsonHost {
         let structured_log_spool = Arc::new(Mutex::new(structured_log_spool));
         let event_loop_telemetry =
             AndroidEventLoopTelemetryRuntime::start(Arc::clone(&structured_log_spool));
+        let host_event_failure_spool = Arc::clone(&structured_log_spool);
+        let host_event_bus = HostEventBus::with_failure_reporter(Arc::new(move |failure| {
+            let mut metadata = BTreeMap::from([
+                ("kind".to_string(), failure.kind.to_string()),
+                ("error_class".to_string(), failure.error_class.to_string()),
+            ]);
+            if let Some(topic) = failure.topic.as_ref() {
+                metadata.insert("topic".to_string(), topic.clone());
+            }
+            if let Ok(mut spool) = host_event_failure_spool.lock() {
+                let _ = spool.record(
+                    "error",
+                    "sand.host.event_bus",
+                    metadata,
+                    now_ms(),
+                );
+            }
+        }));
         Self {
             mode,
             device_id: device_id.clone(),
@@ -1858,6 +1878,7 @@ impl AndroidJsonHost {
             oauth_attempts: BTreeSet::new(),
             browser_attempts: BTreeMap::new(),
             events: VecDeque::new(),
+            host_event_bus,
             active_operations: BTreeSet::new(),
             pending_approvals: BTreeMap::new(),
             remote_approvals: RemoteApprovalRegistry::default(),
@@ -11767,11 +11788,34 @@ impl AndroidJsonHost {
         Ok(())
     }
 
+    fn publish_host_event_projection(&self, event: &Value) {
+        let family = event
+            .get("type")
+            .and_then(Value::as_str)
+            .unwrap_or("unknown")
+            .to_string();
+        let session_id = event
+            .get("sessionId")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string();
+        self.host_event_bus.emit(AndroidHostEvent {
+            family,
+            session_id,
+            payload_json: event.to_string(),
+        });
+    }
+
+    pub fn host_event_bus(&self) -> HostEventBus {
+        self.host_event_bus.clone()
+    }
+
     fn feature_receive(&mut self) -> Result<Value, String> {
         self.drain_mcp_auth_owner_events()?;
         self.drain_agent_wake_once()?;
         self.drain_visible_ack_redrive_once()?;
         if let Some(event) = self.events.pop_front() {
+            self.publish_host_event_projection(&event);
             return Ok(event);
         }
         if let Some(event) = self
@@ -11780,6 +11824,7 @@ impl AndroidJsonHost {
             .map_err(|_| "tray event queue lock poisoned".to_string())?
             .pop_front()
         {
+            self.publish_host_event_projection(&event);
             return Ok(event);
         }
         if let Some(event) = self
@@ -11788,6 +11833,7 @@ impl AndroidJsonHost {
             .map_err(|_| "subagent event queue lock poisoned".to_string())?
             .pop_front()
         {
+            self.publish_host_event_projection(&event);
             return Ok(event);
         }
 
@@ -11849,6 +11895,7 @@ impl AndroidJsonHost {
                         }
                     }
                 }
+                self.publish_host_event_projection(&event);
                 return Ok(event);
             }
             if wait < 10 && !self.active_operations.is_empty() {
@@ -12812,10 +12859,10 @@ impl AndroidJsonHost {
             .map_err(|error| format!("failed to drain plugin runtime events: {error}"))?;
         for event in events {
             match event {
-                HostEvent::ToolRegistered { plugin_id, tool, .. } => {
+                JsHostEvent::ToolRegistered { plugin_id, tool, .. } => {
                     self.runtime_tools.entry(plugin_id).or_default().insert(tool);
                 }
-                HostEvent::ToolUnregistered { plugin_id, tool } => {
+                JsHostEvent::ToolUnregistered { plugin_id, tool } => {
                     let remove_entry = self
                         .runtime_tools
                         .get_mut(&plugin_id)
@@ -12827,7 +12874,7 @@ impl AndroidJsonHost {
                         self.runtime_tools.remove(&plugin_id);
                     }
                 }
-                HostEvent::ServiceRegistered { .. } | HostEvent::ServiceUnregistered { .. } => {}
+                JsHostEvent::ServiceRegistered { .. } | JsHostEvent::ServiceUnregistered { .. } => {}
             }
         }
         Ok(())
