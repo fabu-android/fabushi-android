@@ -780,7 +780,7 @@ mod tests {
         assert!(path.to_string_lossy().contains("xuser-attachments"));
 
         let reopened = AndroidXuserSharingManager::open(
-            root.path().join("shared-rooms.json"),
+            root.path().join("shared-room-registry.json"),
             Arc::new(Mutex::new(AndroidAgentRoster::open(root.path().join("agents.json")).unwrap())),
             Arc::new(Mutex::new(TranscriptStore::open(root.path().join("transcript.json")).unwrap())),
         ).unwrap();
