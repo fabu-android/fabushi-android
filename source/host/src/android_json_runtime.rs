@@ -1529,6 +1529,15 @@ impl AndroidJsonHost {
         let send_acknowledgements = Arc::new(Mutex::new(send_acknowledgement_owner));
         let visible_ack_obligations = Arc::new(AckObligations::new(&app_data_dir));
         if let Some(account_fence) = account.session_fence() {
+            let transcript_snapshot = transcript
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .get_transcript();
+            visible_ack_obligations
+                .reconcile_from_transcript(&account_fence, &transcript_snapshot)
+                .unwrap_or_else(|error| {
+                    panic!("failed to reconcile durable visible acknowledgements: {error}")
+                });
             visible_ack_obligations.arm_boot_redrives(&account_fence, now_ms());
         }
         let human_remote_outbound = Arc::new(Mutex::new(
