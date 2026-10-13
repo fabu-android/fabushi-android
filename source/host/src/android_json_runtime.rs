@@ -2800,6 +2800,10 @@ impl AndroidJsonHost {
             "feature.settings.timeZone.set" => self.set_time_zone_settings(params),
             "feature.settings.agentDefaultModel" => self.agent_default_model_setting(),
             "feature.settings.agentDefaultModel.set" => self.set_agent_default_model_setting(params),
+            "feature.settings.inferenceProvider" => self.inference_provider_setting(),
+            "feature.settings.inferenceProvider.set" => self.set_inference_provider_setting(params),
+            "feature.settings.inferenceRouterUsage" => self.inference_router_usage(),
+            "feature.settings.inferenceRouterUsage.record" => self.record_inference_router_usage(params),
             "feature.settings.localToolPermission" => self.local_tool_permission(),
             "feature.settings.localToolPermission.set" => self.set_local_tool_permission(params),
             "feature.settings.processMetrics" => self.process_metrics_settings(),
@@ -4586,6 +4590,58 @@ impl AndroidJsonHost {
             settled += 1;
         }
         Ok(settled)
+    }
+
+    fn inference_provider_setting(&self) -> Result<Value, String> {
+        let settings = self
+            .user_settings
+            .lock()
+            .map_err(|_| "Android user settings lock poisoned".to_string())?;
+        Ok(json!({"provider": settings.inference_provider()}))
+    }
+
+    fn set_inference_provider_setting(&mut self, params: &Value) -> Result<Value, String> {
+        let provider = required_string(params, "provider")?;
+        let provider = self
+            .user_settings
+            .lock()
+            .map_err(|_| "Android user settings lock poisoned".to_string())?
+            .set_inference_provider(provider)
+            .map_err(|error| format!("failed to persist Android inference provider: {error}"))?;
+        Ok(json!({"provider": provider}))
+    }
+
+    fn inference_router_usage(&self) -> Result<Value, String> {
+        Ok(self
+            .user_settings
+            .lock()
+            .map_err(|_| "Android user settings lock poisoned".to_string())?
+            .inference_router_usage())
+    }
+
+    fn record_inference_router_usage(&mut self, params: &Value) -> Result<Value, String> {
+        let provider = required_string(params, "provider")?;
+        let optional_usage = |field: &str| -> Result<Option<f64>, String> {
+            match params.get(field) {
+                None | Some(Value::Null) => Ok(None),
+                Some(value) => value
+                    .as_f64()
+                    .filter(|value| value.is_finite())
+                    .map(Some)
+                    .ok_or_else(|| format!("{field} must be a finite number")),
+            }
+        };
+        self.user_settings
+            .lock()
+            .map_err(|_| "Android user settings lock poisoned".to_string())?
+            .record_inference_usage(
+                provider,
+                optional_usage("inputTokens")?,
+                optional_usage("outputTokens")?,
+                optional_usage("cacheReadTokens")?,
+                optional_usage("cacheWriteTokens")?,
+            )
+            .map_err(|error| format!("failed to persist Android inference usage: {error}"))
     }
 
     fn local_tool_permission(&self) -> Result<Value, String> {
@@ -15030,6 +15086,65 @@ mod local_tool_permission_dispatch_tests {
             reopened.dispatch("feature.settings.localToolPermission", &json!({}))
                 .unwrap()["permission"],
             "always",
+        );
+    }
+}
+
+#[cfg(test)]
+mod inference_routing_settings_dispatch_tests {
+    use super::*;
+
+    #[test]
+    fn inference_provider_and_usage_routes_are_durable_and_reject_invalid_provider() {
+        let root = tempfile::tempdir().unwrap();
+        let mut host = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+        assert_eq!(
+            host.dispatch("feature.settings.inferenceProvider", &json!({}))
+                .unwrap()["provider"],
+            "cursor",
+        );
+        assert!(host
+            .dispatch(
+                "feature.settings.inferenceProvider.set",
+                &json!({"provider":"invalid"}),
+            )
+            .is_err());
+        assert_eq!(
+            host.dispatch(
+                "feature.settings.inferenceProvider.set",
+                &json!({"provider":"openrouter"}),
+            )
+            .unwrap()["provider"],
+            "openrouter",
+        );
+        let usage = host
+            .dispatch(
+                "feature.settings.inferenceRouterUsage.record",
+                &json!({
+                    "provider":"openrouter",
+                    "inputTokens":2.2,
+                    "outputTokens":4.8,
+                    "cacheReadTokens":1.0
+                }),
+            )
+            .unwrap();
+        assert_eq!(usage["providers"]["openrouter"]["requests"], 1);
+        assert_eq!(usage["providers"]["openrouter"]["inputTokens"], 2);
+        assert_eq!(usage["providers"]["openrouter"]["outputTokens"], 5);
+
+        drop(host);
+        let mut reopened = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+        assert_eq!(
+            reopened
+                .dispatch("feature.settings.inferenceProvider", &json!({}))
+                .unwrap()["provider"],
+            "openrouter",
+        );
+        assert_eq!(
+            reopened
+                .dispatch("feature.settings.inferenceRouterUsage", &json!({}))
+                .unwrap()["providers"]["openrouter"]["requests"],
+            1,
         );
     }
 }
