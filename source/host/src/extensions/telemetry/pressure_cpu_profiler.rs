@@ -162,7 +162,7 @@ impl AndroidPressureCpuProfiler {
 
     fn write_artifact(&self, ended_at_ms: i64, active: &ActiveCapture) -> io::Result<PathBuf> {
         let path = self.directory.join(format!(
-            "{ANDROID_PRESSURE_PROFILE_PREFIX}{}-{}.json",
+            "{ANDROID_PRESSURE_PROFILE_PREFIX}{}-{:020}.json",
             std::process::id(),
             active.started_at_ms.max(0)
         ));
