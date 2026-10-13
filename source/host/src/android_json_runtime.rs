@@ -139,7 +139,7 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::path::PathBuf;
 use std::sync::{
     atomic::{AtomicBool, Ordering},
-    Arc, Condvar, Mutex,
+    mpsc, Arc, Condvar, Mutex,
 };
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -147,6 +147,165 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 const ASSISTANT_READ_MARKER_ID: &str = "projection:mahayana-assistant:last-read";
 const ACCOUNT_TELEMETRY_OUTBOX_CAP: usize = 16;
 const PROCESS_CRASH_EVENT_CAP: usize = 20;
+
+const ANDROID_EVENT_LOOP_RESOLUTION_MS: u64 = 20;
+const ANDROID_EVENT_LOOP_WINDOW_MS: u64 = 60_000;
+const ANDROID_EVENT_LOOP_PRESSURE_P95_MS: f64 = 50.0;
+const ANDROID_EVENT_LOOP_HEARTBEAT_WINDOWS: u64 = 5;
+
+struct AndroidEventLoopTelemetryRuntime {
+    stop: mpsc::Sender<()>,
+    worker: Option<thread::JoinHandle<()>>,
+}
+
+impl AndroidEventLoopTelemetryRuntime {
+    fn start(spool: Arc<Mutex<AndroidStructuredLogSpool>>) -> Self {
+        let (stop_tx, stop_rx) = mpsc::channel();
+        let worker = thread::Builder::new()
+            .name("fabushi-android-host-event-loop-telemetry".into())
+            .spawn(move || run_android_event_loop_sampler(spool, stop_rx))
+            .ok();
+        Self { stop: stop_tx, worker }
+    }
+}
+
+impl Drop for AndroidEventLoopTelemetryRuntime {
+    fn drop(&mut self) {
+        let _ = self.stop.send(());
+        if let Some(worker) = self.worker.take() {
+            let _ = worker.join();
+        }
+    }
+}
+
+fn run_android_event_loop_sampler(
+    spool: Arc<Mutex<AndroidStructuredLogSpool>>,
+    stop: mpsc::Receiver<()>,
+) {
+    let resolution = Duration::from_millis(ANDROID_EVENT_LOOP_RESOLUTION_MS);
+    let window = Duration::from_millis(ANDROID_EVENT_LOOP_WINDOW_MS);
+    let mut window_started_at = Instant::now();
+    let mut next_tick = window_started_at + resolution;
+    let mut last_cpu_seconds = android_process_cpu_seconds();
+    let mut delays_ms = Vec::<f64>::new();
+    let mut window_index = 0_u64;
+
+    loop {
+        let wait = next_tick.saturating_duration_since(Instant::now());
+        match stop.recv_timeout(wait) {
+            Ok(()) | Err(mpsc::RecvTimeoutError::Disconnected) => break,
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
+        }
+
+        let now = Instant::now();
+        delays_ms.push(now.saturating_duration_since(next_tick).as_secs_f64() * 1_000.0);
+        next_tick += resolution;
+        if next_tick <= now {
+            next_tick = now + resolution;
+        }
+
+        let elapsed = now.saturating_duration_since(window_started_at);
+        if elapsed < window {
+            continue;
+        }
+
+        window_index = window_index.saturating_add(1);
+        let p50_ms = android_event_loop_percentile(&mut delays_ms, 0.50);
+        let p95_ms = android_event_loop_percentile(&mut delays_ms, 0.95);
+        let max_ms = delays_ms.iter().copied().fold(0.0_f64, f64::max);
+        let current_cpu_seconds = android_process_cpu_seconds();
+        let utilization = android_process_cpu_utilization(
+            last_cpu_seconds,
+            current_cpu_seconds,
+            elapsed.as_secs_f64(),
+        );
+        last_cpu_seconds = current_cpu_seconds;
+
+        let pressure = p95_ms >= ANDROID_EVENT_LOOP_PRESSURE_P95_MS;
+        let heartbeat = ANDROID_EVENT_LOOP_HEARTBEAT_WINDOWS != 0
+            && window_index % ANDROID_EVENT_LOOP_HEARTBEAT_WINDOWS == 0;
+        if pressure || heartbeat {
+            let trigger = if pressure { "pressure" } else { "heartbeat" };
+            let level = if pressure { "warn" } else { "info" };
+            let metadata = BTreeMap::from([
+                ("trigger".into(), trigger.into()),
+                ("p50_ms".into(), format!("{:.0}", p50_ms.round())),
+                ("p95_ms".into(), format!("{:.0}", p95_ms.round())),
+                ("max_ms".into(), format!("{:.0}", max_ms.round())),
+                ("utilization".into(), format!("{utilization:.3}")),
+                (
+                    "window_ms".into(),
+                    elapsed.as_millis().min(u64::MAX as u128).to_string(),
+                ),
+            ]);
+            // Observability is never allowed to mutate canonical runtime truth.
+            if let Ok(mut spool) = spool.lock() {
+                let _ = spool.record(level, "sand.host.event_loop", metadata, now_ms());
+            }
+        }
+
+        delays_ms.clear();
+        window_started_at = now;
+    }
+}
+
+fn android_event_loop_percentile(samples: &mut [f64], quantile: f64) -> f64 {
+    if samples.is_empty() {
+        return 0.0;
+    }
+    samples.sort_by(|left, right| left.total_cmp(right));
+    let rank = ((samples.len() - 1) as f64 * quantile.clamp(0.0, 1.0)).ceil() as usize;
+    samples[rank.min(samples.len() - 1)]
+}
+
+fn android_process_cpu_utilization(
+    before: Option<f64>,
+    after: Option<f64>,
+    elapsed_seconds: f64,
+) -> f64 {
+    if elapsed_seconds <= 0.0 || !elapsed_seconds.is_finite() {
+        return 0.0;
+    }
+    let Some(delta) = before
+        .zip(after)
+        .map(|(before, after)| (after - before).max(0.0))
+    else {
+        return 0.0;
+    };
+    (delta / elapsed_seconds).clamp(0.0, 1.0)
+}
+
+#[cfg(unix)]
+fn android_process_cpu_seconds() -> Option<f64> {
+    let mut usage = std::mem::MaybeUninit::<libc::rusage>::zeroed();
+    let result = unsafe { libc::getrusage(libc::RUSAGE_SELF, usage.as_mut_ptr()) };
+    if result != 0 {
+        return None;
+    }
+    let usage = unsafe { usage.assume_init() };
+    let user = usage.ru_utime.tv_sec as f64 + usage.ru_utime.tv_usec as f64 / 1_000_000.0;
+    let system = usage.ru_stime.tv_sec as f64 + usage.ru_stime.tv_usec as f64 / 1_000_000.0;
+    Some(user + system)
+}
+
+#[cfg(not(unix))]
+fn android_process_cpu_seconds() -> Option<f64> {
+    None
+}
+
+#[cfg(test)]
+mod android_event_loop_runtime_tests {
+    use super::*;
+
+    #[test]
+    fn percentile_and_cpu_normalization_match_host_contract() {
+        let mut samples = [1.0, 10.0, 3.0, 2.0];
+        assert_eq!(android_event_loop_percentile(&mut samples, 0.50), 3.0);
+        assert_eq!(android_event_loop_percentile(&mut samples, 0.95), 10.0);
+        assert_eq!(android_process_cpu_utilization(Some(1.0), Some(1.5), 1.0), 0.5);
+        assert_eq!(android_process_cpu_utilization(Some(2.0), Some(1.0), 1.0), 0.0);
+    }
+}
 
 const SUBAGENT_REVIEW_APPROVAL_TTL_MS: u64 = 10 * 60 * 1_000;
 const SUBAGENT_REVIEW_MAX_PENDING_PER_AGENT: usize = 4;
@@ -876,6 +1035,7 @@ pub struct AndroidJsonHost {
     structured_log_spool: Arc<Mutex<AndroidStructuredLogSpool>>,
     structured_log_counter_id: String,
     structured_log_shipping: Arc<AtomicBool>,
+    _event_loop_telemetry: AndroidEventLoopTelemetryRuntime,
     process_metrics: AndroidProcessMetricsCollector,
     process_metrics_recent: VecDeque<Value>,
     process_crash_recent: VecDeque<Value>,
@@ -1546,6 +1706,9 @@ impl AndroidJsonHost {
                     });
             }
         }
+        let structured_log_spool = Arc::new(Mutex::new(structured_log_spool));
+        let event_loop_telemetry =
+            AndroidEventLoopTelemetryRuntime::start(Arc::clone(&structured_log_spool));
         Self {
             mode,
             device_id: device_id.clone(),
@@ -1559,9 +1722,10 @@ impl AndroidJsonHost {
             account_telemetry_spill_path: app_data_dir.join("account-telemetry-spill.json"),
             account_telemetry_shipping: Arc::new(AtomicBool::new(false)),
             edge_failures: EdgeFailureBuffer::default(),
-            structured_log_spool: Arc::new(Mutex::new(structured_log_spool)),
+            structured_log_spool,
             structured_log_counter_id,
             structured_log_shipping: Arc::new(AtomicBool::new(false)),
+            _event_loop_telemetry: event_loop_telemetry,
             process_metrics: AndroidProcessMetricsCollector::default(),
             process_metrics_recent: VecDeque::new(),
             process_crash_recent,
