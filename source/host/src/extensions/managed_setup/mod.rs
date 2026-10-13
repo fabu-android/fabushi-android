@@ -5,3 +5,5 @@
 pub mod managed_skills_cache;
 pub mod managed_skills_service;
 pub mod sand_managed_skills;
+
+pub mod cursor_skills_marketplace;
