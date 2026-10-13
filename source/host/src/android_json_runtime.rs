@@ -11629,6 +11629,7 @@ impl AndroidJsonHost {
                 .agent_turn_interruptions
                 .has_active_turn(&agent_id, &account_fence_for_attachment);
         let mut accepted_new_user_message = false;
+        let mut accepted_first_visible_message = false;
 
         if !hidden {
             let client_nonce = command
@@ -11793,6 +11794,13 @@ impl AndroidJsonHost {
                 )
                 .map_err(|error| error.to_string())?;
 
+            let transcript_len_before = transcript
+                .get_transcript()
+                .iter()
+                .filter(|entry| {
+                    entry.get("agentId").and_then(Value::as_str) == Some(agent_id.as_str())
+                })
+                .count();
             let user_was_new = transcript
                 .append_entry_if_absent(json!({
                     "id":request_id,
@@ -11811,6 +11819,7 @@ impl AndroidJsonHost {
                 }))
                 .map_err(|error| format!("failed to persist user transcript entry: {error}"))?;
             accepted_new_user_message = user_was_new;
+            accepted_first_visible_message = user_was_new && transcript_len_before == 0;
             if user_was_new {
                 self.prompt_acceptance
                     .mark_accepted(account_fence, client_nonce);
@@ -11895,13 +11904,14 @@ impl AndroidJsonHost {
                     &account_fence_for_attachment,
                     &agent_id,
                 )?;
-            {
+            let seeded_profile_change = {
                 let mut agents = self
                     .agents
                     .lock()
                     .map_err(|_| "canonical Android Agent roster lock poisoned".to_string())?;
-                if agents
-                    .get(&agent_id)
+                let current = agents.get(&agent_id);
+                if current
+                    .as_ref()
                     .is_some_and(|agent| !agent.is_group && agent.introduction_pending)
                 {
                     agents
@@ -11912,6 +11922,58 @@ impl AndroidJsonHost {
                             )
                         })?;
                 }
+                let current = agents.get(&agent_id);
+                if accepted_first_visible_message
+                    && current.as_ref().is_some_and(|agent| {
+                        !agent.is_group && is_send_acceptance_default_agent_name(&agent.name)
+                    })
+                {
+                    let previous = current.expect("checked above");
+                    let seeded_name = build_send_acceptance_seeded_agent_name(&message_text);
+                    let updated = agents
+                        .update_profile(&agent_id, &seeded_name, &previous.description)
+                        .map_err(|error| {
+                            format!("failed to seed Agent name after accepted first message: {error}")
+                        })?;
+                    Some((previous, updated))
+                } else {
+                    None
+                }
+            };
+            if let Some((previous, agent)) = seeded_profile_change {
+                let timeline_stamp = self.replica_writer.next_stamp("roster");
+                push_turn_event(
+                    &self.turn_events,
+                    json!({
+                        "type":"agent.timeline.event",
+                        "agentId":agent.id,
+                        "updatedAt":agent.updated_at,
+                        "ordered":{
+                            "replicaKey":timeline_stamp.replica_key,
+                            "epoch":timeline_stamp.epoch,
+                            "sequence":timeline_stamp.sequence,
+                        },
+                        "event":{
+                            "type":"name-changed",
+                            "from":previous.name,
+                            "to":agent.name,
+                        }
+                    }),
+                );
+                let profile_stamp = self.replica_writer.next_stamp("roster");
+                push_turn_event(
+                    &self.turn_events,
+                    json!({
+                        "type":"agent.profile.changed",
+                        "agentId":agent.id,
+                        "updatedAt":agent.updated_at,
+                        "ordered":{
+                            "replicaKey":profile_stamp.replica_key,
+                            "epoch":profile_stamp.epoch,
+                            "sequence":profile_stamp.sequence,
+                        },
+                    }),
+                );
             }
             self.record_host_telemetry_projection(user_message_received_telemetry(
                 &UserMessageReceivedFields {
@@ -15419,7 +15481,33 @@ fn optional_non_negative_transcript_time(value: &Value, key: &str) -> Result<Opt
     Ok(Some(timestamp))
 }
 
-pub(crate) fn now_ms() -> u64 {
+pub(crate) const SEND_ACCEPTANCE_DEFAULT_AGENT_NAME: &str = "New Bot";
+const SEND_ACCEPTANCE_LEGACY_DEFAULT_AGENT_NAME: &str = "New Agent";
+const SEND_ACCEPTANCE_NEW_CONVERSATION_FALLBACK: &str = "New conversation";
+const SEND_ACCEPTANCE_MAX_SEEDED_NAME_UTF16: usize = 72;
+
+fn is_send_acceptance_default_agent_name(name: &str) -> bool {
+    matches!(
+        name.trim(),
+        SEND_ACCEPTANCE_DEFAULT_AGENT_NAME | SEND_ACCEPTANCE_LEGACY_DEFAULT_AGENT_NAME
+    )
+}
+
+fn build_send_acceptance_seeded_agent_name(prompt: &str) -> String {
+    let collapsed = prompt.split_whitespace().collect::<Vec<_>>().join(" ");
+    let seed = if collapsed.is_empty() {
+        SEND_ACCEPTANCE_NEW_CONVERSATION_FALLBACK
+    } else {
+        collapsed.as_str()
+    };
+    let utf16 = seed
+        .encode_utf16()
+        .take(SEND_ACCEPTANCE_MAX_SEEDED_NAME_UTF16)
+        .collect::<Vec<_>>();
+    String::from_utf16_lossy(&utf16)
+}
+
+fn now_ms() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
@@ -17210,6 +17298,28 @@ mod tests {
             .unwrap();
         assert_eq!(subagent.status, SubagentStatus::Aborted);
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn send_acceptance_seeded_agent_name_matches_desktop_utf16_contract() {
+        assert!(is_send_acceptance_default_agent_name("New Bot"));
+        assert!(is_send_acceptance_default_agent_name(" New Agent "));
+        assert!(!is_send_acceptance_default_agent_name("Custom"));
+        assert_eq!(
+            build_send_acceptance_seeded_agent_name("  hello   from   Android  "),
+            "hello from Android"
+        );
+        assert_eq!(
+            build_send_acceptance_seeded_agent_name("   "),
+            SEND_ACCEPTANCE_NEW_CONVERSATION_FALLBACK
+        );
+        let long = "😀".repeat(80);
+        assert_eq!(
+            build_send_acceptance_seeded_agent_name(&long)
+                .encode_utf16()
+                .count(),
+            SEND_ACCEPTANCE_MAX_SEEDED_NAME_UTF16,
+        );
     }
 
     #[test]
