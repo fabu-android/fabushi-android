@@ -6,11 +6,19 @@ import com.ombhrum.fabushi.androidpreload.runtime.AndroidCrossUserSharingState
 import org.json.JSONArray
 import org.json.JSONObject
 
+internal data class MobileSharedRoomMember(
+    val authId: String,
+    val agentId: String?,
+    val name: String,
+)
+
 internal data class MobileSharedRoom(
     val id: String,
     val name: String,
+    val hostAuthId: String,
     val hostName: String?,
-    val memberCount: Int,
+    val members: List<MobileSharedRoomMember>,
+    val memberCount: Int = members.size,
 )
 
 internal data class MobileSharedJoinRequest(
@@ -27,6 +35,7 @@ internal data class MobileSharedRoomsSnapshot(
     val environmentAllowed: Boolean = false,
     val enabled: Boolean = false,
     val canonicalRoomManagerBound: Boolean = false,
+    val selfAuthId: String? = null,
     val rooms: List<MobileSharedRoom> = emptyList(),
     val pendingJoinRequests: List<MobileSharedJoinRequest> = emptyList(),
     val typingUserCount: Int = 0,
@@ -42,6 +51,7 @@ internal fun projectMobileSharedRooms(
         enabled = capability.enabled && state.enabled,
         canonicalRoomManagerBound =
             capability.canonicalRoomManagerBound && state.canonicalRoomManagerBound,
+        selfAuthId = state.selfAuthId?.trim()?.takeIf(String::isNotEmpty),
         rooms = parseMobileSharedRooms(state.rooms),
         pendingJoinRequests = parseMobileSharedJoinRequests(state.pendingJoinRequests),
         typingUserCount = state.typingUsers.length(),
@@ -84,14 +94,42 @@ internal fun parseMobileSharedRooms(rows: JSONArray): List<MobileSharedRoom> =
                 .trim()
             if (id.isEmpty() || !seen.add(id)) continue
             val members = row.optJSONArray("members")
+            val projectedMembers = buildList {
+                if (members != null) {
+                    val seenMembers = linkedSetOf<String>()
+                    for (memberIndex in 0 until members.length()) {
+                        val member = members.optJSONObject(memberIndex) ?: continue
+                        val authId = member.optString("authId").trim()
+                        val agentId = member.optString("agentId").trim().takeIf(String::isNotEmpty)
+                        if (authId.isEmpty()) continue
+                        val memberKey = "$authId:${agentId.orEmpty()}"
+                        if (!seenMembers.add(memberKey)) continue
+                        add(
+                            MobileSharedRoomMember(
+                                authId = authId,
+                                agentId = agentId,
+                                name = member.optString("name").trim().ifBlank {
+                                    if (agentId == null) "Member" else "Agent"
+                                },
+                            ),
+                        )
+                    }
+                }
+            }
             add(
                 MobileSharedRoom(
                     id = id,
                     name = row.optString("name")
                         .ifBlank { row.optString("displayName") }
                         .ifBlank { "Shared room" },
+                    hostAuthId = row.optString("hostAuthId").trim(),
                     hostName = row.optString("hostName").trim().takeIf(String::isNotEmpty),
-                    memberCount = members?.length() ?: row.optInt("memberCount", 0).coerceAtLeast(0),
+                    members = projectedMembers,
+                    memberCount = if (members == null) {
+                        row.optInt("memberCount", 0).coerceAtLeast(0)
+                    } else {
+                        projectedMembers.size
+                    },
                 ),
             )
         }
@@ -156,8 +194,16 @@ internal class SharedRoomsPresentationOwner(
         return refresh()
     }
 
-    fun addAgent(payload: JSONObject): MobileSharedRoomsSnapshot {
-        coordinator.crossUserSharingAddAgent(payload)
+    fun addAgent(roomId: String, agent: MobileBotSummaryAndroid): MobileSharedRoomsSnapshot {
+        val normalizedRoomId = roomId.trim()
+        require(normalizedRoomId.isNotEmpty()) { "Shared-room id is required" }
+        require(agent.id.isNotBlank() && agent.name.isNotBlank()) { "Agent identity is required" }
+        coordinator.crossUserSharingAddAgent(
+            JSONObject()
+                .put("roomId", normalizedRoomId)
+                .put("agentId", agent.id)
+                .put("agentName", agent.name),
+        )
         return refresh()
     }
 
