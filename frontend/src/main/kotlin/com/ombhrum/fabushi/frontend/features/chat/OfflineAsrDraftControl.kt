@@ -62,10 +62,14 @@ internal fun OfflineAsrDraftControl(
     val latestDraft = rememberUpdatedState(currentDraft)
     val transcriber = remember(sessionKey) { NativeOfflineSpeechTranscriber(context.applicationContext) }
     val generationFence = remember(sessionKey) { OfflineAsrGenerationFence() }
-    val available = remember { transcriber.isAvailable() }
-    var listening by remember { mutableStateOf(false) }
-    var processing by remember { mutableStateOf(false) }
-    var error by remember(available) { mutableStateOf(if (available) null else "设备离线语音识别不可用") }
+    val available = remember(sessionKey) { transcriber.isAvailable() }
+    // ASR activity is presentation state, but it is session-scoped. Do not carry a previous
+    // account/conversation owner's listening, processing, or error surface into a new session.
+    var listening by remember(sessionKey) { mutableStateOf(false) }
+    var processing by remember(sessionKey) { mutableStateOf(false) }
+    var error by remember(sessionKey, available) {
+        mutableStateOf(if (available) null else "设备离线语音识别不可用")
+    }
 
     fun startOfflineTranscription() {
         if (!available) {
