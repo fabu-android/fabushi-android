@@ -168,6 +168,12 @@ fn rebuild_rows(db: &Connection, entries: &[Value], fingerprint: &str) -> rusqli
 
 fn indexed_message(entry: &Value) -> Option<(String, i64, String)> {
     if entry.get("hiddenOutboundAgentPeerMessage").and_then(Value::as_bool).unwrap_or(false) { return None; }
+    if entry.get("toAgent")
+        .and_then(|value| value.get("kind"))
+        .and_then(Value::as_str) == Some("agent")
+    {
+        return None;
+    }
     if entry.get("hidden").and_then(Value::as_bool).unwrap_or(false) && entry.get("toAgent").is_some() { return None; }
     let kind = entry.get("kind").and_then(Value::as_str).unwrap_or_default();
     let body = match kind {
