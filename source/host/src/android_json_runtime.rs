@@ -47,6 +47,10 @@ use crate::mcp_auth::{
     McpToolExecutionBackendResult, EXECUTE_TOOL_TIMEOUT_MS,
     SandPrivacyMode as BackendSandPrivacyMode,
 };
+use crate::extensions::telemetry::agent_error_telemetry::{
+    agent_error_telemetry, AgentErrorReport,
+};
+use crate::extensions::telemetry::sand_error_tags::SandErrorValue;
 use crate::extensions::telemetry::product_events::{
     access_blocked_event, agent_load_event, agents_unreachable_event, client_persistence_event,
     client_resource_event, connector_auth_clicked_event, entrypoint_error_event,
@@ -2166,6 +2170,37 @@ impl AndroidJsonHost {
 
     pub fn runtime_call_control(&self) -> Arc<RuntimeCallCancellationRegistry> {
         Arc::clone(&self.runtime_call_cancellations)
+    }
+
+    fn record_agent_turn_failure_telemetry(&mut self, event: &Value) {
+        let Some(conversation_id) = event
+            .get("agentId")
+            .and_then(Value::as_str)
+            .filter(|value| !value.trim().is_empty())
+        else {
+            return;
+        };
+        let request_id = event
+            .get("requestId")
+            .and_then(Value::as_str)
+            .filter(|value| !value.trim().is_empty())
+            .map(str::to_string);
+        let projection = agent_error_telemetry(&AgentErrorReport {
+            source: "android-turn".into(),
+            conversation_id: conversation_id.to_string(),
+            request_id,
+            error: SandErrorValue::new("SAND-E0001"),
+            detail: None,
+        });
+        let (Some(level), Some(message)) = (projection.level, projection.event) else {
+            return;
+        };
+        self.sync_structured_log_account_slot();
+        // Telemetry is observational. A spill failure must never change terminal turn truth,
+        // replay a side effect, or turn an already-settled failure into another failure.
+        let _ = self
+            .structured_log_spool
+            .record(level, message, projection.metadata, now_ms());
     }
 
     fn record_product_telemetry(
@@ -9545,6 +9580,7 @@ impl AndroidJsonHost {
                                         "type":"operation.failed",
                                         "operationId":operation_id_owned,
                                         "requestId":request_id_owned,
+                                        "agentId":conversation_id_owned.clone(),
                                         "message":"provider_credentials_unavailable",
                                     }),
                                 );
@@ -9575,6 +9611,7 @@ impl AndroidJsonHost {
                                             "type":"operation.failed",
                                             "operationId":operation_id_owned,
                                             "requestId":request_id_owned,
+                                            "agentId":conversation_id_owned.clone(),
                                             "message":message,
                                         }),
                                     );
@@ -9751,6 +9788,7 @@ impl AndroidJsonHost {
                                     "type":"operation.failed",
                                     "operationId":operation_id_owned,
                                     "requestId":request_id_owned,
+                                    "agentId":conversation_id_owned.clone(),
                                     "message":error.message,
                                 }),
                             );
@@ -9882,6 +9920,7 @@ impl AndroidJsonHost {
                                     "type":"operation.failed",
                                     "operationId":operation_id_owned,
                                     "requestId":request_id_owned,
+                                    "agentId":conversation_id_owned.clone(),
                                     "message":message,
                                 }),
                             );
@@ -9969,6 +10008,7 @@ impl AndroidJsonHost {
                                         "type":"operation.failed",
                                         "operationId":operation_id_owned,
                                         "requestId":request_id_owned,
+                                        "agentId":conversation_id_owned.clone(),
                                         "message":error.message,
                                     })
                                 },
@@ -10339,6 +10379,9 @@ impl AndroidJsonHost {
                 .map_err(|_| "turn event queue lock poisoned".to_string())?
                 .pop_front();
             if let Some(event) = event {
+                if event.get("type").and_then(Value::as_str) == Some("operation.failed") {
+                    self.record_agent_turn_failure_telemetry(&event);
+                }
                 if matches!(
                     event.get("type").and_then(Value::as_str),
                     Some("operation.completed")
