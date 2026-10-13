@@ -6,6 +6,7 @@ pub mod host_tracing;
 pub mod webauthn_proxy_telemetry;
 pub mod product_events;
 pub mod recovery_events;
+pub mod revival_telemetry_mappers;
 pub mod analytics_service;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
