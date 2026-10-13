@@ -94,6 +94,10 @@ impl BoundedLocalFs {
             file.write_all(bytes)?;
             file.sync_all()?;
             fs::rename(&temp, &path)?;
+            // The file contents are durable before rename; sync the containing directory as
+            // well so a successful local write cannot disappear after process/device power loss.
+            #[cfg(unix)]
+            fs::File::open(parent)?.sync_all()?;
             Ok(())
         })();
         if result.is_err() {
@@ -185,6 +189,12 @@ mod tests {
         let fs = BoundedLocalFs::open(&root, 8).unwrap();
         fs.write_file_atomic(Path::new("nested/file.txt"), b"12345678").unwrap();
         assert_eq!(fs.read_file(Path::new("nested/file.txt")).unwrap(), b"12345678");
+        assert!(
+            std::fs::read_dir(root.join("nested"))
+                .unwrap()
+                .all(|entry| !entry.unwrap().file_name().to_string_lossy().ends_with(".tmp")),
+            "a successful bounded write must not leave an unsettled temporary file",
+        );
         assert!(fs.write_file_atomic(Path::new("nested/too-big.txt"), b"123456789").is_err());
         std::fs::write(root.join("oversized.txt"), b"123456789").unwrap();
         assert!(fs.read_file(Path::new("oversized.txt")).is_err());
