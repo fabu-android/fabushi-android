@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeMap,
     fs,
+    io::Write,
     path::PathBuf,
 };
 
@@ -625,16 +626,31 @@ impl ProductionTurnLifecycleStore {
     }
 
     fn persist(&self) -> Result<(), String> {
-        if let Some(parent) = self.path.parent() {
-            fs::create_dir_all(parent).map_err(|error| error.to_string())?;
-        }
+        let parent = self
+            .path
+            .parent()
+            .ok_or_else(|| "turn lifecycle path has no parent".to_string())?;
+        fs::create_dir_all(parent).map_err(|error| error.to_string())?;
         let temporary = self.path.with_extension("json.tmp");
-        fs::write(
-            &temporary,
-            serde_json::to_vec_pretty(&self.state).map_err(|error| error.to_string())?,
-        )
-        .map_err(|error| error.to_string())?;
-        fs::rename(temporary, &self.path).map_err(|error| error.to_string())
+        let bytes =
+            serde_json::to_vec_pretty(&self.state).map_err(|error| error.to_string())?;
+
+        let result = (|| -> Result<(), String> {
+            let mut file = fs::File::create(&temporary).map_err(|error| error.to_string())?;
+            file.write_all(&bytes).map_err(|error| error.to_string())?;
+            file.sync_all().map_err(|error| error.to_string())?;
+            fs::rename(&temporary, &self.path).map_err(|error| error.to_string())?;
+            #[cfg(unix)]
+            fs::File::open(parent)
+                .and_then(|directory| directory.sync_all())
+                .map_err(|error| error.to_string())?;
+            Ok(())
+        })();
+
+        if result.is_err() {
+            let _ = fs::remove_file(&temporary);
+        }
+        result
     }
 }
 
@@ -666,6 +682,26 @@ mod tests {
                 .unwrap_or_default()
                 .as_nanos(),
         ))
+    }
+
+    #[test]
+    fn durable_persist_reopens_cleanly_without_temporary_state() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("nested").join("turn-lifecycle.json");
+        let mut store = ProductionTurnLifecycleStore::open(&path, 1).unwrap();
+        store
+            .record_disk_pressure_episode("acct:a", "agent-a", "episode-1", 2)
+            .unwrap();
+        drop(store);
+
+        assert!(path.exists());
+        assert!(!path.with_extension("json.tmp").exists());
+        let reopened = ProductionTurnLifecycleStore::open(&path, 3).unwrap();
+        assert_eq!(
+            reopened.state.disk_pressure.values().next().unwrap().episode_id,
+            "episode-1"
+        );
+        assert!(!path.with_extension("json.tmp").exists());
     }
 
     #[test]
