@@ -10,6 +10,7 @@ use std::{
 };
 
 const ROSTER_SCHEMA_VERSION: u8 = 1;
+pub const MAX_AGENTS_PER_USER: usize = 50;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -216,6 +217,7 @@ impl AndroidAgentRoster {
         avatar_shape: Option<&Value>,
         avatar_color: Option<&Value>,
     ) -> io::Result<AndroidAgentRecord> {
+        ensure_agent_capacity(&self.state)?;
         let name = normalize_name(name)?;
         let description = normalize_description(description);
         let avatar_shape = parse_avatar_shape(avatar_shape)
@@ -229,7 +231,7 @@ impl AndroidAgentRoster {
             name,
             description,
             title: None,
-            notify_on_updates_enabled: false,
+            notify_on_updates_enabled: true,
             is_group: false,
             member_ids: Vec::new(),
             is_hidden_from_sidebar: false,
@@ -333,6 +335,7 @@ impl AndroidAgentRoster {
                     .map_err(|error| format!("CreateAgent durable replay result is invalid: {error}")));
         }
 
+        ensure_agent_capacity(&self.state).map_err(|error| error.to_string())?;
         let mut next = self.state.clone();
         next.next_id = next.next_id.saturating_add(1);
         let created = AndroidAgentRecord {
@@ -340,7 +343,7 @@ impl AndroidAgentRoster {
             name: normalized_name,
             description: normalized_description,
             title: None,
-            notify_on_updates_enabled: false,
+            notify_on_updates_enabled: true,
             is_group: false,
             member_ids: Vec::new(),
             is_hidden_from_sidebar: false,
@@ -552,6 +555,9 @@ impl AndroidAgentRoster {
                     .find(|agent| agent.id == id)
                     .cloned()
                     .ok_or_else(|| "agent not found".to_string())?;
+                if !source.is_group {
+                    ensure_agent_capacity(&next).map_err(|error| error.to_string())?;
+                }
                 next.next_id = next.next_id.saturating_add(1);
                 let duplicate = AndroidAgentRecord {
                     id: format!("agent-{:08}", next.next_id),
@@ -784,6 +790,9 @@ impl AndroidAgentRoster {
             .find(|agent| agent.id == id)
             .cloned()
             .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "agent not found"))?;
+        if !source.is_group {
+            ensure_agent_capacity(&self.state)?;
+        }
         let mut next = self.state.clone();
         next.next_id = next.next_id.saturating_add(1);
         let duplicate = AndroidAgentRecord {
@@ -1029,6 +1038,20 @@ fn validate_group_members(
         return Err(io::Error::new(io::ErrorKind::InvalidInput, "agent group supports at most 6 members"));
     }
     Ok(members)
+}
+
+fn agent_session_count(state: &AndroidAgentRosterFile) -> usize {
+    state.agents.iter().filter(|agent| !agent.is_group).count()
+}
+
+fn ensure_agent_capacity(state: &AndroidAgentRosterFile) -> io::Result<()> {
+    if agent_session_count(state) >= MAX_AGENTS_PER_USER {
+        return Err(io::Error::new(
+            io::ErrorKind::Other,
+            format!("Agent limit of {MAX_AGENTS_PER_USER} reached"),
+        ));
+    }
+    Ok(())
 }
 
 fn normalize_name(value: &str) -> io::Result<String> {
@@ -1342,6 +1365,57 @@ mod tests {
         assert_eq!(restored.last_viewed_at, 400);
         assert!(!restored.has_unread);
         assert_eq!(restored.unread_count, 0);
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn new_agent_defaults_match_desktop_materialization_contract() {
+        let path = temp_path("materialization-defaults");
+        let mut roster = AndroidAgentRoster::open(&path).unwrap();
+        let created = roster.create("Agent", "description").unwrap();
+        assert!(created.notify_on_updates_enabled);
+        let tool_created = roster
+            .create_for_tool_call(
+                "session:account-a",
+                &created.id,
+                "create-materialized-agent",
+                "Tool Agent",
+                "",
+            )
+            .unwrap();
+        assert!(tool_created.notify_on_updates_enabled);
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn materialization_cap_matches_desktop_and_groups_do_not_consume_agent_slots() {
+        let path = temp_path("materialization-cap");
+        let mut roster = AndroidAgentRoster::open(&path).unwrap();
+        let mut first_id = String::new();
+        for index in 0..MAX_AGENTS_PER_USER {
+            let created = roster.create(&format!("Agent {index}"), "").unwrap();
+            if index == 0 {
+                first_id = created.id;
+            }
+        }
+        let group = roster
+            .create_group("Team", "", std::slice::from_ref(&first_id))
+            .unwrap();
+        assert!(group.is_group);
+        let error = roster.create("Overflow", "").unwrap_err();
+        assert!(error.to_string().contains("Agent limit of 50 reached"));
+        let duplicate_error = roster.duplicate(&first_id).unwrap_err();
+        assert!(duplicate_error.to_string().contains("Agent limit of 50 reached"));
+        let tool_error = roster
+            .create_for_tool_call(
+                "session:account-a",
+                &first_id,
+                "overflow-tool-call",
+                "Overflow Tool Agent",
+                "",
+            )
+            .unwrap_err();
+        assert!(tool_error.contains("Agent limit of 50 reached"));
         let _ = fs::remove_file(path);
     }
 
