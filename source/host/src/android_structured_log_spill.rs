@@ -15,6 +15,7 @@ pub const ANDROID_STRUCTURED_LOG_RECOVERY_ID_CAP: usize = 256;
 
 const ALLOWED_EVENTS: &[&str] = &[
     "sand.access_blocked",
+    "sand.ack.obligation",
     "sand.agent_load",
     "sand.agent.error",
     "sand.agent.error.detail",
