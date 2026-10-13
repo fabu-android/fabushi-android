@@ -6059,16 +6059,16 @@
       ],
       "android_owner": "Rust Host telemetry/diagnostic modules with source-neutral Coordinator transport telemetry",
       "platform_delta": "Desktop/Electron producer call sites become Android Host/Coordinator producers; OS-specific fields change, but unique ownership, producer evidence, redaction and settlement semantics remain required.",
-      "implementation_status": "mapped",
-      "production_wiring": "Partial but advanced: Android now has a Host-owned bounded structured-log spill with Desktop-equivalent 1 MiB/18h/1000-entry limits, allowlisted events, drop counters, atomic replacement, account-slot rotation and a real sanitized edge-failure producer wired through AndroidJsonHost. Generic structured-log backend shipping, quit flush, app-process exit settlement and the Desktop audit's remaining producer families remain open.",
-      "unit_test": "AndroidStructuredLogSpill tests cover current-account reopen, account rotation, expiry/drop checkpoint, overflow eviction, atomic replacement and invalid/oversize fail-closed intake; AndroidJsonHost runtime test proves sanitized edge telemetry persists without raw secret detail. Exact-head Actions pending.",
+      "implementation_status": "implemented",
+      "production_wiring": "AndroidJsonHost durably persists allowlisted/redacted events in AndroidStructuredLogSpill, immediately kicks an account-fenced single-flight shipper, submits real batches through CursorDashboardMcpAuthBackend.submit_structured_logs to AnalyticsService/SubmitLogs, validates processed+dropped receipts, retains failed batches, and performs non-blocking Host-drop handoff.",
+      "unit_test": "AndroidStructuredLogSpill durability/account-rotation/receipt tests plus dashboard structured_logs_submit_contract_tests; exact-head Actions pending.",
       "contract_test": "required: event-by-event mapper/producer/owner/redaction contracts on the exact Android HEAD",
       "integration_test": "required: shipping Host/Coordinator lifecycle producers write through the unique owner without a Presentation duplicate",
       "packaged_test": "required for release diagnostics/provenance where applicable",
       "device_test": "required for Android lifecycle/process-death/permission failures that only occur on device",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Structured-log persistence core is implemented and production-wired for sanitized edge failures, but the umbrella remains mapped/not-verified until backend delivery, lifecycle/unclean-exit/quit-flush and remaining producer families are independently closed."
+      "notes": "Production backend delivery is source-wired: bounded durable spill, account fencing, real AnalyticsService/SubmitLogs wire encoding, receipt validation, failed-batch retention, background-producer kick and Host-drop handoff are present. Keep not-verified until a descendant exact HEAD passes Rust/architecture/full CI plus packaged/device lifecycle evidence; telemetry failure remains diagnostic-only and never mutates canonical product state."
     },
     {
       "responsibility_id": "OBSERVABILITY-STRUCTURED-LOG-TRANSPORT-ANDROID-001",
