@@ -141,7 +141,8 @@ use crate::extensions::transcript::client_side_tool_v2_producer::{
     ClientSideToolV2ProducedValue, ClientSideToolV2Producer,
 };
 use crate::extensions::transcript::prompt_acceptance_ledger::{
-    AcceptanceStatus, PromptAcceptanceLedger, SendAdmission, SendInput, send_input_digest,
+    AcceptanceLookup, AcceptanceStatus, PromptAcceptanceLedger, SendAdmission, SendInput,
+    send_input_digest,
 };
 use crate::extensions::transcript::ack_obligations::{
     build_ack_redrive_send_args, AckObligations, AckRedrivePreparation,
@@ -11624,7 +11625,14 @@ impl AndroidJsonHost {
             let send_input = SendInput {
                 agent_id: Some(agent_id.clone()),
                 prompt: message_text.clone(),
-                rich_text: rich_text.as_str().map(str::to_string),
+                rich_text: match &rich_text {
+                    Value::Null => None,
+                    Value::String(value) => Some(value.clone()),
+                    value => Some(
+                        serde_json::to_string(value)
+                            .map_err(|error| format!("failed to canonicalize rich text for send acceptance: {error}"))?,
+                    ),
+                },
                 reply_to_id: command
                     .get("replyToId")
                     .and_then(Value::as_str)
@@ -11643,10 +11651,10 @@ impl AndroidJsonHost {
                     .collect(),
             };
             let input_digest = send_input_digest(&send_input);
-            let admission = self
-                .prompt_acceptance
-                .admit_send(account_fence, client_nonce, &input_digest)
-                .map_err(|error| error.to_string())?;
+            // Read the durable acceptance evidence before consulting the canonical transcript.
+            // Unknown durability may be healed by an existing canonical transcript entry, but it
+            // must never be treated as permission to dispatch a second side effect.
+            let acceptance_lookup = self.prompt_acceptance.lookup(account_fence, client_nonce);
             let mut transcript = self
                 .transcript
                 .lock()
@@ -11658,7 +11666,17 @@ impl AndroidJsonHost {
                 let same_payload = accepted.get("content").and_then(Value::as_str)
                     == Some(message_text.as_str())
                     && accepted.get("richText").unwrap_or(&Value::Null) == &rich_text
-                    && accepted.get("attachments").unwrap_or(&Value::Null) == &attachment_value;
+                    && accepted.get("attachments").unwrap_or(&Value::Null) == &attachment_value
+                    && accepted.get("replyToId").unwrap_or(&Value::Null)
+                        == command.get("replyToId").unwrap_or(&Value::Null)
+                    && accepted
+                        .get("isFork")
+                        .and_then(Value::as_bool)
+                        .unwrap_or(false)
+                        == command
+                            .get("isFork")
+                            .and_then(Value::as_bool)
+                            .unwrap_or(false);
                 if !same_payload {
                     return Err(format!(
                         "NONCE_DIGEST_MISMATCH: client nonce {client_nonce} was previously accepted with another input"
@@ -11729,12 +11747,23 @@ impl AndroidJsonHost {
                 return Ok(());
             }
 
-            if matches!(
-                &admission,
-                SendAdmission::Duplicate(record) if record.status == AcceptanceStatus::Accepted
-            ) {
+            if matches!(&acceptance_lookup, AcceptanceLookup::UnknownDurability) {
                 return Err(format!(
-                    "SEND_ACCEPTANCE_OUTCOME_UNKNOWN: client nonce {client_nonce} was durably accepted but the canonical transcript entry is missing"
+                    "SEND_ACCEPTANCE_OUTCOME_UNKNOWN: durability for client nonce {client_nonce} is unknown and the canonical transcript entry is missing; reconcile before retrying"
+                ));
+            }
+            let admission = self
+                .prompt_acceptance
+                .admit_send(account_fence, client_nonce, &input_digest)
+                .map_err(|error| error.to_string())?;
+            if let SendAdmission::Duplicate(record) = &admission {
+                let durable_state = match record.status {
+                    AcceptanceStatus::Accepted => "accepted",
+                    AcceptanceStatus::Pending => "pending",
+                    AcceptanceStatus::Rejected => "rejected",
+                };
+                return Err(format!(
+                    "SEND_ACCEPTANCE_OUTCOME_UNKNOWN: client nonce {client_nonce} has durable {durable_state} acceptance evidence but the canonical transcript entry is missing; reconcile before retrying"
                 ));
             }
             self.prompt_acceptance
@@ -11755,6 +11784,8 @@ impl AndroidJsonHost {
                     "content":message_text.clone(),
                     "richText":rich_text,
                     "attachments":attachments.clone(),
+                    "replyToId":command.get("replyToId").cloned().unwrap_or(Value::Null),
+                    "isFork":command.get("isFork").and_then(Value::as_bool).unwrap_or(false),
                     "operationId":operation_id,
                     "agentId":agent_id.clone(),
                     "accountFence":account_fence,
@@ -11779,7 +11810,17 @@ impl AndroidJsonHost {
                     && existing_user.get("clientNonce").and_then(Value::as_str) == Some(client_nonce)
                     && existing_user.get("content").and_then(Value::as_str) == Some(message_text.as_str())
                     && existing_user.get("richText").unwrap_or(&Value::Null) == &rich_text
-                    && existing_user.get("attachments").unwrap_or(&Value::Null) == &attachment_value;
+                    && existing_user.get("attachments").unwrap_or(&Value::Null) == &attachment_value
+                    && existing_user.get("replyToId").unwrap_or(&Value::Null)
+                        == command.get("replyToId").unwrap_or(&Value::Null)
+                    && existing_user
+                        .get("isFork")
+                        .and_then(Value::as_bool)
+                        .unwrap_or(false)
+                        == command
+                            .get("isFork")
+                            .and_then(Value::as_bool)
+                            .unwrap_or(false);
                 if !same_request {
                     return Err(format!(
                         "REQUEST_IDENTITY_MISMATCH: requestId {request_id} was previously accepted with another input"
@@ -22115,7 +22156,7 @@ mod user_message_received_telemetry_wiring_tests {
     }
 
     #[test]
-    fn pending_acceptance_without_transcript_can_complete_once_after_process_death() {
+    fn pending_acceptance_without_transcript_is_outcome_unknown_after_process_death() {
         let root = tempfile::tempdir().unwrap();
         let account_fence = "session:test:android";
         let input = SendInput {
@@ -22141,7 +22182,7 @@ mod user_message_received_telemetry_wiring_tests {
         }
 
         let mut reopened = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
-        reopened
+        let error = reopened
             .queue_chat_turn(
                 "pending-op",
                 "pending-request",
@@ -22152,31 +22193,61 @@ mod user_message_received_telemetry_wiring_tests {
                 }),
                 None,
             )
-            .unwrap();
-        assert_eq!(
-            reopened
-                .transcript
-                .lock()
-                .unwrap()
-                .get_transcript()
-                .iter()
-                .filter(|entry| {
-                    entry.get("clientNonce").and_then(Value::as_str) == Some("pending-nonce")
-                })
-                .count(),
-            1
-        );
+            .unwrap_err();
+        assert!(error.contains("SEND_ACCEPTANCE_OUTCOME_UNKNOWN"));
+        assert!(reopened
+            .transcript
+            .lock()
+            .unwrap()
+            .get_transcript()
+            .iter()
+            .all(|entry| {
+                entry.get("clientNonce").and_then(Value::as_str) != Some("pending-nonce")
+            }));
         assert!(matches!(
             reopened
                 .prompt_acceptance
                 .lookup(account_fence, "pending-nonce"),
-            crate::extensions::transcript::prompt_acceptance_ledger::AcceptanceLookup::Found(
+            AcceptanceLookup::Found(
                 crate::extensions::transcript::prompt_acceptance_ledger::AcceptanceRecord {
-                    status: AcceptanceStatus::Accepted,
+                    status: AcceptanceStatus::Pending,
                     ..
                 }
             )
         ));
+    }
+
+    #[test]
+    fn degraded_acceptance_history_without_transcript_is_outcome_unknown() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::write(
+            root.path().join("send-acceptance.json.degraded"),
+            br#"{"version":1,"sinceMs":1}"#,
+        )
+        .unwrap();
+        let mut host = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+        let error = host
+            .queue_chat_turn(
+                "degraded-op",
+                "degraded-request",
+                &json!({
+                    "text":"do not guess",
+                    "agentId":"degraded-agent",
+                    "clientNonce":"degraded-nonce"
+                }),
+                None,
+            )
+            .unwrap_err();
+        assert!(error.contains("SEND_ACCEPTANCE_OUTCOME_UNKNOWN"));
+        assert!(host
+            .transcript
+            .lock()
+            .unwrap()
+            .get_transcript()
+            .iter()
+            .all(|entry| {
+                entry.get("clientNonce").and_then(Value::as_str) != Some("degraded-nonce")
+            }));
     }
 
     #[test]
