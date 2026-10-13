@@ -6071,6 +6071,74 @@
       "notes": "Structured-log persistence core is implemented and production-wired for sanitized edge failures, but the umbrella remains mapped/not-verified until backend delivery, lifecycle/unclean-exit/quit-flush and remaining producer families are independently closed."
     },
     {
+      "responsibility_id": "OBSERVABILITY-STRUCTURED-LOG-TRANSPORT-ANDROID-001",
+      "domain": "observability-structured-log-transport",
+      "desktop_sources": [
+        {
+          "path": "source/host/src/extensions/telemetry/structured_log_telemetry.rs",
+          "blob_sha": "5c6cb25a4ec4f28a3f09127cb5bd358e0f4f325f",
+          "symbols": [
+            "ProductionStructuredLogTransport",
+            "StructuredLogBackend",
+            "CursorStructuredLogBackend"
+          ]
+        }
+      ],
+      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "responsibility": "Durably buffer bounded structured telemetry, fence it to the current account identity, submit bounded batches to the authenticated backend, settle processed/dropped receipts, retain failed batches, expire stale replay, and keep telemetry failure observational rather than canonical business state.",
+      "source_owner": "Desktop ProductionStructuredLogTransport / CursorStructuredLogBackend",
+      "direct_callers": [
+        "Host telemetry producer projections",
+        "runtime/recovery/send/session diagnostics"
+      ],
+      "downstream_dependencies": [
+        "authenticated Dashboard structured-log endpoint",
+        "machine/device identity",
+        "privacy/account fence"
+      ],
+      "state_owner": "AndroidStructuredLogSpool in Rust Host; UI has no structured-log owner",
+      "persistent_state": [
+        "account-scoped structured-log spill",
+        "drop counters",
+        "recovery de-duplication ids"
+      ],
+      "protocol_wire_contract": [
+        "bounded structured log records",
+        "128-record ship batches",
+        "backend processed+dropped receipt settlement"
+      ],
+      "visible_effect": "Operational diagnostics survive process death/network failure without duplicating product actions or leaking logs across accounts.",
+      "failure_behavior": [
+        "failed backend send retains batch and increments durable drop telemetry",
+        "invalid/oversize spill is discarded fail-closed",
+        "stale account callback cannot settle a new account spool"
+      ],
+      "cancellation_behavior": "shipping is single-flight and exits when account fence changes; telemetry cancellation never cancels canonical product work",
+      "retry_semantics": "failed batches stay durable for later schedule attempts; unknown business side effects are never retried by telemetry",
+      "idempotency_semantics": "receipt settlement drains only acknowledged prefix; recovery ids prevent duplicate replay for one-shot recovery telemetry",
+      "process_death_recovery": "spill reopens from atomic app-private file and applies replay age/size bounds before shipping",
+      "account_fencing": "account slot on disk plus live account fence before and after backend call; account rotation clears foreign-account spool",
+      "security_boundary": "allowlisted event names and bounded metadata only; authenticated backend credentials remain Host-owned and never project to Compose",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "source/host/src/android_structured_log_spill.rs",
+        "source/host/src/android_json_runtime.rs",
+        "source/host/src/mcp_auth/dashboard_mcp_auth_backend.rs"
+      ],
+      "android_owner": "Rust Host AndroidStructuredLogSpool + account-fenced shipper",
+      "platform_delta": "Desktop primarily buffers in worker memory until identity settlement; Android persists an account-scoped spill so process death cannot strand accepted diagnostic records and uses Android Host account fencing for backend settlement.",
+      "implementation_status": "implemented",
+      "production_wiring": "AndroidJsonHost opens the durable spool at startup; every record schedules the single-flight shipper; CursorDashboardMcpAuthBackend submits real structured-log batches and Android settles backend receipts only while the same account fence remains current.",
+      "unit_test": "android_structured_log_spill tests cover account rotation, replay expiry, bounds, atomic replacement, failed shipping retention, receipt settlement and recovery de-duplication; exact-head Actions pending",
+      "contract_test": "Dashboard structured-log backend contract and allowed event schema are exercised in Rust tests; exact-head gate pending",
+      "integration_test": "required on the final exact head: persist -> process reopen -> authenticated ship -> receipt settlement under account fencing",
+      "packaged_test": "required on final APK/AAB exact head",
+      "device_test": "required with protected account/network interruption and restart",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Transport/persistence/shipping responsibility is implemented. The broader OBSERVABILITY-STRUCTURED-LOG-001 remains mapped because individual producer families still require independent closure and final exact-head evidence."
+    },
+    {
       "responsibility_id": "PRODUCT-ANALYTICS-ANDROID-001",
       "domain": "telemetry-product-analytics",
       "desktop_sources": [
