@@ -1,9 +1,15 @@
-use std::path::PathBuf;
+use std::{fs, path::{Path, PathBuf}};
 
 use serde_json::{json, Value};
 
 use crate::{
-    extensions::memory::memory_service::{FileMemoryStore, MemoryKind, MemoryRecord},
+    extensions::memory::{
+        memory_service::{
+            get_project_dir, get_project_memory_shard_dir, get_user_memory_shard_dir,
+            project_dir_exists, FileMemoryStore, MemoryKind, MemoryRecord, MEMORY_NOTE_PREFIX,
+        },
+        project_membership::{is_safe_project_slug, AgentProjectMembership},
+    },
     sha256::sha256_hex,
 };
 
@@ -11,6 +17,14 @@ const DEFAULT_LIST_LIMIT: usize = 200;
 const MAX_LIST_LIMIT: usize = 500;
 const DEFAULT_RECENT_LIMIT: usize = 32;
 const MAX_RECENT_LIMIT: usize = 128;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AndroidMemoryScope<'a> {
+    Agent,
+    User,
+    Project(&'a str),
+}
+
 
 #[derive(Debug, Clone)]
 pub struct AndroidMemoryOwner {
@@ -28,7 +42,17 @@ impl AndroidMemoryOwner {
         agent_id: &str,
         limit: Option<u64>,
     ) -> Result<Value, String> {
-        let store = self.store(account_fence, agent_id)?;
+        self.list_scoped(account_fence, agent_id, AndroidMemoryScope::Agent, limit)
+    }
+
+    pub fn list_scoped(
+        &self,
+        account_fence: &str,
+        agent_id: &str,
+        scope: AndroidMemoryScope<'_>,
+        limit: Option<u64>,
+    ) -> Result<Value, String> {
+        let store = self.scoped_store(account_fence, agent_id, scope)?;
         let limit = bounded_limit(limit, DEFAULT_LIST_LIMIT, MAX_LIST_LIMIT)?;
         Ok(Value::Array(
             store
@@ -45,7 +69,17 @@ impl AndroidMemoryOwner {
         agent_id: &str,
         recent_limit: Option<u64>,
     ) -> Result<Value, String> {
-        let store = self.store(account_fence, agent_id)?;
+        self.recall_scoped(account_fence, agent_id, AndroidMemoryScope::Agent, recent_limit)
+    }
+
+    pub fn recall_scoped(
+        &self,
+        account_fence: &str,
+        agent_id: &str,
+        scope: AndroidMemoryScope<'_>,
+        recent_limit: Option<u64>,
+    ) -> Result<Value, String> {
+        let store = self.scoped_store(account_fence, agent_id, scope)?;
         let recent_limit = bounded_limit(recent_limit, DEFAULT_RECENT_LIMIT, MAX_RECENT_LIMIT)?;
         let recall = store.recall(recent_limit);
         Ok(json!({
@@ -62,18 +96,38 @@ impl AndroidMemoryOwner {
         kind: &str,
         created_at_ms: i64,
     ) -> Result<Value, String> {
+        self.add_scoped(
+            account_fence,
+            agent_id,
+            AndroidMemoryScope::Agent,
+            content,
+            kind,
+            created_at_ms,
+        )
+    }
+
+    pub fn add_scoped(
+        &self,
+        account_fence: &str,
+        agent_id: &str,
+        scope: AndroidMemoryScope<'_>,
+        content: &str,
+        tier: &str,
+        created_at_ms: i64,
+    ) -> Result<Value, String> {
         let content = content.trim();
         if content.is_empty() {
             return Err("memory content is required".into());
         }
-        let kind = match kind {
-            "profile" => MemoryKind::Profile,
-            "log" => MemoryKind::Log,
-            _ => return Err("memory kind must be profile or log".into()),
+        let (payload, kind) = match tier {
+            "profile" => (content.to_string(), MemoryKind::Profile),
+            "log" => (content.to_string(), MemoryKind::Log),
+            "note" => (format!("{MEMORY_NOTE_PREFIX}{content}"), MemoryKind::Log),
+            _ => return Err("memory tier must be profile, note, or log".into()),
         };
-        let store = self.store(account_fence, agent_id)?;
+        let store = self.scoped_store(account_fence, agent_id, scope)?;
         match store
-            .add_memory(content, created_at_ms, kind)
+            .add_memory(&payload, created_at_ms, kind)
             .map_err(|error| format!("failed to persist memory: {error}"))?
         {
             Some(record) => Ok(json!({
@@ -90,11 +144,21 @@ impl AndroidMemoryOwner {
         agent_id: &str,
         memory_id: &str,
     ) -> Result<Value, String> {
+        self.remove_scoped(account_fence, agent_id, AndroidMemoryScope::Agent, memory_id)
+    }
+
+    pub fn remove_scoped(
+        &self,
+        account_fence: &str,
+        agent_id: &str,
+        scope: AndroidMemoryScope<'_>,
+        memory_id: &str,
+    ) -> Result<Value, String> {
         let memory_id = memory_id.trim();
         if memory_id.is_empty() || memory_id.len() > 128 {
             return Err("memory id is invalid".into());
         }
-        let store = self.store(account_fence, agent_id)?;
+        let store = self.scoped_store(account_fence, agent_id, scope)?;
         let removed = store
             .remove_memory(memory_id)
             .map_err(|error| format!("failed to remove memory: {error}"))?;
@@ -102,7 +166,16 @@ impl AndroidMemoryOwner {
     }
 
     pub fn clear(&self, account_fence: &str, agent_id: &str) -> Result<Value, String> {
-        let store = self.store(account_fence, agent_id)?;
+        self.clear_scoped(account_fence, agent_id, AndroidMemoryScope::Agent)
+    }
+
+    pub fn clear_scoped(
+        &self,
+        account_fence: &str,
+        agent_id: &str,
+        scope: AndroidMemoryScope<'_>,
+    ) -> Result<Value, String> {
+        let store = self.scoped_store(account_fence, agent_id, scope)?;
         store
             .clear_memories()
             .map_err(|error| format!("failed to clear memory: {error}"))?;
@@ -110,6 +183,108 @@ impl AndroidMemoryOwner {
     }
 
     fn store(&self, account_fence: &str, agent_id: &str) -> Result<FileMemoryStore, String> {
+        self.scoped_store(account_fence, agent_id, AndroidMemoryScope::Agent)
+    }
+
+    fn scoped_store(
+        &self,
+        account_fence: &str,
+        agent_id: &str,
+        scope: AndroidMemoryScope<'_>,
+    ) -> Result<FileMemoryStore, String> {
+        let (account_root, agent_key) = self.account_agent_root(account_fence, agent_id)?;
+        let path = match scope {
+            AndroidMemoryScope::Agent => account_root.join(format!("agent-{agent_key}")),
+            AndroidMemoryScope::User => get_user_memory_shard_dir(&account_root, &agent_key),
+            AndroidMemoryScope::Project(slug) => {
+                let slug = slug.trim();
+                if !is_safe_project_slug(slug) {
+                    return Err("memory project slug is invalid".into());
+                }
+                if !project_dir_exists(&account_root, slug) {
+                    return Err(format!("memory project {slug:?} does not exist"));
+                }
+                let membership = self.membership(&account_root, &agent_key);
+                if !membership.read().contains(slug) {
+                    return Err(format!("Agent has not joined memory project {slug:?}"));
+                }
+                get_project_memory_shard_dir(&account_root, slug, &agent_key)
+            }
+        };
+        Ok(FileMemoryStore::with_synthesis_metadata(path, true))
+    }
+
+    pub fn create_project(
+        &self,
+        account_fence: &str,
+        agent_id: &str,
+        slug: &str,
+        name: &str,
+        description: Option<&str>,
+    ) -> Result<Value, String> {
+        let (account_root, agent_key) = self.account_agent_root(account_fence, agent_id)?;
+        let slug = slug.trim();
+        let name = name.trim();
+        if !is_safe_project_slug(slug) {
+            return Err("memory project slug is invalid".into());
+        }
+        if name.is_empty() {
+            return Err("memory project name is required".into());
+        }
+        let project_dir = get_project_dir(&account_root, slug);
+        let existed = project_dir_exists(&account_root, slug);
+        if !existed {
+            fs::create_dir_all(&project_dir)
+                .map_err(|error| format!("failed to create memory project: {error}"))?;
+            let body = format!(
+                "---\nname: {}\ndescription: {}\n---\n",
+                name,
+                description.unwrap_or_default().trim()
+            );
+            write_atomic(&project_dir.join("project.md"), body.as_bytes())?;
+        }
+        let joined = self.membership(&account_root, &agent_key).join(slug)?;
+        Ok(json!({"project":slug,"created":!existed,"joined":joined || existed}))
+    }
+
+    pub fn join_project(
+        &self,
+        account_fence: &str,
+        agent_id: &str,
+        slug: &str,
+    ) -> Result<Value, String> {
+        let (account_root, agent_key) = self.account_agent_root(account_fence, agent_id)?;
+        let slug = slug.trim();
+        if !is_safe_project_slug(slug) {
+            return Err("memory project slug is invalid".into());
+        }
+        if !project_dir_exists(&account_root, slug) {
+            return Err(format!("memory project {slug:?} does not exist"));
+        }
+        let joined = self.membership(&account_root, &agent_key).join(slug)?;
+        Ok(json!({"project":slug,"joined":joined}))
+    }
+
+    pub fn leave_project(
+        &self,
+        account_fence: &str,
+        agent_id: &str,
+        slug: &str,
+    ) -> Result<Value, String> {
+        let (account_root, agent_key) = self.account_agent_root(account_fence, agent_id)?;
+        let slug = slug.trim();
+        if !is_safe_project_slug(slug) {
+            return Err("memory project slug is invalid".into());
+        }
+        let left = self.membership(&account_root, &agent_key).leave(slug)?;
+        Ok(json!({"project":slug,"left":left}))
+    }
+
+    fn account_agent_root(
+        &self,
+        account_fence: &str,
+        agent_id: &str,
+    ) -> Result<(PathBuf, String), String> {
         let account_fence = account_fence.trim();
         let agent_id = agent_id.trim();
         if account_fence.is_empty() {
@@ -118,15 +293,36 @@ impl AndroidMemoryOwner {
         if agent_id.is_empty() || agent_id.len() > 200 || agent_id.chars().any(char::is_control) {
             return Err("memory agentId is invalid".into());
         }
-        let account_key = sha256_hex(account_fence.as_bytes());
-        let agent_key = sha256_hex(agent_id.as_bytes());
-        Ok(FileMemoryStore::with_synthesis_metadata(
-            self.root
-                .join(format!("account-{account_key}"))
-                .join(format!("agent-{agent_key}")),
-            true,
+        Ok((
+            self.root.join(format!("account-{}", sha256_hex(account_fence.as_bytes()))),
+            sha256_hex(agent_id.as_bytes()),
         ))
     }
+
+    fn membership(&self, account_root: &Path, agent_key: &str) -> AgentProjectMembership {
+        AgentProjectMembership::new(
+            account_root.join("agent-membership").join(format!("agent-{agent_key}")),
+        )
+    }
+}
+
+fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), String> {
+    let parent = path.parent().ok_or("memory project path has no parent")?;
+    fs::create_dir_all(parent)
+        .map_err(|error| format!("failed to prepare memory project: {error}"))?;
+    let temporary = path.with_extension(format!("tmp-{}", std::process::id()));
+    let result = (|| -> std::io::Result<()> {
+        use std::io::Write;
+        let mut file = fs::File::create(&temporary)?;
+        file.write_all(bytes)?;
+        file.sync_all()?;
+        fs::rename(&temporary, path)?;
+        Ok(())
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(&temporary);
+    }
+    result.map_err(|error| format!("failed to persist memory project: {error}"))
 }
 
 fn bounded_limit(value: Option<u64>, default: usize, max: usize) -> Result<usize, String> {
@@ -207,6 +403,118 @@ mod tests {
         let snapshot = store.prepare_synthesis();
         assert_eq!(snapshot.memories.len(), 1);
         assert_eq!(snapshot.memories[0].origin, MemoryOrigin::Explicit);
+    }
+
+    #[test]
+    fn user_scope_is_account_fenced_and_separate_from_agent_scope() {
+        let root = tempfile::tempdir().unwrap();
+        let owner = AndroidMemoryOwner::new(root.path());
+        owner
+            .add_scoped(
+                "session:account-a",
+                "agent-a",
+                AndroidMemoryScope::User,
+                "User-scoped fact",
+                "profile",
+                1_700_000_000_000,
+            )
+            .unwrap();
+        assert!(owner
+            .list("session:account-a", "agent-a", None)
+            .unwrap()
+            .as_array()
+            .unwrap()
+            .is_empty());
+        assert_eq!(
+            owner
+                .list_scoped(
+                    "session:account-a",
+                    "agent-a",
+                    AndroidMemoryScope::User,
+                    None,
+                )
+                .unwrap()[0]["content"],
+            "User-scoped fact"
+        );
+        assert!(owner
+            .list_scoped(
+                "session:account-b",
+                "agent-a",
+                AndroidMemoryScope::User,
+                None,
+            )
+            .unwrap()
+            .as_array()
+            .unwrap()
+            .is_empty());
+    }
+
+    #[test]
+    fn project_scope_requires_membership_and_recovers_after_rejoin() {
+        let root = tempfile::tempdir().unwrap();
+        let owner = AndroidMemoryOwner::new(root.path());
+        owner
+            .create_project(
+                "session:account-a",
+                "agent-a",
+                "alpha",
+                "Alpha",
+                Some("Project memory"),
+            )
+            .unwrap();
+        owner
+            .add_scoped(
+                "session:account-a",
+                "agent-a",
+                AndroidMemoryScope::Project("alpha"),
+                "Project fact",
+                "note",
+                1_700_000_000_000,
+            )
+            .unwrap();
+        assert_eq!(
+            owner
+                .list_scoped(
+                    "session:account-a",
+                    "agent-a",
+                    AndroidMemoryScope::Project("alpha"),
+                    None,
+                )
+                .unwrap()[0]["content"],
+            "Note: Project fact"
+        );
+        owner
+            .leave_project("session:account-a", "agent-a", "alpha")
+            .unwrap();
+        assert!(owner
+            .list_scoped(
+                "session:account-a",
+                "agent-a",
+                AndroidMemoryScope::Project("alpha"),
+                None,
+            )
+            .unwrap_err()
+            .contains("has not joined"));
+        owner
+            .join_project("session:account-a", "agent-a", "alpha")
+            .unwrap();
+        assert_eq!(
+            owner
+                .list_scoped(
+                    "session:account-a",
+                    "agent-a",
+                    AndroidMemoryScope::Project("alpha"),
+                    None,
+                )
+                .unwrap()[0]["content"],
+            "Note: Project fact"
+        );
+        assert!(owner
+            .join_project("session:account-a", "agent-b", "../escape")
+            .is_err());
+        assert!(owner
+            .join_project("session:account-b", "agent-a", "alpha")
+            .is_err());
     }
 
     #[test]
