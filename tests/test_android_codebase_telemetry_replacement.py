@@ -22,7 +22,7 @@ class AndroidCodebaseTelemetryReplacementTest(unittest.TestCase):
                 if not path.is_file() or path.suffix.lower() not in TEXT_SUFFIXES:
                     continue
                 text = path.read_text(encoding="utf-8", errors="ignore").lower()
-                if re.search(r"\\bcsnaps\\b", text):
+                if re.search(r"\bcsnaps\b", text):
                     offenders.append(str(path.relative_to(REPO_ROOT)))
         self.assertEqual(
             [],
