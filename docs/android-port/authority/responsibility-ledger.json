@@ -16499,6 +16499,60 @@
       "artifact": null,
       "verification_status": "not-verified",
       "notes": "Do not treat the current direct Dashboard fetch as Desktop-equivalent cached resolver closure."
+    },
+    {
+      "responsibility_id": "AGENT-MEMORY-ANDROID-001",
+      "domain": "agent-memory",
+      "desktop_sources": [
+        {
+          "path": "source/host/src/extensions/memory/memory_service.rs",
+          "blob_sha": "c6deba2687888c6f91731c0dc2fb8cf74b5403a4",
+          "symbols": [
+            "MemoryService",
+            "FileMemoryStore",
+            "UserMemoryStore",
+            "ProjectMemoryStore"
+          ]
+        },
+        {
+          "path": "source/host/src/extensions/memory/memory_synthesis_service.rs",
+          "blob_sha": "311004f3481f8a2477ab3a6012214c72db92dfc9",
+          "symbols": [
+            "MemorySynthesisService",
+            "MemorySynthesisQueue",
+            "MemoryEvidence"
+          ]
+        },
+        {
+          "path": "source/host/src/extensions/memory/project_membership.rs",
+          "blob_sha": "915251308910868f14db69480c228a02a56eaec0",
+          "symbols": [
+            "AgentProjectMembership"
+          ]
+        }
+      ],
+      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "responsibility": "Own canonical Agent/user/project memory, project membership and prompt recall; ingest bounded turn evidence; synthesize only evidence-backed changes through a verification pass; protect explicit memories; retry/cancel safely; recover durable state after process death; and keep memory account/Agent/project fenced.",
+      "source_owner": "Desktop Host MemoryExtension / MemoryService / MemorySynthesisService",
+      "visible_effect": "Agents remember durable user/project context across turns and restarts without inventing unsupported memories or leaking another account/project state.",
+      "android_disposition": "direct-port",
+      "android_target": [
+        "source/packages/agent-kv",
+        "source/packages/agent-transcript",
+        "source/host/src/android_json_runtime.rs"
+      ],
+      "android_owner": "missing canonical Rust Host memory owner",
+      "platform_delta": "Core memory semantics are platform-independent Rust and should be ported Rust-to-Rust. Android storage location must be app-private/scoped; inference uses the existing Host provider and cancellation/account fences rather than Desktop extension process wiring.",
+      "implementation_status": "mapped",
+      "production_wiring": "Missing. Existing transcript/KV foundations are not a MemoryService and no production memory synthesis/project membership path is currently wired.",
+      "unit_test": "required: add/remove/dedupe, explicit-memory protection, project membership, evidence validation, synthesis verification, retry/cancel/stale evidence, corruption recovery",
+      "contract_test": "required: memory prompt/record/synthesis change semantics against Desktop authority",
+      "integration_test": "required: turn evidence -> verified synthesis -> restart recall under same account/Agent/project; stale account/project callbacks fenced",
+      "packaged_test": "required on final exact-head package",
+      "device_test": "required: process death/restart, account switch, offline persistence",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "First concrete implementation step: port platform-independent MemoryService/project membership stores, then wire synthesis through the existing Host inference owner; never make Compose a second memory owner."
     }
   ],
   "traceability": {
