@@ -4076,6 +4076,11 @@ impl AndroidJsonHost {
                                 Err(error) => {
                                     self.active_operations.remove(&operation_id);
                                     self.agent_turn_interruptions.unregister_operation(&operation_id);
+                                    self.push_introduction_failure_tray(
+                                        &agent.id,
+                                        command.get("requestId").and_then(Value::as_str),
+                                        &error,
+                                    );
                                     self.events.push_back(json!({
                                         "type":"agent.kickstart.deferred",
                                         "agentId":agent.id,
@@ -12808,6 +12813,11 @@ impl AndroidJsonHost {
             ) {
                 self.active_operations.remove(&operation_id);
                 self.agent_turn_interruptions.unregister_operation(&operation_id);
+                self.push_introduction_failure_tray(
+                    &agent.id,
+                    command.get("requestId").and_then(Value::as_str),
+                    &error,
+                );
                 self.events.push_back(json!({
                     "type":"agent.kickstart.deferred",
                     "agentId":agent.id,
