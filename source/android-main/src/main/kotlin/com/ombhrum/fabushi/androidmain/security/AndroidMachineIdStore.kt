@@ -28,16 +28,22 @@ internal class AndroidMachineIdStore(context: Context) {
     private val legacyFile = File(applicationContext.filesDir, LEGACY_FILE_NAME)
 
     fun getOrCreate(): String = synchronized(PROCESS_LOCK) {
-        readProtected()?.let { return@synchronized it }
+        readProtected()?.let { machineId ->
+            removeLegacyPlaintextIfPresent()
+            return@synchronized machineId
+        }
 
         val legacy = readLegacy()
         val machineId = legacy ?: UUID.randomUUID().toString()
         writeProtected(machineId)
+        removeLegacyPlaintextIfPresent()
+        machineId
+    }
 
-        if (legacy != null && legacyFile.exists() && !legacyFile.delete()) {
+    private fun removeLegacyPlaintextIfPresent() {
+        if (legacyFile.exists() && !legacyFile.delete()) {
             throw IllegalStateException("failed to remove legacy plaintext machine id")
         }
-        machineId
     }
 
     private fun readProtected(): String? {
