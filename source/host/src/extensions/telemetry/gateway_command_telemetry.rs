@@ -14,6 +14,26 @@ pub struct AndroidGatewayCommandReport {
     pub error_class: Option<String>,
 }
 
+
+pub fn classify_android_gateway_command_error(error: &str) -> Option<(&'static str, &'static str)> {
+    if error.starts_with("unknown host method ")
+        || error.contains(" is required")
+        || error.contains(" must ")
+        || error.contains("invalid")
+        || error.contains("out of range")
+        || error.contains("account")
+        || error.contains("stale")
+        || error.contains("fence")
+    {
+        // Desktop gateway reports these as 4xx and intentionally does not emit
+        // sand.gateway_command_error. Keep expected policy/input rejections out
+        // of the server-failure telemetry channel on Android as well.
+        None
+    } else {
+        Some(("command-failed", "CommandError"))
+    }
+}
+
 fn base_metadata(report: &AndroidGatewayCommandReport) -> BTreeMap<String, String> {
     let mut metadata = BTreeMap::from([
         ("method".into(), report.method.chars().take(128).collect()),
@@ -80,6 +100,24 @@ mod tests {
         assert_eq!(failed.level, Some("error"));
         assert_eq!(failed.metadata.get("reason").map(String::as_str), Some("command-rejected"));
         assert_eq!(failed.metadata.get("error_class").map(String::as_str), Some("CommandError"));
+    }
+
+    #[test]
+    fn expected_rejections_do_not_become_gateway_server_errors() {
+        for error in [
+            "unknown host method feature.nope",
+            "agentId is required",
+            "limit must be positive",
+            "invalid approval",
+            "value out of range",
+            "account fence is stale",
+        ] {
+            assert_eq!(classify_android_gateway_command_error(error), None, "{error}");
+        }
+        assert_eq!(
+            classify_android_gateway_command_error("backend transport failed"),
+            Some(("command-failed", "CommandError")),
+        );
     }
 
     #[test]
