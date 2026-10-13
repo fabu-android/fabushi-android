@@ -7076,22 +7076,27 @@ impl AndroidJsonHost {
             .automation_runtime
             .spec_for_account(automation_id, account_fence)
             .ok_or("automation not found")?;
-        // The root assistant currently uses the separate assistant read-marker projection rather
-        // than AndroidAgentRoster. Do not fabricate a second last-viewed owner here.
-        if spec.agent_id == "mahayana-assistant" {
-            return Ok(());
-        }
-        let agent = self
-            .agents
-            .lock()
-            .map_err(|_| "canonical Android Agent roster lock poisoned".to_string())?
-            .get(&spec.agent_id)
-            .ok_or("automation Agent owner not found")?;
+        let (last_viewed_at, unread_count) = if spec.agent_id == "mahayana-assistant" {
+            let entries = self
+                .transcript
+                .lock()
+                .map_err(|_| "transcript lock poisoned".to_string())?
+                .get_transcript();
+            assistant_spend_guard_observation(&entries)
+        } else {
+            let agent = self
+                .agents
+                .lock()
+                .map_err(|_| "canonical Android Agent roster lock poisoned".to_string())?
+                .get(&spec.agent_id)
+                .ok_or("automation Agent owner not found")?;
+            (agent.last_viewed_at, agent.unread_count)
+        };
         let (decision, _evaluation) = self.automation_runtime.evaluate_spend_guard(
             account_fence,
             &spec.agent_id,
-            agent.last_viewed_at,
-            agent.unread_count,
+            last_viewed_at,
+            unread_count,
             observed_at_ms,
         )?;
         match decision {
@@ -14431,6 +14436,52 @@ fn latest_visible_assistant_message_id(entries: &[Value]) -> Option<String> {
         .map(str::to_string)
 }
 
+fn assistant_spend_guard_observation(entries: &[Value]) -> (u64, u64) {
+    let marker = entries
+        .iter()
+        .find(|entry| entry.get("id").and_then(Value::as_str) == Some(ASSISTANT_READ_MARKER_ID));
+    let last_viewed_at_ms = marker
+        .and_then(|entry| entry.get("timestampMs"))
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let last_read_message_id = marker
+        .and_then(|entry| entry.get("lastReadMessageId"))
+        .and_then(Value::as_str);
+
+    let visible_operation_ids = entries
+        .iter()
+        .filter(|entry| {
+            entry.get("kind").and_then(Value::as_str) == Some("message")
+                && entry.get("role").and_then(Value::as_str) == Some("user")
+        })
+        .filter_map(|entry| entry.get("operationId").and_then(Value::as_str))
+        .collect::<BTreeSet<_>>();
+    let visible_assistant_ids = entries
+        .iter()
+        .filter(|entry| {
+            entry.get("kind").and_then(Value::as_str) == Some("message")
+                && entry.get("role").and_then(Value::as_str) == Some("assistant")
+                && entry
+                    .get("operationId")
+                    .and_then(Value::as_str)
+                    .is_some_and(|operation_id| visible_operation_ids.contains(operation_id))
+        })
+        .filter_map(|entry| entry.get("id").and_then(Value::as_str))
+        .collect::<Vec<_>>();
+
+    let unread_count = match last_read_message_id {
+        Some(last_read) => visible_assistant_ids
+            .iter()
+            .position(|id| *id == last_read)
+            .map(|index| visible_assistant_ids.len().saturating_sub(index + 1))
+            .unwrap_or(visible_assistant_ids.len()),
+        None => visible_assistant_ids.len(),
+    }
+    .try_into()
+    .unwrap_or(u64::MAX);
+    (last_viewed_at_ms, unread_count)
+}
+
 fn assistant_projection_from_entries(entries: &[Value]) -> Value {
     let latest_message_id = latest_visible_assistant_message_id(entries);
     let last_read_message_id = entries
@@ -20267,6 +20318,36 @@ mod turn_interrupt_telemetry_wiring_tests {
             .records
             .iter()
             .all(|entry| entry.message != "sand.turn.interrupt"));
+    }
+}
+
+#[cfg(test)]
+mod assistant_spend_guard_projection_tests {
+    use super::*;
+
+    #[test]
+    fn assistant_spend_guard_observation_uses_only_visible_assistant_replies_after_marker() {
+        let entries = vec![
+            json!({"id":"user-1","kind":"message","role":"user","operationId":"op-1","timestampMs":1}),
+            json!({"id":"assistant-1","kind":"message","role":"assistant","operationId":"op-1","timestampMs":2}),
+            json!({"id":ASSISTANT_READ_MARKER_ID,"kind":"assistant-read-marker","lastReadMessageId":"assistant-1","timestampMs":100}),
+            json!({"id":"hidden","kind":"message","role":"assistant","operationId":"hidden-op","timestampMs":101}),
+            json!({"id":"user-2","kind":"message","role":"user","operationId":"op-2","timestampMs":102}),
+            json!({"id":"assistant-2","kind":"message","role":"assistant","operationId":"op-2","timestampMs":103}),
+            json!({"id":"user-3","kind":"message","role":"user","operationId":"op-3","timestampMs":104}),
+            json!({"id":"assistant-3","kind":"message","role":"assistant","operationId":"op-3","timestampMs":105}),
+        ];
+        assert_eq!(assistant_spend_guard_observation(&entries), (100, 2));
+    }
+
+    #[test]
+    fn assistant_spend_guard_observation_without_marker_counts_all_visible_replies() {
+        let entries = vec![
+            json!({"id":"user-1","kind":"message","role":"user","operationId":"op-1"}),
+            json!({"id":"assistant-1","kind":"message","role":"assistant","operationId":"op-1"}),
+            json!({"id":"hidden","kind":"message","role":"assistant","operationId":"hidden-op"}),
+        ];
+        assert_eq!(assistant_spend_guard_observation(&entries), (0, 1));
     }
 }
 
