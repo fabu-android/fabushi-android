@@ -72,6 +72,9 @@ use crate::extensions::telemetry::HostTelemetryProjection;
 use crate::extensions::telemetry::gateway_command_telemetry::{
     gateway_command_timing_telemetry, AndroidGatewayCommandReport,
 };
+use crate::extensions::telemetry::turn_telemetry_mappers::{
+    turn_interrupt_telemetry, TurnInterruptFields,
+};
 use crate::extensions::telemetry::analytics_service::{
     automation_run_product_analytics_event, AndroidProductAnalyticsRuntime, ProductAnalyticsSender,
 };
@@ -5978,6 +5981,19 @@ impl AndroidJsonHost {
         if operation_id.trim().is_empty() {
             return Err("operation id is required".into());
         }
+        // Capture immutable canonical turn context before cancellation settles the journal and
+        // removes the live operation. Generic non-turn operations intentionally emit no turn
+        // telemetry.
+        let interrupt_turn = self
+            .turn_journal
+            .lock()
+            .map_err(|_| "turn journal lock poisoned".to_string())?
+            .record_by_operation(operation_id)
+            .cloned();
+        let had_active_run = self.active_operations.contains(operation_id);
+        let was_in_flight = interrupt_turn
+            .as_ref()
+            .is_some_and(|record| record.state == DurableTurnState::Running);
         if let Some(cancelled) = self.turn_cancellations.remove(operation_id) {
             cancelled.store(true, Ordering::Release);
         }
@@ -6027,6 +6043,19 @@ impl AndroidJsonHost {
             "operationId":operation_id,
             "reason":reason.unwrap_or("cancelled")
         }));
+        if let Some(conversation_id) = interrupt_turn
+            .and_then(|record| record.agent_id)
+            .filter(|value| !value.trim().is_empty())
+        {
+            self.record_host_telemetry_projection(turn_interrupt_telemetry(
+                &TurnInterruptFields {
+                    conversation_id,
+                    reason: reason.unwrap_or("cancelled").to_string(),
+                    had_active_run,
+                    was_in_flight,
+                },
+            ));
+        }
         Ok(())
     }
 
@@ -19646,5 +19675,89 @@ mod host_event_bus_delivery_tests {
             canonical,
             "HostEventBus is a projection-only side channel, never a second canonical queue",
         );
+    }
+}
+
+#[cfg(test)]
+mod turn_interrupt_telemetry_wiring_tests {
+    use super::*;
+
+    #[test]
+    fn cancelling_running_turn_persists_interrupt_telemetry_after_canonical_settlement() {
+        let root = tempfile::tempdir().unwrap();
+        let mut host = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+        let account_fence = host.current_turn_account_fence().unwrap();
+        let generation = host
+            .turn_journal
+            .lock()
+            .unwrap()
+            .begin_with_context(
+                "request-interrupt",
+                "operation-interrupt",
+                &account_fence,
+                Some("turn"),
+                Some("agent-interrupt"),
+                now_ms(),
+            )
+            .unwrap();
+        host.active_operations.insert("operation-interrupt".into());
+
+        host.cancel_operation("operation-interrupt", Some("user"))
+            .unwrap();
+
+        let record = host
+            .turn_journal
+            .lock()
+            .unwrap()
+            .record("request-interrupt")
+            .cloned()
+            .unwrap();
+        assert_eq!(record.generation, generation);
+        assert_eq!(record.state, DurableTurnState::Cancelled);
+        assert_eq!(record.reason.as_deref(), Some("user"));
+        assert!(!host.active_operations.contains("operation-interrupt"));
+
+        let interrupt = host
+            .structured_log_spool
+            .lock()
+            .unwrap()
+            .snapshot()
+            .checkpoint
+            .records
+            .into_iter()
+            .find(|entry| entry.message == "sand.turn.interrupt")
+            .expect("turn cancellation must persist Desktop-compatible interrupt telemetry");
+        assert_eq!(
+            interrupt.metadata.get("conversation_id").map(String::as_str),
+            Some("agent-interrupt")
+        );
+        assert_eq!(interrupt.metadata.get("reason").map(String::as_str), Some("user"));
+        assert_eq!(
+            interrupt.metadata.get("had_active_run").map(String::as_str),
+            Some("true")
+        );
+        assert_eq!(
+            interrupt.metadata.get("was_in_flight").map(String::as_str),
+            Some("true")
+        );
+    }
+
+    #[test]
+    fn cancelling_non_turn_operation_does_not_fabricate_turn_telemetry() {
+        let root = tempfile::tempdir().unwrap();
+        let mut host = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+        host.active_operations.insert("generic-operation".into());
+
+        host.cancel_operation("generic-operation", Some("user")).unwrap();
+
+        assert!(host
+            .structured_log_spool
+            .lock()
+            .unwrap()
+            .snapshot()
+            .checkpoint
+            .records
+            .iter()
+            .all(|entry| entry.message != "sand.turn.interrupt"));
     }
 }
