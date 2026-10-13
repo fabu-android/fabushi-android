@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use crate::extensions::experiments::{HostExperimentsExtension, StopGateSubscription};
+use crate::extensions::experiments::extension::{HostExperimentsExtension, StopGateSubscription};
 
 use super::box_handoff_service::{
     BoxHandoffDeps, BoxHandoffService, HandoffRequest, HandoffStartResult, HandoffTrigger,
