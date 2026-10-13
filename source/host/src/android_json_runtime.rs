@@ -2563,7 +2563,7 @@ impl AndroidJsonHost {
                 Ok(project_cross_user_state(self.cross_user_core.as_ref()))
             }
             "feature.crossUserSharing.setEnabled" => {
-                let enabled = params
+                let requested_enabled = params
                     .get("enabled")
                     .and_then(Value::as_bool)
                     .ok_or("cross-user sharing enabled flag is required")?;
@@ -2571,7 +2571,9 @@ impl AndroidJsonHost {
                     .cross_user_core
                     .as_ref()
                     .ok_or("cross-user sharing runtime is unavailable")?;
-                core.extension.apply_feature_policy(enabled)?;
+                let gate_enabled = self.experiments.check_feature_gate("sand_multiplayer");
+                let effective_enabled = requested_enabled && gate_enabled;
+                core.extension.apply_feature_policy(effective_enabled)?;
                 Ok(project_cross_user_state(Some(core)))
             }
             "feature.crossUserSharing.requestDrain" => {
@@ -13367,6 +13369,36 @@ mod access_blocked_durable_dispatch_tests {
     }
 }
 
+
+#[cfg(test)]
+mod cross_user_sharing_gate_tests {
+    use super::*;
+
+    #[test]
+    fn presentation_cannot_enable_sharing_without_host_feature_gate_and_runtime() {
+        let root = tempfile::tempdir().unwrap();
+        let mut host = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+
+        let capability = host
+            .dispatch("feature.crossUserSharing.capability", &json!({}))
+            .unwrap();
+        assert_eq!(capability["available"], false);
+        assert!(host
+            .dispatch(
+                "feature.crossUserSharing.setEnabled",
+                &json!({"enabled":true}),
+            )
+            .is_err());
+        assert_eq!(
+            host.dispatch(
+                "feature.experiments.gate",
+                &json!({"name":"sand_multiplayer"}),
+            )
+            .unwrap()["enabled"],
+            false,
+        );
+    }
+}
 
 #[cfg(test)]
 mod experiments_runtime_tests {
