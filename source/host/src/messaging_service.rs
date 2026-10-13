@@ -2139,6 +2139,41 @@ impl AndroidMessagingService {
         wakes
     }
 
+    /// Remove only unsettled Agent-to-Agent wake work that references a deleted Agent.
+    ///
+    /// Historical delivered messages remain canonical transcript truth; deletion only prevents
+    /// durable deferred work from resurrecting the removed Agent after process restart.
+    pub fn clear_agent_wakes_for_deleted_agent(
+        &mut self,
+        account_fence: &str,
+        agent_id: &str,
+    ) -> Result<usize, String> {
+        let account_fence = account_fence.trim();
+        let agent_id = agent_id.trim();
+        if account_fence.is_empty() || agent_id.is_empty() {
+            return Err("Agent wake cleanup requires account fence and Agent id".into());
+        }
+        let previous = self.state.clone();
+        let before = self.state.agent_wakes.len();
+        self.state.agent_wakes.retain(|_, wake| {
+            let same_account =
+                wake.get("accountFence").and_then(Value::as_str) == Some(account_fence);
+            let references_agent =
+                wake.get("sourceAgentId").and_then(Value::as_str) == Some(agent_id)
+                    || wake.get("targetAgentId").and_then(Value::as_str) == Some(agent_id);
+            !(same_account && references_agent)
+        });
+        let removed = before.saturating_sub(self.state.agent_wakes.len());
+        if removed == 0 {
+            return Ok(0);
+        }
+        if let Err(error) = self.persist() {
+            self.state = previous;
+            return Err(format!("failed to persist deleted-Agent wake cleanup: {error}"));
+        }
+        Ok(removed)
+    }
+
     pub fn complete_agent_wake(&mut self, wake_id: &str) -> Result<(), String> {
         let previous = self.state.clone();
         if self.state.agent_wakes.remove(wake_id).is_none() {
@@ -4621,6 +4656,60 @@ mod tests {
             .unwrap();
         assert_eq!(replay, first);
         assert_eq!(reopened.pending_agent_wakes("acct:a", 20).len(), 1);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn deleted_agent_wake_cleanup_is_account_fenced_and_survives_reopen() {
+        let root = temp_root("deleted-agent-wakes");
+        {
+            let mut service = AndroidMessagingService::open(&root).unwrap();
+            service
+                .deliver_agent_message(
+                    "acct:a",
+                    "agent-a",
+                    "agent-b",
+                    false,
+                    "hello",
+                    &[],
+                    false,
+                    "tool-call-a",
+                    10,
+                )
+                .unwrap();
+            service
+                .deliver_agent_message(
+                    "acct:b",
+                    "agent-a",
+                    "agent-b",
+                    false,
+                    "other account",
+                    &[],
+                    false,
+                    "tool-call-b",
+                    11,
+                )
+                .unwrap();
+            assert_eq!(service.pending_agent_wakes("acct:a", 100).len(), 1);
+            assert_eq!(service.pending_agent_wakes("acct:b", 100).len(), 1);
+
+            assert_eq!(
+                service
+                    .clear_agent_wakes_for_deleted_agent("acct:a", "agent-b")
+                    .unwrap(),
+                1
+            );
+            assert!(service.pending_agent_wakes("acct:a", 100).is_empty());
+            assert_eq!(
+                service.pending_agent_wakes("acct:b", 100).len(),
+                1,
+                "deletion cleanup must never cross the account fence"
+            );
+        }
+
+        let reopened = AndroidMessagingService::open(&root).unwrap();
+        assert!(reopened.pending_agent_wakes("acct:a", 100).is_empty());
+        assert_eq!(reopened.pending_agent_wakes("acct:b", 100).len(), 1);
         let _ = fs::remove_dir_all(root);
     }
 
