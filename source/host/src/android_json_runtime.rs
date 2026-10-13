@@ -2796,6 +2796,8 @@ impl AndroidJsonHost {
             "feature.settings.timeZone" => self.time_zone_settings(),
             "feature.settings.timeZone.detected" => self.set_detected_time_zone(params),
             "feature.settings.timeZone.set" => self.set_time_zone_settings(params),
+            "feature.settings.agentDefaultModel" => self.agent_default_model_setting(),
+            "feature.settings.agentDefaultModel.set" => self.set_agent_default_model_setting(params),
             "feature.settings.localToolPermission" => self.local_tool_permission(),
             "feature.settings.localToolPermission.set" => self.set_local_tool_permission(params),
             "feature.settings.processMetrics" => self.process_metrics_settings(),
@@ -4264,6 +4266,44 @@ impl AndroidJsonHost {
             .set_time_zone_override(value)
             .map_err(|error| format!("failed to persist Android time zone override: {error}"))?;
         Ok(json!({"overrideTimeZone": saved}))
+    }
+
+    fn agent_default_model_setting(&self) -> Result<Value, String> {
+        let account_scope = self.current_sidebar_account_scope()?;
+        let model = self
+            .user_settings
+            .lock()
+            .map_err(|_| "canonical Android user settings lock poisoned".to_string())?
+            .agent_default_model(&account_scope)
+            .map(str::to_string);
+        Ok(json!({
+            "accountScope": account_scope,
+            "model": model,
+        }))
+    }
+
+    fn set_agent_default_model_setting(&mut self, params: &Value) -> Result<Value, String> {
+        let expected_scope = required_string(params, "expectedAccountScope")?;
+        let account_scope = self.current_sidebar_account_scope()?;
+        if expected_scope != account_scope {
+            return Err("default model account scope changed before mutation".into());
+        }
+        let requested = match params.get("model") {
+            None | Some(Value::Null) => None,
+            Some(Value::String(value)) => Some(value.as_str()),
+            Some(_) => return Err("default model must be a string or null".into()),
+        };
+        let validated = self.validate_available_model_selection(requested)?;
+        let saved = self
+            .user_settings
+            .lock()
+            .map_err(|_| "canonical Android user settings lock poisoned".to_string())?
+            .set_agent_default_model(&account_scope, validated.as_deref())
+            .map_err(|error| format!("failed to persist Android default model: {error}"))?;
+        Ok(json!({
+            "accountScope": account_scope,
+            "model": saved,
+        }))
     }
 
     fn onboarding_seen(&self) -> Result<Value, String> {
@@ -7007,9 +7047,19 @@ impl AndroidJsonHost {
             .get("richText")
             .filter(|value| !value.is_null())
             .cloned();
-        let selected_model = self.validate_available_model_selection(
-            params.get("model").and_then(Value::as_str),
-        )?;
+        let requested_model = match params.get("model").and_then(Value::as_str) {
+            Some(value) if !value.trim().is_empty() => Some(value.trim().to_string()),
+            _ => {
+                let account_scope = self.current_sidebar_account_scope()?;
+                self.user_settings
+                    .lock()
+                    .map_err(|_| "canonical Android user settings lock poisoned".to_string())?
+                    .agent_default_model(&account_scope)
+                    .map(str::to_string)
+            }
+        };
+        let selected_model =
+            self.validate_available_model_selection(requested_model.as_deref())?;
         let attachments = AgentAttachment::list_from_json(params.get("attachments"))?;
         self.agent_attachments
             .lock()
@@ -14538,6 +14588,51 @@ mod local_tool_permission_dispatch_tests {
                 .unwrap()["permission"],
             "always",
         );
+    }
+}
+
+#[cfg(test)]
+mod default_model_settings_dispatch_tests {
+    use super::*;
+
+    #[test]
+    fn default_model_setting_is_account_scoped_durable_and_applies_to_send_without_explicit_model() {
+        let root = tempfile::tempdir().unwrap();
+        let mut host = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+        // The test Host has no dashboard model backend, so an unavailable model must fail closed
+        // instead of being persisted as an unvalidated default.
+        let scope = host.current_sidebar_account_scope().unwrap();
+        assert!(host
+            .dispatch(
+                "feature.settings.agentDefaultModel.set",
+                &json!({"expectedAccountScope":scope,"model":"not-in-catalog"}),
+            )
+            .unwrap_err()
+            .contains("available model catalog backend is unavailable"));
+        assert!(host
+            .dispatch("feature.settings.agentDefaultModel", &json!({}))
+            .unwrap()["model"]
+            .is_null());
+    }
+
+    #[test]
+    fn stale_default_model_mutation_is_account_fenced_before_persistence() {
+        let root = tempfile::tempdir().unwrap();
+        let mut host = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+        assert!(host
+            .dispatch(
+                "feature.settings.agentDefaultModel.set",
+                &json!({
+                    "expectedAccountScope":"account-device:stale",
+                    "model":Value::Null
+                }),
+            )
+            .unwrap_err()
+            .contains("account scope changed"));
+        assert!(host
+            .dispatch("feature.settings.agentDefaultModel", &json!({}))
+            .unwrap()["model"]
+            .is_null());
     }
 }
 
