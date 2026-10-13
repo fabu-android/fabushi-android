@@ -525,6 +525,7 @@ mod tests {
             "0.1.0-test".into(),
             "dev".into(),
         );
+        assert!(runtime.can_record_events());
         assert_eq!(
             runtime
                 .track_model_experiment_exposure("account-a", "treatment")
@@ -579,6 +580,7 @@ mod tests {
             "0.1.0-test".into(),
             "dev".into(),
         );
+        assert!(!runtime.can_record_events());
         runtime
             .track(
                 "account-a",
