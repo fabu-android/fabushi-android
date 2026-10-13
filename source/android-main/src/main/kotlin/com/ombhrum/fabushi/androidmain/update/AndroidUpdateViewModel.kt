@@ -913,31 +913,81 @@ class AndroidUpdateViewModel(application: Application) : AndroidViewModel(applic
             setDataAndType(uri, "application/vnd.android.package-archive")
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
         }
-        if (!setHostUpgradeQuiescing(true)) {
-            updaterTelemetry.record(
-                AndroidUpdaterTelemetryEvent(
-                    category = "apply",
-                    action = "host_quiesce",
-                    result = "failed",
-                    trigger = "manual",
-                    track = _trackPolicy.value.effectiveTrack,
-                    currentVersion = currentVersion,
-                    targetVersion = release.version,
-                ),
-            )
-            _state.value = AndroidUpdateUiState(
-                phase = AndroidUpdatePhase.ERROR,
-                currentVersion = currentVersion,
-                currentVersionCode = currentVersionCode,
-                availableVersion = release.version,
-                availableVersionCode = release.versionCode,
-                message = "更新前无法安全暂停 Host 新任务；安装器未启动，可稍后重试。",
-            )
-            return
-        }
-
         val requested = markerFor(release, AndroidUpdateApplyPhase.REQUESTED)
-        applyStore.write(requested)
+        when (
+            prepareAndroidUpdateInstallerHandoff(
+                setQuiescing = ::setHostUpgradeQuiescing,
+                persistRequested = { applyStore.write(requested) },
+            )
+        ) {
+            AndroidUpdateHandoffPreparation.READY -> Unit
+            AndroidUpdateHandoffPreparation.HOST_QUIESCE_FAILED -> {
+                updaterTelemetry.record(
+                    AndroidUpdaterTelemetryEvent(
+                        category = "apply",
+                        action = "host_quiesce",
+                        result = "failed",
+                        trigger = "manual",
+                        track = _trackPolicy.value.effectiveTrack,
+                        currentVersion = currentVersion,
+                        targetVersion = release.version,
+                    ),
+                )
+                _state.value = AndroidUpdateUiState(
+                    phase = AndroidUpdatePhase.ERROR,
+                    currentVersion = currentVersion,
+                    currentVersionCode = currentVersionCode,
+                    availableVersion = release.version,
+                    availableVersionCode = release.versionCode,
+                    message = "更新前无法安全暂停 Host 新任务；安装器未启动，可稍后重试。",
+                )
+                return
+            }
+            AndroidUpdateHandoffPreparation.MARKER_PERSIST_FAILED -> {
+                updaterTelemetry.record(
+                    AndroidUpdaterTelemetryEvent(
+                        category = "apply",
+                        action = "marker_persist",
+                        result = "failed",
+                        trigger = "manual",
+                        track = _trackPolicy.value.effectiveTrack,
+                        currentVersion = currentVersion,
+                        targetVersion = release.version,
+                    ),
+                )
+                _state.value = AndroidUpdateUiState(
+                    phase = AndroidUpdatePhase.ERROR,
+                    currentVersion = currentVersion,
+                    currentVersionCode = currentVersionCode,
+                    availableVersion = release.version,
+                    availableVersionCode = release.versionCode,
+                    message = "更新请求状态无法安全持久化；Host 已恢复，安装器未启动，可稍后重试。",
+                )
+                return
+            }
+            AndroidUpdateHandoffPreparation.MARKER_PERSIST_FAILED_RESUME_FAILED -> {
+                updaterTelemetry.record(
+                    AndroidUpdaterTelemetryEvent(
+                        category = "apply",
+                        action = "marker_persist_resume",
+                        result = "failed",
+                        trigger = "manual",
+                        track = _trackPolicy.value.effectiveTrack,
+                        currentVersion = currentVersion,
+                        targetVersion = release.version,
+                    ),
+                )
+                _state.value = AndroidUpdateUiState(
+                    phase = AndroidUpdatePhase.ERROR,
+                    currentVersion = currentVersion,
+                    currentVersionCode = currentVersionCode,
+                    availableVersion = release.version,
+                    availableVersionCode = release.versionCode,
+                    message = "更新请求状态无法安全持久化，且 Host 无法恢复接收新任务；安装器未启动，请重启 Fabushi 后重试。",
+                )
+                return
+            }
+        }
         updaterTelemetry.record(
             AndroidUpdaterTelemetryEvent(
                 category = "apply",
