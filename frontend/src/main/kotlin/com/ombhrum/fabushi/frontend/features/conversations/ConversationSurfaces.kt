@@ -145,6 +145,7 @@ internal fun ConversationHome(
     onSetMessagePinned: (String, String, Boolean) -> Unit,
     onSetReaction: (String, String, String, Boolean) -> Unit,
     onForwardMessage: (ForwardMessageBatchRequest, (List<ForwardSettlement>) -> Unit) -> Unit,
+    onSearchForwardRecipients: (String, String, String, Int, (Result<List<ForwardRecipientCandidate>>) -> Unit) -> Unit,
     onStartTyping: (String) -> Unit,
     onStopTyping: (String) -> Unit,
     onSetPinned: (ConversationSummary, Boolean) -> Unit,
@@ -287,7 +288,7 @@ internal fun ConversationHome(
                 )
             },
             onForward = onForwardMessage,
-            forwardDestinations = conversations.filter { it.id != conversation.id && !it.isArchived },
+            onSearchForwardRecipients = onSearchForwardRecipients,
             typingActorName = messagingState.typingActorByConversation[conversation.id],
             onTypingChanged = { typing -> if (typing) onStartTyping(conversation.id) else onStopTyping(conversation.id) },
             onToggleMute = { onSetMuted(conversation, !conversation.isMuted) },
@@ -506,7 +507,7 @@ internal fun ConversationDetail(
     onSetMessagePinned: (String, Boolean) -> Unit,
     onReact: (ChatMessage, String) -> Unit,
     onForward: (ForwardMessageBatchRequest, (List<ForwardSettlement>) -> Unit) -> Unit,
-    forwardDestinations: List<ConversationSummary>,
+    onSearchForwardRecipients: (String, String, String, Int, (Result<List<ForwardRecipientCandidate>>) -> Unit) -> Unit,
     typingActorName: String?,
     onTypingChanged: (Boolean) -> Unit,
     onToggleMute: () -> Unit,
@@ -536,6 +537,10 @@ internal fun ConversationDetail(
     var forwardDropCaptions by remember { mutableStateOf(false) }
     var forwardSubmitting by remember { mutableStateOf(false) }
     var forwardFailure by remember { mutableStateOf<String?>(null) }
+    var forwardRecipientCandidates by remember { mutableStateOf<List<ForwardRecipientCandidate>>(emptyList()) }
+    var forwardRecipientSearchLoading by remember { mutableStateOf(false) }
+    var forwardRecipientSearchError by remember { mutableStateOf<String?>(null) }
+    var forwardRecipientSearchGeneration by remember { mutableStateOf(0) }
     var forwardActiveRecipientIndex by remember { mutableStateOf(0) }
     val forwardRecipientListState = rememberLazyListState()
     var mediaViewerMessageId by remember(conversation.id) { mutableStateOf<String?>(null) }
@@ -746,18 +751,38 @@ internal fun ConversationDetail(
     }
 
     forwardingMessage?.let { message ->
-        val normalizedQuery = forwardQuery.trim()
-        val filteredDestinations = remember(forwardDestinations, normalizedQuery) {
-            val filtered = if (normalizedQuery.isEmpty()) {
-                forwardDestinations
-            } else {
-                forwardDestinations.filter { destination ->
-                    destination.title.contains(normalizedQuery, ignoreCase = true) ||
-                        destination.preview.contains(normalizedQuery, ignoreCase = true)
+        LaunchedEffect(message.id, forwardQuery) {
+            val generation = forwardRecipientSearchGeneration + 1
+            forwardRecipientSearchGeneration = generation
+            forwardRecipientSearchLoading = true
+            forwardRecipientSearchError = null
+            onSearchForwardRecipients(
+                conversation.id,
+                message.id,
+                forwardQuery,
+                50,
+            ) callback@{ result ->
+                if (
+                    forwardRecipientSearchGeneration != generation ||
+                    forwardingMessage?.id != message.id
+                ) {
+                    return@callback
                 }
+                forwardRecipientSearchLoading = false
+                result.fold(
+                    onSuccess = { candidates ->
+                        forwardRecipientCandidates = candidates
+                        val allowedIds = candidates.mapTo(mutableSetOf()) { it.conversationId }
+                        forwardSelection = forwardSelection.filter { it in allowedIds }
+                    },
+                    onFailure = { error ->
+                        forwardRecipientCandidates = emptyList()
+                        forwardRecipientSearchError = error.message ?: "无法加载可转发会话"
+                    },
+                )
             }
-            filtered.take(50)
         }
+        val filteredDestinations = forwardRecipientCandidates
         LaunchedEffect(filteredDestinations.size, forwardActiveRecipientIndex, message.id) {
             if (filteredDestinations.isNotEmpty()) {
                 val bounded = forwardActiveRecipientIndex.coerceIn(0, filteredDestinations.lastIndex)
@@ -777,6 +802,10 @@ internal fun ConversationDetail(
             forwardDropCaptions = false
             forwardSubmitting = false
             forwardFailure = null
+            forwardRecipientSearchGeneration += 1
+            forwardRecipientCandidates = emptyList()
+            forwardRecipientSearchLoading = false
+            forwardRecipientSearchError = null
             forwardActiveRecipientIndex = 0
         }
 
@@ -835,7 +864,12 @@ internal fun ConversationDetail(
                     )
                     if (filteredDestinations.isEmpty()) {
                         Text(
-                            if (forwardDestinations.isEmpty()) "暂无可转发会话" else "没有匹配的可转发会话",
+                            when {
+                                forwardRecipientSearchLoading -> "正在加载可转发会话…"
+                                forwardRecipientSearchError != null -> forwardRecipientSearchError!!
+                                forwardQuery.isBlank() -> "暂无可转发会话"
+                                else -> "没有匹配的可转发会话"
+                            },
                             color = homeSecondaryText,
                         )
                     } else {
