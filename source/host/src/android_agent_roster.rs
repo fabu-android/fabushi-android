@@ -90,6 +90,17 @@ impl Default for AndroidAgentRosterFile {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AndroidAgentRosterRecoveryOutcome {
+    ResetCorruptStore,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AndroidAgentRosterRecovery {
+    pub outcome: AndroidAgentRosterRecoveryOutcome,
+    pub quarantine_path: PathBuf,
+}
+
 #[derive(Clone, Debug)]
 pub struct AndroidAgentRoster {
     path: PathBuf,
@@ -98,19 +109,28 @@ pub struct AndroidAgentRoster {
 
 impl AndroidAgentRoster {
     pub fn open(path: impl Into<PathBuf>) -> io::Result<Self> {
+        Self::open_recovering(path).map(|(roster, _)| roster)
+    }
+
+    pub fn open_recovering(
+        path: impl Into<PathBuf>,
+    ) -> io::Result<(Self, Option<AndroidAgentRosterRecovery>)> {
         let path = path.into();
         if !path.exists() {
-            return Ok(Self {
-                path,
-                state: AndroidAgentRosterFile::default(),
-            });
+            return Ok((
+                Self {
+                    path,
+                    state: AndroidAgentRosterFile::default(),
+                },
+                None,
+            ));
         }
 
         let raw = fs::read_to_string(&path)?;
         match serde_json::from_str::<AndroidAgentRosterFile>(&raw) {
             Ok(mut state) if state.schema_version == ROSTER_SCHEMA_VERSION => {
                 normalize_state(&mut state);
-                Ok(Self { path, state })
+                Ok((Self { path, state }, None))
             }
             _ => {
                 let quarantine = corrupt_path(&path);
@@ -118,10 +138,16 @@ impl AndroidAgentRoster {
                     fs::create_dir_all(parent)?;
                 }
                 fs::rename(&path, &quarantine)?;
-                Ok(Self {
-                    path,
-                    state: AndroidAgentRosterFile::default(),
-                })
+                Ok((
+                    Self {
+                        path,
+                        state: AndroidAgentRosterFile::default(),
+                    },
+                    Some(AndroidAgentRosterRecovery {
+                        outcome: AndroidAgentRosterRecoveryOutcome::ResetCorruptStore,
+                        quarantine_path: quarantine,
+                    }),
+                ))
             }
         }
     }
@@ -1048,6 +1074,29 @@ mod tests {
             std::process::id(),
             now_ms()
         ))
+    }
+
+    #[test]
+    fn corrupt_roster_is_quarantined_and_reports_reset_recovery() {
+        let path = temp_path("corrupt-recovery");
+        fs::write(&path, b"{not-json").unwrap();
+
+        let (roster, recovery) = AndroidAgentRoster::open_recovering(&path).unwrap();
+        assert_eq!(roster.count(), 0);
+        assert!(!path.exists());
+
+        let recovery = recovery.expect("corrupt roster must report recovery");
+        assert_eq!(
+            recovery.outcome,
+            AndroidAgentRosterRecoveryOutcome::ResetCorruptStore
+        );
+        assert!(recovery.quarantine_path.exists());
+        assert_eq!(
+            fs::read(&recovery.quarantine_path).unwrap(),
+            b"{not-json"
+        );
+
+        let _ = fs::remove_file(recovery.quarantine_path);
     }
 
     #[test]
