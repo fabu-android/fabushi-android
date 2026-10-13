@@ -915,10 +915,10 @@ internal fun ConversationDetail(
                                     }
                                     if (isForwardToggleShortcut(keyName, event.isCtrlPressed, event.isMetaPressed)) {
                                         filteredDestinations.getOrNull(forwardActiveRecipientIndex)?.let { destination ->
-                                            forwardSelection = if (destination.id in forwardSelection) {
-                                                forwardSelection.filterNot { it == destination.id }
+                                            forwardSelection = if (destination.conversationId in forwardSelection) {
+                                                forwardSelection.filterNot { it == destination.conversationId }
                                             } else {
-                                                forwardSelection + destination.id
+                                                forwardSelection + destination.conversationId
                                             }
                                         }
                                         return@onPreviewKeyEvent true
@@ -926,23 +926,23 @@ internal fun ConversationDetail(
                                     false
                                 },
                         ) {
-                            itemsIndexed(filteredDestinations, key = { _, destination -> destination.id }) { index, destination ->
-                                val selected = destination.id in forwardSelection
+                            itemsIndexed(filteredDestinations, key = { _, destination -> destination.conversationId }) { index, destination ->
+                                val selected = destination.conversationId in forwardSelection
                                 val active = index == forwardActiveRecipientIndex
                                 TextButton(
                                     enabled = !forwardSubmitting,
                                     onClick = {
                                         forwardActiveRecipientIndex = index
                                         forwardSelection = if (selected) {
-                                            forwardSelection.filterNot { it == destination.id }
+                                            forwardSelection.filterNot { it == destination.conversationId }
                                         } else {
-                                            forwardSelection + destination.id
+                                            forwardSelection + destination.conversationId
                                         }
                                     },
                                     modifier = Modifier
                                         .fillMaxWidth()
                                         .then(if (active) Modifier.border(1.dp, homeAccent, RoundedCornerShape(8.dp)) else Modifier)
-                                        .testTag("forward-recipient-${destination.id}"),
+                                        .testTag("forward-recipient-${destination.conversationId}"),
                                 ) {
                                     Text(buildString {
                                         if (active) append("› ")
