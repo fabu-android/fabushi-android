@@ -478,11 +478,22 @@ mod tests {
         });
         let root = test_root("identity");
         let core = build_xuser_core(provider, transport, &BTreeMap::new(), &root).unwrap();
-        assert_eq!(core.sharing_state().self_auth_id.as_deref(), Some("auth-a"));
+        assert_eq!(
+            core.refresh_self_auth_id().unwrap().as_deref(),
+            Some("auth-a"),
+            "credential identity must resolve even while environment policy keeps sharing disabled",
+        );
+        assert!(
+            core.sharing_state().self_auth_id.is_none(),
+            "disabled sharing projection must remain fail-closed",
+        );
 
         *credentials.subject.lock().unwrap() = "auth-b".into();
         assert_eq!(core.refresh_self_auth_id().unwrap().as_deref(), Some("auth-b"));
-        assert_eq!(core.sharing_state().self_auth_id.as_deref(), Some("auth-b"));
+        assert!(
+            core.sharing_state().self_auth_id.is_none(),
+            "disabled sharing projection must not expose refreshed account identity",
+        );
         let _ = std::fs::remove_dir_all(root);
     }
 
