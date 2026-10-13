@@ -164,31 +164,41 @@ impl TranscriptStore {
         before_seq: Option<usize>,
         limit: usize,
     ) -> io::Result<(Vec<Value>, Option<usize>)> {
+        self.page_for_agent_with_bounds(agent_id, before_seq, None, None, limit)
+    }
+
+    pub fn page_for_agent_with_bounds(
+        &self,
+        agent_id: &str,
+        before_seq: Option<usize>,
+        since_ms: Option<f64>,
+        until_ms: Option<f64>,
+        limit: usize,
+    ) -> io::Result<(Vec<Value>, Option<usize>)> {
         let agent_id = agent_id.trim();
         if agent_id.is_empty() {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "transcript page agent id is required",
-            ));
+            return Err(io::Error::new(io::ErrorKind::InvalidInput, "transcript page agent id is required"));
         }
         if limit == 0 || limit > 500 {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "transcript page limit must be between 1 and 500",
-            ));
+            return Err(io::Error::new(io::ErrorKind::InvalidInput, "transcript page limit must be between 1 and 500"));
         }
-
+        if since_ms.is_some_and(|value| !value.is_finite()) || until_ms.is_some_and(|value| !value.is_finite()) {
+            return Err(io::Error::new(io::ErrorKind::InvalidInput, "transcript page time bounds must be finite"));
+        }
         let scoped = self
             .entries
             .iter()
             .filter(|entry| entry.get("agentId").and_then(Value::as_str) == Some(agent_id))
+            .filter(|entry| is_main_transcript_page_entry(entry))
+            .filter(|entry| {
+                let Some(timestamp_ms) = entry.get("timestampMs").and_then(Value::as_f64) else { return true; };
+                since_ms.is_none_or(|since| timestamp_ms >= since)
+                    && until_ms.is_none_or(|until| timestamp_ms <= until)
+            })
             .collect::<Vec<_>>();
         let end = before_seq.unwrap_or(scoped.len()).min(scoped.len());
         let start = end.saturating_sub(limit);
-        let page = scoped[start..end]
-            .iter()
-            .map(|entry| (*entry).clone())
-            .collect::<Vec<_>>();
+        let page = scoped[start..end].iter().map(|entry| (*entry).clone()).collect::<Vec<_>>();
         let next_before_seq = (start > 0).then_some(start);
         Ok((page, next_before_seq))
     }
@@ -499,6 +509,21 @@ fn sync_parent(_path: &Path) -> io::Result<()> {
     Ok(())
 }
 
+fn is_main_transcript_page_entry(entry: &Value) -> bool {
+    if entry.get("branched").and_then(Value::as_bool).unwrap_or(false) {
+        return false;
+    }
+    match entry.get("kind").and_then(Value::as_str) {
+        Some("send-message" | "sendMessage" | "user-attachment" | "userAttachment") => true,
+        Some("message") => {
+            entry.get("role").and_then(Value::as_str) == Some("user")
+                || entry.get("fromAgent").is_some_and(|value| !value.is_null())
+                || entry.get("toAgent").is_some_and(|value| !value.is_null())
+        }
+        _ => false,
+    }
+}
+
 fn entry_id(entry: &Value) -> io::Result<&str> {
     entry
         .as_object()
@@ -732,6 +757,24 @@ fn validate_entries(entries: &[Value]) -> io::Result<()> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn page_filters_non_main_entries_and_applies_time_bounds() {
+        let root = tempfile::tempdir().unwrap();
+        let mut store = TranscriptStore::open(root.path().join("transcript.json")).unwrap();
+        for entry in [
+            serde_json::json!({"id":"old","agentId":"agent-a","kind":"message","role":"user","content":"old","timestampMs":10}),
+            serde_json::json!({"id":"tool","agentId":"agent-a","kind":"tool-call","name":"x","timestampMs":20}),
+            serde_json::json!({"id":"assistant","agentId":"agent-a","kind":"message","role":"assistant","content":"hidden","timestampMs":30}),
+            serde_json::json!({"id":"branched","agentId":"agent-a","kind":"message","role":"user","content":"branch","branched":true,"timestampMs":40}),
+            serde_json::json!({"id":"peer","agentId":"agent-a","kind":"message","role":"assistant","content":"peer","fromAgent":{"id":"agent-b"},"timestampMs":50}),
+            serde_json::json!({"id":"attachment","agentId":"agent-a","kind":"user-attachment","filePath":"/tmp/a","timestampMs":60}),
+            serde_json::json!({"id":"future","agentId":"agent-a","kind":"send-message","message":{"type":"text","content":"future"},"timestampMs":90}),
+        ] { store.append_entry(entry).unwrap(); }
+        let (page, next) = store.page_for_agent_with_bounds("agent-a", None, Some(40.0), Some(70.0), 10).unwrap();
+        assert_eq!(page.iter().map(|entry| entry["id"].as_str().unwrap()).collect::<Vec<_>>(), vec!["peer", "attachment"]);
+        assert_eq!(next, None);
+    }
+
     use super::*;
     use serde_json::json;
     use std::time::{SystemTime, UNIX_EPOCH};
