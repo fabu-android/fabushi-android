@@ -5,6 +5,7 @@ object PreloadBrowserBase {
         "accounts.google.com",
         "appleid.apple.com",
         "github.com",
+        "login.microsoftonline.com",
     )
 
     private val identityHostSuffixes = listOf(

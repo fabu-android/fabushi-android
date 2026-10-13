@@ -124,7 +124,7 @@ class SendSubmissionTransportQueueTest {
         )
 
         val restored = AndroidSendSubmissionScope("slot-a", "agent-a", "restored", 9)
-        owner.discover(listOf(acknowledgement(restored, AndroidSendAcknowledgementPhase.QUEUED)))
+        owner.discover(\n            listOf(acknowledgement(restored, AndroidSendAcknowledgementPhase.QUEUED)),\n            trackRestoreOutcome = true,\n        )
         owner.flush()
         assertEquals(listOf("restored" to "dispatched"), restoredOutcomes)
 
@@ -155,7 +155,7 @@ class SendSubmissionTransportQueueTest {
         )
 
         val restored = AndroidSendSubmissionScope("slot-a", "agent-a", "offline", 11)
-        owner.discover(listOf(acknowledgement(restored, AndroidSendAcknowledgementPhase.QUEUED)))
+        owner.discover(\n            listOf(acknowledgement(restored, AndroidSendAcknowledgementPhase.QUEUED)),\n            trackRestoreOutcome = true,\n        )
         assertEquals(listOf("offline" to "parked"), restoredOutcomes)
 
         down = false
@@ -180,7 +180,7 @@ class SendSubmissionTransportQueueTest {
         )
 
         val restored = AndroidSendSubmissionScope("slot-a", "agent-a", "failed", 12)
-        owner.discover(listOf(acknowledgement(restored, AndroidSendAcknowledgementPhase.QUEUED)))
+        owner.discover(\n            listOf(acknowledgement(restored, AndroidSendAcknowledgementPhase.QUEUED)),\n            trackRestoreOutcome = true,\n        )
         owner.flush()
 
         assertEquals(listOf("failed" to "failed"), restoredOutcomes)

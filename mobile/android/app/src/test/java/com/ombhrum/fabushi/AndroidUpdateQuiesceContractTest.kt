@@ -1,50 +1,69 @@
 package com.ombhrum.fabushi
 
 import java.io.File
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class AndroidUpdateQuiesceContractTest {
     @Test
-    fun installerHandoffIsFencedByTypedHostQuiesceAndRestoresOnAmbiguousReturn() {
-        val root = repositoryRoot()
-        val port = File(
-            root,
-            "source/android-preload/src/main/kotlin/com/ombhrum/fabushi/androidpreload/runtime/AndroidCoordinatorPort.kt",
-        ).readText()
-        val runtime = File(
-            root,
-            "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/coordinator/AndroidCoordinatorRuntime.kt",
-        ).readText()
+    fun installerHandoffUsesExtractedPolicyAndProductionRestoresHostOnAmbiguousReturn() {
+        val order = mutableListOf<String>()
+        val transitions = mutableListOf<Boolean>()
+        var idleChecks = 0
+
+        val preparation = prepareAndroidUpdateInstallerHandoff(
+            isHostIdle = {
+                idleChecks += 1
+                order += "idle"
+                true
+            },
+            setQuiescing = { quiescing ->
+                transitions += quiescing
+                order += if (quiescing) "quiesce" else "resume"
+                true
+            },
+            persistRequested = { order += "marker" },
+        )
+
+        assertEquals(AndroidUpdateHandoffPreparation.READY, preparation)
+        assertEquals(2, idleChecks)
+        assertEquals(listOf(true), transitions)
+        assertEquals(listOf("idle", "quiesce", "idle", "marker"), order)
+
         val updater = File(
-            root,
+            repositoryRoot(),
             "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/update/AndroidUpdateViewModel.kt",
         ).readText()
-
-        assertTrue(port.contains("fun setUpgradeQuiescing(quiescing: Boolean)"))
-        assertTrue(runtime.contains("\"feature.agent.upgradeQuiesce\""))
-        assertTrue(runtime.contains("JSONObject().put(\"quiescing\", quiescing)"))
-
         val requestMethod = updater.substringAfter("private fun requestPackageInstall(apk: File)")
             .substringBefore("private fun markerFor(")
-        val quiesce = requestMethod.indexOf("setHostUpgradeQuiescing(true)")
-        val markerWrite = requestMethod.indexOf("applyStore.write(requested)")
-        val installer = requestMethod.indexOf("applicationContext.startActivity(intent)")
-        val resumeOnSpawnFailure = requestMethod.indexOf("setHostUpgradeQuiescing(false)")
-        assertTrue("Host must quiesce before durable installer request marker", quiesce >= 0 && quiesce < markerWrite)
-        assertTrue("durable request marker must precede external installer handoff", markerWrite >= 0 && markerWrite < installer)
+
+        val prepareCall = requestMethod.indexOf("prepareAndroidUpdateInstallerHandoff(")
+        val idle = requestMethod.indexOf("isHostIdle = { coordinator.isUpdateHostIdle() }", prepareCall)
+        val quiesce = requestMethod.indexOf("setQuiescing = ::setHostUpgradeQuiescing", prepareCall)
+        val marker = requestMethod.indexOf("persistRequested = { applyStore.write(requested) }", prepareCall)
+        val installer = requestMethod.indexOf("applicationContext.startActivity(intent)", prepareCall)
+        assertTrue("production updater must call the extracted handoff policy", prepareCall >= 0)
+        assertTrue("production policy call must use Coordinator Host idle truth", idle > prepareCall)
+        assertTrue("production policy call must use the typed Host quiesce setter", quiesce > prepareCall)
+        assertTrue("production policy call must persist the durable REQUESTED marker", marker > prepareCall)
+        assertTrue("installer must start only after handoff preparation", installer > marker)
+
+        val spawnFailure = requestMethod.substring(installer)
         assertTrue(
             "installer spawn failure must restore Host turns",
-            resumeOnSpawnFailure > installer,
+            spawnFailure.contains("setHostUpgradeQuiescing(false)"),
         )
 
         val foreground = updater.substringAfter("fun setForeground(foreground: Boolean)")
             .substringBefore("private fun startIdleAutoStageMonitor()")
-        val ambiguousReturn = foreground.indexOf("AndroidUpdatePhase.OUTCOME_UNKNOWN")
-        val resumeOnReturn = foreground.indexOf("setHostUpgradeQuiescing(false)")
+        val installing = foreground.indexOf("AndroidUpdatePhase.INSTALLING")
+        val resumeOnReturn = foreground.indexOf("setHostUpgradeQuiescing(false)", installing)
+        val ambiguousReturn = foreground.indexOf("AndroidUpdatePhase.OUTCOME_UNKNOWN", installing)
+        assertTrue("foreground return must recognize an in-flight installer handoff", installing >= 0)
         assertTrue(
-            "ambiguous installer return must restore Host turns without replaying install",
-            resumeOnReturn >= 0 && resumeOnReturn < ambiguousReturn,
+            "ambiguous installer return must restore Host before projecting outcome-unknown",
+            resumeOnReturn > installing && ambiguousReturn > resumeOnReturn,
         )
     }
 

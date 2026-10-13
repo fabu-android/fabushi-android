@@ -296,9 +296,9 @@ class AccountAccessProjectionOwnerTest {
         )!!
         assertEquals("recovered", recovered.edge)
         assertEquals(
+            "recovery must report the reason that caused the blocked interval",
             "paywallIndividual",
             recovered.accessReason,
-            "recovery must report the reason that caused the blocked interval",
         )
         assertEquals(7L * 24L * 60L * 60L * 1_000L, recovered.msBlocked)
     }

@@ -33,6 +33,13 @@ class FabushiScreenTest {
                 onDenyPermissions = {},
                 onSubmitPluginVariables = {},
                 onCancelPluginVariables = {},
+                onSaveMcpServerInstructions = { _, _ -> },
+                onLogoutMcpAccount = { _, _ -> },
+                onRenameMcpAccount = { _, _, _ -> },
+                onRemoveMcpAccount = { _, _ -> },
+                onOpenMcpServerTools = {},
+                onRetryMcpServerTools = {},
+                onToggleMcpServerTool = { _, _ -> },
             )
         }
 
@@ -66,6 +73,13 @@ class FabushiScreenTest {
                 onDenyPermissions = {},
                 onSubmitPluginVariables = {},
                 onCancelPluginVariables = {},
+                onSaveMcpServerInstructions = { _, _ -> },
+                onLogoutMcpAccount = { _, _ -> },
+                onRenameMcpAccount = { _, _, _ -> },
+                onRemoveMcpAccount = { _, _ -> },
+                onOpenMcpServerTools = {},
+                onRetryMcpServerTools = {},
+                onToggleMcpServerTool = { _, _ -> },
                 authGateEnabled = true,
                 onBeginBrowserLogin = { loginRequests += 1 },
             )
@@ -97,6 +111,13 @@ class FabushiScreenTest {
                 onDenyPermissions = {},
                 onSubmitPluginVariables = {},
                 onCancelPluginVariables = {},
+                onSaveMcpServerInstructions = { _, _ -> },
+                onLogoutMcpAccount = { _, _ -> },
+                onRenameMcpAccount = { _, _, _ -> },
+                onRemoveMcpAccount = { _, _ -> },
+                onOpenMcpServerTools = {},
+                onRetryMcpServerTools = {},
+                onToggleMcpServerTool = { _, _ -> },
             )
         }
 
@@ -130,6 +151,13 @@ class FabushiScreenTest {
                 onDenyPermissions = {},
                 onSubmitPluginVariables = {},
                 onCancelPluginVariables = {},
+                onSaveMcpServerInstructions = { _, _ -> },
+                onLogoutMcpAccount = { _, _ -> },
+                onRenameMcpAccount = { _, _, _ -> },
+                onRemoveMcpAccount = { _, _ -> },
+                onOpenMcpServerTools = {},
+                onRetryMcpServerTools = {},
+                onToggleMcpServerTool = { _, _ -> },
             )
         }
 
@@ -154,6 +182,13 @@ class FabushiScreenTest {
                 onDenyPermissions = {},
                 onSubmitPluginVariables = {},
                 onCancelPluginVariables = {},
+                onSaveMcpServerInstructions = { _, _ -> },
+                onLogoutMcpAccount = { _, _ -> },
+                onRenameMcpAccount = { _, _, _ -> },
+                onRemoveMcpAccount = { _, _ -> },
+                onOpenMcpServerTools = {},
+                onRetryMcpServerTools = {},
+                onToggleMcpServerTool = { _, _ -> },
                 updateState = AndroidUpdateUiState(
                     phase = AndroidUpdatePhase.AVAILABLE,
                     currentVersion = "1.0.4",
@@ -189,6 +224,13 @@ class FabushiScreenTest {
                 onDenyPermissions = {},
                 onSubmitPluginVariables = {},
                 onCancelPluginVariables = {},
+                onSaveMcpServerInstructions = { _, _ -> },
+                onLogoutMcpAccount = { _, _ -> },
+                onRenameMcpAccount = { _, _, _ -> },
+                onRemoveMcpAccount = { _, _ -> },
+                onOpenMcpServerTools = {},
+                onRetryMcpServerTools = {},
+                onToggleMcpServerTool = { _, _ -> },
             )
         }
 
@@ -210,6 +252,13 @@ class FabushiScreenTest {
                 onDenyPermissions = {},
                 onSubmitPluginVariables = {},
                 onCancelPluginVariables = {},
+                onSaveMcpServerInstructions = { _, _ -> },
+                onLogoutMcpAccount = { _, _ -> },
+                onRenameMcpAccount = { _, _, _ -> },
+                onRemoveMcpAccount = { _, _ -> },
+                onOpenMcpServerTools = {},
+                onRetryMcpServerTools = {},
+                onToggleMcpServerTool = { _, _ -> },
                 appAgentSurface = surface,
             )
         }

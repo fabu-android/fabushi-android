@@ -17,8 +17,25 @@ class SharedRoomsPresentationTest {
                 JSONObject()
                     .put("id", "room-a")
                     .put("name", "Alpha")
+                    .put("hostAuthId", "host-a")
                     .put("hostName", "A")
-                    .put("members", JSONArray().put("one").put("two")),
+                    .put(
+                        "members",
+                        JSONArray()
+                            .put(JSONObject().put("authId", "one").put("name", "One"))
+                            .put(
+                                JSONObject()
+                                    .put("authId", "two")
+                                    .put("agentId", "agent-two")
+                                    .put("name", "Two"),
+                            )
+                            .put(
+                                JSONObject()
+                                    .put("authId", "two")
+                                    .put("agentId", "agent-two")
+                                    .put("name", "Duplicate"),
+                            ),
+                    ),
             )
             .put(JSONObject().put("roomId", "room-a").put("name", "duplicate"))
             .put(JSONObject().put("roomId", "room-b").put("displayName", "Beta").put("memberCount", 3))
@@ -54,6 +71,8 @@ class SharedRoomsPresentationTest {
         assertEquals(2, projected.rooms.size)
         assertEquals("Alpha", projected.rooms[0].name)
         assertEquals(2, projected.rooms[0].memberCount)
+        assertEquals(listOf("one", "two"), projected.rooms[0].members.map { it.authId })
+        assertEquals("host-a", projected.rooms[0].hostAuthId)
         assertEquals("Beta", projected.rooms[1].name)
         assertEquals(3, projected.rooms[1].memberCount)
         assertEquals(1, projected.pendingJoinRequests.size)

@@ -1310,7 +1310,8 @@ mod tests {
         assert_eq!(status["result"]["activeRequestCount"], 1);
 
         let mut terminal_sequence = 0;
-        for _ in 0..64 {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while std::time::Instant::now() < deadline {
             let event = call(
                 &mut runtime,
                 json!({"method":"feature.receive","params":{}}),
@@ -1320,8 +1321,12 @@ mod tests {
                 terminal_sequence = result["_coordinator"]["sequence"].as_u64().unwrap();
                 break;
             }
+            std::thread::sleep(std::time::Duration::from_millis(10));
         }
-        assert!(terminal_sequence > 0);
+        assert!(
+            terminal_sequence > 0,
+            "streaming operation did not emit a terminal event before the 5 second deadline"
+        );
 
         let settled = call(&mut runtime, json!({"method":"coordinator.status","params":{}}));
         assert_eq!(settled["result"]["activeRequestCount"], 0);
