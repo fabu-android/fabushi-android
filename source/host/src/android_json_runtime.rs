@@ -7848,18 +7848,27 @@ impl AndroidJsonHost {
         previous_fence: Option<&str>,
         current_fence: Option<&str>,
         observed_at_ms: u64,
-    ) -> usize {
+    ) -> Result<usize, String> {
         let Some(current_fence) = current_fence
             .map(str::trim)
             .filter(|value| !value.is_empty())
         else {
-            return 0;
+            return Ok(0);
         };
         if previous_fence == Some(current_fence) {
-            return 0;
+            return Ok(0);
         }
+        let transcript_snapshot = self
+            .transcript
+            .lock()
+            .map_err(|_| "transcript lock poisoned while reconciling visible acknowledgements".to_string())?
+            .get_transcript();
         self.visible_ack_obligations
-            .arm_boot_redrives(current_fence, observed_at_ms)
+            .reconcile_from_transcript(current_fence, &transcript_snapshot)
+            .map_err(|error| format!("failed to reconcile visible acknowledgements after session settlement: {error}"))?;
+        Ok(self
+            .visible_ack_obligations
+            .arm_boot_redrives(current_fence, observed_at_ms))
     }
 
     fn prepare_account_transition_cleanup(
@@ -9544,7 +9553,20 @@ impl AndroidJsonHost {
 
     fn auth_browser_poll(&mut self, params: &Value) -> Result<Value, String> {
         if self.mode == AndroidHostMode::Test {
+            let previous_fence = self
+                .live_account_fence
+                .lock()
+                .map_err(|_| "live account fence lock poisoned".to_string())?
+                .clone();
             let result = self.browser_poll(params)?;
+            if result.get("status").and_then(Value::as_str) == Some("completed") {
+                let current_fence = self.current_turn_account_fence()?;
+                self.arm_visible_ack_redrives_for_session_change(
+                    previous_fence.as_deref(),
+                    Some(current_fence.as_str()),
+                    now_ms(),
+                )?;
+            }
             self.report_signin_poll_result(&result);
             return Ok(result);
         }
@@ -9594,7 +9616,7 @@ impl AndroidJsonHost {
             previous_fence.as_deref(),
             current_fence.as_deref(),
             now_ms(),
-        );
+        )?;
         if current_fence.is_some() && previous_fence != current_fence {
             schedule_authenticated_experiments_refresh(
                 Arc::clone(&self.experiments),
@@ -10266,7 +10288,18 @@ impl AndroidJsonHost {
             if !self.oauth_attempts.remove(attempt_id) {
                 return Err("OAuth attempt is unknown or already consumed".into());
             }
+            let previous_fence = self
+                .live_account_fence
+                .lock()
+                .map_err(|_| "live account fence lock poisoned".to_string())?
+                .clone();
             self.logged_in = true;
+            let current_fence = self.current_turn_account_fence()?;
+            self.arm_visible_ack_redrives_for_session_change(
+                previous_fence.as_deref(),
+                Some(current_fence.as_str()),
+                now_ms(),
+            )?;
             let result = json!({"attemptId":attempt_id,"status":"completed","auth":self.auth_status()});
             self.report_signin_poll_result(&result);
             return Ok(result);
@@ -10309,7 +10342,7 @@ impl AndroidJsonHost {
             previous_fence.as_deref(),
             current_fence.as_deref(),
             now_ms(),
-        );
+        )?;
         self.report_signin_poll_result(&result);
         Ok(with_account_session_mutation(result, mutation))
     }
@@ -18867,10 +18900,10 @@ export function apply(ctx) {
         host.visible_ack_obligations
             .record_send("session:relogin", "mahayana-assistant", 1.0)
             .unwrap();
-        assert_eq!(host.arm_visible_ack_redrives_for_session_change(None, Some("session:relogin"), 10), 1);
+        assert_eq!(host.arm_visible_ack_redrives_for_session_change(None, Some("session:relogin"), 10).unwrap(), 1);
         assert_eq!(host.visible_ack_obligations.take_due_redrive("session:other", "mahayana-assistant", 10_000), None);
         assert!(host.visible_ack_obligations.take_due_redrive("session:relogin", "mahayana-assistant", 5_010).is_some());
-        assert_eq!(host.arm_visible_ack_redrives_for_session_change(Some("session:relogin"), Some("session:relogin"), 20_000), 0);
+        assert_eq!(host.arm_visible_ack_redrives_for_session_change(Some("session:relogin"), Some("session:relogin"), 20_000).unwrap(), 0);
         let _ = std::fs::remove_dir_all(root);
     }
 
