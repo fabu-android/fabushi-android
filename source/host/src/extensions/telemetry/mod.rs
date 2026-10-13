@@ -14,3 +14,5 @@ pub struct HostTelemetryProjection {
 pub mod agent_open_telemetry;
 pub mod auto_review_approval_telemetry;
 pub mod automation_fire_telemetry;
+#[cfg(test)]
+mod android_projection_tests;
