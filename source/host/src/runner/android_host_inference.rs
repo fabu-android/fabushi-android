@@ -1046,8 +1046,12 @@ mod tests {
     fn routed_tool_loop_uses_canonical_turn_step_budget() {
         assert_eq!(SAND_AGENT_MAX_STEPS, 5_000);
         let source = include_str!("android_host_inference.rs");
-        assert!(source.contains("0..SAND_AGENT_MAX_STEPS"));
-        assert!(!source.contains("for step in 0..8 {"));
+        let production = source
+            .split_once("#[cfg(test)]")
+            .map(|(production, _)| production)
+            .unwrap_or(source);
+        assert!(production.contains("for _tool_step in 0..SAND_AGENT_MAX_STEPS {"));
+        assert!(!production.contains("for step in 0..8 {"));
     }
 
     #[test]
