@@ -68,7 +68,7 @@ impl FileBlobStore {
         fs::create_dir_all(&self.root)?;
         let final_path = self.blob_path(&metadata.id);
         if final_path.exists() {
-            let existing = self.metadata(&metadata.id)?;
+            let existing = self.final_metadata_with_recovery(&metadata.id)?;
             if existing == *metadata {
                 return Ok(BlobUploadStatus {
                     id: metadata.id.clone(),
@@ -119,7 +119,7 @@ impl FileBlobStore {
     pub fn upload_status(&self, id: &BlobId) -> Result<BlobUploadStatus, BlobStoreError> {
         let final_path = self.blob_path(id);
         if final_path.exists() {
-            let metadata = self.metadata(id)?;
+            let metadata = self.final_metadata_with_recovery(id)?;
             return Ok(BlobUploadStatus {
                 id: id.clone(),
                 size_bytes: metadata.size_bytes,
@@ -198,7 +198,7 @@ impl FileBlobStore {
     pub fn finish_upload(&self, id: &BlobId) -> Result<BlobMetadata, BlobStoreError> {
         let final_path = self.blob_path(id);
         if final_path.exists() {
-            let metadata = self.metadata(id)?;
+            let metadata = self.final_metadata_with_recovery(id)?;
             let actual = final_path.metadata()?.len();
             if actual != metadata.size_bytes {
                 return Err(BlobStoreError::IncompleteUpload {
@@ -234,7 +234,11 @@ impl FileBlobStore {
     }
 
     pub fn metadata(&self, id: &BlobId) -> Result<BlobMetadata, BlobStoreError> {
-        self.read_metadata(&self.metadata_path(id))
+        if self.blob_path(id).exists() {
+            self.final_metadata_with_recovery(id)
+        } else {
+            self.read_metadata(&self.metadata_path(id))
+        }
     }
 
     pub fn read_range(
@@ -298,6 +302,47 @@ impl FileBlobStore {
 
     fn part_metadata_path(&self, id: &BlobId) -> PathBuf {
         self.root.join(format!("{}.part.json", id.0))
+    }
+
+    fn final_metadata_with_recovery(
+        &self,
+        id: &BlobId,
+    ) -> Result<BlobMetadata, BlobStoreError> {
+        let metadata_path = self.metadata_path(id);
+        match self.read_metadata(&metadata_path) {
+            Ok(metadata) => return Ok(metadata),
+            Err(BlobStoreError::MissingMetadata(_)) => {}
+            Err(error) => return Err(error),
+        }
+
+        // finish_upload intentionally renames payload before metadata. If Android kills the
+        // process between those two atomic renames, the final payload is already durable and must
+        // not be uploaded again. Reconcile only from the exact pending metadata after rechecking
+        // size/hash; otherwise fail closed.
+        let pending_metadata_path = self.part_metadata_path(id);
+        let metadata = self.read_metadata(&pending_metadata_path)?;
+        let final_path = self.blob_path(id);
+        let actual = final_path.metadata()?.len();
+        if actual != metadata.size_bytes {
+            return Err(BlobStoreError::IncompleteUpload {
+                id: id.clone(),
+                expected: metadata.size_bytes,
+                actual,
+            });
+        }
+        if let Some(expected_hash) = metadata.content_hash.as_deref() {
+            let expected = normalize_sha256(expected_hash)?;
+            let actual_hash = sha256_file(&final_path)?;
+            if actual_hash != expected {
+                return Err(BlobStoreError::IntegrityMismatch {
+                    expected,
+                    actual: actual_hash,
+                });
+            }
+        }
+        fs::rename(&pending_metadata_path, &metadata_path)?;
+        sync_directory(&self.root);
+        Ok(metadata)
     }
 
     fn read_metadata(&self, path: &Path) -> Result<BlobMetadata, BlobStoreError> {
@@ -470,6 +515,35 @@ mod tests {
             Some("human:owner")
         );
         store.delete(&id).unwrap();
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn process_death_between_payload_and_metadata_rename_reconciles_without_reupload() {
+        let root = temporary_root();
+        let store = FileBlobStore::new(&root);
+        let metadata = metadata("media-reconcile");
+        let id = metadata.id.clone();
+        store.begin_upload(&metadata).unwrap();
+        store.append_chunk(&id, 0, b"hello world").unwrap();
+
+        // Model process death immediately after finish_upload's first atomic rename.
+        fs::rename(store.part_path(&id), store.blob_path(&id)).unwrap();
+        assert!(store.blob_path(&id).exists());
+        assert!(store.part_metadata_path(&id).exists());
+        assert!(!store.metadata_path(&id).exists());
+
+        let status = store.upload_status(&id).unwrap();
+        assert!(status.complete);
+        assert_eq!(status.uploaded_bytes, 11);
+        assert_eq!(store.metadata(&id).unwrap(), metadata);
+        assert!(store.metadata_path(&id).exists());
+        assert!(!store.part_metadata_path(&id).exists());
+
+        // Re-entering begin/finish after process recreation is idempotent and never appends bytes.
+        assert!(store.begin_upload(&metadata).unwrap().complete);
+        assert_eq!(store.finish_upload(&id).unwrap(), metadata);
+        assert_eq!(store.read_range(&id, 0, 11).unwrap(), b"hello world");
         let _ = fs::remove_dir_all(root);
     }
 
