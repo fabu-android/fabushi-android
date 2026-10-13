@@ -1,4 +1,5 @@
 pub mod background_wakes;
+pub mod completion_revivals;
 pub mod ack_obligations;
 pub mod async_task_union;
 pub mod agent_lifecycle;
