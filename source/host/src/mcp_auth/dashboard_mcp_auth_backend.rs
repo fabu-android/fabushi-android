@@ -415,6 +415,10 @@ impl CursorDashboardMcpAuthBackend {
         Ok(Self::new(credentials))
     }
 
+    pub fn credential_provider(&self) -> Arc<dyn SandMcpCredentialProvider> {
+        Arc::clone(&self.credentials)
+    }
+
     fn send_unary(
         &self,
         credentials: &SandMcpBackendCredentials,
