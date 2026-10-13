@@ -2876,15 +2876,73 @@ impl AndroidJsonHost {
     }
 
     fn box_recreate_decided_telemetry(&mut self, params: &Value) -> Result<Value, String> {
-        let trigger = required_string(params, "trigger")?;
-        if !matches!(trigger, "auto_update" | "hibernation_auto_update") {
-            return Err("unsupported box recreate decision trigger".into());
-        }
-        self.record_host_telemetry_projection(box_recreate_decided_telemetry(BTreeMap::from([
-            ("trigger".into(), trigger.to_string()),
-            ("mode".into(), "pod_recreate".into()),
-            ("preserved".into(), "true".into()),
-        ])));
+        let metadata = if let Some(trigger) = params.get("trigger").and_then(Value::as_str) {
+            if !matches!(trigger, "auto_update" | "hibernation_auto_update") {
+                return Err("unsupported box recreate decision trigger".into());
+            }
+            BTreeMap::from([
+                ("trigger".into(), trigger.to_string()),
+                ("mode".into(), "pod_recreate".into()),
+                ("preserved".into(), "true".into()),
+            ])
+        } else {
+            let bounded = |name: &str| -> Result<String, String> {
+                let value = required_string(params, name)?.trim();
+                if value.is_empty()
+                    || value.chars().count() > 240
+                    || value.chars().any(char::is_control)
+                {
+                    return Err(format!("{name} is invalid"));
+                }
+                Ok(value.to_string())
+            };
+            let decision = bounded("decision")?;
+            if !matches!(decision.as_str(), "accepted" | "rejected" | "outcome-unknown") {
+                return Err("unsupported box recreate decision".into());
+            }
+            let kind = bounded("kind")?;
+            if !matches!(kind.as_str(), "update" | "reset") {
+                return Err("unsupported box recreate kind".into());
+            }
+            BTreeMap::from([
+                ("request_id".into(), bounded("requestId")?),
+                ("decision".into(), decision),
+                ("kind".into(), kind),
+                (
+                    "preserve_data".into(),
+                    params
+                        .get("preserveData")
+                        .and_then(Value::as_bool)
+                        .ok_or("preserveData is required")?
+                        .to_string(),
+                ),
+                (
+                    "force_recreate".into(),
+                    params
+                        .get("forceRecreate")
+                        .and_then(Value::as_bool)
+                        .ok_or("forceRecreate is required")?
+                        .to_string(),
+                ),
+                (
+                    "force_update".into(),
+                    params
+                        .get("forceUpdate")
+                        .and_then(Value::as_bool)
+                        .ok_or("forceUpdate is required")?
+                        .to_string(),
+                ),
+                (
+                    "has_operation_id".into(),
+                    params
+                        .get("hasOperationId")
+                        .and_then(Value::as_bool)
+                        .ok_or("hasOperationId is required")?
+                        .to_string(),
+                ),
+            ])
+        };
+        self.record_host_telemetry_projection(box_recreate_decided_telemetry(metadata));
         Ok(json!({"recorded":true}))
     }
 
