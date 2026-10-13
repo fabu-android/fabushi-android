@@ -5,6 +5,7 @@ use url::Url;
 use crate::extensions::trays::trays_service::PushErrorOptions;
 
 pub const PROVIDER_OVERLOAD_ERROR_TITLE: &str = "Model provider is overloaded";
+pub const INTRODUCTION_FAILED_TRAY_TITLE: &str = "Your agent couldn't introduce itself";
 pub const PROVIDER_OVERLOAD_ERROR_DETAIL: &str =
     "The model provider is under heavy load right now. This is usually temporary — retry, or switch to another model.";
 pub const SAND_INCLUDED_LIMIT_REASON: &str = "sand_included_limit";
@@ -384,6 +385,23 @@ pub fn describe_agent_run_error(
     }
 }
 
+pub fn introduction_failure_tray(
+    agent_id: &str,
+    request_id: Option<&str>,
+    message: &str,
+    now_ms: i64,
+) -> PushErrorOptions {
+    let mut tray = provider_failure_tray(agent_id, message, now_ms);
+    tray.title = INTRODUCTION_FAILED_TRAY_TITLE.to_string();
+    tray.error_kind = Some("agent_introduction_failed".into());
+    tray.dedupe_key = Some(format!("introduction-failed:{agent_id}"));
+    tray.request_id = request_id
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
+    tray
+}
+
 pub fn provider_failure_tray(
     agent_id: &str,
     message: &str,
@@ -456,6 +474,24 @@ fn replace_reset_in_clause(detail: &str, relative: &str) -> String {
 #[cfg(test)]
 mod android_parity_tests {
     use super::*;
+
+    #[test]
+    fn introduction_failure_tray_is_agent_scoped_and_deduped() {
+        let tray = introduction_failure_tray(
+            "agent-a",
+            Some("agent-kickstart:agent-a:1"),
+            "provider failed",
+            1,
+        );
+        assert_eq!(tray.agent_id.as_deref(), Some("agent-a"));
+        assert_eq!(tray.title, INTRODUCTION_FAILED_TRAY_TITLE);
+        assert_eq!(tray.error_kind.as_deref(), Some("agent_introduction_failed"));
+        assert_eq!(tray.dedupe_key.as_deref(), Some("introduction-failed:agent-a"));
+        assert_eq!(
+            tray.request_id.as_deref(),
+            Some("agent-kickstart:agent-a:1")
+        );
+    }
 
     #[test]
     fn android_agent_run_error_actions_are_bounded_and_safe() {
