@@ -74,6 +74,14 @@ const ALLOWED_EVENTS: &[&str] = &[
     "sand.session.store_db",
     "sand.memory.synthesis",
     "sand.telemetry.sink_edge_failed",
+    "sand.turn.interrupt",
+    "sand.turn.await",
+    "sand.turn.retry",
+    "sand.turn.closing_send_nudge",
+    "sand.user_message.received",
+    "sand.computer_use.usage",
+    "sand.ttft",
+    "sand.turn.usage",
     "sand.transport.stream_down",
     "sand.update.apply",
     "sand.update.check",
@@ -631,6 +639,38 @@ mod tests {
             )
             .unwrap());
         assert!(reopened.batch().is_empty());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn spill_accepts_desktop_turn_telemetry_contracts() {
+        let root = root("turn-telemetry");
+        let path = root.join("spill.json");
+        let mut spool =
+            AndroidStructuredLogSpool::open(&path, "account-a", "counter-a", 1_000).unwrap();
+        for (index, event) in [
+            "sand.turn.interrupt",
+            "sand.turn.await",
+            "sand.turn.retry",
+            "sand.turn.closing_send_nudge",
+            "sand.user_message.received",
+            "sand.computer_use.usage",
+            "sand.ttft",
+            "sand.turn.usage",
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            spool
+                .record(
+                    "info",
+                    event,
+                    BTreeMap::from([("conversation_id".into(), "agent-a".into())]),
+                    1_001 + index as u64,
+                )
+                .unwrap();
+        }
+        assert_eq!(spool.batch().len(), 8);
         let _ = fs::remove_dir_all(root);
     }
 
