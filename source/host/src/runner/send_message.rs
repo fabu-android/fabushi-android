@@ -21,6 +21,7 @@ pub struct SendMessageRoutedTools {
     live_account_fence: Arc<Mutex<Option<String>>>,
     account_fence: String,
     agent_id: String,
+    delivery_agent_id: String,
     request_id: String,
     operation_id: String,
     turn_generation: u64,
@@ -39,6 +40,7 @@ impl SendMessageRoutedTools {
         live_account_fence: Arc<Mutex<Option<String>>>,
         account_fence: &str,
         agent_id: &str,
+        delivery_agent_id: &str,
         request_id: &str,
         operation_id: &str,
         turn_generation: u64,
@@ -54,6 +56,7 @@ impl SendMessageRoutedTools {
             live_account_fence,
             account_fence: account_fence.to_string(),
             agent_id: agent_id.to_string(),
+            delivery_agent_id: delivery_agent_id.to_string(),
             request_id: request_id.to_string(),
             operation_id: operation_id.to_string(),
             turn_generation,
@@ -111,7 +114,8 @@ impl SendMessageRoutedTools {
             "id":entry_id,
             "kind":"send-message",
             "role":"assistant",
-            "agentId":self.agent_id,
+            "agentId":self.delivery_agent_id,
+            "actorAgentId":self.agent_id,
             "operationId":self.operation_id,
             "toolCallId":tool_call_id,
             "message":message,
@@ -126,6 +130,7 @@ impl SendMessageRoutedTools {
             if let Some(existing) = transcript.entry(&entry_id) {
                 if existing.get("message") != entry.get("message")
                     || existing.get("agentId") != entry.get("agentId")
+                    || existing.get("actorAgentId") != entry.get("actorAgentId")
                     || existing.get("operationId") != entry.get("operationId")
                 {
                     return Err(
@@ -185,7 +190,8 @@ impl SendMessageRoutedTools {
                 "operationId":self.operation_id,
                 "requestId":self.request_id,
                 "role":"assistant",
-                "agentId":self.agent_id,
+                "agentId":self.delivery_agent_id,
+                "actorAgentId":self.agent_id,
                 "messageId":entry_id,
                 "message":entry["message"].clone(),
                 "toolCallId":tool_call_id,
@@ -258,6 +264,7 @@ pub fn with_send_message_tools(
         live_account_fence,
         account_fence,
         agent_id,
+        agent_id,
         request_id,
         operation_id,
         turn_generation,
@@ -283,7 +290,7 @@ pub fn with_send_message_tools_counted(
     cancelled: Arc<AtomicBool>,
     committed_send_count: Arc<AtomicUsize>,
 ) -> Arc<dyn AndroidRoutedToolBridge> {
-    Arc::new(SendMessageRoutedTools::new(
+    with_send_message_tools_counted_to_target(
         delegate,
         transcript,
         lifecycle,
@@ -291,6 +298,42 @@ pub fn with_send_message_tools_counted(
         live_account_fence,
         account_fence,
         agent_id,
+        agent_id,
+        request_id,
+        operation_id,
+        turn_generation,
+        process_epoch,
+        cancelled,
+        committed_send_count,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn with_send_message_tools_counted_to_target(
+    delegate: Arc<dyn AndroidRoutedToolBridge>,
+    transcript: Arc<Mutex<TranscriptStore>>,
+    lifecycle: Arc<Mutex<ProductionTurnLifecycleStore>>,
+    events: Arc<Mutex<VecDeque<Value>>>,
+    live_account_fence: Arc<Mutex<Option<String>>>,
+    account_fence: &str,
+    actor_agent_id: &str,
+    delivery_agent_id: &str,
+    request_id: &str,
+    operation_id: &str,
+    turn_generation: u64,
+    process_epoch: u64,
+    cancelled: Arc<AtomicBool>,
+    committed_send_count: Arc<AtomicUsize>,
+) -> Arc<dyn AndroidRoutedToolBridge> {
+    Arc::new(SendMessageRoutedTools::new(
+        delegate,
+        transcript,
+        lifecycle,
+        events,
+        live_account_fence,
+        account_fence,
+        actor_agent_id,
+        delivery_agent_id,
         request_id,
         operation_id,
         turn_generation,
@@ -643,6 +686,62 @@ mod tests {
         tools.call_tool(SEND_MESSAGE_TOOL_NAME, args.clone(), "call-1").unwrap();
         tools.call_tool(SEND_MESSAGE_TOOL_NAME, args, "call-1").unwrap();
         assert_eq!(count.load(Ordering::Acquire), 1);
+    }
+
+    #[test]
+    fn explicit_delivery_target_keeps_actor_lifecycle_separate_from_room_transcript() {
+        let root = tempfile::Builder::new()
+            .prefix("fabushi-send-message-room-target-")
+            .tempdir()
+            .unwrap();
+        let transcript = Arc::new(Mutex::new(
+            TranscriptStore::open(root.path().join("transcript.json")).unwrap(),
+        ));
+        let lifecycle = Arc::new(Mutex::new(
+            ProductionTurnLifecycleStore::open(root.path().join("turn-lifecycle.json"), 1).unwrap(),
+        ));
+        let process_epoch = lifecycle.lock().unwrap().process_epoch();
+        let events = Arc::new(Mutex::new(VecDeque::new()));
+        let live = Arc::new(Mutex::new(Some("acct:a".into())));
+        let tools = with_send_message_tools_counted_to_target(
+            Arc::new(EmptyTools),
+            Arc::clone(&transcript),
+            Arc::clone(&lifecycle),
+            Arc::clone(&events),
+            live,
+            "acct:a",
+            "member-a",
+            "group-room-a",
+            "request-a",
+            "operation-a",
+            1,
+            process_epoch,
+            Arc::new(AtomicBool::new(false)),
+            Arc::new(AtomicUsize::new(0)),
+        );
+
+        tools
+            .call_tool(
+                SEND_MESSAGE_TOOL_NAME,
+                json!({"type":"text","content":"room-visible"}),
+                "call-room",
+            )
+            .unwrap();
+
+        let entries = transcript.lock().unwrap().get_transcript();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0]["agentId"], "group-room-a");
+        assert_eq!(entries[0]["actorAgentId"], "member-a");
+        let event = events.lock().unwrap().front().cloned().unwrap();
+        assert_eq!(event["agentId"], "group-room-a");
+        assert_eq!(event["actorAgentId"], "member-a");
+        assert!(
+            lifecycle
+                .lock()
+                .unwrap()
+                .awaiting_user_projection("acct:a", "member-a")
+                .is_none()
+        );
     }
 
     #[test]
