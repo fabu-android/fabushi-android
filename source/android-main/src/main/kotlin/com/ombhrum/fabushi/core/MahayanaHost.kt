@@ -449,7 +449,7 @@ class MahayanaHost(
         }
         val raw = requestValue(
             "feature.agent.channels.listMetadata",
-            JSONObject().put("agentId", cleanAgentId),
+            JSONObject().put("agentId", cleanAgentId).put("accountFence", accountFence),
         ) as? JSONArray ?: JSONArray()
         return JSONArray().also { projected ->
             for (index in 0 until raw.length()) {
@@ -479,7 +479,8 @@ class MahayanaHost(
         return try {
             val metadata = request(
                 "feature.agent.channels.writeMetadata",
-                JSONObject().put("agentId", cleanAgentId).put("platform", cleanPlatform).put("label", cleanLabel),
+                JSONObject().put("agentId", cleanAgentId).put("platform", cleanPlatform)
+                    .put("label", cleanLabel).put("accountFence", accountFence),
             )
             check(metadata.optBoolean("written", false)) { "Agent channel metadata was rejected" }
             JSONObject().put("connected", true).put("platform", cleanPlatform)
@@ -500,7 +501,8 @@ class MahayanaHost(
         return try {
             val metadata = request(
                 "feature.agent.channels.removeMetadata",
-                JSONObject().put("agentId", cleanAgentId).put("platform", cleanPlatform),
+                JSONObject().put("agentId", cleanAgentId).put("platform", cleanPlatform)
+                    .put("accountFence", accountFence),
             )
             val metadataRemoved = metadata.optBoolean("removed", false)
             JSONObject().put("disconnected", secretRevoked || metadataRemoved)
@@ -536,7 +538,8 @@ class MahayanaHost(
             if (agentChannelSecretRef(cleanAgentId, platform) !in configuredSecretRefs) {
                 request(
                     "feature.agent.channels.removeMetadata",
-                    JSONObject().put("agentId", cleanAgentId).put("platform", platform),
+                    JSONObject().put("agentId", cleanAgentId).put("platform", platform)
+                        .put("accountFence", accountFence),
                 )
             }
         }
