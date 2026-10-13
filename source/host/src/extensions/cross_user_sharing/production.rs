@@ -326,7 +326,8 @@ mod tests {
             ("SAND_DEV_XUSER_SHARING".to_string(), "1".to_string()),
             ("SAND_PACKAGED".to_string(), "0".to_string()),
         ]);
-        let core = build_xuser_core(credentials, transport, &env).unwrap();
+        let root = test_root("upgrade");
+        let core = build_xuser_core(credentials, transport, &env, &root).unwrap();
         core.apply_feature_policy(true).unwrap();
         assert!(core.service.is_started());
         core.prepare_for_upgrade();
@@ -335,6 +336,7 @@ mod tests {
             !core.extension.is_enabled() || !core.service.is_started(),
             "upgrade preparation must not restart sharing work"
         );
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]
