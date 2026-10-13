@@ -1896,6 +1896,84 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
         host.request("feature.crossUserSharing.requestDrain")
             .optBoolean("accepted", false)
 
+    override fun crossUserSharingReconcile(): AndroidCrossUserSharingState =
+        parseCrossUserSharingState(host.request("feature.crossUserSharing.reconcile"))
+
+    override fun crossUserSharingCreateFromAgent(
+        agentId: String,
+        agentName: String,
+        avatarDataUrl: String?,
+    ): JSONObject =
+        host.request(
+            "feature.crossUserSharing.createFromAgent",
+            JSONObject()
+                .put("agentId", agentId)
+                .put("agentName", agentName)
+                .put("avatarDataUrl", avatarDataUrl ?: JSONObject.NULL),
+        )
+
+    override fun crossUserSharingCreateRoomInvite(roomId: String): JSONObject =
+        host.request(
+            "feature.crossUserSharing.invite",
+            JSONObject().put("roomId", roomId),
+        )
+
+    override fun crossUserSharingJoin(link: String): JSONObject =
+        host.request(
+            "feature.crossUserSharing.join",
+            JSONObject().put("link", link),
+        )
+
+    override fun crossUserSharingRespond(payload: JSONObject): AndroidCrossUserSharingState =
+        parseCrossUserSharingState(
+            host.request("feature.crossUserSharing.respond", payload),
+        )
+
+    override fun crossUserSharingCreate(payload: JSONObject): JSONObject =
+        host.request("feature.crossUserSharing.create", payload)
+
+    override fun crossUserSharingAddAgent(payload: JSONObject): AndroidCrossUserSharingState =
+        parseCrossUserSharingState(
+            host.request("feature.crossUserSharing.addAgent", payload),
+        )
+
+    override fun crossUserSharingRemoveAgent(
+        roomId: String,
+        agentId: String,
+    ): AndroidCrossUserSharingState =
+        parseCrossUserSharingState(
+            host.request(
+                "feature.crossUserSharing.removeAgent",
+                JSONObject()
+                    .put("roomId", roomId)
+                    .put("agentId", agentId),
+            ),
+        )
+
+    override fun crossUserSharingLeave(
+        roomId: String,
+        targetAuthId: String?,
+    ): AndroidCrossUserSharingState =
+        parseCrossUserSharingState(
+            host.request(
+                "feature.crossUserSharing.leave",
+                JSONObject()
+                    .put("roomId", roomId)
+                    .put("targetAuthId", targetAuthId ?: JSONObject.NULL),
+            ),
+        )
+
+    override fun crossUserSharingSetTyping(
+        roomId: String,
+        isTyping: Boolean,
+    ): Boolean =
+        host.request(
+            "feature.crossUserSharing.typing",
+            JSONObject()
+                .put("roomId", roomId)
+                .put("isTyping", isTyping),
+        ).optBoolean("accepted", false)
+
     override fun featureExecute(params: JSONObject) =
         host.request(
             "feature.execute",
