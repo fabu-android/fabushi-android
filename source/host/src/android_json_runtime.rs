@@ -865,6 +865,7 @@ pub struct AndroidJsonHost {
     experiments: Arc<HostExperimentsExtension>,
     _session_policy_bindings: AndroidSessionPolicyBindings,
     box_handoff: Arc<Mutex<AndroidBoxHandoffOwner>>,
+    _source_map: crate::extensions::source_map::source_map_service::SandSourceMap,
     agent_channels_root: PathBuf,
     detected_time_zone: Arc<Mutex<Option<String>>>,
     auto_review_settings: Arc<Mutex<DurableAutoReviewSettings>>,
@@ -1510,6 +1511,9 @@ impl AndroidJsonHost {
             experiments,
             _session_policy_bindings: session_policy_bindings,
             box_handoff,
+            _source_map: crate::extensions::source_map::extension::start_source_map_extension(
+                app_data_dir.join("source-map.json"),
+            ),
             agent_channels_root: app_data_dir.join("agent-channels"),
             detected_time_zone: Arc::new(Mutex::new(None)),
             auto_review_settings,
@@ -1625,6 +1629,10 @@ impl AndroidJsonHost {
         *self.remote_binding.lock().map_err(|_| "remote binding lock poisoned".to_string())? = Some(binding);
         *self.remote_runner.lock().map_err(|_| "remote runner lock poisoned".to_string())? = Some(runner);
         Ok(())
+    }
+
+    fn source_map_path(&self) -> &std::path::Path {
+        self._source_map.path()
     }
 
     fn remote_binding_status(&self) -> Value {
