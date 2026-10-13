@@ -153,6 +153,9 @@ use crate::extensions::transcript::run_scheduler::{
     QueueAccepted, QueueDequeued, RunSettlement, WatchdogEvent, WatchdogStage,
 };
 use crate::extensions::transcript::replica_writer::HostReplicaWriter;
+use crate::extensions::transcript::extension::{
+    start_production_transcript_extension, TranscriptExtension,
+};
 use crate::extensions::transcript::send_turn_dispatch::{
     classify_send_dispatch, ProductionTurnDispatch, UserTurnTicket,
 };
@@ -1370,13 +1373,15 @@ pub struct AndroidJsonHost {
     browser_attempts: BTreeMap<String, String>,
     events: VecDeque<Value>,
     host_event_bus: HostEventBus,
+    transcript_projection_events: Arc<Mutex<VecDeque<Value>>>,
+    transcript_extension: TranscriptExtension,
     active_operations: BTreeSet<String>,
     pending_approvals: BTreeMap<String, String>,
     local_approvals: LocalApprovalRegistry,
     local_runner: Arc<Mutex<AndroidLocalRunner>>,
     remote_approvals: RemoteApprovalRegistry,
     turn_events: Arc<Mutex<VecDeque<Value>>>,
-    replica_writer: HostReplicaWriter,
+    replica_writer: Arc<HostReplicaWriter>,
     turn_cancellations: BTreeMap<String, Arc<AtomicBool>>,
     turn_dispatch: Arc<(Mutex<ProductionTurnDispatch>, Condvar)>,
     turn_journal: Arc<Mutex<DurableTurnJournal>>,
@@ -2161,6 +2166,16 @@ impl AndroidJsonHost {
                 let _ = spool.record(level, event, projection.metadata, now_ms());
             }
         }));
+        let live_account_fence = Arc::new(Mutex::new(None));
+        let replica_writer = Arc::new(HostReplicaWriter::new());
+        let transcript_projection_events = Arc::new(Mutex::new(VecDeque::new()));
+        let transcript_extension = start_production_transcript_extension(
+            Arc::clone(&agents),
+            Arc::clone(&replica_writer),
+            Arc::clone(&live_account_fence),
+            Arc::clone(&transcript_projection_events),
+            host_event_bus.clone(),
+        );
         Self {
             mode,
             device_id: device_id.clone(),
@@ -2232,6 +2247,8 @@ impl AndroidJsonHost {
             browser_attempts: BTreeMap::new(),
             events: VecDeque::new(),
             host_event_bus,
+            transcript_projection_events,
+            transcript_extension,
             active_operations: BTreeSet::new(),
             pending_approvals: BTreeMap::new(),
             local_approvals: LocalApprovalRegistry::default(),
@@ -2241,7 +2258,7 @@ impl AndroidJsonHost {
             )),
             remote_approvals: RemoteApprovalRegistry::default(),
             turn_events: Arc::new(Mutex::new(VecDeque::new())),
-            replica_writer: HostReplicaWriter::new(),
+            replica_writer,
             turn_cancellations: BTreeMap::new(),
             turn_dispatch: Arc::new((Mutex::new(ProductionTurnDispatch::default()), Condvar::new())),
             turn_journal: Arc::new(Mutex::new(
@@ -2258,7 +2275,7 @@ impl AndroidJsonHost {
                 }),
             )),
             turn_upgrade_quiescing: Arc::new(AtomicBool::new(false)),
-            live_account_fence: Arc::new(Mutex::new(None)),
+            live_account_fence,
             client_side_tool_v2: ClientSideToolV2Producer::new(),
             agent_turn_interruptions: Arc::new(AgentTurnInterruptionRegistry::default()),
             agent_wake_operations: BTreeMap::new(),
@@ -13917,6 +13934,27 @@ impl AndroidJsonHost {
         self.drain_visible_ack_redrive_once()?;
         self.drain_created_agent_kickstart_nudge_once()?;
         if let Some(event) = self.events.pop_front() {
+            self.publish_host_event_projection(&event);
+            return Ok(event);
+        }
+        loop {
+            let event = self
+                .transcript_projection_events
+                .lock()
+                .map_err(|_| "transcript projection queue lock poisoned".to_string())?
+                .pop_front();
+            let Some(event) = event else {
+                break;
+            };
+            let event_fence = event.get("accountFence").and_then(Value::as_str);
+            let current_fence = self
+                .live_account_fence
+                .lock()
+                .ok()
+                .and_then(|fence| fence.clone());
+            if event_fence != current_fence.as_deref() {
+                continue;
+            }
             self.publish_host_event_projection(&event);
             return Ok(event);
         }
