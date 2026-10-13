@@ -2,7 +2,10 @@ use crate::android_agent_roster::AndroidAgentRoster;
 use crate::extensions::cross_user_sharing::xuser_sharing_service::XuserSharingManager;
 use crate::extensions::cross_user_sharing::xuser_state_reconcile::XuserRoom;
 use crate::extensions::cross_user_sharing::xuser_wire_normalization::{
-    normalize_mirror_entry, InlineImage, MirrorEntry,
+    normalize_inline_images, normalize_mirror_entry, InlineImage, MirrorEntry,
+};
+use crate::extensions::transcript::inline_image_materialization::{
+    materialize_inline_images, InlineImage as TranscriptInlineImage,
 };
 use crate::extensions::transcript::TranscriptStore;
 use crate::groups::group_store::{
@@ -275,6 +278,27 @@ impl AndroidXuserSharingManager {
             .map_err(|error| error.to_string())
     }
 
+    fn materialize_room_images(&self, agent_id: &str, images: Vec<InlineImage>) -> Value {
+        let db_path = self.room_agent_dir(agent_id).join("transcript.json");
+        let images = images
+            .into_iter()
+            .map(|image| TranscriptInlineImage {
+                base64: image.base64,
+                media_type: image.media_type,
+                alt: image.alt,
+            })
+            .collect::<Vec<_>>();
+        Value::Array(
+            materialize_inline_images(&db_path, &images)
+                .into_iter()
+                .map(|image| match image.alt {
+                    Some(alt) => json!({"url": image.url, "alt": alt}),
+                    None => json!({"url": image.url}),
+                })
+                .collect(),
+        )
+    }
+
     /// Hide and revoke every mirror owned by the previous account before the Sand owner is fenced.
     ///
     /// A later account that happens to receive the same room id must create a fresh mirror Agent,
@@ -443,17 +467,25 @@ impl XuserSharingManager for AndroidXuserSharingManager {
         let identity = client_nonce
             .map(|nonce| format!("{room_id}\n{nonce}").into_bytes())
             .unwrap_or(serde_json::to_vec(event).map_err(|error| error.to_string())?);
+        let content = event.get("text").and_then(Value::as_str).unwrap_or_default();
+        let images = self.materialize_room_images(
+            &agent_id,
+            normalize_inline_images(event.get("images").unwrap_or(&Value::Null)),
+        );
+        if content.trim().is_empty() && images.as_array().is_none_or(Vec::is_empty) {
+            return Ok(());
+        }
         let mut entry = json!({
             "id": format!("xuser-room-post-{}", sha256_hex(&identity)),
             "agentId": agent_id,
             "kind": "message",
             "role": "user",
-            "content": event.get("text").and_then(Value::as_str).unwrap_or_default(),
+            "content": content,
             "fromUser": {
                 "authId": event.get("authorAuthId").and_then(Value::as_str).unwrap_or_default(),
                 "name": event.get("authorName").and_then(Value::as_str).unwrap_or("Someone"),
             },
-            "images": event.get("images").cloned().unwrap_or_else(|| Value::Array(vec![])),
+            "images": images,
             "timestampMs": event.get("timestampMs").and_then(Value::as_f64).unwrap_or_else(|| now_ms() as f64),
             "sharedRoomId": room_id,
             "xuserRemote": true,
@@ -514,7 +546,7 @@ impl XuserSharingManager for AndroidXuserSharingManager {
                     "kind": "message",
                     "role": "user",
                     "content": text,
-                    "images": images_json(images),
+                    "images": self.materialize_room_images(&agent_id, images),
                     "clientNonce": client_nonce,
                     "timestampMs": timestamp_ms,
                     "sharedRoomId": room_id,
@@ -549,7 +581,7 @@ impl XuserSharingManager for AndroidXuserSharingManager {
                     "type": "text",
                     "content": text,
                 },
-                "images": images_json(images),
+                "images": self.materialize_room_images(&agent_id, images),
                 "timestampMs": timestamp_ms,
                 "sharedRoomId": room_id,
                 "xuserRemote": true,
@@ -558,21 +590,6 @@ impl XuserSharingManager for AndroidXuserSharingManager {
         self.append_entry_if_absent(local)?;
         Ok(true)
     }
-}
-
-fn images_json(images: Vec<InlineImage>) -> Value {
-    Value::Array(
-        images
-            .into_iter()
-            .map(|image| {
-                json!({
-                    "base64": image.base64,
-                    "mediaType": image.media_type,
-                    "alt": image.alt,
-                })
-            })
-            .collect(),
-    )
 }
 
 fn now_ms() -> u64 {
@@ -727,6 +744,48 @@ mod tests {
         let revoked =
             crate::groups::remote_room_store::read_sand_remote_room_config(&mirror_dir).unwrap();
         assert_eq!(revoked.is_revoked, Some(true));
+    }
+
+    #[test]
+    fn inbound_shared_room_images_are_materialized_before_canonical_transcript_append() {
+        use base64::Engine as _;
+        use base64::engine::general_purpose::STANDARD;
+
+        let root = tempdir().unwrap();
+        let (_, transcript, manager) = open_manager(root.path());
+        manager.install_room(&room(), Some("self-a")).unwrap();
+        let image_bytes = b"shared-room-image";
+        let encoded = STANDARD.encode(image_bytes);
+        manager.post_shared_room_guest_message(&json!({
+            "kind":"room-post",
+            "roomId":"room-a",
+            "authorAuthId":"guest-a",
+            "authorName":"Guest",
+            "text":"",
+            "images":[{"base64":encoded,"mediaType":"image/png","alt":"diagram"}],
+            "clientNonce":"image-nonce-a",
+            "timestampMs":42
+        })).unwrap();
+
+        let rows = transcript.lock().unwrap().get_transcript();
+        let row = rows.iter().find(|row| {
+            row.get("clientNonce").and_then(Value::as_str) == Some("image-nonce-a")
+        }).expect("materialized room post");
+        let image = &row["images"][0];
+        assert!(image.get("base64").is_none());
+        assert_eq!(image.get("alt"), Some(&json!("diagram")));
+        let url = image.get("url").and_then(Value::as_str).expect("file url");
+        let path = url::Url::parse(url).unwrap().to_file_path().unwrap();
+        assert_eq!(fs::read(&path).unwrap(), image_bytes);
+        assert!(path.to_string_lossy().contains("xuser-attachments"));
+
+        let reopened = AndroidXuserSharingManager::open(
+            root.path().join("shared-rooms.json"),
+            Arc::new(Mutex::new(AndroidAgentRoster::open(root.path().join("agents.json")).unwrap())),
+            Arc::new(Mutex::new(TranscriptStore::open(root.path().join("transcript.json")).unwrap())),
+        ).unwrap();
+        let mirror = reopened.find_room_agent_id("room-a").unwrap().expect("room survives reopen");
+        assert!(reopened.room_agent_dir(&mirror).join("xuser-attachments").is_dir());
     }
 
     #[test]
