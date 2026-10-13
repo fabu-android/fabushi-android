@@ -35,6 +35,19 @@ internal interface AndroidPresentationRuntimePort {
 
     fun handlePlatformDeepLink(link: AndroidDeepLink): Boolean
 
+    fun requestHumanCallMediaPermissions(
+        audio: Boolean,
+        video: Boolean,
+        listener: (AndroidHumanCallMediaPermissionProjection) -> Unit,
+    ): Boolean
+
+    fun handleHumanCallMediaPermissionResult(
+        activity: ComponentActivity,
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray,
+    ): Boolean
+
     fun attachInteractiveActivity(activity: ComponentActivity)
 
     fun detachInteractiveActivity(activity: ComponentActivity)
