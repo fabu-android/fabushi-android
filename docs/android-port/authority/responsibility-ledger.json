@@ -19088,6 +19088,339 @@
       "artifact": null,
       "verification_status": "not-verified",
       "notes": "Desktop and Android source were compared at Desktop 371b72f… and Android exact head 470f3090fd0d166df698635cba62c5e41ca76d64. Android replica_writer and roster_projection are direct Rust equivalents with additional focused tests, but current-head CI was still running at review time."
+    },
+    {
+      "responsibility_id": "TRANSCRIPT-RUN-LIFECYCLE-ANDROID-001",
+      "domain": "agent-transcript-run-lifecycle",
+      "desktop_sources": [
+        {
+          "path": "source/host/src/extensions/transcript/run_lifecycle.rs",
+          "blob_sha": "518d1095e641188c942c8f5ca9885c58778ac2ea",
+          "symbols": [
+            "RunLifecycleState",
+            "RunWindowCompleted",
+            "TurnUsageReport",
+            "ExclusiveRunRequest",
+            "RunStateProjection"
+          ]
+        }
+      ],
+      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "responsibility": "Own in-memory per-Agent run/session/provider/subagent lifecycle projection, request-id deduplication, usage settlement and composing/retrying/activity state used to derive visible running status without becoming the durable transcript owner.",
+      "source_owner": "Desktop Transcript RunLifecycleState",
+      "direct_callers": [
+        "Desktop TranscriptManager run observers",
+        "provider/session run lifecycle glue"
+      ],
+      "downstream_dependencies": [
+        "Agent activity projection",
+        "run state UI projection",
+        "provider/session lifecycle callbacks"
+      ],
+      "state_owner": "Rust RunLifecycleState transient lifecycle owner; canonical durable run/transcript remains Host/Coordinator owned",
+      "persistent_state": [],
+      "protocol_wire_contract": [
+        "run/session/provider begin/end transitions",
+        "request-id deduplication",
+        "activity/composing/retrying terminal clearing"
+      ],
+      "visible_effect": "Agent running/activity state remains consistent while nested session/provider/subagent work starts and settles.",
+      "failure_behavior": [
+        "unknown agent/state queries return inactive/default projection",
+        "duplicate request ids do not double-count usage"
+      ],
+      "cancellation_behavior": "terminal/cancellation updates clear transient composing/retrying/activity state through the same lifecycle owner",
+      "retry_semantics": "replayed request ids are deduplicated before usage settlement",
+      "idempotency_semantics": "request-id set and counted settlement prevent duplicate turn accounting",
+      "process_death_recovery": "transient lifecycle is reconstructed from durable Host/Coordinator run state on process restart; this module does not invent persisted runs",
+      "account_fencing": "callers bind lifecycle instances to the current Host/account run scope; stale account callbacks are fenced by Host/Coordinator owners",
+      "security_boundary": "contains no credentials or execution authority; projection only",
+      "android_disposition": "direct-port",
+      "android_target": [
+        "source/host/src/extensions/transcript/run_lifecycle.rs"
+      ],
+      "android_owner": "Rust RunLifecycleState",
+      "platform_delta": "None for platform-independent lifecycle bookkeeping; Android adds focused tests while durable recovery remains owned by existing Host/Coordinator stores.",
+      "implementation_status": "implemented",
+      "production_wiring": "Android Host transcript/run paths compile against the direct Rust port; current exact-head CI verification remains pending.",
+      "unit_test": "nested_session_runs_keep_window_open_until_final_settle; provider_and_live_subagent_contribute_to_running_projection; composing_retrying_and_activity_clear_on_terminal_updates; turn_usage_deduplicates_request_ids_and_sequences_settlements",
+      "contract_test": "covered through Host run/activity contract suites; exact-head CI pending",
+      "integration_test": "Host/Coordinator run lifecycle integration exact-head CI pending",
+      "packaged_test": "required on final githubRelease artifact",
+      "device_test": "required in final Agent chat/process-death acceptance",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Source reviewed against Desktop blob 518d1095...; direct Rust port exists but is intentionally not promoted to verified until descendant exact-head CI and packaged/device evidence."
+    },
+    {
+      "responsibility_id": "TRANSCRIPT-RUNNER-REGISTRY-ANDROID-001",
+      "domain": "agent-runner-registry",
+      "desktop_sources": [
+        {
+          "path": "source/host/src/extensions/transcript/runner_registry.rs",
+          "blob_sha": "431bb56a3f6447b0b9355eaa452fb2d019cd2e63",
+          "symbols": [
+            "TranscriptRunnerRegistry",
+            "RUN_WATCHDOG_INTERRUPT_REASON",
+            "RUN_DIRECT_USER_INTERRUPT_REASON"
+          ]
+        }
+      ],
+      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "responsibility": "Coordinate routed-provider and group-member stream registration, current-stream identity, supersede/watchdog cancellation, execution binding and forced-upgrade quiescing without allowing stale streams to mutate current runs.",
+      "source_owner": "Desktop TranscriptRunnerRegistry",
+      "direct_callers": [
+        "Desktop TranscriptManager",
+        "routed provider runtime",
+        "group member run orchestration",
+        "upgrade quiesce flow"
+      ],
+      "downstream_dependencies": [
+        "RoutedProviderTaskRegistry",
+        "turn execution port",
+        "run watchdog",
+        "group-member runner"
+      ],
+      "state_owner": "Android responsibilities are split across ProductionTurnDispatch, ProductionTurnLifecycleStore, AgentTurnInterruptionRegistry, subagent runtime and Host upgrade-quiesce state",
+      "persistent_state": [
+        "durable turn lifecycle/journal are separate existing owners; registry current-stream maps are transient"
+      ],
+      "protocol_wire_contract": [
+        "stream id to Agent identity",
+        "generation-fenced settlement",
+        "watchdog interrupt",
+        "upgrade quiesce/cancel"
+      ],
+      "visible_effect": "New user turns supersede eligible prior work, wedged work is bounded, group-member streams are cancellable, and upgrade quiesce stops accepting unsafe continuation.",
+      "failure_behavior": [
+        "unknown/stale stream cancellation is a no-op/rejection",
+        "late generation settlement cannot settle a newer run"
+      ],
+      "cancellation_behavior": "watchdog, user supersede, group-member and upgrade quiesce cancellation must route through canonical Host/Runner cancellation owners",
+      "retry_semantics": "recovery-shaped/late work must not be blindly re-dispatched after an uncertain side effect",
+      "idempotency_semantics": "stream id plus generation and durable run identity fence duplicate/late settlement",
+      "process_death_recovery": "DurableTurnJournal/ProductionTurnLifecycleStore and Coordinator recovery own durable reconstruction; transient stream registries are rebuilt",
+      "account_fencing": "live account fence and frozen turn account identity guard routed tools and late callbacks",
+      "security_boundary": "registry can cancel already-authorized execution but cannot grant new tool authority",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "source/host/src/extensions/transcript/send_turn_dispatch.rs",
+        "source/host/src/runner/production_turn_lifecycle.rs",
+        "source/host/src/runner/stream_attempt.rs",
+        "source/host/src/android_json_runtime.rs",
+        "source/host/src/runner/subagent_runtime.rs"
+      ],
+      "android_owner": "Rust Host run dispatch/lifecycle/interruption/subagent owners",
+      "platform_delta": "Desktop single registry responsibility is decomposed into Android Host owners aligned with Coordinator/Host/Runner boundaries.",
+      "implementation_status": "mapped",
+      "production_wiring": "Queue/watchdog/generation, interruption, subagent and upgrade-quiesce primitives are production-wired, but one consolidated proof that every Desktop routed-provider/group-member supersede/recovery-shape edge is covered has not yet been established.",
+      "unit_test": "existing run_scheduler/send_turn_dispatch/production_turn_lifecycle/subagent tests; focused registry-parity gap test still required",
+      "contract_test": "required: routed provider + group member supersede/watchdog/quiesce/stale generation matrix",
+      "integration_test": "required: Host/Coordinator current stream and upgrade-quiesce integration on exact head",
+      "packaged_test": "required on final artifact",
+      "device_test": "required through Agent stop/supersede/process-death/upgrade acceptance",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Conservatively mapped rather than implemented because Android decomposes the owner and the full Desktop registry semantic matrix has not yet been proven."
+    },
+    {
+      "responsibility_id": "TRANSCRIPT-AUTOMATION-FAILURE-ANDROID-001",
+      "domain": "automation-failure-policy",
+      "desktop_sources": [
+        {
+          "path": "source/host/src/extensions/transcript/sand_automation_failure.rs",
+          "blob_sha": "4b4269b47763d32d8e6254d295b7e89eec35e5d8",
+          "symbols": [
+            "is_background_automation_trigger",
+            "normalize_automation_error_kind",
+            "should_notify_automation_failure"
+          ]
+        }
+      ],
+      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "responsibility": "Classify background automation triggers, normalize dynamic failure details into stable error kinds, and apply bounded power-of-two notification backoff.",
+      "source_owner": "Desktop transcript automation failure policy helper",
+      "direct_callers": [
+        "automation/background transcript failure handling"
+      ],
+      "downstream_dependencies": [
+        "automation failure reporting",
+        "notification/tray suppression policy"
+      ],
+      "state_owner": "Pure Rust policy functions; occurrence count is owned by automation runtime",
+      "persistent_state": [
+        "none in this helper"
+      ],
+      "protocol_wire_contract": [
+        "stable normalized failure kind",
+        "background-trigger classifier",
+        "notification occurrence policy"
+      ],
+      "visible_effect": "Repeated background automation failures are grouped stably and notifications back off instead of spamming users.",
+      "failure_behavior": [
+        "unknown detail normalizes conservatively",
+        "non-background triggers are not misclassified"
+      ],
+      "cancellation_behavior": "not applicable; pure classification policy",
+      "retry_semantics": "does not retry side effects; only determines reporting cadence",
+      "idempotency_semantics": "same normalized input/occurrence yields same output",
+      "process_death_recovery": "no local state; caller restores automation occurrence state",
+      "account_fencing": "no account data retained; caller owns account scope",
+      "security_boundary": "error detail normalization avoids embedding dynamic identifiers in stable failure kind",
+      "android_disposition": "direct-port",
+      "android_target": [
+        "source/host/src/extensions/transcript/sand_automation_failure.rs"
+      ],
+      "android_owner": "Rust automation failure policy helper",
+      "platform_delta": "None; platform-independent policy is directly ported.",
+      "implementation_status": "implemented",
+      "production_wiring": "Android automation/transcript code imports the same helper semantics; exact-head CI verification pending.",
+      "unit_test": "background_trigger_contract_is_exact; error_kind_strips_dynamic_ids_numbers_hex_and_parenthetical_detail; failure_notification_uses_power_of_two_backoff",
+      "contract_test": "automation failure policy contract exact-head CI pending",
+      "integration_test": "automation notification/tray integration final acceptance required",
+      "packaged_test": "required on final artifact",
+      "device_test": "required through background automation failure acceptance where applicable",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Direct Rust port with focused tests; not verified until same-head CI and final acceptance."
+    },
+    {
+      "responsibility_id": "TRANSCRIPT-UPGRADE-RESUME-ANDROID-001",
+      "domain": "agent-upgrade-recovery",
+      "desktop_sources": [
+        {
+          "path": "source/host/src/extensions/transcript/sand_upgrade_resume_store.rs",
+          "blob_sha": "1e6faf5e09516cbe4a4420b18595780fe6c757f3",
+          "symbols": [
+            "UpgradeResumeMarker",
+            "SandUpgradeResumeStore",
+            "coerce_upgrade_resume_marker",
+            "parse_upgrade_resume_file",
+            "upsert_resume_marker"
+          ]
+        }
+      ],
+      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "responsibility": "Persist per-Agent upgrade-resume markers so Host upgrade/process restart can resume the original durable work without fabricating or duplicating a new turn.",
+      "source_owner": "Desktop SandUpgradeResumeStore",
+      "direct_callers": [
+        "Host upgrade quiesce/resume flow",
+        "transcript restart recovery"
+      ],
+      "downstream_dependencies": [
+        "durable Agent run identity",
+        "upgrade lifecycle",
+        "transcript resume dispatch"
+      ],
+      "state_owner": "Rust SandUpgradeResumeStore owns only resume markers; canonical transcript/run remain separate owners",
+      "persistent_state": [
+        "upgrade resume marker file keyed per Agent"
+      ],
+      "protocol_wire_contract": [
+        "agent id + resumable run marker",
+        "upsert/list/clear/clear-all semantics"
+      ],
+      "visible_effect": "An interrupted upgrade can restore resumable Agent work instead of silently losing or duplicating it.",
+      "failure_behavior": [
+        "malformed/partial data never fabricates resume markers",
+        "storage failure remains explicit/fail-closed"
+      ],
+      "cancellation_behavior": "clear removes requested resume intent; clear-all on explicit lifecycle reset",
+      "retry_semantics": "reopen uses existing marker identity rather than minting a duplicate run",
+      "idempotency_semantics": "upsert is per-Agent and repeated same marker replaces rather than duplicates",
+      "process_death_recovery": "store is reopened from disk and pending markers survive process restart",
+      "account_fencing": "callers must only consume markers within the current account/run scope; no UI-owned account truth",
+      "security_boundary": "contains no credentials; marker cannot itself authorize execution",
+      "android_disposition": "direct-port",
+      "android_target": [
+        "source/host/src/extensions/transcript/sand_upgrade_resume_store.rs"
+      ],
+      "android_owner": "Rust SandUpgradeResumeStore",
+      "platform_delta": "None for durable marker semantics; Android process death makes reopen behavior a hard acceptance requirement.",
+      "implementation_status": "implemented",
+      "production_wiring": "Direct Rust store exists in Host transcript extension surface; final exact-head integration evidence is still pending.",
+      "unit_test": "marker_upsert_is_per_agent_and_survives_reopen; clear_and_clear_all_remove_only_requested_resume_state; malformed_or_partial_document_never_fabricates_resume_markers",
+      "contract_test": "upgrade resume identity/process-reopen contract exact-head CI pending",
+      "integration_test": "forced Host upgrade/quiesce/resume integration required",
+      "packaged_test": "required on final githubRelease artifact",
+      "device_test": "required in final upgrade/process-death acceptance",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Direct port exists with process-reopen tests; not promoted to verified."
+    },
+    {
+      "responsibility_id": "TRANSCRIPT-SEND-ACCEPTANCE-ANDROID-001",
+      "domain": "messaging-agent-send-acceptance",
+      "desktop_sources": [
+        {
+          "path": "source/host/src/extensions/transcript/send_acceptance.rs",
+          "blob_sha": "4f8bac7537cbc01ccce3c303748a7f65e7259524",
+          "symbols": [
+            "SendAcceptancePreparation",
+            "AcceptedSendEchoPlan",
+            "prepare_send_acceptance",
+            "mark_accepted_send_activity",
+            "plan_accepted_send_echoes",
+            "emit_accepted_send_echoes",
+            "build_seeded_agent_name"
+          ]
+        }
+      ],
+      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "responsibility": "Make visible Agent sends acceptance-safe and idempotent, preserve canonical user echo identity/activity, and seed a default Agent name from the first accepted visible prompt using the Desktop UTF-16 contract.",
+      "source_owner": "Desktop transcript send acceptance helper",
+      "direct_callers": [
+        "Desktop TranscriptManager send path"
+      ],
+      "downstream_dependencies": [
+        "canonical transcript",
+        "Agent roster/activity",
+        "run dispatch",
+        "accepted echo projection"
+      ],
+      "state_owner": "Android canonical TranscriptStore owns messages; PromptAcceptanceLedger owns only durable send admission evidence; AndroidAgentRoster owns Agent profile",
+      "persistent_state": [
+        "account+clientNonce+inputDigest acceptance ledger",
+        "canonical transcript entry",
+        "canonical Agent roster profile"
+      ],
+      "protocol_wire_contract": [
+        "clientNonce/requestId identity",
+        "input digest including attachments/reply/fork",
+        "accepted/pending/rejected durability",
+        "canonical user echo before side-effect redispatch"
+      ],
+      "visible_effect": "A visible user prompt appears once, repeated/recovered sends do not duplicate it, and a default Agent receives the first accepted prompt-derived name.",
+      "failure_behavior": [
+        "nonce digest mismatch fails closed",
+        "unknown durability reconciles against canonical transcript before any redispatch",
+        "corrupt/degraded acceptance history becomes outcome-unknown rather than not-found"
+      ],
+      "cancellation_behavior": "cancellation after accepted send preserves acceptance/transcript identity; later retry reconciles instead of duplicating user send",
+      "retry_semantics": "same accepted nonce replays/reconciles; uncertain durability is never treated as safe-to-send",
+      "idempotency_semantics": "account fence + client nonce + canonical input digest + request identity fence duplicate visible/side-effect sends",
+      "process_death_recovery": "PromptAcceptanceLedger reopens; canonical TranscriptStore is checked first; ledger may be healed only from matching canonical transcript evidence",
+      "account_fencing": "acceptance rows and canonical transcript entries bind current account fence; stale account send cannot be admitted into new account",
+      "security_boundary": "UI cannot declare Host acceptance; canonical Rust Host commits transcript/acceptance before execution",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "source/host/src/extensions/transcript/prompt_acceptance_ledger.rs",
+        "source/host/src/android_json_runtime.rs",
+        "source/host/src/extensions/transcript/transcript_store.rs",
+        "source/host/src/android_agent_roster.rs"
+      ],
+      "android_owner": "Rust Host TranscriptStore + PromptAcceptanceLedger + AndroidAgentRoster",
+      "platform_delta": "Desktop helper is decomposed into durable Android Host owners to satisfy process-death/outcome-unknown semantics while preserving the seeded-name and accepted-echo product behavior.",
+      "implementation_status": "implemented",
+      "production_wiring": "chat.send reads durable acceptance before canonical transcript dispatch, verifies payload/request identity, records pending/accepted evidence, persists the canonical user entry, and seeds default Agent name after the first newly accepted visible message.",
+      "unit_test": "prompt_acceptance_ledger duplicate/digest, corrupt/degraded, canonical digest tests; android_json_runtime send_acceptance_seeded_agent_name_matches_desktop_utf16_contract and send/recovery tests",
+      "contract_test": "Host chat.send acceptance/idempotency/process-death contracts; exact-head CI pending",
+      "integration_test": "Agent send duplicate/recovery/process-death integration exact-head CI pending",
+      "packaged_test": "required on final release artifact",
+      "device_test": "required in final Agent chat/process-death/offline acceptance",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Android splits the Desktop helper into durable owners but preserves canonical acceptance and name-seeding semantics; no verified claim until descendant CI/device evidence."
     }
   ],
   "traceability": {
