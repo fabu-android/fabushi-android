@@ -7,3 +7,4 @@ pub use async_task_union::{merge_async_tasks, AsyncTask};
 pub use sand_pending_wake_store::SandPendingWakeStore;
 pub use transcript_store::{TranscriptRecoveryInfo, TranscriptRecoveryOutcome, TranscriptStore};
 pub mod transcript_entry_ids;
+pub mod inline_image_materialization;
