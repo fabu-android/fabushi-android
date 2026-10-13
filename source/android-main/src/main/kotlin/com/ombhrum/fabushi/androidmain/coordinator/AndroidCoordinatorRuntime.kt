@@ -2441,9 +2441,20 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
         agentId: String,
         beforeSeq: Long?,
         limit: Int,
+        sinceMs: Double?,
+        untilMs: Double?,
     ): AndroidTranscriptHistoryPage {
         require(agentId.isNotBlank()) { "Transcript page requires a non-empty Agent id" }
         require(limit in 1..500) { "Transcript page limit must be between 1 and 500" }
+        require(sinceMs == null || (sinceMs.isFinite() && sinceMs >= 0.0)) {
+            "Transcript page sinceMs must be a finite non-negative number"
+        }
+        require(untilMs == null || (untilMs.isFinite() && untilMs >= 0.0)) {
+            "Transcript page untilMs must be a finite non-negative number"
+        }
+        require(sinceMs == null || untilMs == null || sinceMs <= untilMs) {
+            "Transcript page sinceMs must not exceed untilMs"
+        }
         val params = JSONObject()
             .put("agentId", agentId)
             .put("limit", limit)
@@ -2451,6 +2462,8 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
             require(beforeSeq >= 0L) { "Transcript page cursor must be non-negative" }
             params.put("beforeSeq", beforeSeq)
         }
+        if (sinceMs != null) params.put("sinceMs", sinceMs)
+        if (untilMs != null) params.put("untilMs", untilMs)
         val value = host.request("feature.transcript.page", params)
         val entries = value.optJSONArray("entries") ?: error("Transcript page is missing entries")
         val nextBeforeSeq = if (value.has("nextBeforeSeq") && !value.isNull("nextBeforeSeq")) {
