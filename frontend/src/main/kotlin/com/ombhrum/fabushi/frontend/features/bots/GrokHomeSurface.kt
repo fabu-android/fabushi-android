@@ -1139,7 +1139,13 @@ internal fun GrokHomeSurface(
             },
             onSetAvatarImage = onSetBotAvatarImage,
             onGenerateAvatarImage = onGenerateBotAvatarImage,
+            onStagePickedAvatarImage = onStagePickedBotAvatarImage,
+            onStageGeneratedAvatarImage = onStageGeneratedBotAvatarImage,
+            onEncodeAvatarCrop = onEncodeBotAvatarCrop,
             onSetNotifications = onSetBotNotifyOnUpdates,
+            channelConnections = profileTargetId?.let { botState.channelConnectionsByAgent[it] }.orEmpty(),
+            channelLoading = profileTargetId != null && botState.channelLoadingAgentId == profileTargetId,
+            onDisconnectChannel = onDisconnectBotChannel,
         )
 
         AgentDeleteConfirmation(
