@@ -60,6 +60,9 @@ const ALLOWED_EVENTS: &[&str] = &[
     "sand.local_exec.provider",
     "sand.mcp.desktop_edge_failed",
     "sand.pending_wake",
+    "sand.queue.watchdog",
+    "sand.queue.dequeued",
+    "sand.queue.accepted",
     "sand.reaction.ack",
     "sand.recovery_action",
     "sand.render_stream",
@@ -762,6 +765,29 @@ mod tests {
                 .unwrap();
         }
         assert_eq!(spool.batch().len(), 4);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn spill_accepts_canonical_turn_queue_contracts() {
+        let root = root("turn-queue");
+        let path = root.join("spill.json");
+        let mut spool =
+            AndroidStructuredLogSpool::open(&path, "account-a", "counter-a", 1_000).unwrap();
+        for event in ["sand.queue.accepted", "sand.queue.dequeued", "sand.queue.watchdog"] {
+            spool
+                .record(
+                    "info",
+                    event,
+                    BTreeMap::from([("conversation_id".into(), "agent-a".into())]),
+                    1_001,
+                )
+                .unwrap();
+        }
+        assert_eq!(
+            spool.batch().iter().map(|record| record.message.as_str()).collect::<Vec<_>>(),
+            vec!["sand.queue.accepted", "sand.queue.dequeued", "sand.queue.watchdog"],
+        );
         let _ = fs::remove_dir_all(root);
     }
 
