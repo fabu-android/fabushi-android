@@ -51,6 +51,7 @@ pub mod host_secret_store;
 pub mod human_call_runtime;
 #[allow(special_module_name)]
 pub mod main;
+pub mod managed_team_rules;
 pub mod mcp_auth;
 pub mod mcp_server_tool_settings;
 pub mod notify_drain_gate;

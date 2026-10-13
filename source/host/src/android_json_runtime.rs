@@ -837,6 +837,7 @@ pub struct AndroidJsonHost {
     mcp_auth_watches: Arc<Mutex<AndroidMcpAuthWatchManager>>,
     mcp_auth_owner: Option<AndroidMcpAuthWatchOwner>,
     mcp_dashboard_backend: Option<Arc<CursorDashboardMcpAuthBackend>>,
+    managed_team_rules: Arc<crate::managed_team_rules::ManagedTeamRulesResolver>,
     cross_user_core: Option<ProductionCrossUserCore>,
     _cross_user_experiment_subscription: Option<StopGateSubscription>,
     mcp_server_tool_settings: Arc<Mutex<McpServerToolSettings>>,
@@ -1328,6 +1329,7 @@ impl AndroidJsonHost {
             mcp_auth_watches,
             mcp_auth_owner,
             mcp_dashboard_backend,
+            managed_team_rules: Arc::new(crate::managed_team_rules::ManagedTeamRulesResolver::default()),
             cross_user_core,
             _cross_user_experiment_subscription: cross_user_experiment_subscription,
             mcp_server_tool_settings,
@@ -4118,13 +4120,17 @@ impl AndroidJsonHost {
     }
 
     fn account_team_rules(&self) -> Result<Value, String> {
+        let account_fence = self.current_turn_account_fence()?;
         let rules = match self.mode {
             AndroidHostMode::Test => Vec::new(),
-            AndroidHostMode::Production => self
-                .mcp_dashboard_backend
-                .as_ref()
-                .ok_or("managed team rules backend is unavailable")?
-                .resolve_sand_team_rules()?,
+            AndroidHostMode::Production => {
+                let backend = self
+                    .mcp_dashboard_backend
+                    .as_ref()
+                    .ok_or("managed team rules backend is unavailable")?;
+                self.managed_team_rules
+                    .resolve_with(&account_fence, || backend.resolve_sand_team_rules())?
+            }
         };
         Ok(json!({"rules": rules}))
     }
