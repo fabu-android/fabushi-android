@@ -2049,6 +2049,7 @@ impl AndroidMessagingService {
             "conversationId":conversation_id,
             "messageId":message_id,
             "targetId":target_id,
+            "createdAtMs":now_ms,
             "priorityApplied":!target_is_group && priority,
             "imagesDelivered":!target_is_group || images.is_empty(),
             "droppedImageCount":if target_is_group { images.len() } else { 0 },
