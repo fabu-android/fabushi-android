@@ -1,6 +1,7 @@
 use serde_json::Value;
 use std::collections::BTreeMap;
-use std::sync::Mutex;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, Weak};
 
 pub const SAND_MODEL_EXPERIMENT_NAME: &str = "sand_model_selection";
 pub const SAND_DEFAULT_MODEL_CONFIG_NAME: &str = "sand_default_model";
@@ -43,8 +44,13 @@ struct ExperimentsState {
 /// Network transport is intentionally outside this foundation. A future authenticated Statsig
 /// bootstrap adapter must hydrate this owner rather than giving Presentation or a second runtime
 /// independent feature-gate truth.
+type GateListener = Arc<dyn Fn(bool) + Send + Sync>;
+pub type StopGateSubscription = Box<dyn Fn() + Send + Sync + 'static>;
+
 pub struct HostExperimentsExtension {
     state: Mutex<ExperimentsState>,
+    gate_listeners: Arc<Mutex<BTreeMap<String, BTreeMap<u64, GateListener>>>>,
+    next_listener_id: AtomicU64,
 }
 
 impl Default for HostExperimentsExtension {
@@ -64,6 +70,8 @@ impl HostExperimentsExtension {
                 options,
                 ..ExperimentsState::default()
             }),
+            gate_listeners: Arc::new(Mutex::new(BTreeMap::new())),
+            next_listener_id: AtomicU64::new(0),
         }
     }
 
@@ -92,6 +100,60 @@ impl HostExperimentsExtension {
         bundled_feature_gate_default(name)
     }
 
+    pub fn subscribe_gate(
+        &self,
+        name: impl Into<String>,
+        listener: GateListener,
+    ) -> StopGateSubscription {
+        let name = name.into();
+        let id = self.next_listener_id.fetch_add(1, Ordering::AcqRel).saturating_add(1);
+        self.gate_listeners
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .entry(name.clone())
+            .or_default()
+            .insert(id, listener);
+        let listeners: Weak<Mutex<BTreeMap<String, BTreeMap<u64, GateListener>>>> =
+            Arc::downgrade(&self.gate_listeners);
+        Box::new(move || {
+            let Some(listeners) = listeners.upgrade() else {
+                return;
+            };
+            let mut listeners = listeners
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            if let Some(by_id) = listeners.get_mut(&name) {
+                by_id.remove(&id);
+                if by_id.is_empty() {
+                    listeners.remove(&name);
+                }
+            }
+        })
+    }
+
+    fn notify_gate_listeners(&self) {
+        let names = self
+            .gate_listeners
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .keys()
+            .cloned()
+            .collect::<Vec<_>>();
+        for name in names {
+            let value = self.check_feature_gate(&name);
+            let listeners = self
+                .gate_listeners
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .get(&name)
+                .map(|listeners| listeners.values().cloned().collect::<Vec<_>>())
+                .unwrap_or_default();
+            for listener in listeners {
+                listener(value);
+            }
+        }
+    }
+
     pub fn dynamic_config(&self, name: &str) -> BTreeMap<String, Value> {
         let state = self.state.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         if state.authenticated_bootstrap {
@@ -113,6 +175,8 @@ impl HostExperimentsExtension {
                 state.settings_overrides.remove(&name);
             }
         }
+        drop(state);
+        self.notify_gate_listeners();
     }
 
     /// Atomically accepts a bootstrap only when it carries a non-empty authenticated user id.
@@ -128,6 +192,8 @@ impl HostExperimentsExtension {
         state.network_dynamic_configs = parsed.dynamic_configs;
         state.hydrated_user_id = Some(user_id);
         state.authenticated_bootstrap = true;
+        drop(state);
+        self.notify_gate_listeners();
         Ok(())
     }
 
@@ -154,6 +220,8 @@ impl HostExperimentsExtension {
         state.network_dynamic_configs.clear();
         state.hydrated_user_id = None;
         state.authenticated_bootstrap = false;
+        drop(state);
+        self.notify_gate_listeners();
     }
 }
 
@@ -365,6 +433,46 @@ mod tests {
                 .and_then(Value::as_str),
             Some("default")
         );
+    }
+
+    #[test]
+    fn gate_subscription_tracks_canonical_changes_and_cancel_is_idempotent() {
+        let experiments = HostExperimentsExtension::with_options(HostExperimentsOptions {
+            is_dev_build: false,
+            env_gate_overrides: None,
+        });
+        let seen = Arc::new(Mutex::new(Vec::<bool>::new()));
+        let seen_listener = Arc::clone(&seen);
+        let stop = experiments.subscribe_gate(
+            "sand_multiplayer",
+            Arc::new(move |value| seen_listener.lock().unwrap().push(value)),
+        );
+        experiments.set_settings_override("sand_multiplayer", Some(true));
+        experiments.set_settings_override("sand_multiplayer", Some(false));
+        assert_eq!(*seen.lock().unwrap(), vec![true, false]);
+        stop();
+        stop();
+        experiments.set_settings_override("sand_multiplayer", Some(true));
+        assert_eq!(*seen.lock().unwrap(), vec![true, false]);
+    }
+
+    #[test]
+    fn account_scope_clear_notifies_gate_subscribers() {
+        let experiments = HostExperimentsExtension::with_options(HostExperimentsOptions {
+            is_dev_build: false,
+            env_gate_overrides: None,
+        });
+        let seen = Arc::new(Mutex::new(Vec::<bool>::new()));
+        let sink = Arc::clone(&seen);
+        let _stop = experiments.subscribe_gate(
+            "sand_multiplayer",
+            Arc::new(move |value| sink.lock().unwrap().push(value)),
+        );
+        experiments
+            .hydrate_authenticated_statsig(&bootstrap(Some("user-a"), true, "model-a"))
+            .unwrap();
+        experiments.clear_account_scope();
+        assert_eq!(*seen.lock().unwrap(), vec![true, false]);
     }
 
     #[test]
