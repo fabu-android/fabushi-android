@@ -170,6 +170,41 @@ impl AndroidXuserSharingManager {
             .append_entry_if_absent(entry)
             .map_err(|error| error.to_string())
     }
+
+    /// Hide and revoke every mirror owned by the previous account before the Sand owner is fenced.
+    ///
+    /// A later account that happens to receive the same room id must create a fresh mirror Agent,
+    /// so old-account transcript rows can never become visible again through id reuse.
+    pub fn fence_account_transition(&self) -> Result<(), String> {
+        let mirror_ids = {
+            let mut registry = self
+                .registry
+                .lock()
+                .map_err(|_| "shared-room registry lock poisoned".to_string())?;
+            let mut next = registry.state.clone();
+            let mut mirror_ids = Vec::new();
+            for record in next.rooms.values_mut() {
+                record.revoked = true;
+                mirror_ids.push(record.mirror_agent_id.clone());
+            }
+            if !mirror_ids.is_empty() {
+                registry.commit(next).map_err(|error| error.to_string())?;
+            }
+            mirror_ids
+        };
+        let mut agents = self
+            .agents
+            .lock()
+            .map_err(|_| "agent roster lock poisoned".to_string())?;
+        for mirror_id in mirror_ids {
+            if agents.get(&mirror_id).is_some() {
+                agents
+                    .set_hidden(&mirror_id, true)
+                    .map_err(|error| error.to_string())?;
+            }
+        }
+        Ok(())
+    }
 }
 
 impl XuserSharingManager for AndroidXuserSharingManager {
@@ -218,7 +253,7 @@ impl XuserSharingManager for AndroidXuserSharingManager {
 
     fn install_room(&self, room: &XuserRoom, _self_auth_id: Option<&str>) -> Result<(), String> {
         let existing = self.room_record(&room.room_id);
-        let mirror_agent_id = if let Some(existing) = existing {
+        let mirror_agent_id = if let Some(existing) = existing.filter(|record| !record.revoked) {
             let mirror_id = existing.mirror_agent_id;
             let mut agents = self
                 .agents
@@ -469,6 +504,23 @@ mod tests {
                 .unwrap()
                 .is_hidden_from_sidebar
         );
+    }
+
+    #[test]
+    fn new_account_same_room_id_gets_fresh_mirror_after_fence() {
+        let root = tempdir().unwrap();
+        let (agents, _, manager) = open_manager(root.path());
+        manager.install_room(&room(), Some("account-a")).unwrap();
+        let old_mirror = manager.find_room_agent_id("room-a").unwrap().unwrap();
+
+        manager.fence_account_transition().unwrap();
+        assert!(manager.find_room_agent_id("room-a").unwrap().is_none());
+        assert!(agents.lock().unwrap().get(&old_mirror).unwrap().is_hidden_from_sidebar);
+
+        manager.install_room(&room(), Some("account-b")).unwrap();
+        let new_mirror = manager.find_room_agent_id("room-a").unwrap().unwrap();
+        assert_ne!(old_mirror, new_mirror);
+        assert!(!agents.lock().unwrap().get(&new_mirror).unwrap().is_hidden_from_sidebar);
     }
 
     #[test]
