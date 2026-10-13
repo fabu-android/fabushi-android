@@ -4642,7 +4642,7 @@ mod tests {
             execute(
                 &mut service,
                 "agent-b-profile",
-                "agent-a",
+                "agent-b",
                 json!({"type":"upsertProfile","actor":{"id":"agent-b","kind":"assistant","displayName":"Agent B"}}),
             )
             .unwrap();
