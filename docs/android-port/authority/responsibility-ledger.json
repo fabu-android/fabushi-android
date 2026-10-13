@@ -17847,6 +17847,81 @@
       "artifact": null,
       "verification_status": "not-verified",
       "notes": "Explicit gap created from current Desktop host_tracing.rs audit; do not treat structured logging as trace parity."
+    },
+    {
+      "responsibility_id": "AGENT-KICKSTART-LIFECYCLE-ANDROID-001",
+      "domain": "agent-onboarding-kickstart",
+      "desktop_sources": [
+        {
+          "path": "source/host/src/extensions/transcript/agent_lifecycle.rs",
+          "blob_sha": "f333bbad9b18196ab904e1ea6e66f52b9c8fb8ff",
+          "symbols": [
+            "run_created_agent_kickstart",
+            "SAND_ONBOARDING_KICKSTART_PROMPT",
+            "SAND_DISK_SAVER_KICKSTART_PROMPT",
+            "REPLY_NUDGE_PROMPT"
+          ]
+        }
+      ],
+      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "responsibility": "After explicit first-Agent kickstart intent, run a hidden canonical Host turn without fabricating a user message; keep introductionPending durable until a real visible assistant delivery; when the initial completed turn produces no visible delivery, issue at most one reply nudge and recover that decision across process death without duplicating unknown-outcome work.",
+      "source_owner": "Desktop transcript Agent lifecycle owner",
+      "direct_callers": [
+        "createAgent materialization/kickstart handoff",
+        "Host turn completion",
+        "Host event receive/recovery loop"
+      ],
+      "downstream_dependencies": [
+        "canonical Agent roster",
+        "durable turn journal",
+        "production inference owner",
+        "canonical Agent transcript"
+      ],
+      "state_owner": "Rust Host canonical roster + DurableTurnJournal; Compose owns no kickstart truth",
+      "persistent_state": [
+        "Agent introductionPending",
+        "initial kickstart request/operation/account/generation state",
+        "reply-nudge request/operation state"
+      ],
+      "protocol_wire_contract": [
+        "requestSource agent-kickstart",
+        "requestSource agent-kickstart-nudge",
+        "hidden=true",
+        "appendUserMessage=false",
+        "skipAckObligation=true"
+      ],
+      "visible_effect": "A newly created Agent opens with one useful visible assistant response; an empty first attempt gets one bounded retry without inventing or replaying user text.",
+      "failure_behavior": [
+        "unsupported/missing auth defers without clearing introductionPending",
+        "outcome-unknown journal state is never retried blindly",
+        "empty initial completed turn schedules one nudge",
+        "empty/failed nudge remains pending for explicit later recovery rather than looping"
+      ],
+      "cancellation_behavior": "turn cancellation settles through canonical turn lifecycle and never creates an unbounded retry loop",
+      "retry_semantics": "exactly one reply nudge is allowed after a proven Completed initial kickstart with no visible transcript; any existing nudge journal record fences duplicate retry",
+      "idempotency_semantics": "deterministic kickstart and nudge request ids bind Agent id + durable createdAt; durable journal rejects duplicate request identity",
+      "process_death_recovery": "feature.receive recomputes pending nudge eligibility from durable introductionPending, transcript and DurableTurnJournal after reopen; Running/OutcomeUnknown work is not replayed",
+      "account_fencing": "queue_chat_turn records the canonical account fence and DurableTurnJournal fences stale callbacks/account changes",
+      "security_boundary": "Host owns hidden prompts and inference dispatch; no UI retry or credential access",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "source/host/src/extensions/transcript/agent_lifecycle.rs",
+        "source/host/src/android_agent_roster.rs",
+        "source/host/src/runner/durable_turn_journal.rs",
+        "source/host/src/android_json_runtime.rs"
+      ],
+      "android_owner": "Rust Android Host Agent lifecycle owner",
+      "platform_delta": "Android replaces Desktop's SendMessage-style delivery observation with canonical assistant transcript persistence as the user-visible delivery proof while preserving hidden first-turn/nudge semantics and durable recovery.",
+      "implementation_status": "implemented",
+      "production_wiring": "createAgent persists introductionPending and queues hidden agent-kickstart. Host completion clears pending only after non-empty canonical assistant persistence. feature.receive drains durable empty-kickstart state and queues one hidden agent-kickstart-nudge through queue_chat_turn. ffe41f13fa6bc17d6145ec01ff12763c62422726 enables the kickstart request source; 52c72d6d9c5a9de70dca65cf9f235e59bab3b035 adds the Desktop-equivalent reply-nudge prompt; 52a4e21116042341f4895a19657a30dc8c71938e wires durable nudge recovery; c95f07b6b160ef3f0d54fcc9075ec02df9549e50 adds process-reopen/duplicate fencing coverage.",
+      "unit_test": "agent_lifecycle prompt tests plus android_json_runtime::tests::created_agent_kickstart_is_hidden_and_settles_introduction_pending and completed_empty_kickstart_reopens_into_one_reply_nudge; fresh exact-head Actions pending",
+      "contract_test": "DurableTurnJournal request-source/account/generation identity plus deterministic nudge request id and one-record fence; fresh exact-head Actions pending",
+      "integration_test": "Rust Host createAgent -> hidden kickstart -> empty-completed durable state -> reopen -> single nudge -> canonical assistant transcript test added at c95f07b6b160ef3f0d54fcc9075ec02df9549e50",
+      "packaged_test": "required on final exact-head APK/AAB",
+      "device_test": "required on protected device acceptance, including process death between empty kickstart and nudge",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Source implementation and production wiring are present. Do not mark verified until a descendant exact HEAD has green Rust/architecture/Android/package evidence plus protected packaged/device process-death acceptance. Broader Desktop agent_lifecycle.rs responsibilities such as delete/duplicate/sidebar/disk re-audit remain mapped separately and are not closed by this row."
     }
   ],
   "traceability": {
