@@ -4926,7 +4926,10 @@ impl AndroidJsonHost {
     }
 
     fn global_content_search(&mut self, params: &Value) -> Result<Value, String> {
-        let query = required_string(params, "query")?;
+        let query = params
+            .get("query")
+            .and_then(Value::as_str)
+            .ok_or("query is required")?;
         let message_limit = params
             .get("messageLimit")
             .and_then(Value::as_u64)
@@ -8654,7 +8657,7 @@ impl AndroidJsonHost {
             "hidden":true,
             "appendUserMessage":false,
             "awaitTurn":false,
-            "requestSource":"subagent-revival",
+            "requestSource":"background-revival",
             "skipAckObligation":true,
             "directAddressedAcceptance":true,
         });
@@ -11713,6 +11716,22 @@ impl AndroidJsonHost {
             prompt.push_str(&time_zone);
             prompt.push_str("\n</system_reminder>");
         }
+        if let Some(existing) = self
+            .turn_journal
+            .lock()
+            .map_err(|_| "turn journal lock poisoned".to_string())?
+            .record(request_id)
+            .cloned()
+        {
+            if existing.account_fence == account_fence_for_attachment
+                && existing.state == DurableTurnState::OutcomeUnknown
+            {
+                return Err(format!(
+                    "turn request {request_id} has outcome-unknown state; reconcile before retry"
+                ));
+            }
+        }
+
         let ack_guard_owes_visible_ack = !hidden
             && !command
                 .get("skipAckObligation")
@@ -12217,8 +12236,8 @@ impl AndroidJsonHost {
         let profile_revision = profile.as_ref().map(|profile| {
             crate::sha256::sha256_hex(
                 format!(
-                    "{}\n{}\n{}\n{}",
-                    profile.id, profile.name, profile.description, profile.updated_at
+                    "{}\n{}\n{}",
+                    profile.id, profile.name, profile.description
                 )
                 .as_bytes(),
             )
@@ -17534,7 +17553,22 @@ mod tests {
             .unwrap();
         assert_eq!(updated["name"], "After");
 
-        let timeline = host.dispatch("feature.receive", &json!({})).unwrap();
+        let deadline = std::time::Instant::now() + Duration::from_secs(2);
+        let timeline = loop {
+            let event = host.dispatch("feature.receive", &json!({})).unwrap();
+            if event["type"] == "agent.timeline.event" {
+                break event;
+            }
+            assert_eq!(
+                event["type"], "transcript.roster",
+                "only canonical roster bridge projections may precede the direct timeline event",
+            );
+            assert_eq!(event["agentId"], agent.id);
+            assert!(
+                std::time::Instant::now() < deadline,
+                "timeline event must remain ordered behind bounded roster projections",
+            );
+        };
         assert_eq!(timeline["type"], "agent.timeline.event");
         assert_eq!(timeline["agentId"], agent.id);
         assert_eq!(timeline["event"]["type"], "name-changed");
@@ -17546,7 +17580,22 @@ mod tests {
         let replica_epoch = timeline["ordered"]["epoch"].as_str().unwrap().to_string();
         assert!(!replica_epoch.is_empty());
 
-        let profile = host.dispatch("feature.receive", &json!({})).unwrap();
+        let deadline = std::time::Instant::now() + Duration::from_secs(2);
+        let profile = loop {
+            let event = host.dispatch("feature.receive", &json!({})).unwrap();
+            if event["type"] == "agent.profile.changed" {
+                break event;
+            }
+            assert_eq!(
+                event["type"], "transcript.roster",
+                "only canonical roster bridge projections may precede the direct profile event",
+            );
+            assert_eq!(event["agentId"], agent.id);
+            assert!(
+                std::time::Instant::now() < deadline,
+                "profile event must remain ordered behind bounded roster projections",
+            );
+        };
         assert_eq!(profile["type"], "agent.profile.changed");
         assert_eq!(profile["agentId"], agent.id);
         assert_eq!(profile["updatedAt"], updated["updatedAt"]);
@@ -18769,11 +18818,10 @@ export function apply(ctx) {
             .expect("completed turn keeps canonical Agent");
         let revision = crate::sha256::sha256_hex(
             format!(
-                "{}\n{}\n{}\n{}",
+                "{}\n{}\n{}",
                 current_agent.id,
                 current_agent.name,
-                current_agent.description,
-                current_agent.updated_at
+                current_agent.description
             )
             .as_bytes(),
         );
@@ -18855,6 +18903,7 @@ export function apply(ctx) {
         let mut host = AndroidJsonHost::new(&root, AndroidHostMode::Test);
         sign_in_test_account(&mut host);
         let account_fence = host.current_turn_account_fence().unwrap();
+        host.structured_log_shipping.store(true, Ordering::Release);
         host.visible_ack_obligations
             .record_send(&account_fence, "deleted-agent", 1.0)
             .unwrap();
@@ -22423,7 +22472,7 @@ mod automation_event_batch_wiring_tests {
                 &json!({"automationId":automation_id,"claimId":"claim-after-restart"}),
             )
             .unwrap_err();
-        assert!(outcome_unknown.contains("outcome is unknown"));
+        assert!(outcome_unknown.contains("outcome-unknown"));
         let reconciled = reopened
             .dispatch(
                 "feature.automation.event.reconcile",
