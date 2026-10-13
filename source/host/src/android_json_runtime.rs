@@ -54,8 +54,9 @@ use crate::extensions::telemetry::recovery_events::{
     rebuild_escalation_event, rebuild_pending_stall_event, recovery_action_event,
     replica_resync_event, resync_completed_event, send_journal_restore_event,
 };
-use crate::extensions::cross_user_sharing::production::build_production_xuser_relay_client;
-use crate::extensions::cross_user_sharing::xuser_relay::SandXuserRelayClient;
+use crate::extensions::cross_user_sharing::production::{
+    build_production_xuser_core, ProductionCrossUserCore,
+};
 use crate::extensions::teach_recording::{DurableTeachRecordingOwner, TeachRecordingPhase};
 use crate::extensions::trays::extension::{start_trays_extension, HostTraysExtension};
 use crate::extensions::trays::trays_service::{TrayEvent, TraySubscription};
@@ -713,6 +714,32 @@ fn restored_send_journal_telemetry(
         .collect()
 }
 
+fn project_cross_user_state(
+    core: Option<&ProductionCrossUserCore>,
+) -> Value {
+    let Some(core) = core else {
+        return json!({
+            "available": false,
+            "enabled": false,
+            "selfAuthId": Value::Null,
+            "pendingJoinRequests": [],
+            "rooms": [],
+            "typingUsers": [],
+            "canonicalRoomManagerBound": false,
+        });
+    };
+    let state = core.service.get_state();
+    json!({
+        "available": true,
+        "enabled": state.is_enabled,
+        "selfAuthId": state.self_auth_id,
+        "pendingJoinRequests": state.pending_join_requests,
+        "rooms": state.rooms,
+        "typingUsers": state.typing_users,
+        "canonicalRoomManagerBound": false,
+    })
+}
+
 pub struct AndroidJsonHost {
     mode: AndroidHostMode,
     device_id: String,
@@ -748,7 +775,7 @@ pub struct AndroidJsonHost {
     mcp_auth_watches: Arc<Mutex<AndroidMcpAuthWatchManager>>,
     mcp_auth_owner: Option<AndroidMcpAuthWatchOwner>,
     mcp_dashboard_backend: Option<Arc<CursorDashboardMcpAuthBackend>>,
-    cross_user_relay: Option<Arc<SandXuserRelayClient>>,
+    cross_user_core: Option<ProductionCrossUserCore>,
     mcp_server_tool_settings: Arc<Mutex<McpServerToolSettings>>,
     plugin_variables: PluginVariableStore,
     pending_plugin_variable_writes: BTreeMap<String, PreparedPluginVariableWrite>,
@@ -1033,11 +1060,12 @@ impl AndroidJsonHost {
         } else {
             (None, None)
         };
-        let cross_user_relay = if mode == AndroidHostMode::Production {
+        let cross_user_core = if mode == AndroidHostMode::Production {
+            let env = std::env::vars().collect::<BTreeMap<_, _>>();
             mcp_dashboard_backend
                 .as_ref()
                 .and_then(|dashboard| {
-                    build_production_xuser_relay_client(dashboard.credential_provider()).ok()
+                    build_production_xuser_core(dashboard.credential_provider(), &env).ok()
                 })
         } else {
             None
@@ -1199,7 +1227,7 @@ impl AndroidJsonHost {
             mcp_auth_watches,
             mcp_auth_owner,
             mcp_dashboard_backend,
-            cross_user_relay,
+            cross_user_core,
             mcp_server_tool_settings,
             plugin_variables,
             pending_plugin_variable_writes: BTreeMap::new(),
@@ -2521,9 +2549,39 @@ impl AndroidJsonHost {
             },
             "feature.telemetry.processCrash.recent" => Ok(Value::Array(self.process_crash_recent.iter().cloned().collect())),
             "feature.crossUserSharing.capability" => Ok(json!({
-                "available": self.cross_user_relay.is_some(),
+                "available": self.cross_user_core.is_some(),
+                "environmentAllowed": self.cross_user_core
+                    .as_ref()
+                    .is_some_and(|core| core.extension.reason().is_none()),
+                "enabled": self.cross_user_core
+                    .as_ref()
+                    .is_some_and(|core| core.extension.is_enabled()),
                 "credentialBoundary": "sand-renewal-only",
+                "canonicalRoomManagerBound": false,
             })),
+            "feature.crossUserSharing.state" => {
+                Ok(project_cross_user_state(self.cross_user_core.as_ref()))
+            }
+            "feature.crossUserSharing.setEnabled" => {
+                let enabled = params
+                    .get("enabled")
+                    .and_then(Value::as_bool)
+                    .ok_or("cross-user sharing enabled flag is required")?;
+                let core = self
+                    .cross_user_core
+                    .as_ref()
+                    .ok_or("cross-user sharing runtime is unavailable")?;
+                core.extension.apply_feature_policy(enabled)?;
+                Ok(project_cross_user_state(Some(core)))
+            }
+            "feature.crossUserSharing.requestDrain" => {
+                let core = self
+                    .cross_user_core
+                    .as_ref()
+                    .ok_or("cross-user sharing runtime is unavailable")?;
+                core.extension.request_relay_drain();
+                Ok(json!({"accepted":true}))
+            }
             "feature.agent.diskPressure.observe" => self.agent_disk_pressure_observe(params),
             "feature.agent.diskPressure.record" => self.agent_disk_pressure_record(params),
             "feature.agent.turn.reconcile" => self.agent_turn_reconcile(params),
