@@ -21,17 +21,17 @@ class AgentChannelsModelTest {
     }
 
     @Test
-    fun comingSoonWinsOverLegacyConnectionAndConnectableRowsPreserveDesktopStatusOrder() {
+    fun existingProtectedConnectionWinsOverComingSoonWhileEmptyRowsPreserveDesktopAvailability() {
         val comingSoon = desktopMainAgentChannelManifests.first()
         val staleLegacy = AgentChannelConnection(
             platform = comingSoon.platform,
             label = "legacy",
             status = "connected",
         )
-        assertEquals(
-            AgentChannelRowKind.COMING_SOON,
-            projectAgentChannelRow(comingSoon, staleLegacy).kind,
-        )
+        val existing = projectAgentChannelRow(comingSoon, staleLegacy)
+        assertEquals(AgentChannelRowKind.CONNECTED, existing.kind)
+        assertEquals("Connected", existing.statusLabel)
+        assertEquals("Connected as legacy", existing.detail)
 
         val available = comingSoon.copy(availability = AgentChannelAvailability.AVAILABLE)
         val connected = projectAgentChannelRow(
