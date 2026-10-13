@@ -12,3 +12,4 @@ pub use pending_card_sweeps::{expire_pending_auto_review_approval_entries, expir
 pub use transcript_store::{TranscriptRecoveryInfo, TranscriptRecoveryOutcome, TranscriptStore};
 pub mod transcript_entry_ids;
 pub mod inline_image_materialization;
+pub mod sand_ack_obligation_store;
