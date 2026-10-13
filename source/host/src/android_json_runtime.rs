@@ -1989,6 +1989,49 @@ impl AndroidJsonHost {
         }
     }
 
+    fn remote_box_store_sync_prepare(&mut self, params: &Value) -> Result<Value, String> {
+        let binding = self.remote_box_store_sync_binding()?;
+        let request_id = required_string(params, "requestId")?;
+        let store_id = required_string(params, "storeId")?;
+        let action = required_string(params, "action")?;
+        Self::parse_remote_box_store_sync_action(action)?;
+        let base_manifest_etag = params.get("baseManifestEtag").and_then(Value::as_str).map(str::to_string);
+        let account_fence = self.current_turn_account_fence()?;
+        let identity = crate::sha256::sha256_hex(
+            format!("{account_fence}\n{}\n{request_id}\n{store_id}\n{action}\n{}",
+                binding.device_id, base_manifest_etag.as_deref().unwrap_or_default()).as_bytes(),
+        );
+        let operation_id = format!("remote-box-store-sync-{}", &identity[..32]);
+        let approval_id = format!("approval-{operation_id}");
+        let target = json!({
+            "executionTarget":"remote_box",
+            "deviceId":binding.device_id,
+            "storeId":store_id,
+            "action":action,
+            "baseManifestEtag":base_manifest_etag,
+        });
+        if self.pending_approvals.get(&approval_id) == Some(&operation_id) {
+            return Ok(json!({"requestId":request_id,"operationId":operation_id,"approvalId":approval_id,"status":"approval-pending"}));
+        }
+        if self.pending_approvals.contains_key(&approval_id) || self.active_operations.contains(&operation_id) {
+            return Err("Remote BoxStore approval identity collision".into());
+        }
+        self.capability_broker.request_remote_approval(
+            &approval_id, request_id, &operation_id, REMOTE_BOX_STORE_SYNC_CAPABILITY,
+            target.clone(), &account_fence, binding.account_epoch, &binding.device_id, now_ms(),
+        )?;
+        self.active_operations.insert(operation_id.clone());
+        self.pending_approvals.insert(approval_id.clone(), operation_id.clone());
+        self.events.push_back(json!({
+            "type":"approval.requested","operationId":operation_id,"requestId":request_id,
+            "approvalId":approval_id,"capability":REMOTE_BOX_STORE_SYNC_CAPABILITY,
+            "target":target,"accountFence":account_fence,"accountEpoch":binding.account_epoch,
+            "deviceId":binding.device_id,"remoteDispatch":true,
+            "reason":"Remote BoxStore synchronization requires an explicit one-time grant",
+        }));
+        Ok(json!({"requestId":request_id,"operationId":operation_id,"approvalId":approval_id,"status":"approval-pending"}))
+    }
+
     fn remote_box_store_sync_dispatch(&mut self, params: &Value) -> Result<Value, String> {
         let binding = self.remote_box_store_sync_binding()?;
         let approval_id = required_string(params, "approvalId")?;
@@ -2010,9 +2053,9 @@ impl AndroidJsonHost {
         {
             return Err("Remote BoxStore approval target does not match dispatch scope".into());
         }
-        self.capability_broker.consume_approval_for_dispatch(
+        self.capability_broker.consume_remote_approval_for_dispatch(
             approval_id, operation_id, request_id, REMOTE_BOX_STORE_SYNC_CAPABILITY,
-            &account_fence, now_ms(),
+            &account_fence, binding.account_epoch, &binding.device_id, now_ms(),
         )?;
         let record = RemoteBoxStoreSyncRecord::prepared(
             operation_id, request_id, account_fence.clone(), binding.account_epoch,
@@ -3611,6 +3654,7 @@ impl AndroidJsonHost {
             "feature.sourceMap.getOrCreateBoxStore" => self.source_map_get_or_create_box_store(),
             "feature.sourceMap.setMode" => self.source_map_set_mode(params),
             "feature.remote.binding.status" => Ok(self.remote_binding_status()),
+            "feature.remote.boxStoreSync.prepare" => self.remote_box_store_sync_prepare(params),
             "feature.remote.boxStoreSync.dispatch" => self.remote_box_store_sync_dispatch(params),
             "feature.remote.boxStoreSync.status" => self.remote_box_store_sync_status(params),
             "feature.remote.boxStoreSync.reconcile" => self.remote_box_store_sync_reconcile(params),
@@ -14535,6 +14579,43 @@ mod tests {
             )
             .unwrap();
         assert!(duplicate["settlements"].as_array().unwrap().is_empty());
+    }
+
+    #[test]
+    fn remote_box_store_sync_prepare_uses_remote_epoch_and_device_grant() {
+        let root = tempfile::tempdir().unwrap();
+        let mut host = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+        let account_fence = host.current_turn_account_fence().unwrap();
+        let now = now_ms();
+        host.set_remote_binding_json(Some(&json!({
+            "credentialPlane":"authorized-remote-runner-v1",
+            "credentialId":"credential-box-store-test",
+            "issuedAtMs":now.saturating_sub(1),
+            "expiresAtMs":now.saturating_add(60_000),
+            "endpoint":"https://runner.example.invalid",
+            "bearerCredential":"box-store-test-bearer-credential-long-enough",
+            "deviceId":"device-box-store","accountFence":account_fence,
+            "accountEpoch":7,"executors":["box-store-sync"],
+        }).to_string())).unwrap();
+        let prepared = host.dispatch("feature.remote.boxStoreSync.prepare", &json!({
+            "requestId":"box-store-request-1","storeId":"store-a","action":"snapshot","baseManifestEtag":"etag-1",
+        })).unwrap();
+        let approval_id = prepared["approvalId"].as_str().unwrap().to_string();
+        let operation_id = prepared["operationId"].as_str().unwrap().to_string();
+        assert_eq!(prepared["status"], "approval-pending");
+        let approval_event = host.dispatch("feature.receive", &json!({})).unwrap();
+        assert_eq!(approval_event["type"], "approval.requested");
+        assert_eq!(approval_event["accountEpoch"], 7);
+        assert_eq!(approval_event["deviceId"], "device-box-store");
+        host.dispatch("feature.approval.resolve", &json!({"approvalId":approval_id,"approved":true})).unwrap();
+        assert!(host.capability_broker.consume_remote_approval_for_dispatch(
+            &approval_id,&operation_id,"box-store-request-1",REMOTE_BOX_STORE_SYNC_CAPABILITY,
+            &account_fence,8,"device-box-store",now_ms(),
+        ).is_err());
+        host.capability_broker.consume_remote_approval_for_dispatch(
+            &approval_id,&operation_id,"box-store-request-1",REMOTE_BOX_STORE_SYNC_CAPABILITY,
+            &account_fence,7,"device-box-store",now_ms(),
+        ).unwrap();
     }
 
     #[test]
