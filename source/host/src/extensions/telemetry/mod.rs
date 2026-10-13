@@ -48,3 +48,4 @@ pub mod connector_auth_telemetry;
 pub mod queue_telemetry_mappers;
 
 pub mod model_experiment_exposure;
+pub mod pressure_cpu_profiler;
