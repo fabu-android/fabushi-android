@@ -21,7 +21,6 @@ pub fn classify_android_gateway_command_error(error: &str) -> Option<(&'static s
         || error.contains(" must ")
         || error.contains("invalid")
         || error.contains("out of range")
-        || error.contains("account")
         || error.contains("stale")
         || error.contains("fence")
     {
@@ -117,6 +116,11 @@ mod tests {
         assert_eq!(
             classify_android_gateway_command_error("backend transport failed"),
             Some(("command-failed", "CommandError")),
+        );
+        assert_eq!(
+            classify_android_gateway_command_error("account telemetry storage backend failed"),
+            Some(("command-failed", "CommandError")),
+            "internal account-related failures must not be hidden as expected client rejection",
         );
     }
 
