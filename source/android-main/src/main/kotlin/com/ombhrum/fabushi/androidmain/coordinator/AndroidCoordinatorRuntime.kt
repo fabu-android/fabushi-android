@@ -498,6 +498,17 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
     override fun availableModelCatalog(): JSONObject =
         host.request("feature.models.available")
 
+    override fun agentDefaultModel(): JSONObject =
+        host.request("feature.settings.agentDefaultModel")
+
+    override fun setAgentDefaultModel(expectedAccountScope: String, model: String?): JSONObject =
+        host.request(
+            "feature.settings.agentDefaultModel.set",
+            JSONObject()
+                .put("expectedAccountScope", expectedAccountScope)
+                .put("model", model ?: JSONObject.NULL),
+        )
+
     override fun managedSkillsCatalog(): JSONObject =
         host.request("feature.agent.managedSkills")
 
