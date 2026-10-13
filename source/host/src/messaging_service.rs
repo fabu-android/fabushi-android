@@ -271,6 +271,14 @@ impl AndroidMessagingService {
                 })
             });
 
+        let peer_display_name = self
+            .state
+            .actors
+            .get(peer_actor_id)
+            .and_then(|actor| actor.get("displayName"))
+            .and_then(Value::as_str)
+            .unwrap_or(peer_actor_id)
+            .to_string();
         let conversation = self
             .state
             .conversations
@@ -279,11 +287,7 @@ impl AndroidMessagingService {
                 json!({
                     "id":conversation_id,
                     "kind":"direct",
-                    "title":self.state.actors
-                        .get(peer_actor_id)
-                        .and_then(|actor| actor.get("displayName"))
-                        .and_then(Value::as_str)
-                        .unwrap_or(peer_actor_id),
+                    "title":peer_display_name,
                     "ownerId":authenticated_actor_id,
                     "participants":[
                         {"actorId":authenticated_actor_id,"role":"owner","joinedAtMs":now_ms},
@@ -355,7 +359,7 @@ impl AndroidMessagingService {
             } else {
                 "delivered"
             };
-            let reactions = project_remote_human_reactions(
+            let reaction_actors = project_remote_human_reaction_actors(
                 remote.get("reactions"),
                 authenticated_actor_id,
                 peer_actor_id,
@@ -387,7 +391,7 @@ impl AndroidMessagingService {
                 "silent":false,
                 "protectedContent":false,
                 "deliveryState":delivery_state,
-                "reactions":reactions,
+                "reactions":[],
                 "pinned":false,
                 "deleted":false
             });
@@ -423,6 +427,20 @@ impl AndroidMessagingService {
                     messages_for_conversation.insert(message_id.clone(), projected);
                     changed += 1;
                 }
+            }
+            if reaction_actors.is_empty() {
+                if let Some(messages) = self.state.reaction_actors.get_mut(&conversation_id) {
+                    messages.remove(&message_id);
+                    if messages.is_empty() {
+                        self.state.reaction_actors.remove(&conversation_id);
+                    }
+                }
+            } else {
+                self.state
+                    .reaction_actors
+                    .entry(conversation_id.clone())
+                    .or_default()
+                    .insert(message_id.clone(), reaction_actors);
             }
             if newest
                 .as_ref()
@@ -3684,18 +3702,18 @@ fn stable_human_direct_conversation_id(left: &str, right: &str) -> String {
     format!("human-direct-{}", crate::sha256::sha256_hex(&identity))
 }
 
-fn project_remote_human_reactions(
+fn project_remote_human_reaction_actors(
     value: Option<&Value>,
     local_actor_id: &str,
     peer_actor_id: &str,
-) -> Result<Vec<Value>, String> {
+) -> Result<BTreeMap<String, BTreeSet<String>>, String> {
     let Some(value) = value.filter(|value| !value.is_null()) else {
-        return Ok(Vec::new());
+        return Ok(BTreeMap::new());
     };
     let reactions = value
         .as_array()
         .ok_or("remote Human reactions must be an array")?;
-    let mut projected = Vec::new();
+    let mut projected = BTreeMap::new();
     for reaction in reactions {
         let reaction = reaction
             .as_object()
@@ -3709,13 +3727,17 @@ fn project_remote_human_reactions(
             .get("reactedByMe")
             .and_then(Value::as_bool)
             .unwrap_or(false);
+        let actors = projected
+            .entry(emoji.to_string())
+            .or_insert_with(BTreeSet::new);
         if reacted_by_me {
-            projected.push(json!({"reaction":emoji,"actorId":local_actor_id}));
+            actors.insert(local_actor_id.to_string());
         }
-        for _ in 0..count.saturating_sub(u64::from(reacted_by_me)).min(64) {
-            projected.push(json!({"reaction":emoji,"actorId":peer_actor_id}));
+        if count > u64::from(reacted_by_me) {
+            actors.insert(peer_actor_id.to_string());
         }
     }
+    projected.retain(|_, actors| !actors.is_empty());
     Ok(projected)
 }
 
