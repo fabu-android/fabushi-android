@@ -45,22 +45,6 @@ pub struct StructuredTelemetryEvent {
     pub metadata: BTreeMap<String, String>,
 }
 
-pub const BOX_RECREATE_DECIDED_EVENT: &str = "sand.box.recreate_decided";
-
-/// Direct Rust-to-Rust port of Desktop's box_recreate_decided telemetry projection.
-///
-/// Android does not own a local Desktop Box process, but it still consumes rebuild/recreate
-/// decisions for an explicitly authorized Remote Runner. Keep the wire event name, info severity,
-/// and structured metadata projection stable without granting telemetry a new execution boundary.
-pub fn box_recreate_decided_event(
-    metadata: BTreeMap<String, String>,
-) -> StructuredTelemetryEvent {
-    StructuredTelemetryEvent {
-        level: TelemetryLevel::Info,
-        metadata,
-    }
-}
-
 
 pub fn access_blocked_event(
     edge: &str,
@@ -1125,18 +1109,6 @@ mod tests {
             .unwrap();
         assert_eq!(denied.metadata.get("error_code").map(String::as_str), Some("SAND-E0202"));
         assert_eq!(denied.metadata.get("http_status").map(String::as_str), Some("403"));
-    }
-
-    #[test]
-    fn box_recreate_decided_preserves_desktop_event_and_metadata_contract() {
-        let metadata = BTreeMap::from([
-            ("reason".to_string(), "remote_rebuild".to_string()),
-            ("preserve_data".to_string(), "true".to_string()),
-        ]);
-        let event = box_recreate_decided_event(metadata.clone());
-        assert_eq!(BOX_RECREATE_DECIDED_EVENT, "sand.box.recreate_decided");
-        assert_eq!(event.level, TelemetryLevel::Info);
-        assert_eq!(event.metadata, metadata);
     }
 
     #[test]
