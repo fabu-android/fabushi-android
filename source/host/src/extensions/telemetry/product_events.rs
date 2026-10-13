@@ -1068,75 +1068,6 @@ pub fn event_loop_pressure_event(
 }
 
 
-pub fn automation_run_event(
-    conversation_id: &str,
-    automation_id: &str,
-    trigger: &str,
-    outcome: &str,
-    is_group: bool,
-    duration_ms: f64,
-    sent_message_count: Option<i64>,
-) -> Result<StructuredTelemetryEvent, String> {
-    if !bounded_token(conversation_id)
-        || !bounded_token(automation_id)
-        || !bounded_token(trigger)
-        || !matches!(outcome, "ok" | "failed" | "cancelled" | "outcome_unknown")
-        || !duration_ms.is_finite()
-        || duration_ms < 0.0
-        || sent_message_count.is_some_and(|value| value < 0)
-    {
-        return Err("automation-run telemetry metadata is invalid".into());
-    }
-    let mut metadata = BTreeMap::from([
-        ("conversation_id".into(), conversation_id.into()),
-        ("automation_id".into(), automation_id.into()),
-        ("trigger".into(), trigger.into()),
-        ("outcome".into(), outcome.into()),
-        ("is_group".into(), is_group.to_string()),
-        ("duration_ms".into(), duration_ms.round().to_string()),
-    ]);
-    if let Some(value) = sent_message_count {
-        metadata.insert("sent_message_count".into(), value.to_string());
-    }
-    Ok(StructuredTelemetryEvent {
-        level: if outcome == "ok" { TelemetryLevel::Info } else { TelemetryLevel::Warn },
-        metadata,
-    })
-}
-
-pub fn automation_lifecycle_event(
-    conversation_id: &str,
-    automation_id: &str,
-    action: &str,
-    source: &str,
-    trigger_type: &str,
-    age_ms: f64,
-    recorded_run_count: u64,
-) -> Result<StructuredTelemetryEvent, String> {
-    if !bounded_token(conversation_id)
-        || !bounded_token(automation_id)
-        || !matches!(action, "created" | "updated" | "enabled" | "disabled" | "deleted")
-        || !matches!(source, "android" | "agent" | "system")
-        || !bounded_token(trigger_type)
-        || !age_ms.is_finite()
-        || age_ms < 0.0
-    {
-        return Err("automation-lifecycle telemetry metadata is invalid".into());
-    }
-    Ok(StructuredTelemetryEvent {
-        level: TelemetryLevel::Info,
-        metadata: BTreeMap::from([
-            ("conversation_id".into(), conversation_id.into()),
-            ("automation_id".into(), automation_id.into()),
-            ("action".into(), action.into()),
-            ("source".into(), source.into()),
-            ("trigger_type".into(), trigger_type.into()),
-            ("age_ms".into(), age_ms.round().to_string()),
-            ("recorded_run_count".into(), recorded_run_count.to_string()),
-        ]),
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1560,18 +1491,5 @@ mod tests {
         assert!(event_loop_pressure_event(0.0, -1.0, 0.0, 60_000.0).is_err());
     }
 
-
-    #[test]
-    fn automation_telemetry_preserves_terminal_and_lifecycle_contracts() {
-        let run = automation_run_event("agent-a", "daily-brief", "schedule", "ok", false, 12.6, Some(2)).unwrap();
-        assert_eq!(run.level, TelemetryLevel::Info);
-        assert_eq!(run.metadata.get("duration_ms").map(String::as_str), Some("13"));
-        assert_eq!(run.metadata.get("sent_message_count").map(String::as_str), Some("2"));
-        assert!(automation_run_event("agent-a", "daily-brief", "schedule", "future", false, 1.0, None).is_err());
-        let lifecycle = automation_lifecycle_event("agent-a", "daily-brief", "created", "android", "schedule", 0.0, 0).unwrap();
-        assert_eq!(lifecycle.level, TelemetryLevel::Info);
-        assert_eq!(lifecycle.metadata.get("action").map(String::as_str), Some("created"));
-        assert!(automation_lifecycle_event("agent-a", "daily-brief", "created", "android", "schedule", -1.0, 0).is_err());
-    }
 
 }
