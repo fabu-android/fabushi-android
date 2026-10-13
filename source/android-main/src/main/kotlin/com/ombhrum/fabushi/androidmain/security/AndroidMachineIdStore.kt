@@ -3,6 +3,7 @@ package com.ombhrum.fabushi.androidmain.security
 import android.content.Context
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
+import android.system.Os
 import android.util.Base64
 import java.io.File
 import java.io.FileOutputStream
@@ -26,9 +27,8 @@ internal class AndroidMachineIdStore(context: Context) {
     private val protectedFile = File(applicationContext.noBackupFilesDir, FILE_NAME)
     private val legacyFile = File(applicationContext.filesDir, LEGACY_FILE_NAME)
 
-    @Synchronized
-    fun getOrCreate(): String {
-        readProtected()?.let { return it }
+    fun getOrCreate(): String = synchronized(PROCESS_LOCK) {
+        readProtected()?.let { return@synchronized it }
 
         val legacy = readLegacy()
         val machineId = legacy ?: UUID.randomUUID().toString()
@@ -37,7 +37,7 @@ internal class AndroidMachineIdStore(context: Context) {
         if (legacy != null && legacyFile.exists() && !legacyFile.delete()) {
             throw IllegalStateException("failed to remove legacy plaintext machine id")
         }
-        return machineId
+        machineId
     }
 
     private fun readProtected(): String? {
@@ -84,12 +84,10 @@ internal class AndroidMachineIdStore(context: Context) {
                 stream.write(document.toByteArray(StandardCharsets.UTF_8))
                 stream.fd.sync()
             }
-            if (!temporary.renameTo(protectedFile)) {
-                protectedFile.delete()
-                check(temporary.renameTo(protectedFile)) {
-                    "failed to atomically replace protected machine id"
-                }
-            }
+            // Both paths live in app-private storage on the same filesystem. POSIX rename
+            // atomically replaces an existing target, so a crash can expose either the old
+            // complete ciphertext or the new complete ciphertext, never a missing/partial owner.
+            Os.rename(temporary.absolutePath, protectedFile.absolutePath)
         } finally {
             temporary.delete()
         }
@@ -130,5 +128,6 @@ internal class AndroidMachineIdStore(context: Context) {
         const val LEGACY_FILE_NAME = "machine-id"
         const val GCM_TAG_BITS = 128
         const val MAX_MACHINE_ID_LENGTH = 200
+        val PROCESS_LOCK = Any()
     }
 }

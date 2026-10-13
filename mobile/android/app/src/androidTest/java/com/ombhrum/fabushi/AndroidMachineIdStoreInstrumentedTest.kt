@@ -4,6 +4,9 @@ import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.ombhrum.fabushi.androidmain.security.AndroidMachineIdStore
 import java.io.File
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.Executors
+import java.util.concurrent.CountDownLatch
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -54,6 +57,29 @@ class AndroidMachineIdStoreInstrumentedTest {
         assertTrue(protectedFile.exists())
         assertFalse(protectedFile.readText().contains(legacy))
         assertEquals(legacy, AndroidMachineIdStore(context).getOrCreate())
+    }
+
+
+    @Test
+    fun concurrentStoreInstancesConvergeOnOneDurableMachineId() {
+        val workers = Executors.newFixedThreadPool(8)
+        val start = CountDownLatch(1)
+        try {
+            val futures = (0 until 16).map {
+                workers.submit<String> {
+                    start.await()
+                    AndroidMachineIdStore(context).getOrCreate()
+                }
+            }
+            start.countDown()
+            val ids = futures.map { it.get(10, TimeUnit.SECONDS) }.toSet()
+            assertEquals(1, ids.size)
+            assertEquals(ids.single(), AndroidMachineIdStore(context).getOrCreate())
+            assertTrue(protectedFile.exists())
+            assertFalse(File(context.noBackupFilesDir, "fabushi-machine-id.v1.tmp").exists())
+        } finally {
+            workers.shutdownNow()
+        }
     }
 
     @Test
