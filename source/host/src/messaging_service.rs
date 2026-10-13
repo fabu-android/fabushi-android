@@ -4115,7 +4115,11 @@ fn project_remote_human_attachments(value: Option<&Value>) -> Result<Vec<Value>,
                 .ok_or("remote Human attachment must be an object")?;
             let resource_id =
                 required_non_empty(attachment.get("resourceId"), "remote Human resource id")?;
-            if resource_id.len() > 200 {
+            if resource_id.len() > 128
+                || resource_id.contains('/')
+                || resource_id.contains('\\')
+                || resource_id.chars().any(char::is_control)
+            {
                 return Err("remote Human resource id is invalid".into());
             }
             let name = required_non_empty(attachment.get("name"), "remote Human attachment name")?;
@@ -4590,6 +4594,31 @@ mod tests {
             1,
         );
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn remote_human_attachment_metadata_rejects_unsafe_resource_ids() {
+        assert!(project_remote_human_attachments(Some(&json!([{
+            "resourceId":"../escape",
+            "name":"file.txt",
+            "size":5
+        }]))).is_err());
+        assert!(project_remote_human_attachments(Some(&json!([{
+            "resourceId":"resource\\escape",
+            "name":"file.txt",
+            "size":5
+        }]))).is_err());
+        assert!(project_remote_human_attachments(Some(&json!([{
+            "resourceId":"r".repeat(129),
+            "name":"file.txt",
+            "size":5
+        }]))).is_err());
+        let valid = project_remote_human_attachments(Some(&json!([{
+            "resourceId":"resource-1",
+            "name":"file.txt",
+            "size":5
+        }]))).unwrap();
+        assert_eq!(valid[0]["resourceId"], "resource-1");
     }
 
     #[test]
