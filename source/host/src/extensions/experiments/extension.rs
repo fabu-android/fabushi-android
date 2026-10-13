@@ -3,6 +3,9 @@ use std::collections::BTreeMap;
 use super::model_selection::{configured_model_from_config, read_sand_model_experiment_process_override, SandAgentModelSelection, SandModelExperimentArm, SandModelExperimentState};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, Weak};
+use std::thread;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use uuid::Uuid;
 
 pub const SAND_MODEL_EXPERIMENT_NAME: &str = "sand_model_selection";
 pub const SAND_DEFAULT_MODEL_CONFIG_NAME: &str = "sand_default_model";
@@ -10,6 +13,10 @@ pub const SAND_AUTOMATIONS_MODEL_CONFIG_NAME: &str = "sand_automations_model";
 pub const SAND_COMPUTER_USE_CONFIG_NAME: &str = "sand_computer_use_playwright_config";
 pub const SAND_BROWSER_USE_CONFIG_NAME: &str = "sand_browser_use_model";
 pub const SAND_PRODUCT_FEATURE_GATE_DEFAULTS_ENV: &str = "SAND_PRODUCT_FEATURE_GATE_DEFAULTS";
+pub const STATSIG_CLIENT_KEY: &str =
+    "client-Bm4HJ0aDjXHQVsoACMREyLNxm5p6zzuzhO50MgtoT5D";
+pub const STATSIG_LOG_EVENT_PROXY_URL: &str = "https://api3.cursor.sh/tev1/v1";
+pub const STATSIG_JS_SDK_VERSION: &str = "3.31.0";
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct HostExperimentsOptions {
@@ -45,8 +52,10 @@ struct ExperimentsState {
     network_feature_gates: BTreeMap<String, bool>,
     network_dynamic_configs: BTreeMap<String, BTreeMap<String, Value>>,
     network_experiments: BTreeMap<String, StatsigExperimentAssignment>,
+    statsig_user: Option<Value>,
     hydrated_user_id: Option<String>,
     authenticated_bootstrap: bool,
+    model_experiment_exposure_logged: bool,
     refresh_generation: u64,
 }
 
@@ -226,8 +235,10 @@ impl HostExperimentsExtension {
         state.network_feature_gates = parsed.feature_gates;
         state.network_dynamic_configs = parsed.dynamic_configs;
         state.network_experiments = parsed.experiments;
+        state.statsig_user = parsed.statsig_user;
         state.hydrated_user_id = Some(user_id);
         state.authenticated_bootstrap = true;
+        state.model_experiment_exposure_logged = false;
         drop(state);
         self.notify_gate_listeners();
         Ok(true)
@@ -241,6 +252,48 @@ impl HostExperimentsExtension {
         assignment.group_name.as_deref()?;
         let enabled = assignment.value.get("enabled").and_then(Value::as_bool).unwrap_or(false);
         Some(SandModelExperimentState { active: true, arm: if enabled { SandModelExperimentArm::Treatment } else { SandModelExperimentArm::Control } })
+    }
+
+    pub fn has_sand_model_experiment_process_override(&self) -> bool {
+        read_sand_model_experiment_process_override().is_some()
+    }
+
+    /// Log the provider-side Statsig exposure exactly once for the current authenticated
+    /// bootstrap. Product Analytics is a separate attribution lane and must never be used to
+    /// pretend that the provider exposure happened.
+    pub fn log_sand_model_experiment_exposure(&self) -> bool {
+        let (user, assignment) = {
+            let mut state = self.state.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+            if !state.authenticated_bootstrap
+                || state.hydrated_user_id.as_deref().is_none_or(str::is_empty)
+            {
+                return false;
+            }
+            if state.model_experiment_exposure_logged {
+                return true;
+            }
+            let Some(assignment) = state
+                .network_experiments
+                .get(SAND_MODEL_EXPERIMENT_NAME)
+                .filter(|assignment| assignment.group_name.is_some())
+                .cloned()
+            else {
+                return false;
+            };
+            let Some(user) = state.statsig_user.clone() else {
+                return false;
+            };
+            state.model_experiment_exposure_logged = true;
+            (user, assignment)
+        };
+
+        let scheduled = spawn_statsig_model_exposure(user, assignment);
+        if !scheduled {
+            if let Ok(mut state) = self.state.lock() {
+                state.model_experiment_exposure_logged = false;
+            }
+        }
+        scheduled
     }
 
     pub fn configured_default_model(&self) -> Option<SandAgentModelSelection> {
@@ -274,14 +327,17 @@ impl HostExperimentsExtension {
         state.network_feature_gates.clear();
         state.network_dynamic_configs.clear();
         state.network_experiments.clear();
+        state.statsig_user = None;
         state.hydrated_user_id = None;
         state.authenticated_bootstrap = false;
+        state.model_experiment_exposure_logged = false;
         drop(state);
         self.notify_gate_listeners();
     }
 }
 
 struct ParsedBootstrap {
+    statsig_user: Option<Value>,
     hydrated_user_id: Option<String>,
     feature_gates: BTreeMap<String, bool>,
     dynamic_configs: BTreeMap<String, BTreeMap<String, Value>>,
@@ -291,8 +347,9 @@ struct ParsedBootstrap {
 fn parse_statsig_bootstrap(config: &str) -> Result<ParsedBootstrap, String> {
     let parsed: Value =
         serde_json::from_str(config).map_err(|error| format!("invalid Statsig bootstrap: {error}"))?;
-    let hydrated_user_id = parsed
-        .get("user")
+    let statsig_user = parsed.get("user").cloned();
+    let hydrated_user_id = statsig_user
+        .as_ref()
         .and_then(Value::as_object)
         .and_then(|user| user.get("userID"))
         .and_then(Value::as_str)
@@ -328,7 +385,77 @@ fn parse_statsig_bootstrap(config: &str) -> Result<ParsedBootstrap, String> {
         }
     }
 
-    Ok(ParsedBootstrap { hydrated_user_id, feature_gates, dynamic_configs, experiments })
+    Ok(ParsedBootstrap { statsig_user, hydrated_user_id, feature_gates, dynamic_configs, experiments })
+}
+
+
+fn wall_clock_now_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis()
+        .min(u64::MAX as u128) as u64
+}
+
+fn statsig_model_exposure_payload(
+    user: Value,
+    assignment: &StatsigExperimentAssignment,
+    now_ms: u64,
+) -> Value {
+    serde_json::json!({
+        "events": [{
+            "eventName": "statsig::config_exposure",
+            "user": user,
+            "time": now_ms,
+            "value": Value::Null,
+            "metadata": {
+                "config": SAND_MODEL_EXPERIMENT_NAME,
+                "ruleID": assignment.rule_id.clone().unwrap_or_default(),
+                "reason": "Network:Recognized"
+            },
+            "secondaryExposures": assignment.secondary_exposures.clone()
+        }],
+        "statsigMetadata": {
+            "sdkType": "js-client",
+            "sdkVersion": STATSIG_JS_SDK_VERSION
+        }
+    })
+}
+
+fn spawn_statsig_model_exposure(
+    user: Value,
+    assignment: StatsigExperimentAssignment,
+) -> bool {
+    let payload = statsig_model_exposure_payload(user, &assignment, wall_clock_now_ms());
+    let now = wall_clock_now_ms().to_string();
+    let session_id = Uuid::new_v4().to_string();
+    let url = format!(
+        "{}/rgstr",
+        STATSIG_LOG_EVENT_PROXY_URL.trim_end_matches('/')
+    );
+    thread::Builder::new()
+        .name("android-experiments-exposure".into())
+        .spawn(move || {
+            let agent = ureq::AgentBuilder::new()
+                .timeout_connect(Duration::from_secs(5))
+                .timeout_read(Duration::from_secs(10))
+                .timeout_write(Duration::from_secs(10))
+                .redirects(0)
+                .build();
+            let _ = agent
+                .post(&url)
+                .query("k", STATSIG_CLIENT_KEY)
+                .query("st", "js-client")
+                .query("sv", STATSIG_JS_SDK_VERSION)
+                .query("t", &now)
+                .query("sid", &session_id)
+                .set("statsig-event-count", "1")
+                .set("statsig-retry-count", "0")
+                .set("statsig-sdk-type", "js-client")
+                .set("statsig-sdk-version", STATSIG_JS_SDK_VERSION)
+                .send_json(payload);
+        })
+        .is_ok()
 }
 
 fn statsig_gate_value(value: &Value) -> Option<bool> {
@@ -411,6 +538,38 @@ mod tests {
             }
         })
         .to_string()
+    }
+
+    #[test]
+    fn model_exposure_payload_keeps_bootstrap_user_rule_and_secondary_exposures() {
+        let parsed = parse_statsig_bootstrap(
+            &serde_json::json!({
+                "user":{"userID":"user-a","custom":{"plan":"pro"}},
+                "dynamic_configs":{
+                    SAND_MODEL_EXPERIMENT_NAME:{
+                        "value":{"enabled":true},
+                        "group_name":"treatment",
+                        "rule_id":"rule-7",
+                        "secondary_exposures":[{"gate":"g1","gateValue":"true"}]
+                    }
+                }
+            })
+            .to_string(),
+        )
+        .unwrap();
+        let assignment = parsed.experiments.get(SAND_MODEL_EXPERIMENT_NAME).unwrap();
+        let payload = statsig_model_exposure_payload(
+            parsed.statsig_user.clone().unwrap(),
+            assignment,
+            123,
+        );
+        assert_eq!(payload["events"][0]["eventName"], "statsig::config_exposure");
+        assert_eq!(payload["events"][0]["user"]["custom"]["plan"], "pro");
+        assert_eq!(payload["events"][0]["metadata"]["config"], SAND_MODEL_EXPERIMENT_NAME);
+        assert_eq!(payload["events"][0]["metadata"]["ruleID"], "rule-7");
+        assert_eq!(payload["events"][0]["secondaryExposures"][0]["gate"], "g1");
+        assert_eq!(payload["statsigMetadata"]["sdkType"], "js-client");
+        assert_eq!(payload["statsigMetadata"]["sdkVersion"], STATSIG_JS_SDK_VERSION);
     }
 
     #[test]
