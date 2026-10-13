@@ -164,8 +164,14 @@ impl SandXuserRemoteTurns {
                 member.auth_id == self_auth_id
                     && member.agent_id.as_deref() == Some(agent_id.as_str())
             })
-            || !self.turn_dedupe.mark_seen_if_new(&turn_nonce)
         {
+            return true;
+        }
+        let is_new_turn = match self.turn_dedupe.mark_seen_if_new(&turn_nonce) {
+            Ok(is_new) => is_new,
+            Err(_) => return true,
+        };
+        if !is_new_turn {
             return true;
         }
 
