@@ -8,6 +8,7 @@ import com.ombhrum.fabushi.androidpreload.deeplink.AndroidPresentationDeepLink
 import com.ombhrum.fabushi.androidpreload.deeplink.AuthCompletionStatus
 import com.ombhrum.fabushi.androidpreload.runtime.AccountAccessProjection
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidAccountUsageSummary
+import com.ombhrum.fabushi.androidpreload.runtime.AndroidAccountUpgradeCta
 import com.ombhrum.fabushi.androidpreload.runtime.RootConnectionResilienceProjection
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidCoordinatorPort
 import kotlinx.coroutines.Dispatchers
@@ -980,6 +981,68 @@ class MarketplaceViewModel(application: Application) : AndroidViewModel(applicat
                     )
                 }
             }
+        }
+    }
+
+    fun performAccountUpgradeCta(cta: AndroidAccountUpgradeCta) {
+        val snapshot = mutableState.value
+        if (!snapshot.loggedIn || snapshot.accountAuthId.isBlank() || snapshot.accountUsageBusy ||
+            cta.disabled || cta.kind != "dashboard-action" ||
+            cta.dashboardAction != "requestLimitIncrease"
+        ) return
+        val generation = ++accountUsageRefreshGeneration
+        val expectedAuthId = snapshot.accountAuthId
+        mutableState.value = snapshot.copy(accountUsageBusy = true, accountUsageError = null)
+        viewModelScope.launch {
+            val (actionResult, reconcileResult) = withContext(Dispatchers.IO) {
+                val action = runCatching {
+                    coordinator.accountDashboardAction(
+                        action = cta.dashboardAction,
+                        args = cta.args,
+                    )
+                }
+                val reconcile = if (action.isSuccess) {
+                    runCatching { coordinator.accountUsageSummary() }
+                } else {
+                    Result.failure(action.exceptionOrNull() ?: IllegalStateException("Account upgrade action failed"))
+                }
+                action to reconcile
+            }
+            val current = mutableState.value
+            if (!shouldApplyAccountUsageResult(
+                    requestGeneration = generation,
+                    currentGeneration = accountUsageRefreshGeneration,
+                    expectedAuthId = expectedAuthId,
+                    currentLoggedIn = current.loggedIn,
+                    currentAuthId = current.accountAuthId,
+                )) return@launch
+
+            val actionResponse = actionResult.getOrNull()
+            val actionSettled = actionResponse?.optBoolean("ok", false) == true
+            val reconciled = reconcileResult.getOrNull()
+            mutableState.value = current.copy(
+                accountUsageSummary = reconciled ?: current.accountUsageSummary,
+                accountUsageBusy = false,
+                accountUsageError = when {
+                    !actionSettled && actionResult.isSuccess ->
+                        actionResponse?.optString("message")?.takeIf(String::isNotBlank)
+                            ?: "Upgrade request was not accepted."
+                    actionResult.isFailure ->
+                        "Upgrade request outcome is unknown. The app did not retry the side effect automatically."
+                    reconcileResult.isFailure ->
+                        "Upgrade request was accepted, but the latest account state could not be read."
+                    else -> null
+                },
+                message = when {
+                    actionSettled ->
+                        cta.successMessage
+                            ?: actionResponse?.optString("message")?.takeIf(String::isNotBlank)
+                            ?: "Upgrade request accepted"
+                    actionResult.isFailure ->
+                        "Upgrade request outcome unknown; not retried"
+                    else -> "Upgrade request was not accepted"
+                },
+            )
         }
     }
 
