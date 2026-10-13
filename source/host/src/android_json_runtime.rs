@@ -55,9 +55,14 @@ use crate::extensions::telemetry::connector_auth_telemetry::{
     connector_auth_telemetry, ConnectorAuthReport,
 };
 use crate::extensions::telemetry::HostTelemetryProjection;
+use crate::extensions::telemetry::automation_fire_telemetry::{
+    automation_run_telemetry, AutomationRunReport,
+};
+use crate::extensions::telemetry::automation_lifecycle_telemetry::{
+    automation_lifecycle_telemetry, AutomationLifecycleReport,
+};
 use crate::extensions::telemetry::product_events::{
-    access_blocked_event, agent_load_event, agents_unreachable_event, automation_lifecycle_event,
-    automation_run_event, client_persistence_event,
+    access_blocked_event, agent_load_event, agents_unreachable_event, client_persistence_event,
     client_resource_event, connector_auth_clicked_event, entrypoint_error_event,
     event_loop_pressure_event, onboarding_step_event, reaction_ack_event, render_stream_event,
     render_ttfr_event, renderer_boundary_caught_event, renderer_unhandled_event, send_ack_event,
@@ -5795,18 +5800,19 @@ impl AndroidJsonHost {
             self.edge_failures.report("automation-runtime", "terminal-telemetry", "MissingSpec");
             return;
         };
-        let event = automation_run_event(
-            &spec.agent_id,
-            automation_id,
-            "schedule",
-            outcome,
-            self.automation_is_group(&spec.agent_id),
-            updated_at_ms.saturating_sub(started_at_ms) as f64,
-            None,
-        );
-        if event.and_then(|event| self.record_product_telemetry("sand.automation.run", event).map(|_| ())).is_err() {
-            self.edge_failures.report("structured-log-spill", "automation-run-telemetry", "StorageError");
-        }
+        let projection = automation_run_telemetry(&AutomationRunReport {
+            conversation_id: spec.agent_id.clone(),
+            automation_id: automation_id.to_string(),
+            trigger: "schedule".into(),
+            outcome: outcome.to_string(),
+            is_group: self.automation_is_group(&spec.agent_id),
+            duration_ms: updated_at_ms.saturating_sub(started_at_ms) as f64,
+            lateness_ms: None,
+            scheduled_for_ms: None,
+            sent_message_count: None,
+            event_batch_size: None,
+        });
+        self.record_host_telemetry_projection(projection);
     }
 
     fn record_automation_lifecycle_telemetry(
@@ -5819,18 +5825,21 @@ impl AndroidJsonHost {
             self.edge_failures.report("automation-runtime", "lifecycle-telemetry", "MissingSpec");
             return;
         };
-        let event = automation_lifecycle_event(
-            &spec.agent_id,
-            automation_id,
-            action,
-            "android",
-            "schedule",
-            now_ms().saturating_sub(spec.created_at_ms) as f64,
-            self.automation_runtime.run_count_for_automation(automation_id, account_fence),
-        );
-        if event.and_then(|event| self.record_product_telemetry("sand.automation.lifecycle", event).map(|_| ())).is_err() {
-            self.edge_failures.report("structured-log-spill", "automation-lifecycle-telemetry", "StorageError");
-        }
+        let projection = automation_lifecycle_telemetry(&AutomationLifecycleReport {
+            conversation_id: spec.agent_id.clone(),
+            automation_id: automation_id.to_string(),
+            action: action.to_string(),
+            source: "android".into(),
+            trigger_type: "schedule".into(),
+            age_ms: now_ms().saturating_sub(spec.created_at_ms) as f64,
+            recorded_run_count: self
+                .automation_runtime
+                .run_count_for_automation(automation_id, account_fence),
+            scheduled_fires_next_7_days: None,
+            fires_on_weekend: None,
+            fires_overnight: None,
+        });
+        self.record_host_telemetry_projection(projection);
     }
 
     fn automation_upsert(&mut self, params: &Value) -> Result<Value, String> {
