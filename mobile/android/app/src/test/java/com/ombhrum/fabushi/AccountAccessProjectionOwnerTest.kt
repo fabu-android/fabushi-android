@@ -21,6 +21,28 @@ class AccountAccessProjectionOwnerTest {
         }
     }
 
+    private class FailingStore(
+        epoch: Long = 0L,
+        identity: String? = null,
+        hasReachedBox: Boolean = false,
+    ) : AccountAccessEpochStore {
+        private var durableEpoch = epoch
+        private var durableIdentity = identity
+        private var durableHasReachedBox = hasReachedBox
+        var failWrites = false
+
+        override fun readEpoch() = durableEpoch
+        override fun readIdentity() = durableIdentity
+        override fun readHasReachedBox() = durableHasReachedBox
+
+        override fun write(epoch: Long, identity: String?, hasReachedBox: Boolean) {
+            if (failWrites) error("injected persistence failure")
+            durableEpoch = epoch
+            durableIdentity = identity
+            durableHasReachedBox = hasReachedBox
+        }
+    }
+
     @Test fun success() {
         val owner = AccountAccessProjectionOwner(MemoryStore()); owner.observeAuth(true, "a")
         val p = owner.settle(owner.beginRefresh(), AccountAccessFacts(
@@ -88,6 +110,47 @@ class AccountAccessProjectionOwnerTest {
         val currentEpoch = owner.currentProjection().accountEpoch
         val p = owner.settle(stale, AccountAccessFacts(true, sandAccessState=AccountAccessState.GRANTED))
         assertEquals(currentEpoch, p.accountEpoch); assertEquals(AccountAccessState.UNKNOWN, p.sandAccessState)
+    }
+
+    @Test fun failedAccountEpochPersistenceDoesNotPublishNewAccountFence() {
+        val store = FailingStore()
+        val owner = AccountAccessProjectionOwner(store)
+        owner.observeAuth(true, "a")
+        val before = owner.currentProjection()
+        store.failWrites = true
+
+        assertThrows(IllegalStateException::class.java) {
+            owner.observeAuth(true, "b")
+        }
+
+        assertEquals(before.accountEpoch, owner.currentProjection().accountEpoch)
+        val reopened = AccountAccessProjectionOwner(store)
+        reopened.observeAuth(true, "a")
+        assertEquals(before.accountEpoch, reopened.currentProjection().accountEpoch)
+    }
+
+    @Test fun failedFirstBoxPersistenceDoesNotPublishDurableLatch() {
+        val store = FailingStore()
+        val owner = AccountAccessProjectionOwner(store)
+        owner.observeAuth(true, "a")
+        store.failWrites = true
+        val token = owner.beginRefresh()
+
+        assertThrows(IllegalStateException::class.java) {
+            owner.settle(
+                token,
+                AccountAccessFacts(
+                    loggedIn = true,
+                    rosterLoadState = AccountRosterLoadState.READY,
+                ),
+            )
+        }
+
+        assertFalse(owner.currentProjection().hasReachedBox)
+        store.failWrites = false
+        val reopened = AccountAccessProjectionOwner(store)
+        reopened.observeAuth(true, "a")
+        assertFalse(reopened.currentProjection().hasReachedBox)
     }
 
     @Test fun processDeathKeepsEpochAndDurableFirstBoxButNotAccessDecision() {
