@@ -5,9 +5,9 @@
     "desktop_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
     "android_repository": "fabu-android/fabushi-android",
     "android_pr": 3,
-    "android_head_at_update": "0571e7feaff8b2f034b093c496867dba1e51755a",
+    "android_head_at_update": "470f3090fd0d166df698635cba62c5e41ca76d64",
     "status": "incomplete",
-    "note": "Desktop canonical remains 371b72f1cd20de03dc4dff9a15ed761054968093. Android parent 0571e7feaff8b2f034b093c496867dba1e51755a restores missing Rust owner closure and reduces Host compile debt from 60/93 errors at f727a13 to six deterministic errors in job 115517384549. COMPUTER rebuild started-untrackable/no-replay/account-fence changes are implemented but not verified until a descendant exact-head run reaches Kotlin/JNI/package/device acceptance. Full source closure debt remains open."
+    "note": "Desktop canonical remains 371b72f1cd20de03dc4dff9a15ed761054968093. Android exact head 470f3090fd0d166df698635cba62c5e41ca76d64 is under active CI. Transcript source closure review has begun: primitive replica/projection responsibilities are implemented but not yet exact-head verified, while extension/roster composition remains a mapped production gap. Full source/package/device closure remains open."
   },
   "responsibilities": [
     {
@@ -18911,6 +18911,183 @@
       "artifact": null,
       "verification_status": "not-verified",
       "notes": "Source and shipping production path implemented in 5b79319c... and 39c3ceb5.... Do not mark verified until same-final-head Actions/package/device evidence succeeds."
+    },
+    {
+      "responsibility_id": "TRANSCRIPT-EXTENSION-COMPOSITION-ANDROID-001",
+      "domain": "transcript",
+      "desktop_sources": [
+        {
+          "path": "source/host/src/extensions/transcript/extension.rs",
+          "blob_sha": "ef69506c36a58988645764714a7d172c02ce57f4",
+          "symbols": [
+            "TranscriptExtensionDeps",
+            "TranscriptExtensionEventBridge",
+            "TranscriptExtension",
+            "start_transcript_extension",
+            "start_production_transcript_extension",
+            "bind_runner_outline_stream_events"
+          ]
+        },
+        {
+          "path": "source/host/src/extensions/transcript/mod.rs",
+          "blob_sha": "e808f77b36b20d83e7f6fa7e62859c70ca0e2dd3",
+          "symbols": [
+            "transcript module export/composition surface"
+          ]
+        },
+        {
+          "path": "source/host/src/extensions/transcript/roster_emit.rs",
+          "blob_sha": "5fb7bb1e99b3a04f5e9617b0fade44025b99ca7b",
+          "symbols": [
+            "ProductionRosterEmit",
+            "OutlineStreamScheduler",
+            "ROSTER_REPLICA_KEY",
+            "timeline/profile/outline projection emit"
+          ]
+        }
+      ],
+      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "responsibility": "Compose the shipping transcript extension around the canonical transcript/session owners; bridge profile/timeline/run/configuration events through the Host event bus; coalesce runner outline updates; publish roster projection events without creating a second transcript or roster owner; dispose observers/workers deterministically.",
+      "source_owner": "Desktop TranscriptExtension + ProductionRosterEmit over ProductionSessionWorkers/TranscriptManager/SandHostEventBus",
+      "direct_callers": [
+        "shipping Host extension composition",
+        "TranscriptManager production services and turn execution wiring",
+        "runner inference event stream",
+        "profile-watch/session workers"
+      ],
+      "downstream_dependencies": [
+        "attachments",
+        "content-search",
+        "memory",
+        "session",
+        "telemetry",
+        "trays",
+        "turn-execution",
+        "Host event bus",
+        "roster projection",
+        "profile watch"
+      ],
+      "state_owner": "canonical transcript/session repositories remain the owners; extension composition owns only observer/subscription/worker lifecycle and transient coalescing state",
+      "persistent_state": [
+        "transcript/session durable stores delegated to canonical owners",
+        "no independent durable state in the extension composition itself"
+      ],
+      "protocol_wire_contract": [
+        "transcript.profile-changed",
+        "transcript.timeline-event",
+        "transcript.automation-config-changed",
+        "transcript.channel-config-changed",
+        "transcript.listener-connect-card",
+        "transcript.run-started",
+        "transcript.run-ended",
+        "runner-inference delta/completed/failed/cancelled events"
+      ],
+      "visible_effect": "Agent transcript/roster/profile/run updates project consistently into the Android product and survive lifecycle changes through canonical stores rather than UI-owned state.",
+      "failure_behavior": [
+        "profile-watch startup failure is surfaced rather than fabricated as success",
+        "malformed/unrecognized event payloads do not mutate canonical transcript state",
+        "missing Android composition remains an explicit migration gap"
+      ],
+      "cancellation_behavior": "Dropping the composition must unsubscribe event observers, stop coalescing/profile-watch workers, and dispose manager-owned transient runtime resources without deleting canonical transcript data.",
+      "retry_semantics": "Observer delivery may be retried only from canonical durable state or stable event identity; side-effecting turn/tool work is not blindly replayed by presentation.",
+      "idempotency_semantics": "Projection refreshes converge on canonical session/transcript state; duplicate observer registration and duplicate canonical owners are forbidden.",
+      "process_death_recovery": "Cold start must reconstruct observers/workers around existing durable transcript/session owners; it must not recreate settled turns or append duplicate messages.",
+      "account_fencing": "All transcript/session projections remain scoped by the current Host account/session owner and stale callbacks must be rejected by Coordinator/Host fencing.",
+      "security_boundary": "Host owns transcript/event composition; Compose/ViewModel receives typed immutable projections and cannot inject privileged Host events directly.",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "source/host/src/extensions/transcript/mod.rs",
+        "source/host/src/android_json_runtime.rs",
+        "source/host/src/android_agent_roster.rs",
+        "source/host/src/host_event_bus.rs"
+      ],
+      "android_owner": "Rust Host transcript/session/runtime owners; Android currently has the canonical stores/event infrastructure but does not yet contain a complete one-for-one TranscriptExtension/ProductionRosterEmit shipping composition.",
+      "platform_delta": "Core transcript/event semantics stay in Rust. Android replaces Desktop process/window integration with Host process lifecycle and typed JNI projections; missing composition must be completed rather than moved into Compose.",
+      "implementation_status": "mapped",
+      "production_wiring": "partial: Android ships transcript/session stores, Host event projection, roster state and runner/runtime wiring, but the Desktop extension.rs + ProductionRosterEmit composition is not yet represented as a single complete Android production boundary.",
+      "unit_test": "partial: existing Android transcript/session/roster and Host event tests cover component semantics; dedicated full composition lifecycle coverage remains required.",
+      "contract_test": "required: profile/timeline/run/configuration event families, outline coalescing, subscription disposal, account fencing and cold-start reconstruction.",
+      "integration_test": "required through production Host→JNI→typed Kotlin projection on the final exact HEAD.",
+      "packaged_test": "required on minified release artifact.",
+      "device_test": "required for process death/restart and streaming outline/profile projection without duplicate transcript mutation.",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Reviewed from Desktop authority 371b72f… and Android exact head 470f3090fd0d166df698635cba62c5e41ca76d64. This row intentionally records a real partial composition gap; it must not be promoted to verified until production wiring and same-head CI/package/device evidence exist."
+    },
+    {
+      "responsibility_id": "TRANSCRIPT-REPLICA-PROJECTION-ANDROID-001",
+      "domain": "transcript",
+      "desktop_sources": [
+        {
+          "path": "source/host/src/extensions/transcript/replica_writer.rs",
+          "blob_sha": "035800ff9496d7d8572260a93ccadac2330dca2a",
+          "symbols": [
+            "ReplicaStamp",
+            "ReplicaSnapshot",
+            "HostReplicaWriter"
+          ]
+        },
+        {
+          "path": "source/host/src/extensions/transcript/roster_projection.rs",
+          "blob_sha": "8b919420cc9aa22a646e4082edc52142a9a985eb",
+          "symbols": [
+            "OutlineStreamCoalescingPolicy",
+            "OutlineStreamDeadline",
+            "RosterProjection",
+            "OUTLINE_STREAM_COALESCE_MS"
+          ]
+        }
+      ],
+      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "responsibility": "Provide process-epoch replica stamps with monotonic per-replica sequence/coverage snapshots and deterministic roster outline stream coalescing with stale-deadline fencing, stream identity lifecycle and last-known-name projection.",
+      "source_owner": "Desktop HostReplicaWriter + RosterProjection/OutlineStreamCoalescingPolicy",
+      "direct_callers": [
+        "transcript roster emitter",
+        "profile/outline stream projection",
+        "replica snapshot producers"
+      ],
+      "downstream_dependencies": [
+        "UUID process epoch",
+        "per-replica sequence map",
+        "outline stream scheduler",
+        "roster projection consumers"
+      ],
+      "state_owner": "Rust Host process owns replica epoch/sequence and transient roster projection/coalescing state.",
+      "persistent_state": "none in these helpers; durable transcript/session state is owned elsewhere.",
+      "protocol_wire_contract": [
+        "ReplicaStamp {replica_key, epoch, sequence}",
+        "ReplicaSnapshot {replica_key, epoch, through_sequence, coverage, value}",
+        "250ms outline coalescing policy with generation-fenced deadlines"
+      ],
+      "visible_effect": "Consumers can reject stale replica/outline updates and receive the latest coalesced streaming outline without cross-replica sequence contamination.",
+      "failure_behavior": [
+        "poisoned sequence mutex recovers inner state",
+        "stale deadline generation is ignored",
+        "stopping coalescing drops pending transient outline state"
+      ],
+      "cancellation_behavior": "stop() disables coalescing, clears pending/deadline state and advances generation so old callbacks cannot flush.",
+      "retry_semantics": "A stale deadline may not be retried as current; callers must use the latest generation or a fresh canonical snapshot.",
+      "idempotency_semantics": "last_sequence/capture_snapshot do not advance state; repeated stream identity lookup returns the same item until explicit finish.",
+      "process_death_recovery": "Replica epoch is process-scoped and intentionally changes after process death; canonical durable state is restored by higher-level transcript/session owners and projected under the new epoch.",
+      "account_fencing": "These helpers are account-neutral primitives; callers must partition replica keys/roster projections by the account-scoped Host owner and never reuse stale account callbacks.",
+      "security_boundary": "Pure Rust Host helper state; no direct UI/JNI mutation surface.",
+      "android_disposition": "direct-port",
+      "android_target": [
+        "source/host/src/extensions/transcript/replica_writer.rs",
+        "source/host/src/extensions/transcript/roster_projection.rs"
+      ],
+      "android_owner": "Rust Host transcript extension primitives",
+      "platform_delta": "No Android-specific semantic delta; implementation remains Rust-to-Rust.",
+      "implementation_status": "implemented",
+      "production_wiring": "component implementation exists in the Android Host source tree; higher-level TranscriptExtension/ProductionRosterEmit composition remains tracked separately.",
+      "unit_test": "implemented in both Android target files: monotonic per-replica epoch/sequence/snapshot coverage plus stale-deadline/latest-item/stream-identity lifecycle tests.",
+      "contract_test": "source-level Rust tests preserve the Desktop primitive contract; same-final-head CI is still required before verification.",
+      "integration_test": "covered only when the higher-level transcript/roster composition is wired; tracked by TRANSCRIPT-EXTENSION-COMPOSITION-ANDROID-001.",
+      "packaged_test": "indirectly required through final native Host release artifact.",
+      "device_test": "not independently sufficient; exercised through transcript/roster device acceptance.",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Desktop and Android source were compared at Desktop 371b72f… and Android exact head 470f3090fd0d166df698635cba62c5e41ca76d64. Android replica_writer and roster_projection are direct Rust equivalents with additional focused tests, but current-head CI was still running at review time."
     }
   ],
   "traceability": {
