@@ -4,6 +4,7 @@
 //! unrestricted shell; concrete Android actions must be individually registered.
 
 pub mod bounded_fs;
+pub mod bounded_file_handlers;
 pub mod failure_classifier;
 pub mod invariant_violation_log;
 #[allow(special_module_name)]
