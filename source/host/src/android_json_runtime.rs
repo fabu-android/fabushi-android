@@ -4202,8 +4202,24 @@ impl AndroidJsonHost {
             "feature.messaging.contactGroups" => self.messaging_contact_groups(params),
             "feature.messaging.contactGroups.set" => self.messaging_contact_groups_set(params),
             "feature.agent.channels.listMetadata" => self.agent_channels_list_metadata(params),
-            "feature.agent.channels.writeMetadata" => self.agent_channels_write_metadata(params),
-            "feature.agent.channels.removeMetadata" => self.agent_channels_remove_metadata(params),
+            "feature.agent.channels.writeMetadata" => {
+                let result = self.agent_channels_write_metadata(params)?;
+                self.transcript_extension.event_bridge().channel_config_changed();
+                if let (Some(agent_id), Some(platform)) = (
+                    params.get("agentId").and_then(Value::as_str),
+                    params.get("platform").and_then(Value::as_str),
+                ) {
+                    self.transcript_extension
+                        .event_bridge()
+                        .listener_connect_card(agent_id, platform);
+                }
+                Ok(result)
+            }
+            "feature.agent.channels.removeMetadata" => {
+                let result = self.agent_channels_remove_metadata(params)?;
+                self.transcript_extension.event_bridge().channel_config_changed();
+                Ok(result)
+            }
             "feature.agent.upgradeQuiesce" => self.agent_upgrade_quiesce(params),
             "feature.call.create" => self.human_call_create(params),
             "feature.call.list" => self.human_call_list(params),
@@ -4216,10 +4232,18 @@ impl AndroidJsonHost {
             "feature.call.signal.remoteWatermark" => self.human_call_signal_remote_watermark(params),
             "feature.call.signal.list" => self.human_call_signal_list(params),
             "feature.call.reconcile" => self.human_call_reconcile(params),
-            "feature.automation.upsert" => self.automation_upsert(params),
+            "feature.automation.upsert" => {
+                let result = self.automation_upsert(params)?;
+                self.transcript_extension.event_bridge().automation_config_changed();
+                Ok(result)
+            }
             "feature.automation.list" => self.automation_list(),
             "feature.automation.listForAgent" => self.automation_list_for_agent(params),
-            "feature.automation.setAgentEnabled" => self.automation_set_agent_enabled(params),
+            "feature.automation.setAgentEnabled" => {
+                let result = self.automation_set_agent_enabled(params)?;
+                self.transcript_extension.event_bridge().automation_config_changed();
+                Ok(result)
+            }
             "feature.automation.start" => self.automation_start(params),
             "feature.automation.event.enqueue" => self.automation_event_enqueue(params),
             "feature.automation.event.claim" => self.automation_event_claim(params),
@@ -4417,6 +4441,11 @@ impl AndroidJsonHost {
                 let profile_changed =
                     previous.name != agent.name || previous.description != agent.description;
                 if previous.name != agent.name {
+                    let timeline = json!({
+                        "type":"name-changed",
+                        "from":previous.name,
+                        "to":agent.name,
+                    });
                     let stamp = self.replica_writer.next_stamp("roster");
                     push_turn_event(
                         &self.turn_events,
@@ -4429,13 +4458,12 @@ impl AndroidJsonHost {
                                 "epoch":stamp.epoch,
                                 "sequence":stamp.sequence,
                             },
-                            "event":{
-                                "type":"name-changed",
-                                "from":previous.name,
-                                "to":agent.name,
-                            }
+                            "event":timeline,
                         }),
                     );
+                    self.transcript_extension
+                        .event_bridge()
+                        .timeline_event(&agent.id, timeline);
                 }
                 if profile_changed {
                     let stamp = self.replica_writer.next_stamp("roster");
@@ -4452,6 +4480,9 @@ impl AndroidJsonHost {
                             },
                         }),
                     );
+                    self.transcript_extension
+                        .event_bridge()
+                        .profile_changed(&agent.id);
                 }
                 Ok(agent.as_json())
             }
@@ -11475,6 +11506,9 @@ impl AndroidJsonHost {
                         return Err(error);
                     }
                 };
+                self.transcript_extension
+                    .event_bridge()
+                    .run_started(if request_id.is_empty() { &operation_id } else { request_id });
                 if let Err(error) = self.queue_chat_turn(
                     &operation_id,
                     request_id,
@@ -11970,6 +12004,11 @@ impl AndroidJsonHost {
                 }
             };
             if let Some((previous, agent)) = seeded_profile_change {
+                let timeline = json!({
+                    "type":"name-changed",
+                    "from":previous.name,
+                    "to":agent.name,
+                });
                 let timeline_stamp = self.replica_writer.next_stamp("roster");
                 push_turn_event(
                     &self.turn_events,
@@ -11982,13 +12021,12 @@ impl AndroidJsonHost {
                             "epoch":timeline_stamp.epoch,
                             "sequence":timeline_stamp.sequence,
                         },
-                        "event":{
-                            "type":"name-changed",
-                            "from":previous.name,
-                            "to":agent.name,
-                        }
+                        "event":timeline,
                     }),
                 );
+                self.transcript_extension
+                    .event_bridge()
+                    .timeline_event(&agent.id, timeline);
                 let profile_stamp = self.replica_writer.next_stamp("roster");
                 push_turn_event(
                     &self.turn_events,
@@ -12003,6 +12041,9 @@ impl AndroidJsonHost {
                         },
                     }),
                 );
+                self.transcript_extension
+                    .event_bridge()
+                    .profile_changed(&agent.id);
             }
             self.record_host_telemetry_projection(user_message_received_telemetry(
                 &UserMessageReceivedFields {
@@ -14031,6 +14072,9 @@ impl AndroidJsonHost {
                     if let Some(operation_id) =
                         event.get("operationId").and_then(Value::as_str)
                     {
+                        self.transcript_extension
+                            .event_bridge()
+                            .run_ended(operation_id);
                         self.active_operations.remove(operation_id);
                         self.turn_cancellations.remove(operation_id);
                         self.agent_turn_interruptions.unregister_operation(operation_id);
