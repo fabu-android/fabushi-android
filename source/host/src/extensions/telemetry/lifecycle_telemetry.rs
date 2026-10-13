@@ -410,3 +410,76 @@ pub fn box_infrastructure_telemetry(event: &BoxInfrastructureEvent) -> HostTelem
         ),
     }
 }
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn host_lifecycle_projection_preserves_terminal_and_stuck_error_contract() {
+        let completed = host_lifecycle_telemetry(&HostLifecycleReport::Completed {
+            phase: "plugin_graph".into(),
+            plugin_count: Some(7),
+            entry_count: Some(99),
+            duration_ms: 125,
+        });
+        assert_eq!(completed.level, Some("info"));
+        assert_eq!(completed.event, Some(HOST_LIFECYCLE_EVENT));
+        assert_eq!(
+            completed.metadata.get("outcome").map(String::as_str),
+            Some("completed"),
+        );
+        assert_eq!(
+            completed.metadata.get("plugin_count").map(String::as_str),
+            Some("7"),
+        );
+        assert!(!completed.metadata.contains_key("entry_count"));
+
+        let failed = host_lifecycle_telemetry(&HostLifecycleReport::Failed {
+            phase: "transcript_read".into(),
+            duration_ms: 350,
+            error: HostLifecycleError::Failed,
+        });
+        assert_eq!(failed.level, Some("error"));
+        assert_eq!(
+            failed.metadata.get("error_code").map(String::as_str),
+            Some("SAND-E0303"),
+        );
+
+        let stuck = host_lifecycle_telemetry(&HostLifecycleReport::Stuck {
+            phase: "plugin_graph".into(),
+            duration_ms: 300_000,
+            error: HostLifecycleError::Stalled,
+        });
+        assert_eq!(stuck.level, Some("warn"));
+        assert_eq!(
+            stuck.metadata.get("error_code").map(String::as_str),
+            Some("SAND-E0302"),
+        );
+        assert_eq!(
+            stuck.metadata.get("outcome").map(String::as_str),
+            Some("stuck"),
+        );
+    }
+
+    #[test]
+    fn box_process_crash_projection_keeps_remote_boundary_fields() {
+        let projection = box_infrastructure_telemetry(&BoxInfrastructureEvent::ProcessCrash {
+            binary: "box-exec-daemon".into(),
+            signal: "SIGSEGV".into(),
+            count: 3,
+        });
+        assert_eq!(projection.level, Some("warn"));
+        assert_eq!(projection.event, Some(BOX_PROCESS_CRASH_EVENT));
+        assert_eq!(
+            projection.metadata.get("binary").map(String::as_str),
+            Some("box-exec-daemon"),
+        );
+        assert_eq!(
+            projection.metadata.get("signal").map(String::as_str),
+            Some("SIGSEGV"),
+        );
+        assert_eq!(projection.metadata.get("count").map(String::as_str), Some("3"));
+    }
+}
