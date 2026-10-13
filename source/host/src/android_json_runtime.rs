@@ -888,6 +888,8 @@ pub struct AndroidJsonHost {
     managed_team_rules: Arc<crate::managed_team_rules::ManagedTeamRulesResolver>,
     cross_user_core: Option<ProductionCrossUserCore>,
     _cross_user_experiment_subscription: Option<StopGateSubscription>,
+    remote_client_paused: Arc<AtomicBool>,
+    _remote_client_pause_subscription: StopGateSubscription,
     mcp_server_tool_settings: Arc<Mutex<McpServerToolSettings>>,
     plugin_variables: PluginVariableStore,
     pending_plugin_variable_writes: BTreeMap<String, PreparedPluginVariableWrite>,
@@ -1362,6 +1364,16 @@ impl AndroidJsonHost {
                 }),
             )
         });
+        let remote_client_paused = Arc::new(AtomicBool::new(
+            experiments.check_feature_gate("sand_client_pause"),
+        ));
+        let remote_client_pause_subscription = {
+            let paused = Arc::clone(&remote_client_paused);
+            experiments.subscribe_gate(
+                "sand_client_pause",
+                Arc::new(move |enabled| paused.store(enabled, Ordering::Release)),
+            )
+        };
         let mcp_server_tool_settings = Arc::new(Mutex::new(
             McpServerToolSettings::open(app_data_dir.join("mcp-server-tool-settings.json"))
                 .unwrap_or_else(|error| panic!("failed to open durable MCP server tool settings: {error}")),
@@ -1543,6 +1555,8 @@ impl AndroidJsonHost {
             managed_team_rules,
             cross_user_core,
             _cross_user_experiment_subscription: cross_user_experiment_subscription,
+            remote_client_paused,
+            _remote_client_pause_subscription: remote_client_pause_subscription,
             mcp_server_tool_settings,
             plugin_variables,
             pending_plugin_variable_writes: BTreeMap::new(),
@@ -1625,6 +1639,9 @@ impl AndroidJsonHost {
             *self.remote_runner.lock().map_err(|_| "remote runner lock poisoned".to_string())? = None;
             return Ok(());
         }
+        if self.remote_client_paused.load(Ordering::Acquire) {
+            return Err("trusted Remote client is paused by sand_client_pause".into());
+        }
         let binding = RemoteDispatchBinding::parse(raw.unwrap())?;
         let current_fence = self.current_turn_account_fence()?;
         if current_fence != binding.account_fence {
@@ -1650,8 +1667,11 @@ impl AndroidJsonHost {
         let current_fence = self.current_turn_account_fence().ok();
         let binding = self.remote_binding.lock().ok().and_then(|binding| binding.clone());
         let runner_ready = self.remote_runner.lock().map(|runner| runner.is_some()).unwrap_or(false);
+        let paused = self.remote_client_paused.load(Ordering::Acquire);
         let ready = binding.as_ref().is_some_and(|binding| {
-            runner_ready && current_fence.as_deref() == Some(binding.account_fence.as_str())
+            !paused
+                && runner_ready
+                && current_fence.as_deref() == Some(binding.account_fence.as_str())
         });
         match binding {
             Some(binding) if ready => json!({
@@ -1666,6 +1686,7 @@ impl AndroidJsonHost {
                 "executors": binding.executors.iter().cloned().collect::<Vec<_>>(),
                 "deviceId": binding.device_id,
                 "accountEpoch": binding.account_epoch,
+                "paused": false,
             }),
             _ => json!({
                 "ready": false,
@@ -1673,6 +1694,7 @@ impl AndroidJsonHost {
                 "executors": [],
                 "deviceId": Value::Null,
                 "accountEpoch": Value::Null,
+                "paused": paused,
             }),
         }
     }
@@ -9141,6 +9163,7 @@ impl AndroidJsonHost {
         let remote_capability_broker = self.capability_broker.clone();
         let remote_binding = Arc::clone(&self.remote_binding);
         let remote_runner = Arc::clone(&self.remote_runner);
+        let remote_client_paused = Arc::clone(&self.remote_client_paused);
         let remote_approvals = self.remote_approvals.clone();
         let remote_user_settings = Arc::clone(&self.user_settings);
         let remote_local_tool_permission_ceiling = match self.mode {
@@ -9468,6 +9491,7 @@ impl AndroidJsonHost {
                         &operation_id_owned,
                         &request_id_owned,
                         Arc::clone(&cancelled),
+                        Arc::clone(&remote_client_paused),
                     )
                 } else {
                     routed_subagent_tools
