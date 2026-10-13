@@ -522,3 +522,75 @@ pub fn start_disk_pressure_watch(deps: DiskPressureWatchDeps) -> DiskPressureWat
         worker: Mutex::new(worker),
     }
 }
+
+
+#[cfg(test)]
+mod android_tests {
+    use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn test_root(label: &str) -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "fabushi-disk-pressure-{label}-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        ))
+    }
+
+    #[test]
+    fn reminder_episode_survives_reopen_and_claim_release_commit_is_idempotent() {
+        let root = test_root("reopen");
+        let first = DiskPressureReminderEpisodes::new(
+            Some(&root),
+            Some(Arc::new(|| "episode-1".to_string())),
+            None,
+        );
+        first.observe_pressure(DiskPressureLevel::Hard, true);
+        first.enroll(["agent-a"]);
+        assert_eq!(first.claim("agent-a", "claim-1").as_deref(), Some("episode-1"));
+        assert_eq!(first.claim("agent-a", "other-claim"), None);
+        first.release("agent-a", "claim-1");
+        assert_eq!(first.claim("agent-a", "claim-2").as_deref(), Some("episode-1"));
+        drop(first);
+
+        let reopened = DiskPressureReminderEpisodes::new(
+            Some(&root),
+            Some(Arc::new(|| "episode-2".to_string())),
+            None,
+        );
+        assert_eq!(reopened.claim("agent-a", "claim-3").as_deref(), Some("episode-1"));
+        assert!(reopened.commit("agent-a", "claim-3"));
+        assert_eq!(reopened.claim("agent-a", "claim-4"), None);
+        reopened.observe_pressure(DiskPressureLevel::Healthy, true);
+        assert_eq!(reopened.claim("agent-a", "claim-5"), None);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn restored_episode_is_not_cleared_by_incomplete_healthy_sample() {
+        let root = test_root("incomplete-healthy");
+        let first = DiskPressureReminderEpisodes::new(
+            Some(&root),
+            Some(Arc::new(|| "episode-1".to_string())),
+            None,
+        );
+        first.observe_pressure(DiskPressureLevel::Soft, true);
+        first.enroll(["agent-a"]);
+        drop(first);
+
+        let reopened = DiskPressureReminderEpisodes::new(
+            Some(&root),
+            Some(Arc::new(|| "episode-2".to_string())),
+            None,
+        );
+        reopened.observe_pressure(DiskPressureLevel::Healthy, false);
+        assert_eq!(reopened.claim("agent-a", "claim-1").as_deref(), Some("episode-1"));
+        reopened.release("agent-a", "claim-1");
+        reopened.observe_pressure(DiskPressureLevel::Soft, true);
+        assert_eq!(reopened.claim("agent-a", "claim-2").as_deref(), Some("episode-1"));
+        let _ = fs::remove_dir_all(root);
+    }
+}
