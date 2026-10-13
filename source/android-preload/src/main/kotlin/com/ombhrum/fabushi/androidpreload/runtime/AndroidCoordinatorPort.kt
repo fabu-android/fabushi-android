@@ -341,6 +341,7 @@ data class AndroidClientSideToolV2Event(
 data class AndroidTranscriptHistoryPage(
     val entries: JSONArray,
     val nextBeforeSeq: Long?,
+    val threadCounts: Map<String, Int> = emptyMap(),
 )
 
 data class AndroidTranscriptThread(
