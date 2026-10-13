@@ -21348,12 +21348,24 @@ mod user_message_received_telemetry_wiring_tests {
     fn duplicate_request_id_never_replays_a_different_or_unsettled_user_turn() {
         let root = tempfile::tempdir().unwrap();
         let mut host = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
-        let first = json!({
-            "text":"first",
-            "agentId":"request-id-agent",
-            "clientNonce":"nonce-a"
-        });
-        host.queue_chat_turn("op-a", "request-id-a", &first, None).unwrap();
+        let account_fence = host.current_turn_account_fence().unwrap();
+        host.transcript
+            .lock()
+            .unwrap()
+            .append_entry(json!({
+                "id":"request-id-a",
+                "kind":"message",
+                "role":"user",
+                "content":"first",
+                "richText":Value::Null,
+                "attachments":[],
+                "operationId":"op-a",
+                "agentId":"request-id-agent",
+                "accountFence":account_fence,
+                "clientNonce":"nonce-a",
+                "timestampMs":1_u64,
+            }))
+            .unwrap();
 
         let collision = json!({
             "text":"second",
@@ -21365,10 +21377,13 @@ mod user_message_received_telemetry_wiring_tests {
             .unwrap_err();
         assert!(error.contains("REQUEST_IDENTITY_MISMATCH"));
 
-        // Simulate a duplicate delivery while the first turn has no visible assistant echo yet.
-        let duplicate = host
-            .queue_chat_turn("op-c", "request-id-a", &first, None);
-        assert!(duplicate.is_ok());
+        let duplicate = json!({
+            "text":"first",
+            "agentId":"request-id-agent",
+            "clientNonce":"nonce-a"
+        });
+        host.queue_chat_turn("op-c", "request-id-a", &duplicate, None)
+            .unwrap();
         let interrupted = host
             .turn_events
             .lock()
@@ -21379,7 +21394,10 @@ mod user_message_received_telemetry_wiring_tests {
                     && event.get("requestId").and_then(Value::as_str) == Some("request-id-a")
                     && event.get("deduped").and_then(Value::as_bool) == Some(true)
             });
-        assert!(interrupted, "same requestId must reconcile instead of starting a second turn");
+        assert!(
+            interrupted,
+            "same requestId must reconcile instead of starting a second turn"
+        );
         assert_eq!(
             host.transcript
                 .lock()
