@@ -9,7 +9,6 @@ import android.net.NetworkCapabilities
 import android.provider.OpenableColumns
 import android.util.Base64
 import android.view.View
-import android.os.StatFs
 import android.os.Debug
 import android.os.Process
 import android.os.SystemClock
@@ -193,9 +192,6 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
     }
     private val computerRebuildMigrationRunning = AtomicBoolean(false)
     private val computerRebuildQueueRunning = AtomicBoolean(false)
-    private val storagePressureExecutor = Executors.newSingleThreadScheduledExecutor { runnable ->
-        Thread(runnable, "fabushi-storage-pressure").apply { isDaemon = true }
-    }
     private val processMetricsExecutor = Executors.newSingleThreadScheduledExecutor { runnable ->
         Thread(runnable, "fabushi-process-metrics").apply { isDaemon = true }
     }
@@ -298,26 +294,6 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
             },
             PROCESS_SESSION_HEARTBEAT_SECONDS,
             PROCESS_SESSION_HEARTBEAT_SECONDS,
-            TimeUnit.SECONDS,
-        )
-        storagePressureExecutor.scheduleWithFixedDelay(
-            {
-                runCatching {
-                    val stats = StatFs(application.filesDir.absolutePath)
-                    val totalBytes = stats.totalBytes
-                    val availableBytes = stats.availableBytes
-                    if (totalBytes > 0L && availableBytes >= 0L && availableBytes <= totalBytes) {
-                        host.request(
-                            "feature.agent.diskPressure.observe",
-                            JSONObject()
-                                .put("totalBytes", totalBytes)
-                                .put("availableBytes", availableBytes),
-                        )
-                    }
-                }
-            },
-            0L,
-            STORAGE_PRESSURE_SAMPLE_SECONDS,
             TimeUnit.SECONDS,
         )
     }
@@ -4446,7 +4422,6 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
         computerRebuildMigrationExecutor.shutdownNow()
         computerRebuildQueueExecutor.shutdownNow()
         remoteComputerReconnectExecutor.shutdownNow()
-        storagePressureExecutor.shutdownNow()
         processMetricsExecutor.shutdownNow()
         processSessionHeartbeatExecutor.shutdownNow()
         computerRebuildTelemetryExecutor.shutdownNow()
@@ -4471,7 +4446,6 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
         }
 
     companion object {
-        private const val STORAGE_PRESSURE_SAMPLE_SECONDS = 60L
         private const val PROCESS_METRICS_INITIAL_DELAY_SECONDS = 10L
         private const val PROCESS_METRICS_SAMPLE_SECONDS = 10L
         private const val PROCESS_SESSION_HEARTBEAT_SECONDS = 60L
