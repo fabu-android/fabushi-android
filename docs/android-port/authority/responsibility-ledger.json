@@ -5912,6 +5912,71 @@
       "notes": "Structured-log persistence core is implemented and production-wired for sanitized edge failures, but the umbrella remains mapped/not-verified until backend delivery, lifecycle/unclean-exit/quit-flush and remaining producer families are independently closed."
     },
     {
+      "responsibility_id": "PRODUCT-ANALYTICS-ANDROID-001",
+      "domain": "telemetry-product-analytics",
+      "desktop_sources": [
+        {
+          "path": "source/host/src/extensions/telemetry/analytics_service.rs",
+          "blob_sha": "7c9d9506fd98a10ca93254dc1b218a46a0d17515",
+          "symbols": [
+            "ProductionAnalyticsRuntime",
+            "AutomationRunAnalyticsTelemetry",
+            "product_analytics_event"
+          ]
+        }
+      ],
+      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "responsibility": "Send only explicitly allowlisted product analytics through the authenticated Sand analytics endpoint with feature-gate/opt-out semantics, bounded buffering, account fencing, privacy headers, scalar property typing, daily activity de-duplication and shutdown flush without making analytics failure canonical business state.",
+      "source_owner": "Desktop ProductionAnalyticsRuntime + HostProductAnalytics/AutomationRunAnalyticsTelemetry",
+      "direct_callers": [
+        "AndroidJsonHost product telemetry/activity bridge",
+        "automation terminal telemetry projection"
+      ],
+      "downstream_dependencies": [
+        "CursorDashboardMcpAuthBackend canonical credentials/privacy mode",
+        "HostExperimentsExtension sand_product_analytics gate"
+      ],
+      "state_owner": "Rust AndroidProductAnalyticsRuntime; no Compose/Kotlin analytics queue owner",
+      "persistent_state": [
+        "none: analytics queue is bounded process-local observational state; canonical local diagnostics remain the structured-log spool"
+      ],
+      "protocol_wire_contract": [
+        "POST /aiserver.v1.AnalyticsService/TrackEvents",
+        "bearer auth + cursor checksum + client-version + namespace + x-ghost-mode",
+        "eventData supports string/bool/number scalars"
+      ],
+      "visible_effect": "Product analytics can report permitted activity/automation outcomes without exposing local diagnostic metadata or blocking product actions when analytics is unavailable.",
+      "failure_behavior": [
+        "network/backend failure retains a bounded runtime buffer",
+        "analytics errors never mutate/replay business state",
+        "explicit privacy opt-out is fail-closed and cannot be re-enabled by a later gate callback"
+      ],
+      "cancellation_behavior": "shutdown sends Stop and joins worker for a final bounded flush when enabled",
+      "retry_semantics": "failed batches remain bounded and retry on later flush opportunities; unknown analytics delivery never retries a user side effect",
+      "idempotency_semantics": "daily active is de-duplicated per account-scope/reason/day; account switch fences and drops deferred events from the prior account scope",
+      "process_death_recovery": "analytics queue itself is observational/non-canonical and is not replayed after process death; canonical user effects remain elsewhere",
+      "account_fencing": "queued analytics is scoped by current account fence and old-scope deferred events are discarded on scope change",
+      "security_boundary": "credentials/machine-id/privacy mode stay inside CursorDashboardMcpAuthBackend; analytics receives only allowlisted scalar event properties and never exposes tokens to JNI/Compose",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "source/host/src/extensions/telemetry/analytics_service.rs",
+        "source/host/src/android_json_runtime.rs",
+        "source/host/src/mcp_auth/dashboard_mcp_auth_backend.rs"
+      ],
+      "android_owner": "Rust Host product-analytics runtime + canonical dashboard transport owner",
+      "platform_delta": "Android Host is app-local rather than Desktop box-hosted; product identity uses the existing Android Sand backend configuration and reports host_in_box=false while retaining the Desktop event schema/gate/privacy behavior.",
+      "implementation_status": "implemented",
+      "production_wiring": "Production AndroidJsonHost creates AndroidProductAnalyticsRuntime from the same dashboard backend configuration/transport owner; sand.send marks active, sand.automation.run uses the Desktop field allowlist, and all other structured telemetry remains local-only.",
+      "unit_test": "analytics_service tests cover deferred gate flush, account-switch fencing, bounded failed delivery, automation field allowlist/scalar types, and explicit privacy opt-out; exact-head GitHub Actions pending",
+      "contract_test": "CursorDashboardMcpAuthBackend fixed TrackEvents endpoint/header owner plus analytics payload encoder; exact-head Rust gate pending",
+      "integration_test": "required: authenticated TrackEvents delivery and account-switch/privacy-mode behavior on descendant exact head",
+      "packaged_test": "required on final signed APK/AAB",
+      "device_test": "required on protected device acceptance",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Implementation is wired but deliberately not marked verified until a stable descendant exact HEAD passes Rust/architecture/full/package/device gates. 7a9b6ace and 3df1c466 are implementation ancestors, not final-head acceptance evidence."
+    },
+    {
       "responsibility_id": "TELEMETRY-STARTUP-ANDROID-001",
       "domain": "telemetry-startup-lifecycle",
       "desktop_sources": [
