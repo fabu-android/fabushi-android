@@ -50,6 +50,10 @@ use crate::mcp_auth::{
     McpToolExecutionBackendResult, EXECUTE_TOOL_TIMEOUT_MS,
     SandPrivacyMode as BackendSandPrivacyMode,
 };
+use crate::extensions::action_audit::action_audit_backend::create_sand_audit_batch_sender;
+use crate::extensions::action_audit::action_audit_service::{
+    SandActionAuditor, ACTION_AUDIT_FLUSH_INTERVAL_MS,
+};
 use crate::extensions::telemetry::agent_error_telemetry::{
     agent_error_telemetry, AgentErrorReport,
 };
@@ -1071,6 +1075,7 @@ pub struct AndroidJsonHost {
     mcp_auth_watches: Arc<Mutex<AndroidMcpAuthWatchManager>>,
     mcp_auth_owner: Option<AndroidMcpAuthWatchOwner>,
     mcp_dashboard_backend: Option<Arc<CursorDashboardMcpAuthBackend>>,
+    action_audit: Option<Arc<SandActionAuditor>>,
     product_analytics: Option<Arc<AndroidProductAnalyticsRuntime>>,
     managed_skills: Option<Arc<SandManagedSkillsService>>,
     managed_team_rules: Arc<crate::managed_team_rules::ManagedTeamRulesResolver>,
@@ -1501,6 +1506,25 @@ impl AndroidJsonHost {
         } else {
             (None, None)
         };
+        let action_audit = if mode == AndroidHostMode::Production {
+            mcp_dashboard_backend.as_ref().map(|dashboard| {
+                let audit_root = app_data_dir.join("action-audit");
+                let agent_root = audit_root.join("agents");
+                let experiments = Arc::clone(&experiments);
+                Arc::new(SandActionAuditor::new(
+                    audit_root.join("audit-outbox.json"),
+                    Arc::new(move |agent_id| {
+                        let digest = crate::sha256::sha256_hex(agent_id.as_bytes());
+                        agent_root.join(digest).join("audit.jsonl")
+                    }),
+                    Arc::new(move || experiments.check_feature_gate("sand_action_audit_logs")),
+                    create_sand_audit_batch_sender(Arc::clone(dashboard)),
+                    Duration::from_millis(ACTION_AUDIT_FLUSH_INTERVAL_MS),
+                ))
+            })
+        } else {
+            None
+        };
         let product_analytics = if mode == AndroidHostMode::Production {
             mcp_dashboard_backend.as_ref().map(|dashboard| {
                 let backend = Arc::clone(dashboard);
@@ -1798,6 +1822,7 @@ impl AndroidJsonHost {
             mcp_auth_watches,
             mcp_auth_owner,
             mcp_dashboard_backend,
+            action_audit,
             product_analytics,
             managed_skills,
             managed_team_rules,
