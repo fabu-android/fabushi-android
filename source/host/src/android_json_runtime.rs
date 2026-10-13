@@ -892,6 +892,67 @@ pub struct AndroidJsonHost {
     webauthn_provider_queues: BTreeMap<String, VecDeque<WebAuthnRequestFrame>>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum AndroidApprovalDecision {
+    AllowOnce,
+    Deny,
+    Always,
+    Never,
+}
+
+impl AndroidApprovalDecision {
+    fn parse(value: &str) -> Result<Self, String> {
+        match value.trim() {
+            "allow-once" => Ok(Self::AllowOnce),
+            "deny" => Ok(Self::Deny),
+            "always" => Ok(Self::Always),
+            "never" => Ok(Self::Never),
+            _ => Err("approval decision must be allow-once, deny, always, or never".into()),
+        }
+    }
+
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::AllowOnce => "allow-once",
+            Self::Deny => "deny",
+            Self::Always => "always",
+            Self::Never => "never",
+        }
+    }
+
+    fn approved(self) -> bool {
+        matches!(self, Self::AllowOnce | Self::Always)
+    }
+
+    fn is_standing_policy(self) -> bool {
+        matches!(self, Self::Always | Self::Never)
+    }
+}
+
+fn parse_android_approval_resolution(
+    params: &Value,
+) -> Result<(String, AndroidApprovalDecision), String> {
+    let payload = params
+        .get("resolution")
+        .filter(|value| value.is_object())
+        .unwrap_or(params);
+    let approval_id = required_string(payload, "approvalId")?.to_string();
+    let decision = if let Some(decision) = payload.get("decision").and_then(Value::as_str) {
+        AndroidApprovalDecision::parse(decision)?
+    } else {
+        let approved = payload
+            .get("approved")
+            .and_then(Value::as_bool)
+            .ok_or("approval resolution requires decision or approved")?;
+        if approved {
+            AndroidApprovalDecision::AllowOnce
+        } else {
+            AndroidApprovalDecision::Deny
+        }
+    };
+    Ok((approval_id, decision))
+}
+
 impl AndroidJsonHost {
     pub fn new(app_data_dir: impl Into<PathBuf>, mode: AndroidHostMode) -> Self {
         Self::new_with_account_session(app_data_dir, mode, None)
@@ -8853,12 +8914,45 @@ impl AndroidJsonHost {
     }
 
     fn feature_approval_resolve(&mut self, params: &Value) -> Result<Value, String> {
-        let approval_id = required_string(params, "approvalId")?.to_string();
-        let approved = params
-            .get("approved")
-            .and_then(Value::as_bool)
-            .ok_or("approved is required")?;
+        let (approval_id, decision) = parse_android_approval_resolution(params)?;
         let account_fence = self.current_turn_account_fence()?;
+        let remote_dispatch = self
+            .remote_approvals
+            .is_pending_for_account(&approval_id, &account_fence)?;
+        if decision.is_standing_policy() && !remote_dispatch {
+            return Err(
+                "always/never approval decisions are limited to Remote local-computer actions"
+                    .into(),
+            );
+        }
+
+        let mut approved = decision.approved();
+        let mut effective_local_tool_permission = None;
+        if remote_dispatch && decision.is_standing_policy() {
+            self.sync_local_tool_permission_ceiling()?;
+            let requested = match decision {
+                AndroidApprovalDecision::Always => "always",
+                AndroidApprovalDecision::Never => "never",
+                _ => unreachable!("standing policy checked above"),
+            };
+            let mut settings = self
+                .user_settings
+                .lock()
+                .map_err(|_| "Android user settings lock poisoned".to_string())?;
+            settings
+                .set_local_tool_permission(requested)
+                .map_err(|error| {
+                    format!("failed to persist Android local tool permission: {error}")
+                })?;
+            let effective = settings.local_tool_permission();
+            effective_local_tool_permission = Some(effective.as_str().to_string());
+            approved = match decision {
+                AndroidApprovalDecision::Always => effective != LocalToolPermission::Never,
+                AndroidApprovalDecision::Never => false,
+                _ => unreachable!("standing policy checked above"),
+            };
+        }
+
         if self.subagent_review_approvals.contains(&approval_id) {
             let resolved = self.capability_broker.resolve_approval(
                 &approval_id,
@@ -8880,11 +8974,13 @@ impl AndroidJsonHost {
                 "operationId":resolved.operation_id,
                 "capability":resolved.capability,
                 "approved":approved,
+                "decision":decision.as_str(),
                 "autoReview":true,
             }));
             return Ok(json!({
                 "status":"resolved",
                 "approved":approved,
+                "decision":decision.as_str(),
                 "operationId":resolved.operation_id,
                 "capability":resolved.capability,
                 "execution": if approved { "review-unlocked" } else { "denied" },
@@ -8904,15 +9000,19 @@ impl AndroidJsonHost {
                 "parentOperationId":resolution.parent_operation_id,
                 "capability":resolution.capability,
                 "approved":approved,
+                "decision":decision.as_str(),
                 "remoteDispatch":true,
+                "effectiveLocalToolPermission":effective_local_tool_permission,
             }));
             return Ok(json!({
                 "status":"resolved",
                 "approved":approved,
+                "decision":decision.as_str(),
                 "operationId":resolution.remote_operation_id,
                 "parentOperationId":resolution.parent_operation_id,
                 "capability":resolution.capability,
                 "execution": if approved { "dispatch-unlocked" } else { "denied" },
+                "effectiveLocalToolPermission":effective_local_tool_permission,
             }));
         }
         let operation_id = self
@@ -8940,6 +9040,7 @@ impl AndroidJsonHost {
             "operationId":operation_id,
             "capability":resolved.capability,
             "approved":approved,
+            "decision":decision.as_str(),
         }));
         self.active_operations.remove(&operation_id);
         if approved {
@@ -8952,6 +9053,7 @@ impl AndroidJsonHost {
             Ok(json!({
                 "status":"resolved",
                 "approved":true,
+                "decision":decision.as_str(),
                 "operationId":operation_id,
                 "capability":resolved.capability,
                 "execution":"authorized"
@@ -8965,6 +9067,7 @@ impl AndroidJsonHost {
             Ok(json!({
                 "status":"resolved",
                 "approved":false,
+                "decision":decision.as_str(),
                 "operationId":operation_id,
                 "capability":resolved.capability,
                 "execution":"denied"
@@ -13473,6 +13576,37 @@ mod process_metrics_settings_dispatch_tests {
 #[cfg(test)]
 mod local_tool_permission_dispatch_tests {
     use super::*;
+
+    #[test]
+    fn approval_resolution_accepts_four_way_and_legacy_shapes() {
+        assert_eq!(
+            parse_android_approval_resolution(&json!({
+                "approvalId":"approval-a",
+                "decision":"always"
+            })).unwrap(),
+            ("approval-a".into(), AndroidApprovalDecision::Always),
+        );
+        assert_eq!(
+            parse_android_approval_resolution(&json!({
+                "resolution":{
+                    "approvalId":"approval-b",
+                    "decision":"allow-once"
+                }
+            })).unwrap(),
+            ("approval-b".into(), AndroidApprovalDecision::AllowOnce),
+        );
+        assert_eq!(
+            parse_android_approval_resolution(&json!({
+                "approvalId":"approval-c",
+                "approved":false
+            })).unwrap(),
+            ("approval-c".into(), AndroidApprovalDecision::Deny),
+        );
+        assert!(parse_android_approval_resolution(&json!({
+            "approvalId":"approval-d",
+            "decision":"forever"
+        })).is_err());
+    }
 
     #[test]
     fn local_tool_permission_is_durable_and_invalid_values_do_not_mutate() {

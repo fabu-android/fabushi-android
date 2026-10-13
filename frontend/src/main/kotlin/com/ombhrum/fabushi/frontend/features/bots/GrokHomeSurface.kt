@@ -135,7 +135,7 @@ internal fun GrokHomeSurface(
     onRespondToWidget: (String, String) -> Unit,
     onDismissWidget: (String) -> Unit,
     onStop: () -> Unit,
-    onResolveApproval: (Boolean) -> Unit,
+    onResolveApproval: (MobileApprovalDecision) -> Unit,
     onMessageTargetConsumed: (String) -> Unit,
     shortcutNewAgentNonce: Int = 0,
     shortcutFocusPromptNonce: Int = 0,

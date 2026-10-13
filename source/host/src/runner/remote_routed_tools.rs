@@ -285,6 +285,26 @@ pub(crate) struct RemoteApprovalRegistry {
 }
 
 impl RemoteApprovalRegistry {
+    pub(crate) fn is_pending_for_account(
+        &self,
+        approval_id: &str,
+        current_account_fence: &str,
+    ) -> Result<bool, String> {
+        let wait = self
+            .waits
+            .lock()
+            .map_err(|_| "remote approval registry lock poisoned".to_string())?
+            .get(approval_id)
+            .cloned();
+        let Some(wait) = wait else {
+            return Ok(false);
+        };
+        if wait.account_fence != current_account_fence {
+            return Err("remote approval callback is fenced by account identity".into());
+        }
+        Ok(true)
+    }
+
     pub(crate) fn resolve_from_ui(
         &self,
         broker: &SharedCapabilityBroker,

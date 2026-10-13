@@ -61,12 +61,20 @@ data class MobileBotSummaryAndroid(
     val updatedAt: Long = 0L,
 ) : SidebarOrderAgent
 
+enum class MobileApprovalDecision(val wireValue: String) {
+    ALLOW_ONCE("allow-once"),
+    DENY("deny"),
+    ALWAYS("always"),
+    NEVER("never"),
+}
+
 data class PendingAgentApproval(
     val approvalId: String,
     val operationId: String,
     val capability: String,
     val reason: String,
     val expiresAtMs: Long?,
+    val remoteDispatch: Boolean = false,
     val resolving: Boolean = false,
 )
 
@@ -90,6 +98,7 @@ internal fun projectPendingAgentApproval(
         capability = event.optString("capability").ifBlank { "agent.subagent.review" },
         reason = event.optString("reason").ifBlank { "This Agent action requires approval." },
         expiresAtMs = expiresAtMs,
+        remoteDispatch = event.optBoolean("remoteDispatch", false),
     )
 }
 
@@ -3118,9 +3127,13 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
         return structured?.toString(2) ?: result.toString(2)
     }
 
-    fun resolveApproval(approved: Boolean) {
+    fun resolveApproval(decision: MobileApprovalDecision) {
         val pending = mutableState.value.pendingApproval ?: return
         if (pending.resolving) return
+        if (!pending.remoteDispatch && decision in setOf(MobileApprovalDecision.ALWAYS, MobileApprovalDecision.NEVER)) {
+            commitState(mutableState.value.copy(error = "Standing permission applies only to Remote computer actions."))
+            return
+        }
         commitState(mutableState.value.copy(pendingApproval = pending.copy(resolving = true), error = null))
         viewModelScope.launch {
             runCatching {
@@ -3128,7 +3141,7 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
                     coordinator.featureApprovalResolve(
                         JSONObject()
                             .put("approvalId", pending.approvalId)
-                            .put("approved", approved),
+                            .put("decision", decision.wireValue),
                     )
                 }
             }.onSuccess {

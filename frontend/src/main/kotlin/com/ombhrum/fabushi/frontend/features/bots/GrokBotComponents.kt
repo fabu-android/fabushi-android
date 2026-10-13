@@ -366,7 +366,7 @@ internal fun GrokBotChatAndroid(
     onRespondToWidget: (String, String) -> Unit,
     onDismissWidget: (String) -> Unit,
     onStop: () -> Unit,
-    onResolveApproval: (Boolean) -> Unit,
+    onResolveApproval: (MobileApprovalDecision) -> Unit,
     onMessageTargetConsumed: (String) -> Unit,
     shortcutFocusPromptNonce: Int = 0,
     shortcutFindInChatNonce: Int = 0,
@@ -481,9 +481,21 @@ internal fun GrokBotChatAndroid(
                 if (state.busy) onStop() else if (interactionReady) onSend()
             },
         )
-        state.pendingApproval?.takeIf { !it.resolving }?.let {
-            actions["mobile-bot-approval-approve"] = FabushiAppAgentSurface.Action(setOf("invoke")) { onResolveApproval(true) }
-            actions["mobile-bot-approval-deny"] = FabushiAppAgentSurface.Action(setOf("invoke")) { onResolveApproval(false) }
+        state.pendingApproval?.takeIf { !it.resolving }?.let { approval ->
+            actions["mobile-bot-approval-approve"] = FabushiAppAgentSurface.Action(setOf("invoke")) {
+                onResolveApproval(MobileApprovalDecision.ALLOW_ONCE)
+            }
+            actions["mobile-bot-approval-deny"] = FabushiAppAgentSurface.Action(setOf("invoke")) {
+                onResolveApproval(MobileApprovalDecision.DENY)
+            }
+            if (approval.remoteDispatch) {
+                actions["mobile-bot-approval-always"] = FabushiAppAgentSurface.Action(setOf("invoke")) {
+                    onResolveApproval(MobileApprovalDecision.ALWAYS)
+                }
+                actions["mobile-bot-approval-never"] = FabushiAppAgentSurface.Action(setOf("invoke")) {
+                    onResolveApproval(MobileApprovalDecision.NEVER)
+                }
+            }
         }
         appAgentSurface.publish(screen = "bot-chat", elements = elements, actions = actions)
     }
@@ -791,8 +803,30 @@ internal fun GrokBotChatAndroid(
                         Text(approval.reason, color = GrokMobileMuted, fontSize = 12.sp)
                         Text(approval.capability, color = GrokMobileMuted, fontSize = 11.sp)
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Button(onClick = { onResolveApproval(false) }, enabled = !approval.resolving, modifier = Modifier.testTag("mobile-bot-approval-deny")) { Text("Deny") }
-                            Button(onClick = { onResolveApproval(true) }, enabled = !approval.resolving, modifier = Modifier.testTag("mobile-bot-approval-approve")) { Text(if (approval.resolving) "Resolving…" else "Approve") }
+                            Button(
+                                onClick = { onResolveApproval(MobileApprovalDecision.DENY) },
+                                enabled = !approval.resolving,
+                                modifier = Modifier.testTag("mobile-bot-approval-deny"),
+                            ) { Text("Deny") }
+                            Button(
+                                onClick = { onResolveApproval(MobileApprovalDecision.ALLOW_ONCE) },
+                                enabled = !approval.resolving,
+                                modifier = Modifier.testTag("mobile-bot-approval-approve"),
+                            ) { Text(if (approval.resolving) "Resolving…" else "Allow once") }
+                        }
+                        if (approval.remoteDispatch) {
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Button(
+                                    onClick = { onResolveApproval(MobileApprovalDecision.ALWAYS) },
+                                    enabled = !approval.resolving,
+                                    modifier = Modifier.testTag("mobile-bot-approval-always"),
+                                ) { Text("Always allow") }
+                                Button(
+                                    onClick = { onResolveApproval(MobileApprovalDecision.NEVER) },
+                                    enabled = !approval.resolving,
+                                    modifier = Modifier.testTag("mobile-bot-approval-never"),
+                                ) { Text("Never allow") }
+                            }
                         }
                     }
                 }
