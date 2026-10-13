@@ -18272,6 +18272,76 @@
       "artifact": null,
       "verification_status": "not-verified",
       "notes": "Deliberately mapped, not implemented. Next work should wire canonical send/queue/ack/pending-wake owners to these pure mappers and the Host structured-log sink."
+    },
+    {
+      "responsibility_id": "OBSERVABILITY-TURN-INTERRUPT-001",
+      "domain": "observability-turn-lifecycle",
+      "desktop_sources": [
+        {
+          "path": "source/host/src/extensions/telemetry/turn_telemetry_mappers.rs",
+          "blob_sha": "f94320a65ed2417bbfdb5bde49ec95d94ae95d4c",
+          "symbols": [
+            "TurnInterruptFields",
+            "turn_interrupt_telemetry",
+            "TURN_INTERRUPT_EVENT"
+          ]
+        }
+      ],
+      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "responsibility": "Emit Desktop-compatible sand.turn.interrupt telemetry only for a canonical Agent turn interruption, with the durable conversation identity plus truthful pre-settlement active/in-flight state, without allowing observability failure to alter cancellation truth.",
+      "source_owner": "Desktop turn telemetry mapper + turn lifecycle producer",
+      "direct_callers": [
+        "AndroidJsonHost::cancel_operation",
+        "AndroidJsonHost::feature_interrupt"
+      ],
+      "downstream_dependencies": [
+        "DurableTurnJournal",
+        "AndroidStructuredLogSpool",
+        "CursorDashboardMcpAuthBackend SubmitLogs shipper"
+      ],
+      "state_owner": "DurableTurnJournal remains canonical for turn identity/state; telemetry owns no canonical run state.",
+      "persistent_state": [
+        "turn journal running/cancelled state",
+        "durable structured telemetry spool"
+      ],
+      "protocol_wire_contract": [
+        "event=sand.turn.interrupt",
+        "conversation_id",
+        "reason",
+        "had_active_run",
+        "was_in_flight"
+      ],
+      "visible_effect": "No direct UI effect; production diagnostics preserve truthful user-initiated turn interruption semantics across Android lifecycle boundaries.",
+      "failure_behavior": [
+        "non-turn operations emit no fabricated turn telemetry",
+        "structured telemetry failure is diagnostic-only",
+        "canonical cancellation completes independently of telemetry persistence"
+      ],
+      "cancellation_behavior": "The cancellation path settles the canonical turn first; telemetry observes the completed cancellation and cannot retry or replay the cancelled turn.",
+      "retry_semantics": "Telemetry delivery follows the durable structured-log shipper; cancellation itself is not retried by the telemetry path.",
+      "idempotency_semantics": "Turn identity comes from durable operation lookup; the telemetry mapper has no side effect on turn state.",
+      "process_death_recovery": "Durable turn journal remains the source of truth; unsent telemetry remains in the structured-log spill and may ship after restart.",
+      "account_fencing": "The turn journal record carries account_fence and the structured shipper is account-fenced; stale/non-turn operations are not projected as turn interrupts.",
+      "security_boundary": "No prompt/error body is logged; the event carries bounded turn identity/reason booleans only.",
+      "android_disposition": "direct-port",
+      "android_target": [
+        "source/host/src/extensions/telemetry/turn_telemetry_mappers.rs",
+        "source/host/src/runner/durable_turn_journal.rs",
+        "source/host/src/android_structured_log_spill.rs",
+        "source/host/src/android_json_runtime.rs"
+      ],
+      "android_owner": "Rust Host canonical turn journal + diagnostic structured telemetry boundary",
+      "platform_delta": "Electron/Node producer wiring is replaced by AndroidJsonHost typed Host lifecycle wiring; mapper contract remains byte-for-byte Rust-to-Rust ported.",
+      "implementation_status": "implemented",
+      "production_wiring": "07a02616b9968d39d5689284b3f2886fd709b9ef adds canonical operation lookup; e954c109de11bf25a540673edcdf6799558eb900 admits Desktop turn telemetry events to the durable spool; d1afaa1f254fb7d92e2827b5e0c13f2b99688d4b wires cancel_operation to the mapper after canonical cancellation settlement.",
+      "unit_test": "durable_turn_journal::operation_lookup_returns_canonical_running_turn_context; AndroidStructuredLogSpool::spill_accepts_desktop_turn_telemetry_contracts; turn_interrupt_telemetry_wiring_tests::{cancelling_running_turn_persists_interrupt_telemetry_after_canonical_settlement,cancelling_non_turn_operation_does_not_fabricate_turn_telemetry}.",
+      "contract_test": "Desktop mapper is exact blob match f94320a65ed2417bbfdb5bde49ec95d94ae95d4c; exact-head Rust/architecture CI pending.",
+      "integration_test": "AndroidJsonHost cancellation integration test persists sand.turn.interrupt from a durable running turn and rejects generic non-turn projection; exact-head Actions pending.",
+      "packaged_test": "required on final exact-head APK/AAB",
+      "device_test": "required on protected device acceptance with an in-flight Agent turn interruption",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Implemented source + production wiring. Do not mark verified until a descendant exact HEAD passes Rust/architecture/full CI and packaged/device evidence."
     }
   ],
   "traceability": {
