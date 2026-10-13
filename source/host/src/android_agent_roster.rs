@@ -23,6 +23,14 @@ pub struct AndroidAgentRecord {
     pub title: Option<String>,
     #[serde(default)]
     pub notify_on_updates_enabled: bool,
+    #[serde(default = "default_agent_origin")]
+    pub origin: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub purpose: Option<String>,
+    #[serde(default)]
+    pub introduction_pending: bool,
+    #[serde(default)]
+    pub created_at: u64,
     #[serde(default)]
     pub is_group: bool,
     #[serde(default)]
@@ -58,6 +66,10 @@ impl AndroidAgentRecord {
             "description": self.description,
             "title": self.title,
             "notifyOnUpdatesEnabled": self.notify_on_updates_enabled,
+            "origin": self.origin,
+            "purpose": self.purpose,
+            "introductionPending": self.introduction_pending,
+            "createdAt": self.created_at,
             "isGroup": self.is_group,
             "memberIds": self.member_ids,
             "isHiddenFromSidebar": self.is_hidden_from_sidebar,
@@ -217,21 +229,40 @@ impl AndroidAgentRoster {
         avatar_shape: Option<&Value>,
         avatar_color: Option<&Value>,
     ) -> io::Result<AndroidAgentRecord> {
+        self.create_materialized_with_persona(name, description, avatar_shape, avatar_color, "user", None)
+    }
+
+    pub fn create_materialized_with_persona(
+        &mut self,
+        name: &str,
+        description: &str,
+        avatar_shape: Option<&Value>,
+        avatar_color: Option<&Value>,
+        origin: &str,
+        purpose: Option<&str>,
+    ) -> io::Result<AndroidAgentRecord> {
         ensure_agent_capacity(&self.state)?;
         let name = normalize_name(name)?;
         let description = normalize_description(description);
+        let origin = normalize_agent_origin(origin);
+        let purpose = normalize_agent_purpose(purpose)?;
         let avatar_shape = parse_avatar_shape(avatar_shape)
             .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error))?;
         let avatar_color = parse_avatar_color(avatar_color)
             .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error))?;
         let mut next = self.state.clone();
         next.next_id = next.next_id.saturating_add(1);
+        let created_at = now_ms();
         let record = AndroidAgentRecord {
             id: format!("agent-{:08}", next.next_id),
             name,
             description,
             title: None,
             notify_on_updates_enabled: true,
+            origin,
+            purpose,
+            introduction_pending: true,
+            created_at,
             is_group: false,
             member_ids: Vec::new(),
             is_hidden_from_sidebar: false,
@@ -251,6 +282,19 @@ impl AndroidAgentRoster {
         Ok(record)
     }
 
+    pub fn find_by_purpose(&self, purpose: &str) -> Option<AndroidAgentRecord> {
+        let purpose = normalize_agent_purpose(Some(purpose)).ok().flatten()?;
+        self.state.agents.iter()
+            .find(|agent| !agent.is_group && agent.purpose.as_deref() == Some(purpose.as_str()))
+            .cloned()
+    }
+
+    pub fn set_introduction_pending(&mut self, id: &str, pending: bool) -> io::Result<AndroidAgentRecord> {
+        self.mutate_agent(id, |agent| {
+            if !agent.is_group { agent.introduction_pending = pending; }
+        })
+    }
+
     pub fn create_group(
         &mut self,
         name: &str,
@@ -268,6 +312,10 @@ impl AndroidAgentRoster {
             description,
             title: None,
             notify_on_updates_enabled: false,
+            origin: default_agent_origin(),
+            purpose: None,
+            introduction_pending: false,
+            created_at: now_ms(),
             is_group: true,
             member_ids: members,
             is_hidden_from_sidebar: false,
@@ -344,6 +392,10 @@ impl AndroidAgentRoster {
             description: normalized_description,
             title: None,
             notify_on_updates_enabled: true,
+            origin: default_agent_origin(),
+            purpose: None,
+            introduction_pending: true,
+            created_at: now_ms(),
             is_group: false,
             member_ids: Vec::new(),
             is_hidden_from_sidebar: false,
@@ -565,6 +617,10 @@ impl AndroidAgentRoster {
                     description: source.description,
                     title: source.title,
                     notify_on_updates_enabled: source.notify_on_updates_enabled,
+                    origin: default_agent_origin(),
+                    purpose: None,
+                    introduction_pending: !source.is_group,
+                    created_at: now_ms(),
                     is_group: source.is_group,
                     member_ids: source.member_ids,
                     is_hidden_from_sidebar: false,
@@ -809,6 +865,10 @@ impl AndroidAgentRoster {
             description: source.description,
             title: source.title,
             notify_on_updates_enabled: source.notify_on_updates_enabled,
+            origin: default_agent_origin(),
+            purpose: None,
+            introduction_pending: !source.is_group,
+            created_at: now_ms(),
             is_group: source.is_group,
             member_ids: source.member_ids,
             is_hidden_from_sidebar: false,
@@ -1002,6 +1062,11 @@ fn normalize_state(state: &mut AndroidAgentRosterFile) {
         .collect::<BTreeSet<_>>();
     for agent in &mut state.agents {
         agent.is_pinned = pinned.contains(&agent.id);
+        if agent.origin != "dev" { agent.origin = default_agent_origin(); }
+        if agent.created_at == 0 { agent.created_at = agent.updated_at; }
+        if agent.purpose.as_deref().is_some_and(|value| !valid_agent_purpose(value)) {
+            agent.purpose = None;
+        }
         if agent.is_group {
             let mut member_seen = BTreeSet::new();
             agent.member_ids.retain(|member_id| {
@@ -1060,6 +1125,27 @@ fn ensure_agent_capacity(state: &AndroidAgentRosterFile) -> io::Result<()> {
         ));
     }
     Ok(())
+}
+
+fn default_agent_origin() -> String { "user".to_string() }
+
+fn normalize_agent_origin(value: &str) -> String {
+    if value.trim() == "dev" { "dev".to_string() } else { default_agent_origin() }
+}
+
+fn valid_agent_purpose(value: &str) -> bool {
+    let mut chars = value.chars();
+    let Some(first) = chars.next() else { return false; };
+    first.is_ascii_lowercase()
+        && chars.all(|ch| ch.is_ascii_lowercase() || ch.is_ascii_digit() || ch == '_' || ch == '-')
+}
+
+fn normalize_agent_purpose(value: Option<&str>) -> io::Result<Option<String>> {
+    let Some(value) = value.map(str::trim).filter(|value| !value.is_empty()) else { return Ok(None); };
+    if !valid_agent_purpose(value) {
+        return Err(io::Error::new(io::ErrorKind::InvalidInput, "agent purpose is invalid"));
+    }
+    Ok(Some(value.to_string()))
 }
 
 fn normalize_name(value: &str) -> io::Result<String> {
@@ -1384,6 +1470,10 @@ mod tests {
         let mut roster = AndroidAgentRoster::open(&path).unwrap();
         let created = roster.create("Agent", "description").unwrap();
         assert!(created.notify_on_updates_enabled);
+        assert_eq!(created.origin, "user");
+        assert!(created.purpose.is_none());
+        assert!(created.introduction_pending);
+        assert!(created.created_at > 0);
         let tool_created = roster
             .create_for_tool_call(
                 "session:account-a",
@@ -1394,6 +1484,33 @@ mod tests {
             )
             .unwrap();
         assert!(tool_created.notify_on_updates_enabled);
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn materialization_metadata_is_durable_and_special_purpose_is_not_duplicated() {
+        let path = temp_path("materialization-metadata");
+        let mut roster = AndroidAgentRoster::open(&path).unwrap();
+        let special = roster
+            .create_materialized_with_persona("Plugin Auth", "", None, None, "dev", Some("plugin-auth"))
+            .unwrap();
+        assert_eq!(special.origin, "dev");
+        assert_eq!(special.purpose.as_deref(), Some("plugin-auth"));
+        assert!(special.introduction_pending);
+        roster.set_introduction_pending(&special.id, false).unwrap();
+        drop(roster);
+
+        let mut reopened = AndroidAgentRoster::open(&path).unwrap();
+        let persisted = reopened.find_by_purpose("plugin-auth").unwrap();
+        assert_eq!(persisted.id, special.id);
+        assert!(!persisted.introduction_pending);
+        let duplicate = reopened.duplicate(&special.id).unwrap();
+        assert_eq!(duplicate.origin, "user");
+        assert!(duplicate.purpose.is_none());
+        assert!(duplicate.introduction_pending);
+        assert!(reopened
+            .create_materialized_with_persona("Bad", "", None, None, "user", Some("Plugin Auth"))
+            .is_err());
         let _ = fs::remove_file(path);
     }
 
