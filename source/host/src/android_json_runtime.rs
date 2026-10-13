@@ -13363,6 +13363,15 @@ fn push_turn_event(events: &Arc<Mutex<VecDeque<Value>>>, event: Value) {
 
 impl Drop for AndroidJsonHost {
     fn drop(&mut self) {
+        // Final telemetry handoff is best-effort but durable: enqueue the current account/session
+        // buffers and kick the existing account-fenced shippers before releasing the Host.
+        // The shippers own Arc-backed state, so nativeDestroy never blocks the Android lifecycle
+        // on network I/O. Any batch without a backend receipt remains in the durable spill and is
+        // recovered on the next cold start rather than being treated as "not sent".
+        self.sync_structured_log_account_slot();
+        self.schedule_structured_log_ship();
+        self.schedule_account_telemetry_ship();
+
         for cancelled in self.turn_cancellations.values() {
             cancelled.store(true, Ordering::Release);
         }
