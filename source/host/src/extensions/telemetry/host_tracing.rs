@@ -155,7 +155,7 @@ pub fn host_tracing_resource(service_version: Option<&str>) -> HostTracingResour
     );
     attributes.insert(
         "host.name".into(),
-        std::env::var("HOSTNAME").unwrap_or_else(|_| "unknown".into()),
+        "android".into(),
     );
     attributes.insert("os.type".into(), std::env::consts::OS.into());
     attributes.insert("process.runtime.name".into(), "rust".into());
@@ -163,7 +163,7 @@ pub fn host_tracing_resource(service_version: Option<&str>) -> HostTracingResour
         "process.runtime.version".into(),
         option_env!("RUSTC_VERSION").unwrap_or("unknown").into(),
     );
-    attributes.insert("deployment.environment".into(), "box".into());
+    attributes.insert("deployment.environment".into(), "android".into());
     HostTracingResource { attributes }
 }
 
@@ -890,7 +890,7 @@ pub fn init_production_host_tracing(
             trace_export_url(&backend_url),
             get_token,
             host_tracing_base_headers(),
-            std::env::var("SAND_INSECURE_BACKEND_TLS").as_deref() == Ok("1"),
+            false,
             factory,
         ));
         let provider = ProductionHostTracerProvider::new(Arc::clone(&exporter));
