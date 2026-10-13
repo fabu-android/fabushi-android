@@ -476,11 +476,15 @@ pub(crate) struct RemoteRoutedTools {
     parent_operation_id: String,
     parent_request_id: String,
     cancelled: Arc<AtomicBool>,
+    client_paused: Arc<AtomicBool>,
 }
 
 impl AndroidRoutedToolBridge for RemoteRoutedTools {
     fn list_tools(&self) -> Result<Vec<Value>, String> {
         let mut tools = self.delegate.list_tools()?;
+        if self.client_paused.load(Ordering::Acquire) {
+            return Ok(tools);
+        }
         let binding = match self.current_binding() {
             Ok(binding) => binding,
             Err(_) => return Ok(tools),
@@ -748,6 +752,8 @@ impl AndroidRoutedToolBridge for RemoteRoutedTools {
             }
         }
 
+        self.refuse_new_dispatch_if_paused()?;
+
         self.broker.request_remote_approval(
             &approval_id,
             &request_id,
@@ -883,6 +889,13 @@ impl AndroidRoutedToolBridge for RemoteRoutedTools {
                 "trusted Remote binding changed after approval",
             ));
         }
+        if let Err(error) = self.refuse_new_dispatch_if_paused() {
+            return Err(abandon_unconsumed_remote_approval(
+                &self.broker,
+                &operation_id,
+                &error,
+            ));
+        }
         let permission_before_dispatch = self.local_tool_permission()?;
         if permission_before_dispatch == LocalToolPermission::Never
             || (permission_at_authorization == LocalToolPermission::Always
@@ -931,13 +944,17 @@ impl AndroidRoutedToolBridge for RemoteRoutedTools {
             }
             return Err(error);
         }
-        if self.cancelled.load(Ordering::Acquire) {
+        if self.cancelled.load(Ordering::Acquire) || self.client_paused.load(Ordering::Acquire) {
             if let Ok(mut guard) = self.runner.lock() {
                 if let Some(runner) = guard.as_mut() {
                     let _ = runner.cancel_prepared_authorized(&context, now_ms());
                 }
             }
-            return Err("remote tool dispatch cancelled before side effect".into());
+            return Err(if self.client_paused.load(Ordering::Acquire) {
+                "trusted Remote client is paused before side effect".into()
+            } else {
+                "remote tool dispatch cancelled before side effect".into()
+            });
         }
 
         let mut guard = self
@@ -958,6 +975,14 @@ impl AndroidRoutedToolBridge for RemoteRoutedTools {
 }
 
 impl RemoteRoutedTools {
+    fn refuse_new_dispatch_if_paused(&self) -> Result<(), String> {
+        if self.client_paused.load(Ordering::Acquire) {
+            Err("trusted Remote client is paused by sand_client_pause".into())
+        } else {
+            Ok(())
+        }
+    }
+
     fn local_tool_permission(&self) -> Result<LocalToolPermission, String> {
         self.user_settings
             .lock()
@@ -1002,6 +1027,7 @@ pub(crate) fn with_remote_routed_tools(
     parent_operation_id: &str,
     parent_request_id: &str,
     cancelled: Arc<AtomicBool>,
+    client_paused: Arc<AtomicBool>,
 ) -> Arc<dyn AndroidRoutedToolBridge> {
     Arc::new(RemoteRoutedTools {
         delegate,
@@ -1016,6 +1042,7 @@ pub(crate) fn with_remote_routed_tools(
         parent_operation_id: parent_operation_id.to_string(),
         parent_request_id: parent_request_id.to_string(),
         cancelled,
+        client_paused,
     })
 }
 
@@ -1818,12 +1845,43 @@ mod tests {
             parent_operation_id: "parent-operation".into(),
             parent_request_id: "parent-request".into(),
             cancelled: Arc::new(AtomicBool::new(false)),
+            client_paused: Arc::new(AtomicBool::new(false)),
         };
 
         let error = tools
             .call_tool("Shell", json!({"command":"echo denied"}), "tool-call-1")
             .unwrap_err();
         assert!(error.contains("disabled by the current Host permission policy"));
+    }
+
+    #[test]
+    fn client_pause_hides_remote_tools_and_refuses_only_new_dispatch() {
+        let root = tempfile::tempdir().unwrap();
+        let settings = AndroidUserSettings::open(root.path().join("user-settings.json")).unwrap();
+        let paused = Arc::new(AtomicBool::new(true));
+        let tools = RemoteRoutedTools {
+            delegate: Arc::new(NeverCalledDelegate),
+            broker: SharedCapabilityBroker::open(root.path().join("broker.json"), 1).unwrap(),
+            binding: Arc::new(Mutex::new(None)),
+            runner: Arc::new(Mutex::new(None)),
+            approvals: RemoteApprovalRegistry::default(),
+            user_settings: Arc::new(Mutex::new(settings)),
+            local_tool_permission_ceiling: None,
+            live_account_fence: Arc::new(Mutex::new(None)),
+            events: Arc::new(Mutex::new(VecDeque::new())),
+            parent_operation_id: "parent-operation".into(),
+            parent_request_id: "parent-request".into(),
+            cancelled: Arc::new(AtomicBool::new(false)),
+            client_paused: Arc::clone(&paused),
+        };
+
+        assert!(tools.list_tools().unwrap().is_empty());
+        assert!(tools
+            .refuse_new_dispatch_if_paused()
+            .unwrap_err()
+            .contains("sand_client_pause"));
+        paused.store(false, Ordering::Release);
+        assert!(tools.refuse_new_dispatch_if_paused().is_ok());
     }
 
     #[test]
