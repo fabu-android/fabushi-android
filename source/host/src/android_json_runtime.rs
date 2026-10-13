@@ -3024,10 +3024,7 @@ impl AndroidJsonHost {
             "feature.messaging.blob.read" => self.messaging_blob_read(params),
             "feature.messaging.execute" => self.messaging_execute(params),
             "feature.transcript.snapshot" => Ok(Value::Array(
-                self.transcript
-                    .lock()
-                    .map_err(|_| "transcript lock poisoned".to_string())?
-                    .get_transcript(),
+                self.current_account_transcript_entries()?,
             )),
             "feature.transcript.page" => self.transcript_page(params),
             "feature.search.agentContent" => self.agent_content_search(params),
@@ -3051,7 +3048,7 @@ impl AndroidJsonHost {
     }
 
 
-    fn current_account_search_entries(&self) -> Result<Vec<Value>, String> {
+    fn current_account_transcript_entries(&self) -> Result<Vec<Value>, String> {
         let account_slot = self.account.account_storage_scope();
         let account_fence = self.current_turn_account_fence()?;
         Ok(self
@@ -3061,6 +3058,9 @@ impl AndroidJsonHost {
             .get_transcript()
             .into_iter()
             .filter(|entry| {
+                // Legacy rows can predate explicit account metadata. The durable account-environment
+                // binding already fences the whole store in that case. Once a row carries an
+                // account identity, however, it must match the live account projection exactly.
                 let slot_ok = entry
                     .get("accountSlot")
                     .and_then(Value::as_str)
@@ -3074,6 +3074,10 @@ impl AndroidJsonHost {
                 slot_ok && fence_ok
             })
             .collect())
+    }
+
+    fn current_account_search_entries(&self) -> Result<Vec<Value>, String> {
+        self.current_account_transcript_entries()
     }
 
     fn agent_content_search(&self, params: &Value) -> Result<Value, String> {
@@ -3182,13 +3186,19 @@ impl AndroidJsonHost {
     }
 
     fn transcript_page(&self, params: &Value) -> Result<Value, String> {
-        let agent_id = required_string(params, "agentId")?;
+        let agent_id = required_string(params, "agentId")?.trim();
+        if agent_id.is_empty() {
+            return Err("transcript page agent id is required".into());
+        }
         let limit = params
             .get("limit")
             .and_then(Value::as_u64)
             .unwrap_or(200);
         let limit = usize::try_from(limit)
             .map_err(|_| "transcript page limit is out of range".to_string())?;
+        if limit == 0 || limit > 500 {
+            return Err("transcript page limit must be between 1 and 500".into());
+        }
         let before_seq = params
             .get("beforeSeq")
             .filter(|value| !value.is_null())
@@ -3196,12 +3206,17 @@ impl AndroidJsonHost {
             .map(usize::try_from)
             .transpose()
             .map_err(|_| "transcript page cursor is out of range".to_string())?;
-        let (entries, next_before_seq) = self
-            .transcript
-            .lock()
-            .map_err(|_| "transcript lock poisoned".to_string())?
-            .page_for_agent(agent_id, before_seq, limit)
-            .map_err(|error| error.to_string())?;
+
+        let scoped = self
+            .current_account_transcript_entries()?
+            .into_iter()
+            .filter(|entry| entry.get("agentId").and_then(Value::as_str) == Some(agent_id))
+            .collect::<Vec<_>>();
+        let end = before_seq.unwrap_or(scoped.len()).min(scoped.len());
+        let start = end.saturating_sub(limit);
+        let entries = scoped[start..end].to_vec();
+        let next_before_seq = (start > 0).then_some(start);
+
         Ok(json!({
             "entries": entries,
             "nextBeforeSeq": next_before_seq,
@@ -13099,6 +13114,51 @@ mod transcript_page_contract_tests {
         assert_eq!(entry["level"], "warn");
         assert_eq!(entry["metadata"]["error_code"], "SAND-E0219");
         assert_eq!(entry["metadata"]["error_retryable"], "false");
+    }
+
+    #[test]
+    fn transcript_snapshot_and_page_are_fenced_to_the_current_account() {
+        let root = tempfile::tempdir().unwrap();
+        let mut host = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+        {
+            let mut transcript = host.transcript.lock().unwrap();
+            transcript
+                .append_entry(json!({
+                    "id":"current-account",
+                    "agentId":"agent-a",
+                    "kind":"message",
+                    "role":"assistant",
+                    "content":"current",
+                    "accountFence":"session:test:android"
+                }))
+                .unwrap();
+            transcript
+                .append_entry(json!({
+                    "id":"other-account",
+                    "agentId":"agent-a",
+                    "kind":"message",
+                    "role":"assistant",
+                    "content":"secret",
+                    "accountFence":"session:other"
+                }))
+                .unwrap();
+        }
+
+        let snapshot = host
+            .dispatch("feature.transcript.snapshot", &json!({}))
+            .unwrap();
+        assert_eq!(snapshot.as_array().unwrap().len(), 1);
+        assert_eq!(snapshot[0]["id"], "current-account");
+
+        let page = host
+            .dispatch(
+                "feature.transcript.page",
+                &json!({"agentId":"agent-a","limit":20}),
+            )
+            .unwrap();
+        assert_eq!(page["entries"].as_array().unwrap().len(), 1);
+        assert_eq!(page["entries"][0]["id"], "current-account");
+        assert_eq!(page["nextBeforeSeq"], Value::Null);
     }
 
     #[test]
