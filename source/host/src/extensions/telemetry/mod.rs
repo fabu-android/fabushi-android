@@ -46,3 +46,5 @@ pub mod lifecycle_telemetry;
 pub mod local_exec_telemetry;
 pub mod connector_auth_telemetry;
 pub mod queue_telemetry_mappers;
+
+pub mod model_experiment_exposure;
