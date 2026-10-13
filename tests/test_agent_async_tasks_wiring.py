@@ -52,7 +52,12 @@ class AgentAsyncTasksWiringTest(unittest.TestCase):
         self.assertIn('"type":"agent.async-tasks.changed"', worker)
         self.assertIn('"parentAgentId":parent_agent_id', worker)
         self.assertIn('"parentAgentId":parent_agent_id', worker)
-        self.assertIn("publish_settlement(&self.events, settlement)", worker)
+        self.assertIn(
+            "publish_settlement(&self.events, &self.completion_wake_sink, settlement)",
+            worker,
+        )
+        self.assertIn("completion_wake_sink(&record)", worker)
+        self.assertIn('"type":"subagent.revival.persist-failed"', worker)
 
         handler = vm.index("private fun handleOperationEvent(event: JSONObject)")
         async_event = vm.index('if (type == "agent.async-tasks.changed")', handler)
