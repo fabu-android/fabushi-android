@@ -1,3 +1,4 @@
+use crate::sha256::sha256_hex;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet};
@@ -83,12 +84,27 @@ pub struct PendingCapabilityApproval {
     pub resolved_at_ms: Option<u64>,
 }
 
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+struct LocalToolRefusalRecord {
+    agent_id: String,
+    direction_epoch: u64,
+    action: String,
+    target_hash: String,
+    sequence: u64,
+}
+
+const LOCAL_TOOL_REFUSAL_MEMORY_PER_AGENT: usize = 512;
+
 #[derive(Default, Deserialize, Serialize)]
 struct DurableState {
     #[serde(default)]
     pending: BTreeMap<String, PendingCapabilityCall>,
     #[serde(default)]
     approvals: BTreeMap<String, PendingCapabilityApproval>,
+    #[serde(default)]
+    local_tool_refusals: BTreeMap<String, LocalToolRefusalRecord>,
+    #[serde(default)]
+    next_local_tool_refusal_sequence: u64,
     #[serde(default)]
     audit: Vec<CapabilityAuditRecord>,
 }
@@ -526,6 +542,49 @@ impl CapabilityBroker {
             now_ms,
         )?;
         Ok(true)
+    }
+
+    /// Durable refusal memory prevents a model from evading a denial with a fresh tool-call id.
+    pub fn local_tool_refusal_reason(
+        &self, agent_id: &str, direction_epoch: u64, action: &str, target: &Value,
+    ) -> Result<Option<String>, String> {
+        validate_identity("local-tool agent", agent_id)?;
+        validate_identity("local-tool action", action)?;
+        validate_scope_json("local-tool target", target)?;
+        if direction_epoch == 0 { return Err("local-tool direction epoch must be positive".into()); }
+        let target_hash = sha256_hex(&serde_json::to_vec(target)
+            .map_err(|error| format!("failed to serialize local-tool target: {error}"))?);
+        let key = format!("{agent_id}\0{action}\0{target_hash}");
+        Ok(self.state.local_tool_refusals.get(&key)
+            .filter(|refusal| refusal.direction_epoch >= direction_epoch)
+            .map(|_| "The user already declined this exact action in the current task; do not retry it or auto-authorize it after a later permission change.".to_string()))
+    }
+
+    pub fn remember_local_tool_refusal(
+        &mut self, agent_id: &str, direction_epoch: u64, action: &str, target: &Value,
+    ) -> Result<(), String> {
+        validate_identity("local-tool agent", agent_id)?;
+        validate_identity("local-tool action", action)?;
+        validate_scope_json("local-tool target", target)?;
+        if direction_epoch == 0 { return Err("local-tool direction epoch must be positive".into()); }
+        let target_hash = sha256_hex(&serde_json::to_vec(target)
+            .map_err(|error| format!("failed to serialize local-tool target: {error}"))?);
+        let key = format!("{agent_id}\0{action}\0{target_hash}");
+        let sequence = self.state.next_local_tool_refusal_sequence;
+        self.state.next_local_tool_refusal_sequence = self.state.next_local_tool_refusal_sequence.saturating_add(1);
+        match self.state.local_tool_refusals.get_mut(&key) {
+            Some(existing) => { existing.direction_epoch = existing.direction_epoch.max(direction_epoch); existing.sequence = sequence; }
+            None => { self.state.local_tool_refusals.insert(key, LocalToolRefusalRecord { agent_id: agent_id.to_string(), direction_epoch, action: action.to_string(), target_hash, sequence }); }
+        }
+        let mut mine = self.state.local_tool_refusals.iter()
+            .filter(|(_, refusal)| refusal.agent_id == agent_id)
+            .map(|(key, refusal)| (key.clone(), refusal.sequence)).collect::<Vec<_>>();
+        if mine.len() > LOCAL_TOOL_REFUSAL_MEMORY_PER_AGENT {
+            mine.sort_by_key(|(_, sequence)| *sequence);
+            let remove = mine.len() - LOCAL_TOOL_REFUSAL_MEMORY_PER_AGENT;
+            for (key, _) in mine.into_iter().take(remove) { self.state.local_tool_refusals.remove(&key); }
+        }
+        self.persist()
     }
 
     #[cfg(test)]
@@ -1145,5 +1204,30 @@ mod tests {
         drop(b);
         let b=CapabilityBroker::open(d.path().join("broker.json"),20).unwrap();
         assert!(b.needs_reconciliation("r"));
+    }
+
+    #[test]
+    fn local_tool_refusal_blocks_same_action_for_same_or_older_direction_only() {
+        let (_d, mut b) = broker();
+        let target = json!({"deviceId":"device-1","tool":"Shell","arguments":{"command":"rm -rf ./tmp"}});
+        assert_eq!(b.local_tool_refusal_reason("agent-a", 7, "Shell", &target).unwrap(), None);
+        b.remember_local_tool_refusal("agent-a", 7, "Shell", &target).unwrap();
+        assert!(b.local_tool_refusal_reason("agent-a", 7, "Shell", &target).unwrap().is_some());
+        assert!(b.local_tool_refusal_reason("agent-a", 6, "Shell", &target).unwrap().is_some());
+        assert_eq!(b.local_tool_refusal_reason("agent-a", 8, "Shell", &target).unwrap(), None);
+        assert_eq!(b.local_tool_refusal_reason("agent-a", 7, "Read", &target).unwrap(), None);
+    }
+
+    #[test]
+    fn local_tool_refusal_survives_restart_and_is_target_scoped() {
+        let (d, mut b) = broker();
+        let denied = json!({"path":"/private/a"});
+        let other = json!({"path":"/private/b"});
+        b.remember_local_tool_refusal("agent-a", 3, "Read", &denied).unwrap();
+        drop(b);
+        let b = CapabilityBroker::open(d.path().join("broker.json"), 10).unwrap();
+        assert!(b.local_tool_refusal_reason("agent-a", 3, "Read", &denied).unwrap().is_some());
+        assert_eq!(b.local_tool_refusal_reason("agent-a", 3, "Read", &other).unwrap(), None);
+        assert_eq!(b.local_tool_refusal_reason("agent-b", 3, "Read", &denied).unwrap(), None);
     }
 }
