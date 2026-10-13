@@ -55,6 +55,25 @@ pub struct ProductionCrossUserCore {
     pub extension: Arc<CrossUserSharingExtension>,
 }
 
+
+impl ProductionCrossUserCore {
+    pub fn sharing_state(&self) -> super::xuser_sharing_service::SandSharingState {
+        self.extension.get_sharing_state()
+    }
+
+    pub fn apply_feature_policy(&self, enabled: bool) -> Result<(), String> {
+        self.extension.apply_feature_policy(enabled)
+    }
+
+    pub fn request_relay_drain(&self) {
+        self.extension.request_relay_drain();
+    }
+
+    pub fn prepare_for_upgrade(&self) {
+        self.extension.prepare_for_upgrade();
+    }
+}
+
 pub fn build_xuser_core(
     credentials: Arc<dyn SandMcpCredentialProvider>,
     transport: Arc<dyn XuserRelayTransport>,
