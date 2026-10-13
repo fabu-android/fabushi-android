@@ -32,7 +32,15 @@ class SharedRoomsPresentationTest {
             available = true,
             enabled = true,
             selfAuthId = "self",
-            pendingJoinRequests = JSONArray().put(JSONObject()),
+            pendingJoinRequests = JSONArray().put(
+                JSONObject()
+                    .put("requestId", "request-a")
+                    .put("roomId", "room-a")
+                    .put("roomName", "Alpha")
+                    .put("requesterAuthId", "peer-a")
+                    .put("requesterName", "Peer A")
+                    .put("createdAtMs", 42L),
+            ),
             rooms = rooms,
             typingUsers = JSONArray().put(JSONObject()).put(JSONObject()),
             canonicalRoomManagerBound = true,
@@ -48,7 +56,9 @@ class SharedRoomsPresentationTest {
         assertEquals(2, projected.rooms[0].memberCount)
         assertEquals("Beta", projected.rooms[1].name)
         assertEquals(3, projected.rooms[1].memberCount)
-        assertEquals(1, projected.pendingJoinRequestCount)
+        assertEquals(1, projected.pendingJoinRequests.size)
+        assertEquals("request-a", projected.pendingJoinRequests.single().requestId)
+        assertEquals("Peer A", projected.pendingJoinRequests.single().requesterName)
         assertEquals(2, projected.typingUserCount)
     }
 
@@ -75,6 +85,37 @@ class SharedRoomsPresentationTest {
         assertTrue(projected.available)
         assertFalse(projected.enabled)
         assertFalse(projected.canonicalRoomManagerBound)
+    }
+
+    @Test
+    fun malformed_or_duplicate_join_requests_are_not_actionable() {
+        val requests = JSONArray()
+            .put("not-an-object")
+            .put(JSONObject().put("requestId", "missing-room"))
+            .put(
+                JSONObject()
+                    .put("requestId", " request-a ")
+                    .put("roomId", " room-a ")
+                    .put("roomName", "Alpha")
+                    .put("requesterAuthId", " peer-a ")
+                    .put("requesterName", "Peer A")
+                    .put("createdAtMs", 7L),
+            )
+            .put(
+                JSONObject()
+                    .put("requestId", "request-a")
+                    .put("roomId", "room-b")
+                    .put("requesterAuthId", "peer-b"),
+            )
+
+        val parsed = parseMobileSharedJoinRequests(requests)
+
+        assertEquals(1, parsed.size)
+        assertEquals("request-a", parsed.single().requestId)
+        assertEquals("room-a", parsed.single().roomId)
+        assertEquals("peer-a", parsed.single().requesterAuthId)
+        assertEquals("Peer A", parsed.single().requesterName)
+        assertEquals(7L, parsed.single().createdAtMs)
     }
 
     @Test
