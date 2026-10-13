@@ -74,6 +74,8 @@ struct PersistedAndroidUserSettings {
     onboarding_seen_by_account: BTreeMap<String, bool>,
     #[serde(default)]
     process_metrics_local_enabled: bool,
+    #[serde(default = "default_true")]
+    webauthn_proxy_enabled: bool,
     #[serde(default)]
     agent_default_model_by_account: BTreeMap<String, String>,
     #[serde(default)]
@@ -240,6 +242,21 @@ impl AndroidUserSettings {
         Ok(normalized)
     }
 
+    pub fn webauthn_proxy_enabled(&self) -> bool {
+        self.state.webauthn_proxy_enabled
+    }
+
+    pub fn set_webauthn_proxy_enabled(&mut self, value: bool) -> io::Result<bool> {
+        if self.state.webauthn_proxy_enabled == value {
+            return Ok(value);
+        }
+        let mut next = self.state.clone();
+        next.webauthn_proxy_enabled = value;
+        write_atomic_json(&self.path, &next)?;
+        self.state = next;
+        Ok(value)
+    }
+
     pub fn process_metrics_local_enabled(&self) -> bool {
         self.state.process_metrics_local_enabled
     }
@@ -301,6 +318,10 @@ impl AndroidUserSettings {
         self.state = next;
         Ok(normalized)
     }
+}
+
+const fn default_true() -> bool {
+    true
 }
 
 fn parse_state(raw: &str) -> io::Result<PersistedAndroidUserSettings> {
@@ -545,6 +566,32 @@ mod tests {
             reopened.computer_use_model("account:a"),
             Some("computer-use-v2"),
         );
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn webauthn_proxy_defaults_enabled_and_disable_survives_restart() {
+        let path = test_path("webauthn-proxy");
+        let mut settings = AndroidUserSettings::open(&path).unwrap();
+        assert!(settings.webauthn_proxy_enabled());
+        assert!(!settings.set_webauthn_proxy_enabled(false).unwrap());
+        drop(settings);
+
+        let mut reopened = AndroidUserSettings::open(&path).unwrap();
+        assert!(!reopened.webauthn_proxy_enabled());
+        assert!(reopened.set_webauthn_proxy_enabled(true).unwrap());
+        drop(reopened);
+        assert!(AndroidUserSettings::open(&path).unwrap().webauthn_proxy_enabled());
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn predecessor_without_webauthn_field_migrates_to_enabled_default() {
+        let path = test_path("webauthn-predecessor");
+        fs::write(&path, r#"{"timeZoneOverride":null}"#).unwrap();
+        let settings = AndroidUserSettings::open(&path).unwrap();
+        assert!(settings.webauthn_proxy_enabled());
         let _ = fs::remove_file(path);
     }
 
