@@ -45,4 +45,37 @@ class AndroidAccountSessionStoreInstrumentedTest {
         assertNull(store.readSessionJson())
         assertFalse(ciphertext.exists())
     }
+
+    @Test
+    fun clearCryptographicallyErasesSessionAcrossStoreReopen() {
+        val session = """{"accessToken":"access-token","refreshToken":"refresh-token","accessTokenExpiresAt":2000000000000,"refreshTokenExpiresAt":2100000000000,"sessionId":"session-clear","deviceId":"device-clear","username":"user@example.com","userId":"user-clear"}"""
+        store.writeSessionJson(session)
+
+        store.clear()
+
+        assertFalse(ciphertext.exists())
+        assertNull(AndroidAccountSessionStore(context).readSessionJson())
+    }
+
+    @Test
+    fun failedCiphertextDeletionStillDestroysKeyAndPreventsSessionResurrection() {
+        val session = """{"accessToken":"access-token","refreshToken":"refresh-token","accessTokenExpiresAt":2000000000000,"refreshTokenExpiresAt":2100000000000,"sessionId":"session-retained","deviceId":"device-retained","username":"user@example.com","userId":"user-retained"}"""
+        store.writeSessionJson(session)
+        val encrypted = ciphertext.readBytes()
+
+        assertTrue(ciphertext.delete())
+        assertTrue(ciphertext.mkdir())
+        File(ciphertext, "keep").writeText("force-delete-failure")
+
+        val failure = runCatching { store.clear() }.exceptionOrNull()
+        assertTrue(failure is IllegalStateException)
+
+        assertTrue(ciphertext.deleteRecursively())
+        ciphertext.writeBytes(encrypted)
+
+        // The ciphertext survived the simulated deletion failure, but clear() destroyed the
+        // Keystore key before reporting failure. A cold-start store must therefore reject it.
+        assertNull(AndroidAccountSessionStore(context).readSessionJson())
+        assertFalse(ciphertext.exists())
+    }
 }
