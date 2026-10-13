@@ -26,6 +26,7 @@ pub mod bot_block_telemetry;
 pub mod conversation_gc_telemetry;
 pub mod mcp_discovery_telemetry;
 pub mod box_copy_in_telemetry;
+pub mod box_recreate_decided_telemetry;
 pub mod experiments_diagnostic_telemetry;
 pub mod host_extension_diagnostic_telemetry;
 pub mod turn_empty_delivery_telemetry;
