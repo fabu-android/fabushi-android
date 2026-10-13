@@ -1064,6 +1064,7 @@ internal fun ProductionRenderer(
                             onStageGeneratedBotAvatarImage = botModel::stageGeneratedBotAvatarImage,
                             onEncodeBotAvatarCrop = botModel::encodeBotAvatarCrop,
                             onSetBotNotifyOnUpdates = botModel::setBotNotifyOnUpdates,
+                            onDisconnectBotChannel = botModel::disconnectAgentChannel,
                             onHideBot = botModel::hideBot,
                             onUnhideBot = botModel::unhideBot,
                             onSetBotUnread = botModel::setBotUnread,
