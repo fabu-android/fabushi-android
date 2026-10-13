@@ -1050,6 +1050,95 @@ impl AutomationRuntime {
         Ok(copy)
     }
 
+    pub fn settle_event_run_terminal(
+        &mut self,
+        run_id: &str,
+        account_fence: &str,
+        generation: u64,
+        terminal: &str,
+        reason: Option<String>,
+        now_ms: u64,
+        fallback_time_zone: Option<&str>,
+    ) -> Result<AutomationRun, String> {
+        let run_snapshot = self
+            .state
+            .runs
+            .get(run_id)
+            .cloned()
+            .ok_or("automation run not found")?;
+        if run_snapshot.account_fence != account_fence || run_snapshot.generation != generation {
+            return Err("stale automation callback fenced by account/generation".into());
+        }
+        if run_snapshot.state != AutomationRunState::Running {
+            return Err("automation event run cannot settle from current state".into());
+        }
+        if run_snapshot.trigger_kind != "event" {
+            return Err("automation run is not event-triggered".into());
+        }
+        let batch_id = run_snapshot
+            .event_batch_id
+            .clone()
+            .ok_or("automation event run is missing its durable batch")?;
+        let batch = self
+            .state
+            .event_batches
+            .get(&batch_id)
+            .cloned()
+            .ok_or("automation event batch not found")?;
+        if batch.account_fence != account_fence
+            || batch.automation_id != run_snapshot.automation_id
+        {
+            return Err("automation event batch ownership mismatch".into());
+        }
+        if batch.state != AutomationEventBatchState::Claimed {
+            return Err("automation event batch outcome is unknown; reconcile before settlement".into());
+        }
+        let next_state = match terminal {
+            "operation.completed" => AutomationRunState::Completed,
+            "operation.failed" => AutomationRunState::Failed,
+            "operation.interrupted" => AutomationRunState::Cancelled,
+            _ => return Err("automation terminal event is unsupported".into()),
+        };
+
+        // Compute any schedule mutation before changing either durable owner. From here to persist
+        // the run and event batch settle together, so a crash cannot expose only one side as done.
+        let next_run_at_ms = if let Some(spec) = self.state.specs.get(&run_snapshot.automation_id) {
+            let mut next_spec = spec.clone();
+            next_spec.last_run_at_ms = Some(now_ms);
+            canonical_next_run_ms(&next_spec, fallback_time_zone)?
+        } else {
+            None
+        };
+
+        {
+            let run = self.current_mut(run_id, account_fence, generation)?;
+            run.state = next_state;
+            run.approval_id = None;
+            run.reason = reason;
+            run.updated_at_ms = now_ms;
+        }
+        self.state.event_batches.remove(&batch_id);
+        for occurrence_id in batch.occurrence_ids {
+            self.remember_settled_event_occurrence(Self::event_occurrence_key(
+                account_fence,
+                &run_snapshot.automation_id,
+                &occurrence_id,
+            ));
+        }
+        if let Some(spec) = self.state.specs.get_mut(&run_snapshot.automation_id) {
+            spec.last_run_at_ms = Some(now_ms);
+            spec.next_run_at_ms = next_run_at_ms;
+        }
+        let copy = self
+            .state
+            .runs
+            .get(run_id)
+            .cloned()
+            .ok_or("automation run disappeared during terminal settlement")?;
+        self.persist()?;
+        Ok(copy)
+    }
+
     pub fn settle(
         &mut self,
         run_id: &str,
@@ -1800,6 +1889,115 @@ mod tests {
         assert_eq!(recovered_run["trigger_kind"], "event");
         assert_eq!(recovered_run["event_count"], 1);
         assert!(recovered_run["event_batch_id"].is_string());
+    }
+
+    #[test]
+    fn event_run_terminal_settles_run_and_occurrence_together() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("automation.json");
+        let mut runtime = AutomationRuntime::open(&path, 1).unwrap();
+        runtime.upsert_spec(spec("acct-a"), Some("UTC")).unwrap();
+        runtime
+            .enqueue_event_fire(
+                "daily-brief",
+                "acct-a",
+                "terminal-occurrence",
+                json!({"kind":"github","delivery":"terminal"}),
+                1,
+            )
+            .unwrap();
+        let (run, batch) = runtime
+            .begin_event_run(
+                "daily-brief",
+                "acct-a",
+                "terminal-claim",
+                "terminal-run",
+                1_000,
+            )
+            .unwrap()
+            .unwrap();
+        let settled = runtime
+            .settle_event_run_terminal(
+                &run.run_id,
+                "acct-a",
+                run.generation,
+                "operation.failed",
+                Some("provider failed".into()),
+                1_100,
+                Some("UTC"),
+            )
+            .unwrap();
+        assert_eq!(settled.state, AutomationRunState::Failed);
+        assert_eq!(settled.reason.as_deref(), Some("provider failed"));
+        assert!(runtime
+            .enqueue_event_fire(
+                "daily-brief",
+                "acct-a",
+                "terminal-occurrence",
+                json!({"kind":"github","delivery":"duplicate"}),
+                1_200,
+            )
+            .unwrap()
+            .duplicate);
+        assert!(runtime
+            .settle_event_batch(&batch.batch_id, "acct-a", true, 1_201)
+            .unwrap_err()
+            .contains("not found"));
+
+        drop(runtime);
+        let recovered = AutomationRuntime::open(&path, 2_000).unwrap();
+        assert_eq!(
+            recovered.snapshot("terminal-run").unwrap()["state"],
+            "failed"
+        );
+    }
+
+    #[test]
+    fn interrupted_event_run_consumes_external_occurrence_without_replay() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut runtime = AutomationRuntime::open(dir.path().join("automation.json"), 1).unwrap();
+        runtime.upsert_spec(spec("acct-a"), Some("UTC")).unwrap();
+        runtime
+            .enqueue_event_fire(
+                "daily-brief",
+                "acct-a",
+                "interrupt-occurrence",
+                json!({"kind":"slack","delivery":"interrupt"}),
+                1,
+            )
+            .unwrap();
+        let (run, _) = runtime
+            .begin_event_run(
+                "daily-brief",
+                "acct-a",
+                "interrupt-claim",
+                "interrupt-run",
+                1_000,
+            )
+            .unwrap()
+            .unwrap();
+        let settled = runtime
+            .settle_event_run_terminal(
+                &run.run_id,
+                "acct-a",
+                run.generation,
+                "operation.interrupted",
+                Some("user".into()),
+                1_050,
+                Some("UTC"),
+            )
+            .unwrap();
+        assert_eq!(settled.state, AutomationRunState::Cancelled);
+        assert!(runtime
+            .enqueue_event_fire(
+                "daily-brief",
+                "acct-a",
+                "interrupt-occurrence",
+                json!({"kind":"slack","delivery":"duplicate"}),
+                1_100,
+            )
+            .unwrap()
+            .duplicate);
     }
 
 }
