@@ -102,7 +102,7 @@ struct PersistedAndroidUserSettings {
     #[serde(default)]
     agent_default_model_by_account: BTreeMap<String, String>,
     #[serde(default)]
-    computer_use_model_by_account: BTreeMap<String, String>,
+    computer_use_model_by_account: BTreeMap<String, Value>,
     #[serde(default)]
     inference_provider: Option<String>,
     #[serde(default)]
@@ -231,49 +231,58 @@ impl AndroidUserSettings {
         self.set_account_model(account_scope, value, true)
     }
 
-    pub fn computer_use_model(&self, account_scope: &str) -> Option<&str> {
+    pub fn computer_use_model(&self, account_scope: &str) -> Option<Value> {
         self.state
             .computer_use_model_by_account
             .get(account_scope)
-            .map(String::as_str)
+            .and_then(|value| normalize_computer_use_model_selection(Some(value)).ok().flatten())
     }
 
     pub fn set_computer_use_model(
         &mut self,
         account_scope: &str,
-        value: Option<&str>,
-    ) -> io::Result<Option<String>> {
-        self.set_account_model(account_scope, value, false)
+        value: Option<&Value>,
+    ) -> io::Result<Option<Value>> {
+        validate_account_scope(account_scope)?;
+        let normalized = normalize_computer_use_model_selection(value)?;
+        if self.computer_use_model(account_scope) == normalized {
+            return Ok(normalized);
+        }
+        let mut next = self.state.clone();
+        match normalized.as_ref() {
+            Some(selection) => {
+                next.computer_use_model_by_account
+                    .insert(account_scope.to_string(), selection.clone());
+            }
+            None => {
+                next.computer_use_model_by_account.remove(account_scope);
+            }
+        }
+        write_atomic_json(&self.path, &next)?;
+        self.state = next;
+        Ok(normalized)
     }
 
     fn set_account_model(
         &mut self,
         account_scope: &str,
         value: Option<&str>,
-        agent_default: bool,
+        _agent_default: bool,
     ) -> io::Result<Option<String>> {
         validate_account_scope(account_scope)?;
         let normalized = normalize_model_id(value)?;
-        let current = if agent_default {
-            self.agent_default_model(account_scope)
-        } else {
-            self.computer_use_model(account_scope)
-        };
+        let current = self.agent_default_model(account_scope);
         if current == normalized.as_deref() {
             return Ok(normalized);
         }
         let mut next = self.state.clone();
-        let target = if agent_default {
-            &mut next.agent_default_model_by_account
-        } else {
-            &mut next.computer_use_model_by_account
-        };
         match normalized.as_ref() {
             Some(model) => {
-                target.insert(account_scope.to_string(), model.clone());
+                next.agent_default_model_by_account
+                    .insert(account_scope.to_string(), model.clone());
             }
             None => {
-                target.remove(account_scope);
+                next.agent_default_model_by_account.remove(account_scope);
             }
         }
         write_atomic_json(&self.path, &next)?;
@@ -503,6 +512,65 @@ fn normalize_model_id(value: Option<&str>) -> io::Result<Option<String>> {
     Ok(Some(value.to_string()))
 }
 
+fn normalize_computer_use_model_selection(value: Option<&Value>) -> io::Result<Option<Value>> {
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    // Read old Android string-only state without losing the user's selected model.
+    if let Some(legacy_model_id) = value.as_str() {
+        let Some(model_id) = normalize_model_id(Some(legacy_model_id))? else {
+            return Ok(None);
+        };
+        return Ok(Some(json!({
+            "modelId": model_id,
+            "maxMode": false,
+            "parameters": []
+        })));
+    }
+    let object = value.as_object().ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "computer use model selection must be an object or null",
+        )
+    })?;
+    let model_id = object
+        .get("modelId")
+        .and_then(Value::as_str)
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "computer use modelId is required"))?;
+    let model_id = normalize_model_id(Some(model_id))?
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "computer use modelId is required"))?;
+    let max_mode = object
+        .get("maxMode")
+        .and_then(Value::as_bool)
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "computer use maxMode is required"))?;
+    let parameters = object
+        .get("parameters")
+        .and_then(Value::as_array)
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "computer use parameters are required"))?;
+    let mut normalized_parameters = Vec::with_capacity(parameters.len());
+    for parameter in parameters {
+        let parameter = parameter.as_object().ok_or_else(|| {
+            io::Error::new(io::ErrorKind::InvalidInput, "computer use parameter must be an object")
+        })?;
+        let id = parameter
+            .get("id")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "computer use parameter id is required"))?;
+        let parameter_value = parameter
+            .get("value")
+            .and_then(Value::as_str)
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "computer use parameter value is required"))?;
+        normalized_parameters.push(json!({"id": id, "value": parameter_value}));
+    }
+    Ok(Some(json!({
+        "modelId": model_id,
+        "maxMode": max_mode,
+        "parameters": normalized_parameters
+    })))
+}
+
 fn normalize_time_zone(value: Option<&str>) -> io::Result<Option<String>> {
     let Some(value) = value.map(str::trim).filter(|value| !value.is_empty()) else {
         return Ok(None);
@@ -707,11 +775,16 @@ mod tests {
                 .unwrap(),
             Some("claude-4-sonnet".into()),
         );
+        let computer_selection = json!({
+            "modelId": "computer-use-v2",
+            "maxMode": true,
+            "parameters": [{"id":"reasoning","value":"high"}]
+        });
         assert_eq!(
             settings
-                .set_computer_use_model("account:a", Some("computer-use-v2"))
+                .set_computer_use_model("account:a", Some(&computer_selection))
                 .unwrap(),
-            Some("computer-use-v2".into()),
+            Some(computer_selection.clone()),
         );
         assert_eq!(settings.agent_default_model("account:b"), None);
         drop(settings);
@@ -723,7 +796,7 @@ mod tests {
         );
         assert_eq!(
             reopened.computer_use_model("account:a"),
-            Some("computer-use-v2"),
+            Some(computer_selection.clone()),
         );
         assert!(reopened
             .set_agent_default_model("", Some("model"))
@@ -738,7 +811,27 @@ mod tests {
         assert_eq!(reopened.agent_default_model("account:a"), None);
         assert_eq!(
             reopened.computer_use_model("account:a"),
-            Some("computer-use-v2"),
+            Some(computer_selection),
+        );
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn legacy_string_computer_use_model_is_normalized_without_rotation() {
+        let path = test_path("legacy-computer-model");
+        fs::write(
+            &path,
+            r#"{"computerUseModelByAccount":{"account:a":"computer-use-v1"}}"#,
+        )
+        .unwrap();
+        let settings = AndroidUserSettings::open(&path).unwrap();
+        assert_eq!(
+            settings.computer_use_model("account:a"),
+            Some(json!({
+                "modelId":"computer-use-v1",
+                "maxMode":false,
+                "parameters":[]
+            })),
         );
         let _ = fs::remove_file(path);
     }
