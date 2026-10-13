@@ -67,6 +67,8 @@ internal class AndroidOsNotificationManager(
     fun handleAgents(agents: List<AndroidNotificationAgent>) {
         val snapshots = agents.map { snapshotOf(it) }
         val transitions = diff(previous, snapshots)
+        removedNotificationAgentIds(previous.keys, snapshots.mapTo(linkedSetOf()) { it.id })
+            .forEach(::forget)
         previous.clear()
         snapshots.associateByTo(previous) { it.id }
         snapshots.forEach { snapshot ->
@@ -259,6 +261,11 @@ internal class AndroidOsNotificationManager(
     )
 
     companion object {
+        internal fun removedNotificationAgentIds(
+            previousIds: Set<String>,
+            nextIds: Set<String>,
+        ): Set<String> = previousIds - nextIds
+
         private const val THROTTLE_MS = 5_000L
         private const val MAX_BODY_LENGTH = 140
         private const val CHANNEL_ATTENTION = "fabushi-agent-attention"
