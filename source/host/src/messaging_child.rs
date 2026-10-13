@@ -369,16 +369,10 @@ impl ConversationChildStore {
     }
 
     fn persist(&self) -> io::Result<()> {
-        if let Ok(previous) = fs::read(&self.path) {
-            if decode_child_state(&previous).is_ok() {
-                let backup = child_backup_path(&self.path);
-                let temporary_backup = PathBuf::from(format!("{}.tmp", backup.display()));
-                fs::copy(&self.path, &temporary_backup)?;
-                File::open(&temporary_backup)?.sync_all()?;
-                fs::rename(&temporary_backup, &backup)?;
-                sync_child_parent(&backup)?;
-            }
-        }
+        // Mirror the exact next durable state into the recovery replica first, then replace the
+        // canonical file. A later corruption therefore cannot roll draft/read/pin state back to
+        // an older snapshot merely because the previous canonical happened to be valid.
+        write_child_state_atomic(&child_backup_path(&self.path), &self.state)?;
         write_child_state_atomic(&self.path, &self.state)
     }
 
