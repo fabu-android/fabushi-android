@@ -11,6 +11,7 @@ pub mod remote_routed_tools;
 pub mod sand_labeling;
 pub mod web_routed_tools;
 pub mod sand_auto_review;
+pub mod send_message;
 pub mod auto_review_gate;
 pub mod stream_attempt;
 pub mod subagent_runtime;
@@ -46,6 +47,8 @@ pub use android_host_inference::{
     AndroidHostInferenceProvider, AndroidInferenceMode, AndroidRoutedToolBridge,
     AndroidSubagentReviewDecision,
 };
+
+pub use send_message::{with_send_message_tools, SEND_MESSAGE_TOOL_NAME};
 
 pub use agent_management::{
     with_agent_management_tools, AgentTurnInterruptionRegistry, CREATE_AGENT_TOOL_NAME,
