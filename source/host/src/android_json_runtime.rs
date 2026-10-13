@@ -169,7 +169,7 @@ use crate::runner::{
     shared_turn_run_shell, SharedTurnRunShell,
     build_turn_subagent_types, parse_turn_subagent_capability_projection,
     COORDINATOR_SUBAGENT_CAPABILITIES_FIELD, DurableSubagentOwner, SubagentFrozenTurnConfig,
-    SubagentRunOutcome, SubagentSteerReview, SubagentTaskReviewCallback,
+    SubagentLineage, SubagentRunOutcome, SubagentSteerReview, SubagentTaskReviewCallback,
     SubagentSteerReviewCallback, SubagentToolBridge, SubagentToolContext,
     build_parent_subagent_routed_tools, spawn_generated_subagent, SubagentCompletionWakeSink,
     with_agent_management_tools_and_transcript,
