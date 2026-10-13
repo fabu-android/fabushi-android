@@ -2801,6 +2801,21 @@ impl AndroidJsonHost {
         Arc::clone(&self.runtime_call_cancellations)
     }
 
+    fn push_introduction_failure_tray(
+        &mut self,
+        agent_id: &str,
+        request_id: Option<&str>,
+        message: &str,
+    ) {
+        let tray = crate::extensions::transcript::agent_run_error::introduction_failure_tray(
+            agent_id,
+            request_id,
+            message,
+            i64::try_from(now_ms()).unwrap_or(i64::MAX),
+        );
+        self.trays.push_error(tray);
+    }
+
     fn record_agent_turn_failure_tray(&mut self, event: &Value) {
         let Some(agent_id) = event
             .get("agentId")
@@ -2818,17 +2833,24 @@ impl AndroidJsonHost {
         else {
             return;
         };
+        let request_id = event
+            .get("requestId")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty());
+        if request_id.is_some_and(|request_id| {
+            request_id.starts_with("agent-kickstart:")
+                || request_id.starts_with("agent-kickstart-nudge:")
+        }) {
+            self.push_introduction_failure_tray(agent_id, request_id, message);
+            return;
+        }
         let mut tray = crate::extensions::transcript::agent_run_error::provider_failure_tray(
             agent_id,
             message,
             i64::try_from(now_ms()).unwrap_or(i64::MAX),
         );
-        tray.request_id = event
-            .get("requestId")
-            .and_then(Value::as_str)
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(str::to_string);
+        tray.request_id = request_id.map(str::to_string);
         self.trays.push_error(tray);
     }
 
