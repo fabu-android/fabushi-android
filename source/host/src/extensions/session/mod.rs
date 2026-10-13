@@ -4,6 +4,7 @@ pub mod session_recovery;
 pub mod session_path_contracts;
 pub mod conversation_blobs_path;
 pub mod session_diagnostics;
+pub mod extension;
 pub mod agent_db_schema;
 pub mod agent_db_serde;
 pub mod agent_db_transcript_pages;
