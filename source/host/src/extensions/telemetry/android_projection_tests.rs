@@ -78,3 +78,59 @@ fn late_automation_run_is_warn_and_drop_retains_reconciliation_context() {
     assert_eq!(dropped.metadata.get("reason").map(String::as_str), Some("outcome-unknown"));
     assert_eq!(dropped.metadata.get("run_uuid").map(String::as_str), Some("run-a"));
 }
+
+
+#[test]
+fn disk_pressure_projection_maps_platform_severity() {
+    let projection = super::disk_pressure_telemetry::disk_pressure_telemetry(
+        &super::disk_pressure_telemetry::DiskPressureReport {
+            level: "hard".into(),
+            volume: "app-private".into(),
+            trigger: "write".into(),
+            total_bytes: 1000.0,
+            available_bytes: 50.0,
+            used_percent: 95.0,
+        },
+    );
+    assert_eq!(projection.level, Some("error"));
+    assert_eq!(projection.metadata.get("pressure_level").map(String::as_str), Some("hard"));
+    assert_eq!(projection.metadata.get("used_percent").map(String::as_str), Some("95.0"));
+}
+
+#[test]
+fn host_diagnostic_projection_keeps_degraded_send_as_error() {
+    let projection = super::host_diagnostic_telemetry::host_diagnostic_telemetry(
+        &super::host_diagnostic_telemetry::HostDiagnostic {
+            kind: "send_ledger_degraded".into(),
+            stage: Some("restore".into()),
+            agent_id: Some("agent-a".into()),
+            reason: Some("corrupt".into()),
+            error_class: Some("InvalidData".into()),
+        },
+    );
+    assert_eq!(projection.level, Some("error"));
+    assert_eq!(projection.event, Some(super::host_diagnostic_telemetry::HOST_DIAGNOSTIC_EVENT));
+    assert_eq!(projection.metadata.get("stage").map(String::as_str), Some("restore"));
+}
+
+#[test]
+fn search_index_health_projection_warns_only_for_bounded_retry_kinds() {
+    let retry = super::search_index_health_telemetry::search_index_health_telemetry(
+        &super::search_index_health_telemetry::SearchIndexHealthReport {
+            kind: "job_retry".into(),
+            stage: Some("reconcile".into()),
+            error_class: None,
+            count: Some(2),
+        },
+    );
+    assert_eq!(retry.level, Some("warn"));
+    assert_eq!(retry.metadata.get("count").map(String::as_str), Some("2"));
+
+    let corrupt = super::search_index_health_telemetry::search_index_health_telemetry(
+        &super::search_index_health_telemetry::SearchIndexHealthReport {
+            kind: "corrupt".into(),
+            ..Default::default()
+        },
+    );
+    assert_eq!(corrupt.level, Some("error"));
+}
