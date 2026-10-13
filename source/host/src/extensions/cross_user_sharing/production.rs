@@ -74,6 +74,7 @@ pub fn android_xuser_environment(
 /// by AndroidJsonHost. Its job is to guarantee that environment policy, sharing state and relay
 /// transport share one credential/relay owner instead of being reconstructed by callers.
 pub struct ProductionCrossUserCore {
+    credentials: Arc<dyn SandMcpCredentialProvider>,
     pub relay: Arc<SandXuserRelayClient>,
     pub service: Arc<SandXuserSharingService>,
     pub relay_driver: Arc<XuserRelayDriver>,
