@@ -4161,6 +4161,11 @@ impl AndroidJsonHost {
             "deleteAgents" => {
                 let ids = params.get("ids").and_then(Value::as_array).ok_or("ids array is required")?
                     .iter().filter_map(Value::as_str).map(str::to_string).collect::<Vec<_>>();
+                if let Ok(account_fence) = self.current_turn_account_fence() {
+                    for agent_id in &ids {
+                        self.cleanup_agent_before_delete(&account_fence, agent_id)?;
+                    }
+                }
                 let deleted = self.agents
                     .lock()
                     .map_err(|_| "canonical Android Agent roster lock poisoned".to_string())?
@@ -7650,6 +7655,56 @@ impl AndroidJsonHost {
         }))
     }
 
+    fn cleanup_agent_before_delete(
+        &mut self,
+        account_fence: &str,
+        agent_id: &str,
+    ) -> Result<(), String> {
+        let agent_id = agent_id.trim();
+        if agent_id.is_empty() {
+            return Ok(());
+        }
+
+        self.agent_turn_interruptions
+            .interrupt_for_deletion(agent_id, account_fence)?;
+
+        self.visible_ack_obligations
+            .clear_agent(account_fence, agent_id)
+            .map_err(|error| {
+                format!("failed to clear deleted-Agent acknowledgement obligation: {error}")
+            })?;
+
+        self.pending_wake_store
+            .clear_agent(account_fence, agent_id)
+            .map_err(|error| {
+                format!("failed to clear deleted-Agent pending wakes: {error}")
+            })?;
+
+        let running_subagents = {
+            self.subagent_owner
+                .lock()
+                .map_err(|_| "durable subagent owner lock poisoned".to_string())?
+                .list_running_for_parent(agent_id)
+        };
+        if !running_subagents.is_empty() {
+            let mut owner = self
+                .subagent_owner
+                .lock()
+                .map_err(|_| "durable subagent owner lock poisoned".to_string())?;
+            let callback_epoch = owner.process_epoch();
+            for subagent in running_subagents {
+                owner.abort(
+                    &subagent.subagent_id,
+                    &subagent.account_fence,
+                    callback_epoch,
+                    now_ms(),
+                )?;
+            }
+        }
+
+        Ok(())
+    }
+
     fn agent_roster_mutation(&mut self, params: &Value) -> Result<Value, String> {
         let operation_id = required_string(params, "operationId")?;
         let expected_account_fence = required_string(params, "accountFence")?;
@@ -7710,6 +7765,22 @@ impl AndroidJsonHost {
                     &sections,
                     &known_agent_ids,
                 );
+        }
+
+        if mutation.get("kind").and_then(Value::as_str) == Some("delete") {
+            let ids = mutation
+                .get("ids")
+                .and_then(Value::as_array)
+                .ok_or("presentation delete ids are required")?
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_string)
+                .collect::<BTreeSet<_>>();
+            for agent_id in &ids {
+                self.cleanup_agent_before_delete(&current_account_fence, agent_id)?;
+            }
         }
 
         self.agents
