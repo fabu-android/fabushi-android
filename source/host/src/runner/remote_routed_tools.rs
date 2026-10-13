@@ -18,7 +18,9 @@ use std::sync::{
 };
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-const APPROVAL_WAIT_TIMEOUT: Duration = Duration::from_secs(120);
+// Desktop SAND_LOCAL_TOOL_ASK_TTL_MS is 10 minutes. Keep Android's authorized Remote
+// replacement at the same user-visible ask lifetime; cancellation/account fencing still aborts sooner.
+const APPROVAL_WAIT_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 const APPROVAL_POLL: Duration = Duration::from_millis(250);
 const MAX_SHELL_COMMAND: usize = 32 * 1024;
 const MAX_READ_PATH: usize = 4096;
@@ -1793,6 +1795,11 @@ mod tests {
     }
 
     #[test]
+    #[test]
+    fn approval_wait_ttl_matches_desktop_local_tool_contract() {
+        assert_eq!(APPROVAL_WAIT_TIMEOUT, Duration::from_secs(10 * 60));
+    }
+
     fn never_permission_fails_closed_before_remote_binding() {
         let root = tempfile::tempdir().unwrap();
         let mut settings =
