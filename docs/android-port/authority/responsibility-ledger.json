@@ -7563,7 +7563,7 @@
       "device_test": "required for invite/join approval/add-remove/leave/reconnect/account switch/process death/accessibility",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Source/runtime closure has advanced beyond the earlier relay/service absence. Account-switch fencing is now implemented separately by AGENT-SHARED-ROOM-ACCOUNT-FENCE-ANDROID-001. Do not advance this aggregate beyond mapped until canonical manager + typed mutation + native management + same-final-head package/device evidence close."
+      "notes": "Cross-user extension/core lifecycle, account fencing, durable departure/tombstone and nonce-dedupe foundations are now production-wired. Keep this umbrella mapped/not-verified because canonical room-manager installation, remote-turn execution/publisher closure, native management surface and exact-head package/device evidence remain open."
     },
     {
       "responsibility_id": "AGENT-SHARED-ROOM-ACCOUNT-FENCE-ANDROID-001",
