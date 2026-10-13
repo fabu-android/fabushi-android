@@ -241,6 +241,19 @@ impl AckObligations {
         self.store.record_interrupt(account_fence, agent_id, at_ms)
     }
 
+    pub fn defer_unfulfilled_completion(
+        &self,
+        account_fence: &str,
+        agent_id: &str,
+        now_ms: u64,
+    ) -> io::Result<bool> {
+        let pending = self.record_interrupt(account_fence, agent_id, now_ms as f64)?;
+        if pending {
+            self.schedule_after_idle(account_fence, agent_id, now_ms);
+        }
+        Ok(pending)
+    }
+
     pub fn pending_for_account(&self, account_fence: &str) -> Vec<AckObligation> {
         self.store.list_for_account(account_fence)
     }
@@ -360,6 +373,29 @@ mod tests {
         }
         assert!(matches!(owner.prepare_redrive("acct-a", "agent-a", true).unwrap(), AckRedrivePreparation::LostMaxRedrives(_)));
         assert!(owner.pending_for_account("acct-a").is_empty());
+    }
+
+    #[test]
+    fn completed_without_visible_delivery_stays_redrivable() {
+        let root = tempfile::tempdir().unwrap();
+        let owner = AckObligations::new(root.path());
+        owner.record_send("acct-a", "agent-a", 1.0).unwrap();
+        assert!(owner
+            .defer_unfulfilled_completion("acct-a", "agent-a", 2)
+            .unwrap());
+        assert_eq!(
+            owner.take_due_redrive(
+                "acct-a",
+                "agent-a",
+                2 + ACK_REDRIVE_IDLE_DELAY_MS - 1,
+            ),
+            None,
+        );
+        assert_eq!(
+            owner.take_due_redrive("acct-a", "agent-a", 2 + ACK_REDRIVE_IDLE_DELAY_MS),
+            Some(AckRedriveTrigger::Idle),
+        );
+        assert_eq!(owner.pending_for_account("acct-a").len(), 1);
     }
 
     #[test]
