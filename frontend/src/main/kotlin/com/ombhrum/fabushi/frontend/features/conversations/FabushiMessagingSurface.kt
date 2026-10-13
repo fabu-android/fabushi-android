@@ -212,6 +212,8 @@ fun FabushiMessagingSurface(
     onSetMessagePinned: (String, String, Boolean) -> Unit = { _, _, _ -> },
     onSetReaction: (String, String, String, Boolean) -> Unit = { _, _, _, _ -> },
     onForwardMessage: (ForwardMessageBatchRequest, (List<ForwardSettlement>) -> Unit) -> Unit = { _, callback -> callback(emptyList()) },
+    onSearchForwardRecipients: (String, String, String, Int, (Result<List<ForwardRecipientCandidate>>) -> Unit) -> Unit =
+        { _, _, _, _, callback -> callback(Result.success(emptyList())) },
     onStartTyping: (String) -> Unit = {},
     onStopTyping: (String) -> Unit = {},
     onSetPinned: (ConversationSummary, Boolean) -> Unit = { _, _ -> },
@@ -566,6 +568,7 @@ fun FabushiMessagingSurface(
             onSetMessagePinned = onSetMessagePinned,
             onSetReaction = onSetReaction,
             onForwardMessage = onForwardMessage,
+            onSearchForwardRecipients = onSearchForwardRecipients,
             onStartTyping = onStartTyping,
             onStopTyping = onStopTyping,
             onSetPinned = onSetPinned,
