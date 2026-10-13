@@ -226,7 +226,7 @@ impl RemoteDispatchBinding {
         Ok(())
     }
 
-    fn active_at(&self, now_ms: u64) -> Result<(), String> {
+    pub(crate) fn active_at(&self, now_ms: u64) -> Result<(), String> {
         if now_ms < self.issued_at_ms {
             return Err("trusted Remote credential is not active yet".into());
         }
