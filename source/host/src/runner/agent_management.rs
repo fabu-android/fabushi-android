@@ -20,6 +20,7 @@ const SELF_SEND_REJECTION: &str =
 struct ActiveAgentTurn {
     operation_id: String,
     account_fence: String,
+    protect_from_priority_interrupt: bool,
     cancelled: Arc<AtomicBool>,
 }
 
@@ -34,6 +35,7 @@ impl AgentTurnInterruptionRegistry {
         agent_id: &str,
         operation_id: &str,
         account_fence: &str,
+        protect_from_priority_interrupt: bool,
         cancelled: Arc<AtomicBool>,
     ) -> Result<(), String> {
         let mut active = self
@@ -45,6 +47,7 @@ impl AgentTurnInterruptionRegistry {
             ActiveAgentTurn {
                 operation_id: operation_id.to_string(),
                 account_fence: account_fence.to_string(),
+                protect_from_priority_interrupt,
                 cancelled,
             },
         );
@@ -75,7 +78,7 @@ impl AgentTurnInterruptionRegistry {
             .lock()
             .map_err(|_| "Agent turn interruption registry lock poisoned".to_string())?;
         let Some(turn) = active.get(agent_id) else { return Ok(None); };
-        if turn.account_fence != account_fence {
+        if turn.account_fence != account_fence || turn.protect_from_priority_interrupt {
             return Ok(None);
         }
         turn.cancelled.store(true, Ordering::Release);
@@ -629,12 +632,14 @@ mod tests {
             &target.id,
             "operation-target",
             "acct:a",
+            false,
             Arc::clone(&target_cancelled),
         ).unwrap();
         interruptions.register(
             "agent-unrelated",
             "operation-unrelated",
             "acct:a",
+            false,
             Arc::clone(&unrelated_cancelled),
         ).unwrap();
         let tools = with_agent_management_tools(
@@ -657,6 +662,50 @@ mod tests {
         assert!(interruptions.has_active_turn(&target.id, "acct:a"));
         interruptions.unregister_operation("operation-target");
         assert!(!interruptions.has_active_turn(&target.id, "acct:a"));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn priority_direct_send_never_interrupts_a_user_lane() {
+        let root = std::env::temp_dir().join(format!(
+            "fabushi-agent-management-priority-user-lane-{}-{}",
+            std::process::id(),
+            now_ms_i64()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        let roster = Arc::new(Mutex::new(AndroidAgentRoster::open(root.join("agents.json")).unwrap()));
+        let target = roster.lock().unwrap().create("Target", "target").unwrap();
+        let messaging = Arc::new(Mutex::new(AndroidMessagingService::open(&root).unwrap()));
+        let live = Arc::new(Mutex::new(Some("acct:a".into())));
+        let user_lane_cancelled = Arc::new(AtomicBool::new(false));
+        let interruptions = Arc::new(AgentTurnInterruptionRegistry::default());
+        interruptions.register(
+            &target.id,
+            "operation-user-lane",
+            "acct:a",
+            true,
+            Arc::clone(&user_lane_cancelled),
+        ).unwrap();
+        let tools = with_agent_management_tools(
+            Arc::new(EmptyTools),
+            roster,
+            messaging,
+            live,
+            "acct:a",
+            "agent-root",
+            Arc::new(AtomicBool::new(false)),
+            Arc::clone(&interruptions),
+        );
+        tools.call_tool(
+            SEND_TO_AGENT_TOOL_NAME,
+            json!({"target_id":target.id,"message":"priority peer update","priority":true}),
+            "priority-user-lane",
+        ).unwrap();
+        assert!(
+            !user_lane_cancelled.load(Ordering::Acquire),
+            "Desktop parity: a priority Agent message must never interrupt the user's active lane"
+        );
+        assert!(interruptions.has_active_turn(&target.id, "acct:a"));
         let _ = fs::remove_dir_all(root);
     }
 
