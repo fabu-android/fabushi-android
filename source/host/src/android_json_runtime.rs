@@ -20543,11 +20543,13 @@ mod process_crash_telemetry_dispatch_tests {
     fn recovered_crash_marks_prior_session_without_contaminating_current_marker() {
         let root = tempfile::tempdir().unwrap();
         let marker_path = root.path().join("host-session-marker.json");
+        let started_at_ms = now_ms().saturating_sub(1_000).max(1);
+        let last_alive_at_ms = started_at_ms.saturating_add(250);
         let (mut prior, previous) =
-            crate::process_crash_guard::AndroidUncleanExitMarker::open(&marker_path, 1_000)
+            crate::process_crash_guard::AndroidUncleanExitMarker::open(&marker_path, started_at_ms)
                 .unwrap();
         assert!(previous.is_none());
-        prior.heartbeat(1_250).unwrap();
+        prior.heartbeat(last_alive_at_ms).unwrap();
         // Simulate process death: Drop would be a clean shutdown and intentionally remove marker.
         std::mem::forget(prior);
 
@@ -20557,7 +20559,7 @@ mod process_crash_telemetry_dispatch_tests {
             &json!({
                 "kind":"uncaught_exception",
                 "errorClass":"IllegalStateException",
-                "occurredAtMs":1_250,
+                "occurredAtMs":last_alive_at_ms,
                 "uptimeMs":250
             }),
         )
@@ -20639,15 +20641,17 @@ mod process_crash_telemetry_dispatch_tests {
     fn cold_start_unclean_session_is_persisted_as_structured_telemetry() {
         let root = tempfile::tempdir().unwrap();
         let marker_path = root.path().join("host-session-marker.json");
+        let started_at_ms = now_ms().saturating_sub(1_000).max(1);
+        let last_alive_at_ms = started_at_ms.saturating_add(250);
         let (mut prior, previous) =
             crate::process_crash_guard::AndroidUncleanExitMarker::open_with_version(
                 &marker_path,
-                1_000,
+                started_at_ms,
                 "1.2.3",
             )
             .unwrap();
         assert!(previous.is_none());
-        prior.heartbeat(1_250).unwrap();
+        prior.heartbeat(last_alive_at_ms).unwrap();
         std::mem::forget(prior);
 
         let host = AndroidJsonHost::new_with_account_session_and_device_id_and_app_version(
