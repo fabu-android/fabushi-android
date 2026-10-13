@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 
 pub mod host_crash_marker;
 pub mod host_lifecycle_progress;
+pub mod host_tracing;
 pub mod webauthn_proxy_telemetry;
 pub mod product_events;
 pub mod recovery_events;
