@@ -25,6 +25,23 @@ data class AndroidMcpOAuthCompletion(
     val outcome: String,
 )
 
+data class AndroidCrossUserSharingCapability(
+    val available: Boolean,
+    val environmentAllowed: Boolean,
+    val enabled: Boolean,
+    val canonicalRoomManagerBound: Boolean,
+)
+
+data class AndroidCrossUserSharingState(
+    val available: Boolean,
+    val enabled: Boolean,
+    val selfAuthId: String?,
+    val pendingJoinRequests: JSONArray,
+    val rooms: JSONArray,
+    val typingUsers: JSONArray,
+    val canonicalRoomManagerBound: Boolean,
+)
+
 data class AndroidGeneratedAvatarImage(
     val imageData: String,
     val mimeType: String,
@@ -829,6 +846,15 @@ interface AndroidCoordinatorPort {
     fun automationCancel(params: JSONObject): JSONObject
     fun automationSettle(params: JSONObject): JSONObject
     fun automationSnapshot(params: JSONObject): JSONObject
+
+    fun crossUserSharingCapability(): AndroidCrossUserSharingCapability =
+        error("Cross-user sharing capability is unavailable on this Coordinator port")
+    fun crossUserSharingState(): AndroidCrossUserSharingState =
+        error("Cross-user sharing state is unavailable on this Coordinator port")
+    fun crossUserSharingSetEnabled(enabled: Boolean): AndroidCrossUserSharingState =
+        error("Cross-user sharing lifecycle control is unavailable on this Coordinator port")
+    fun crossUserSharingRequestDrain(): Boolean =
+        error("Cross-user sharing relay control is unavailable on this Coordinator port")
 
     fun featureExecute(params: JSONObject): JSONObject
     fun sendAcknowledgementBegin(
