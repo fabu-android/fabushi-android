@@ -15699,20 +15699,22 @@
         "source/local-exec-daemon/src/bounded_fs.rs",
         "source/local-exec-daemon/src/lib.rs",
         "source/host/src/host_runner_composition.rs",
-        "source/host/Cargo.toml"
+        "source/host/Cargo.toml",
+        "source/host/src/runner/local_routed_tools.rs",
+        "source/host/src/android_json_runtime.rs"
       ],
       "android_owner": "Rust AndroidLocalRunner behind HostRunnerComposition",
       "platform_delta": "Desktop general local-exec daemon is narrowed on Android; arbitrary shell/computer-use goes to Authorized Remote Runner.",
       "implementation_status": "implemented",
-      "production_wiring": "Host links local-exec crate and AndroidLocalRunner implements HostRunnerSession; real-runner Host composition test exists. Concrete AndroidJsonHost file-capability registration remains open.",
+      "production_wiring": "Shipping AndroidJsonHost owns one process-scoped bounded AndroidLocalRunner rooted at app-private local-runner-files storage and exposes local Read/Write only through with_local_file_tools after Capability Broker account-fenced permission/approval checks. Root Agent turns wrap the canonical routed tool graph with Local Runner before the Remote wrapper; an explicitly authorized Remote binding can replace the same tool names, so Local and Remote never become simultaneous canonical owners. Local approval status/resolve is wired through the Host UI approval boundary and standing Always/Never policy settles same-account pending Local waits.",
       "unit_test": "bounded_fs containment/symlink/size/atomic/cwd tests; duplicate capability owner preservation; unknown cancellation fail-closed",
       "contract_test": "real AndroidLocalRunner routed by Host composition without Remote journal",
-      "integration_test": "partial; concrete shipping local file capability registration remains required",
+      "integration_test": "Host/Local adapter tests cover bounded Read/Write, account-fenced approvals and permission policy; shipping AndroidJsonHost composition added by 3a43094f584c2f4ac74aaf76ef04ed155870ac45 and local policy convergence by baba70fdf426dcdc75c87623e58ceca87d3bba93. Exact-head Actions pending.",
       "packaged_test": "required",
       "device_test": "required",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Implemented by aa6c3056, 980478b5, 785be088, e4dd06b8, 7ed8720f, 367dc893, 44c1a7d4. This does not claim full local-exec parity."
+      "notes": "Production wiring gap is closed in source by 3a43094f584c2f4ac74aaf76ef04ed155870ac45 and baba70fdf426dcdc75c87623e58ceca87d3bba93. Keep not-verified until a descendant exact HEAD passes Rust/Android/package/device evidence; this still does not claim unrestricted Desktop local-exec parity."
     },
     {
       "responsibility_id": "AGENT-SESSION-DB-CONTRACTS-ANDROID-001",
