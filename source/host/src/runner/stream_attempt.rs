@@ -105,6 +105,7 @@ pub struct StreamAttemptResult {
     pub finish_reason: String,
     pub attempts: usize,
     pub retries: Vec<RetryObservation>,
+    pub first_token_delay_ms: u64,
 }
 
 pub struct StreamAttemptHost<P: TurnStreamProvider> {
@@ -183,6 +184,7 @@ impl<P: TurnStreamProvider> StreamAttemptHost<P> {
                         finish_reason: generation.finish_reason,
                         attempts: attempt,
                         retries,
+                        first_token_delay_ms: generation.first_token_delay_ms,
                     });
                 }
                 Err(failure) => {
@@ -309,6 +311,7 @@ mod tests {
         assert_eq!(result.attempts, 2);
         assert_eq!(result.retries.len(), 1);
         assert_eq!(result.chunks.concat(), "hello");
+        assert_eq!(result.first_token_delay_ms, 10);
     }
 
     #[test]
