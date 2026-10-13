@@ -993,6 +993,162 @@ impl AndroidMessagingService {
         )])
     }
 
+    /// Derive the server mutation for a canonical direct-Human text send.
+    ///
+    /// The Host owns transport; this repository owns membership/content truth. Returning None
+    /// means the command is not a Human remote direct send. Unsupported remote content fails
+    /// closed instead of silently becoming a local-only success.
+    pub fn remote_human_send_intent(
+        &self,
+        actor_id: &str,
+        command: &Map<String, Value>,
+    ) -> Result<Option<Value>, String> {
+        if command.get("type").and_then(Value::as_str) != Some("sendMessage") {
+            return Ok(None);
+        }
+        let conversation_id =
+            required_non_empty(command.get("conversationId"), "conversation id")?;
+        let conversation = self.require_conversation_access(conversation_id, actor_id)?;
+        if conversation_kind(conversation) != Some("direct") {
+            return Ok(None);
+        }
+        let participants = conversation
+            .get("participants")
+            .and_then(Value::as_array)
+            .ok_or("direct Human conversation participants are required")?;
+        if participants.len() != 2 {
+            return Ok(None);
+        }
+        let mut peer_actor_id = None;
+        for participant in participants {
+            let participant_id = required_non_empty(
+                participant.get("actorId"),
+                "direct Human participant actor id",
+            )?;
+            let is_human = self
+                .state
+                .actors
+                .get(participant_id)
+                .and_then(|actor| actor.get("kind"))
+                .and_then(Value::as_str)
+                == Some("human");
+            if !is_human {
+                return Ok(None);
+            }
+            if participant_id != actor_id {
+                if peer_actor_id.replace(participant_id.to_string()).is_some() {
+                    return Ok(None);
+                }
+            }
+        }
+        let peer_actor_id =
+            peer_actor_id.ok_or("direct Human conversation omitted the peer actor")?;
+        if !self.state.contact_ids.contains(&peer_actor_id) {
+            return Ok(None);
+        }
+        if conversation_id != stable_human_direct_conversation_id(actor_id, &peer_actor_id) {
+            return Err(
+                "remote Human send requires the canonical server-backed direct conversation identity"
+                    .into(),
+            );
+        }
+        let client_request_id =
+            required_non_empty(command.get("clientMessageId"), "clientMessageId")?;
+        if !bounded_id(client_request_id) {
+            return Err("remote Human clientMessageId is invalid".into());
+        }
+        if command
+            .get("threadRootMessageId")
+            .is_some_and(|value| !value.is_null())
+            || command
+                .get("scheduledAtMs")
+                .is_some_and(|value| !value.is_null())
+            || command.get("silent").and_then(Value::as_bool).unwrap_or(false)
+            || command
+                .get("protectedContent")
+                .and_then(Value::as_bool)
+                .unwrap_or(false)
+        {
+            return Err(
+                "remote Human send does not yet support thread, scheduled, silent, or protected-content semantics"
+                    .into(),
+            );
+        }
+        let content = command
+            .get("content")
+            .and_then(Value::as_object)
+            .ok_or("remote Human send content object is required")?;
+        if content.get("type").and_then(Value::as_str) != Some("text") {
+            return Err(
+                "remote Human send currently supports text content only; attachment/media transport must settle separately"
+                    .into(),
+            );
+        }
+        let text = content
+            .get("data")
+            .and_then(Value::as_object)
+            .and_then(|data| data.get("text"))
+            .and_then(Value::as_object)
+            .and_then(|text| text.get("text"))
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|text| !text.is_empty())
+            .ok_or("remote Human text content is empty")?;
+        if text.len() > 2 * 1024 * 1024 {
+            return Err("remote Human text content is too large".into());
+        }
+
+        let reply_to_remote_message_id =
+            if let Some(reply_to) = optional_string(command.get("replyToMessageId")) {
+                let reply = self.require_message(conversation_id, &reply_to)?;
+                Some(
+                    required_non_empty(
+                        reply.get("remoteMessageId"),
+                        "remote Human reply server message id",
+                    )?
+                    .to_string(),
+                )
+            } else {
+                None
+            };
+        Ok(Some(json!({
+            "conversationId":conversation_id,
+            "peerActorId":peer_actor_id,
+            "targetUserId":peer_actor_id.trim_start_matches("human:"),
+            "clientRequestId":client_request_id,
+            "text":text,
+            "replyToMessageId":reply_to_remote_message_id,
+            "attachments":[],
+        })))
+    }
+
+    pub fn remote_human_server_echo_for_client_request(
+        &self,
+        conversation_id: &str,
+        actor_id: &str,
+        client_request_id: &str,
+    ) -> Option<(String, String)> {
+        self.state
+            .messages
+            .get(conversation_id)?
+            .values()
+            .find(|message| {
+                message.get("senderId").and_then(Value::as_str) == Some(actor_id)
+                    && message.get("clientMessageId").and_then(Value::as_str)
+                        == Some(client_request_id)
+                    && message
+                        .get("remoteMessageId")
+                        .and_then(Value::as_str)
+                        .is_some()
+            })
+            .and_then(|message| {
+                Some((
+                    message.get("id")?.as_str()?.to_string(),
+                    message.get("remoteMessageId")?.as_str()?.to_string(),
+                ))
+            })
+    }
+
     fn send_message(
         &mut self,
         command: &Map<String, Value>,
@@ -1015,6 +1171,13 @@ impl AndroidMessagingService {
                 messages
                     .get(&stable_id)
                     .or_else(|| messages.get(client_message_id))
+                    .or_else(|| {
+                        messages.values().find(|message| {
+                            message.get("senderId").and_then(Value::as_str) == Some(actor_id)
+                                && message.get("clientMessageId").and_then(Value::as_str)
+                                    == Some(client_message_id)
+                        })
+                    })
             })
             .cloned()
         {
@@ -4028,6 +4191,132 @@ mod tests {
         assert!(service
             .execute(&request, "human:new-account", 100)
             .is_err());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn remote_human_send_intent_is_owned_by_canonical_direct_conversation() {
+        let root = temp_root("remote-send-intent");
+        let actor = "human:self";
+        let peer = "human:peer";
+        let conversation_id = stable_human_direct_conversation_id(actor, peer);
+        let mut service = AndroidMessagingService::open(&root).unwrap();
+        service
+            .reconcile_remote_human_contacts(&[
+                json!({"id":peer,"kind":"human","displayName":"Peer"})
+            ])
+            .unwrap();
+        execute(
+            &mut service,
+            "self-profile",
+            actor,
+            json!({"type":"upsertProfile","actor":{"id":actor,"kind":"human","displayName":"Self"}}),
+        )
+        .unwrap();
+        execute(
+            &mut service,
+            "direct",
+            actor,
+            json!({"type":"createConversation","conversation":{
+                "id":conversation_id,
+                "kind":"direct",
+                "title":"Peer",
+                "ownerId":actor,
+                "participants":[
+                    {"actorId":actor,"role":"owner","joinedAtMs":1},
+                    {"actorId":peer,"role":"member","joinedAtMs":1}
+                ]
+            }}),
+        )
+        .unwrap();
+
+        let command = json!({
+            "type":"sendMessage",
+            "conversationId":conversation_id,
+            "clientMessageId":"client-1",
+            "content":{"type":"text","data":{"text":{"text":"hello","entities":[]}}}
+        });
+        let intent = service
+            .remote_human_send_intent(actor, command.as_object().unwrap())
+            .unwrap()
+            .unwrap();
+        assert_eq!(intent["targetUserId"], "peer");
+        assert_eq!(intent["clientRequestId"], "client-1");
+        assert_eq!(intent["text"], "hello");
+        assert!(intent["attachments"].as_array().unwrap().is_empty());
+
+        let unsupported = json!({
+            "type":"sendMessage",
+            "conversationId":conversation_id,
+            "clientMessageId":"client-2",
+            "content":{"type":"document","data":{"media":{"id":"blob-a"}}}
+        });
+        assert!(service
+            .remote_human_send_intent(actor, unsupported.as_object().unwrap())
+            .is_err());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn server_reconciled_client_request_prevents_duplicate_local_send() {
+        let root = temp_root("remote-send-replay");
+        let actor = "human:self";
+        let peer = "human:peer";
+        let conversation_id = stable_human_direct_conversation_id(actor, peer);
+        let mut service = AndroidMessagingService::open(&root).unwrap();
+        service
+            .reconcile_remote_human_messages(
+                actor,
+                peer,
+                &[json!({
+                    "id":"42",
+                    "senderUserId":"self",
+                    "recipientUserId":"peer",
+                    "text":"hello",
+                    "clientRequestId":"client-1",
+                    "createdAt":"2026-10-13T00:00:00Z",
+                    "readAt":Value::Null,
+                    "attachments":[],
+                    "reactions":[]
+                })],
+            )
+            .unwrap();
+        assert_eq!(
+            service
+                .remote_human_server_echo_for_client_request(
+                    &conversation_id,
+                    actor,
+                    "client-1",
+                )
+                .unwrap()
+                .1,
+            "42",
+        );
+        let result = execute(
+            &mut service,
+            "local-replay",
+            actor,
+            json!({
+                "type":"sendMessage",
+                "conversationId":conversation_id,
+                "clientMessageId":"client-1",
+                "content":{"type":"text","data":{"text":{"text":"hello","entities":[]}}}
+            }),
+        )
+        .unwrap();
+        assert_eq!(
+            result["envelopes"][0]["event"]["message"]["id"],
+            "human-server-message:42",
+        );
+        assert_eq!(
+            service
+                .state
+                .messages
+                .get(&conversation_id)
+                .unwrap()
+                .len(),
+            1,
+        );
         let _ = fs::remove_dir_all(root);
     }
 
