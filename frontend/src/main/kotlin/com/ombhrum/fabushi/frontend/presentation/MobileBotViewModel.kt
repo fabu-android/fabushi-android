@@ -368,11 +368,22 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
         viewModelScope.launch {
             val result = withContext(Dispatchers.IO) {
                 runCatching {
+                    val defaultProjection = coordinator.agentDefaultModel()
+                    val settledAccountSlot = canonicalRosterSelectionAccountSlot()
+                    val defaultScope = defaultProjection.optString("accountScope").trim()
+                    check(defaultScope == settledAccountSlot) {
+                        "Default model projection belongs to a stale account"
+                    }
+                    val defaultModel = defaultProjection
+                        .takeIf { it.has("model") && !it.isNull("model") }
+                        ?.optString("model")
+                        ?.trim()
+                        ?.takeIf(String::isNotEmpty)
                     val projection = projectMobileAvailableModelCatalog(
                         coordinator.availableModelCatalog(),
-                        previous.selectedModelId,
+                        defaultModel,
                     )
-                    projection to canonicalRosterSelectionAccountSlot()
+                    projection to settledAccountSlot
                 }
             }
             if (
@@ -402,10 +413,37 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     fun selectAvailableModel(modelId: String) {
+        val expectedAccountSlot = rosterSelectionAccountSlot ?: return
+        val token = modelCatalogGeneration
         val current = mutableState.value.modelCatalog
         runCatching { current.selectAvailableModel(modelId) }
             .onSuccess { selected ->
-                commitState(mutableState.value.copy(modelCatalog = selected))
+                commitState(mutableState.value.copy(modelCatalog = selected.copy(error = null)))
+                viewModelScope.launch {
+                    val result = withContext(Dispatchers.IO) {
+                        runCatching {
+                            coordinator.setAgentDefaultModel(
+                                expectedAccountScope = expectedAccountSlot,
+                                model = modelId,
+                            )
+                        }
+                    }
+                    if (
+                        token != modelCatalogGeneration ||
+                        expectedAccountSlot != rosterSelectionAccountSlot
+                    ) {
+                        return@launch
+                    }
+                    result.onFailure { error ->
+                        commitState(
+                            mutableState.value.copy(
+                                modelCatalog = current.copy(
+                                    error = error.message ?: "Default model could not be saved",
+                                ),
+                            ),
+                        )
+                    }
+                }
             }
             .onFailure { error ->
                 commitState(
