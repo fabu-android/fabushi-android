@@ -3757,17 +3757,39 @@ impl AndroidJsonHost {
             return Err("remote Human message sync requires the production account transport".into());
         }
         let contact_id = required_string(params, "contactId")?;
+        let peer_actor_id = canonical_human_actor_id(contact_id)?;
+        let backend_contact_id = peer_actor_id
+            .strip_prefix("human:")
+            .unwrap_or(peer_actor_id.as_str());
         let limit = params
             .get("limit")
             .and_then(Value::as_u64)
             .unwrap_or(100);
         let before = params.get("before").and_then(Value::as_str);
-        let path = human_remote_messages_path(contact_id, before, limit)?;
-        let (result, mutation) = self
+        let path = human_remote_messages_path(backend_contact_id, before, limit)?;
+        let fence_before_network = self.current_turn_account_fence()?;
+        let (actor_id, status_mutation) = self.current_messaging_identity()?;
+        let (result, request_mutation) = self
             .account
             .authenticated_device_api_request("GET", &path, None)?;
         validate_human_remote_envelope(&result, "message sync")?;
-        Ok(with_account_session_mutation(result, mutation))
+        if self.current_turn_account_fence()? != fence_before_network {
+            return Err("Human message sync became stale after the account changed.".into());
+        }
+        let messages = human_remote_message_rows(&result)?;
+        let reconciled = self
+            .messaging
+            .lock()
+            .map_err(|_| "canonical Android messaging owner lock poisoned".to_string())?
+            .reconcile_remote_human_messages(&actor_id, &peer_actor_id, messages)?;
+        Ok(with_account_session_mutation(
+            json!({
+                "success":true,
+                "data":{"messages":messages},
+                "reconciledCount":reconciled
+            }),
+            request_mutation.or(status_mutation),
+        ))
     }
 
     fn messaging_forward_recipients(&mut self, params: &Value) -> Result<Value, String> {
@@ -10852,6 +10874,27 @@ fn normalize_human_remote_contacts(
         }));
     }
     Ok(normalized)
+}
+
+fn canonical_human_actor_id(value: &str) -> Result<String, String> {
+    let value = value.trim();
+    if value.is_empty() || value.len() > 160 {
+        return Err("remote Human actor id is invalid".into());
+    }
+    Ok(if value.starts_with("human:") {
+        value.to_string()
+    } else {
+        format!("human:{value}")
+    })
+}
+
+fn human_remote_message_rows(value: &Value) -> Result<&[Value], String> {
+    value
+        .get("data")
+        .and_then(|data| data.get("messages"))
+        .and_then(Value::as_array)
+        .map(Vec::as_slice)
+        .ok_or_else(|| "Fabushi Human message sync response omitted data.messages".to_string())
 }
 
 fn human_remote_messages_path(
