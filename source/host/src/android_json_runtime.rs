@@ -1503,6 +1503,12 @@ impl AndroidJsonHost {
         } else {
             None
         };
+        if let (Some(analytics), Some(account_scope)) = (
+            product_analytics.as_ref(),
+            account.account_storage_scope(),
+        ) {
+            let _ = analytics.mark_active(&account_scope, "host_startup");
+        }
         let managed_skills = if mode == AndroidHostMode::Production {
             mcp_dashboard_backend.as_ref().map(|dashboard| {
                 let dashboard = Arc::clone(dashboard);
