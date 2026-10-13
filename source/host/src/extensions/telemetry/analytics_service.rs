@@ -139,6 +139,10 @@ impl AndroidProductAnalyticsRuntime {
         !self.disabled
     }
 
+    pub fn can_record_events(&self) -> bool {
+        !self.disabled
+    }
+
     pub fn track(
         &self,
         account_scope: &str,
@@ -407,6 +411,7 @@ mod tests {
             "0.1.0-test".into(),
             "dev".into(),
         );
+        assert!(!runtime.can_record_events());
         runtime
             .track(
                 "account-a",
