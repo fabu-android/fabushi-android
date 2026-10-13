@@ -201,6 +201,24 @@ mod tests {
     }
 
     #[test]
+    fn binding_tracks_live_maintenance_gate_changes_without_a_second_owner() {
+        use crate::extensions::session::session_maintenance::
+            is_legacy_store_blob_retirement_enabled;
+
+        let experiments = Arc::new(HostExperimentsExtension::new());
+        experiments.set_settings_override(LEGACY_BLOB_RETIREMENT_GATE, Some(false));
+        let binding = AndroidSessionPolicyBindings::bind(Arc::clone(&experiments));
+        assert!(!is_legacy_store_blob_retirement_enabled());
+
+        experiments.set_settings_override(LEGACY_BLOB_RETIREMENT_GATE, Some(true));
+        assert!(is_legacy_store_blob_retirement_enabled());
+
+        experiments.set_settings_override(LEGACY_BLOB_RETIREMENT_GATE, Some(false));
+        assert!(!is_legacy_store_blob_retirement_enabled());
+        drop(binding);
+    }
+
+    #[test]
     fn dynamic_conversation_limits_follow_canonical_authenticated_experiment_state() {
         let experiments = HostExperimentsExtension::new();
         experiments
