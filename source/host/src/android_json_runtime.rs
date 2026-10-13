@@ -7531,6 +7531,7 @@ impl AndroidJsonHost {
             || self.experiments.configured_default_model(),
             || self.experiments.configured_automations_model(),
         );
+        let configured_default = self.experiments.configured_default_model();
         let env_model_override = std::env::var("SAND_AGENT_MODEL")
             .ok()
             .map(|value| value.trim().to_string())
@@ -7540,6 +7541,8 @@ impl AndroidJsonHost {
         } else if let Some(model) = env_model_override.as_deref() {
             AndroidHostInferenceProvider::resolve_model_id(model)
         } else if let Some(selection) = experiment_selection.as_ref() {
+            AndroidHostInferenceProvider::resolve_model_id(&selection.model_id)
+        } else if let Some(selection) = configured_default.as_ref() {
             AndroidHostInferenceProvider::resolve_model_id(&selection.model_id)
         } else {
             AndroidHostInferenceProvider::resolve_model_id("default")
