@@ -19421,6 +19421,355 @@
       "artifact": null,
       "verification_status": "not-verified",
       "notes": "Android splits the Desktop helper into durable owners but preserves canonical acceptance and name-seeding semantics; no verified claim until descendant CI/device evidence."
+    },
+    {
+      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "packaged_test": "required on final exact-head githubRelease artifact",
+      "device_test": "required in final messaging/Agent acceptance",
+      "responsibility_id": "TRANSCRIPT-GROUP-FANOUT-ANDROID-001",
+      "domain": "group-agent-messaging",
+      "desktop_sources": [
+        {
+          "path": "source/host/src/extensions/transcript/send_group_fanout.rs",
+          "blob_sha": "f67898a1c93dffdaf81d38349bb454300ae56ea0",
+          "symbols": [
+            "dispatch_local_group_send",
+            "dispatch_local_group_send_with_observer",
+            "collect_new_member_send_messages",
+            "LocalGroupFanoutDisposition"
+          ]
+        }
+      ],
+      "responsibility": "Fan one group-room send into bounded member turns, persist member-authored room entries, distinguish local from remote members, preserve per-member failure and shared-room publication, and avoid a second group state owner.",
+      "source_owner": "Desktop local group send fanout",
+      "direct_callers": [
+        "Transcript send path for group agents"
+      ],
+      "downstream_dependencies": [
+        "GroupChatOrchestrator",
+        "ProductionSessionWorkers",
+        "group config/shared-room runtime",
+        "member turn executor"
+      ],
+      "state_owner": "AndroidAgentRoster owns group membership; GroupChatOrchestrator and group_chat_glue own transient orchestration only",
+      "persistent_state": [
+        "canonical group transcript entries only"
+      ],
+      "protocol_wire_contract": [
+        "group room/member identities",
+        "bounded member-turn result",
+        "shared-room identity",
+        "member preemption/failure disposition"
+      ],
+      "visible_effect": "A group send reaches eligible members and posts member replies to the canonical room without corrupting the room when one member fails or is remote.",
+      "failure_behavior": [
+        "per-member failure remains explicit",
+        "stale orchestration stops",
+        "remote member requires authorized remote execution"
+      ],
+      "cancellation_behavior": "cancel or preempt only the affected member turn while preserving already durable room entries",
+      "retry_semantics": "already persisted member entries are not blindly emitted again; remote outcome-unknown work reconciles",
+      "idempotency_semantics": "canonical entry identity plus round/member identity fences duplicate posts",
+      "process_death_recovery": "reopen canonical group transcript and roster; transient fanout must reconstruct or reconcile instead of replaying every member",
+      "account_fencing": "frozen account and current group identity fence stale callbacks",
+      "security_boundary": "fanout cannot widen member tool grants; remote members remain behind authorized runner boundaries",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "source/host/src/extensions/transcript/group_chat_orchestrator.rs",
+        "source/host/src/extensions/transcript/group_chat_glue.rs",
+        "source/host/src/android_json_runtime.rs",
+        "source/host/src/android_agent_roster.rs"
+      ],
+      "android_owner": "Rust GroupChatOrchestrator plus canonical AndroidAgentRoster/TranscriptStore",
+      "platform_delta": "Desktop session-worker fanout is decomposed into Android Host group orchestration and canonical roster/transcript owners.",
+      "implementation_status": "mapped",
+      "production_wiring": "Group orchestration, member preview/routing and canonical group ownership exist, but exact local/remote fanout disposition, member failure aggregation and shared-room post recovery are not yet fully proven.",
+      "unit_test": "group_chat_orchestrator and group_chat_glue focused tests exist; full Desktop fanout matrix still required",
+      "contract_test": "required: local+remote members, DM preemption, per-member failure, shared-room publish and stale-account fencing",
+      "integration_test": "required: real multi-Agent group send through Host/Coordinator",
+      "notes": "Mapped conservatively; no implementation promotion until the Desktop fanout semantic matrix is closed."
+    },
+    {
+      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "packaged_test": "required on final exact-head githubRelease artifact",
+      "device_test": "required in final messaging/Agent acceptance",
+      "responsibility_id": "TRANSCRIPT-SEND-MESSAGE-SHAPING-ANDROID-001",
+      "domain": "messaging-message-shaping",
+      "desktop_sources": [
+        {
+          "path": "source/host/src/extensions/transcript/send_message_shaping.rs",
+          "blob_sha": "f43ed9960d4e0e42e9cc997b4921674adcda0cd2",
+          "symbols": [
+            "UserMessageOptions",
+            "UserAttachmentOptions",
+            "toggle_reaction",
+            "shape_send_prompt_media_args",
+            "collect_inbound_images",
+            "create_user_message",
+            "create_user_attachment_entry",
+            "describe_replied_message_quote"
+          ]
+        }
+      ],
+      "responsibility": "Normalize message, attachment, reaction, reply/fork, media and inbound-image inputs into canonical transcript and inference shapes while preserving attachment and quote identity.",
+      "source_owner": "Desktop send message shaping helper",
+      "direct_callers": [
+        "Desktop TranscriptManager/send pipeline",
+        "inbound image and media preparation"
+      ],
+      "downstream_dependencies": [
+        "selected image inputs",
+        "canonical transcript",
+        "attachment metadata",
+        "inference prompt shaping"
+      ],
+      "state_owner": "Stateless shaping helpers plus canonical Android TranscriptStore and attachment owners",
+      "persistent_state": [
+        "only shaped fields persisted in canonical transcript/attachment records"
+      ],
+      "protocol_wire_contract": [
+        "richText/replyTo/isFork/clientNonce",
+        "attachment path/name/size/dimensions",
+        "image/video MIME and prompt media",
+        "reaction identity"
+      ],
+      "visible_effect": "Replies, reactions, attachments and media retain their intended meaning when sent and recovered on Android.",
+      "failure_behavior": [
+        "invalid media metadata is omitted or rejected rather than fabricated",
+        "invalid reply/media shape cannot gain authority"
+      ],
+      "cancellation_behavior": "shaping itself has no side effect; upload/send owners handle cancellation",
+      "retry_semantics": "same canonical input shapes deterministically",
+      "idempotency_semantics": "deterministic shaping plus canonical attachment/message identity",
+      "process_death_recovery": "durable owners reopen transcript and attachment metadata; shaping holds no durable state",
+      "account_fencing": "callers admit current-account data before shaping",
+      "security_boundary": "file/media access remains in Android scoped-storage/attachment owners",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "source/host/src/android_json_runtime.rs",
+        "source/host/src/agent_attachment.rs",
+        "source/host/src/extensions/transcript/transcript_store.rs",
+        "source/host/src/selected_image_inputs.rs"
+      ],
+      "android_owner": "Rust Host chat/send shaping plus canonical attachment/transcript owners",
+      "platform_delta": "Desktop filesystem/media helpers are replaced by Android attachment/scoped-storage adapters.",
+      "implementation_status": "mapped",
+      "production_wiring": "chat.send already persists richText/replyTo/isFork/clientNonce/attachments and Android has media owners, but the full reaction/quote/media/inbound-image helper surface is not closed.",
+      "unit_test": "existing attachment/chat.send/selected-image tests; dedicated shaping parity tests required",
+      "contract_test": "required: reaction, reply/fork, image/video, attachment metadata and offline composed-note parity",
+      "integration_test": "required: native attachment/media/reply send via typed bridge",
+      "notes": "Mapped because Desktop shaping responsibilities are distributed and several sub-responsibilities remain unproven."
+    },
+    {
+      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "packaged_test": "required on final exact-head githubRelease artifact",
+      "device_test": "required in final messaging/Agent acceptance",
+      "responsibility_id": "TRANSCRIPT-SEND-NOT-PERSISTED-ANDROID-001",
+      "domain": "messaging-send-durability",
+      "desktop_sources": [
+        {
+          "path": "source/host/src/extensions/transcript/send_not_persisted_error.rs",
+          "blob_sha": "b216dd1959e71c75ec9316af785d266236d3395d",
+          "symbols": [
+            "SandSendNotPersistedError"
+          ]
+        }
+      ],
+      "responsibility": "Reject a send if its addressed canonical transcript cannot be persisted so a retry is visible and is never swallowed as success.",
+      "source_owner": "Desktop send-not-persisted error contract",
+      "direct_callers": [
+        "Desktop send persistence path"
+      ],
+      "downstream_dependencies": [
+        "canonical transcript store",
+        "send acceptance/admission"
+      ],
+      "state_owner": "Canonical Android TranscriptStore and PromptAcceptanceLedger",
+      "persistent_state": [
+        "no error-owned state"
+      ],
+      "protocol_wire_contract": [
+        "persistence failure must surface as rejection or outcome-unknown, never success"
+      ],
+      "visible_effect": "Storage failure is visible as a send failure instead of silently losing the user message.",
+      "failure_behavior": [
+        "fail closed before downstream execution can be treated as accepted"
+      ],
+      "cancellation_behavior": "no independent cancellation; rejection occurs at persistence boundary",
+      "retry_semantics": "retry after storage/reconciliation using the same idempotent identity",
+      "idempotency_semantics": "acceptance ledger plus transcript identity fence a retry from duplicating an earlier durable send",
+      "process_death_recovery": "acceptance ledger and canonical transcript determine durable versus outcome-unknown state after restart",
+      "account_fencing": "persistence and acceptance are account-fenced",
+      "security_boundary": "UI cannot override Host persistence failure",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "source/host/src/android_json_runtime.rs",
+        "source/host/src/extensions/transcript/prompt_acceptance_ledger.rs",
+        "source/host/src/extensions/transcript/transcript_store.rs"
+      ],
+      "android_owner": "Rust Host persistence and acceptance boundary",
+      "platform_delta": "Android uses Host Result/error plus durable acceptance state rather than the Desktop named error type.",
+      "implementation_status": "mapped",
+      "production_wiring": "chat.send propagates transcript and acceptance errors, but a focused injected persistence-failure contract is still required to prove no swallowed send.",
+      "unit_test": "PromptAcceptanceLedger corruption and unknown-durability tests exist; injected transcript-persist failure test required",
+      "contract_test": "required: persistence failure externally observable and no inference/tool side effect starts",
+      "integration_test": "required: simulated storage failure/recovery in GitHub Actions",
+      "notes": "Mapped pending deterministic persistence-failure evidence."
+    },
+    {
+      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "packaged_test": "required on final exact-head githubRelease artifact",
+      "device_test": "required in final messaging/Agent acceptance",
+      "responsibility_id": "TRANSCRIPT-SEND-PIPELINE-ANDROID-001",
+      "domain": "messaging-agent-send-pipeline",
+      "desktop_sources": [
+        {
+          "path": "source/host/src/extensions/transcript/send_pipeline.rs",
+          "blob_sha": "12f58e2923cd909b9564b99e0a6393955a0945e0",
+          "symbols": [
+            "SendPipelineState",
+            "SendBegin",
+            "PersistedSendContext",
+            "RecoverySend",
+            "begin_send",
+            "record_pending_acceptance",
+            "mark_send_accepted",
+            "mark_send_rejected",
+            "finish_send",
+            "register_recovery_turn"
+          ]
+        }
+      ],
+      "responsibility": "Coordinate send admission, in-flight deduplication, durable acceptance, canonical echo context, run generation/recovery identity and attachment-side send state before and after execution.",
+      "source_owner": "Desktop SendPipelineState",
+      "direct_callers": [
+        "Desktop TranscriptManager send path"
+      ],
+      "downstream_dependencies": [
+        "PromptAcceptanceLedger",
+        "canonical transcript",
+        "run scheduler",
+        "recovery user messages",
+        "attachment/box request tracking"
+      ],
+      "state_owner": "Android splits durable admission to PromptAcceptanceLedger/TranscriptStore and run sequencing to ProductionTurnDispatch/Coordinator",
+      "persistent_state": [
+        "acceptance ledger",
+        "canonical transcript",
+        "durable run/journal"
+      ],
+      "protocol_wire_contract": [
+        "clientNonce plus canonical input digest",
+        "request/operation identity",
+        "run generation",
+        "accepted echo identity",
+        "outcome-unknown reconciliation"
+      ],
+      "visible_effect": "A user send is accepted once, appears once, starts one run and recovers after process death without duplicate message/tool side effects.",
+      "failure_behavior": [
+        "digest/request mismatch fails closed",
+        "unknown durability reconciles before redispatch",
+        "late generation cannot settle newer run"
+      ],
+      "cancellation_behavior": "accepted message identity remains durable while run cancellation settles only the run",
+      "retry_semantics": "same admitted nonce reconciles/replays; uncertain side effects are not blindly retried",
+      "idempotency_semantics": "account fence + clientNonce + digest + request identity + run generation",
+      "process_death_recovery": "PromptAcceptanceLedger/TranscriptStore reopen and DurableTurnJournal/ProductionTurnLifecycle recover the original run identity",
+      "account_fencing": "send acceptance, transcript and routed tools bind current/frozen account fence",
+      "security_boundary": "Host/Coordinator own admission and execution; UI cannot manufacture acceptance",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "source/host/src/extensions/transcript/prompt_acceptance_ledger.rs",
+        "source/host/src/extensions/transcript/send_turn_dispatch.rs",
+        "source/host/src/extensions/transcript/run_scheduler.rs",
+        "source/host/src/extensions/transcript/transcript_store.rs",
+        "source/host/src/android_json_runtime.rs",
+        "source/host/src/runner/durable_turn_journal.rs",
+        "source/host/src/runner/production_turn_lifecycle.rs"
+      ],
+      "android_owner": "Rust Host canonical send admission/transcript/run owners",
+      "platform_delta": "Desktop monolithic SendPipelineState is decomposed along Android Coordinator/Host durable ownership boundaries.",
+      "implementation_status": "implemented",
+      "production_wiring": "shipping chat.send performs account admission, nonce/digest checks, canonical transcript persistence, accepted profile/activity effects, ProductionTurnDispatch scheduling and terminal reconciliation.",
+      "unit_test": "PromptAcceptanceLedger, send_turn_dispatch, run_scheduler, durable turn lifecycle and android_json_runtime send/recovery tests",
+      "contract_test": "Host/JNI duplicate, stale generation, account switch and process-recovery contracts; exact-head CI pending",
+      "integration_test": "real Agent chat send/cancel/recovery exact-head CI/device acceptance required",
+      "notes": "Implemented across canonical Android owners; intentionally not verified until descendant CI and final artifact/device evidence."
+    },
+    {
+      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "packaged_test": "required on final exact-head githubRelease artifact",
+      "device_test": "required in final messaging/Agent acceptance",
+      "responsibility_id": "TRANSCRIPT-SEND-THREAD-STAMPING-ANDROID-001",
+      "domain": "messaging-reply-threading",
+      "desktop_sources": [
+        {
+          "path": "source/host/src/extensions/transcript/send_thread_stamping.rs",
+          "blob_sha": "e0c37baf3c70eda870515e55edd980bf4eb82aa1",
+          "symbols": [
+            "ReplyContext",
+            "SendReplyThreading",
+            "resolve_send_reply_threading",
+            "validate_ai_reply_target",
+            "apply_auto_reply_thread"
+          ]
+        }
+      ],
+      "responsibility": "Validate reply targets, derive quote/fork context, strip stale AI reply targets and apply automatic reply threading only when the referenced canonical entry is live.",
+      "source_owner": "Desktop send thread stamping helper",
+      "direct_callers": [
+        "Desktop send pipeline",
+        "AI assistant response shaping"
+      ],
+      "downstream_dependencies": [
+        "canonical transcript",
+        "message quote shaping",
+        "send pipeline"
+      ],
+      "state_owner": "Canonical TranscriptStore owns entries; threading logic is stateless",
+      "persistent_state": [
+        "replyTo and fork fields in canonical message entries"
+      ],
+      "protocol_wire_contract": [
+        "reply target entry id",
+        "isFork",
+        "quoted reply context",
+        "AI reply_to validation"
+      ],
+      "visible_effect": "Replies/forks point to live intended messages and stale targets do not create broken threads.",
+      "failure_behavior": [
+        "missing or stale target is stripped/rejected rather than persisted as a broken reference"
+      ],
+      "cancellation_behavior": "stateless; send/run cancellation owned elsewhere",
+      "retry_semantics": "same canonical transcript state yields the same threading decision",
+      "idempotency_semantics": "entry-id target plus canonical send identity",
+      "process_death_recovery": "replyTo/isFork persist and restored sends revalidate against durable entries",
+      "account_fencing": "reply target must resolve in the current account/conversation transcript",
+      "security_boundary": "reply target cannot cross an inaccessible transcript",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "source/host/src/android_json_runtime.rs",
+        "source/host/src/extensions/transcript/transcript_store.rs",
+        "source/host/src/extensions/transcript/prompt_acceptance_ledger.rs"
+      ],
+      "android_owner": "Rust Host canonical transcript/send path",
+      "platform_delta": "Desktop pure helper is currently folded into Android chat.send/transcript logic.",
+      "implementation_status": "mapped",
+      "production_wiring": "replyToId/isFork participate in durable digest and canonical identity checks, but stale-AI-target stripping, quote context and auto-thread behavior lack focused parity proof.",
+      "unit_test": "canonical digest reply-target test exists; stale-target/auto-thread/quote tests required",
+      "contract_test": "required: valid/stale/cross-account reply target and fork semantics",
+      "integration_test": "required: native reply/fork send and process-reopen thread rendering",
+      "notes": "Mapped until the complete Desktop reply-threading semantic surface is explicitly implemented/tested."
     }
   ],
   "traceability": {
