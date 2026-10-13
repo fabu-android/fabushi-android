@@ -263,6 +263,22 @@ impl AndroidAccountService {
         Ok((value, mutation))
     }
 
+    /// Authenticated request for device-bound Fabushi product APIs such as native messaging.
+    ///
+    /// The account service remains the only bearer-token owner. Callers cannot inject or cache a
+    /// second credential; they only select the server path/body while this owner refreshes the
+    /// session and binds the canonical Android device identity on the wire.
+    pub(crate) fn authenticated_device_api_request(
+        &mut self,
+        method: &str,
+        path: &str,
+        body: Option<Value>,
+    ) -> Result<(Value, Option<AccountSessionMutation>), String> {
+        let (token, mutation) = self.valid_access_token()?;
+        let value = self.request_json_with_device_header(path, method, body, Some(&token))?;
+        Ok((value, mutation))
+    }
+
     pub fn update_display_name(
         &mut self,
         display_name: &str,
@@ -664,6 +680,27 @@ impl AndroidAccountService {
         body: Option<Value>,
         bearer: Option<&str>,
     ) -> Result<Value, String> {
+        self.request_json_with_headers(path, method, body, bearer, false)
+    }
+
+    fn request_json_with_device_header(
+        &self,
+        path: &str,
+        method: &str,
+        body: Option<Value>,
+        bearer: Option<&str>,
+    ) -> Result<Value, String> {
+        self.request_json_with_headers(path, method, body, bearer, true)
+    }
+
+    fn request_json_with_headers(
+        &self,
+        path: &str,
+        method: &str,
+        body: Option<Value>,
+        bearer: Option<&str>,
+        bind_device: bool,
+    ) -> Result<Value, String> {
         let url = self
             .base_url
             .join(path.trim_start_matches('/'))
@@ -685,6 +722,9 @@ impl AndroidAccountService {
                 return Err("Fabushi account credential is invalid.".into());
             }
             request = request.set("Authorization", &format!("Bearer {token}"));
+        }
+        if bind_device {
+            request = request.set("x-fabushi-device-id", &self.device_id);
         }
 
         let response = match body {
@@ -979,6 +1019,47 @@ mod tests {
     }
 
 
+
+    #[test]
+    fn device_bound_authenticated_request_uses_single_account_token_and_machine_identity() {
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut bytes = [0_u8; 4096];
+            let read = stream.read(&mut bytes).unwrap();
+            let request = String::from_utf8_lossy(&bytes[..read]).to_ascii_lowercase();
+            assert!(request.starts_with("get /api/social/friends "));
+            assert!(request.contains("authorization: bearer abcdefghijklmnopqrstuvwxyz0123456789"));
+            assert!(request.contains("x-fabushi-device-id: device-1"));
+            let body = r#"{"ok":true}"#;
+            write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                body,
+            )
+            .unwrap();
+            stream.flush().unwrap();
+        });
+
+        let raw = durable_session().to_string();
+        let mut service = AndroidAccountService::with_base_url(
+            "device-1",
+            &format!("http://{address}"),
+            Some(&raw),
+        )
+        .unwrap();
+        let (value, mutation) = service
+            .authenticated_device_api_request("GET", "/api/social/friends", None)
+            .unwrap();
+        assert_eq!(value, json!({"ok":true}));
+        assert!(mutation.is_none());
+        server.join().unwrap();
+    }
 
     #[test]
     fn canonical_auth_id_projection_accepts_string_and_number_ids() {
