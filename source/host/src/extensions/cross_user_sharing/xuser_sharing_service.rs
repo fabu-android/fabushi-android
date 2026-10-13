@@ -1,6 +1,7 @@
 use super::xuser_entry_publisher::SandXuserEntryPublisher;
 use super::xuser_relay::{XuserRelayClient, XuserRelayDriver};
 use super::xuser_state_reconcile::{XuserRoom, reconcile_rooms};
+use serde::Serialize;
 use serde_json::Value;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, Weak};
@@ -8,7 +9,8 @@ use std::sync::{Arc, Mutex, Weak};
 pub const STATE_RECONCILE_INTERVAL_MS: u64 = 5 * 60_000;
 pub const SELF_IDENTITY_RETRY_MS: u64 = 1_000;
 
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SandSharingState {
     pub is_enabled: bool,
     pub self_auth_id: Option<String>,
