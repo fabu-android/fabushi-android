@@ -3967,20 +3967,23 @@
         "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/production/command-palette-model.kt",
         "mobile/android/app/src/test/java/com/ombhrum/fabushi/FrontendProductionModelParityTest.kt",
         ".github/workflows/grok-android-architecture.yml",
-        ".github/workflows/android-parity-full-ci.yml"
+        ".github/workflows/android-parity-full-ci.yml",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/presentation/MessagingViewModel.kt",
+        "mobile/android/app/src/test/java/com/ombhrum/fabushi/CanonicalMessagingContactProjectionTest.kt"
       ],
       "android_owner": "Native Kotlin command-palette model",
       "platform_delta": "Desktop TypeScript canonical agent-row replacement is implemented as Kotlin deduplication over Android's flattened CommandPaletteEntry projection. No second roster owner is introduced.",
       "implementation_status": "implemented",
-      "production_wiring": "commandPaletteEntries canonicalizes stable entry IDs before tab filtering and fuzzy scoring, preserving the first slot and replacing it with the newest row.",
-      "unit_test": "FrontendProductionModelParityTest.commandPaletteCanonicalIdentityReplacesStaleRowsWithoutDuplicates",
-      "contract_test": "Exact Android unit regression exercises latest-row replacement and one-result search projection.",
-      "integration_test": "Grok Android Architecture existing-android-regression and Android Parity Full CI Gradle test path; same-head result pending.",
+      "production_wiring": "Canonical Rust messaging state owns actors by stable actor id. Android presentation now re-canonicalizes snapshot actor rows by id before contact/search projection: later replacement rows overwrite stale metadata/hidden state while the first canonical position is retained, and the current signed-in actor is never projected as a parallel contact root.",
+      "unit_test": "CanonicalMessagingContactProjectionTest covers latest replacement metadata/hidden state, stable deduped ordering, and current-actor exclusion.",
+      "contract_test": "Desktop current-main tdrp-canonical-search-contract.spec.ts blob 3b97e3c332ef69d2a07984135abd7917b2d1ab49 was re-read. Android canonicalMessagingContacts preserves latest replacement semantics without duplicate participant roots.",
+      "integration_test": "Production syncBatch -> parseContacts -> MessagingUiState contacts/search projection uses canonicalMessagingContacts. Same-final-head Android CI and packaged search journey remain required.",
       "packaged_test": "Not yet independently exercised in final packaged acceptance.",
       "device_test": "Not yet independently exercised in final protected-device acceptance.",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Implemented but intentionally not verified until same final exact HEAD CI/package/device gates succeed. FBCP Revision 7 is a cross-cutting source authority for this responsibility; this mapping does not upgrade implementation_status or verification_status."
+      "notes": "Implementation closure reached for canonical participant replacement identity. Keep not-verified until descendant exact-head JVM/Android/package acceptance proves the shipping search surface.",
+      "android_head_at_update": "c8fae37500bf009b3c58ee9f9a9d7f7154f653e1"
     },
     {
       "responsibility_id": "GOVERNANCE-SPEC-FIRST-ANDROID-001",
