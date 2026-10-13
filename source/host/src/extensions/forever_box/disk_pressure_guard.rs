@@ -366,3 +366,56 @@ impl DiskPressureGuard {
         self.disposed.store(true, Ordering::Release);
     }
 }
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn classifies_thresholds_with_hysteresis() {
+        let total = 100 * GIB;
+        assert_eq!(
+            classify_disk_pressure(total, 20 * GIB, DiskPressureLevel::Healthy),
+            DiskPressureLevel::Healthy,
+        );
+        assert_eq!(
+            classify_disk_pressure(total, 8 * GIB, DiskPressureLevel::Healthy),
+            DiskPressureLevel::Soft,
+        );
+        assert_eq!(
+            classify_disk_pressure(total, 2 * GIB, DiskPressureLevel::Healthy),
+            DiskPressureLevel::Hard,
+        );
+
+        // A hard episode does not clear at the entry threshold; it needs the recovery margin.
+        assert_eq!(
+            classify_disk_pressure(total, 3 * GIB, DiskPressureLevel::Hard),
+            DiskPressureLevel::Hard,
+        );
+        assert_eq!(
+            classify_disk_pressure(total, 9 * GIB, DiskPressureLevel::Hard),
+            DiskPressureLevel::Soft,
+        );
+        assert_eq!(
+            classify_disk_pressure(total, 21 * GIB, DiskPressureLevel::Soft),
+            DiskPressureLevel::Healthy,
+        );
+    }
+
+    #[test]
+    fn aggregate_uses_the_most_severe_volume() {
+        let mut states = HashMap::new();
+        states.insert("workspace".to_string(), DiskPressureLevel::Healthy);
+        states.insert("data".to_string(), DiskPressureLevel::Soft);
+        assert_eq!(
+            aggregate_disk_pressure_level(&states),
+            DiskPressureLevel::Soft,
+        );
+        states.insert("temp".to_string(), DiskPressureLevel::Hard);
+        assert_eq!(
+            aggregate_disk_pressure_level(&states),
+            DiskPressureLevel::Hard,
+        );
+    }
+}
