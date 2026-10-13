@@ -18348,20 +18348,22 @@
       "security_boundary": "bounded diagnostic fields only",
       "android_disposition": "direct-port",
       "android_target": [
-        "source/host/src/extensions/telemetry/queue_telemetry_mappers.rs"
+        "source/host/src/extensions/telemetry/queue_telemetry_mappers.rs",
+        "source/host/src/android_json_runtime.rs",
+        "source/host/src/android_structured_log_spill.rs"
       ],
-      "android_owner": "Not yet production-wired; mapper module only",
-      "platform_delta": "Mapper semantics are platform-neutral; missing work is production producer wiring, not an Android mechanism substitution.",
+      "android_owner": "Canonical Rust Host queue/ack/pending-wake owners feeding the durable Android structured-log spool",
+      "platform_delta": "Mapper semantics are platform-neutral. Android uses the direct-ported RunScheduler plus an Android-adapted ProductionTurnDispatch/Condvar lease around its provider worker; durable telemetry uses the account-scoped structured-log spool.",
       "implementation_status": "mapped",
-      "production_wiring": "Current exact-branch git grep found no production caller outside the mapper module/tests.",
-      "unit_test": "Mapper severity/field tests exist",
-      "contract_test": "pending production-producer contract coverage",
-      "integration_test": "missing",
+      "production_wiring": "ack-obligation redrive/lost, pending-wake stale prune, queue accepted/dequeued/watchdog are production-wired. send_dispatch remains without a real Android dispatch timing/skew producer.",
+      "unit_test": "Mapper tests plus RunScheduler/ProductionTurnDispatch focused tests exist; exact-head Actions pending.",
+      "contract_test": "Queue accepted/dequeued/watchdog reports are constructed from canonical scheduler events; pending-wake prune reports use actual durable markers; send_dispatch producer contract remains open.",
+      "integration_test": "Partial production integration is wired; blocked from implemented until send_dispatch timing/skew producer is real.",
       "packaged_test": "missing",
       "device_test": "missing",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Deliberately mapped, not implemented. Next work should wire canonical send/queue/ack/pending-wake owners to these pure mappers and the Host structured-log sink."
+      "notes": "Do not mark implemented/verified yet. Remaining earliest gap in this responsibility is sand.send_dispatch production timing/skew ownership."
     },
     {
       "responsibility_id": "OBSERVABILITY-TURN-INTERRUPT-001",
