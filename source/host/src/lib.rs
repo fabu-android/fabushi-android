@@ -23,6 +23,7 @@ pub mod auto_review_settings;
 pub mod box_rebuild_backend;
 pub mod capability_broker;
 pub mod composer_draft;
+pub mod connectors;
 pub mod account_service;
 pub mod account_telemetry;
 pub mod account_telemetry_spill;
