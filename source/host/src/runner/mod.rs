@@ -1,3 +1,5 @@
+pub mod sand_prompt_markers;
+pub mod conversation_outline;
 pub mod agent_management;
 pub mod android_host_inference;
 pub mod background_work;
