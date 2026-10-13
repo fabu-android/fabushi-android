@@ -29,6 +29,7 @@ use crate::android_user_settings::{AndroidUserSettings, LocalToolPermission};
 use crate::host_secret_store::get_or_create_host_machine_id;
 use crate::onepassword_provisioning::{DurableOnePasswordProvisioningOwner, DurableProvisioningPhase};
 use crate::human_call_runtime::HumanCallRuntime;
+use crate::human_remote_outbound::DurableHumanRemoteOutboundOwner;
 use crate::env_descriptor_account_binding::EnvDescriptorAccountBinding;
 use crate::host_runner_composition::AuthenticatedRemoteHostRunner;
 use crate::messaging_service::AndroidMessagingService;
@@ -876,6 +877,7 @@ pub struct AndroidJsonHost {
     source_map: Arc<SandSourceMap>,
     memory: AndroidMemoryOwner,
     send_acknowledgements: Arc<Mutex<DurableSendAcknowledgementOwner>>,
+    human_remote_outbound: Arc<Mutex<DurableHumanRemoteOutboundOwner>>,
     composer_drafts: Arc<Mutex<DurableComposerDraftOwner>>,
     agent_attachments: Arc<Mutex<DurableAgentAttachmentOwner>>,
     messaging: Arc<Mutex<AndroidMessagingService>>,
@@ -1244,6 +1246,12 @@ impl AndroidJsonHost {
             );
         }
         let send_acknowledgements = Arc::new(Mutex::new(send_acknowledgement_owner));
+        let human_remote_outbound = Arc::new(Mutex::new(
+            DurableHumanRemoteOutboundOwner::open(app_data_dir.join("human-remote-outbound.json"))
+                .unwrap_or_else(|error| {
+                    panic!("failed to open durable Android Human remote outbound journal: {error}")
+                }),
+        ));
         let composer_drafts = Arc::new(Mutex::new(
             DurableComposerDraftOwner::open(app_data_dir.join("composer-drafts.json"), now_ms())
                 .unwrap_or_else(|error| panic!("failed to open durable Android composer draft owner: {error}")),
@@ -1527,6 +1535,7 @@ impl AndroidJsonHost {
             source_map,
             memory: AndroidMemoryOwner::new(app_data_dir.join("memory")),
             send_acknowledgements,
+            human_remote_outbound,
             composer_drafts,
             agent_attachments,
             messaging,
@@ -11311,6 +11320,7 @@ impl Drop for AndroidJsonHost {
 fn has_existing_account_durable_data(app_data_dir: &std::path::Path) -> bool {
     [
         "messaging-repository.json",
+        "human-remote-outbound.json",
         "transcript.json",
         "agents.json",
         "composer-drafts.json",
