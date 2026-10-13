@@ -1,4 +1,5 @@
 use crate::account_telemetry::AccountTelemetryProjection;
+use crate::android_structured_log_spill::StructuredLogRecord;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
 use fabushi_android_shared::node::mcp::mcp_auth_watch_lifecycle::{
@@ -757,6 +758,43 @@ impl CursorDashboardMcpAuthBackend {
         if receipt.logs_processed.saturating_add(receipt.logs_dropped) != expected {
             return Err(format!(
                 "AnalyticsService.SubmitLogs returned invalid receipt: processed={} dropped={} expected={expected}",
+                receipt.logs_processed, receipt.logs_dropped,
+            ));
+        }
+        Ok((receipt.logs_processed, receipt.logs_dropped))
+    }
+
+    pub fn submit_structured_logs(
+        &self,
+        entries: &[StructuredLogRecord],
+    ) -> Result<(u64, u64), String> {
+        if entries.is_empty() {
+            return Ok((0, 0));
+        }
+        let credentials = self.credentials.credentials()?;
+        let request = encode_structured_logs_submit_request(
+            entries,
+            &credentials.machine_id,
+            &credentials.client_version,
+        )?;
+        let ghost_mode = self.resolve_ghost_mode(&credentials);
+        let response = self.send_unary(
+            &credentials,
+            ANALYTICS_SUBMIT_LOGS_PATH,
+            &request,
+            ACCOUNT_TELEMETRY_SUBMIT_TIMEOUT_MS,
+            ghost_mode,
+        )?;
+        let receipt = decode_submit_logs_response(&response)?;
+        if !receipt.success {
+            return Err(receipt
+                .error_message
+                .unwrap_or_else(|| "AnalyticsService.SubmitLogs rejected structured telemetry".into()));
+        }
+        let expected = entries.len() as u64;
+        if receipt.logs_processed.saturating_add(receipt.logs_dropped) != expected {
+            return Err(format!(
+                "AnalyticsService.SubmitLogs returned invalid structured telemetry receipt: processed={} dropped={} expected={expected}",
                 receipt.logs_processed, receipt.logs_dropped,
             ));
         }
@@ -2777,6 +2815,71 @@ struct SubmitLogsReceipt {
     logs_dropped: u64,
 }
 
+fn encode_structured_logs_submit_request(
+    entries: &[StructuredLogRecord],
+    machine_id: &str,
+    client_version: &str,
+) -> Result<Vec<u8>, String> {
+    let machine_id = machine_id.trim();
+    if machine_id.is_empty() {
+        return Err("structured telemetry machine id is required".into());
+    }
+    let client_version = client_version.trim();
+    if client_version.is_empty() {
+        return Err("structured telemetry client version is required".into());
+    }
+    let app_version = env::var("SAND_CLIENT_APP_VERSION")
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "0.18.0".into());
+    let mut request = Vec::new();
+    for entry in entries {
+        let level = match entry.level.as_str() {
+            "info" => 1_u64,
+            "debug" => 2_u64,
+            "warn" => 3_u64,
+            "error" => 4_u64,
+            other => return Err(format!("unsupported structured telemetry level={other}")),
+        };
+        let message = entry.message.trim();
+        if message.is_empty() || message.chars().count() > 128 {
+            return Err("structured telemetry message is outside bounded schema".into());
+        }
+        let mut metadata = std::collections::BTreeMap::<String, String>::from([
+            ("client".into(), "sand".into()),
+            ("client.type".into(), "sand".into()),
+            ("client.machine_id".into(), machine_id.to_string()),
+            ("client_version".into(), client_version.to_string()),
+            ("app_version".into(), app_version.clone()),
+            ("arch".into(), std::env::consts::ARCH.to_string()),
+            ("platform".into(), "android".into()),
+        ]);
+        for (key, value) in &entry.metadata {
+            if key.is_empty() || key.chars().count() > 96 {
+                continue;
+            }
+            metadata.insert(key.clone(), value.chars().take(4096).collect());
+        }
+
+        let mut log = Vec::new();
+        encode_key(1, 0, &mut log);
+        encode_varint(level, &mut log);
+        encode_string(2, message, &mut log);
+        for (key, value) in metadata {
+            let mut pair = Vec::new();
+            encode_string(1, &key, &mut pair);
+            encode_string(2, &value, &mut pair);
+            encode_len_delimited(3, &pair, &mut log);
+        }
+        encode_key(4, 0, &mut log);
+        encode_varint(entry.timestamp, &mut log);
+        encode_string(7, SAND_LOG_KEY, &mut log);
+        encode_len_delimited(1, &log, &mut request);
+    }
+    Ok(request)
+}
+
 fn encode_account_telemetry_submit_logs_request(
     entries: &[AccountTelemetryProjection],
     machine_id: &str,
@@ -4117,6 +4220,65 @@ mod access_blocked_submit_logs_tests {
         let logs = repeated_message_fields(&request, 1).unwrap();
         assert_eq!(decode_optional_varint_field(logs[0], 1).unwrap(), Some(3));
         assert_eq!(string_fields(logs[0], 2).unwrap(), vec![ACCESS_BLOCKED_EVENT.to_string()]);
+    }
+}
+
+#[cfg(test)]
+mod structured_logs_submit_contract_tests {
+    use super::*;
+    use std::collections::BTreeMap;
+
+    fn record(level: &str, timestamp: u64) -> StructuredLogRecord {
+        StructuredLogRecord {
+            level: level.into(),
+            message: "sand.send".into(),
+            metadata: BTreeMap::from([("outcome".into(), "acked".into())]),
+            timestamp,
+        }
+    }
+
+    #[test]
+    fn structured_logs_preserve_desktop_wire_levels_and_android_platform_tags() {
+        let request = encode_structured_logs_submit_request(
+            &[
+                record("info", 11),
+                record("debug", 12),
+                record("warn", 13),
+                record("error", 14),
+            ],
+            "machine-a",
+            "0.18.0",
+        )
+        .unwrap();
+        let logs = repeated_message_fields(&request, 1).unwrap();
+        assert_eq!(logs.len(), 4);
+        assert_eq!(decode_optional_varint_field(logs[0], 1).unwrap(), Some(1));
+        assert_eq!(decode_optional_varint_field(logs[1], 1).unwrap(), Some(2));
+        assert_eq!(decode_optional_varint_field(logs[2], 1).unwrap(), Some(3));
+        assert_eq!(decode_optional_varint_field(logs[3], 1).unwrap(), Some(4));
+        assert_eq!(string_fields(logs[0], 2).unwrap(), vec!["sand.send".to_string()]);
+        assert_eq!(decode_optional_varint_field(logs[0], 4).unwrap(), Some(11));
+        assert_eq!(string_fields(logs[0], 7).unwrap(), vec![SAND_LOG_KEY.to_string()]);
+        let metadata = repeated_message_fields(logs[0], 3).unwrap();
+        let pairs = metadata
+            .into_iter()
+            .filter_map(|pair| {
+                Some((
+                    string_fields(pair, 1).ok()?.into_iter().next()?,
+                    string_fields(pair, 2).ok()?.into_iter().next()?,
+                ))
+            })
+            .collect::<std::collections::BTreeMap<_, _>>();
+        assert_eq!(pairs.get("platform").map(String::as_str), Some("android"));
+        assert_eq!(pairs.get("client.machine_id").map(String::as_str), Some("machine-a"));
+        assert_eq!(pairs.get("outcome").map(String::as_str), Some("acked"));
+    }
+
+    #[test]
+    fn structured_logs_reject_unknown_levels_and_missing_identity() {
+        assert!(encode_structured_logs_submit_request(&[record("trace", 1)], "machine-a", "0.18.0").is_err());
+        assert!(encode_structured_logs_submit_request(&[record("info", 1)], "", "0.18.0").is_err());
+        assert!(encode_structured_logs_submit_request(&[record("info", 1)], "machine-a", "").is_err());
     }
 }
 
