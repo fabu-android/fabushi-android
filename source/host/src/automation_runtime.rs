@@ -136,6 +136,20 @@ impl AutomationRuntime {
             .collect()
     }
 
+    pub fn spec_for_account(&self, id: &str, account_fence: &str) -> Option<AutomationSpec> {
+        self.state.specs.get(id).filter(|spec| spec.account_fence == account_fence).cloned()
+    }
+
+    pub fn run_count_for_automation(&self, id: &str, account_fence: &str) -> u64 {
+        self.state
+            .runs
+            .values()
+            .filter(|run| run.automation_id == id && run.account_fence == account_fence)
+            .count()
+            .try_into()
+            .unwrap_or(u64::MAX)
+    }
+
     pub fn has_owned_spec(&self, id: &str, account_fence: &str, agent_id: &str) -> bool {
         self.state.specs.get(id).is_some_and(|spec| {
             spec.account_fence == account_fence && spec.agent_id == agent_id
@@ -527,6 +541,17 @@ mod tests {
         assert!(runtime.has_owned_spec("daily-brief", "acct-a", "agent-a"));
         assert!(!runtime.has_owned_spec("daily-brief", "acct-b", "agent-a"));
         assert!(!runtime.has_owned_spec("daily-brief", "acct-a", "agent-b"));
+        assert_eq!(
+            runtime.spec_for_account("daily-brief", "acct-a").unwrap().agent_id,
+            "agent-a"
+        );
+        assert!(runtime.spec_for_account("daily-brief", "acct-b").is_none());
+        assert_eq!(runtime.run_count_for_automation("daily-brief", "acct-a"), 0);
+        runtime
+            .begin_run("daily-brief", "request-count", "run-count", "acct-a", 2)
+            .unwrap();
+        assert_eq!(runtime.run_count_for_automation("daily-brief", "acct-a"), 1);
+        assert_eq!(runtime.run_count_for_automation("daily-brief", "acct-b"), 0);
     }
 
     #[test]
