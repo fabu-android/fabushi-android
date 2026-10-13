@@ -3244,11 +3244,28 @@ impl AndroidJsonHost {
             .map(usize::try_from)
             .transpose()
             .map_err(|_| "transcript page cursor is out of range".to_string())?;
+        let since_ms = optional_non_negative_transcript_time(params, "sinceMs")?;
+        let until_ms = optional_non_negative_transcript_time(params, "untilMs")?;
+        if let (Some(since_ms), Some(until_ms)) = (since_ms, until_ms) {
+            if since_ms > until_ms {
+                return Err("transcript page sinceMs must not exceed untilMs".into());
+            }
+        }
 
         let scoped = self
             .current_account_transcript_entries()?
             .into_iter()
             .filter(|entry| entry.get("agentId").and_then(Value::as_str) == Some(agent_id))
+            .filter(|entry| {
+                let timestamp = entry.get("timestampMs").and_then(Value::as_f64);
+                let lower_ok = since_ms.map_or(true, |lower| {
+                    timestamp.map_or(true, |timestamp| timestamp >= lower)
+                });
+                let upper_ok = until_ms.map_or(true, |upper| {
+                    timestamp.map_or(true, |timestamp| timestamp <= upper)
+                });
+                lower_ok && upper_ok
+            })
             .collect::<Vec<_>>();
         let end = before_seq.unwrap_or(scoped.len()).min(scoped.len());
         let start = end.saturating_sub(limit);
@@ -10206,6 +10223,17 @@ fn required_u64(value: &Value, key: &str) -> Result<u64, String> {
     value.get(key).and_then(Value::as_u64).ok_or_else(|| format!("{key} is required"))
 }
 
+fn optional_non_negative_transcript_time(value: &Value, key: &str) -> Result<Option<f64>, String> {
+    let Some(raw) = value.get(key).filter(|value| !value.is_null()) else {
+        return Ok(None);
+    };
+    let timestamp = raw
+        .as_f64()
+        .filter(|timestamp| timestamp.is_finite() && *timestamp >= 0.0)
+        .ok_or_else(|| format!("{key} must be a finite non-negative number"))?;
+    Ok(Some(timestamp))
+}
+
 pub(crate) fn now_ms() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -13397,6 +13425,42 @@ mod transcript_page_contract_tests {
             .dispatch(
                 "feature.transcript.page",
                 &json!({"agentId":"agent-a","limit":0}),
+            )
+            .is_err());
+
+        {
+            let mut transcript = reopened.transcript.lock().unwrap();
+            transcript
+                .append_entry(json!({
+                    "id":"a-timed-old","kind":"message","role":"user","agentId":"agent-a",
+                    "content":"old","timestampMs":10
+                }))
+                .unwrap();
+            transcript
+                .append_entry(json!({
+                    "id":"a-timed-new","kind":"message","role":"user","agentId":"agent-a",
+                    "content":"new","timestampMs":30
+                }))
+                .unwrap();
+        }
+        let window = reopened
+            .dispatch(
+                "feature.transcript.page",
+                &json!({"agentId":"agent-a","limit":20,"sinceMs":20,"untilMs":40}),
+            )
+            .unwrap();
+        let window_ids = window["entries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|entry| entry["id"].as_str())
+            .collect::<Vec<_>>();
+        assert!(window_ids.contains(&"a-timed-new"));
+        assert!(!window_ids.contains(&"a-timed-old"));
+        assert!(reopened
+            .dispatch(
+                "feature.transcript.page",
+                &json!({"agentId":"agent-a","limit":20,"sinceMs":50,"untilMs":40}),
             )
             .is_err());
     }
