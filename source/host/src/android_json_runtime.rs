@@ -6096,7 +6096,9 @@ impl AndroidJsonHost {
 
     fn current_sidebar_account_scope(&self) -> Result<String, String> {
         if self.mode == AndroidHostMode::Test {
-            return Ok("account-device:test:android".to_string());
+            return self.logged_in
+                .then(|| "account-device:test:android".to_string())
+                .ok_or_else(|| "Sign in to Fabushi to use account-scoped capabilities.".to_string());
         }
         #[cfg(feature = "ci-account-session-import")]
         if let Some(identity) = self.ci_session_identity.as_ref() {
@@ -6116,7 +6118,9 @@ impl AndroidJsonHost {
 
     fn current_turn_account_fence(&self) -> Result<String, String> {
         let resolved = if self.mode == AndroidHostMode::Test {
-            Ok("session:test:android".to_string())
+            self.logged_in
+                .then(|| "session:test:android".to_string())
+                .ok_or_else(|| "Sign in to Fabushi to use account-scoped capabilities.".to_string())
         } else {
             #[cfg(feature = "ci-account-session-import")]
             if let Some(identity) = self.ci_session_identity.as_ref() {
@@ -21884,12 +21888,24 @@ mod host_event_bus_delivery_tests {
             .unwrap();
         assert_eq!(accepted["requestId"], "event-bus-capability-1");
 
+        let started = host.dispatch("feature.receive", &json!({})).unwrap();
+        assert_eq!(started["type"], "operation.started");
+        let projected_started = receiver
+            .recv_timeout(Duration::from_secs(1))
+            .expect("started canonical event must be observable by HostEventBus");
+        assert_eq!(projected_started.family, "operation.started");
+        assert_eq!(
+            serde_json::from_str::<Value>(&projected_started.payload_json).unwrap(),
+            started,
+            "HostEventBus must project the canonical started event without consuming it",
+        );
+
         let canonical = host.dispatch("feature.receive", &json!({})).unwrap();
         assert_eq!(canonical["type"], "approval.requested");
 
         let projected = receiver
             .recv_timeout(Duration::from_secs(1))
-            .expect("delivered canonical event must be observable by HostEventBus");
+            .expect("approval canonical event must be observable by HostEventBus");
         assert_eq!(projected.family, "approval.requested");
         assert_eq!(
             serde_json::from_str::<Value>(&projected.payload_json).unwrap(),
