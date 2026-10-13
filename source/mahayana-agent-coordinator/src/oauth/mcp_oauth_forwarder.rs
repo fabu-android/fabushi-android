@@ -31,15 +31,34 @@ impl OAuthForwarder {
 
     pub fn pending_count(&self) -> usize { self.registry.pending_count() }
 
-    pub fn forward(
+    pub fn stage(
         &mut self,
         callback: OAuthCallback,
     ) -> Result<(McpOAuthPendingRegistration, OAuthCallback), &'static str> {
         callback.validate()?;
         let registration = self
             .registry
-            .consume(&callback.state)
+            .registration(&callback.state)
             .ok_or("OAuth callback state is unknown or already consumed")?;
+        Ok((registration, callback))
+    }
+
+    pub fn consume(
+        &mut self,
+        state: &str,
+    ) -> Result<McpOAuthPendingRegistration, &'static str> {
+        self.registry
+            .consume(state)
+            .ok_or("OAuth callback state is unknown or already consumed")
+    }
+
+    pub fn forward(
+        &mut self,
+        callback: OAuthCallback,
+    ) -> Result<(McpOAuthPendingRegistration, OAuthCallback), &'static str> {
+        let (registration, callback) = self.stage(callback)?;
+        let consumed = self.consume(&callback.state)?;
+        debug_assert_eq!(consumed, registration);
         Ok((registration, callback))
     }
 }
