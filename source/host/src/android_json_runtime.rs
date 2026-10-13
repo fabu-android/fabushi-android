@@ -10962,6 +10962,18 @@ impl AndroidJsonHost {
                                     }),
                                 );
                             }
+                            if final_text.is_empty() && settles_visible_ack {
+                                let observed = now_ms();
+                                visible_ack_obligations
+                                    .defer_unfulfilled_completion(
+                                        &account_fence_owned,
+                                        &conversation_id_owned,
+                                        observed,
+                                    )
+                                    .map_err(|error| {
+                                        format!("failed to defer unfulfilled visible acknowledgement: {error}")
+                                    })?;
+                            }
                             turn_journal
                                 .lock()
                                 .map_err(|_| "turn journal lock poisoned".to_string())?
