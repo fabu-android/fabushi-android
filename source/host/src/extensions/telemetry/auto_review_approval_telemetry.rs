@@ -41,3 +41,47 @@ pub fn auto_review_approval_telemetry(
         metadata,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn auto_review_projection_clamps_rounds_and_preserves_optional_fields() {
+        let projection = auto_review_approval_telemetry(&AutoReviewApprovalReport {
+            event_type: "resolved".into(),
+            conversation_id: "agent-1".into(),
+            approval_id: "approval-7".into(),
+            surface: "turn".into(),
+            status: "approved".into(),
+            age_ms: -2.4,
+            ttl_ms: Some(1_234.6),
+            cause: Some("user".into()),
+        });
+        assert_eq!(projection.level, None);
+        assert_eq!(projection.event, Some("sand.auto_review.approval"));
+        assert_eq!(projection.metadata.get("age_ms").map(String::as_str), Some("0"));
+        assert_eq!(projection.metadata.get("ttl_ms").map(String::as_str), Some("1235"));
+        assert_eq!(projection.metadata.get("cause").map(String::as_str), Some("user"));
+        assert_eq!(
+            projection.metadata.get("approval_id").map(String::as_str),
+            Some("approval-7"),
+        );
+    }
+
+    #[test]
+    fn auto_review_projection_omits_absent_optional_fields() {
+        let projection = auto_review_approval_telemetry(&AutoReviewApprovalReport {
+            event_type: "expired".into(),
+            conversation_id: "agent-2".into(),
+            approval_id: "approval-8".into(),
+            surface: "queue".into(),
+            status: "expired".into(),
+            age_ms: 10.0,
+            ttl_ms: None,
+            cause: None,
+        });
+        assert!(!projection.metadata.contains_key("ttl_ms"));
+        assert!(!projection.metadata.contains_key("cause"));
+    }
+}
