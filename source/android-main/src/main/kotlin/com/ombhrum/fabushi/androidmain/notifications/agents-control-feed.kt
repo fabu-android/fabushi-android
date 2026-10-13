@@ -27,6 +27,12 @@ internal class AndroidAgentsControlFeed(
                 osNotifications.handleAgentUpserted(notificationAgent(agent))
                 dockBadge.handleAgentUpserted(badgeAgent(agent))
             }
+            "agent-forgotten" -> {
+                val agentId = event.optString("agentId").trim()
+                if (agentId.isEmpty()) return
+                osNotifications.forget(agentId)
+                dockBadge.forget(agentId)
+            }
             "agents-roster-seed" -> {
                 val agents = parseAgents(event.optJSONArray("agents")) ?: return
                 osNotifications.seedBaseline(agents.map(::notificationAgent))
