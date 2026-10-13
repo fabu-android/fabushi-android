@@ -160,8 +160,8 @@ mod tests {
         core.extension.apply_feature_policy(true).unwrap();
         assert!(!core.extension.is_enabled());
         assert!(
-            Arc::ptr_eq(&core.service, &core.service),
-            "composition must expose one process-owned sharing service"
+            !core.service.is_started(),
+            "environment denial must keep the process-owned sharing service stopped"
         );
     }
 
