@@ -676,7 +676,10 @@ mod tests {
             ExecutionCapability {
                 id: "computer.use".into(),
                 target: ExecutionTarget::AndroidLocal,
-                cancellable: true,
+                // AndroidLocalRunner intentionally rejects cancellable capabilities until a
+                // separately reachable cancellation lane exists. Keep this boundary test on a
+                // bounded synchronous local capability; long-running/cancellable work is Remote.
+                cancellable: false,
                 supports_streaming: false,
             },
             Box::new(RealLocalEcho),
