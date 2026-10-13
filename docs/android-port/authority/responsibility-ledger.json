@@ -16489,17 +16489,17 @@
         "source/host/src/managed_team_rules.rs"
       ],
       "android_owner": "Rust Host ManagedTeamRulesResolver + protected Dashboard backend",
-      "platform_delta": "Android uses the protected Dashboard backend and Host dispatch. f22842 adds an account-fenced in-memory known-good resolver equivalent to Desktop refresh/failure preservation; asynchronous startup preload remains to close.",
-      "implementation_status": "mapped",
-      "production_wiring": "GetTeams/GetTeamRules -> CursorDashboardMcpAuthBackend -> AndroidJsonHost -> ManagedTeamRulesResolver. Successful requests refresh same-account snapshot and transient failures fall back only within the current account fence. Startup preload remains open.",
-      "unit_test": "managed_team_rules::{failed_refresh_preserves_same_account_known_good_snapshot, first_refresh_failure_remains_a_real_error, snapshots_are_account_fenced_and_clearable}; Dashboard wire/merge tests already cover direct teams, Sand/all-Agent filtering and fullPath dedupe. Descendant exact-head Actions pending.",
-      "contract_test": "required: Desktop GetTeams/GetTeamRules wire/filter semantics",
+      "platform_delta": "Android uses the protected Dashboard backend and Host dispatch rather than Electron extension composition. Snapshot state is in-memory like Desktop but additionally partitioned by canonical account session fence.",
+      "implementation_status": "implemented",
+      "production_wiring": "Existing protected session: AndroidJsonHost asynchronously preloads through CursorDashboardMcpAuthBackend -> ManagedTeamRulesResolver. Runtime feature.account.teamRules refreshes through the same resolver; success replaces only the current account snapshot and transient failure preserves only that same-account known-good snapshot.",
+      "unit_test": "managed_team_rules::{failed_refresh_preserves_same_account_known_good_snapshot, first_refresh_failure_remains_a_real_error, snapshots_are_account_fenced_and_clearable}; dashboard_mcp_auth_backend::managed_team_rules_wire_matches_desktop_contract. GitHub Actions descendant of e991 pending.",
+      "contract_test": "Dashboard GetTeams/GetTeamRules paths, request encoding, direct-team selection, Sand/all-Agent filtering and fullPath dedupe are covered in Host Rust tests; exact-head Actions pending.",
       "integration_test": "required: production Dashboard credential path refreshes then serves cached rules during a bounded backend failure without crossing account fence",
       "packaged_test": "required on final exact-head package",
       "device_test": "required on protected account acceptance",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "f22842 closes known-good snapshot/failure/account-fence semantics. Keep mapped/not-verified because Desktop-style asynchronous startup preload plus packaged/protected-account acceptance remain open."
+      "notes": "Source and production wiring implemented by f22842 + e991c7. Keep verification_status=not-verified until descendant exact-head CI plus packaged/protected-account acceptance succeeds."
     },
     {
       "responsibility_id": "AGENT-MEMORY-ANDROID-001",
