@@ -9,3 +9,5 @@ pub mod xuser_sharing_environment;
 
 pub mod xuser_entry_publisher;
 pub mod xuser_remote_turn_admission;
+pub mod xuser_relay;
+pub mod xuser_sharing_service;
