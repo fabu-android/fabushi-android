@@ -240,6 +240,13 @@ internal fun SharedRoomsSurface(
             }
 
             items(snapshot.rooms, key = { it.id }) { room ->
+                val selfAuthId = snapshot.selfAuthId
+                val isHost = selfAuthId != null && room.hostAuthId == selfAuthId
+                val humanMembers = room.members.filter { it.agentId == null }
+                val selfAgentIds = room.members
+                    .filter { it.authId == selfAuthId && it.agentId != null }
+                    .mapNotNull { it.agentId }
+                    .toSet()
                 Column(
                     Modifier.fillMaxWidth()
                         .background(androidx.compose.ui.graphics.Color.White, RoundedCornerShape(16.dp))
@@ -273,6 +280,65 @@ internal fun SharedRoomsSurface(
                             onClick = { runAction { owner.leave(room.id) } },
                             enabled = !loading,
                         ) { Text("Leave") }
+                    }
+                    if (humanMembers.isNotEmpty()) {
+                        Text("People", color = GrokMobileInk, fontWeight = FontWeight.SemiBold)
+                        humanMembers.forEach { member ->
+                            Row(
+                                Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Text(
+                                    member.name,
+                                    color = GrokMobileMuted,
+                                    fontSize = 12.sp,
+                                    modifier = Modifier.weight(1f),
+                                )
+                                if (member.authId == room.hostAuthId) {
+                                    Text("Host", color = GrokMobileMuted, fontSize = 11.sp)
+                                } else if (isHost && member.authId != selfAuthId) {
+                                    TextButton(
+                                        onClick = { runAction { owner.leave(room.id, member.authId) } },
+                                        enabled = !loading,
+                                        modifier = Modifier.testTag(
+                                            "shared-room-remove-person-${room.id}-${member.authId}",
+                                        ),
+                                    ) { Text("Remove") }
+                                }
+                            }
+                        }
+                    }
+                    if (shareableAgents.isNotEmpty()) {
+                        Text("Your agents", color = GrokMobileInk, fontWeight = FontWeight.SemiBold)
+                        shareableAgents.forEach { bot ->
+                            val isMember = bot.id in selfAgentIds
+                            Row(
+                                Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Text(
+                                    bot.name,
+                                    color = GrokMobileMuted,
+                                    fontSize = 12.sp,
+                                    modifier = Modifier.weight(1f),
+                                )
+                                TextButton(
+                                    onClick = {
+                                        runAction {
+                                            if (isMember) {
+                                                owner.removeAgent(room.id, bot.id)
+                                            } else {
+                                                owner.addAgent(room.id, bot)
+                                            }
+                                        }
+                                    },
+                                    enabled = !loading,
+                                    modifier = Modifier.testTag(
+                                        "shared-room-${if (isMember) "remove" else "add"}-agent-${room.id}-${bot.id}",
+                                    ),
+                                ) { Text(if (isMember) "Remove" else "Add") }
+                            }
+                        }
                     }
                 }
             }
