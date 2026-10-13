@@ -1,6 +1,7 @@
 use super::xuser_departure_obligations::{SandXuserDepartureObligations, XuserDepartureRelay};
 use super::xuser_entry_publisher::SandXuserEntryPublisher;
 use super::xuser_relay::{XuserRelayClient, XuserRelayDriver};
+use super::xuser_remote_turns::SandXuserRemoteTurns;
 use super::xuser_state_reconcile::{XuserRoom, reconcile_rooms};
 use serde::Serialize;
 use serde_json::Value;
@@ -106,6 +107,7 @@ pub struct SandXuserSharingService {
     relay_driver: Mutex<Option<Arc<XuserRelayDriver>>>,
     entry_publisher: Mutex<Option<Arc<SandXuserEntryPublisher>>>,
     manager: Mutex<Option<Arc<dyn XuserSharingManager>>>,
+    remote_turns: Mutex<Option<Arc<SandXuserRemoteTurns>>>,
     departures: Mutex<Option<(SandXuserDepartureObligations, Arc<dyn XuserDepartureRelay>)>>,
     state: Mutex<SandSharingState>,
     room_mint_lock: Mutex<()>,
@@ -118,6 +120,7 @@ impl SandXuserSharingService {
             relay_driver: Mutex::new(None),
             entry_publisher: Mutex::new(None),
             manager: Mutex::new(None),
+            remote_turns: Mutex::new(None),
             departures: Mutex::new(None),
             state: Mutex::new(SandSharingState::default()),
             room_mint_lock: Mutex::new(()),
@@ -143,6 +146,23 @@ impl SandXuserSharingService {
             .manager
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(manager);
+    }
+
+    pub fn bind_remote_turns(&self, remote_turns: Arc<SandXuserRemoteTurns>) {
+        let mut slot = self
+            .remote_turns
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if let Some(previous) = slot.replace(remote_turns) {
+            previous.stop();
+        }
+    }
+
+    pub fn has_remote_turns(&self) -> bool {
+        self.remote_turns
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .is_some()
     }
 
     pub fn bind_departure_obligations(
@@ -233,6 +253,15 @@ impl SandXuserSharingService {
             .cloned()
         {
             driver.stop();
+        }
+        if let Some(remote_turns) = self
+            .remote_turns
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .as_ref()
+            .cloned()
+        {
+            remote_turns.stop();
         }
     }
 
@@ -638,6 +667,24 @@ impl SandXuserSharingService {
             return Ok(true);
         }
         match event.get("kind").and_then(Value::as_str) {
+            Some("turn-request") => {
+                let remote_turns = self
+                    .remote_turns
+                    .lock()
+                    .unwrap_or_else(|p| p.into_inner())
+                    .as_ref()
+                    .cloned();
+                Ok(remote_turns.is_some_and(|remote_turns| remote_turns.handle_turn_request(event)))
+            }
+            Some("turn-result") => {
+                let remote_turns = self
+                    .remote_turns
+                    .lock()
+                    .unwrap_or_else(|p| p.into_inner())
+                    .as_ref()
+                    .cloned();
+                Ok(remote_turns.is_some_and(|remote_turns| remote_turns.handle_turn_result(event)))
+            }
             Some("room-join-request") => {
                 let Some(request) = event.get("request").filter(|value| value.is_object()) else {
                     return Ok(true);
@@ -912,6 +959,37 @@ mod tests {
         service.set_enabled(true);
         let state = service.reconcile_share_state().unwrap();
         assert_eq!(state.self_auth_id.as_deref(), Some("sand-self"));
+    }
+
+    #[test]
+    fn remote_turn_events_are_not_claimed_until_canonical_host_is_bound() {
+        let transport = Arc::new(FakeRelayTransport {
+            requests: AtomicUsize::new(0),
+        });
+        let relay = Arc::new(XuserRelayClient::new(
+            "https://relay.example.invalid".into(),
+            Arc::new(|| Ok("token".to_string())),
+            transport,
+        ));
+        let service = SandXuserSharingService::new(relay);
+        service.set_enabled(true);
+        assert!(!service.has_remote_turns());
+        assert!(!service
+            .handle_event(&serde_json::json!({
+                "kind":"turn-request",
+                "roomId":"room-a",
+                "turnNonce":"nonce-a",
+                "agentId":"agent-a",
+                "hostAuthId":"host-a"
+            }))
+            .unwrap());
+        assert!(!service
+            .handle_event(&serde_json::json!({
+                "kind":"turn-result",
+                "turnNonce":"nonce-a",
+                "messages":["done"]
+            }))
+            .unwrap());
     }
 
     #[test]
