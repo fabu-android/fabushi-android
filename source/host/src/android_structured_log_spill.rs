@@ -4,7 +4,6 @@ use std::{
     fs,
     io::{self, Write},
     path::{Path, PathBuf},
-    sync::{Arc, Mutex},
 };
 
 pub const ANDROID_STRUCTURED_LOG_SPILL_MAX_BYTES: usize = 1024 * 1024;
@@ -370,39 +369,6 @@ fn atomic_replace(path: &Path, encoded: &[u8]) -> io::Result<()> {
 pub struct AndroidStructuredLogSpool {
     spill: FileAndroidStructuredLogSpill,
     state: AndroidStructuredLogSpillState,
-}
-
-#[derive(Clone, Debug)]
-pub struct SharedAndroidStructuredLogSpool {
-    inner: Arc<Mutex<AndroidStructuredLogSpool>>,
-}
-
-impl SharedAndroidStructuredLogSpool {
-    pub fn new(spool: AndroidStructuredLogSpool) -> Self {
-        Self {
-            inner: Arc::new(Mutex::new(spool)),
-        }
-    }
-
-    pub fn record(
-        &self,
-        level: &str,
-        message: &str,
-        metadata: BTreeMap<String, String>,
-        timestamp: u64,
-    ) -> io::Result<()> {
-        self.inner
-            .lock()
-            .map_err(|_| io::Error::new(io::ErrorKind::Other, "structured log spool lock poisoned"))?
-            .record(level, message, metadata, timestamp)
-    }
-
-    pub fn rotate_account(&self, account_slot: &str, counter_id: &str) -> io::Result<bool> {
-        self.inner
-            .lock()
-            .map_err(|_| io::Error::new(io::ErrorKind::Other, "structured log spool lock poisoned"))?
-            .rotate_account(account_slot, counter_id)
-    }
 }
 
 impl AndroidStructuredLogSpool {
