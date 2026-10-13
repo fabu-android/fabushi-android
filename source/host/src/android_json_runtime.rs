@@ -20345,6 +20345,17 @@ mod android_box_handoff_runtime_tests {
     use super::*;
 
     #[test]
+    fn handoff_resume_prompts_preserve_return_dismiss_and_uncertain_close_semantics() {
+        assert!(AndroidJsonHost::box_handoff_resume_prompt("returned")
+            .contains("handed the box back"));
+        assert!(AndroidJsonHost::box_handoff_resume_prompt("dismissed")
+            .contains("Treat it as declined"));
+        let viewer_closed = AndroidJsonHost::box_handoff_resume_prompt("viewer-closed");
+        assert!(viewer_closed.contains("may or may not have finished"));
+        assert!(viewer_closed.contains("read-only Screenshot"));
+    }
+
+    #[test]
     fn durable_handoff_routes_survive_reopen_and_fence_late_results() {
         let root = tempfile::tempdir().unwrap();
         let request_id;
