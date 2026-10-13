@@ -1871,6 +1871,16 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
                 .put("enabled", enabled),
         )
     override fun automationStart(params: JSONObject) = host.request("feature.automation.start", params)
+    override fun automationEventEnqueue(params: JSONObject): JSONObject =
+        host.request("feature.automation.event.enqueue", params)
+    override fun automationEventClaim(params: JSONObject): JSONObject? =
+        host.requestValue("feature.automation.event.claim", params) as? JSONObject
+    override fun automationEventStart(params: JSONObject): JSONObject? =
+        host.requestValue("feature.automation.event.start", params) as? JSONObject
+    override fun automationEventSettle(params: JSONObject): JSONObject =
+        host.request("feature.automation.event.settle", params)
+    override fun automationEventReconcile(params: JSONObject): JSONObject =
+        host.request("feature.automation.event.reconcile", params)
     override fun automationAdvanceStep(params: JSONObject) = host.request("feature.automation.advanceStep", params)
     override fun automationAwaitApproval(params: JSONObject) = host.request("feature.automation.awaitApproval", params)
     override fun automationResolveApproval(params: JSONObject) = host.request("feature.automation.resolveApproval", params)
