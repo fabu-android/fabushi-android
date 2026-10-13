@@ -44,6 +44,7 @@ const ALLOWED_EVENTS: &[&str] = &[
     "sand.desktop.edge_failed",
     "sand.desktop.event_loop",
     "sand.host.event_loop",
+    "sand.host.invariant_violation",
     "sand.desktop.startup",
     "sand.desktop.process_crash",
     "sand.desktop.renderer_lifecycle",
@@ -53,6 +54,9 @@ const ALLOWED_EVENTS: &[&str] = &[
     "sand.desktop.signin",
     "sand.desktop.unclean_exit",
     "sand.image.edge_failed",
+    "sand.local_exec.refused",
+    "sand.local_exec.exec_failed",
+    "sand.local_exec.provider",
     "sand.mcp.desktop_edge_failed",
     "sand.reaction.ack",
     "sand.recovery_action",
@@ -712,6 +716,34 @@ mod tests {
                 "sand.box.recreate_decided",
             ]
         );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn spill_accepts_invariant_and_local_exec_telemetry_contracts() {
+        let root = root("host-local-exec-telemetry");
+        let path = root.join("spill.json");
+        let mut spool =
+            AndroidStructuredLogSpool::open(&path, "account-a", "counter-a", 1_000).unwrap();
+        for (index, event) in [
+            "sand.host.invariant_violation",
+            "sand.local_exec.refused",
+            "sand.local_exec.exec_failed",
+            "sand.local_exec.provider",
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            spool
+                .record(
+                    if event == "sand.host.invariant_violation" { "error" } else { "warn" },
+                    event,
+                    BTreeMap::from([("kind".into(), "bounded".into())]),
+                    1_001 + index as u64,
+                )
+                .unwrap();
+        }
+        assert_eq!(spool.batch().len(), 4);
         let _ = fs::remove_dir_all(root);
     }
 
