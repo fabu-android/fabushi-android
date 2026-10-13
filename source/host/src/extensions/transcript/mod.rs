@@ -24,3 +24,4 @@ pub use transcript_store::{TranscriptRecoveryInfo, TranscriptRecoveryOutcome, Tr
 pub mod transcript_entry_ids;
 pub mod inline_image_materialization;
 pub mod sand_ack_obligation_store;
+pub mod replica_writer;
