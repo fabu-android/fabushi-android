@@ -1,7 +1,6 @@
 package com.ombhrum.fabushi.core
 
 import android.content.Context
-import android.os.StatFs
 import com.ombhrum.fabushi.androidmain.security.AndroidAccountSessionStore
 import com.ombhrum.fabushi.androidmain.security.AndroidMachineIdStore
 import com.ombhrum.fabushi.androidmain.security.AndroidCredentialVaultStore
@@ -106,30 +105,6 @@ class MahayanaHost(
                             },
                             HOST_SESSION_HEARTBEAT_INTERVAL_MS,
                             HOST_SESSION_HEARTBEAT_INTERVAL_MS,
-                            TimeUnit.MILLISECONDS,
-                        )
-                        created.heartbeatExecutor.scheduleAtFixedRate(
-                            {
-                                val sample = runCatching {
-                                    StatFs(appDataDir).let { stats ->
-                                        JSONObject()
-                                            .put("totalBytes", stats.totalBytes.coerceAtLeast(0L))
-                                            .put("availableBytes", stats.availableBytes.coerceAtLeast(0L))
-                                    }
-                                }.getOrNull() ?: return@scheduleAtFixedRate
-                                synchronized(created.lock) {
-                                    val active = created.handle
-                                    if (active == 0L) return@synchronized
-                                    val request = JSONObject()
-                                        .put("method", "feature.agent.diskPressure.observe")
-                                        .put("params", sample)
-                                    // Logged-out Hosts have no account fence; fail closed and sample again
-                                    // after the next interval rather than inventing a global reminder owner.
-                                    runCatching { nativeDispatch(active, request.toString()) }
-                                }
-                            },
-                            DISK_PRESSURE_SAMPLE_INTERVAL_MS,
-                            DISK_PRESSURE_SAMPLE_INTERVAL_MS,
                             TimeUnit.MILLISECONDS,
                         )
                         sharedHosts[appDataDir] = created
@@ -719,7 +694,6 @@ class MahayanaHost(
     private companion object {
         const val MAX_REPLAY_EVENTS = 256
         const val HOST_SESSION_HEARTBEAT_INTERVAL_MS = 60_000L
-        const val DISK_PRESSURE_SAMPLE_INTERVAL_MS = 5 * 60_000L
         val registryLock = Any()
         val sharedHosts = mutableMapOf<String, SharedHost>()
     }
