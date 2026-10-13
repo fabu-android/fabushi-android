@@ -84,6 +84,12 @@ pub fn is_context_overflow_dead_end(message: &str) -> bool {
         || lower.contains("conversation too large")
 }
 
+pub fn is_authentication_dead_end(message: &str) -> bool {
+    let lower = message.to_ascii_lowercase();
+    lower.contains("provider_authentication_required")
+        || lower.contains("provider_credentials_unavailable")
+}
+
 pub fn should_retry_turn_attempt(
     canceled: bool,
     message: &str,
@@ -99,7 +105,7 @@ pub fn should_retry_turn_attempt(
     if stream_output_produced && !resume_checkpoint_available {
         return false;
     }
-    if is_context_overflow_dead_end(message) {
+    if is_context_overflow_dead_end(message) || is_authentication_dead_end(message) {
         return false;
     }
     first_token_stall || message_looks_transient(message) || is_provider_capacity_error(message)
@@ -159,6 +165,24 @@ mod tests {
         assert!(!should_retry_turn_attempt(
             false,
             "context window exceeded",
+            false,
+            false,
+            1,
+            policy,
+            false,
+        ));
+        assert!(!should_retry_turn_attempt(
+            false,
+            "provider_authentication_required http_401",
+            false,
+            false,
+            1,
+            policy,
+            false,
+        ));
+        assert!(!should_retry_turn_attempt(
+            false,
+            "provider_credentials_unavailable",
             false,
             false,
             1,
