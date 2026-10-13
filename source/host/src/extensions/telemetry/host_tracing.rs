@@ -218,7 +218,9 @@ impl HostTracing {
 }
 
 pub struct HostTracingInitializer {
-    initialized: Mutex<Option<Arc<HostTracing>>>,
+    // The process-global initializer must not keep an old account/session tracing owner alive.
+    // AndroidJsonHost owns the strong reference for exactly one Host lifetime.
+    initialized: Mutex<Option<Weak<HostTracing>>>,
 }
 
 impl Default for HostTracingInitializer {
@@ -235,19 +237,24 @@ impl HostTracingInitializer {
         build: impl FnOnce() -> Result<HostTracing, String>,
     ) -> Option<Arc<HostTracing>> {
         let mut initialized = self.initialized.lock().expect("host tracing init poisoned");
-        if let Some(existing) = initialized.as_ref() {
-            return Some(Arc::clone(existing));
+        if let Some(existing) = initialized.as_ref().and_then(Weak::upgrade) {
+            return Some(existing);
         }
         let tracing = Arc::new(build().ok()?);
-        *initialized = Some(Arc::clone(&tracing));
+        *initialized = Some(Arc::downgrade(&tracing));
         Some(tracing)
     }
 
     pub fn reset_for_tests(&self) {
-        self.initialized
+        let previous = self
+            .initialized
             .lock()
             .expect("host tracing init poisoned")
-            .take();
+            .take()
+            .and_then(|tracing| tracing.upgrade());
+        if let Some(tracing) = previous {
+            tracing.dispose();
+        }
     }
 }
 
