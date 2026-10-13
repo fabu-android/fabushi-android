@@ -283,6 +283,16 @@ impl AndroidMcpAuthWatchManager {
         Ok(completions)
     }
 
+    pub fn reset_for_account_transition(
+        &mut self,
+    ) -> Result<Vec<McpAuthWatchCompletion>, String> {
+        let completions = self.lifecycle.cancel_all();
+        self.pending_oauth_states.clear();
+        self.pending_completions.clear();
+        self.persist()?;
+        Ok(completions)
+    }
+
     pub fn prune_expired(&mut self, now_ms: u64) -> Result<usize, String> {
         let removed = self.lifecycle.prune_expired(now_ms);
         let before_states = self.pending_oauth_states.len();
@@ -804,6 +814,50 @@ mod tests {
         assert!(manager.cancel_watch("18", "default").unwrap().is_some());
         assert!(manager.is_empty());
         let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn account_transition_reset_drops_active_and_pending_old_account_callbacks() {
+        let path = temp_store("account-transition-reset");
+        let mut manager = AndroidMcpAuthWatchManager::open(&path, 1_000).unwrap();
+        let (watch, _) = manager
+            .begin_watch(
+                1_000,
+                "17",
+                "Calendar",
+                "https://mcp.example.test",
+                "old-account",
+                Some("agent-a"),
+                false,
+            )
+            .unwrap();
+        let completion = manager
+            .note_auth_completed_elsewhere("17", "old-account")
+            .unwrap()
+            .expect("completion should be durable before transition");
+        assert_eq!(completion.generation, watch.generation);
+        assert_eq!(manager.pending_completions().len(), 1);
+
+        manager
+            .begin_watch(
+                1_001,
+                "18",
+                "Drive",
+                "https://mcp.example.test",
+                "old-account",
+                None,
+                false,
+            )
+            .unwrap();
+        let cancelled = manager.reset_for_account_transition().unwrap();
+        assert_eq!(cancelled.len(), 1);
+        assert!(manager.is_empty());
+        assert!(manager.pending_completions().is_empty());
+        assert!(!path.exists());
+
+        let reopened = AndroidMcpAuthWatchManager::open(&path, 1_002).unwrap();
+        assert!(reopened.is_empty());
+        assert!(reopened.pending_completions().is_empty());
     }
 
     #[test]
