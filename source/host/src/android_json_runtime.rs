@@ -16051,6 +16051,96 @@ mod tests {
     }
 
     #[test]
+    fn delete_agents_clears_durable_ack_and_agent_wake_before_reopen() {
+        let root = std::env::temp_dir().join(format!(
+            "fabushi-delete-agent-lifecycle-{}-{}",
+            std::process::id(),
+            now_ms()
+        ));
+        let account_fence;
+        let deleted_id;
+        {
+            let mut host = AndroidJsonHost::new(&root, AndroidHostMode::Test);
+            account_fence = host.current_turn_account_fence().unwrap();
+            let created = host
+                .dispatch(
+                    "createAgent",
+                    &json!({"name":"Delete Me","description":"lifecycle fixture"}),
+                )
+                .unwrap();
+            deleted_id = created["agent"]["id"].as_str().unwrap().to_string();
+
+            host.visible_ack_obligations
+                .record_send(&account_fence, &deleted_id, 10.0)
+                .unwrap();
+            host.messaging
+                .lock()
+                .unwrap()
+                .deliver_agent_message(
+                    &account_fence,
+                    "agent-source",
+                    &deleted_id,
+                    false,
+                    "pending peer wake",
+                    &[],
+                    false,
+                    "delete-agent-wake",
+                    11,
+                )
+                .unwrap();
+            assert!(host
+                .visible_ack_obligations
+                .pending_for_account(&account_fence)
+                .iter()
+                .any(|entry| entry.agent_id == deleted_id));
+            assert_eq!(
+                host.messaging
+                    .lock()
+                    .unwrap()
+                    .pending_agent_wakes(&account_fence, i64::MAX)
+                    .len(),
+                1
+            );
+
+            let deleted = host
+                .dispatch("deleteAgents", &json!({"ids":[deleted_id.clone()]}))
+                .unwrap();
+            assert_eq!(deleted["deletedIds"], json!([deleted_id.clone()]));
+            assert!(host
+                .visible_ack_obligations
+                .pending_for_account(&account_fence)
+                .iter()
+                .all(|entry| entry.agent_id != deleted_id));
+            assert!(host
+                .messaging
+                .lock()
+                .unwrap()
+                .pending_agent_wakes(&account_fence, i64::MAX)
+                .is_empty());
+        }
+
+        let mut reopened = AndroidJsonHost::new(&root, AndroidHostMode::Test);
+        let roster = reopened.dispatch("listAgents", &json!({})).unwrap();
+        assert!(roster
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|agent| agent["id"].as_str() != Some(deleted_id.as_str())));
+        assert!(reopened
+            .visible_ack_obligations
+            .pending_for_account(&account_fence)
+            .iter()
+            .all(|entry| entry.agent_id != deleted_id));
+        assert!(reopened
+            .messaging
+            .lock()
+            .unwrap()
+            .pending_agent_wakes(&account_fence, i64::MAX)
+            .is_empty());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn transcript_survives_host_reopen_and_dedupes_settled_send() {
         let root = std::env::temp_dir().join(format!(
             "fabushi-json-host-transcript-{}-{}",
