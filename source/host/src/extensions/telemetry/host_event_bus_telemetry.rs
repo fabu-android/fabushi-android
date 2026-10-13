@@ -1,12 +1,12 @@
 use std::collections::BTreeMap;
 
-use crate::host_event_bus::HostEventFailureReport;
+use crate::host_event_bus::HostEventFailure;
 
 use super::HostTelemetryProjection;
 
 pub const HOST_EVENT_BUS_EVENT: &str = "sand.host.event_bus";
 
-pub fn host_event_bus_telemetry(report: &HostEventFailureReport) -> HostTelemetryProjection {
+pub fn host_event_bus_telemetry(report: &HostEventFailure) -> HostTelemetryProjection {
     let mut metadata = BTreeMap::from([
         ("kind".into(), report.kind.clone()),
         ("error_class".into(), report.error_class.clone()),
@@ -27,7 +27,7 @@ mod tests {
 
     #[test]
     fn failure_projection_is_bounded_to_kind_topic_and_error_class() {
-        let projection = host_event_bus_telemetry(&HostEventFailureReport {
+        let projection = host_event_bus_telemetry(&HostEventFailure {
             kind: "subscriber_failed".into(),
             topic: Some("tool".into()),
             error_class: "panic".into(),
