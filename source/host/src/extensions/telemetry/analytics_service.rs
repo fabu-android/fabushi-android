@@ -135,6 +135,10 @@ impl AndroidProductAnalyticsRuntime {
         runtime
     }
 
+    pub fn can_record_events(&self) -> bool {
+        !self.disabled
+    }
+
     pub fn track(
         &self,
         account_scope: &str,
