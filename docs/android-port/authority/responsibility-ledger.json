@@ -17711,6 +17711,69 @@
       "artifact": null,
       "verification_status": "not-verified",
       "notes": "Implementation commits b580024dd95df6fee5956ef870e2cc4f640d985b, 7972f19a0fe7664a6056604c0668af35556e0ecc, 5bde56e9f1205b89f7e651f14fc09e8232d7842f. Their individual workflow runs were superseded/cancelled by concurrent pushes, so no old green evidence is promoted to current HEAD."
+    },
+    {
+      "responsibility_id": "OBSERVABILITY-DISTRIBUTED-TRACE-ANDROID-001",
+      "domain": "observability-distributed-tracing",
+      "desktop_sources": [
+        {
+          "path": "source/host/src/extensions/telemetry/host_tracing.rs",
+          "blob_sha": "3f7ccd235734984307a2563f689f3e6eff5e23a4",
+          "symbols": [
+            "TokenRefreshingSpanExporter",
+            "ProductionHostTracerProvider",
+            "init_production_host_tracing"
+          ]
+        }
+      ],
+      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "responsibility": "Preserve Host distributed trace context and bounded span export with token refresh, parent/child trace propagation, flush/shutdown and failure isolation without making telemetry part of product truth.",
+      "source_owner": "Desktop Host tracing/OTLP exporter",
+      "direct_callers": [
+        "Host telemetry startup",
+        "send trace factory",
+        "turn/command tracing"
+      ],
+      "downstream_dependencies": [
+        "authenticated telemetry backend /v1/traces",
+        "traceparent propagation"
+      ],
+      "state_owner": "Host tracing provider/export queue; presentation owns none",
+      "persistent_state": [],
+      "protocol_wire_contract": [
+        "W3C traceparent identity",
+        "OTLP protobuf POST /v1/traces",
+        "authenticated bearer refresh"
+      ],
+      "visible_effect": "Diagnostics can correlate Android Host operations across distributed backend spans without changing user-visible business state.",
+      "failure_behavior": [
+        "missing/expired token drops/fails trace export without affecting canonical product state",
+        "exporter exceptions fail isolated",
+        "shutdown is idempotent"
+      ],
+      "cancellation_behavior": "dispose/clean shutdown flushes then disables further span export",
+      "retry_semantics": "no business-side-effect retry is coupled to trace export",
+      "idempotency_semantics": "span end is single-settlement",
+      "process_death_recovery": "no canonical product state depends on in-memory spans; post-death tracing restarts with a new provider while durable business operations retain their own ids",
+      "account_fencing": "export bearer must come from the current Android account session; old-account token/exporter must be disposed on settlement change",
+      "security_boundary": "tokens never reach Compose; trace attributes must remain bounded/redacted",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "source/host/src/android_json_runtime.rs",
+        "source/host/src/extensions/telemetry/gateway_command_telemetry.rs"
+      ],
+      "android_owner": "planned Rust Host tracing exporter integrated with current account service",
+      "platform_delta": "Desktop resource tags deployment.environment=box/HOSTNAME and Box backend headers are not valid Android facts; Android must emit Android-native resource tags while preserving trace identity/export semantics.",
+      "implementation_status": "mapped",
+      "production_wiring": "request/operation correlation exists in structured telemetry, but no production OTLP trace exporter / HostTrace factory is wired on Android yet.",
+      "unit_test": "pending Android traceparent/exporter tests",
+      "contract_test": "pending OTLP protobuf/auth-refresh contract test",
+      "integration_test": "pending current-account token rotation + trace export integration",
+      "packaged_test": "pending final exact-head APK/AAB",
+      "device_test": "pending device trace-export acceptance",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Explicit gap created from current Desktop host_tracing.rs audit; do not treat structured logging as trace parity."
     }
   ],
   "traceability": {
