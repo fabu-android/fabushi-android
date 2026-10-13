@@ -579,6 +579,13 @@ impl AutomationRuntime {
             dropped_occurrence_ids.push(dropped.occurrence_id);
         }
         let pending_count = queue.len();
+        for occurrence_id in &dropped_occurrence_ids {
+            self.remember_settled_event_occurrence(Self::event_occurrence_key(
+                account_fence,
+                automation_id,
+                occurrence_id,
+            ));
+        }
         self.persist()?;
         Ok(AutomationEventEnqueueOutcome {
             accepted: true,
@@ -696,7 +703,9 @@ impl AutomationRuntime {
                 ));
             }
         } else {
-            let queue_key = Self::event_queue_key(account_fence, &batch.automation_id);
+            let automation_id = batch.automation_id.clone();
+            let claimed_at_ms = batch.claimed_at_ms;
+            let queue_key = Self::event_queue_key(account_fence, &automation_id);
             let queue = self.state.event_fires.entry(queue_key).or_default();
             let mut restored = batch
                 .occurrence_ids
@@ -704,10 +713,10 @@ impl AutomationRuntime {
                 .zip(batch.events)
                 .map(|(occurrence_id, event)| AutomationEventFire {
                     occurrence_id,
-                    automation_id: batch.automation_id.clone(),
+                    automation_id: automation_id.clone(),
                     account_fence: account_fence.to_string(),
                     event,
-                    enqueued_at_ms: batch.claimed_at_ms,
+                    enqueued_at_ms: claimed_at_ms,
                     available_at_ms: now_ms,
                 })
                 .collect::<Vec<_>>();
@@ -746,7 +755,9 @@ impl AutomationRuntime {
                 ));
             }
         } else {
-            let queue_key = Self::event_queue_key(account_fence, &batch.automation_id);
+            let automation_id = batch.automation_id.clone();
+            let claimed_at_ms = batch.claimed_at_ms;
+            let queue_key = Self::event_queue_key(account_fence, &automation_id);
             let queue = self.state.event_fires.entry(queue_key).or_default();
             let mut restored = batch
                 .occurrence_ids
@@ -754,10 +765,10 @@ impl AutomationRuntime {
                 .zip(batch.events)
                 .map(|(occurrence_id, event)| AutomationEventFire {
                     occurrence_id,
-                    automation_id: batch.automation_id.clone(),
+                    automation_id: automation_id.clone(),
                     account_fence: account_fence.to_string(),
                     event,
-                    enqueued_at_ms: batch.claimed_at_ms,
+                    enqueued_at_ms: claimed_at_ms,
                     available_at_ms: now_ms,
                 })
                 .collect::<Vec<_>>();
@@ -1570,6 +1581,16 @@ mod tests {
             dropped.extend(outcome.dropped_occurrence_ids);
         }
         assert_eq!(dropped, vec!["overflow-0".to_string()]);
+        assert!(runtime
+            .enqueue_event_fire(
+                "daily-brief",
+                "acct-a",
+                "overflow-0",
+                json!({"value":"duplicate-after-drop"}),
+                2,
+            )
+            .unwrap()
+            .duplicate);
         let batch = runtime
             .claim_event_batch("daily-brief", "acct-a", "overflow-claim", 751)
             .unwrap()
