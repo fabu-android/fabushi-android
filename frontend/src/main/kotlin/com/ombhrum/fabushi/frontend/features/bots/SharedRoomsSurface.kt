@@ -36,6 +36,7 @@ import kotlinx.coroutines.withContext
 
 @Composable
 internal fun SharedRoomsSurface(
+    bots: List<MobileBotSummaryAndroid>,
     onBack: () -> Unit,
 ) {
     val owner = remember { SharedRoomsPresentationOwner(CoordinatorClient.presentation()) }
@@ -45,6 +46,9 @@ internal fun SharedRoomsSurface(
     var error by remember { mutableStateOf<String?>(null) }
     var joinLink by remember { mutableStateOf("") }
     var generation by remember { mutableLongStateOf(0L) }
+    val shareableAgents = remember(bots) {
+        bots.filter { bot -> !bot.isHidden && !bot.isGroup && !bot.isSharedRoom }
+    }
 
     fun runAction(action: () -> MobileSharedRoomsSnapshot) {
         val token = ++generation
@@ -146,8 +150,8 @@ internal fun SharedRoomsSurface(
         }
 
         val metadata = buildString {
-            if (snapshot.pendingJoinRequestCount > 0) {
-                append("${snapshot.pendingJoinRequestCount} pending")
+            if (snapshot.pendingJoinRequests.isNotEmpty()) {
+                append("${snapshot.pendingJoinRequests.size} pending")
             }
             if (snapshot.typingUserCount > 0) {
                 if (isNotEmpty()) append(" · ")
@@ -167,6 +171,74 @@ internal fun SharedRoomsSurface(
             Modifier.fillMaxWidth().weight(1f).padding(horizontal = 16.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
+            if (snapshot.enabled && snapshot.pendingJoinRequests.isNotEmpty()) {
+                item(key = "pending-join-heading") {
+                    Text("Pending requests", color = GrokMobileInk, fontWeight = FontWeight.SemiBold)
+                }
+                items(snapshot.pendingJoinRequests, key = { "join:${it.requestId}" }) { request ->
+                    Column(
+                        Modifier.fillMaxWidth()
+                            .background(androidx.compose.ui.graphics.Color.White, RoundedCornerShape(16.dp))
+                            .padding(14.dp)
+                            .testTag("shared-room-join-request-${request.requestId}"),
+                    ) {
+                        Text(request.requesterName, color = GrokMobileInk, fontWeight = FontWeight.SemiBold)
+                        Text(request.roomName, color = GrokMobileMuted, fontSize = 12.sp)
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            TextButton(
+                                onClick = { runAction { owner.respond(request.requestId, false) } },
+                                enabled = !loading,
+                                modifier = Modifier.testTag("shared-room-deny-${request.requestId}"),
+                            ) { Text("Deny") }
+                            TextButton(
+                                onClick = { runAction { owner.respond(request.requestId, true) } },
+                                enabled = !loading,
+                                modifier = Modifier.testTag("shared-room-approve-${request.requestId}"),
+                            ) { Text("Approve") }
+                        }
+                    }
+                }
+            }
+
+            if (snapshot.enabled && shareableAgents.isNotEmpty()) {
+                item(key = "share-agent-heading") {
+                    Text("Share an Agent", color = GrokMobileInk, fontWeight = FontWeight.SemiBold)
+                }
+                items(shareableAgents, key = { "share-agent:${it.id}" }) { bot ->
+                    Row(
+                        Modifier.fillMaxWidth()
+                            .background(androidx.compose.ui.graphics.Color.White, RoundedCornerShape(16.dp))
+                            .padding(horizontal = 14.dp, vertical = 10.dp)
+                            .testTag("shared-room-share-agent-${bot.id}"),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(Modifier.weight(1f)) {
+                            Text(bot.name, color = GrokMobileInk, fontWeight = FontWeight.SemiBold)
+                            if (bot.description.isNotBlank()) {
+                                Text(bot.description, color = GrokMobileMuted, fontSize = 12.sp)
+                            }
+                        }
+                        TextButton(
+                            onClick = {
+                                runAction {
+                                    val result = owner.createRoomFromAgent(
+                                        agentId = bot.id,
+                                        agentName = bot.name,
+                                        avatarDataUrl = bot.avatarDataUrl,
+                                    )
+                                    check(result.optString("status") == "ok") {
+                                        result.optString("message").ifBlank { "Shared room could not be created" }
+                                    }
+                                    owner.refresh()
+                                }
+                            },
+                            enabled = !loading,
+                            modifier = Modifier.testTag("shared-room-share-${bot.id}"),
+                        ) { Text("Share") }
+                    }
+                }
+            }
+
             items(snapshot.rooms, key = { it.id }) { room ->
                 Column(
                     Modifier.fillMaxWidth()
