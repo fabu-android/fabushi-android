@@ -16701,6 +16701,56 @@ mod process_metrics_recent_dispatch_tests {
 }
 
 #[cfg(test)]
+mod box_recreate_decided_dispatch_tests {
+    use super::*;
+
+    #[test]
+    fn rebuild_decision_and_auto_update_shapes_share_the_durable_mapper() {
+        let root = tempfile::tempdir().unwrap();
+        let mut host = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+        let accepted = host.dispatch(
+            "feature.telemetry.boxRecreateDecided",
+            &json!({
+                "requestId":"rebuild-1",
+                "decision":"accepted",
+                "kind":"reset",
+                "preserveData":false,
+                "forceRecreate":true,
+                "forceUpdate":false,
+                "hasOperationId":true
+            }),
+        ).unwrap();
+        assert_eq!(accepted["recorded"], true);
+        assert_eq!(
+            host.dispatch(
+                "feature.telemetry.boxRecreateDecided",
+                &json!({"trigger":"auto_update"}),
+            ).unwrap()["recorded"],
+            true,
+        );
+        let durable = std::fs::read_to_string(
+            root.path().join("android-structured-log-spill.v1.json"),
+        ).unwrap();
+        assert!(durable.contains("sand.box.recreate_decided"));
+        assert!(durable.contains("rebuild-1"));
+        assert!(durable.contains("accepted"));
+        assert!(durable.contains("auto_update"));
+        assert!(host.dispatch(
+            "feature.telemetry.boxRecreateDecided",
+            &json!({
+                "requestId":"rebuild-2",
+                "decision":"invented",
+                "kind":"reset",
+                "preserveData":false,
+                "forceRecreate":true,
+                "forceUpdate":false,
+                "hasOperationId":false
+            }),
+        ).is_err());
+    }
+}
+
+#[cfg(test)]
 mod event_loop_pressure_dispatch_tests {
     use super::*;
 
