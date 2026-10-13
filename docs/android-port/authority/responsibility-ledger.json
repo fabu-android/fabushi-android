@@ -16928,6 +16928,82 @@
       "artifact": null,
       "verification_status": "not-verified",
       "notes": "Direct-port source owner is present, but code presence is not parity. Keep mapped until production composition and exact-head evidence close the runtime route."
+    },
+    {
+      "responsibility_id": "AGENT-SESSION-EXTENSION-COMPOSITION-ANDROID-001",
+      "domain": "agent-session-lifecycle",
+      "desktop_sources": [
+        {
+          "path": "source/host/src/extensions/session/extension.rs",
+          "blob_sha": "f34b1d871a4d635e0f83b7103a0bbe1150388c4b",
+          "symbols": [
+            "SessionExtension",
+            "start_session_extension",
+            "conversation_size_limits_from_experiments"
+          ]
+        }
+      ],
+      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "responsibility": "Compose the shipping Agent session lifecycle: bind experiment-driven conversation limits and maintenance gates, retain one canonical session/store owner, own Human takeover handoff lifecycle, release subscriptions/workers on shutdown, and prevent stale handoff work from crossing account/process boundaries.",
+      "source_owner": "Desktop SessionExtension",
+      "direct_callers": [
+        "Host session extension startup/shutdown",
+        "session gateway and Human takeover callers"
+      ],
+      "downstream_dependencies": [
+        "Agent/session persistence",
+        "conversation GC/maintenance",
+        "Box handoff lifecycle",
+        "Host experiment gates"
+      ],
+      "state_owner": "AndroidJsonHost owns canonical session/transcript repositories; AndroidSessionPolicyBindings owns only policy projection; AndroidBoxHandoffOwner is the single durable handoff owner.",
+      "persistent_state": [
+        "canonical Android transcript/session repositories",
+        "box-handoff.json with accountFence/requestId fencing"
+      ],
+      "protocol_wire_contract": [
+        "feature.agent.handoff.status",
+        "feature.agent.handoff.start",
+        "feature.agent.handoff.attachSnapshot",
+        "feature.agent.handoff.end",
+        "grok_bot_conversation_size_limits",
+        "grok_bot_conversation_gc",
+        "sand_stale_root_gc",
+        "sand_legacy_store_blob_retirement"
+      ],
+      "visible_effect": "Agent conversations retain size/maintenance policy and Human takeover state across Android process death without leaking a prior account's handoff.",
+      "failure_behavior": [
+        "durable handoff decode/version errors fail Host construction closed",
+        "cross-account handoff targets are rejected",
+        "stale request-id snapshot/end callbacks are ignored",
+        "policy subscription teardown never creates a second session owner"
+      ],
+      "cancellation_behavior": "ending a handoff consumes the matching durable request; stale or already-ended requests have no effect; Host teardown drops policy subscriptions and canonical owners.",
+      "retry_semantics": "duplicate handoff start for the same account/Agent returns the existing request instead of creating a second side effect; process reopen resumes the durable pending handoff.",
+      "idempotency_semantics": "request identity plus account fence makes start/attach/end idempotent or stale-safe; experiment policy projection is read from the canonical Host experiments owner.",
+      "process_death_recovery": "AndroidBoxHandoffOwner reopens durable pending state; transcript/session repositories reopen independently; no request is re-sent merely because the process restarted.",
+      "account_fencing": "Every production handoff feature reads the canonical Host account fence and AndroidBoxHandoffOwner persists/checks it before status/start/snapshot/end.",
+      "security_boundary": "Compose/JNI can request lifecycle operations but cannot mutate handoff files or session truth directly; Remote Runner/viewport code may attach a snapshot only with the live account fence and request identity.",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "source/host/src/android_session_policy_runtime.rs",
+        "source/host/src/android_box_handoff.rs",
+        "source/host/src/android_json_runtime.rs",
+        "source/host/src/android_agent_roster.rs",
+        "source/host/src/extensions/transcript/transcript_store.rs"
+      ],
+      "android_owner": "Rust AndroidJsonHost split composition: canonical session/transcript owners + AndroidSessionPolicyBindings + AndroidBoxHandoffOwner",
+      "platform_delta": "Desktop SessionExtension retains ProductionSessionWorkers and process-local BoxHandoffService. Android keeps its already-shipping native canonical repositories, projects only applicable session policy gates, and replaces process-local handoff with a crash-safe durable account-fenced owner. Desktop legacy member-directory cleanup is not run against unrelated Android storage layout.",
+      "implementation_status": "implemented",
+      "production_wiring": "AndroidJsonHost constructs AndroidSessionPolicyBindings and one durable AndroidBoxHandoffOwner during production startup; dispatch exposes feature.agent.handoff.status/start/attachSnapshot/end; Rust ownership tears down policy subscriptions/owners with the Host.",
+      "unit_test": "android_session_policy_runtime::tests::binding_tracks_live_maintenance_gate_changes_without_a_second_owner; android_box_handoff::tests cover duplicate/reopen, stale snapshot, account switch and durable end; direct BoxHandoffService focused tests also cover stale snapshot fencing.",
+      "contract_test": "Host dispatch requires canonical account fence before handoff mutations and AndroidBoxHandoffOwner validates account/request identity.",
+      "integration_test": "required: production Host process-reopen resumes pending handoff and account switch cannot observe/mutate the prior account handoff.",
+      "packaged_test": "required on final exact-head APK/AAB",
+      "device_test": "required with authorized Remote Runner snapshot/takeover path",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Implementation source and production Host route exist, but authorized Remote Runner screenshot capture plus exact-head package/device evidence remain open. Do not upgrade to verified from unit/Rust gates alone."
     }
   ],
   "traceability": {
