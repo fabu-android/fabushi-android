@@ -1050,6 +1050,160 @@ impl AutomationRuntime {
         Ok(copy)
     }
 
+    pub fn mark_event_run_outcome_unknown(
+        &mut self,
+        run_id: &str,
+        account_fence: &str,
+        generation: u64,
+        reason: &str,
+        now_ms: u64,
+    ) -> Result<AutomationRun, String> {
+        let run_snapshot = self
+            .state
+            .runs
+            .get(run_id)
+            .cloned()
+            .ok_or("automation run not found")?;
+        if run_snapshot.account_fence != account_fence || run_snapshot.generation != generation {
+            return Err("stale automation callback fenced by account/generation".into());
+        }
+        if run_snapshot.trigger_kind != "event" {
+            return Err("automation run is not event-triggered".into());
+        }
+        let batch_id = run_snapshot
+            .event_batch_id
+            .clone()
+            .ok_or("automation event run is missing its durable batch")?;
+        let batch = self
+            .state
+            .event_batches
+            .get_mut(&batch_id)
+            .ok_or("automation event batch not found")?;
+        if batch.account_fence != account_fence
+            || batch.automation_id != run_snapshot.automation_id
+        {
+            return Err("automation event batch ownership mismatch".into());
+        }
+        batch.state = AutomationEventBatchState::OutcomeUnknown;
+        let run = self.current_mut(run_id, account_fence, generation)?;
+        run.state = AutomationRunState::OutcomeUnknown;
+        run.reason = Some(reason.into());
+        run.updated_at_ms = now_ms;
+        let copy = run.clone();
+        self.persist()?;
+        Ok(copy)
+    }
+
+    pub fn reconcile_event_run_outcome(
+        &mut self,
+        run_id: &str,
+        account_fence: &str,
+        generation: u64,
+        completed: bool,
+        reason: Option<String>,
+        now_ms: u64,
+        fallback_time_zone: Option<&str>,
+    ) -> Result<AutomationRun, String> {
+        let run_snapshot = self
+            .state
+            .runs
+            .get(run_id)
+            .cloned()
+            .ok_or("automation run not found")?;
+        if run_snapshot.account_fence != account_fence || run_snapshot.generation != generation {
+            return Err("stale automation callback fenced by account/generation".into());
+        }
+        if run_snapshot.state != AutomationRunState::OutcomeUnknown
+            || run_snapshot.trigger_kind != "event"
+        {
+            return Err("automation event run does not require reconciliation".into());
+        }
+        let batch_id = run_snapshot
+            .event_batch_id
+            .clone()
+            .ok_or("automation event run is missing its durable batch")?;
+        let batch = self
+            .state
+            .event_batches
+            .get(&batch_id)
+            .cloned()
+            .ok_or("automation event batch not found")?;
+        if batch.account_fence != account_fence
+            || batch.automation_id != run_snapshot.automation_id
+            || batch.state != AutomationEventBatchState::OutcomeUnknown
+        {
+            return Err("automation event batch does not require matching reconciliation".into());
+        }
+
+        if completed {
+            let next_run_at_ms = if let Some(spec) = self.state.specs.get(&run_snapshot.automation_id) {
+                let mut next_spec = spec.clone();
+                next_spec.last_run_at_ms = Some(now_ms);
+                canonical_next_run_ms(&next_spec, fallback_time_zone)?
+            } else {
+                None
+            };
+            {
+                let run = self.current_mut(run_id, account_fence, generation)?;
+                run.state = AutomationRunState::Completed;
+                run.reason = reason;
+                run.updated_at_ms = now_ms;
+            }
+            self.state.event_batches.remove(&batch_id);
+            for occurrence_id in batch.occurrence_ids {
+                self.remember_settled_event_occurrence(Self::event_occurrence_key(
+                    account_fence,
+                    &run_snapshot.automation_id,
+                    &occurrence_id,
+                ));
+            }
+            if let Some(spec) = self.state.specs.get_mut(&run_snapshot.automation_id) {
+                spec.last_run_at_ms = Some(now_ms);
+                spec.next_run_at_ms = next_run_at_ms;
+            }
+        } else {
+            // Reconciliation established that the side effect did not complete. Preserve the old
+            // run as a terminal cancelled record, then restore only its event occurrences for a
+            // fresh generation rather than mutating the old request into another execution.
+            {
+                let run = self.current_mut(run_id, account_fence, generation)?;
+                run.state = AutomationRunState::Cancelled;
+                run.reason = Some(
+                    reason.unwrap_or_else(|| "reconciled as not completed".into()),
+                );
+                run.updated_at_ms = now_ms;
+            }
+            self.state.event_batches.remove(&batch_id);
+            let queue_key =
+                Self::event_queue_key(account_fence, &run_snapshot.automation_id);
+            let queue = self.state.event_fires.entry(queue_key).or_default();
+            let mut restored = batch
+                .occurrence_ids
+                .into_iter()
+                .zip(batch.events)
+                .map(|(occurrence_id, event)| AutomationEventFire {
+                    occurrence_id,
+                    automation_id: run_snapshot.automation_id.clone(),
+                    account_fence: account_fence.to_string(),
+                    event,
+                    enqueued_at_ms: batch.claimed_at_ms,
+                    available_at_ms: now_ms,
+                })
+                .collect::<Vec<_>>();
+            restored.append(queue);
+            *queue = restored;
+        }
+
+        let copy = self
+            .state
+            .runs
+            .get(run_id)
+            .cloned()
+            .ok_or("automation run disappeared during reconciliation")?;
+        self.persist()?;
+        Ok(copy)
+    }
+
     pub fn settle_event_run_terminal(
         &mut self,
         run_id: &str,
@@ -1998,6 +2152,67 @@ mod tests {
             )
             .unwrap()
             .duplicate);
+    }
+
+    #[test]
+    fn event_run_outcome_unknown_reconciles_run_and_batch_as_one_owner() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut runtime = AutomationRuntime::open(dir.path().join("automation.json"), 1).unwrap();
+        runtime.upsert_spec(spec("acct-a"), Some("UTC")).unwrap();
+        runtime
+            .enqueue_event_fire(
+                "daily-brief",
+                "acct-a",
+                "unknown-occurrence",
+                json!({"kind":"github","delivery":"unknown"}),
+                1,
+            )
+            .unwrap();
+        let (run, _) = runtime
+            .begin_event_run(
+                "daily-brief",
+                "acct-a",
+                "unknown-claim",
+                "unknown-run",
+                1_000,
+            )
+            .unwrap()
+            .unwrap();
+        runtime
+            .mark_event_run_outcome_unknown(
+                &run.run_id,
+                "acct-a",
+                run.generation,
+                "dispatch settlement unknown",
+                1_010,
+            )
+            .unwrap();
+        assert_eq!(
+            runtime.snapshot("unknown-run").unwrap()["state"],
+            "outcome_unknown"
+        );
+        let reconciled = runtime
+            .reconcile_event_run_outcome(
+                "unknown-run",
+                "acct-a",
+                run.generation,
+                false,
+                None,
+                1_020,
+                Some("UTC"),
+            )
+            .unwrap();
+        assert_eq!(reconciled.state, AutomationRunState::Cancelled);
+        let replay = runtime
+            .claim_event_batch(
+                "daily-brief",
+                "acct-a",
+                "unknown-claim-retry",
+                1_020,
+            )
+            .unwrap()
+            .unwrap();
+        assert_eq!(replay.occurrence_ids, vec!["unknown-occurrence"]);
     }
 
 }
