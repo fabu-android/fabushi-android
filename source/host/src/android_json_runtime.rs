@@ -14901,6 +14901,29 @@ mod tests {
     use crate::runner::SubagentLineage;
 
     #[test]
+    fn startup_account_binding_precedes_account_scoped_spool() {
+        // This order is a security/ownership contract, not an implementation preference:
+        // a restored protected session may belong to another environment. No account-scoped
+        // durable owner may observe that scope until EnvDescriptorAccountBinding settles it.
+        let source = include_str!("android_json_runtime.rs");
+        let constructor = source
+            .find("let account_binding = EnvDescriptorAccountBinding::new")
+            .expect("startup account binding construction must remain production-wired");
+        let authorize = source[constructor..]
+            .find("account_binding.authorize(")
+            .map(|offset| constructor + offset)
+            .expect("startup account binding authorization must remain production-wired");
+        let scoped_spool = source[constructor..]
+            .find("let structured_log_account_slot = account")
+            .map(|offset| constructor + offset)
+            .expect("structured-log account scope must remain explicit");
+        assert!(
+            authorize < scoped_spool,
+            "environment/account binding must settle before any account-scoped durable spool opens",
+        );
+    }
+
+    #[test]
     fn platform_injected_machine_id_does_not_create_plaintext_host_file() {
         let root = tempfile::tempdir().unwrap();
         let injected = "android-keystore-device-123";
