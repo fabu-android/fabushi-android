@@ -16131,6 +16131,73 @@ export function apply(ctx) {
     }
 
     #[test]
+    fn created_agent_kickstart_is_hidden_and_settles_introduction_pending() {
+        let root = tempfile::tempdir().unwrap();
+        let mut host = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+        let created = host
+            .dispatch(
+                "createAgent",
+                &json!({
+                    "name":"Kickstart",
+                    "description":"Give the user a concise first useful result.",
+                    "isKickstartRequested":true
+                }),
+            )
+            .unwrap();
+        let agent_id = created["agent"]["id"].as_str().unwrap().to_string();
+        assert_eq!(created["agent"]["introductionPending"], true);
+        assert!(
+            created["kickstartOperationId"].as_str().is_some_and(|value| !value.is_empty()),
+            "requested kickstart must return its operation identity"
+        );
+
+        let deadline = std::time::Instant::now() + Duration::from_secs(3);
+        let mut completed = false;
+        while std::time::Instant::now() < deadline {
+            let event = host.dispatch("feature.receive", &json!({})).unwrap();
+            if event["type"] == "operation.completed"
+                && event["operationId"] == created["kickstartOperationId"]
+            {
+                completed = true;
+                break;
+            }
+            if event["type"] == "operation.failed"
+                && event["operationId"] == created["kickstartOperationId"]
+            {
+                panic!("created Agent kickstart failed: {event}");
+            }
+            if event.as_object().is_some_and(|object| object.is_empty()) {
+                thread::sleep(Duration::from_millis(10));
+            }
+        }
+        assert!(completed, "created Agent kickstart must settle");
+
+        let roster = host.dispatch("listAgents", &json!({})).unwrap();
+        let projected = roster
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|agent| agent["id"] == agent_id)
+            .expect("created Agent remains in canonical roster");
+        assert_eq!(
+            projected["introductionPending"], false,
+            "non-empty kickstart completion settles the durable introduction flag"
+        );
+        let transcript = host
+            .transcript
+            .lock()
+            .unwrap()
+            .get_transcript()
+            .into_iter()
+            .filter(|entry| entry.get("agentId").and_then(Value::as_str) == Some(agent_id.as_str()))
+            .collect::<Vec<_>>();
+        assert!(
+            transcript.iter().all(|entry| entry.get("role").and_then(Value::as_str) != Some("user")),
+            "hidden kickstart must never fabricate or replay a user message"
+        );
+    }
+
+    #[test]
     fn create_agent_preserves_materialization_origin_purpose_and_intro_suppression() {
         let root = tempfile::tempdir().unwrap();
         let mut host = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
