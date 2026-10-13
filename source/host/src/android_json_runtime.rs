@@ -76,7 +76,8 @@ use crate::extensions::telemetry::gateway_command_telemetry::{
     gateway_command_timing_telemetry, AndroidGatewayCommandReport,
 };
 use crate::extensions::telemetry::turn_telemetry_mappers::{
-    turn_interrupt_telemetry, TurnInterruptFields,
+    turn_interrupt_telemetry, user_message_received_telemetry, TurnInterruptFields,
+    UserMessageReceivedFields,
 };
 use crate::extensions::telemetry::analytics_service::{
     automation_run_product_analytics_event, AndroidProductAnalyticsRuntime, ProductAnalyticsSender,
@@ -10701,6 +10702,11 @@ impl AndroidJsonHost {
                 .unwrap_or(false);
         let ack_guard_accepted_at_ms = now_ms();
         let mut ack_send_guard = None;
+        let user_message_was_in_flight = !hidden
+            && self
+                .agent_turn_interruptions
+                .has_active_turn(&agent_id, &account_fence_for_attachment);
+        let mut accepted_new_user_message = false;
 
         if !hidden {
             let client_nonce = command
@@ -10790,6 +10796,7 @@ impl AndroidJsonHost {
                     "timestampMs":now_ms(),
                 }))
                 .map_err(|error| format!("failed to persist user transcript entry: {error}"))?;
+            accepted_new_user_message = user_was_new;
 
             if !user_was_new {
                 if let Some(existing) = transcript.entry(&assistant_entry_id) {
@@ -10823,6 +10830,15 @@ impl AndroidJsonHost {
                     return Ok(());
                 }
             }
+        }
+
+        if accepted_new_user_message {
+            self.record_host_telemetry_projection(user_message_received_telemetry(
+                &UserMessageReceivedFields {
+                    conversation_id: agent_id.clone(),
+                    was_in_flight: user_message_was_in_flight,
+                },
+            ));
         }
 
         if ack_guard_owes_visible_ack {
@@ -20128,5 +20144,82 @@ mod automation_spend_guard_wiring_tests {
         assert!(state
             .snoozed_until_ms
             .is_some_and(|until| until >= now.saturating_add(SPEND_GUARD_SNOOZE_MS)));
+    }
+}
+
+#[cfg(test)]
+mod user_message_received_telemetry_wiring_tests {
+    use super::*;
+
+    #[test]
+    fn newly_persisted_user_message_emits_once_with_truthful_in_flight_state() {
+        let root = tempfile::tempdir().unwrap();
+        let mut host = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+        let account_fence = host.current_turn_account_fence().unwrap();
+        host.agent_turn_interruptions
+            .register(
+                "agent-message-telemetry",
+                "prior-operation",
+                &account_fence,
+                false,
+                Arc::new(AtomicBool::new(false)),
+            )
+            .unwrap();
+        let command = json!({
+            "text":"hello",
+            "agentId":"agent-message-telemetry",
+            "clientNonce":"message-telemetry-nonce"
+        });
+
+        host.queue_chat_turn(
+            "message-telemetry-operation",
+            "message-telemetry-request",
+            &command,
+            None,
+        )
+        .unwrap();
+
+        let first = host
+            .structured_log_spool
+            .lock()
+            .unwrap()
+            .snapshot()
+            .checkpoint
+            .records
+            .into_iter()
+            .filter(|entry| entry.message == "sand.user_message.received")
+            .collect::<Vec<_>>();
+        assert_eq!(first.len(), 1);
+        assert_eq!(
+            first[0].metadata.get("conversation_id").map(String::as_str),
+            Some("agent-message-telemetry")
+        );
+        assert_eq!(
+            first[0].metadata.get("was_in_flight").map(String::as_str),
+            Some("true")
+        );
+
+        host.queue_chat_turn(
+            "message-telemetry-duplicate-operation",
+            "message-telemetry-duplicate-request",
+            &command,
+            None,
+        )
+        .unwrap();
+
+        let after_duplicate = host
+            .structured_log_spool
+            .lock()
+            .unwrap()
+            .snapshot()
+            .checkpoint
+            .records
+            .into_iter()
+            .filter(|entry| entry.message == "sand.user_message.received")
+            .count();
+        assert_eq!(
+            after_duplicate, 1,
+            "nonce-deduped user input must not emit a second received event"
+        );
     }
 }
