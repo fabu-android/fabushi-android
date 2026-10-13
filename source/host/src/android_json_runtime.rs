@@ -3273,11 +3273,11 @@ impl AndroidJsonHost {
         let limit = params
             .get("limit")
             .and_then(Value::as_u64)
-            .unwrap_or(200);
+            .unwrap_or(500);
         let limit = usize::try_from(limit)
             .map_err(|_| "transcript page limit is out of range".to_string())?;
-        if limit == 0 || limit > 500 {
-            return Err("transcript page limit must be between 1 and 500".into());
+        if limit == 0 || limit > 5_000 {
+            return Err("transcript page limit must be between 1 and 5000".into());
         }
         let before_seq = params
             .get("beforeSeq")
@@ -13700,6 +13700,18 @@ mod transcript_page_contract_tests {
             .dispatch(
                 "feature.transcript.page",
                 &json!({"agentId":"agent-a","limit":0}),
+            )
+            .is_err());
+        assert!(reopened
+            .dispatch(
+                "feature.transcript.page",
+                &json!({"agentId":"agent-a","limit":5_000}),
+            )
+            .is_ok());
+        assert!(reopened
+            .dispatch(
+                "feature.transcript.page",
+                &json!({"agentId":"agent-a","limit":5_001}),
             )
             .is_err());
 
