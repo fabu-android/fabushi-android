@@ -10467,6 +10467,14 @@ impl AndroidJsonHost {
             prompt.push_str(&time_zone);
             prompt.push_str("\n</system_reminder>");
         }
+        let ack_guard_owes_visible_ack = !hidden
+            && !command
+                .get("skipAckObligation")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+        let ack_guard_accepted_at_ms = now_ms();
+        let mut ack_send_guard = None;
+
         if !hidden {
             let client_nonce = command
                 .get("clientNonce")
@@ -10590,6 +10598,15 @@ impl AndroidJsonHost {
             }
         }
 
+        if ack_guard_owes_visible_ack {
+            ack_send_guard = Some(self.visible_ack_obligations.arm_send_guard(
+                &account_fence_for_attachment,
+                &agent_id,
+                ack_guard_accepted_at_ms as f64,
+                true,
+            ));
+        }
+
         let skip_ack_obligation = command
             .get("skipAckObligation")
             .and_then(Value::as_bool)
@@ -10621,6 +10638,12 @@ impl AndroidJsonHost {
         } else {
             None
         };
+        if owes_visible_ack {
+            if let Some(guard) = ack_send_guard.as_mut() {
+                guard.disarm();
+            }
+        }
+
         let settles_visible_ack = ack_run_token.is_some();
 
         let request_source = normalize_turn_request_source(command.get("requestSource"))?;
