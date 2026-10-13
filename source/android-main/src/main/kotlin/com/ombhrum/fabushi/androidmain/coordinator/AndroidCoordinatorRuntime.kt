@@ -2848,6 +2848,17 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
             }
         }.getOrDefault(false)
 
+    override fun setUpgradeQuiescing(quiescing: Boolean): Boolean =
+        host.request(
+            "feature.agent.upgradeQuiesce",
+            JSONObject().put("quiescing", quiescing),
+        ).let { projection ->
+            check(projection.optBoolean("quiescing", !quiescing) == quiescing) {
+                "Host upgrade quiesce projection did not match the requested state"
+            }
+            quiescing
+        }
+
     private fun currentAgentRosterAccountFence(): String =
         host.request("feature.account.fence").getString("accountFence")
 
