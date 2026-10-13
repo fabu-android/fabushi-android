@@ -1156,6 +1156,9 @@ impl AndroidJsonHost {
                 TranscriptRecoveryOutcome::RecoveredInterruptedWrite => {
                     ("warn", "recovered_interrupted_write")
                 }
+                TranscriptRecoveryOutcome::RecoveredSalvage => {
+                    ("warn", "recovered_salvage")
+                }
                 TranscriptRecoveryOutcome::ResetCorruptStore => {
                     ("error", "reset_corrupt_store")
                 }
