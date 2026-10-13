@@ -1662,19 +1662,30 @@ impl AndroidJsonHost {
                 }
             }
         }));
-        let (unclean_exit, prior_unclean_exit) = AndroidUncleanExitMarker::open_with_version(
+        let (mut unclean_exit, _) = AndroidUncleanExitMarker::open_with_version(
             app_data_dir.join("host-session-marker.json"),
             now_ms(),
             app_version,
         )
         .unwrap_or_else(|error| panic!("failed to arm Android Host session marker: {error}"));
         let mut process_crash_recent = VecDeque::new();
-        if let Some(prior) = prior_unclean_exit {
+        for prior in unclean_exit.pending_recoveries().to_vec() {
             let kind = match prior.kind {
                 AndroidUncleanExitKind::UncleanExit => "unclean_exit",
                 AndroidUncleanExitKind::MarkerOrphaned => "marker_orphaned",
             };
             let is_unclean_exit = matches!(prior.kind, AndroidUncleanExitKind::UncleanExit);
+            let recovery_id = crate::sha256::sha256_hex(
+                format!(
+                    "unclean-exit:{}:{}:{}:{}:{}",
+                    prior.started_at_ms,
+                    prior.last_alive_at_ms,
+                    prior.previous_version,
+                    prior.same_version,
+                    prior.crash_seen,
+                )
+                .as_bytes(),
+            );
             let mut telemetry_metadata = BTreeMap::from([
                 ("kind".to_string(), kind.to_string()),
                 (
@@ -1685,23 +1696,29 @@ impl AndroidJsonHost {
                 ("same_version".to_string(), prior.same_version.to_string()),
                 ("crash_seq_seen".to_string(), prior.crash_seen.to_string()),
                 ("prev_started_at_ms".to_string(), prior.started_at_ms.to_string()),
+                ("recovery_id".to_string(), recovery_id.clone()),
             ]);
             if is_unclean_exit {
                 telemetry_metadata.insert("error_code".to_string(), "SAND-E0610".to_string());
                 telemetry_metadata.insert("error_domain".to_string(), "android-process".to_string());
                 telemetry_metadata.insert("error_retryable".to_string(), "false".to_string());
             }
-            if structured_log_spool
-                .record(
+            let settled = structured_log_spool
+                .record_once(
+                    &recovery_id,
                     if is_unclean_exit { "warn" } else { "info" },
                     "sand.desktop.unclean_exit",
                     telemetry_metadata,
                     now_ms(),
                 )
-                .is_err()
-            {
-                // Telemetry persistence is best-effort during early Host construction: a spill
-                // failure must not turn an otherwise recoverable cold start into a product outage.
+                .is_ok();
+            if settled {
+                let _ = unclean_exit.acknowledge_recovery(&prior);
+            } else {
+                // Do not retire the recovery record until it is durably represented in the
+                // structured-log spool. A transient early-startup write failure must be retried
+                // after process death instead of silently losing the previous crash.
+                break;
             }
             process_crash_recent.push_back(json!({
                 "kind":kind,
