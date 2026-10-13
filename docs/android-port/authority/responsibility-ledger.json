@@ -18736,6 +18736,88 @@
       "artifact": null,
       "verification_status": "not-verified",
       "notes": "Mapped replacement only; do not mark implemented until Box policy remote wire and device evidence exist."
+    },
+    {
+      "responsibility_id": "REMOTE-BOX-WALLPAPER-ANDROID-001",
+      "domain": "remote-box-presentation",
+      "desktop_sources": [
+        {
+          "path": "source/host/src/extensions/wallpaper/box_wallpaper_commands.rs",
+          "blob_sha": "a43a9b59e0e2cbe4e79355968d2e5b44c524a511",
+          "symbols": [
+            "BoxWallpaperCommands",
+            "read_live_displays",
+            "parse_tone_plan"
+          ]
+        },
+        {
+          "path": "source/host/src/extensions/wallpaper/extension.rs",
+          "blob_sha": "2b8ca062c08d74dd81c6f9b2048004bb505293e9",
+          "symbols": [
+            "HostWallpaperExtension",
+            "start_wallpaper_extension"
+          ]
+        },
+        {
+          "path": "source/host/src/extensions/wallpaper/mod.rs",
+          "blob_sha": "b814cb9a93472de7913769f6b7e30e92e9bcc5b9"
+        },
+        {
+          "path": "source/host/src/extensions/wallpaper/wallpaper_service.rs",
+          "blob_sha": "591455ce7b665d8112ff0361a9bf76543b076b9a",
+          "symbols": [
+            "WallpaperToneScheduler"
+          ]
+        }
+      ],
+      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "responsibility": "Preserve scheduled wallpaper/tone behavior for an authorized remote Box/desktop without granting the Android app local X11/root process authority.",
+      "source_owner": "Desktop Host Wallpaper extension",
+      "direct_callers": [
+        "Desktop start_production_host_extensions shipping registry"
+      ],
+      "downstream_dependencies": [
+        "Settings user timezone",
+        "Box X11 display sockets",
+        "sand-wallpaper helper"
+      ],
+      "state_owner": "Authorized RemoteBox executor; Android app owns no X11 wallpaper state",
+      "persistent_state": [
+        "remote operation identity only"
+      ],
+      "protocol_wire_contract": [
+        "Remote side effect must bind accountEpoch, device, capability grant and operation identity"
+      ],
+      "visible_effect": "A connected authorized remote Box/desktop can keep the same scheduled background effect; the Android device itself is not silently modified.",
+      "failure_behavior": [
+        "no authorized executor => unavailable/fail closed",
+        "sent/acked unknown => outcome-unknown and reconcile before retry"
+      ],
+      "cancellation_behavior": "cancel only the authorized remote operation",
+      "retry_semantics": "safe pre-dispatch retries only; never blind-replay unknown wallpaper side effects",
+      "idempotency_semantics": "durable remote operation identity fences duplicate dispatch",
+      "process_death_recovery": "RemoteExecutionJournal preserves operation identity and converts uncertain dispatch to outcome-unknown",
+      "account_fencing": "account fence/epoch plus device grant",
+      "security_boundary": "Android never impersonates Unix UID/GID, reads /tmp/.X11-unix, or executes sand-wallpaper locally",
+      "android_disposition": "not-applicable-with-replacement",
+      "android_target": [
+        "source/host/src/remote_execution.rs",
+        "source/host/src/host_runner_composition.rs",
+        "source/box-exec-daemon",
+        "docs/android-port/features/08-remote.md"
+      ],
+      "android_owner": "Authorized RemoteBox execution boundary",
+      "platform_delta": "Desktop can execute local Box/X11 helpers; Android delegates the desktop-only effect to an explicitly authorized RemoteBox executor.",
+      "implementation_status": "mapped",
+      "production_wiring": "Remote execution journal/runner boundary exists, but wallpaper-specific outbound side-effect wire remains unproven and fail-closed.",
+      "unit_test": "RemoteExecutionJournal/runner tests exist; wallpaper-specific adapter test required",
+      "contract_test": "required: wallpaper capability unavailable without authorized RemoteBox transport",
+      "integration_test": "required: one authorized remote wallpaper operation with revoke/stale/account fencing",
+      "packaged_test": "required on final exact-head APK/AAB",
+      "device_test": "required with authorized Box/desktop endpoint",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Mapped replacement only. Do not mark implemented/verified until wallpaper-specific RemoteBox wire plus exact-head device evidence exists."
     }
   ],
   "traceability": {
