@@ -16717,6 +16717,146 @@ export function apply(ctx) {
     }
 
     #[test]
+    fn completed_empty_kickstart_reopens_into_one_reply_nudge() {
+        let root = tempfile::tempdir().unwrap();
+        let mut host = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+        let created = host
+            .dispatch(
+                "createAgent",
+                &json!({
+                    "name":"Empty Kickstart",
+                    "description":"Deliver one useful first response."
+                }),
+            )
+            .unwrap();
+        let agent_id = created["agent"]["id"].as_str().unwrap().to_string();
+        let created_at = created["agent"]["createdAt"].as_u64().unwrap();
+        let account_fence = host.current_turn_account_fence().unwrap();
+        let kickstart_request_id = format!("agent-kickstart:{agent_id}:{created_at}");
+        let kickstart_operation_id = "synthetic-empty-kickstart";
+        {
+            let mut journal = host.turn_journal.lock().unwrap();
+            let generation = journal
+                .begin_with_context(
+                    &kickstart_request_id,
+                    kickstart_operation_id,
+                    &account_fence,
+                    Some("agent-kickstart"),
+                    Some(&agent_id),
+                    now_ms(),
+                )
+                .unwrap();
+            journal
+                .settle(
+                    &kickstart_request_id,
+                    kickstart_operation_id,
+                    &account_fence,
+                    generation,
+                    DurableTurnState::Completed,
+                    None,
+                    now_ms(),
+                )
+                .unwrap();
+        }
+        drop(host);
+
+        let mut reopened = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+        reopened.drain_created_agent_kickstart_nudge_once().unwrap();
+        let nudge_request_id = format!("agent-kickstart-nudge:{agent_id}:{created_at}");
+        let first_nudge = reopened
+            .turn_journal
+            .lock()
+            .unwrap()
+            .record(&nudge_request_id)
+            .cloned()
+            .expect("completed empty kickstart must schedule one durable reply nudge");
+        assert_eq!(
+            first_nudge.request_source.as_deref(),
+            Some("agent-kickstart-nudge")
+        );
+        reopened.drain_created_agent_kickstart_nudge_once().unwrap();
+        let second_nudge = reopened
+            .turn_journal
+            .lock()
+            .unwrap()
+            .record(&nudge_request_id)
+            .cloned()
+            .unwrap();
+        assert_eq!(
+            second_nudge.generation, first_nudge.generation,
+            "a running or already-recorded nudge must never be duplicated"
+        );
+
+        let deadline = std::time::Instant::now() + Duration::from_secs(3);
+        let mut completed = false;
+        while std::time::Instant::now() < deadline {
+            let event = reopened.dispatch("feature.receive", &json!({})).unwrap();
+            if event["type"] == "operation.completed"
+                && event["operationId"] == first_nudge.operation_id
+            {
+                completed = true;
+                break;
+            }
+            if event["type"] == "operation.failed"
+                && event["operationId"] == first_nudge.operation_id
+            {
+                panic!("reply nudge failed: {event}");
+            }
+            if event.as_object().is_some_and(|object| object.is_empty()) {
+                thread::sleep(Duration::from_millis(10));
+            }
+        }
+        assert!(completed, "reply nudge must settle exactly once");
+
+        let roster = reopened.dispatch("listAgents", &json!({})).unwrap();
+        let projected = roster
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|agent| agent["id"] == agent_id)
+            .expect("Agent remains in canonical roster");
+        assert_eq!(
+            projected["introductionPending"], false,
+            "a real nudge delivery settles the durable introduction flag"
+        );
+        let transcript = reopened
+            .transcript
+            .lock()
+            .unwrap()
+            .get_transcript()
+            .into_iter()
+            .filter(|entry| entry.get("agentId").and_then(Value::as_str) == Some(agent_id.as_str()))
+            .collect::<Vec<_>>();
+        assert!(
+            transcript.iter().all(|entry| entry.get("role").and_then(Value::as_str) != Some("user")),
+            "reply nudge must not fabricate or replay a user message"
+        );
+        assert!(
+            transcript.iter().any(|entry| {
+                entry.get("role").and_then(Value::as_str) == Some("assistant")
+                    && entry.get("text").and_then(Value::as_str).is_some_and(|text| !text.trim().is_empty())
+            }),
+            "reply nudge must create one visible assistant delivery"
+        );
+
+        let generation = first_nudge.generation;
+        drop(reopened);
+        let mut reopened_again = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+        reopened_again.drain_created_agent_kickstart_nudge_once().unwrap();
+        assert_eq!(
+            reopened_again
+                .turn_journal
+                .lock()
+                .unwrap()
+                .record(&nudge_request_id)
+                .unwrap()
+                .generation,
+            generation,
+            "process reopen must not create a second reply nudge"
+        );
+    }
+
+    #[test]
     fn create_agent_preserves_materialization_origin_purpose_and_intro_suppression() {
         let root = tempfile::tempdir().unwrap();
         let mut host = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
