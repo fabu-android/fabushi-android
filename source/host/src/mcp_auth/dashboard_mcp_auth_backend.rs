@@ -130,6 +130,13 @@ struct PrivacyCacheEntry {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SandMcpBackendConfiguration {
+    pub backend_url: String,
+    pub client_version: String,
+    pub box_namespace: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SandMcpBackendCredentials {
     pub backend_url: String,
     pub access_token: String,
@@ -178,6 +185,14 @@ pub struct ProcessSandMcpCredentialProvider {
 }
 
 impl ProcessSandMcpCredentialProvider {
+    pub fn configuration(&self) -> SandMcpBackendConfiguration {
+        SandMcpBackendConfiguration {
+            backend_url: self.backend_url.clone(),
+            client_version: self.client_version.clone(),
+            box_namespace: self.box_namespace.clone(),
+        }
+    }
+
     pub fn from_environment(machine_id: impl Into<String>) -> Result<Self, String> {
         let machine_id = machine_id.into();
         if machine_id.trim().is_empty() {
@@ -376,12 +391,12 @@ fn feedback_error_for_status(status: u16) -> FeedbackSubmitBackendError {
 }
 
 pub struct CursorDashboardMcpAuthBackend {
-    credentials: Box<dyn SandMcpCredentialProvider>,
+    credentials: Arc<dyn SandMcpCredentialProvider>,
     privacy_cache: Mutex<Option<PrivacyCacheEntry>>,
 }
 
 impl CursorDashboardMcpAuthBackend {
-    pub fn new(credentials: Box<dyn SandMcpCredentialProvider>) -> Self {
+    pub fn new(credentials: Arc<dyn SandMcpCredentialProvider>) -> Self {
         Self {
             credentials,
             privacy_cache: Mutex::new(None),
@@ -389,9 +404,10 @@ impl CursorDashboardMcpAuthBackend {
     }
 
     pub fn from_process_environment(machine_id: impl Into<String>) -> Result<Self, String> {
-        Ok(Self::new(Box::new(
+        let credentials: Arc<dyn SandMcpCredentialProvider> = Arc::new(
             ProcessSandMcpCredentialProvider::from_environment(machine_id)?,
-        )))
+        );
+        Ok(Self::new(credentials))
     }
 
     fn send_unary(
