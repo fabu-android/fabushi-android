@@ -2516,6 +2516,41 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
         return AndroidTranscriptHistoryPage(entries = entries, nextBeforeSeq = nextBeforeSeq)
     }
 
+    override fun transcriptThread(
+        agentId: String,
+        rootId: String,
+    ): AndroidTranscriptThread {
+        val normalizedAgentId = agentId.trim()
+        val normalizedRootId = rootId.trim()
+        require(normalizedAgentId.isNotEmpty()) { "Transcript thread requires a non-empty Agent id" }
+        require(normalizedRootId.isNotEmpty()) { "Transcript thread requires a non-empty root id" }
+        val value = host.request(
+            "feature.transcript.thread",
+            JSONObject()
+                .put("agentId", normalizedAgentId)
+                .put("rootId", normalizedRootId),
+        )
+        val entries = value.optJSONArray("entries")
+            ?: error("Transcript thread is missing entries")
+        for (index in 0 until entries.length()) {
+            val entry = entries.optJSONObject(index)
+                ?: error("Transcript thread entry $index is not an object")
+            check(entry.optString("agentId").trim() == normalizedAgentId) {
+                "Transcript thread returned an entry for a different Agent"
+            }
+        }
+        if (entries.length() > 0) {
+            check(entries.optJSONObject(0)?.optString("id") == normalizedRootId) {
+                "Transcript thread root identity does not match the request"
+            }
+        }
+        return AndroidTranscriptThread(
+            agentId = normalizedAgentId,
+            rootId = normalizedRootId,
+            entries = entries,
+        )
+    }
+
     override fun globalContentSearchMessages(
         query: String,
         limit: Int,
