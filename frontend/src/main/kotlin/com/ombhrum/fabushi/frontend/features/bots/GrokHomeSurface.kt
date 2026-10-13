@@ -109,6 +109,7 @@ internal fun GrokHomeSurface(
     onStageGeneratedBotAvatarImage: suspend (String, String) -> Result<AndroidAvatarImageSource>,
     onEncodeBotAvatarCrop: suspend (AndroidAvatarImageSource, AndroidAvatarCrop) -> Result<String>,
     onSetBotNotifyOnUpdates: (String, Boolean) -> Unit,
+    onDisconnectBotChannel: (String, String) -> Unit,
     onHideBot: (String) -> Unit,
     onUnhideBot: (String) -> Unit,
     onSetBotUnread: (String, Boolean) -> Unit,
@@ -212,6 +213,11 @@ internal fun GrokHomeSurface(
             onStageGeneratedAvatarImage = onStageGeneratedBotAvatarImage,
             onEncodeAvatarCrop = onEncodeBotAvatarCrop,
             onSetNotifications = onSetBotNotifyOnUpdates,
+            channelConnections = profileTarget?.id
+                ?.let { botState.channelConnectionsByAgent[it] }
+                .orEmpty(),
+            channelLoading = botState.channelLoadingAgentId == profileTarget?.id,
+            onDisconnectChannel = onDisconnectBotChannel,
         )
         return
     }
