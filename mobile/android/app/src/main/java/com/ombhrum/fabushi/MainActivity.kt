@@ -101,6 +101,22 @@ class MainActivity : ComponentActivity() {
         intent.data?.let(::enqueueDeepLink)
     }
 
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray,
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (runtimeReady) {
+            runtimePort.handleHumanCallMediaPermissionResult(
+                activity = this,
+                requestCode = requestCode,
+                permissions = permissions,
+                grantResults = grantResults,
+            )
+        }
+    }
+
     override fun onDestroy() {
         deepLinkController.markNotReady()
         globalKeyboardShortcutController.clearPresentationBinding()
