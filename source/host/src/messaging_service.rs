@@ -1,5 +1,5 @@
 use crate::{
-    messaging_blob::{BlobId, BlobMetadata, FileBlobStore},
+    messaging_blob::{BlobId, BlobMetadata, FileBlobStore, MAX_BLOB_RANGE_BYTES},
     messaging_child::{
         ConversationChildIdentity, ConversationChildPaginationState, ConversationChildStore,
         ConversationDestination, ConversationMessagePosition,
@@ -1163,25 +1163,72 @@ impl AndroidMessagingService {
             .get("content")
             .and_then(Value::as_object)
             .ok_or("remote Human send content object is required")?;
-        if content.get("type").and_then(Value::as_str) != Some("text") {
-            return Err(
-                "remote Human send currently supports text content only; attachment/media transport must settle separately"
-                    .into(),
-            );
-        }
-        let text = content
-            .get("data")
-            .and_then(Value::as_object)
-            .and_then(|data| data.get("text"))
-            .and_then(Value::as_object)
-            .and_then(|text| text.get("text"))
+        self.validate_content_for_send(conversation, &Value::Object(content.clone()), actor_id)?;
+        let content_type = content
+            .get("type")
             .and_then(Value::as_str)
-            .map(str::trim)
-            .filter(|text| !text.is_empty())
-            .ok_or("remote Human text content is empty")?;
-        if text.len() > 2 * 1024 * 1024 {
-            return Err("remote Human text content is too large".into());
-        }
+            .ok_or("remote Human send content type is required")?;
+        let (text, attachments) = match content_type {
+            "text" => {
+                let text = content
+                    .get("data")
+                    .and_then(Value::as_object)
+                    .and_then(|data| data.get("text"))
+                    .and_then(Value::as_object)
+                    .and_then(|text| text.get("text"))
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|text| !text.is_empty())
+                    .ok_or("remote Human text content is empty")?;
+                if text.len() > 2 * 1024 * 1024 {
+                    return Err("remote Human text content is too large".into());
+                }
+                (text.to_string(), Vec::<Value>::new())
+            }
+            "photo" | "video" | "animation" | "audio" | "voice" | "document" => {
+                let data = content
+                    .get("data")
+                    .and_then(Value::as_object)
+                    .ok_or("remote Human media data is required")?;
+                let media = data
+                    .get("media")
+                    .and_then(Value::as_object)
+                    .ok_or("remote Human media descriptor is required")?;
+                let blob_id = required_non_empty(media.get("id"), "remote Human attachment blob id")?;
+                let id = BlobId::new(blob_id.to_string()).map_err(|error| error.to_string())?;
+                let metadata = self.blobs.metadata(&id).map_err(|error| error.to_string())?;
+                if metadata.owner_actor_id.as_deref() != Some(actor_id) {
+                    return Err("remote Human attachment requires durable blob ownership".into());
+                }
+                if metadata.size_bytes == 0 || metadata.size_bytes > 32 * 1024 * 1024 {
+                    return Err("remote Human attachment size exceeds the backend limit".into());
+                }
+                let caption = data
+                    .get("caption")
+                    .and_then(Value::as_object)
+                    .and_then(|caption| caption.get("text"))
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .unwrap_or_default();
+                if caption.len() > 2 * 1024 * 1024 {
+                    return Err("remote Human attachment caption is too large".into());
+                }
+                (
+                    caption.to_string(),
+                    vec![json!({
+                        "blobId":metadata.id.0,
+                        "fileName":metadata.file_name,
+                        "mimeType":metadata.mime_type,
+                        "sizeBytes":metadata.size_bytes,
+                    })],
+                )
+            }
+            _ => {
+                return Err(format!(
+                    "remote Human send content type {content_type} is not supported by the backend"
+                ));
+            }
+        };
 
         let reply_to_remote_message_id =
             if let Some(reply_to) = optional_string(command.get("replyToMessageId")) {
@@ -1203,7 +1250,7 @@ impl AndroidMessagingService {
             "clientRequestId":client_request_id,
             "text":text,
             "replyToMessageId":reply_to_remote_message_id,
-            "attachments":[],
+            "attachments":attachments,
         })))
     }
 
@@ -1842,6 +1889,49 @@ impl AndroidMessagingService {
             return Err(format!("failed to persist deferred Agent wake: {error}"));
         }
         Ok(())
+    }
+
+    /// Read one complete canonical blob for account-owned remote transport.
+    ///
+    /// Presentation cannot call this through the public messaging command protocol. The Host must
+    /// provide the authenticated actor id, and the durable blob owner remains authoritative.
+    pub fn read_owned_blob_for_remote_transport(
+        &self,
+        actor_id: &str,
+        blob_id: &str,
+    ) -> Result<(String, String, u64, Vec<u8>), String> {
+        const MAX_REMOTE_RESOURCE_BYTES: u64 = 32 * 1024 * 1024;
+        let id = BlobId::new(blob_id.to_string()).map_err(|error| error.to_string())?;
+        let metadata = self.blobs.metadata(&id).map_err(|error| error.to_string())?;
+        if metadata.owner_actor_id.as_deref() != Some(actor_id) {
+            return Err("remote Human attachment read requires durable blob ownership".into());
+        }
+        if metadata.size_bytes == 0 || metadata.size_bytes > MAX_REMOTE_RESOURCE_BYTES {
+            return Err("remote Human attachment size exceeds the backend limit".into());
+        }
+        let mut offset = 0_u64;
+        let mut bytes = Vec::with_capacity(metadata.size_bytes as usize);
+        while offset < metadata.size_bytes {
+            let length = (metadata.size_bytes - offset).min(MAX_BLOB_RANGE_BYTES);
+            let chunk = self
+                .blobs
+                .read_range(&id, offset, length)
+                .map_err(|error| error.to_string())?;
+            if chunk.is_empty() {
+                return Err("remote Human attachment blob ended before declared size".into());
+            }
+            offset = offset.saturating_add(chunk.len() as u64);
+            bytes.extend_from_slice(&chunk);
+        }
+        if bytes.len() as u64 != metadata.size_bytes {
+            return Err("remote Human attachment blob size mismatched durable metadata".into());
+        }
+        Ok((
+            metadata.file_name,
+            metadata.mime_type,
+            metadata.size_bytes,
+            bytes,
+        ))
     }
 
     pub fn read_blob_range(
@@ -4381,14 +4471,60 @@ mod tests {
         assert_eq!(intent["text"], "hello");
         assert!(intent["attachments"].as_array().unwrap().is_empty());
 
-        let unsupported = json!({
+        execute(
+            &mut service,
+            "blob-begin-remote",
+            actor,
+            json!({"type":"beginBlobUpload","metadata":{
+                "id":"blob-a","fileName":"hello.txt","mimeType":"text/plain",
+                "sizeBytes":5,"contentHash":Value::Null,"createdAtMs":1
+            }}),
+        )
+        .unwrap();
+        execute(
+            &mut service,
+            "blob-chunk-remote",
+            actor,
+            json!({"type":"appendBlobChunk","blobId":"blob-a","offset":0,"dataBase64":"aGVsbG8="}),
+        )
+        .unwrap();
+        execute(
+            &mut service,
+            "blob-finish-remote",
+            actor,
+            json!({"type":"finishBlobUpload","blobId":"blob-a"}),
+        )
+        .unwrap();
+
+        let attachment = json!({
             "type":"sendMessage",
             "conversationId":conversation_id,
             "clientMessageId":"client-2",
-            "content":{"type":"document","data":{"media":{"id":"blob-a"}}}
+            "content":{"type":"document","data":{
+                "media":{
+                    "id":"blob-a","fileName":"forged-name.bin","mimeType":"application/x-forged",
+                    "sizeBytes":999,"remoteUrl":"fabushi-blob://blob-a"
+                },
+                "caption":{"text":"caption","entities":[]}
+            }}
         });
+        let attachment_intent = service
+            .remote_human_send_intent(actor, attachment.as_object().unwrap())
+            .unwrap()
+            .unwrap();
+        assert_eq!(attachment_intent["text"], "caption");
+        assert_eq!(attachment_intent["attachments"][0]["blobId"], "blob-a");
+        assert_eq!(attachment_intent["attachments"][0]["fileName"], "hello.txt");
+        assert_eq!(attachment_intent["attachments"][0]["mimeType"], "text/plain");
+        assert_eq!(attachment_intent["attachments"][0]["sizeBytes"], 5);
+
+        let (name, mime, size, bytes) = service
+            .read_owned_blob_for_remote_transport(actor, "blob-a")
+            .unwrap();
+        assert_eq!((name.as_str(), mime.as_str(), size), ("hello.txt", "text/plain", 5));
+        assert_eq!(bytes, b"hello");
         assert!(service
-            .remote_human_send_intent(actor, unsupported.as_object().unwrap())
+            .read_owned_blob_for_remote_transport("human:outsider", "blob-a")
             .is_err());
         let _ = fs::remove_dir_all(root);
     }
