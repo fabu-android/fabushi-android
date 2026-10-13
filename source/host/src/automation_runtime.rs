@@ -50,12 +50,83 @@ pub struct AutomationRun {
     pub reason: Option<String>,
 }
 
+pub const SPEND_GUARD_IDLE_TTL_MS: u64 = 3 * 24 * 60 * 60 * 1_000;
+pub const SPEND_GUARD_MIN_UNREAD_COUNT: u64 = 15;
+pub const SPEND_GUARD_MIN_FIRES_SINCE_VIEWED: u64 = 20;
+pub const SPEND_GUARD_PAUSE_DELAY_MS: u64 = 3 * 24 * 60 * 60 * 1_000;
+pub const SPEND_GUARD_SNOOZE_MS: u64 = 30 * 24 * 60 * 60 * 1_000;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AutomationSpendGuardDecision {
+    OptedOut,
+    UserActive,
+    Snoozed,
+    Pause,
+    AwaitingAck,
+    Nudge,
+    BelowThresholds,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+pub struct AutomationSpendGuardState {
+    pub nudged_at_ms: Option<u64>,
+    pub snoozed_until_ms: Option<u64>,
+    pub opted_out: bool,
+    #[serde(default)]
+    pub paused_automation_ids: Vec<String>,
+    pub card_entry_id: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct AutomationSpendGuardEvaluation {
+    pub now_ms: u64,
+    pub last_viewed_at_ms: u64,
+    pub unread_count: u64,
+    pub fires_since_viewed_count: u64,
+}
+
+pub fn evaluate_automation_spend_guard(
+    input: AutomationSpendGuardEvaluation,
+    state: &AutomationSpendGuardState,
+) -> AutomationSpendGuardDecision {
+    if state.opted_out {
+        return AutomationSpendGuardDecision::OptedOut;
+    }
+    if input.now_ms.saturating_sub(input.last_viewed_at_ms) < SPEND_GUARD_IDLE_TTL_MS {
+        return AutomationSpendGuardDecision::UserActive;
+    }
+    if state
+        .snoozed_until_ms
+        .is_some_and(|until| input.now_ms < until)
+    {
+        return AutomationSpendGuardDecision::Snoozed;
+    }
+    if let Some(nudged_at_ms) = state
+        .nudged_at_ms
+        .filter(|nudged| *nudged > input.last_viewed_at_ms)
+    {
+        return if input.now_ms.saturating_sub(nudged_at_ms) >= SPEND_GUARD_PAUSE_DELAY_MS {
+            AutomationSpendGuardDecision::Pause
+        } else {
+            AutomationSpendGuardDecision::AwaitingAck
+        };
+    }
+    if input.unread_count >= SPEND_GUARD_MIN_UNREAD_COUNT
+        || input.fires_since_viewed_count >= SPEND_GUARD_MIN_FIRES_SINCE_VIEWED
+    {
+        return AutomationSpendGuardDecision::Nudge;
+    }
+    AutomationSpendGuardDecision::BelowThresholds
+}
+
 #[derive(Default, Deserialize, Serialize)]
 struct DurableAutomationState {
     next_generation: u64,
     specs: BTreeMap<String, AutomationSpec>,
     runs: BTreeMap<String, AutomationRun>,
     request_to_run: BTreeMap<String, String>,
+    #[serde(default)]
+    spend_guard: BTreeMap<String, AutomationSpendGuardState>,
 }
 
 pub struct AutomationRuntime {
@@ -148,6 +219,160 @@ impl AutomationRuntime {
             .count()
             .try_into()
             .unwrap_or(u64::MAX)
+    }
+
+    fn spend_guard_key(account_fence: &str, agent_id: &str) -> String {
+        format!("{account_fence}\n{agent_id}")
+    }
+
+    pub fn spend_guard_state(
+        &self,
+        account_fence: &str,
+        agent_id: &str,
+    ) -> AutomationSpendGuardState {
+        self.state
+            .spend_guard
+            .get(&Self::spend_guard_key(account_fence, agent_id))
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    pub fn evaluate_spend_guard(
+        &self,
+        account_fence: &str,
+        agent_id: &str,
+        last_viewed_at_ms: u64,
+        unread_count: u64,
+        now_ms: u64,
+    ) -> Result<(AutomationSpendGuardDecision, AutomationSpendGuardEvaluation), String> {
+        if account_fence.trim().is_empty() || agent_id.trim().is_empty() {
+            return Err("spend guard requires account and Agent identity".into());
+        }
+        let owned_ids = self
+            .state
+            .specs
+            .values()
+            .filter(|spec| spec.account_fence == account_fence && spec.agent_id == agent_id)
+            .map(|spec| spec.id.as_str())
+            .collect::<std::collections::BTreeSet<_>>();
+        let fires_since_viewed_count = self
+            .state
+            .runs
+            .values()
+            .filter(|run| {
+                run.account_fence == account_fence
+                    && owned_ids.contains(run.automation_id.as_str())
+                    && run.started_at_ms > last_viewed_at_ms
+            })
+            .count()
+            .try_into()
+            .unwrap_or(u64::MAX);
+        let evaluation = AutomationSpendGuardEvaluation {
+            now_ms,
+            last_viewed_at_ms,
+            unread_count,
+            fires_since_viewed_count,
+        };
+        let state = self.spend_guard_state(account_fence, agent_id);
+        Ok((evaluate_automation_spend_guard(evaluation, &state), evaluation))
+    }
+
+    pub fn record_spend_guard_nudge(
+        &mut self,
+        account_fence: &str,
+        agent_id: &str,
+        card_entry_id: &str,
+        now_ms: u64,
+    ) -> Result<(), String> {
+        if card_entry_id.trim().is_empty() {
+            return Err("spend guard card entry id is required".into());
+        }
+        let key = Self::spend_guard_key(account_fence, agent_id);
+        let state = self.state.spend_guard.entry(key).or_default();
+        state.nudged_at_ms = Some(now_ms);
+        state.card_entry_id = Some(card_entry_id.to_string());
+        state.snoozed_until_ms = None;
+        self.persist()
+    }
+
+    pub fn pause_agent_automations_for_spend_guard(
+        &mut self,
+        account_fence: &str,
+        agent_id: &str,
+        fallback_time_zone: Option<&str>,
+    ) -> Result<Vec<String>, String> {
+        let mut paused = Vec::new();
+        for spec in self.state.specs.values_mut() {
+            if spec.account_fence == account_fence && spec.agent_id == agent_id && spec.enabled {
+                spec.enabled = false;
+                spec.next_run_at_ms = canonical_next_run_ms(spec, fallback_time_zone)?;
+                paused.push(spec.id.clone());
+            }
+        }
+        paused.sort();
+        let key = Self::spend_guard_key(account_fence, agent_id);
+        let state = self.state.spend_guard.entry(key).or_default();
+        for id in &paused {
+            if !state.paused_automation_ids.contains(id) {
+                state.paused_automation_ids.push(id.clone());
+            }
+        }
+        state.paused_automation_ids.sort();
+        state.paused_automation_ids.dedup();
+        self.persist()?;
+        Ok(state.paused_automation_ids.clone())
+    }
+
+    pub fn apply_spend_guard_answer(
+        &mut self,
+        account_fence: &str,
+        agent_id: &str,
+        card_entry_id: &str,
+        value: &str,
+        now_ms: u64,
+        fallback_time_zone: Option<&str>,
+    ) -> Result<bool, String> {
+        let key = Self::spend_guard_key(account_fence, agent_id);
+        let Some(current) = self.state.spend_guard.get(&key).cloned() else {
+            return Ok(false);
+        };
+        if current.card_entry_id.as_deref() != Some(card_entry_id) {
+            return Ok(false);
+        }
+        let mut next = AutomationSpendGuardState::default();
+        match value {
+            "spend-guard:keep" | "spend-guard:resume" | "spend-guard:never-ask" => {
+                for id in &current.paused_automation_ids {
+                    if let Some(spec) = self.state.specs.get_mut(id) {
+                        if spec.account_fence == account_fence && spec.agent_id == agent_id {
+                            spec.enabled = true;
+                            spec.next_run_at_ms = canonical_next_run_ms(spec, fallback_time_zone)?;
+                        }
+                    }
+                }
+                if value == "spend-guard:never-ask" {
+                    next.opted_out = true;
+                } else {
+                    next.snoozed_until_ms = Some(now_ms.saturating_add(SPEND_GUARD_SNOOZE_MS));
+                }
+            }
+            "spend-guard:pause" => {
+                for spec in self.state.specs.values_mut() {
+                    if spec.account_fence == account_fence && spec.agent_id == agent_id && spec.enabled {
+                        spec.enabled = false;
+                        spec.next_run_at_ms = canonical_next_run_ms(spec, fallback_time_zone)?;
+                        next.paused_automation_ids.push(spec.id.clone());
+                    }
+                }
+                next.paused_automation_ids.sort();
+                next.card_entry_id = Some(card_entry_id.to_string());
+            }
+            "spend-guard:stay-paused" => {}
+            _ => return Ok(false),
+        }
+        self.state.spend_guard.insert(key, next);
+        self.persist()?;
+        Ok(true)
     }
 
     pub fn has_owned_spec(&self, id: &str, account_fence: &str, agent_id: &str) -> bool {
@@ -717,6 +942,100 @@ mod tests {
         let listed = runtime.list_for_account("acct-a");
         assert_eq!(listed[0]["schedule"], "@every 5m");
         assert_eq!(listed[0]["next_run_at_ms"], 301_000);
+    }
+
+    #[test]
+    fn spend_guard_matches_desktop_thresholds_and_survives_restart() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("automation.json");
+        let mut runtime = AutomationRuntime::open(&path, 1).unwrap();
+        runtime.upsert_spec(spec("acct-a"), Some("UTC")).unwrap();
+
+        let idle = SPEND_GUARD_IDLE_TTL_MS + 100;
+        let (below, _) = runtime
+            .evaluate_spend_guard("acct-a", "agent-a", 100, 14, idle)
+            .unwrap();
+        assert_eq!(below, AutomationSpendGuardDecision::BelowThresholds);
+
+        let (nudge, _) = runtime
+            .evaluate_spend_guard("acct-a", "agent-a", 100, 15, idle)
+            .unwrap();
+        assert_eq!(nudge, AutomationSpendGuardDecision::Nudge);
+        runtime
+            .record_spend_guard_nudge("acct-a", "agent-a", "guard-card", idle)
+            .unwrap();
+
+        let (awaiting, _) = runtime
+            .evaluate_spend_guard("acct-a", "agent-a", 100, 15, idle + 1)
+            .unwrap();
+        assert_eq!(awaiting, AutomationSpendGuardDecision::AwaitingAck);
+        drop(runtime);
+
+        let mut reopened = AutomationRuntime::open(&path, idle + SPEND_GUARD_PAUSE_DELAY_MS).unwrap();
+        let (pause, _) = reopened
+            .evaluate_spend_guard(
+                "acct-a",
+                "agent-a",
+                100,
+                15,
+                idle + SPEND_GUARD_PAUSE_DELAY_MS,
+            )
+            .unwrap();
+        assert_eq!(pause, AutomationSpendGuardDecision::Pause);
+        let paused = reopened
+            .pause_agent_automations_for_spend_guard("acct-a", "agent-a", Some("UTC"))
+            .unwrap();
+        assert_eq!(paused, vec!["daily-brief".to_string()]);
+        assert_eq!(
+            reopened.list_for_agent("acct-a", "agent-a")[0]["enabled"],
+            false
+        );
+    }
+
+    #[test]
+    fn spend_guard_answer_is_card_and_account_fenced() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut runtime = AutomationRuntime::open(dir.path().join("automation.json"), 1).unwrap();
+        runtime.upsert_spec(spec("acct-a"), Some("UTC")).unwrap();
+        runtime
+            .record_spend_guard_nudge("acct-a", "agent-a", "guard-card", 10)
+            .unwrap();
+        runtime
+            .pause_agent_automations_for_spend_guard("acct-a", "agent-a", Some("UTC"))
+            .unwrap();
+
+        assert!(!runtime
+            .apply_spend_guard_answer(
+                "acct-a",
+                "agent-a",
+                "forged-card",
+                "spend-guard:resume",
+                20,
+                Some("UTC"),
+            )
+            .unwrap());
+        assert!(!runtime
+            .apply_spend_guard_answer(
+                "acct-b",
+                "agent-a",
+                "guard-card",
+                "spend-guard:resume",
+                20,
+                Some("UTC"),
+            )
+            .unwrap());
+        assert!(runtime
+            .apply_spend_guard_answer(
+                "acct-a",
+                "agent-a",
+                "guard-card",
+                "spend-guard:resume",
+                20,
+                Some("UTC"),
+            )
+            .unwrap());
+        assert_eq!(runtime.list_for_agent("acct-a", "agent-a")[0]["enabled"], true);
+        assert!(runtime.spend_guard_state("acct-a", "agent-a").snoozed_until_ms.is_some());
     }
 
     #[test]
