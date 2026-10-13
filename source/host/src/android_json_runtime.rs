@@ -3949,6 +3949,10 @@ impl AndroidJsonHost {
             "feature.automation.listForAgent" => self.automation_list_for_agent(params),
             "feature.automation.setAgentEnabled" => self.automation_set_agent_enabled(params),
             "feature.automation.start" => self.automation_start(params),
+            "feature.automation.event.enqueue" => self.automation_event_enqueue(params),
+            "feature.automation.event.claim" => self.automation_event_claim(params),
+            "feature.automation.event.settle" => self.automation_event_settle(params),
+            "feature.automation.event.reconcile" => self.automation_event_reconcile(params),
             "feature.automation.advanceStep" => self.automation_advance_step(params),
             "feature.automation.awaitApproval" => self.automation_await_approval(params),
             "feature.automation.resolveApproval" => self.automation_resolve_approval(params),
@@ -7182,6 +7186,67 @@ impl AndroidJsonHost {
             observed_at_ms,
         )?;
         Ok(automation_run_json(&run))
+    }
+
+    fn automation_event_enqueue(&mut self, params: &Value) -> Result<Value, String> {
+        if self.turn_upgrade_quiescing.load(Ordering::Acquire) {
+            return Err("automation wakes are quiesced for upgrade".into());
+        }
+        let account_fence = self.current_turn_account_fence()?;
+        let outcome = self.automation_runtime.enqueue_event_fire(
+            required_string(params, "automationId")?,
+            &account_fence,
+            required_string(params, "occurrenceId")?,
+            params.get("event").cloned().ok_or("event is required")?,
+            now_ms(),
+        )?;
+        serde_json::to_value(outcome)
+            .map_err(|error| format!("failed to serialize automation event enqueue outcome: {error}"))
+    }
+
+    fn automation_event_claim(&mut self, params: &Value) -> Result<Value, String> {
+        if self.turn_upgrade_quiescing.load(Ordering::Acquire) {
+            return Err("automation wakes are quiesced for upgrade".into());
+        }
+        let account_fence = self.current_turn_account_fence()?;
+        let claimed = self.automation_runtime.claim_event_batch(
+            required_string(params, "automationId")?,
+            &account_fence,
+            required_string(params, "claimId")?,
+            now_ms(),
+        )?;
+        serde_json::to_value(claimed)
+            .map_err(|error| format!("failed to serialize automation event batch: {error}"))
+    }
+
+    fn automation_event_settle(&mut self, params: &Value) -> Result<Value, String> {
+        let account_fence = self.current_turn_account_fence()?;
+        let succeeded = params
+            .get("succeeded")
+            .and_then(Value::as_bool)
+            .ok_or("succeeded is required")?;
+        self.automation_runtime.settle_event_batch(
+            required_string(params, "batchId")?,
+            &account_fence,
+            succeeded,
+            now_ms(),
+        )?;
+        Ok(json!({"settled":true,"succeeded":succeeded}))
+    }
+
+    fn automation_event_reconcile(&mut self, params: &Value) -> Result<Value, String> {
+        let account_fence = self.current_turn_account_fence()?;
+        let completed = params
+            .get("completed")
+            .and_then(Value::as_bool)
+            .ok_or("completed is required")?;
+        self.automation_runtime.reconcile_event_batch(
+            required_string(params, "batchId")?,
+            &account_fence,
+            completed,
+            now_ms(),
+        )?;
+        Ok(json!({"reconciled":true,"completed":completed}))
     }
 
     fn automation_advance_step(&mut self, params: &Value) -> Result<Value, String> {
@@ -20443,6 +20508,98 @@ mod assistant_spend_guard_projection_tests {
             json!({"id":"hidden","kind":"message","role":"assistant","operationId":"hidden-op"}),
         ];
         assert_eq!(assistant_spend_guard_observation(&entries), (0, 1));
+    }
+}
+
+#[cfg(test)]
+mod automation_event_batch_wiring_tests {
+    use super::*;
+
+    #[test]
+    fn production_event_routes_preserve_debounce_dedupe_and_reconciliation() {
+        let root = tempfile::tempdir().unwrap();
+        let mut host = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+        let created = host
+            .dispatch(
+                "createAgent",
+                &json!({"name":"Event Agent","isIntroductionSuppressed":true}),
+            )
+            .unwrap();
+        let agent_id = created["agent"]["id"].as_str().unwrap().to_string();
+        let stored = host
+            .dispatch(
+                "feature.automation.upsert",
+                &json!({
+                    "id":"event-routine",
+                    "agentId":agent_id,
+                    "name":"Event routine",
+                    "prompt":"Handle the event",
+                    "schedule":"@every 5m",
+                    "enabled":true
+                }),
+            )
+            .unwrap();
+        let automation_id = stored["id"].as_str().unwrap().to_string();
+
+        let enqueued = host
+            .dispatch(
+                "feature.automation.event.enqueue",
+                &json!({
+                    "automationId":automation_id,
+                    "occurrenceId":"event-occurrence-1",
+                    "event":{"kind":"github","id":"delivery-1"}
+                }),
+            )
+            .unwrap();
+        assert_eq!(enqueued["accepted"], true);
+        let duplicate = host
+            .dispatch(
+                "feature.automation.event.enqueue",
+                &json!({
+                    "automationId":automation_id,
+                    "occurrenceId":"event-occurrence-1",
+                    "event":{"kind":"github","id":"delivery-duplicate"}
+                }),
+            )
+            .unwrap();
+        assert_eq!(duplicate["duplicate"], true);
+
+        let early = host
+            .automation_runtime
+            .claim_event_batch(&automation_id, &host.current_turn_account_fence().unwrap(), "early", now_ms())
+            .unwrap();
+        assert!(early.is_none(), "750ms debounce must remain Host-owned");
+
+        let account_fence = host.current_turn_account_fence().unwrap();
+        let claimed = host
+            .automation_runtime
+            .claim_event_batch(
+                &automation_id,
+                &account_fence,
+                "claim-1",
+                now_ms().saturating_add(crate::automation_runtime::AUTOMATION_EVENT_DEBOUNCE_MS),
+            )
+            .unwrap()
+            .unwrap();
+        assert_eq!(claimed.occurrence_ids, vec!["event-occurrence-1"]);
+        let batch_id = claimed.batch_id.clone();
+        drop(host);
+
+        let mut reopened = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+        let outcome_unknown = reopened
+            .dispatch(
+                "feature.automation.event.claim",
+                &json!({"automationId":automation_id,"claimId":"claim-after-restart"}),
+            )
+            .unwrap_err();
+        assert!(outcome_unknown.contains("outcome is unknown"));
+        let reconciled = reopened
+            .dispatch(
+                "feature.automation.event.reconcile",
+                &json!({"batchId":batch_id,"completed":false}),
+            )
+            .unwrap();
+        assert_eq!(reconciled["reconciled"], true);
     }
 }
 
