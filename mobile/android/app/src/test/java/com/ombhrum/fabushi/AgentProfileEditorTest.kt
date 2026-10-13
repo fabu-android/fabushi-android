@@ -1,16 +1,16 @@
 package com.ombhrum.fabushi
 
-import com.ombhrum.fabushi.androidmain.media.AGENT_AVATAR_MAX_ZOOM
-import com.ombhrum.fabushi.androidmain.media.AndroidAvatarCrop
-import com.ombhrum.fabushi.androidmain.media.AndroidAvatarImageSource
 import com.ombhrum.fabushi.androidmain.media.MAX_AGENT_AVATAR_OUTPUT_DIMENSION
 import com.ombhrum.fabushi.androidmain.media.MAX_AGENT_AVATAR_SOURCE_BYTES
 import com.ombhrum.fabushi.androidmain.media.MAX_AGENT_AVATAR_SOURCE_DIMENSION
 import com.ombhrum.fabushi.androidmain.media.avatarDecodeSampleSize
 import com.ombhrum.fabushi.androidmain.media.avatarDimensionsAllowed
-import com.ombhrum.fabushi.androidmain.media.clampAndroidAvatarCrop
-import com.ombhrum.fabushi.androidmain.media.initialAndroidAvatarCrop
-import com.ombhrum.fabushi.androidmain.media.panAndroidAvatarCrop
+import com.ombhrum.fabushi.androidpreload.runtime.ANDROID_AGENT_AVATAR_MAX_ZOOM
+import com.ombhrum.fabushi.androidpreload.runtime.AndroidAvatarCrop
+import com.ombhrum.fabushi.androidpreload.runtime.AndroidAvatarImageSource
+import com.ombhrum.fabushi.androidpreload.runtime.clampAndroidAvatarCrop
+import com.ombhrum.fabushi.androidpreload.runtime.initialAndroidAvatarCrop
+import com.ombhrum.fabushi.androidpreload.runtime.panAndroidAvatarCrop
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -45,7 +45,7 @@ class AgentProfileEditorTest {
             source,
             AndroidAvatarCrop(zoom = 99f, centerX = -500f, centerY = 9_000f),
         )
-        assertEquals(AGENT_AVATAR_MAX_ZOOM, bounded.zoom)
+        assertEquals(ANDROID_AGENT_AVATAR_MAX_ZOOM, bounded.zoom)
         assertEquals(40f, bounded.centerX, 0.001f)
         assertEquals(360f, bounded.centerY, 0.001f)
     }
