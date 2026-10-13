@@ -13,45 +13,6 @@ pub const ACK_REDRIVE_IDLE_DELAY_MS: u64 = 5_000;
 
 pub fn build_ack_redrive_prompt() -> &'static str {
     "[System recovery] The user sent one or more messages that were never visibly acknowledged. Respond now with a real user-visible SendMessage. If the latest request is unavailable, say it may have been missed and ask the user to resend it. Never invent completion."
-    #[test]
-    fn older_turn_cannot_clear_later_coalesced_obligation() {
-        let root = tempfile::tempdir().unwrap();
-        let owner = AckObligations::new(root.path());
-        let first = owner
-            .record_send_and_mint_token("acct-a", "agent-a", 10.0)
-            .unwrap();
-        let second = owner
-            .record_send_and_mint_token("acct-a", "agent-a", 20.0)
-            .unwrap();
-        assert!(!owner
-            .fulfill_ack_obligation("acct-a", "agent-a", &first.ack_token)
-            .unwrap());
-        assert_eq!(
-            owner
-                .store
-                .get("acct-a", "agent-a")
-                .unwrap()
-                .coalesced_count,
-            2.0
-        );
-        assert!(owner
-            .fulfill_ack_obligation("acct-a", "agent-a", &second.ack_token)
-            .unwrap());
-        assert!(owner.store.get("acct-a", "agent-a").is_none());
-    }
-
-    #[test]
-    fn ack_token_never_crosses_account_fence() {
-        let root = tempfile::tempdir().unwrap();
-        let owner = AckObligations::new(root.path());
-        let reservation = owner
-            .record_send_and_mint_token("acct-a", "agent-a", 10.0)
-            .unwrap();
-        assert!(!owner
-            .fulfill_ack_obligation("acct-b", "agent-a", &reservation.ack_token)
-            .unwrap());
-        assert!(owner.store.get("acct-a", "agent-a").is_some());
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -380,7 +341,7 @@ mod tests {
         assert_eq!(a.len(), 1);
         assert_eq!(a[0].coalesced_count, 2.0);
         assert_eq!(reopened.pending_for_account("acct-b").len(), 1);
-        assert!(reopened.fulfill("acct-a", "agent-a").unwrap());
+        assert!(reopened.fulfill_reconciled("acct-a", "agent-a").unwrap());
         assert!(reopened.pending_for_account("acct-a").is_empty());
         assert_eq!(reopened.pending_for_account("acct-b").len(), 1);
     }
@@ -412,4 +373,45 @@ mod tests {
         assert_eq!(command["skipAckObligation"], true);
         assert_eq!(command["ackRedrive"], true);
     }
+
+    #[test]
+    fn older_turn_cannot_clear_later_coalesced_obligation() {
+        let root = tempfile::tempdir().unwrap();
+        let owner = AckObligations::new(root.path());
+        let first = owner
+            .record_send_and_mint_token("acct-a", "agent-a", 10.0)
+            .unwrap();
+        let second = owner
+            .record_send_and_mint_token("acct-a", "agent-a", 20.0)
+            .unwrap();
+        assert!(!owner
+            .fulfill_ack_obligation("acct-a", "agent-a", &first.ack_token)
+            .unwrap());
+        assert_eq!(
+            owner
+                .store
+                .get("acct-a", "agent-a")
+                .unwrap()
+                .coalesced_count,
+            2.0
+        );
+        assert!(owner
+            .fulfill_ack_obligation("acct-a", "agent-a", &second.ack_token)
+            .unwrap());
+        assert!(owner.store.get("acct-a", "agent-a").is_none());
+    }
+
+    #[test]
+    fn ack_token_never_crosses_account_fence() {
+        let root = tempfile::tempdir().unwrap();
+        let owner = AckObligations::new(root.path());
+        let reservation = owner
+            .record_send_and_mint_token("acct-a", "agent-a", 10.0)
+            .unwrap();
+        assert!(!owner
+            .fulfill_ack_obligation("acct-b", "agent-a", &reservation.ack_token)
+            .unwrap());
+        assert!(owner.store.get("acct-a", "agent-a").is_some());
+    }
+
 }
