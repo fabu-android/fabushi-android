@@ -1095,7 +1095,12 @@ mod tests {
             .append_entry(json!({"id":"one","agentId":"agent-a","kind":"message"}))
             .unwrap_err();
         assert_eq!(error.kind(), io::ErrorKind::AlreadyExists);
-        assert_eq!(store.get_transcript().len(), 1);
+        assert_eq!(store.get_transcript().len(), 2);
+        assert_eq!(
+            store.get_transcript().iter().filter(|entry| entry["id"] == "one").count(),
+            1,
+            "duplicate append must not create a second canonical entry",
+        );
 
         let _ = fs::remove_dir_all(path.parent().unwrap());
     }
