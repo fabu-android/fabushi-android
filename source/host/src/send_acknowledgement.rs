@@ -4,7 +4,7 @@ use serde_json::{json, Value};
 const MAX_SETTLED_ACCEPTANCES: usize = 256;
 
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     fs,
     io::Write,
     path::{Path, PathBuf},
@@ -100,6 +100,13 @@ struct SendAcknowledgementState {
     seen_echoes: BTreeMap<String, BTreeMap<String, SendAcknowledgementEntryKind>>,
     #[serde(default)]
     settled_acceptances: BTreeMap<String, SendAcknowledgementRecord>,
+    /// Compact, durable identities for every nonce that has ever reached canonical acceptance.
+    ///
+    /// Full acceptance payloads are bounded for diagnostics/reconciliation, but nonce identity
+    /// must never be forgotten: otherwise an old accepted nonce could be replayed after eviction
+    /// and incorrectly become a fresh send.
+    #[serde(default)]
+    settled_nonce_tombstones: BTreeSet<String>,
 }
 
 pub struct DurableSendAcknowledgementOwner {
@@ -122,6 +129,21 @@ impl DurableSendAcknowledgementOwner {
         // Capture exactly the pre-existing durable rows before reopen fencing mutates them.
         // This is observability/reconciliation evidence only; the journal remains the canonical owner.
         let restored_on_open = state.records.values().cloned().collect::<Vec<_>>();
+        // Backfill compact nonce identities when opening journals written before tombstones were
+        // introduced. This migration is idempotent and makes already-settled retry aliases safe
+        // before any new dispatch can begin.
+        for record in state.settled_acceptances.values() {
+            for nonce in std::iter::once(record.nonce.as_str())
+                .chain(record.prior_nonces.iter().map(String::as_str))
+            {
+                state.settled_nonce_tombstones.insert(settlement_tombstone_key(
+                    record.account_slot.as_deref(),
+                    &record.account_fence,
+                    &record.agent_id,
+                    nonce,
+                ));
+            }
+        }
         state.owner_generation = state.owner_generation.saturating_add(1).max(1);
         for record in state.records.values_mut() {
             record.generation = state.owner_generation;
@@ -274,6 +296,17 @@ impl DurableSendAcknowledgementOwner {
                 );
             }
             return Err("send nonce was reused with different payload".into());
+        }
+        if self.state.settled_nonce_tombstones.contains(&settlement_tombstone_key(
+            account_slot,
+            account_fence,
+            agent_id,
+            nonce,
+        )) {
+            return Err(
+                "send nonce was already accepted and compacted; automatic redispatch is forbidden"
+                    .into(),
+            );
         }
 
         if let Some(key) = self.find_key(account_slot, account_fence, agent_id, nonce) {
@@ -556,6 +589,16 @@ impl DurableSendAcknowledgementOwner {
             if let Some(mut accepted) = self.state.records.remove(&key) {
                 accepted.phase = SendAcknowledgementPhase::AcceptedAwaitingEcho;
                 accepted.reason = Some("canonical echo observed".into());
+                for nonce in std::iter::once(accepted.nonce.as_str())
+                    .chain(accepted.prior_nonces.iter().map(String::as_str))
+                {
+                    self.state.settled_nonce_tombstones.insert(settlement_tombstone_key(
+                        accepted.account_slot.as_deref(),
+                        &accepted.account_fence,
+                        &accepted.agent_id,
+                        nonce,
+                    ));
+                }
                 self.state.settled_acceptances.insert(key.clone(), accepted);
                 while self.state.settled_acceptances.len() > MAX_SETTLED_ACCEPTANCES {
                     let Some(oldest_key) = self
@@ -841,6 +884,15 @@ fn assert_generation(record: &SendAcknowledgementRecord, generation: u64) -> Res
     Ok(())
 }
 
+fn settlement_tombstone_key(
+    account_slot: Option<&str>,
+    account_fence: &str,
+    agent_id: &str,
+    nonce: &str,
+) -> String {
+    crate::sha256::sha256_hex(scope_key(account_slot, account_fence, agent_id, nonce).as_bytes())
+}
+
 fn scope_key(
     account_slot: Option<&str>,
     account_fence: &str,
@@ -1048,6 +1100,140 @@ mod tests {
             .record(Some("slot-a"), "session:a", "agent-a", "restore-a")
             .expect("canonical reopened row");
         assert_eq!(canonical.phase, SendAcknowledgementPhase::OutcomeUnknown);
+    }
+
+    #[test]
+    fn compacted_acceptance_keeps_nonce_tombstone_and_allows_new_nonce() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settled-compaction.json");
+        let mut owner = DurableSendAcknowledgementOwner::open(&path, 1).unwrap();
+        for index in 0..=MAX_SETTLED_ACCEPTANCES {
+            let nonce = format!("nonce-{index}");
+            let record = owner
+                .begin(None, "session:a", "agent-a", &nonce, "hello", message(&nonce))
+                .unwrap();
+            owner
+                .mark_dispatching(None, "session:a", "agent-a", &nonce, record.generation)
+                .unwrap();
+            owner
+                .mark_accepted(None, "session:a", "agent-a", &nonce, record.generation)
+                .unwrap();
+            assert!(owner
+                .ingest_echo(
+                    None,
+                    "session:a",
+                    "agent-a",
+                    record.generation,
+                    &nonce,
+                    SendAcknowledgementEntryKind::Message,
+                    &nonce,
+                )
+                .unwrap());
+        }
+        assert!(
+            owner
+                .settled_acceptance(None, "session:a", "agent-a", "nonce-0")
+                .is_none(),
+            "oldest full acceptance payload must be compacted"
+        );
+        let replay = owner
+            .begin(
+                None,
+                "session:a",
+                "agent-a",
+                "nonce-0",
+                "hello",
+                message("nonce-0"),
+            )
+            .unwrap_err();
+        assert!(replay.contains("already accepted and compacted"));
+
+        owner
+            .begin(
+                None,
+                "session:a",
+                "agent-a",
+                "brand-new",
+                "hello",
+                message("brand-new"),
+            )
+            .expect("fresh nonce remains admissible after compaction");
+    }
+
+    #[test]
+    fn settled_retry_alias_is_tombstoned_across_reopen() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("retry-alias.json");
+        let mut owner = DurableSendAcknowledgementOwner::open(&path, 1).unwrap();
+        let first = owner
+            .begin(None, "session:a", "agent-a", "nonce-a", "hello", message("nonce-a"))
+            .unwrap();
+        owner
+            .mark_failed(
+                None,
+                "session:a",
+                "agent-a",
+                "nonce-a",
+                first.generation,
+                2,
+                "proven failure",
+            )
+            .unwrap();
+        let fresh = "sand-resend-v1:7:nonce-a:retry-1";
+        let retried = owner
+            .retry_failed(
+                None,
+                "session:a",
+                "agent-a",
+                "nonce-a",
+                first.generation,
+                fresh,
+                message(fresh),
+            )
+            .unwrap();
+        owner
+            .mark_dispatching(
+                None,
+                "session:a",
+                "agent-a",
+                fresh,
+                retried.generation,
+            )
+            .unwrap();
+        owner
+            .mark_accepted(
+                None,
+                "session:a",
+                "agent-a",
+                fresh,
+                retried.generation,
+            )
+            .unwrap();
+        assert!(owner
+            .ingest_echo(
+                None,
+                "session:a",
+                "agent-a",
+                retried.generation,
+                fresh,
+                SendAcknowledgementEntryKind::Message,
+                fresh,
+            )
+            .unwrap());
+        drop(owner);
+
+        let mut reopened = DurableSendAcknowledgementOwner::open(&path, 3).unwrap();
+        let replay = reopened
+            .begin(
+                None,
+                "session:a",
+                "agent-a",
+                "nonce-a",
+                "hello",
+                message("nonce-a"),
+            )
+            .unwrap_err();
+        assert!(replay.contains("already accepted and compacted"));
     }
 
     #[test]
