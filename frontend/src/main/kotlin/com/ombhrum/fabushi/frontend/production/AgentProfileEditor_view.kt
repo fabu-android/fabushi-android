@@ -31,13 +31,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import androidx.compose.ui.unit.dp
-import com.ombhrum.fabushi.androidpreload.media.ANDROID_AGENT_AVATAR_MAX_ZOOM
-import com.ombhrum.fabushi.androidpreload.media.ANDROID_AGENT_AVATAR_MIN_ZOOM
-import com.ombhrum.fabushi.androidpreload.media.AndroidAvatarCrop
-import com.ombhrum.fabushi.androidpreload.media.AndroidAvatarImageSource
-import com.ombhrum.fabushi.androidpreload.media.clampAndroidAvatarCrop
-import com.ombhrum.fabushi.androidpreload.media.initialAndroidAvatarCrop
-import com.ombhrum.fabushi.androidpreload.media.panAndroidAvatarCrop
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidGeneratedAvatarImage
 import com.ombhrum.fabushi.androidpreload.runtime.ANDROID_AGENT_AVATAR_MAX_ZOOM
 import com.ombhrum.fabushi.androidpreload.runtime.ANDROID_AGENT_AVATAR_MIN_ZOOM
