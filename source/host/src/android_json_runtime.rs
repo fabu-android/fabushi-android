@@ -24,6 +24,7 @@ use crate::agent_attachment::{
     DurableAgentAttachmentOwner, COMPOSER_ATTACHMENT_LIMIT,
 };
 use crate::android_sidebar_sections::{AndroidSidebarSection, AndroidSidebarSections};
+use crate::android_session_projection::project_agent_session;
 use crate::android_user_settings::{AndroidUserSettings, LocalToolPermission};
 use crate::host_secret_store::get_or_create_host_machine_id;
 use crate::onepassword_provisioning::{DurableOnePasswordProvisioningOwner, DurableProvisioningPhase};
@@ -3585,12 +3586,9 @@ impl AndroidJsonHost {
             .map_err(|_| "transcript lock poisoned".to_string())?
             .get_transcript();
 
-        let mut latest_message: BTreeMap<String, (u64, String)> = BTreeMap::new();
+        let mut entries_by_agent: BTreeMap<String, Vec<Value>> = BTreeMap::new();
         let mut running_agents = BTreeSet::new();
         for entry in transcript {
-            if entry.get("kind").and_then(Value::as_str) != Some("message") {
-                continue;
-            }
             let Some(agent_id) = entry
                 .get("agentId")
                 .and_then(Value::as_str)
@@ -3598,18 +3596,10 @@ impl AndroidJsonHost {
             else {
                 continue;
             };
-            let timestamp = entry
-                .get("timestampMs")
-                .and_then(Value::as_u64)
-                .unwrap_or(0);
-            if let Some(content) = entry.get("content").and_then(Value::as_str) {
-                let replace = latest_message
-                    .get(agent_id)
-                    .is_none_or(|(observed_at, _)| timestamp >= *observed_at);
-                if replace {
-                    latest_message.insert(agent_id.to_string(), (timestamp, content.to_string()));
-                }
-            }
+            entries_by_agent
+                .entry(agent_id.to_string())
+                .or_default()
+                .push(entry.clone());
             if entry
                 .get("operationId")
                 .and_then(Value::as_str)
@@ -3638,15 +3628,40 @@ impl AndroidJsonHost {
             .map(|agent| {
                 let mut value = agent.as_json();
                 if let Some(object) = value.as_object_mut() {
-                    if let Some((timestamp, message)) = latest_message.get(&agent.id) {
-                        object.insert("lastMessage".into(), Value::String(message.clone()));
-                        object.insert(
-                            "updatedAt".into(),
-                            Value::from(agent.updated_at.max(*timestamp)),
-                        );
-                    } else {
-                        object.insert("lastMessage".into(), Value::String(String::new()));
-                    }
+                    let session_projection = entries_by_agent
+                        .get(&agent.id)
+                        .map(|entries| project_agent_session(entries))
+                        .unwrap_or_default();
+                    let last_message_preview = session_projection
+                        .last_message
+                        .as_ref()
+                        .map(|message| message.preview.clone())
+                        .unwrap_or_default();
+                    object.insert("lastMessage".into(), Value::String(last_message_preview.clone()));
+                    object.insert("lastMessagePreview".into(), Value::String(last_message_preview));
+                    object.insert(
+                        "lastMessageId".into(),
+                        session_projection
+                            .last_message
+                            .as_ref()
+                            .map(|message| Value::String(message.id.clone()))
+                            .unwrap_or(Value::Null),
+                    );
+                    object.insert(
+                        "lastEntry".into(),
+                        session_projection.last_entry.unwrap_or(Value::Null),
+                    );
+                    object.insert(
+                        "newestEntryId".into(),
+                        session_projection
+                            .newest_entry_id
+                            .map(Value::String)
+                            .unwrap_or(Value::Null),
+                    );
+                    object.insert(
+                        "updatedAt".into(),
+                        Value::from(agent.updated_at.max(session_projection.updated_at_ms)),
+                    );
                     object.insert(
                         "isRunning".into(),
                         Value::Bool(running_agents.contains(&agent.id)),
