@@ -313,6 +313,31 @@ mod tests {
     }
 
     #[test]
+    fn prepare_for_upgrade_stops_started_core_without_restarting() {
+        let credentials: Arc<dyn SandMcpCredentialProvider> = Arc::new(
+            RotatingSandCredentials {
+                calls: Mutex::new(0),
+            },
+        );
+        let transport: Arc<dyn XuserRelayTransport> = Arc::new(CapturingTransport {
+            tokens: Mutex::new(Vec::new()),
+        });
+        let env = BTreeMap::from([
+            ("SAND_DEV_XUSER_SHARING".to_string(), "1".to_string()),
+            ("SAND_PACKAGED".to_string(), "0".to_string()),
+        ]);
+        let core = build_xuser_core(credentials, transport, &env).unwrap();
+        core.apply_feature_policy(true).unwrap();
+        assert!(core.service.is_started());
+        core.prepare_for_upgrade();
+        assert!(!core.service.is_started());
+        assert!(
+            !core.extension.is_enabled() || !core.service.is_started(),
+            "upgrade preparation must not restart sharing work"
+        );
+    }
+
+    #[test]
     fn relay_fetches_a_fresh_dedicated_sand_token_for_each_request() {
         let credentials: Arc<dyn SandMcpCredentialProvider> = Arc::new(
             RotatingSandCredentials {
