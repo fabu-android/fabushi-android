@@ -1,4 +1,5 @@
 use crate::extensions::content_search::android_search_index::AndroidContentSearchIndex;
+use crate::extensions::experiments::HostExperimentsExtension;
 use crate::edge_failures::EdgeFailureBuffer;
 use crate::account_service::{AccountSessionMutation, AndroidAccountService};
 use crate::account_telemetry::{
@@ -732,6 +733,7 @@ pub struct AndroidJsonHost {
     agents: Arc<Mutex<AndroidAgentRoster>>,
     sidebar_sections: Arc<Mutex<AndroidSidebarSections>>,
     user_settings: Arc<Mutex<AndroidUserSettings>>,
+    experiments: Arc<HostExperimentsExtension>,
     detected_time_zone: Arc<Mutex<Option<String>>>,
     auto_review_settings: Arc<Mutex<DurableAutoReviewSettings>>,
     transcript: Arc<Mutex<TranscriptStore>>,
@@ -1172,6 +1174,7 @@ impl AndroidJsonHost {
             agents,
             sidebar_sections,
             user_settings,
+            experiments: Arc::new(HostExperimentsExtension::new()),
             detected_time_zone: Arc::new(Mutex::new(None)),
             auto_review_settings,
             transcript,
@@ -2714,6 +2717,8 @@ impl AndroidJsonHost {
             "feature.search.agentContent" => self.agent_content_search(params),
             "feature.contentSearch.messages" => self.content_search_messages(params),
             "feature.contentSearch.media" => self.content_search_media(params),
+            "feature.experiments.gate" => self.experiments_gate(params),
+            "feature.experiments.dynamicConfig" => self.experiments_dynamic_config(params),
             "feature.assistant.projection" => self.assistant_projection(),
             "feature.assistant.markRead" => self.assistant_mark_read(),
             "feature.webauthn.registerProvider" => self.webauthn_register_provider(),
@@ -2935,6 +2940,30 @@ impl AndroidJsonHost {
             .collect::<Vec<_>>();
         serde_json::to_value(matches)
             .map_err(|error| format!("failed to serialize media search result: {error}"))
+    }
+
+    fn experiments_gate(&self, params: &Value) -> Result<Value, String> {
+        let name = required_string(params, "name")?.trim();
+        if name.is_empty() || name.len() > 256 || name.chars().any(char::is_control) {
+            return Err("experiment gate name is invalid".into());
+        }
+        Ok(json!({
+            "name": name,
+            "enabled": self.experiments.check_feature_gate(name),
+            "authenticatedBootstrap": self.experiments.has_authenticated_bootstrap(),
+        }))
+    }
+
+    fn experiments_dynamic_config(&self, params: &Value) -> Result<Value, String> {
+        let name = required_string(params, "name")?.trim();
+        if name.is_empty() || name.len() > 256 || name.chars().any(char::is_control) {
+            return Err("experiment dynamic config name is invalid".into());
+        }
+        Ok(json!({
+            "name": name,
+            "value": self.experiments.dynamic_config(name),
+            "authenticatedBootstrap": self.experiments.has_authenticated_bootstrap(),
+        }))
     }
 
     fn agent_async_tasks(&self, params: &Value) -> Result<Value, String> {
@@ -4326,6 +4355,7 @@ impl AndroidJsonHost {
         // Prepared variable writes may contain secret values. Even though commit is account-fenced,
         // the old account's uncommitted secret material must not survive the transition in memory.
         self.pending_plugin_variable_writes.clear();
+        self.experiments.clear_account_scope();
         self.cancel_mcp_auth_watches_for_account_change(reason)?;
         self.user_settings
             .lock()
@@ -13262,6 +13292,48 @@ mod access_blocked_durable_dispatch_tests {
     }
 }
 
+
+#[cfg(test)]
+mod experiments_runtime_tests {
+    use super::*;
+
+    #[test]
+    fn experiment_projection_is_read_only_host_owned_and_account_cleanup_fences_network_truth() {
+        let root = tempfile::tempdir().unwrap();
+        let mut host = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+        let bundled = host
+            .dispatch("feature.experiments.gate", &json!({"name":"sand_multitask"}))
+            .unwrap();
+        assert_eq!(bundled["enabled"], true);
+        assert_eq!(bundled["authenticatedBootstrap"], false);
+
+        host.experiments
+            .hydrate_authenticated_statsig(
+                &json!({
+                    "user":{"userID":"user-a"},
+                    "feature_gates":{"sand_multiplayer":{"value":true}},
+                    "dynamic_configs":{"sand_default_model":{"value":{"modelId":"model-a"}}}
+                })
+                .to_string(),
+            )
+            .unwrap();
+        assert_eq!(
+            host.dispatch("feature.experiments.gate", &json!({"name":"sand_multiplayer"}))
+                .unwrap()["enabled"],
+            true
+        );
+        host.prepare_account_transition_cleanup("account-a:epoch-1", "account-switch")
+            .unwrap();
+        let fenced = host
+            .dispatch("feature.experiments.gate", &json!({"name":"sand_multiplayer"}))
+            .unwrap();
+        assert_eq!(fenced["enabled"], false);
+        assert_eq!(fenced["authenticatedBootstrap"], false);
+        assert!(host
+            .dispatch("feature.experiments.gate", &json!({"name":""}))
+            .is_err());
+    }
+}
 
 #[cfg(test)]
 mod signin_gate_runtime_tests {
