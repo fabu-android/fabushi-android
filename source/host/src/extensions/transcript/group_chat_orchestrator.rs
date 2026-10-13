@@ -154,3 +154,116 @@ where
         spoken
     }
 }
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use futures::future::BoxFuture;
+    use std::sync::Mutex;
+
+    struct TestDeps {
+        members: Vec<GroupMember>,
+        history: Mutex<Vec<GroupMessage>>,
+        outputs: Mutex<Vec<Vec<String>>>,
+    }
+
+    impl GroupOrchestratorDeps for TestDeps {
+        fn resolve_members<'a>(&'a self, ids: &'a [String]) -> BoxFuture<'a, Vec<GroupMember>> {
+            let members = self
+                .members
+                .iter()
+                .filter(|member| ids.iter().any(|id| id == &member.id))
+                .cloned()
+                .collect::<Vec<_>>();
+            Box::pin(async move { members })
+        }
+
+        fn read_history(&self) -> Vec<GroupMessage> {
+            self.history.lock().unwrap().clone()
+        }
+
+        fn is_current(&self) -> bool {
+            true
+        }
+
+        fn run_member_turn<'a>(
+            &'a self,
+            _request: GroupMemberTurnRequest,
+        ) -> BoxFuture<'a, Vec<String>> {
+            let output = self.outputs.lock().unwrap().remove(0);
+            Box::pin(async move { output })
+        }
+
+        fn post_member_message(&self, member: &GroupMember, content: &str) {
+            self.history.lock().unwrap().push(GroupMessage {
+                speaker: crate::groups::group_chat::GroupSpeaker::Member {
+                    id: member.id.clone(),
+                    name: member.name.clone(),
+                },
+                content: content.to_string(),
+            });
+        }
+    }
+
+    fn member(id: &str, name: &str) -> GroupMember {
+        GroupMember {
+            id: id.into(),
+            name: name.into(),
+            description: String::new(),
+        }
+    }
+
+    #[test]
+    fn orchestrator_filters_pass_and_caps_member_messages() {
+        let deps = TestDeps {
+            members: vec![member("a", "A")],
+            history: Mutex::new(vec![GroupMessage {
+                speaker: crate::groups::group_chat::GroupSpeaker::User { name: None },
+                content: "hello".into(),
+            }]),
+            outputs: Mutex::new(vec![vec![
+                "(pass)".into(),
+                " first ".into(),
+                "second".into(),
+                "third".into(),
+            ]]),
+        };
+        let orchestrator = GroupChatOrchestrator::new(deps);
+        let group = GroupDescription {
+            name: "Room".into(),
+            description: String::new(),
+        };
+        let spoken = futures::executor::block_on(orchestrator.run_one_turn(
+            &group,
+            &member("a", "A"),
+            &[member("a", "A")],
+        ));
+        assert_eq!(spoken, vec!["first".to_string(), "second".to_string()]);
+    }
+
+    #[test]
+    fn orchestrator_posts_member_output_into_shared_history() {
+        let deps = TestDeps {
+            members: vec![member("a", "A")],
+            history: Mutex::new(vec![GroupMessage {
+                speaker: crate::groups::group_chat::GroupSpeaker::User { name: None },
+                content: "@A status?".into(),
+            }]),
+            outputs: Mutex::new(vec![vec!["done".into()], vec!["(pass)".into()]]),
+        };
+        let orchestrator = GroupChatOrchestrator::new(deps);
+        let group = GroupDescription {
+            name: "Room".into(),
+            description: "coordination".into(),
+        };
+        futures::executor::block_on(orchestrator.run(&group, &["a".to_string()]));
+        let history = orchestrator.deps.read_history();
+        assert!(history.iter().any(|message| {
+            matches!(
+                &message.speaker,
+                crate::groups::group_chat::GroupSpeaker::Member { id, .. } if id == "a"
+            ) && message.content == "done"
+        }));
+    }
+}
