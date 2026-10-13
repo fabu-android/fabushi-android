@@ -10,3 +10,4 @@ pub mod agent_db_recovery;
 pub mod agent_db;
 #[cfg(test)]
 mod agent_db_android_tests;
+pub mod channel_store;
