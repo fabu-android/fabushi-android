@@ -4636,14 +4636,14 @@ mod tests {
                 &mut service,
                 "agent-a-profile",
                 "agent-a",
-                json!({"type":"upsertProfile","actor":{"id":"agent-a","kind":"agent","displayName":"Agent A"}}),
+                json!({"type":"upsertProfile","actor":{"id":"agent-a","kind":"assistant","displayName":"Agent A"}}),
             )
             .unwrap();
             execute(
                 &mut service,
                 "agent-b-profile",
                 "agent-a",
-                json!({"type":"upsertProfile","actor":{"id":"agent-b","kind":"agent","displayName":"Agent B"}}),
+                json!({"type":"upsertProfile","actor":{"id":"agent-b","kind":"assistant","displayName":"Agent B"}}),
             )
             .unwrap();
             execute(
@@ -5692,8 +5692,8 @@ mod tests {
             all.iter()
                 .map(|row| row["id"].as_str().unwrap())
                 .collect::<Vec<_>>(),
-            vec!["conversation:newer", "conversation:older", "conversation:source"],
-            "eligible Human destinations are ordered newest first",
+            vec!["conversation:source", "conversation:newer", "conversation:older"],
+            "eligible Human destinations are ordered newest first, including the just-updated source",
         );
 
         let query = service
