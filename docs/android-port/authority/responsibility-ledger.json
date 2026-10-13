@@ -16296,6 +16296,18 @@
         {
           "path": "source/electron-preload/runtime/webview.ts",
           "blob_sha": "73e6602ce8e8b8f251daaec4055bc9ae9514bc46"
+        },
+        {
+          "path": "source/host/src/extensions/webauthn_proxy/extension.rs",
+          "blob_sha": "c3023aac5bb43651fa9ee5f4e76fcaa7d33cbb5e"
+        },
+        {
+          "path": "source/host/src/extensions/webauthn_proxy/mod.rs",
+          "blob_sha": "109c55a20e5b2317f12b3a71360ea4f54dfb5760"
+        },
+        {
+          "path": "source/host/src/extensions/webauthn_proxy/webauthn_proxy_bridge.rs",
+          "blob_sha": "fd52784e73159ee1d0759394ad10b900be2105f1"
         }
       ],
       "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
@@ -16306,12 +16318,16 @@
       "android_target": [
         "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/webauthn/AndroidCredentialManagerWebAuthn.kt",
         "source/host/src/extensions/webauthn_proxy/webauthn_proxy_bridge.rs",
-        "mobile/android/app/src/test/java/com/ombhrum/fabushi/AndroidWebAuthnContractTest.kt"
+        "mobile/android/app/src/test/java/com/ombhrum/fabushi/AndroidWebAuthnContractTest.kt",
+        "source/shared/src/webauthn_gateway.rs",
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/FabushiApplication.kt",
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/coordinator/AndroidCoordinatorRuntime.kt",
+        "mobile/android/app/src/main/java/com/ombhrum/fabushi/MainActivity.kt"
       ],
       "android_owner": "Android CredentialManager adapter plus Rust Host WebAuthn proxy",
       "platform_delta": "Electron navigator.credentials interception is replaced by Android CredentialManager while Host retains canonical request lifecycle and the 60-second fail-closed stall boundary.",
       "implementation_status": "implemented",
-      "production_wiring": "Typed Android WebAuthn provider routes approved ceremonies to CredentialManager and settles Host proxy requests; arbitrary web content is not a credential owner.",
+      "production_wiring": "FabushiProcessRuntime owns one AndroidCredentialManagerWebAuthn; MainActivity onStart/onStop attaches/detaches through AndroidPresentationRuntimePort. Typed Coordinator calls feature.webauthn.registerProvider/unregisterProvider/pollRequest/submitResponses; AndroidJsonHost owns provider queues, enablement, ceremony request lifecycle and one-shot settlement.",
       "unit_test": "AndroidWebAuthnContractTest; exact-head Actions pending",
       "contract_test": "Host WebAuthn proxy plus Android contract tests; exact-head Actions pending",
       "integration_test": "required on packaged CredentialManager flow",
@@ -16319,7 +16335,7 @@
       "device_test": "required on passkey-capable Android device/provider",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Implemented source/wiring; current exact-head package/device evidence still required."
+      "notes": "Implemented source/wiring including Host proxy current-main sources; keep not-verified until current exact-head package/device CredentialManager acceptance succeeds."
     },
     {
       "responsibility_id": "REMOTE-BOX-STORE-SYNC-ANDROID-001",
@@ -18659,6 +18675,67 @@
       "artifact": null,
       "verification_status": "not-verified",
       "notes": "Source and production wiring are implemented. Do not mark verified until descendant exact-head GitHub Actions and packaged/device evidence succeeds."
+    },
+    {
+      "responsibility_id": "WEBAUTHN-BOX-MARKER-ANDROID-001",
+      "domain": "security-webauthn-remote-box",
+      "desktop_sources": [
+        {
+          "path": "source/host/src/extensions/webauthn_proxy/webauthn_proxy_marker.rs",
+          "blob_sha": "30b336dd07b61027adedc31547f751b417f9f707",
+          "symbols": [
+            "apply_web_authn_proxy_marker",
+            "apply_web_authn_proxy_marker_at"
+          ]
+        }
+      ],
+      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "responsibility": "Preserve Box browser WebAuthn policy enablement without granting the Android app local Box filesystem/process authority.",
+      "source_owner": "Desktop Box WebAuthn marker/policy helper",
+      "direct_callers": [
+        "Desktop Host WebAuthn extension enablement"
+      ],
+      "downstream_dependencies": [
+        "Box Chrome policy",
+        "authorized RemoteBox executor"
+      ],
+      "state_owner": "Remote Box policy owner; Android local passkeys are owned separately by CredentialManager",
+      "persistent_state": [
+        "remote Box WebAuthn enablement marker only"
+      ],
+      "protocol_wire_contract": [
+        "remote operation requires accountEpoch/device/grant/operation identity"
+      ],
+      "visible_effect": "Passkeys work natively on Android; an authorized remote Box may enable its browser WebAuthn proxy without Android executing desktop policy commands locally.",
+      "failure_behavior": [
+        "no authorized remote executor => unavailable/fail closed",
+        "unknown remote side effect => reconcile before retry"
+      ],
+      "cancellation_behavior": "authorized remote operation cancellation only",
+      "retry_semantics": "no blind replay after dispatch",
+      "idempotency_semantics": "remote operation identity fences duplicate policy toggle",
+      "process_death_recovery": "RemoteExecutionJournal outcome-unknown reconciliation",
+      "account_fencing": "account fence/epoch plus device grant",
+      "security_boundary": "Android never writes /home/box or invokes box-chrome-policy locally",
+      "android_disposition": "not-applicable-with-replacement",
+      "android_target": [
+        "source/host/src/remote_execution.rs",
+        "source/host/src/host_runner_composition.rs",
+        "source/box-exec-daemon",
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/webauthn/AndroidCredentialManagerWebAuthn.kt"
+      ],
+      "android_owner": "Native CredentialManager locally; authorized RemoteBox executor for Box policy",
+      "platform_delta": "Desktop local Host can mutate Box policy files; Android uses system CredentialManager locally and must delegate Box policy mutation remotely.",
+      "implementation_status": "mapped",
+      "production_wiring": "Native Android passkey route is production-wired; Box marker/policy remote operation is not yet proven and remains fail closed.",
+      "unit_test": "WebAuthn bridge/Android contract tests exist; RemoteBox marker adapter test required",
+      "contract_test": "required: Android local route never executes Box policy command",
+      "integration_test": "required: authorized RemoteBox toggles policy with stale/revoked grant fencing",
+      "packaged_test": "native CredentialManager package acceptance required",
+      "device_test": "passkey-capable Android + authorized Box endpoint required",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Mapped replacement only; do not mark implemented until Box policy remote wire and device evidence exist."
     }
   ],
   "traceability": {
