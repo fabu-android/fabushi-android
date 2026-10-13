@@ -140,6 +140,9 @@ use crate::extensions::transcript::sand_pending_wake_store::{
 use crate::extensions::transcript::client_side_tool_v2_producer::{
     ClientSideToolV2ProducedValue, ClientSideToolV2Producer,
 };
+use crate::extensions::transcript::prompt_acceptance_ledger::{
+    AcceptanceStatus, PromptAcceptanceLedger, SendAdmission, SendInput, send_input_digest,
+};
 use crate::extensions::transcript::ack_obligations::{
     build_ack_redrive_send_args, AckObligations, AckRedrivePreparation,
 };
@@ -1332,6 +1335,7 @@ pub struct AndroidJsonHost {
     memory: AndroidMemoryOwner,
     send_acknowledgements: Arc<Mutex<DurableSendAcknowledgementOwner>>,
     visible_ack_obligations: Arc<AckObligations>,
+    prompt_acceptance: PromptAcceptanceLedger,
     human_remote_outbound: Arc<Mutex<DurableHumanRemoteOutboundOwner>>,
     human_remote_resources: Arc<Mutex<DurableHumanRemoteResourceOutboundOwner>>,
     composer_drafts: Arc<Mutex<DurableComposerDraftOwner>>,
@@ -2192,6 +2196,7 @@ impl AndroidJsonHost {
             memory: AndroidMemoryOwner::new(app_data_dir.join("memory")),
             send_acknowledgements,
             visible_ack_obligations,
+            prompt_acceptance: PromptAcceptanceLedger::new(Some(&app_data_dir)),
             human_remote_outbound,
             human_remote_resources,
             composer_drafts,
@@ -11616,6 +11621,32 @@ impl AndroidJsonHost {
             let rich_text = command.get("richText").cloned().unwrap_or(Value::Null);
             let attachment_value = serde_json::to_value(&attachments)
                 .map_err(|error| format!("failed to canonicalize Agent attachments: {error}"))?;
+            let send_input = SendInput {
+                agent_id: Some(agent_id.clone()),
+                prompt: message_text.clone(),
+                rich_text: rich_text.as_str().map(str::to_string),
+                reply_to_id: command
+                    .get("replyToId")
+                    .and_then(Value::as_str)
+                    .map(str::to_string),
+                is_fork: command
+                    .get("isFork")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false),
+                attachment_paths: attachments
+                    .iter()
+                    .map(|attachment| attachment.path.clone())
+                    .collect(),
+                attachment_names: attachments
+                    .iter()
+                    .map(|attachment| attachment.name.clone())
+                    .collect(),
+            };
+            let input_digest = send_input_digest(&send_input);
+            let admission = self
+                .prompt_acceptance
+                .admit_send(account_fence, client_nonce, &input_digest)
+                .map_err(|error| error.to_string())?;
             let mut transcript = self
                 .transcript
                 .lock()
@@ -11633,6 +11664,24 @@ impl AndroidJsonHost {
                         "NONCE_DIGEST_MISMATCH: client nonce {client_nonce} was previously accepted with another input"
                     ));
                 }
+
+                // Heal legacy/degraded ledger state only from the canonical transcript. The
+                // transcript remains the single message owner; the acceptance ledger only
+                // prevents process-death redispatch.
+                self.prompt_acceptance
+                    .record_pending(
+                        account_fence,
+                        client_nonce,
+                        &input_digest,
+                        &agent_id,
+                        accepted
+                            .get("id")
+                            .and_then(Value::as_str)
+                            .map(str::to_string),
+                    )
+                    .map_err(|error| error.to_string())?;
+                self.prompt_acceptance
+                    .mark_accepted(account_fence, client_nonce);
 
                 let accepted_operation_id = accepted
                     .get("operationId")
@@ -11680,6 +11729,24 @@ impl AndroidJsonHost {
                 return Ok(());
             }
 
+            if matches!(
+                &admission,
+                SendAdmission::Duplicate(record) if record.status == AcceptanceStatus::Accepted
+            ) {
+                return Err(format!(
+                    "SEND_ACCEPTANCE_OUTCOME_UNKNOWN: client nonce {client_nonce} was durably accepted but the canonical transcript entry is missing"
+                ));
+            }
+            self.prompt_acceptance
+                .record_pending(
+                    account_fence,
+                    client_nonce,
+                    &input_digest,
+                    &agent_id,
+                    Some(request_id.to_string()),
+                )
+                .map_err(|error| error.to_string())?;
+
             let user_was_new = transcript
                 .append_entry_if_absent(json!({
                     "id":request_id,
@@ -11696,6 +11763,10 @@ impl AndroidJsonHost {
                 }))
                 .map_err(|error| format!("failed to persist user transcript entry: {error}"))?;
             accepted_new_user_message = user_was_new;
+            if user_was_new {
+                self.prompt_acceptance
+                    .mark_accepted(account_fence, client_nonce);
+            }
 
             if !user_was_new {
                 let existing_user = transcript
@@ -11714,6 +11785,8 @@ impl AndroidJsonHost {
                         "REQUEST_IDENTITY_MISMATCH: requestId {request_id} was previously accepted with another input"
                     ));
                 }
+                self.prompt_acceptance
+                    .mark_accepted(account_fence, client_nonce);
 
                 let mut events = self
                     .turn_events
