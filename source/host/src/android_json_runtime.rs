@@ -5762,8 +5762,17 @@ impl AndroidJsonHost {
         ))
     }
 
+    fn agent_channels_account_fence(&self, params: &Value) -> Result<String, String> {
+        let expected = required_string(params, "accountFence")?;
+        let current = self.current_turn_account_fence()?;
+        if expected != current {
+            return Err("stale Agent channel account fence".into());
+        }
+        Ok(current)
+    }
+
     fn agent_channels_list_metadata(&self, params: &Value) -> Result<Value, String> {
-        let account_fence = self.current_turn_account_fence()?;
+        let account_fence = self.agent_channels_account_fence(params)?;
         let agent_id = required_string(params, "agentId")?;
         serde_json::to_value(
             self.agent_channel_store(&account_fence, agent_id)?
@@ -5773,7 +5782,7 @@ impl AndroidJsonHost {
     }
 
     fn agent_channels_write_metadata(&self, params: &Value) -> Result<Value, String> {
-        let account_fence = self.current_turn_account_fence()?;
+        let account_fence = self.agent_channels_account_fence(params)?;
         let agent_id = required_string(params, "agentId")?;
         let platform = required_string(params, "platform")?;
         let label = params.get("label").and_then(Value::as_str).unwrap_or("");
@@ -5785,7 +5794,7 @@ impl AndroidJsonHost {
     }
 
     fn agent_channels_remove_metadata(&self, params: &Value) -> Result<Value, String> {
-        let account_fence = self.current_turn_account_fence()?;
+        let account_fence = self.agent_channels_account_fence(params)?;
         let agent_id = required_string(params, "agentId")?;
         let platform = required_string(params, "platform")?;
         let removed = self
