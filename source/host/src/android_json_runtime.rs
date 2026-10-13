@@ -88,7 +88,9 @@ use crate::extensions::telemetry::host_tracing::{
 };
 use crate::extensions::telemetry::pressure_cpu_profiler::AndroidPressureCpuProfiler;
 use crate::extensions::telemetry::queue_telemetry_mappers::{
-    ack_obligation_telemetry, pending_wake_telemetry, AckObligationReport, PendingWakeReport,
+    ack_obligation_telemetry, pending_wake_telemetry, queue_accepted_telemetry,
+    queue_dequeued_telemetry, queue_watchdog_telemetry, AckObligationReport, PendingWakeReport,
+    QueueAcceptedReport, QueueDequeuedReport, QueueWatchdogReport,
 };
 use crate::extensions::telemetry::automation_fire_telemetry::{
     automation_run_telemetry, AutomationRunReport,
@@ -133,6 +135,12 @@ use crate::extensions::transcript::ack_obligations::{
 };
 use crate::extensions::transcript::agent_lifecycle::{kickstart_prompt_for_purpose, REPLY_NUDGE_PROMPT};
 use crate::extensions::transcript::pending_wake_rearm::PENDING_WAKE_STALE_MAX_AGE_MS;
+use crate::extensions::transcript::run_scheduler::{
+    QueueAccepted, QueueDequeued, RunSettlement, WatchdogEvent, WatchdogStage,
+};
+use crate::extensions::transcript::send_turn_dispatch::{
+    classify_send_dispatch, ProductionTurnDispatch, UserTurnTicket,
+};
 use crate::extensions::webauthn_proxy::{
     WebAuthnBridgeError, WebAuthnProxyExtension, WebAuthnProxyExtensionConfig,
 };
@@ -1118,6 +1126,164 @@ fn project_cross_user_state(
     })
 }
 
+
+fn record_turn_queue_projection(
+    spool: &Arc<Mutex<AndroidStructuredLogSpool>>,
+    projection: HostTelemetryProjection,
+) {
+    let Some(event) = projection.event else { return; };
+    if let Ok(mut spool) = spool.lock() {
+        let _ = spool.record(
+            projection.level.unwrap_or("info"),
+            event,
+            projection.metadata,
+            now_ms(),
+        );
+    }
+}
+
+fn record_queue_accepted_projection(
+    spool: &Arc<Mutex<AndroidStructuredLogSpool>>,
+    event: &QueueAccepted,
+) {
+    record_turn_queue_projection(
+        spool,
+        queue_accepted_telemetry(&QueueAcceptedReport {
+            conversation_id: event.agent_id.clone(),
+            lane: event.lane.as_str().into(),
+            source: event.source.clone(),
+            position: event.position as i64,
+            depth_user: event.depth_user as i64,
+            depth_agent: event.depth_agent as i64,
+            depth_background: event.depth_background as i64,
+            has_active: event.has_active,
+        }),
+    );
+}
+
+fn record_queue_dequeued_projection(
+    spool: &Arc<Mutex<AndroidStructuredLogSpool>>,
+    event: &QueueDequeued,
+) {
+    record_turn_queue_projection(
+        spool,
+        queue_dequeued_telemetry(&QueueDequeuedReport {
+            conversation_id: event.agent_id.clone(),
+            lane: event.lane.as_str().into(),
+            source: event.source.clone(),
+            queue_wait_ms: event.queue_wait_ms as f64,
+            accepted_to_run_ms: event.accepted_to_run_ms.map(|value| value as f64),
+            jumped_background: event.jumped_background as i64,
+            depth_user: event.depth_user as i64,
+            depth_agent: event.depth_agent as i64,
+            depth_background: event.depth_background as i64,
+        }),
+    );
+}
+
+fn record_queue_watchdog_projection(
+    spool: &Arc<Mutex<AndroidStructuredLogSpool>>,
+    event: &WatchdogEvent,
+    interrupted: Option<bool>,
+) {
+    record_turn_queue_projection(
+        spool,
+        queue_watchdog_telemetry(&QueueWatchdogReport {
+            conversation_id: event.agent_id.clone(),
+            stage: event.stage.as_str().into(),
+            active_lane: Some(event.active_lane.as_str().into()),
+            active_source: Some(event.active_source.clone()),
+            active_runtime_ms: event.active_runtime_ms as f64,
+            waiting_user_age_ms: event.waiting_user_age_ms.map(|value| value as f64),
+            interrupted,
+        }),
+    );
+}
+
+struct AndroidTurnSchedulerLease {
+    turn_dispatch: Arc<(Mutex<ProductionTurnDispatch>, Condvar)>,
+    ticket: UserTurnTicket,
+    generation: u64,
+    structured_log_spool: Arc<Mutex<AndroidStructuredLogSpool>>,
+    interruptions: Arc<AgentTurnInterruptionRegistry>,
+    operation_id: String,
+}
+
+impl Drop for AndroidTurnSchedulerLease {
+    fn drop(&mut self) {
+        self.interruptions.unregister_operation(&self.operation_id);
+        let (settlement, next) = {
+            let (lock, _) = &*self.turn_dispatch;
+            let Ok(mut dispatch) = lock.lock() else { return; };
+            dispatch.settle_and_start_next(&self.ticket, self.generation, now_ms())
+        };
+        if let RunSettlement::ZombieSettled { watchdog, .. } = settlement {
+            record_queue_watchdog_projection(&self.structured_log_spool, &watchdog, Some(false));
+        }
+        if let Some(next) = next.as_ref() {
+            record_queue_dequeued_projection(&self.structured_log_spool, next);
+        }
+        self.turn_dispatch.1.notify_all();
+    }
+}
+
+fn wait_for_turn_scheduler_lease(
+    turn_dispatch: Arc<(Mutex<ProductionTurnDispatch>, Condvar)>,
+    ticket: UserTurnTicket,
+    structured_log_spool: Arc<Mutex<AndroidStructuredLogSpool>>,
+    interruptions: Arc<AgentTurnInterruptionRegistry>,
+    operation_id: String,
+    account_fence: &str,
+) -> Result<AndroidTurnSchedulerLease, String> {
+    loop {
+        let (lock, ready) = &*turn_dispatch;
+        let mut dispatch = lock
+            .lock()
+            .map_err(|_| "turn dispatch lock poisoned".to_string())?;
+        if let Some(generation) = dispatch.active_generation_for(&ticket) {
+            drop(dispatch);
+            return Ok(AndroidTurnSchedulerLease {
+                turn_dispatch,
+                ticket,
+                generation,
+                structured_log_spool,
+                interruptions,
+                operation_id,
+            });
+        }
+        let observed_at_ms = now_ms();
+        let wait_ms = dispatch
+            .watchdog_wait_ms(&ticket.agent_id, observed_at_ms)
+            .unwrap_or(1_000)
+            .max(1);
+        let (mut dispatch, _) = ready
+            .wait_timeout(dispatch, Duration::from_millis(wait_ms))
+            .map_err(|_| "turn dispatch wait poisoned".to_string())?;
+        if let Some(tick) = dispatch.watchdog_tick(&ticket.agent_id, now_ms()) {
+            let interrupted = if tick.event.stage == WatchdogStage::Trip {
+                interruptions
+                    .interrupt_priority(&ticket.agent_id, account_fence)
+                    .ok()
+                    .flatten()
+                    .is_some()
+            } else {
+                false
+            };
+            let started_next = tick.started_next;
+            drop(dispatch);
+            record_queue_watchdog_projection(
+                &structured_log_spool,
+                &tick.event,
+                Some(interrupted),
+            );
+            if let Some(next) = started_next.as_ref() {
+                record_queue_dequeued_projection(&structured_log_spool, next);
+                ready.notify_all();
+            }
+        }
+    }
+}
+
 pub struct AndroidJsonHost {
     mode: AndroidHostMode,
     device_id: String,
@@ -1194,6 +1360,7 @@ pub struct AndroidJsonHost {
     remote_approvals: RemoteApprovalRegistry,
     turn_events: Arc<Mutex<VecDeque<Value>>>,
     turn_cancellations: BTreeMap<String, Arc<AtomicBool>>,
+    turn_dispatch: Arc<(Mutex<ProductionTurnDispatch>, Condvar)>,
     turn_journal: Arc<Mutex<DurableTurnJournal>>,
     turn_lifecycle: Arc<Mutex<ProductionTurnLifecycleStore>>,
     turn_upgrade_quiescing: Arc<AtomicBool>,
@@ -2019,6 +2186,7 @@ impl AndroidJsonHost {
             remote_approvals: RemoteApprovalRegistry::default(),
             turn_events: Arc::new(Mutex::new(VecDeque::new())),
             turn_cancellations: BTreeMap::new(),
+            turn_dispatch: Arc::new((Mutex::new(ProductionTurnDispatch::default()), Condvar::new())),
             turn_journal: Arc::new(Mutex::new(
                 DurableTurnJournal::open(app_data_dir.join("agent-turn-journal.json"), now_ms())
                     .unwrap_or_else(|error| panic!("failed to open durable Agent turn journal: {error}")),
@@ -11308,14 +11476,6 @@ impl AndroidJsonHost {
         let cancelled = Arc::new(AtomicBool::new(false));
         self.turn_cancellations
             .insert(operation_id.to_string(), cancelled.clone());
-        self.agent_turn_interruptions.register(
-            &agent_id,
-            operation_id,
-            &account_fence,
-            owes_visible_ack,
-            Arc::clone(&cancelled),
-        )?;
-
         let mode = self.mode;
         let turn_events = self.turn_events.clone();
         let transcript = self.transcript.clone();
@@ -11427,10 +11587,100 @@ impl AndroidJsonHost {
         };
         let subagent_review_expiry_policy =
             subagent_review_approval_expiry_policy(request_source.as_deref());
+        let turn_dispatch = Arc::clone(&self.turn_dispatch);
+        let queue_structured_log_spool = Arc::clone(&self.structured_log_spool);
+        let queue_interruptions = Arc::clone(&self.agent_turn_interruptions);
+        let queue_request_source = request_source.clone();
+        let queue_ack_redrive = ack_redrive;
+        let queue_ack_token = ack_run_token.clone();
+        let queue_agent_id = agent_id.clone();
+        let queue_operation_id = operation_id.to_string();
+        let queue_account_fence = account_fence.clone();
+        let queue_owes_visible_ack = owes_visible_ack;
+        let queue_cancelled = Arc::clone(&cancelled);
+        let queue_accepted_at_ms = ack_guard_accepted_at_ms;
+        let (queue_admission_tx, queue_admission_rx) = mpsc::sync_channel::<Result<(), String>>(1);
 
         let spawn = thread::Builder::new()
             .name(format!("fabushi-turn-{}", operation_id.chars().take(32).collect::<String>()))
             .spawn(move || {
+                let (lane, source) = classify_send_dispatch(
+                    queue_request_source.as_deref(),
+                    queue_ack_redrive,
+                );
+                let admitted = {
+                    let (lock, _) = &*turn_dispatch;
+                    lock.lock()
+                        .map_err(|_| "turn dispatch lock poisoned".to_string())
+                        .and_then(|mut dispatch| {
+                            dispatch
+                                .enqueue_turn_with_start(
+                                    &queue_agent_id,
+                                    Some(&queue_operation_id),
+                                    queue_accepted_at_ms,
+                                    now_ms(),
+                                    lane,
+                                    source,
+                                    queue_ack_token.as_deref(),
+                                )
+                                .map_err(str::to_string)
+                        })
+                };
+                let (ticket, accepted, started) = match admitted {
+                    Ok(value) => value,
+                    Err(error) => {
+                        let _ = queue_admission_tx.send(Err(error));
+                        return;
+                    }
+                };
+                record_queue_accepted_projection(&queue_structured_log_spool, &accepted);
+                if let Some(started) = started.as_ref() {
+                    record_queue_dequeued_projection(&queue_structured_log_spool, started);
+                }
+                let _ = queue_admission_tx.send(Ok(()));
+                let scheduler_lease = match wait_for_turn_scheduler_lease(
+                    Arc::clone(&turn_dispatch),
+                    ticket,
+                    Arc::clone(&queue_structured_log_spool),
+                    Arc::clone(&queue_interruptions),
+                    queue_operation_id.clone(),
+                    &queue_account_fence,
+                ) {
+                    Ok(lease) => lease,
+                    Err(error) => {
+                        push_turn_event(
+                            &turn_events,
+                            json!({
+                                "type":"operation.failed",
+                                "operationId":operation_id_owned,
+                                "requestId":request_id_owned,
+                                "agentId":queue_agent_id,
+                                "message":error,
+                            }),
+                        );
+                        return;
+                    }
+                };
+                if let Err(error) = queue_interruptions.register(
+                    &scheduler_lease.ticket.agent_id,
+                    &queue_operation_id,
+                    &queue_account_fence,
+                    queue_owes_visible_ack,
+                    Arc::clone(&queue_cancelled),
+                ) {
+                    push_turn_event(
+                        &turn_events,
+                        json!({
+                            "type":"operation.failed",
+                            "operationId":operation_id_owned,
+                            "requestId":request_id_owned,
+                            "agentId":scheduler_lease.ticket.agent_id,
+                            "message":error,
+                        }),
+                    );
+                    return;
+                }
+                let _scheduler_lease = scheduler_lease;
                 let review_mode = match mode {
                     AndroidHostMode::Test => AndroidInferenceMode::Test,
                     AndroidHostMode::Production => AndroidInferenceMode::Production,
@@ -12340,7 +12590,15 @@ impl AndroidJsonHost {
                 }
             });
 
-        if let Err(error) = spawn {
+        let admission_error = match spawn {
+            Err(error) => Some(format!("failed to start turn worker: {error}")),
+            Ok(_worker) => match queue_admission_rx.recv() {
+                Ok(Ok(())) => None,
+                Ok(Err(error)) => Some(format!("failed to admit turn into Host scheduler: {error}")),
+                Err(_) => Some("turn scheduler admission worker exited before acknowledgement".into()),
+            },
+        };
+        if let Some(error) = admission_error {
             self.turn_cancellations.remove(operation_id);
             self.agent_turn_interruptions.unregister_operation(operation_id);
             self.active_operations.remove(operation_id);
@@ -12363,10 +12621,10 @@ impl AndroidJsonHost {
                     &account_fence,
                     turn_generation,
                     DurableTurnState::Failed,
-                    Some(format!("failed to start turn worker: {error}")),
+                    Some(error.clone()),
                     now_ms(),
                 );
-            return Err(format!("failed to start turn worker: {error}"));
+            return Err(error);
         }
 
         Ok(())
