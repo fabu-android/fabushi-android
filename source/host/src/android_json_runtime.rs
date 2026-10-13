@@ -135,8 +135,9 @@ use crate::runner::{
     SubagentRunOutcome, SubagentSteerReview, SubagentTaskReviewCallback,
     SubagentSteerReviewCallback, SubagentToolBridge, SubagentToolContext,
     build_parent_subagent_routed_tools, spawn_generated_subagent,
-    with_agent_management_tools, with_send_message_tools, with_multitask_todo_tools, with_remote_routed_tools, with_web_routed_tools,
-    AgentTurnInterruptionRegistry, RemoteApprovalRegistry, RemoteDispatchBinding,
+    with_agent_management_tools, with_send_message_tools, with_multitask_todo_tools,
+    with_local_file_tools, with_remote_routed_tools, with_web_routed_tools,
+    AgentTurnInterruptionRegistry, LocalApprovalRegistry, RemoteApprovalRegistry, RemoteDispatchBinding,
     DurableMultitaskTodoStore,
 };
 use fabushi_android_shared::feedback::normalize_feedback_submit_args;
@@ -152,6 +153,7 @@ use fabushi_android_shared::webauthn_gateway::{
 use mahayana_js_runtime::{DeepSeekJsHost, HostEvent as JsHostEvent};
 use crate::host_event_bus::{HostEvent as AndroidHostEvent, HostEventBus};
 use fabushi_android_box_exec_daemon::{AuthenticatedRemoteHttpTransport, RemoteTransportPolicy};
+use fabushi_android_local_exec_daemon::{bounded_file_handlers::bounded_file_runner, AndroidLocalRunner};
 use mahayana_plugin_runtime::{
     ExternalReleaseManifest, PermissionManager, PluginInstaller,
 };
@@ -1124,6 +1126,8 @@ pub struct AndroidJsonHost {
     host_event_bus: HostEventBus,
     active_operations: BTreeSet<String>,
     pending_approvals: BTreeMap<String, String>,
+    local_approvals: LocalApprovalRegistry,
+    local_runner: Arc<Mutex<AndroidLocalRunner>>,
     remote_approvals: RemoteApprovalRegistry,
     turn_events: Arc<Mutex<VecDeque<Value>>>,
     turn_cancellations: BTreeMap<String, Arc<AtomicBool>>,
@@ -1895,6 +1899,11 @@ impl AndroidJsonHost {
             host_event_bus,
             active_operations: BTreeSet::new(),
             pending_approvals: BTreeMap::new(),
+            local_approvals: LocalApprovalRegistry::default(),
+            local_runner: Arc::new(Mutex::new(
+                bounded_file_runner(app_data_dir.join("local-runner-files"))
+                    .unwrap_or_else(|error| panic!("failed to initialize bounded Android Local Runner: {error:?}")),
+            )),
             remote_approvals: RemoteApprovalRegistry::default(),
             turn_events: Arc::new(Mutex::new(VecDeque::new())),
             turn_cancellations: BTreeMap::new(),
@@ -10524,6 +10533,10 @@ impl AndroidJsonHost {
         let live_account_fence = Arc::clone(&self.live_account_fence);
         let agent_turn_interruptions = Arc::clone(&self.agent_turn_interruptions);
         let web_backend = self.mcp_dashboard_backend.clone();
+        let local_capability_broker = self.capability_broker.clone();
+        let local_runner = Arc::clone(&self.local_runner);
+        let local_approvals = self.local_approvals.clone();
+        let local_user_settings = Arc::clone(&self.user_settings);
         let remote_capability_broker = self.capability_broker.clone();
         let remote_binding = Arc::clone(&self.remote_binding);
         let remote_runner = Arc::clone(&self.remote_runner);
@@ -10855,6 +10868,22 @@ impl AndroidJsonHost {
                 } else {
                     routed_subagent_tools
                 };
+                // Local app-sandbox Read/Write is the default Android execution boundary.
+                // Keep Remote outside this wrapper so an explicitly authorized Remote binding can
+                // replace the same tool names without creating a second canonical execution owner.
+                let routed_subagent_tools = with_local_file_tools(
+                    routed_subagent_tools,
+                    local_capability_broker.clone(),
+                    Arc::clone(&local_runner),
+                    local_approvals.clone(),
+                    Arc::clone(&local_user_settings),
+                    Arc::clone(&live_account_fence),
+                    Arc::clone(&turn_events),
+                    &operation_id_owned,
+                    &request_id_owned,
+                    turn_generation,
+                    Arc::clone(&cancelled),
+                );
                 let routed_subagent_tools = if subagent_capabilities.remote_box_available {
                     with_remote_routed_tools(
                         routed_subagent_tools,
@@ -12017,6 +12046,9 @@ impl AndroidJsonHost {
     fn feature_approval_status(&self, params: &Value) -> Result<Value, String> {
         let approval_id = required_string(params, "approvalId")?;
         let account_fence = self.current_turn_account_fence()?;
+        let local_pending = self
+            .local_approvals
+            .is_pending_for_account(approval_id, &account_fence)?;
         let remote_pending = self
             .remote_approvals
             .is_pending_for_account(approval_id, &account_fence)?;
@@ -12027,19 +12059,22 @@ impl AndroidJsonHost {
             .is_some_and(|operation_id| self.active_operations.contains(operation_id));
         Ok(json!({
             "approvalId": approval_id,
-            "pending": remote_pending || subagent_pending || generic_pending,
+            "pending": local_pending || remote_pending || subagent_pending || generic_pending,
         }))
     }
 
     fn feature_approval_resolve(&mut self, params: &Value) -> Result<Value, String> {
         let (approval_id, decision) = parse_android_approval_resolution(params)?;
         let account_fence = self.current_turn_account_fence()?;
+        let local_dispatch = self
+            .local_approvals
+            .is_pending_for_account(&approval_id, &account_fence)?;
         let remote_dispatch = self
             .remote_approvals
             .is_pending_for_account(&approval_id, &account_fence)?;
-        if decision.is_standing_policy() && !remote_dispatch {
+        if decision.is_standing_policy() && !(local_dispatch || remote_dispatch) {
             return Err(
-                "always/never approval decisions are limited to Remote local-computer actions"
+                "always/never approval decisions are limited to Local/Remote computer actions"
                     .into(),
             );
         }
@@ -12048,7 +12083,7 @@ impl AndroidJsonHost {
         let mut effective_decision = decision.as_str();
         let mut effective_local_tool_permission = None;
         let mut persistence_degraded: Option<String> = None;
-        if remote_dispatch && decision.is_standing_policy() {
+        if (local_dispatch || remote_dispatch) && decision.is_standing_policy() {
             self.sync_local_tool_permission_ceiling()?;
             let requested = match decision {
                 AndroidApprovalDecision::Always => "always",
@@ -12114,6 +12149,38 @@ impl AndroidJsonHost {
                 "operationId":resolved.operation_id,
                 "capability":resolved.capability,
                 "execution": if approved { "review-unlocked" } else { "denied" },
+            }));
+        }
+        if let Some(resolution) = self.local_approvals.resolve_from_ui(
+            &self.capability_broker,
+            &approval_id,
+            approved,
+            &account_fence,
+            now_ms(),
+        )? {
+            self.events.push_back(json!({
+                "type":"approval.resolved",
+                "approvalId":approval_id,
+                "operationId":resolution.local_operation_id,
+                "capability":resolution.capability,
+                "approved":approved,
+                "decision":decision.as_str(),
+                "effectiveDecision":effective_decision,
+                "localDispatch":true,
+                "effectiveLocalToolPermission":effective_local_tool_permission,
+                "persistenceDegraded":persistence_degraded.clone(),
+            }));
+            return Ok(json!({
+                "status":"resolved",
+                "approved":approved,
+                "decision":decision.as_str(),
+                "effectiveDecision":effective_decision,
+                "operationId":resolution.local_operation_id,
+                "capability":resolution.capability,
+                "execution": if approved { "dispatch-unlocked" } else { "denied" },
+                "localDispatch":true,
+                "effectiveLocalToolPermission":effective_local_tool_permission,
+                "persistenceDegraded":persistence_degraded,
             }));
         }
         if let Some(resolution) = self.remote_approvals.resolve_from_ui(
