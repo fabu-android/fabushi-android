@@ -10767,6 +10767,7 @@ impl AndroidJsonHost {
             &agent_id,
             operation_id,
             &account_fence,
+            owes_visible_ack,
             Arc::clone(&cancelled),
         )?;
 
