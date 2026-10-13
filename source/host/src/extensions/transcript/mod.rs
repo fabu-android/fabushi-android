@@ -17,6 +17,7 @@ pub mod send_turn_dispatch;
 pub mod pending_card_sweeps;
 pub mod sand_automation_failure;
 pub mod sand_pending_wake_store;
+pub mod sand_upgrade_resume_store;
 pub mod transcript_store;
 
 pub use async_task_union::{merge_async_tasks, AsyncTask};
