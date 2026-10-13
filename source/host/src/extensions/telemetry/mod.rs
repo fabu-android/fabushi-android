@@ -16,3 +16,6 @@ pub mod auto_review_approval_telemetry;
 pub mod automation_fire_telemetry;
 #[cfg(test)]
 mod android_projection_tests;
+pub mod disk_pressure_telemetry;
+pub mod host_diagnostic_telemetry;
+pub mod search_index_health_telemetry;
