@@ -7939,7 +7939,7 @@ impl AndroidJsonHost {
                 })?;
             if let Some(agent_id) = agent_id.as_deref() {
                 self.visible_ack_obligations
-                    .fulfill(&account_fence, agent_id)
+                    .fulfill_reconciled(&account_fence, agent_id)
                     .map_err(|error| {
                         format!("failed to settle reconciled visible acknowledgement: {error}")
                     })?;
