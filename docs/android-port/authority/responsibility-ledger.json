@@ -18144,6 +18144,134 @@
       "artifact": null,
       "verification_status": "not-verified",
       "notes": "Compatibility/source-closure sub-responsibility for source rows that already referenced this ID. It must not be interpreted as a second runtime owner."
+    },
+    {
+      "responsibility_id": "TELEMETRY-MODEL-EXPERIMENT-EXPOSURE-ANDROID-001",
+      "domain": "telemetry-experiments",
+      "desktop_sources": [
+        {
+          "path": "source/host/src/extensions/telemetry/model_experiment_exposure.rs",
+          "blob_sha": "7ff636d90d684f70e1923a5284a8bd256f31d792"
+        }
+      ],
+      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "responsibility": "Attribute model-experiment exposure only after authenticated assignment settles, require real provider exposure for normal network assignments, allow Product Analytics fallback only for an explicit process override, and emit at most once per relevant account/bootstrap scope.",
+      "source_owner": "Desktop model experiment exposure owner",
+      "state_owner": "HostExperimentsExtension plus AndroidProductAnalyticsRuntime; Presentation owns no experiment truth",
+      "visible_effect": "Experiment-selected models and exposure attribution stay consistent without duplicate analytics or stale-account exposure.",
+      "failure_behavior": [
+        "missing/anonymous assignment emits nothing",
+        "failed provider exposure is not fabricated as success",
+        "privacy opt-out suppresses analytics delivery"
+      ],
+      "cancellation_behavior": "account clear/switch invalidates account-scoped experiment state via generation fencing",
+      "retry_semantics": "provider scheduling failure clears the provider single-fire latch so a later valid turn may retry; analytics queue failure clears its account-scope dedupe key",
+      "idempotency_semantics": "provider exposure is once per authenticated bootstrap; Product Analytics exposure is once per account scope",
+      "process_death_recovery": "fresh process rehydrates authenticated experiment state before using network assignment; no UI-local exposure state is restored",
+      "account_fencing": "authenticated bootstrap generation and clear_account_scope fence stale account refresh/exposure",
+      "security_boundary": "Statsig/provider and analytics credentials remain Host-owned; only bounded arm attribution is emitted",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "source/host/src/extensions/experiments/extension.rs",
+        "source/host/src/extensions/experiments/model_selection.rs",
+        "source/host/src/extensions/telemetry/analytics_service.rs",
+        "source/host/src/android_json_runtime.rs"
+      ],
+      "android_owner": "Rust Host experiments owner + product analytics runtime",
+      "platform_delta": "Android uses the canonical Rust authenticated experiments owner directly instead of Desktop hydration-wait helper wiring; semantics are preserved with generation/account fencing and provider exposure scheduling.",
+      "implementation_status": "implemented",
+      "production_wiring": "Android turn model selection calls HostExperimentsExtension provider exposure and conditionally tracks bounded product analytics on the real turn path.",
+      "unit_test": "Experiments and analytics tests cover assignment, stale refresh, one-shot provider exposure, account-scope analytics de-duplication and privacy opt-out; exact-head Actions pending",
+      "contract_test": "provider exposure payload and bounded arm analytics contract tests exist; exact-head Actions pending",
+      "integration_test": "production turn path is source-wired; exact-head CI/package/device acceptance pending",
+      "packaged_test": "required",
+      "device_test": "required",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Narrow production responsibility implemented; broader EXPERIMENTS-HOST-ANDROID-001 remains independently gated by its remaining scope and final evidence."
+    },
+    {
+      "responsibility_id": "TELEMETRY-PRESSURE-CPU-PROFILER-ANDROID-001",
+      "domain": "telemetry-resource-pressure",
+      "desktop_sources": [
+        {
+          "path": "source/host/src/extensions/telemetry/pressure_cpu_profiler.rs",
+          "blob_sha": "c0d14984e12bd482f2a21eabb1131987a72c74c2"
+        }
+      ],
+      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "responsibility": "Capture bounded diagnostics after sustained CPU/event-loop pressure with configurable duration/window/cooldown/retention, avoid overlapping captures, dispose cleanly, and retain useful evidence without granting Android arbitrary desktop profiler process execution.",
+      "source_owner": "Desktop pressure CPU profiler",
+      "state_owner": "AndroidPressureCpuProfiler in Rust Host",
+      "visible_effect": "Performance incidents can retain bounded diagnostics while normal app behavior and privacy remain unaffected.",
+      "failure_behavior": [
+        "capture/write failure remains diagnostic only",
+        "unsupported desktop profiler subprocesses are not emulated",
+        "retention is bounded"
+      ],
+      "cancellation_behavior": "dispose cancels in-flight capture without publishing a partial artifact",
+      "retry_semantics": "new capture can occur only after sustained pressure and configured cooldown",
+      "idempotency_semantics": "one active capture at a time; pruning is deterministic and bounded",
+      "process_death_recovery": "artifacts already atomically written remain available; no in-memory active capture is treated as completed after death",
+      "account_fencing": "process-resource diagnostics are installation/process scoped and contain no account token; telemetry shipping remains account-fenced separately",
+      "security_boundary": "self-process CPU/RSS/thread snapshots only; no arbitrary perf/WPR child process and no raw user content",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "source/host/src/extensions/telemetry/pressure_cpu_profiler.rs",
+        "source/host/src/android_json_runtime.rs"
+      ],
+      "android_owner": "Rust AndroidPressureCpuProfiler",
+      "platform_delta": "Desktop perf/WPR backend is replaced with bounded Android self-process snapshots because arbitrary profiler subprocess execution is not an Android app capability.",
+      "implementation_status": "implemented",
+      "production_wiring": "AndroidJsonHost constructs AndroidPressureCpuProfiler and binds it to AndroidEventLoopTelemetryRuntime.",
+      "unit_test": "Focused Rust tests cover sustained pressure/cooldown, bounded retention/snapshot artifact and dispose cancellation; exact-head Actions pending",
+      "contract_test": "dynamic-config knob compatibility retained; exact-head Actions pending",
+      "integration_test": "event-loop runtime production composition is source-wired; exact-head CI/package/device performance evidence pending",
+      "packaged_test": "required",
+      "device_test": "required performance acceptance",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Implemented source and production wiring; not verified until descendant exact-head CI/package/device performance evidence succeeds."
+    },
+    {
+      "responsibility_id": "TELEMETRY-QUEUE-LIFECYCLE-ANDROID-001",
+      "domain": "telemetry-queue-lifecycle",
+      "desktop_sources": [
+        {
+          "path": "source/host/src/extensions/telemetry/queue_telemetry_mappers.rs",
+          "blob_sha": "14c769121cb2f1e8940af037e8d4fbd825bbdc36"
+        }
+      ],
+      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "responsibility": "Emit bounded telemetry for send dispatch, queue acceptance/dequeue/watchdog settlement, visible-ack obligations and pending wake lifecycle from the canonical queue/ack/wake owners.",
+      "source_owner": "Desktop queue telemetry mapper + queue/ack/wake producers",
+      "state_owner": "Canonical queue/ack/pending-wake owners; telemetry mappers own no business state",
+      "visible_effect": "Diagnostics explain queue stalls, late settlement, lost acknowledgements and wake failures without changing delivery truth.",
+      "failure_behavior": [
+        "telemetry failure never mutates queue/ack/wake truth"
+      ],
+      "cancellation_behavior": "follows canonical producer lifecycle; mapper itself has no side-effect cancellation",
+      "retry_semantics": "no telemetry-driven business retry",
+      "idempotency_semantics": "producer-defined event identity; mapper is pure",
+      "process_death_recovery": "must be emitted from durable queue/ack/wake recovery owners where applicable",
+      "account_fencing": "producer account fence must be carried before emission",
+      "security_boundary": "bounded diagnostic fields only",
+      "android_disposition": "direct-port",
+      "android_target": [
+        "source/host/src/extensions/telemetry/queue_telemetry_mappers.rs"
+      ],
+      "android_owner": "Not yet production-wired; mapper module only",
+      "platform_delta": "Mapper semantics are platform-neutral; missing work is production producer wiring, not an Android mechanism substitution.",
+      "implementation_status": "mapped",
+      "production_wiring": "Current exact-branch git grep found no production caller outside the mapper module/tests.",
+      "unit_test": "Mapper severity/field tests exist",
+      "contract_test": "pending production-producer contract coverage",
+      "integration_test": "missing",
+      "packaged_test": "missing",
+      "device_test": "missing",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Deliberately mapped, not implemented. Next work should wire canonical send/queue/ack/pending-wake owners to these pure mappers and the Host structured-log sink."
     }
   ],
   "traceability": {
