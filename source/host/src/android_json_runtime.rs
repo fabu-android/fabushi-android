@@ -64,6 +64,12 @@ use crate::extensions::cross_user_sharing::xuser_entry_publisher::{
 };
 use crate::extensions::cross_user_sharing::xuser_relay::XuserRelayClient;
 use crate::extensions::cross_user_sharing::xuser_sharing_service::SandXuserSharingService;
+use crate::extensions::managed_setup::cursor_skills_marketplace::{
+    fetch_sand_managed_skills, fetch_skill_catalog,
+};
+use crate::extensions::managed_setup::managed_skills_service::{
+    ManagedSkillsRefreshTrigger, SandManagedSkillsService,
+};
 use crate::extensions::teach_recording::{DurableTeachRecordingOwner, TeachRecordingPhase};
 use crate::extensions::trays::extension::{start_trays_extension, HostTraysExtension};
 use crate::extensions::trays::trays_service::{TrayEvent, TraySubscription};
@@ -868,6 +874,7 @@ pub struct AndroidJsonHost {
     mcp_auth_watches: Arc<Mutex<AndroidMcpAuthWatchManager>>,
     mcp_auth_owner: Option<AndroidMcpAuthWatchOwner>,
     mcp_dashboard_backend: Option<Arc<CursorDashboardMcpAuthBackend>>,
+    managed_skills: Option<Arc<SandManagedSkillsService>>,
     managed_team_rules: Arc<crate::managed_team_rules::ManagedTeamRulesResolver>,
     cross_user_core: Option<ProductionCrossUserCore>,
     _cross_user_experiment_subscription: Option<StopGateSubscription>,
@@ -1263,6 +1270,28 @@ impl AndroidJsonHost {
         } else {
             (None, None)
         };
+        let managed_skills = if mode == AndroidHostMode::Production {
+            mcp_dashboard_backend.as_ref().map(|dashboard| {
+                let dashboard = Arc::clone(dashboard);
+                let fetch = Arc::new(move || {
+                    fetch_sand_managed_skills(dashboard.as_ref())
+                        .map_err(|error| error.to_string())
+                });
+                let service = Arc::new(SandManagedSkillsService::new(
+                    app_data_dir.join("managed-skills"),
+                    fetch,
+                    None,
+                ));
+                if let Some(account_fence) = account.session_fence() {
+                    if service.set_account_scope(Some(&account_fence)).is_ok() {
+                        service.start();
+                    }
+                }
+                service
+            })
+        } else {
+            None
+        };
         let cross_user_core = if mode == AndroidHostMode::Production {
             let env = android_xuser_environment(true, std::env::vars());
             mcp_dashboard_backend.as_ref().and_then(|dashboard| {
@@ -1482,6 +1511,7 @@ impl AndroidJsonHost {
             mcp_auth_watches,
             mcp_auth_owner,
             mcp_dashboard_backend,
+            managed_skills,
             managed_team_rules,
             cross_user_core,
             _cross_user_experiment_subscription: cross_user_experiment_subscription,
@@ -2746,6 +2776,7 @@ impl AndroidJsonHost {
             "feature.account.sandAccess" => self.account_sand_access(),
             "feature.account.privacyMode" => Ok(self.account_privacy_mode()),
             "feature.account.teamRules" => self.account_team_rules(),
+            "feature.agent.managedSkills" => self.agent_managed_skills(),
             "feature.account.prReviewPreferences" => self.account_pr_review_preferences(),
             "feature.account.dashboardAction" => self.account_dashboard_action(params),
             "feature.account.usageSummary" => self.account_usage_summary(),
@@ -4365,6 +4396,33 @@ impl AndroidJsonHost {
             .map_err(|error| format!("failed to serialize auto-review settings: {error}"))
     }
 
+    fn agent_managed_skills(&self) -> Result<Value, String> {
+        let account_fence = self.current_turn_account_fence()?;
+        let service = self
+            .managed_skills
+            .as_ref()
+            .ok_or("managed skills runtime is unavailable")?;
+        service.set_account_scope(Some(&account_fence))?;
+        service.refresh(ManagedSkillsRefreshTrigger::OnDemand);
+        let managed = service.cached_skills();
+        let marketplace = self
+            .mcp_dashboard_backend
+            .as_ref()
+            .ok_or("managed skills Dashboard backend is unavailable")
+            .and_then(|backend| {
+                fetch_skill_catalog(backend.as_ref()).map_err(|error| error.to_string())
+            })?;
+        if self.current_turn_account_fence()? != account_fence {
+            service.set_account_scope(None)?;
+            return Err("managed skills result is stale after account switch".into());
+        }
+        Ok(json!({
+            "accountFence": account_fence,
+            "managed": managed,
+            "marketplace": marketplace,
+        }))
+    }
+
     fn account_team_rules(&self) -> Result<Value, String> {
         let account_fence = self.current_turn_account_fence()?;
         let rules = match self.mode {
@@ -4812,6 +4870,11 @@ impl AndroidJsonHost {
         // Prepared variable writes may contain secret values. Even though commit is account-fenced,
         // the old account's uncommitted secret material must not survive the transition in memory.
         self.pending_plugin_variable_writes.clear();
+        if let Some(service) = self.managed_skills.as_ref() {
+            service
+                .set_account_scope(None)
+                .map_err(|error| format!("failed to clear managed skills account scope during transition: {error}"))?;
+        }
         self.experiments.clear_account_scope();
         if let Some(core) = self.cross_user_core.as_ref() {
             core.fence_account_transition()?;
