@@ -48,7 +48,7 @@ use crate::mcp_auth::{
     SandPrivacyMode as BackendSandPrivacyMode,
 };
 use crate::extensions::telemetry::agent_error_telemetry::{
-    agent_error_detail_telemetry, agent_error_telemetry, AgentErrorDetail, AgentErrorReport,
+    agent_error_telemetry, AgentErrorReport,
 };
 use crate::extensions::telemetry::sand_error_tags::SandErrorValue;
 use crate::extensions::telemetry::connector_auth_telemetry::{
@@ -2213,41 +2213,24 @@ impl AndroidJsonHost {
             .and_then(Value::as_str)
             .filter(|value| !value.trim().is_empty())
             .map(str::to_string);
-        let detail = event
-            .get("message")
-            .and_then(Value::as_str)
-            .filter(|value| !value.trim().is_empty())
-            .map(|message| AgentErrorDetail {
-                message: message.to_string(),
-                // Android terminal events intentionally do not carry provider stacks. Never
-                // synthesize or leak a stack just to satisfy the Desktop detail schema.
-                stack: None,
-            });
         let report = AgentErrorReport {
             source: "android-turn".into(),
             conversation_id: conversation_id.to_string(),
             request_id,
-            // The terminal event does not carry a frozen provider error code. Use the registry
-            // fallback instead of guessing a transport/agent classification.
+            // Terminal operation.failed carries free-form provider/user-facing text, not a
+            // frozen SandErrorDetail that has crossed the Desktop redaction boundary. Preserve
+            // the structured failure signal but never persist that raw text as telemetry detail.
             error: SandErrorValue::new("SAND-E0001"),
-            detail,
+            detail: None,
         };
-        let summary = agent_error_telemetry(&report);
-        let detail = agent_error_detail_telemetry(&report);
+        let projection = agent_error_telemetry(&report);
+        let (Some(level), Some(message)) = (projection.level, projection.event) else {
+            return;
+        };
         self.sync_structured_log_account_slot();
         // Telemetry is observational. A spill failure must never change terminal turn truth,
         // replay a side effect, or turn an already-settled failure into another failure.
-        for projection in std::iter::once(summary).chain(detail) {
-            let (Some(level), Some(message)) = (projection.level, projection.event) else {
-                continue;
-            };
-            let _ = self.record_structured_log(
-                level,
-                message,
-                projection.metadata,
-                now_ms(),
-            );
-        }
+        let _ = self.record_structured_log(level, message, projection.metadata, now_ms());
     }
 
     fn record_structured_log(
@@ -16663,6 +16646,45 @@ mod structured_log_spill_runtime_tests {
     use crate::android_structured_log_spill::{
         FileAndroidStructuredLogSpill, SpillLoad,
     };
+
+    #[test]
+    fn agent_failure_telemetry_does_not_persist_raw_terminal_message() {
+        let root = tempfile::tempdir().unwrap();
+        let spill_path = root.path().join("android-structured-log-spill.v1.json");
+        let mut host = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+        host.record_agent_turn_failure_telemetry(&json!({
+            "type":"operation.failed",
+            "agentId":"agent-a",
+            "requestId":"request-a",
+            "message":"provider failed: bearer secret-token-must-not-survive"
+        }));
+        drop(host);
+
+        let raw = std::fs::read_to_string(&spill_path).unwrap();
+        assert!(raw.contains("sand.agent.error"));
+        assert!(!raw.contains("secret-token-must-not-survive"));
+        assert!(!raw.contains("sand.agent.error.detail"));
+
+        let loaded = FileAndroidStructuredLogSpill::new(&spill_path)
+            .load("logged-out", now_ms())
+            .unwrap();
+        let state = match loaded {
+            SpillLoad::Loaded(state) => state,
+            other => panic!("expected durable structured-log spill, got {other:?}"),
+        };
+        let records = state
+            .checkpoint
+            .records
+            .iter()
+            .filter(|record| record.message == "sand.agent.error")
+            .collect::<Vec<_>>();
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].metadata["conversation_id"], "agent-a");
+        assert_eq!(records[0].metadata["request_id"], "request-a");
+        assert_eq!(records[0].metadata["error_code"], "SAND-E0001");
+        assert!(!records[0].metadata.contains_key("error_message"));
+        assert!(!records[0].metadata.contains_key("error_stack"));
+    }
 
     #[test]
     fn sanitized_edge_failure_is_durable_without_raw_error_detail() {
