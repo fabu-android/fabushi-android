@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
+use std::io::Write;
 use std::path::PathBuf;
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -440,9 +441,18 @@ impl HumanCallRuntime {
             fs::create_dir_all(parent).map_err(|error| error.to_string())?;
         }
         let temp = self.path.with_extension("json.tmp");
-        fs::write(&temp, serde_json::to_vec_pretty(&self.state).map_err(|error| error.to_string())?)
-            .map_err(|error| error.to_string())?;
-        fs::rename(temp, &self.path).map_err(|error| error.to_string())
+        let payload = serde_json::to_vec_pretty(&self.state).map_err(|error| error.to_string())?;
+        let result = (|| -> Result<(), String> {
+            let mut file = fs::File::create(&temp).map_err(|error| error.to_string())?;
+            file.write_all(&payload).map_err(|error| error.to_string())?;
+            file.sync_all().map_err(|error| error.to_string())?;
+            fs::rename(&temp, &self.path).map_err(|error| error.to_string())?;
+            Ok(())
+        })();
+        if result.is_err() {
+            let _ = fs::remove_file(&temp);
+        }
+        result
     }
 }
 
@@ -485,6 +495,32 @@ mod tests {
         let second = runtime.send_signal("call-1", "acct-a", call.generation, "device-a", 2, "candidate", json!({"candidate":"two"}), 4).unwrap();
         assert_eq!((first.seq, second.seq), (1, 2));
         assert!(runtime.send_signal("call-1", "acct-a", call.generation, "device-b", 3, "answer", json!({}), 5).is_err());
+    }
+
+    #[test]
+    fn durable_store_reopens_after_synced_atomic_replacement() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("human-calls.json");
+        {
+            let mut runtime = HumanCallRuntime::open(&path, 1).unwrap();
+            let call = runtime.create(
+                "call-durable",
+                "req-durable",
+                "conversation-1",
+                "human-a",
+                vec!["human-a".into(), "human-b".into()],
+                "acct-a",
+                2,
+            ).unwrap();
+            runtime.transition("call-durable", "acct-a", call.generation, "accept", None, 3).unwrap();
+        }
+        assert!(path.exists());
+        assert!(!path.with_extension("json.tmp").exists());
+        let reopened = HumanCallRuntime::open(&path, 9).unwrap();
+        let restored = reopened.list("conversation-1", "acct-a", 20);
+        assert_eq!(restored.len(), 1);
+        assert_eq!(restored[0].id, "call-durable");
+        assert_eq!(restored[0].state, HumanCallState::OutcomeUnknown);
     }
 
     #[test]
