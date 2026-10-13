@@ -18710,3 +18710,41 @@ mod human_remote_sync_contract_tests {
         assert!(validate_human_remote_envelope(&json!([]), "message sync").is_err());
     }
 }
+
+
+#[cfg(test)]
+mod host_event_bus_delivery_tests {
+    use super::*;
+
+    #[test]
+    fn feature_receive_projects_canonical_event_without_competing_consumption() {
+        let root = tempfile::tempdir().unwrap();
+        let mut host = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+        let receiver = host.host_event_bus().subscribe();
+
+        let accepted = host
+            .dispatch(
+                "feature.execute",
+                &json!({"command":{
+                    "type":"capability.request",
+                    "requestId":"event-bus-capability-1",
+                    "capability":"camera"
+                }}),
+            )
+            .unwrap();
+        assert_eq!(accepted["requestId"], "event-bus-capability-1");
+
+        let canonical = host.dispatch("feature.receive", &json!({})).unwrap();
+        assert_eq!(canonical["type"], "approval.requested");
+
+        let projected = receiver
+            .recv_timeout(Duration::from_secs(1))
+            .expect("delivered canonical event must be observable by HostEventBus");
+        assert_eq!(projected.family, "approval.requested");
+        assert_eq!(
+            serde_json::from_str::<Value>(&projected.payload_json).unwrap(),
+            canonical,
+            "HostEventBus is a projection-only side channel, never a second canonical queue",
+        );
+    }
+}
