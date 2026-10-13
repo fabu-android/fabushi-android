@@ -1,4 +1,5 @@
 pub mod content_search;
+pub mod extension_ids_generated;
 pub mod cross_user_sharing;
 pub mod experiments;
 pub mod telemetry;
