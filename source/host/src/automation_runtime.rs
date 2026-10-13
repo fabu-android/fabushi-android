@@ -50,6 +50,49 @@ pub struct AutomationRun {
     pub reason: Option<String>,
 }
 
+pub const AUTOMATION_EVENT_DEBOUNCE_MS: u64 = 750;
+pub const MAX_QUEUED_EVENT_FIRES_PER_AUTOMATION: usize = 500;
+pub const MAX_EVENTS_IN_AUTOMATION_WAKE: usize = 25;
+pub const MAX_SETTLED_EVENT_OCCURRENCES: usize = 1_024;
+pub const MAX_AUTOMATION_EVENT_BYTES: usize = 256 * 1_024;
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+pub struct AutomationEventFire {
+    pub occurrence_id: String,
+    pub automation_id: String,
+    pub account_fence: String,
+    pub event: Value,
+    pub enqueued_at_ms: u64,
+    pub available_at_ms: u64,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum AutomationEventBatchState {
+    Claimed,
+    OutcomeUnknown,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+pub struct AutomationEventBatch {
+    pub batch_id: String,
+    pub claim_id: String,
+    pub automation_id: String,
+    pub account_fence: String,
+    pub occurrence_ids: Vec<String>,
+    pub events: Vec<Value>,
+    pub claimed_at_ms: u64,
+    pub state: AutomationEventBatchState,
+}
+
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+pub struct AutomationEventEnqueueOutcome {
+    pub accepted: bool,
+    pub duplicate: bool,
+    pub dropped_occurrence_ids: Vec<String>,
+    pub pending_count: usize,
+}
+
 pub const SPEND_GUARD_IDLE_TTL_MS: u64 = 3 * 24 * 60 * 60 * 1_000;
 pub const SPEND_GUARD_MIN_UNREAD_COUNT: u64 = 15;
 pub const SPEND_GUARD_MIN_FIRES_SINCE_VIEWED: u64 = 20;
@@ -126,6 +169,14 @@ struct DurableAutomationState {
     runs: BTreeMap<String, AutomationRun>,
     request_to_run: BTreeMap<String, String>,
     #[serde(default)]
+    next_event_batch_generation: u64,
+    #[serde(default)]
+    event_fires: BTreeMap<String, Vec<AutomationEventFire>>,
+    #[serde(default)]
+    event_batches: BTreeMap<String, AutomationEventBatch>,
+    #[serde(default)]
+    settled_event_occurrences: Vec<String>,
+    #[serde(default)]
     spend_guard: BTreeMap<String, AutomationSpendGuardState>,
 }
 
@@ -147,6 +198,12 @@ impl AutomationRuntime {
         };
 
         let mut changed = false;
+        for batch in state.event_batches.values_mut() {
+            if batch.state == AutomationEventBatchState::Claimed {
+                batch.state = AutomationEventBatchState::OutcomeUnknown;
+                changed = true;
+            }
+        }
         for run in state.runs.values_mut() {
             if run.state == AutomationRunState::Running {
                 run.state = AutomationRunState::OutcomeUnknown;
@@ -425,6 +482,289 @@ impl AutomationRuntime {
         let copy = spec.clone();
         self.persist()?;
         Ok(copy)
+    }
+
+    fn event_queue_key(account_fence: &str, automation_id: &str) -> String {
+        format!("{account_fence}\n{automation_id}")
+    }
+
+    fn event_occurrence_key(
+        account_fence: &str,
+        automation_id: &str,
+        occurrence_id: &str,
+    ) -> String {
+        format!("{account_fence}\n{automation_id}\n{occurrence_id}")
+    }
+
+    fn event_occurrence_known(
+        &self,
+        account_fence: &str,
+        automation_id: &str,
+        occurrence_id: &str,
+    ) -> bool {
+        let key = Self::event_occurrence_key(account_fence, automation_id, occurrence_id);
+        if self.state.settled_event_occurrences.iter().any(|value| value == &key) {
+            return true;
+        }
+        if self
+            .state
+            .event_fires
+            .get(&Self::event_queue_key(account_fence, automation_id))
+            .is_some_and(|fires| fires.iter().any(|fire| fire.occurrence_id == occurrence_id))
+        {
+            return true;
+        }
+        self.state.event_batches.values().any(|batch| {
+            batch.account_fence == account_fence
+                && batch.automation_id == automation_id
+                && batch.occurrence_ids.iter().any(|value| value == occurrence_id)
+        })
+    }
+
+    pub fn enqueue_event_fire(
+        &mut self,
+        automation_id: &str,
+        account_fence: &str,
+        occurrence_id: &str,
+        event: Value,
+        now_ms: u64,
+    ) -> Result<AutomationEventEnqueueOutcome, String> {
+        let occurrence_id = occurrence_id.trim();
+        if occurrence_id.is_empty() || occurrence_id.len() > 256 {
+            return Err("automation event occurrence id is invalid".into());
+        }
+        let spec = self
+            .state
+            .specs
+            .get(automation_id)
+            .ok_or("automation not found")?;
+        if !spec.enabled {
+            return Err("automation is disabled".into());
+        }
+        if spec.account_fence != account_fence {
+            return Err("automation account fence mismatch".into());
+        }
+        let event_bytes = serde_json::to_vec(&event).map_err(|error| error.to_string())?;
+        if event_bytes.len() > MAX_AUTOMATION_EVENT_BYTES {
+            return Err("automation event payload exceeds the durable queue limit".into());
+        }
+        if self.event_occurrence_known(account_fence, automation_id, occurrence_id) {
+            let pending_count = self
+                .state
+                .event_fires
+                .get(&Self::event_queue_key(account_fence, automation_id))
+                .map(Vec::len)
+                .unwrap_or(0);
+            return Ok(AutomationEventEnqueueOutcome {
+                accepted: false,
+                duplicate: true,
+                dropped_occurrence_ids: Vec::new(),
+                pending_count,
+            });
+        }
+
+        let queue_key = Self::event_queue_key(account_fence, automation_id);
+        let queue = self.state.event_fires.entry(queue_key).or_default();
+        queue.push(AutomationEventFire {
+            occurrence_id: occurrence_id.to_string(),
+            automation_id: automation_id.to_string(),
+            account_fence: account_fence.to_string(),
+            event,
+            enqueued_at_ms: now_ms,
+            available_at_ms: now_ms.saturating_add(AUTOMATION_EVENT_DEBOUNCE_MS),
+        });
+        let mut dropped_occurrence_ids = Vec::new();
+        while queue.len() > MAX_QUEUED_EVENT_FIRES_PER_AUTOMATION {
+            let dropped = queue.remove(0);
+            dropped_occurrence_ids.push(dropped.occurrence_id);
+        }
+        let pending_count = queue.len();
+        self.persist()?;
+        Ok(AutomationEventEnqueueOutcome {
+            accepted: true,
+            duplicate: false,
+            dropped_occurrence_ids,
+            pending_count,
+        })
+    }
+
+    pub fn claim_event_batch(
+        &mut self,
+        automation_id: &str,
+        account_fence: &str,
+        claim_id: &str,
+        now_ms: u64,
+    ) -> Result<Option<AutomationEventBatch>, String> {
+        let claim_id = claim_id.trim();
+        if claim_id.is_empty() || claim_id.len() > 256 {
+            return Err("automation event claim id is invalid".into());
+        }
+        if let Some(existing) = self
+            .state
+            .event_batches
+            .values()
+            .find(|batch| batch.claim_id == claim_id)
+        {
+            if existing.account_fence != account_fence || existing.automation_id != automation_id {
+                return Err("automation event claim id is already bound".into());
+            }
+            if existing.state == AutomationEventBatchState::OutcomeUnknown {
+                return Err("automation event batch outcome is unknown; reconcile before replay".into());
+            }
+            return Ok(Some(existing.clone()));
+        }
+        if self.state.event_batches.values().any(|batch| {
+            batch.account_fence == account_fence && batch.automation_id == automation_id
+        }) {
+            return Err("automation event batch is already claimed or outcome-unknown".into());
+        }
+
+        let queue_key = Self::event_queue_key(account_fence, automation_id);
+        let Some(queue) = self.state.event_fires.get_mut(&queue_key) else {
+            return Ok(None);
+        };
+        let ready = queue
+            .iter()
+            .take_while(|fire| fire.available_at_ms <= now_ms)
+            .count()
+            .min(MAX_EVENTS_IN_AUTOMATION_WAKE);
+        if ready == 0 {
+            return Ok(None);
+        }
+        let claimed = queue.drain(..ready).collect::<Vec<_>>();
+        if queue.is_empty() {
+            self.state.event_fires.remove(&queue_key);
+        }
+        self.state.next_event_batch_generation =
+            self.state.next_event_batch_generation.saturating_add(1).max(1);
+        let batch_id = format!(
+            "automation-event-batch-{}",
+            self.state.next_event_batch_generation
+        );
+        let batch = AutomationEventBatch {
+            batch_id: batch_id.clone(),
+            claim_id: claim_id.to_string(),
+            automation_id: automation_id.to_string(),
+            account_fence: account_fence.to_string(),
+            occurrence_ids: claimed
+                .iter()
+                .map(|fire| fire.occurrence_id.clone())
+                .collect(),
+            events: claimed.into_iter().map(|fire| fire.event).collect(),
+            claimed_at_ms: now_ms,
+            state: AutomationEventBatchState::Claimed,
+        };
+        self.state.event_batches.insert(batch_id, batch.clone());
+        self.persist()?;
+        Ok(Some(batch))
+    }
+
+    fn remember_settled_event_occurrence(&mut self, key: String) {
+        self.state.settled_event_occurrences.retain(|value| value != &key);
+        self.state.settled_event_occurrences.push(key);
+        while self.state.settled_event_occurrences.len() > MAX_SETTLED_EVENT_OCCURRENCES {
+            self.state.settled_event_occurrences.remove(0);
+        }
+    }
+
+    pub fn settle_event_batch(
+        &mut self,
+        batch_id: &str,
+        account_fence: &str,
+        succeeded: bool,
+        now_ms: u64,
+    ) -> Result<(), String> {
+        let batch = self
+            .state
+            .event_batches
+            .get(batch_id)
+            .cloned()
+            .ok_or("automation event batch not found")?;
+        if batch.account_fence != account_fence {
+            return Err("automation event batch account fence mismatch".into());
+        }
+        if batch.state == AutomationEventBatchState::OutcomeUnknown {
+            return Err("automation event batch outcome is unknown; reconcile before settlement".into());
+        }
+        self.state.event_batches.remove(batch_id);
+        if succeeded {
+            for occurrence_id in batch.occurrence_ids {
+                self.remember_settled_event_occurrence(Self::event_occurrence_key(
+                    account_fence,
+                    &batch.automation_id,
+                    &occurrence_id,
+                ));
+            }
+        } else {
+            let queue_key = Self::event_queue_key(account_fence, &batch.automation_id);
+            let queue = self.state.event_fires.entry(queue_key).or_default();
+            let mut restored = batch
+                .occurrence_ids
+                .into_iter()
+                .zip(batch.events)
+                .map(|(occurrence_id, event)| AutomationEventFire {
+                    occurrence_id,
+                    automation_id: batch.automation_id.clone(),
+                    account_fence: account_fence.to_string(),
+                    event,
+                    enqueued_at_ms: batch.claimed_at_ms,
+                    available_at_ms: now_ms,
+                })
+                .collect::<Vec<_>>();
+            restored.append(queue);
+            *queue = restored;
+        }
+        self.persist()
+    }
+
+    pub fn reconcile_event_batch(
+        &mut self,
+        batch_id: &str,
+        account_fence: &str,
+        completed: bool,
+        now_ms: u64,
+    ) -> Result<(), String> {
+        let batch = self
+            .state
+            .event_batches
+            .get(batch_id)
+            .cloned()
+            .ok_or("automation event batch not found")?;
+        if batch.account_fence != account_fence {
+            return Err("automation event batch account fence mismatch".into());
+        }
+        if batch.state != AutomationEventBatchState::OutcomeUnknown {
+            return Err("automation event batch does not require reconciliation".into());
+        }
+        self.state.event_batches.remove(batch_id);
+        if completed {
+            for occurrence_id in batch.occurrence_ids {
+                self.remember_settled_event_occurrence(Self::event_occurrence_key(
+                    account_fence,
+                    &batch.automation_id,
+                    &occurrence_id,
+                ));
+            }
+        } else {
+            let queue_key = Self::event_queue_key(account_fence, &batch.automation_id);
+            let queue = self.state.event_fires.entry(queue_key).or_default();
+            let mut restored = batch
+                .occurrence_ids
+                .into_iter()
+                .zip(batch.events)
+                .map(|(occurrence_id, event)| AutomationEventFire {
+                    occurrence_id,
+                    automation_id: batch.automation_id.clone(),
+                    account_fence: account_fence.to_string(),
+                    event,
+                    enqueued_at_ms: batch.claimed_at_ms,
+                    available_at_ms: now_ms,
+                })
+                .collect::<Vec<_>>();
+            restored.append(queue);
+            *queue = restored;
+        }
+        self.persist()
     }
 
     pub fn begin_run(
@@ -1064,6 +1404,178 @@ mod tests {
         assert_eq!(disabled.next_run_at_ms, None);
         let enabled = runtime.set_agent_workflow_enabled("acct-a", "agent-a", "daily-brief", true, Some("UTC")).unwrap();
         assert!(enabled.next_run_at_ms.is_some());
+    }
+
+    #[test]
+    fn event_occurrences_are_debounced_bounded_batched_and_deduplicated() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("automation.json");
+        let mut runtime = AutomationRuntime::open(&path, 1).unwrap();
+        runtime.upsert_spec(spec("acct-a"), Some("UTC")).unwrap();
+
+        let first = runtime
+            .enqueue_event_fire(
+                "daily-brief",
+                "acct-a",
+                "occurrence-1",
+                json!({"kind":"message","value":1}),
+                1_000,
+            )
+            .unwrap();
+        assert!(first.accepted);
+        assert!(!first.duplicate);
+        assert!(runtime
+            .claim_event_batch("daily-brief", "acct-a", "claim-early", 1_749)
+            .unwrap()
+            .is_none());
+        let duplicate = runtime
+            .enqueue_event_fire(
+                "daily-brief",
+                "acct-a",
+                "occurrence-1",
+                json!({"kind":"message","value":999}),
+                1_100,
+            )
+            .unwrap();
+        assert!(duplicate.duplicate);
+
+        for index in 2..=30 {
+            runtime
+                .enqueue_event_fire(
+                    "daily-brief",
+                    "acct-a",
+                    &format!("occurrence-{index}"),
+                    json!({"kind":"message","value":index}),
+                    1_000,
+                )
+                .unwrap();
+        }
+        let batch = runtime
+            .claim_event_batch("daily-brief", "acct-a", "claim-1", 1_750)
+            .unwrap()
+            .unwrap();
+        assert_eq!(batch.events.len(), MAX_EVENTS_IN_AUTOMATION_WAKE);
+        assert_eq!(batch.occurrence_ids[0], "occurrence-1");
+        assert_eq!(batch.occurrence_ids[24], "occurrence-25");
+        assert_eq!(
+            runtime
+                .claim_event_batch("daily-brief", "acct-a", "claim-1", 1_751)
+                .unwrap()
+                .unwrap(),
+            batch,
+            "stable claim replay must return the same batch"
+        );
+        runtime
+            .settle_event_batch(&batch.batch_id, "acct-a", true, 1_752)
+            .unwrap();
+        let settled_duplicate = runtime
+            .enqueue_event_fire(
+                "daily-brief",
+                "acct-a",
+                "occurrence-1",
+                json!({"kind":"message"}),
+                2_000,
+            )
+            .unwrap();
+        assert!(settled_duplicate.duplicate);
+        let next = runtime
+            .claim_event_batch("daily-brief", "acct-a", "claim-2", 2_000)
+            .unwrap()
+            .unwrap();
+        assert_eq!(next.events.len(), 5);
+    }
+
+    #[test]
+    fn claimed_event_batch_requires_reconciliation_after_process_death() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("automation.json");
+        let batch_id;
+        {
+            let mut runtime = AutomationRuntime::open(&path, 1).unwrap();
+            runtime.upsert_spec(spec("acct-a"), Some("UTC")).unwrap();
+            runtime
+                .enqueue_event_fire(
+                    "daily-brief",
+                    "acct-a",
+                    "occurrence-crash",
+                    json!({"kind":"connector","id":"event-1"}),
+                    10,
+                )
+                .unwrap();
+            let batch = runtime
+                .claim_event_batch("daily-brief", "acct-a", "claim-crash", 1_000)
+                .unwrap()
+                .unwrap();
+            batch_id = batch.batch_id;
+        }
+
+        let mut recovered = AutomationRuntime::open(&path, 2_000).unwrap();
+        assert!(recovered
+            .claim_event_batch("daily-brief", "acct-a", "claim-after-restart", 2_000)
+            .unwrap_err()
+            .contains("outcome-unknown"));
+        assert!(recovered
+            .settle_event_batch(&batch_id, "acct-a", true, 2_001)
+            .unwrap_err()
+            .contains("reconcile"));
+        recovered
+            .reconcile_event_batch(&batch_id, "acct-a", false, 2_002)
+            .unwrap();
+        let replay = recovered
+            .claim_event_batch("daily-brief", "acct-a", "claim-reconciled", 2_002)
+            .unwrap()
+            .unwrap();
+        assert_eq!(replay.occurrence_ids, vec!["occurrence-crash"]);
+        recovered
+            .settle_event_batch(&replay.batch_id, "acct-a", true, 2_003)
+            .unwrap();
+        assert!(recovered
+            .enqueue_event_fire(
+                "daily-brief",
+                "acct-a",
+                "occurrence-crash",
+                json!({"kind":"connector","id":"event-1"}),
+                2_004,
+            )
+            .unwrap()
+            .duplicate);
+    }
+
+    #[test]
+    fn event_queue_drops_oldest_overflow_and_is_account_fenced() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut runtime = AutomationRuntime::open(dir.path().join("automation.json"), 1).unwrap();
+        runtime.upsert_spec(spec("acct-a"), Some("UTC")).unwrap();
+        assert!(runtime
+            .enqueue_event_fire(
+                "daily-brief",
+                "acct-b",
+                "wrong-account",
+                json!({"value":0}),
+                1,
+            )
+            .unwrap_err()
+            .contains("account fence"));
+        let mut dropped = Vec::new();
+        for index in 0..=MAX_QUEUED_EVENT_FIRES_PER_AUTOMATION {
+            let outcome = runtime
+                .enqueue_event_fire(
+                    "daily-brief",
+                    "acct-a",
+                    &format!("overflow-{index}"),
+                    json!({"value":index}),
+                    1,
+                )
+                .unwrap();
+            dropped.extend(outcome.dropped_occurrence_ids);
+        }
+        assert_eq!(dropped, vec!["overflow-0".to_string()]);
+        let batch = runtime
+            .claim_event_batch("daily-brief", "acct-a", "overflow-claim", 751)
+            .unwrap()
+            .unwrap();
+        assert_eq!(batch.occurrence_ids[0], "overflow-1");
+        assert_eq!(batch.occurrence_ids.len(), MAX_EVENTS_IN_AUTOMATION_WAKE);
     }
 
 }
