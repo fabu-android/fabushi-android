@@ -165,6 +165,7 @@ pub enum McpToolExecutionBackendResult {
 }
 
 pub trait SandMcpCredentialProvider: Send + Sync {
+    fn configuration(&self) -> SandMcpBackendConfiguration;
     fn credentials(&self) -> Result<SandMcpBackendCredentials, String>;
 }
 
@@ -284,6 +285,10 @@ impl ProcessSandMcpCredentialProvider {
 }
 
 impl SandMcpCredentialProvider for ProcessSandMcpCredentialProvider {
+    fn configuration(&self) -> SandMcpBackendConfiguration {
+        ProcessSandMcpCredentialProvider::configuration(self)
+    }
+
     fn credentials(&self) -> Result<SandMcpBackendCredentials, String> {
         let now = system_now_ms();
         if let Some(cached) = self
