@@ -452,16 +452,70 @@ fn read_entries(path: &Path) -> io::Result<Vec<Value>> {
 
 fn salvage_valid_entries(path: &Path) -> io::Result<Vec<Value>> {
     let raw = fs::read_to_string(path)?;
-    let value: Value = serde_json::from_str(&raw)
-        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
-    let entries = value
-        .as_array()
-        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "transcript root must be an array"))?;
-    Ok(entries
-        .iter()
-        .filter(|entry| entry_id(entry).is_ok())
-        .cloned()
-        .collect())
+    if !raw.trim_start().starts_with('[') {
+        return Ok(Vec::new());
+    }
+
+    // A corrupt transcript may be syntactically invalid as a whole (for example, process death
+    // after several complete array elements but before the final element/closing bracket). Mirror
+    // Desktop's row-by-row SQLite salvage: only recover fully delimited top-level JSON objects,
+    // never guess a partial object, and keep the first occurrence of a durable entry id.
+    let mut entries = Vec::new();
+    let mut seen_ids = HashSet::new();
+    let mut start = None;
+    let mut object_depth = 0usize;
+    let mut array_depth = 0usize;
+    let mut in_string = false;
+    let mut escaped = false;
+
+    for (index, ch) in raw.char_indices() {
+        if in_string {
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == '"' {
+                in_string = false;
+            }
+            continue;
+        }
+
+        match ch {
+            '"' => in_string = true,
+            '[' => array_depth = array_depth.saturating_add(1),
+            ']' => array_depth = array_depth.saturating_sub(1),
+            '{' if array_depth == 1 => {
+                if object_depth == 0 {
+                    start = Some(index);
+                }
+                object_depth = object_depth.saturating_add(1);
+            }
+            '{' if object_depth > 0 => {
+                object_depth = object_depth.saturating_add(1);
+            }
+            '}' if object_depth > 0 => {
+                object_depth -= 1;
+                if object_depth == 0 {
+                    let Some(start) = start.take() else {
+                        continue;
+                    };
+                    let end = index + ch.len_utf8();
+                    let Ok(entry) = serde_json::from_str::<Value>(&raw[start..end]) else {
+                        continue;
+                    };
+                    let Ok(id) = entry_id(&entry) else {
+                        continue;
+                    };
+                    if seen_ids.insert(id.to_string()) {
+                        entries.push(entry);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    Ok(entries)
 }
 
 fn temporary_path(path: &Path) -> PathBuf {
@@ -1068,6 +1122,33 @@ mod tests {
             vec!["keep-a", "keep-b"],
         );
         assert_eq!(TranscriptStore::open(&path).unwrap().get_transcript().len(), 2);
+        let _ = fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
+    fn recovering_open_salvages_complete_prefix_from_truncated_store_and_deduplicates_ids() {
+        let path = temp_path();
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(
+            &path,
+            r#"[{"id":"keep-a","kind":"message","content":"brace } in string"},{"id":"same","kind":"notice"},{"id":"same","kind":"notice","text":"duplicate"},{"kind":"message"},{"id":"keep-b","kind":"message"},{"id":"partial""#,
+        )
+        .unwrap();
+
+        let (store, recovery) = TranscriptStore::open_recovering(&path).unwrap();
+        let recovery = recovery.unwrap();
+
+        assert_eq!(recovery.outcome, TranscriptRecoveryOutcome::RecoveredSalvage);
+        assert!(recovery.quarantine_path.unwrap().exists());
+        assert_eq!(
+            store
+                .get_transcript()
+                .iter()
+                .map(|entry| entry["id"].as_str().unwrap())
+                .collect::<Vec<_>>(),
+            vec!["keep-a", "same", "keep-b"],
+        );
+        assert_eq!(TranscriptStore::open(&path).unwrap().get_transcript().len(), 3);
         let _ = fs::remove_dir_all(path.parent().unwrap());
     }
 
