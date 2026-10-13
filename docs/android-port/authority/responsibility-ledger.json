@@ -7528,20 +7528,21 @@
         "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/production/AgentProfileEditor_view.kt",
         "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/features/bots/GrokHomeSurface.kt",
         "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/production/ProductionRenderer_view.kt",
-        "mobile/android/app/src/test/java/com/ombhrum/fabushi/AgentProfileEditorTest.kt"
+        "mobile/android/app/src/test/java/com/ombhrum/fabushi/AgentProfileEditorTest.kt",
+        "source/host/src/android_json_runtime.rs"
       ],
       "android_owner": "Rust AndroidAgentRoster + durable Coordinator mutation owner; native settings fence is transient lifecycle protection only.",
       "platform_delta": "Desktop React subscriptions/generation guards become native Compose lifecycle plus a typed Kotlin mutation fence; canonical state remains in Rust Host and is re-read from agentList.",
       "implementation_status": "implemented",
-      "production_wiring": "Shipping GrokHomeSurface opens native AgentProfileEditor, binds begin/end lifecycle, dispatches typed profile/notification commands through Coordinator durable mutation ownership, receives canonical roster invalidation/upsert events, and refreshes from Host agentList.",
-      "unit_test": "Rust roster tests cover title/notification persistence, duplicate preservation, legacy serde defaults, durable replay and group rejection; AgentProfileEditorTest covers title normalization and Agent/account/dispose/serialized-mutation fencing.",
-      "contract_test": "Rust Android runtime contract suite exercises canonical roster mutation settlement; typed Kotlin port exposes explicit profile/notification methods rather than arbitrary Host dispatch.",
+      "production_wiring": "Canonical AndroidAgentRoster owns durable title/notifyOnUpdates state. Host dispatch now exposes setAgentNotifyOnUpdates against that owner; Coordinator/Presentation consume authoritative roster projections rather than a second settings store.",
+      "unit_test": "android_agent_roster::tests::mutations_persist_one_canonical_roster now proves notifyOnUpdates survives reopen; android_json_runtime::tests::agent_notify_on_updates_dispatch_persists_the_canonical_preference proves the shipping Host route, required boolean validation, and durable reopen behavior.",
+      "contract_test": "Desktop gateway setAgentNotifyOnUpdates(id,isEnabled) semantics are preserved by the exact Host compatibility route while roster projection continues to expose notifyOnUpdatesEnabled.",
       "integration_test": "Exact-head CI must rerun after this authority commit; predecessor 723895 Rust foundation and Rust contract/runtime were successful but are not final evidence for this descendant.",
       "packaged_test": "required: native Agent settings title/notification journey from final packaged artifact with authoritative refresh, account switch and process-death reopen",
       "device_test": "required: supported-device notification setting/title edit, late callback/account switch/process death/reopen",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Production implementation is present, but this responsibility is intentionally not verified until the authority descendant HEAD passes required JVM/native/APK plus packaged/device evidence. Do not inherit predecessor green."
+      "notes": "Production implementation is present, but this responsibility is intentionally not verified until the authority descendant HEAD passes required JVM/native/APK plus packaged/device evidence. Do not inherit predecessor green. Gap audit at Desktop gateway blob e77e6bc40d9b12a020b7ad5eec1fcb6d11c68550 found the field was durable but not mutable through production Host. Commits 3da255d114fefa01eb8e7ffeb0baa8e0067b7d66 and 39377a08202f124d33abb5efb6f96cc92f77802b close that wiring/test gap. Descendant exact-head CI/package/device evidence remains required."
     },
     {
       "responsibility_id": "AGENT-SHARED-ROOM-ANDROID-001",
