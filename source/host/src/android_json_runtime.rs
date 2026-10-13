@@ -225,6 +225,35 @@ fn mcp_account_fence_generation(account_fence: &str) -> u64 {
     u64::from_str_radix(&digest[..16], 16).unwrap_or(1).max(1)
 }
 
+fn validate_mcp_approval_target(
+    target: &Value,
+    server_id: &str,
+    tool_name: &str,
+) -> Result<(), String> {
+    let Some(target) = target.as_object() else {
+        // Older approvals did not bind MCP server/tool identity. They remain compatible, but
+        // dispatch still requires a fresh current-catalog check before the approval is consumed.
+        return Ok(());
+    };
+    if let Some(value) = target.get("serverId") {
+        let declared = value
+            .as_str()
+            .ok_or("MCP approval target serverId must be a string")?;
+        if declared != server_id {
+            return Err("MCP approval target serverId does not match dispatch".into());
+        }
+    }
+    if let Some(value) = target.get("toolName") {
+        let declared = value
+            .as_str()
+            .ok_or("MCP approval target toolName must be a string")?;
+        if declared != tool_name {
+            return Err("MCP approval target toolName does not match dispatch".into());
+        }
+    }
+    Ok(())
+}
+
 fn mark_turn_awaiting_user(
     shell: &SharedTurnRunShell,
     lifecycle: &Arc<Mutex<ProductionTurnLifecycleStore>>,
@@ -7246,6 +7275,27 @@ impl AndroidJsonHost {
             return Err("mcp.routed.execute tool is disabled for the current account".into());
         }
 
+        // Revalidate the live server/tool catalog before consuming the one-time grant. A tool
+        // disappearing or being replaced after the approval UI was shown must not inherit that
+        // approval or fall through to an arbitrary backend tool name.
+        let backend = self
+            .mcp_dashboard_backend
+            .as_ref()
+            .ok_or("MCP Dashboard backend is available only in production")?;
+        let current_tools = backend.list_server_tools(&server_id)?;
+        if !current_tools.iter().any(|tool| tool.name == tool_name) {
+            return Err("mcp.routed.execute tool is absent from current server catalog".into());
+        }
+
+        let approval = self.capability_broker.approval_for_dispatch(
+            approval_id,
+            approval_operation_id,
+            approval_request_id,
+            "mcp.execute",
+            &account_fence,
+        )?;
+        validate_mcp_approval_target(&approval.target, &server_id, &tool_name)?;
+
         self.capability_broker.consume_approval_for_dispatch(
             approval_id,
             approval_operation_id,
@@ -7280,10 +7330,6 @@ impl AndroidJsonHost {
             now_ms(),
         )?;
 
-        let backend = self
-            .mcp_dashboard_backend
-            .as_ref()
-            .ok_or("MCP Dashboard backend is available only in production")?;
         let execution = backend.execute_server_tool(
             &server_id,
             &tool_name,
@@ -10214,6 +10260,38 @@ fn encode_api_path_segment(value: &str) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mcp_approval_target_fences_server_and_tool_identity() {
+        assert!(validate_mcp_approval_target(&Value::Null, "server-a", "read").is_ok());
+        assert!(validate_mcp_approval_target(&json!({"reason":"legacy"}), "server-a", "read").is_ok());
+        assert!(validate_mcp_approval_target(
+            &json!({"serverId":"server-a","toolName":"read"}),
+            "server-a",
+            "read",
+        ).is_ok());
+
+        let server_error = validate_mcp_approval_target(
+            &json!({"serverId":"server-b","toolName":"read"}),
+            "server-a",
+            "read",
+        ).unwrap_err();
+        assert!(server_error.contains("serverId does not match"));
+
+        let tool_error = validate_mcp_approval_target(
+            &json!({"serverId":"server-a","toolName":"write"}),
+            "server-a",
+            "read",
+        ).unwrap_err();
+        assert!(tool_error.contains("toolName does not match"));
+
+        assert!(validate_mcp_approval_target(
+            &json!({"serverId":7,"toolName":"read"}),
+            "server-a",
+            "read",
+        ).unwrap_err().contains("serverId must be a string"));
+    }
+
 #[test]
     fn agent_content_search_reads_canonical_transcript_and_survives_reopen() {
         let root = tempfile::tempdir().unwrap();
