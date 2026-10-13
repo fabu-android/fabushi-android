@@ -1033,6 +1033,8 @@ interface AndroidCoordinatorPort {
         error("Transcript widget dismissal is unavailable on this Coordinator port")
     fun featureInterrupt(params: JSONObject): JSONObject
     fun featureApprovalResolve(params: JSONObject): JSONObject
+    fun featureApprovalStatus(approvalId: String): Boolean =
+        error("Approval status reconciliation is unavailable on this Coordinator port")
     fun transcriptSnapshot(): JSONArray
     fun transcriptPage(
         agentId: String,
