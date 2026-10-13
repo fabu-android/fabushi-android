@@ -1904,6 +1904,10 @@ impl AndroidMessagingService {
         }
 
         let previous = self.state.clone();
+        // Desktop group Agent messaging is intentionally text-only and priority is 1:1-only.
+        // Keep the original arguments in the replay key, but never project unsupported group
+        // media into canonical messages or wake payloads.
+        let delivered_images: &[Value] = if target_is_group { &[] } else { images };
         let conversation_id = if target_is_group {
             let conversation = self
                 .state
@@ -1957,7 +1961,7 @@ impl AndroidMessagingService {
                 "type":"text",
                 "data":{
                     "text":{"text":message,"entities":[]},
-                    "agentImages":images,
+                    "agentImages":delivered_images,
                     "agentPriority": if target_is_group { false } else { priority }
                 }
             });
@@ -2029,7 +2033,7 @@ impl AndroidMessagingService {
                         "conversationId":conversation_id,
                         "messageId":message_id,
                         "message":message,
-                        "images":images,
+                        "images":delivered_images,
                         "priority": if target_is_group { false } else { priority },
                         "createdAtMs":now_ms,
                         "attempts":0,
@@ -2046,6 +2050,8 @@ impl AndroidMessagingService {
             "messageId":message_id,
             "targetId":target_id,
             "priorityApplied":!target_is_group && priority,
+            "imagesDelivered":!target_is_group || images.is_empty(),
+            "droppedImageCount":if target_is_group { images.len() } else { 0 },
             "deliveryMode":"async-new-turn"
         });
         self.state.agent_delivery_calls.insert(
@@ -4529,6 +4535,92 @@ mod tests {
         )
         .unwrap();
         stable_message_id(actor, "message:root")
+    }
+
+    #[test]
+    fn agent_group_delivery_is_text_only_priority_neutral_and_replay_safe() {
+        let root = temp_root("agent-group-delivery");
+        let images = vec![json!({"url":"content://image/1","alt":"photo"})];
+        let first;
+        {
+            let mut service = AndroidMessagingService::open(&root).unwrap();
+            execute(
+                &mut service,
+                "agent-a-profile",
+                "agent-a",
+                json!({"type":"upsertProfile","actor":{"id":"agent-a","kind":"agent","displayName":"Agent A"}}),
+            )
+            .unwrap();
+            execute(
+                &mut service,
+                "agent-b-profile",
+                "agent-a",
+                json!({"type":"upsertProfile","actor":{"id":"agent-b","kind":"agent","displayName":"Agent B"}}),
+            )
+            .unwrap();
+            execute(
+                &mut service,
+                "agent-group",
+                "agent-a",
+                json!({"type":"createConversation","conversation":{
+                    "id":"agent-group",
+                    "kind":"group",
+                    "title":"Agents",
+                    "ownerId":"agent-a",
+                    "participants":[
+                        {"actorId":"agent-a","role":"owner","joinedAtMs":1},
+                        {"actorId":"agent-b","role":"member","joinedAtMs":1}
+                    ]
+                }}),
+            )
+            .unwrap();
+
+            first = service
+                .deliver_agent_message(
+                    "acct:a",
+                    "agent-a",
+                    "agent-group",
+                    true,
+                    "group text",
+                    &images,
+                    true,
+                    "tool-call-group-1",
+                    10,
+                )
+                .unwrap();
+            assert_eq!(first["priorityApplied"], false);
+            assert_eq!(first["imagesDelivered"], false);
+            assert_eq!(first["droppedImageCount"], 1);
+
+            let message_id = first["messageId"].as_str().unwrap();
+            let delivered = service.state.messages["agent-group"][message_id].clone();
+            assert_eq!(delivered["content"]["data"]["agentImages"], json!([]));
+            assert_eq!(delivered["content"]["data"]["agentPriority"], false);
+
+            let wakes = service.pending_agent_wakes("acct:a", 10);
+            assert_eq!(wakes.len(), 1);
+            assert_eq!(wakes[0]["targetAgentId"], "agent-b");
+            assert_eq!(wakes[0]["images"], json!([]));
+            assert_eq!(wakes[0]["priority"], false);
+        }
+
+        let mut reopened = AndroidMessagingService::open(&root).unwrap();
+        let replay = reopened
+            .deliver_agent_message(
+                "acct:a",
+                "agent-a",
+                "agent-group",
+                true,
+                "group text",
+                &images,
+                true,
+                "tool-call-group-1",
+                20,
+            )
+            .unwrap();
+        assert_eq!(replay, first);
+        assert_eq!(reopened.pending_agent_wakes("acct:a", 20).len(), 1);
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
