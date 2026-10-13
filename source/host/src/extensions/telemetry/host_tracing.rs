@@ -888,6 +888,115 @@ pub fn init_production_host_tracing(
     })
 }
 
+pub struct AndroidExplicitHostTracing {
+    provider: Arc<ProductionHostTracerProvider>,
+    resource: HostTracingResource,
+}
+
+impl AndroidExplicitHostTracing {
+    pub fn new(service_version: Option<&str>) -> Result<Self, String> {
+        let disabled_factory: SpanExporterFactory =
+            Arc::new(|_| Arc::new(FailedSpanExporter) as Arc<dyn SpanExporter>);
+        let disabled_exporter = Arc::new(TokenRefreshingSpanExporter::new(
+            "https://invalid.local/v1/traces",
+            Arc::new(|| None),
+            BTreeMap::new(),
+            false,
+            disabled_factory,
+        ));
+        let provider = ProductionHostTracerProvider::new(disabled_exporter);
+        provider.register()?;
+        set_turn_trace_host_bundle_version(service_version);
+        Ok(Self {
+            provider,
+            resource: host_tracing_resource(service_version),
+        })
+    }
+
+    pub fn flush_authenticated(
+        &self,
+        backend_url: &str,
+        bearer_token: &str,
+    ) -> Result<(), String> {
+        let bearer_token = bearer_token.trim();
+        if bearer_token.is_empty() || bearer_token.len() > 16 * 1024 {
+            return Err("invalid Android tracing bearer token".into());
+        }
+        let spans = {
+            let mut queue = self
+                .provider
+                .queue
+                .lock()
+                .map_err(|_| "host tracing queue mutex poisoned".to_string())?;
+            if queue.is_empty() {
+                return Ok(());
+            }
+            std::mem::take(&mut *queue)
+        };
+        let result = (|| {
+            let mut headers = host_tracing_base_headers();
+            headers.insert("authorization".into(), format!("Bearer {bearer_token}"));
+            let options = SpanExporterOptions {
+                url: trace_export_url(backend_url),
+                headers,
+                reject_unauthorized: true,
+            };
+            let exporter = ProductionOtlpHttpSpanExporter::new(options, self.resource.clone())?;
+            match exporter.export(&spans) {
+                ExportResultCode::Success => Ok(()),
+                ExportResultCode::Failed => Err("Android Host tracing export failed".into()),
+            }
+        })();
+        if result.is_err() {
+            if let Ok(mut queue) = self.provider.queue.lock() {
+                let mut restored = spans;
+                restored.append(&mut *queue);
+                if restored.len() > 512 {
+                    restored.drain(0..restored.len() - 512);
+                }
+                *queue = restored;
+            }
+        }
+        result
+    }
+
+    #[cfg(test)]
+    fn pending_span_count(&self) -> usize {
+        self.provider.queue.lock().map(|queue| queue.len()).unwrap_or(0)
+    }
+}
+
+impl Drop for AndroidExplicitHostTracing {
+    fn drop(&mut self) {
+        clear_host_trace_factory();
+        set_turn_trace_host_bundle_version(None);
+    }
+}
+
+#[cfg(test)]
+mod android_explicit_host_tracing_tests {
+    use super::*;
+    use crate::send_trace_host::begin_gateway_command_trace;
+
+    #[test]
+    fn explicit_android_adapter_registers_factory_without_owning_a_bearer() {
+        let tracing = AndroidExplicitHostTracing::new(Some("android-test")).unwrap();
+        let trace = begin_gateway_command_trace(None, "feature.auth.status").unwrap();
+        trace.span.end();
+        assert_eq!(tracing.pending_span_count(), 1);
+        assert!(tracing.flush_authenticated("https://api.example.invalid", "").is_err());
+        assert_eq!(tracing.pending_span_count(), 1);
+    }
+
+    #[test]
+    fn android_resource_is_not_reported_as_box() {
+        let resource = host_tracing_resource(Some("1"));
+        assert_eq!(resource.attributes["host.name"], "android");
+        assert_eq!(resource.attributes["deployment.environment"], "android");
+    }
+}
+
+
 struct FailedSpanExporter;
 
 impl SpanExporter for FailedSpanExporter {
