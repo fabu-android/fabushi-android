@@ -1158,6 +1158,7 @@ impl AndroidJsonHost {
         let (transcript_store, transcript_recovery) =
             TranscriptStore::open_recovering(app_data_dir.join("transcript.json"))
                 .unwrap_or_else(|error| panic!("failed to recover canonical Android transcript: {error}"));
+        let transcript_recovered = transcript_recovery.is_some();
         if let Some(recovery) = transcript_recovery {
             let (level, outcome) = match recovery.outcome {
                 TranscriptRecoveryOutcome::RecoveredInterruptedWrite => {
@@ -1188,9 +1189,16 @@ impl AndroidJsonHost {
                 now_ms(),
             );
         }
+        let recovered_transcript_entries = transcript_recovered
+            .then(|| transcript_store.get_transcript());
         let transcript = Arc::new(Mutex::new(transcript_store));
-        let content_search = AndroidContentSearchIndex::open(app_data_dir.join("search-index.db"))
+        let mut content_search = AndroidContentSearchIndex::open(app_data_dir.join("search-index.db"))
             .unwrap_or_else(|error| panic!("failed to open Android content search index: {error}"));
+        if let Some(entries) = recovered_transcript_entries.as_deref() {
+            content_search
+                .reconcile(entries)
+                .unwrap_or_else(|error| panic!("failed to reconcile search index after transcript recovery: {error}"));
+        }
         let send_acknowledgement_observed_at_ms = now_ms();
         let send_acknowledgement_owner = DurableSendAcknowledgementOwner::open(
             app_data_dir.join("send-acknowledgements.json"),
