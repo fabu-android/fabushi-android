@@ -17546,25 +17546,27 @@
       "process_death_recovery": "service state is reconstructed from canonical source-map/object-store owners; local scheduling queues are intentionally process-local",
       "account_fencing": "production provider must be account/source scoped; current service does not project credentials or account truth",
       "security_boundary": "Android does not enable backstop from environment variables; production enablement/provider must be injected through typed Host composition",
-      "android_disposition": "android-adapted",
+      "android_disposition": "not-applicable-with-replacement",
       "android_target": [
         "source/host/src/extensions/state_backstop/state_backstop_service.rs",
         "source/host/src/extensions/state_backstop/extension.rs",
-        "source/host/src/extensions/state_backstop/mod.rs",
-        "source/host/src/extensions/source_map/source_map_service.rs"
+        "source/host/src/extensions/source_map/source_map_service.rs",
+        "source/host/src/remote_box_store_sync.rs",
+        "source/host/src/android_json_runtime.rs",
+        "source/box-exec-daemon/src/box_store_backend.rs"
       ],
-      "android_owner": "Rust Host StateBackstop service",
-      "platform_delta": "Portable snapshot/debounce logic is Rust-to-Rust. Desktop environment-variable enablement is disabled on Android; typed Host policy must explicitly enable it. Android still lacks the production BoxStoreSync/object-store provider binding.",
+      "android_owner": "Rust Host app-private canonical Agent state + explicitly authorized Remote BoxStore snapshot/hydrate replacement",
+      "platform_delta": "Desktop may enable an automatic 5-second S3 object-store backstop from process environment. Android must not allow an environment variable or background debounce worker to mint remote-write authority. The portable bounded snapshot helper remains reusable/tested, but shipping recovery uses app-private canonical durable state plus explicit box.store.sync snapshot/hydrate through a one-time approval, protected account/device/executor binding, existing authenticated Remote Runner, and external RemoteBoxStoreBackend.",
       "implementation_status": "implemented",
-      "production_wiring": "Core service and typed gate compile graph are wired under extensions::state_backstop. Shipping object-store/BoxStoreSync provider composition is still missing, so enabled production path is not closed.",
-      "unit_test": "state_backstop service Android gate test plus typed extension disabled-gate test; GitHub Actions evidence pending on descendant exact HEAD",
-      "contract_test": "required: stable SourceMap source id + authorized object-store put/get + max-size/disabled/error contracts",
-      "integration_test": "required: shipping Host composition schedules snapshot after canonical Agent durable mutation and reads it back after reopen",
+      "production_wiring": "The Desktop automatic object-store mechanism is intentionally not enabled in Android production. Replacement is wired: feature.remote.boxStoreSync.dispatch/status/reconcile uses the durable Host BoxStore journal and one-time box.store.sync approval; the external authorized Runner performs bounded CAS snapshot/hydrate with no blind replay. Local canonical Agent state remains app-private and survives ordinary process death without requiring a remote snapshot.",
+      "unit_test": "Portable StateBackstop tests cover bounded agent identity and disabled typed gate; RemoteBoxStore domain/backend tests cover duplicate identity, account/device fencing, process-reopen outcome-unknown, snapshot/hydrate/CAS conflict and path bounds. Exact-head Actions still required.",
+      "contract_test": "Replacement contract requires explicit box.store.sync approval and exact executionTarget/deviceId/storeId/action matching; environment variables cannot enable Android remote writes. External Runner independently authenticates the operation. Exact-head Actions pending.",
+      "integration_test": "required: protected external Runner snapshot -> local-state loss/rebuild -> hydrate on one exact Android HEAD; automatic unapproved background S3 writes are intentionally absent.",
       "packaged_test": "required on final exact-head APK/AAB",
       "device_test": "required with authorized remote object-store/runner",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Commits 205411aa5046500782f819e57767b9528aa0d3a5, 6fcc71a2a2c82558c5f039ce0534ea6f88214468, dad16c6665329e014469bc7ec98279e469cb1c81 and 1fa7b225d887d7530f2d41e192b9563033012a6a add the portable service, typed gate, module and compile-graph wiring. Do not mark verified until production BoxStoreSync/object-store composition and same-head CI/package/device evidence succeed."
+      "notes": "N/A-with-replacement review conclusion: the original user capability (durable remote recovery copy) is preserved, but Android replaces Desktop automatic S3 backstop with explicit authorized Remote BoxStore snapshot/hydrate. User-visible difference: remote backup is permission-bound rather than silently scheduled by environment policy. Do not mark verified until exact-head CI/package/device replacement evidence succeeds."
     },
     {
       "responsibility_id": "MSG-HUMAN-REMOTE-ATTACHMENT-OUTBOUND-ANDROID-001",
