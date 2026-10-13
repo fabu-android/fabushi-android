@@ -295,6 +295,21 @@ impl AutomationRuntime {
         self.persist()
     }
 
+    pub fn set_spend_guard_card_entry(
+        &mut self,
+        account_fence: &str,
+        agent_id: &str,
+        card_entry_id: &str,
+    ) -> Result<(), String> {
+        if card_entry_id.trim().is_empty() {
+            return Err("spend guard card entry id is required".into());
+        }
+        let key = Self::spend_guard_key(account_fence, agent_id);
+        let state = self.state.spend_guard.entry(key).or_default();
+        state.card_entry_id = Some(card_entry_id.to_string());
+        self.persist()
+    }
+
     pub fn pause_agent_automations_for_spend_guard(
         &mut self,
         account_fence: &str,
