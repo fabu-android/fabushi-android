@@ -8409,8 +8409,6 @@ impl AndroidJsonHost {
             schedule_authenticated_experiments_refresh(
                 Arc::clone(&self.experiments),
                 self.mcp_dashboard_backend.as_ref().cloned(),
-                self.product_analytics.as_ref().cloned(),
-                self.account.account_storage_scope(),
             );
         }
         self.report_signin_poll_result(&result);
