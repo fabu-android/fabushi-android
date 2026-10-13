@@ -452,24 +452,27 @@ impl AndroidNativeRuntime {
             return error_response(id, message.into());
         }
 
-        let forwarded = self.mcp_oauth.forward(callback.clone());
-        let (provider, server_id, account_key, generation, callback) = match forwarded {
-            Ok((registration, callback)) => (
-                registration.provider,
-                registration.server_id,
-                registration.account_key,
-                registration.generation,
-                callback,
-            ),
-            Err(message) if self.mode == AndroidHostMode::Production => (
-                "restored".to_string(),
-                None,
-                None,
-                None,
-                callback,
-            ),
-            Err(message) => return error_response(id, message.into()),
-        };
+        let staged = self.mcp_oauth.stage(callback.clone());
+        let (provider, server_id, account_key, generation, callback, staged_locally) =
+            match staged {
+                Ok((registration, callback)) => (
+                    registration.provider,
+                    registration.server_id,
+                    registration.account_key,
+                    registration.generation,
+                    callback,
+                    true,
+                ),
+                Err(_message) if self.mode == AndroidHostMode::Production => (
+                    "restored".to_string(),
+                    None,
+                    None,
+                    None,
+                    callback,
+                    false,
+                ),
+                Err(message) => return error_response(id, message.into()),
+            };
 
         self.next_request_id = self.next_request_id.saturating_add(1);
         let host_request_id = format!("mcp-oauth-{:016}", self.next_request_id);
@@ -504,6 +507,23 @@ impl AndroidNativeRuntime {
             .and_then(Value::as_str)
             .or_else(|| host_result.get("status").and_then(Value::as_str))
             .unwrap_or("stale");
+
+        if staged_locally && outcome == "pending-validation" {
+            let consumed = match self.mcp_oauth.consume(state) {
+                Ok(registration) => registration,
+                Err(message) => return error_response(id, message.into()),
+            };
+            if consumed.provider != provider
+                || consumed.server_id.as_deref() != server_id.as_deref()
+                || consumed.account_key.as_deref() != account_key.as_deref()
+                || consumed.generation != generation
+            {
+                return error_response(
+                    id,
+                    "OAuth callback registration changed before Host acceptance".into(),
+                );
+            }
+        }
 
         success_response(
             id,
@@ -1094,6 +1114,45 @@ mod tests {
         serde_json::from_str(&runtime.dispatch_legacy_json(&request.to_string())).unwrap()
     }
 
+    fn sign_in_test_account(runtime: &mut AndroidNativeRuntime) {
+        let started = call(
+            runtime,
+            json!({"method":"feature.auth.oauthStart","params":{"provider":"google"}}),
+        );
+        assert_eq!(started["ok"], true);
+        let attempt_id = started["result"]["attemptId"]
+            .as_str()
+            .expect("test OAuth start must return attemptId")
+            .to_string();
+        let completed = call(
+            runtime,
+            json!({"method":"feature.auth.oauthPoll","params":{"attemptId":attempt_id}}),
+        );
+        assert_eq!(completed["ok"], true);
+        assert_eq!(completed["result"]["status"], "completed");
+        assert_eq!(completed["result"]["auth"]["loggedIn"], true);
+    }
+
+    fn receive_until(
+        runtime: &mut AndroidNativeRuntime,
+        label: &str,
+        mut matches: impl FnMut(&Value) -> bool,
+    ) -> Value {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while std::time::Instant::now() < deadline {
+            let envelope = call(
+                runtime,
+                json!({"method":"feature.receive","params":{}}),
+            );
+            if envelope["ok"] == true && matches(&envelope["result"]) {
+                return envelope["result"].clone();
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+            std::thread::yield_now();
+        }
+        panic!("{label} was not observed before the 5 second deadline");
+    }
+
     #[test]
     fn update_track_policy_projection_keeps_effective_policy_in_rust() {
         let public = update_track_policy_projection(None, false, Some("nightly"), Some("dogfood"));
@@ -1189,6 +1248,7 @@ mod tests {
     fn agent_lifecycle_controls_are_reachable_only_through_coordinator_host_dispatch() {
         let mut runtime =
             AndroidNativeRuntime::new(test_root("agent-lifecycle"), AndroidHostMode::Test, 11);
+        sign_in_test_account(&mut runtime);
 
         let quiesced = call(
             &mut runtime,
@@ -1290,6 +1350,7 @@ mod tests {
     fn streaming_operation_is_active_until_terminal_event_and_replayable() {
         let mut runtime =
             AndroidNativeRuntime::new(test_root("stream"), AndroidHostMode::Test, 9);
+        sign_in_test_account(&mut runtime);
 
         let accepted = call(
             &mut runtime,
@@ -1309,36 +1370,26 @@ mod tests {
         assert_eq!(status["result"]["generation"], 9);
         assert_eq!(status["result"]["activeRequestCount"], 1);
 
-        let mut terminal_sequence = 0;
-        let mut terminal_family = None;
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-        while std::time::Instant::now() < deadline {
-            let event = call(
-                &mut runtime,
-                json!({"method":"feature.receive","params":{}}),
-            );
-            let result = &event["result"];
-            let family = result["type"].as_str().unwrap_or_default();
-            if matches!(
-                family,
-                "operation.completed" | "operation.failed" | "operation.interrupted"
-            ) {
-                terminal_sequence = result["_coordinator"]["sequence"].as_u64().unwrap();
-                terminal_family = Some(family.to_string());
-                break;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(10));
-        }
+        let started = receive_until(&mut runtime, "operation.started", |event| {
+            event["type"] == "operation.started" && event["operationId"] == "stream-1"
+        });
+        let started_sequence = started["_coordinator"]["sequence"]
+            .as_u64()
+            .expect("started event must carry Coordinator sequence");
+
+        let terminal = receive_until(&mut runtime, "stream terminal event", |event| {
+            event["operationId"] == "stream-1"
+                && matches!(
+                    event["type"].as_str(),
+                    Some("operation.completed" | "operation.failed" | "operation.interrupted")
+                )
+        });
+        let terminal_sequence = terminal["_coordinator"]["sequence"]
+            .as_u64()
+            .expect("terminal event must carry Coordinator sequence");
         assert!(
-            terminal_sequence > 0,
-            "streaming operation did not emit a terminal event before the 5 second deadline"
-        );
-        assert!(
-            matches!(
-                terminal_family.as_deref(),
-                Some("operation.completed" | "operation.failed" | "operation.interrupted")
-            ),
-            "terminal delivery must use the same bounded family set as record_received_event"
+            terminal_sequence > started_sequence,
+            "terminal event must follow operation.started in Coordinator replay order"
         );
 
         let settled = call(&mut runtime, json!({"method":"coordinator.status","params":{}}));
@@ -1402,6 +1453,7 @@ mod tests {
     fn interrupt_uses_coordinator_cancel_and_emits_terminal_event() {
         let mut runtime =
             AndroidNativeRuntime::new(test_root("cancel"), AndroidHostMode::Test, 3);
+        sign_in_test_account(&mut runtime);
         let accepted = call(
             &mut runtime,
             json!({
@@ -1424,20 +1476,21 @@ mod tests {
         assert_eq!(interrupted["ok"], true);
         assert_eq!(interrupted["result"]["status"], "interrupted");
 
-        let event = call(
-            &mut runtime,
-            json!({"method":"feature.receive","params":{}}),
-        );
-        assert_eq!(event["result"]["type"], "operation.started");
-        let terminal = call(
-            &mut runtime,
-            json!({"method":"feature.receive","params":{}}),
-        );
-        assert_eq!(terminal["result"]["type"], "operation.interrupted");
-        assert!(terminal["result"]["_coordinator"]["sequence"]
+        let started = receive_until(&mut runtime, "cancel operation.started", |event| {
+            event["type"] == "operation.started" && event["operationId"] == "long-1"
+        });
+        let started_sequence = started["_coordinator"]["sequence"]
             .as_u64()
-            .unwrap()
-            > 0);
+            .expect("cancel started event must carry Coordinator sequence");
+        let terminal = receive_until(&mut runtime, "operation.interrupted", |event| {
+            event["type"] == "operation.interrupted" && event["operationId"] == "long-1"
+        });
+        let terminal_sequence = terminal["_coordinator"]["sequence"]
+            .as_u64()
+            .expect("cancel terminal event must carry Coordinator sequence");
+        assert!(terminal_sequence > started_sequence);
+        let settled = call(&mut runtime, json!({"method":"coordinator.status","params":{}}));
+        assert_eq!(settled["result"]["activeRequestCount"], 0);
     }
 
     #[test]
@@ -1458,6 +1511,7 @@ mod tests {
     fn mcp_oauth_callback_is_single_use_and_host_event_does_not_echo_code() {
         let mut runtime =
             AndroidNativeRuntime::new(test_root("mcp-oauth"), AndroidHostMode::Test, 13);
+        sign_in_test_account(&mut runtime);
         let state = "0123456789abcdef0123456789abcdef";
 
         let watch = call(
@@ -1513,22 +1567,15 @@ mod tests {
         );
         assert_eq!(duplicate["ok"], false);
 
-        let mut saw_callback_acceptance = false;
-        for _ in 0..8 {
-            let event = call(
-                &mut runtime,
-                json!({"method":"feature.receive","params":{}}),
-            );
-            let result = &event["result"];
-            if result["type"] == "mcp.auth.callback.accepted" {
-                saw_callback_acceptance = true;
-                assert_eq!(result["provider"], "github");
-                assert!(result.get("code").is_none());
-                assert!(!result.to_string().contains("secret-oauth-code"));
-                break;
-            }
-        }
-        assert!(saw_callback_acceptance);
+        assert_eq!(completed["result"]["pendingCount"], 0);
+        let callback_event = receive_until(
+            &mut runtime,
+            "mcp.auth.callback.accepted",
+            |event| event["type"] == "mcp.auth.callback.accepted",
+        );
+        assert_eq!(callback_event["provider"], "github");
+        assert!(callback_event.get("code").is_none());
+        assert!(!callback_event.to_string().contains("secret-oauth-code"));
     }
 
 }
