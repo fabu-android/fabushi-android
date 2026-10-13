@@ -4458,6 +4458,17 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
                 }
                 if (hasWorkingAgent) return@execute
 
+                // Desktop emits sand.box.recreate_decided only after every automatic-update gate
+                // accepts, and before the recreate side effect. Android queued-when-idle is the
+                // platform replacement for that automatic producer. Telemetry remains
+                // observational: a log failure must never suppress or replay the canonical request.
+                runCatching {
+                    host.request(
+                        "feature.telemetry.boxRecreateDecided",
+                        JSONObject().put("trigger", "auto_update"),
+                    )
+                }
+
                 val requestId = "android-rebuild-$processGeneration-" + UUID.randomUUID().toString()
                 computerRebuildOwner.reserveQueuedRequest(expectedEpoch, requestId)
                 dispatchComputerRebuildRequest(
