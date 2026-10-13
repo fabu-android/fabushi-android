@@ -61,7 +61,10 @@ internal fun AgentNetworkSurface(
     val botsById = remember(bots) { bots.associateBy { it.id } }
     var showSharedRooms by remember { mutableStateOf(false) }
     if (showSharedRooms) {
-        SharedRoomsSurface(onBack = { showSharedRooms = false })
+        SharedRoomsSurface(
+            bots = bots,
+            onBack = { showSharedRooms = false },
+        )
         return
     }
 
