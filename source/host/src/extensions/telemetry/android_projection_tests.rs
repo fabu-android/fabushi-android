@@ -214,7 +214,7 @@ fn sand_error_tags_preserve_registry_fallback_and_retryability() {
     assert_eq!(known.get("error_code").map(String::as_str), Some("SAND-E0101"));
     assert_eq!(known.get("error_domain").map(String::as_str), Some("transport"));
     assert_eq!(known.get("error_retryable").map(String::as_str), Some("true"));
-    assert_eq!(known.get("error_errno").map(String::as_str), Some("ECONNRESET"));
+    assert_eq!(known.get("errno").map(String::as_str), Some("ECONNRESET"));
 
     let unknown = sand_error_tags(&SandErrorValue::new("SAND-E9999"));
     assert_eq!(unknown.get("error_code").map(String::as_str), Some("SAND-E0001"));
