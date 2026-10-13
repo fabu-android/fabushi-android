@@ -62,6 +62,7 @@ pub struct AndroidPressureCpuProfiler {
     last_capture_started_at_ms: Option<i64>,
     active: Option<ActiveCapture>,
     disposed: bool,
+    fixed_knobs: Option<PressureCpuProfilerKnobs>,
 }
 
 impl AndroidPressureCpuProfiler {
@@ -78,14 +79,16 @@ impl AndroidPressureCpuProfiler {
             last_capture_started_at_ms: None,
             active: None,
             disposed: false,
+            fixed_knobs: None,
         })
     }
 
     fn knobs(&self) -> EffectiveKnobs {
-        let dynamic = self
-            .experiments
-            .get_dynamic_config("sand_pressure_cpu_profiler_config");
-        let configured = pressure_knobs_from_dynamic_config(&dynamic);
+        let configured = self.fixed_knobs.unwrap_or_else(|| {
+            pressure_knobs_from_dynamic_config(
+                &self.experiments.dynamic_config("sand_pressure_cpu_profiler_config"),
+            )
+        });
         EffectiveKnobs {
             sustained_pressure_window_ms: configured
                 .sustained_pressure_window_ms
@@ -292,11 +295,13 @@ mod tests {
 
     fn runtime(
         root: &Path,
-        config: BTreeMap<String, Value>,
+        knobs: PressureCpuProfilerKnobs,
     ) -> AndroidPressureCpuProfiler {
-        let experiments = Arc::new(HostExperimentsExtension::default());
-        experiments.set_dynamic_config_for_tests("sand_pressure_cpu_profiler_config", config);
-        AndroidPressureCpuProfiler::new(root, experiments).unwrap()
+        let mut profiler =
+            AndroidPressureCpuProfiler::new(root, Arc::new(HostExperimentsExtension::default()))
+                .unwrap();
+        profiler.fixed_knobs = Some(knobs);
+        profiler
     }
 
     #[test]
@@ -304,11 +309,12 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let mut profiler = runtime(
             root.path(),
-            BTreeMap::from([
-                ("sustainedPressureWindowMs".into(), serde_json::json!(100)),
-                ("profileDurationMs".into(), serde_json::json!(20)),
-                ("minIntervalMs".into(), serde_json::json!(1_000)),
-            ]),
+            PressureCpuProfilerKnobs {
+                sustained_pressure_window_ms: Some(100),
+                profile_duration_ms: Some(20),
+                min_interval_ms: Some(1_000),
+                ..PressureCpuProfilerKnobs::default()
+            },
         );
         profiler.on_pressure(1_000);
         assert!(profiler.on_tick(1_200).unwrap().is_none());
@@ -327,12 +333,12 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let mut profiler = runtime(
             root.path(),
-            BTreeMap::from([
-                ("sustainedPressureWindowMs".into(), serde_json::json!(100)),
-                ("profileDurationMs".into(), serde_json::json!(0)),
-                ("minIntervalMs".into(), serde_json::json!(0)),
-                ("maxRetainedProfiles".into(), serde_json::json!(2)),
-            ]),
+            PressureCpuProfilerKnobs {
+                sustained_pressure_window_ms: Some(100),
+                profile_duration_ms: Some(0),
+                min_interval_ms: Some(0),
+                max_retained_profiles: Some(2),
+            },
         );
         for base in [1_000, 2_000, 3_000] {
             profiler.on_pressure(base);
@@ -363,11 +369,12 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let mut profiler = runtime(
             root.path(),
-            BTreeMap::from([
-                ("sustainedPressureWindowMs".into(), serde_json::json!(100)),
-                ("profileDurationMs".into(), serde_json::json!(20)),
-                ("minIntervalMs".into(), serde_json::json!(0)),
-            ]),
+            PressureCpuProfilerKnobs {
+                sustained_pressure_window_ms: Some(100),
+                profile_duration_ms: Some(20),
+                min_interval_ms: Some(0),
+                ..PressureCpuProfilerKnobs::default()
+            },
         );
         profiler.on_pressure(10);
         profiler.on_pressure(11);
