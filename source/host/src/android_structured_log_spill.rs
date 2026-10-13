@@ -11,6 +11,7 @@ pub const ANDROID_STRUCTURED_LOG_SPILL_MAX_BYTES: usize = 1024 * 1024;
 pub const ANDROID_STRUCTURED_LOG_SPILL_MAX_AGE_MS: u64 = 18 * 60 * 60 * 1_000;
 pub const ANDROID_STRUCTURED_LOG_SPILL_MAX_ENTRIES: usize = 1_000;
 pub const ANDROID_STRUCTURED_LOG_BATCH_SIZE: usize = 128;
+pub const ANDROID_STRUCTURED_LOG_RECOVERY_ID_CAP: usize = 256;
 
 const ALLOWED_EVENTS: &[&str] = &[
     "sand.access_blocked",
@@ -103,6 +104,8 @@ pub struct StructuredLogCheckpoint {
     pub counter_id: String,
     pub counters: BTreeMap<TelemetryDropReason, DropCounter>,
     pub records: Vec<StructuredLogRecord>,
+    #[serde(default)]
+    pub recovery_ids: Vec<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -132,6 +135,7 @@ impl AndroidStructuredLogSpillState {
                 counter_id: counter_id.into(),
                 counters,
                 records: Vec::new(),
+                recovery_ids: Vec::new(),
             },
         }
     }
@@ -156,6 +160,10 @@ impl AndroidStructuredLogSpillState {
             eligible.drain(..evicted);
         }
         self.checkpoint.records = eligible;
+        if self.checkpoint.recovery_ids.len() > ANDROID_STRUCTURED_LOG_RECOVERY_ID_CAP {
+            let drain = self.checkpoint.recovery_ids.len() - ANDROID_STRUCTURED_LOG_RECOVERY_ID_CAP;
+            self.checkpoint.recovery_ids.drain(..drain);
+        }
 
         while !self.checkpoint.records.is_empty()
             && encoded_len(&self) > ANDROID_STRUCTURED_LOG_SPILL_MAX_BYTES
@@ -201,6 +209,14 @@ fn valid_state(state: &AndroidStructuredLogSpillState, enforce_record_cap: bool)
         || state.checkpoint.counter_id.chars().count() > 128
         || (enforce_record_cap
             && state.checkpoint.records.len() > ANDROID_STRUCTURED_LOG_SPILL_MAX_ENTRIES)
+        || state.checkpoint.recovery_ids.len() > ANDROID_STRUCTURED_LOG_RECOVERY_ID_CAP
+        || state.checkpoint.recovery_ids.iter().any(|value| {
+            value.is_empty()
+                || value.chars().count() > 128
+                || !value
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b':' | b'-' | b'_' | b'.'))
+        })
     {
         return false;
     }
@@ -451,6 +467,71 @@ impl AndroidStructuredLogSpool {
         Ok(())
     }
 
+    pub fn record_once(
+        &mut self,
+        recovery_id: &str,
+        level: &str,
+        message: &str,
+        metadata: BTreeMap<String, String>,
+        timestamp_ms: u64,
+    ) -> io::Result<bool> {
+        if recovery_id.is_empty()
+            || recovery_id.chars().count() > 128
+            || !recovery_id
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b':' | b'-' | b'_' | b'.'))
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "structured telemetry recovery id is invalid",
+            ));
+        }
+        if self
+            .state
+            .checkpoint
+            .recovery_ids
+            .iter()
+            .any(|value| value == recovery_id)
+        {
+            return Ok(false);
+        }
+        if !matches!(level, "debug" | "info" | "warn" | "error")
+            || !ALLOWED_EVENTS.contains(&message)
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "structured telemetry record is outside the allowed schema",
+            ));
+        }
+
+        let mut candidate = self.state.clone();
+        candidate.checkpoint.records.push(StructuredLogRecord {
+            level: level.into(),
+            message: message.into(),
+            metadata,
+            timestamp: timestamp_ms,
+        });
+        candidate
+            .checkpoint
+            .recovery_ids
+            .push(recovery_id.to_string());
+        if candidate.checkpoint.recovery_ids.len() > ANDROID_STRUCTURED_LOG_RECOVERY_ID_CAP {
+            let drain =
+                candidate.checkpoint.recovery_ids.len() - ANDROID_STRUCTURED_LOG_RECOVERY_ID_CAP;
+            candidate.checkpoint.recovery_ids.drain(..drain);
+        }
+        self.state = self
+            .spill
+            .replace(&candidate, timestamp_ms)?
+            .unwrap_or_else(|| {
+                AndroidStructuredLogSpillState::empty(
+                    candidate.account_slot.clone(),
+                    candidate.checkpoint.counter_id.clone(),
+                )
+            });
+        Ok(true)
+    }
+
     pub fn batch(&self) -> Vec<StructuredLogRecord> {
         self.state
             .checkpoint
@@ -524,6 +605,52 @@ mod tests {
             metadata: BTreeMap::from([("kind".into(), "bounded".into())]),
             timestamp,
         }
+    }
+
+    #[test]
+    fn recovery_id_is_durable_across_shipping_and_prevents_duplicate_replay() {
+        let root = root("recovery-id");
+        let path = root.join("spill.json");
+        let mut spool =
+            AndroidStructuredLogSpool::open(&path, "account-a", "counter-a", 1_000).unwrap();
+        let metadata = BTreeMap::from([("kind".into(), "unclean_exit".into())]);
+        assert!(spool
+            .record_once(
+                "unclean:100:150",
+                "warn",
+                "sand.desktop.unclean_exit",
+                metadata.clone(),
+                1_001,
+            )
+            .unwrap());
+        assert!(!spool
+            .record_once(
+                "unclean:100:150",
+                "warn",
+                "sand.desktop.unclean_exit",
+                metadata.clone(),
+                1_002,
+            )
+            .unwrap());
+        assert_eq!(spool.batch().len(), 1);
+
+        spool.settle_success(1, 0, 1_003).unwrap();
+        assert!(spool.batch().is_empty());
+        drop(spool);
+
+        let mut reopened =
+            AndroidStructuredLogSpool::open(&path, "account-a", "counter-a", 1_004).unwrap();
+        assert!(!reopened
+            .record_once(
+                "unclean:100:150",
+                "warn",
+                "sand.desktop.unclean_exit",
+                metadata,
+                1_005,
+            )
+            .unwrap());
+        assert!(reopened.batch().is_empty());
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
