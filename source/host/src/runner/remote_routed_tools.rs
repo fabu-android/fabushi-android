@@ -218,6 +218,7 @@ impl RemoteDispatchBinding {
             "external-shell",
             "external-read",
             "cloud-agent",
+            "box-store-sync",
         ];
         if let Some(executor) = self.executors.iter().find(|value| !ALLOWED_EXECUTORS.contains(&value.as_str())) {
             return Err(format!("remote binding executor is unsupported: {executor}"));
@@ -239,7 +240,7 @@ impl RemoteDispatchBinding {
         self.executors.contains(executor)
     }
 
-    fn context(
+    pub(crate) fn context(
         &self,
         operation_id: &str,
         request_id: &str,
