@@ -24,7 +24,12 @@ impl ProductionExecutor {
         let action=self.actions.get_mut(&request.capability_id)
             .ok_or_else(|| ExecutionError::CapabilityUnavailable(request.capability_id.clone()))?;
         let output_json=action.execute(&request.input_json)?;
-        Ok(ExecutionResult { operation_id: request.operation_id.clone(), output_json })
+        let result = ExecutionResult {
+            operation_id: request.operation_id.clone(),
+            output_json,
+        };
+        result.validate()?;
+        Ok(result)
     }
 }
 
@@ -62,6 +67,34 @@ mod tests {
         fn execute(&mut self, _input_json: &str) -> Result<String, ExecutionError> {
             Ok(format!(r#"{{"owner":"{}"}}"#, self.0))
         }
+    }
+
+    struct InvalidOutputAction;
+    impl ProductionAction for InvalidOutputAction {
+        fn execute(&mut self, _input_json: &str) -> Result<String, ExecutionError> {
+            Ok("{".into())
+        }
+    }
+
+    #[test]
+    fn production_executor_rejects_invalid_handler_output() {
+        let mut executor = ProductionExecutor::default();
+        executor
+            .register("android.invalid-output", Box::new(InvalidOutputAction))
+            .unwrap();
+        let error = executor
+            .execute(&ExecutionRequest {
+                operation_id: "op-invalid-output".into(),
+                capability_id: "android.invalid-output".into(),
+                input_json: "{}".into(),
+                timeout_ms: 1_000,
+            })
+            .unwrap_err();
+        assert!(matches!(
+            error,
+            ExecutionError::InvalidRequest(message)
+                if message.contains("output_json must be valid JSON")
+        ));
     }
 
     #[test]
