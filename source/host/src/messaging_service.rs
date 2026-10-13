@@ -2852,19 +2852,18 @@ impl AndroidMessagingService {
             file.sync_all()?;
         }
 
-        // Keep the previous *validated* canonical snapshot as the recovery replica. Never replace
-        // the backup from a corrupt canonical file, otherwise a process crash could destroy both
-        // the request replay journal and its only trusted predecessor.
-        if let Ok(previous) = fs::read(&self.path) {
-            if decode_repository_state(&previous).is_ok() {
-                let backup = repository_backup_path(&self.path);
-                let backup_temporary = backup.with_extension("json.bak.tmp");
-                fs::copy(&self.path, &backup_temporary)?;
-                File::open(&backup_temporary)?.sync_all()?;
-                fs::rename(&backup_temporary, &backup)?;
-                sync_parent_directory(&backup)?;
-            }
+        // Mirror the exact next settled state into the recovery replica before replacing the
+        // canonical file. This preserves request replay/journal truth across later corruption
+        // without making the replica a second runtime owner.
+        let backup = repository_backup_path(&self.path);
+        let backup_temporary = PathBuf::from(format!("{}.tmp", backup.display()));
+        {
+            let mut file = File::create(&backup_temporary)?;
+            file.write_all(&bytes)?;
+            file.sync_all()?;
         }
+        fs::rename(&backup_temporary, &backup)?;
+        sync_parent_directory(&backup)?;
 
         fs::rename(&temporary, &self.path)?;
         sync_parent_directory(&self.path)
