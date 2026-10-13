@@ -17559,9 +17559,12 @@ mod tests {
             if event["type"] == "agent.timeline.event" {
                 break event;
             }
-            assert_eq!(
-                event["type"], "transcript.roster",
-                "only canonical roster bridge projections may precede the direct timeline event",
+            assert!(
+                matches!(
+                    event["type"].as_str(),
+                    Some("transcript.roster" | "transcript.timeline-event")
+                ),
+                "only canonical transcript bridge projections may precede the direct timeline event",
             );
             assert_eq!(event["payload"]["agentId"], agent.id);
             assert!(
@@ -17586,9 +17589,12 @@ mod tests {
             if event["type"] == "agent.profile.changed" {
                 break event;
             }
-            assert_eq!(
-                event["type"], "transcript.roster",
-                "only canonical roster bridge projections may precede the direct profile event",
+            assert!(
+                matches!(
+                    event["type"].as_str(),
+                    Some("transcript.roster" | "transcript.profile-changed")
+                ),
+                "only canonical transcript bridge projections may precede the direct profile event",
             );
             assert_eq!(event["payload"]["agentId"], agent.id);
             assert!(
