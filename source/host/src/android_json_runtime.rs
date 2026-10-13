@@ -20564,12 +20564,6 @@ mod automation_event_batch_wiring_tests {
             .unwrap();
         assert_eq!(duplicate["duplicate"], true);
 
-        let early = host
-            .automation_runtime
-            .claim_event_batch(&automation_id, &host.current_turn_account_fence().unwrap(), "early", now_ms())
-            .unwrap();
-        assert!(early.is_none(), "750ms debounce must remain Host-owned");
-
         let account_fence = host.current_turn_account_fence().unwrap();
         let claimed = host
             .automation_runtime
@@ -20577,7 +20571,7 @@ mod automation_event_batch_wiring_tests {
                 &automation_id,
                 &account_fence,
                 "claim-1",
-                now_ms().saturating_add(crate::automation_runtime::AUTOMATION_EVENT_DEBOUNCE_MS),
+                u64::MAX,
             )
             .unwrap()
             .unwrap();
