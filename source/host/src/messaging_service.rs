@@ -1109,7 +1109,6 @@ impl AndroidMessagingService {
         source_message_id: &str,
         query: &str,
         limit: usize,
-        now_ms: i64,
     ) -> Result<Vec<Value>, String> {
         let actor_id = authenticated_actor_id.trim();
         let source_conversation_id = source_conversation_id.trim();
@@ -4480,7 +4479,6 @@ mod tests {
                 &message_id,
                 "",
                 100,
-                100,
             )
             .unwrap();
         assert_eq!(
@@ -4498,7 +4496,6 @@ mod tests {
                 &message_id,
                 "other person",
                 50,
-                100,
             )
             .unwrap();
         assert_eq!(query.len(), 1);
@@ -4525,7 +4522,6 @@ mod tests {
                 &protected_id,
                 "",
                 50,
-                100,
             )
             .unwrap()
             .is_empty());
@@ -4537,7 +4533,6 @@ mod tests {
                 "missing-message",
                 "",
                 50,
-                100,
             )
             .is_err());
 
