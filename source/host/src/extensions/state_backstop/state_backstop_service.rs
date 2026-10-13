@@ -11,6 +11,7 @@ use std::time::{Duration, Instant};
 pub const SAND_STATE_BACKSTOP_REL_PATH: &str = "state/store.db";
 pub const DEFAULT_MAX_SNAPSHOT_BYTES: usize = 64 * 1024 * 1024;
 pub const STATE_BACKSTOP_DEBOUNCE_MS: u64 = 5_000;
+const MAX_AGENT_ID_BYTES: usize = 512;
 
 pub trait StateBackstopObjectStore: Send + Sync {
     fn put(&self, path: &str, bytes: &[u8]) -> Result<(), String>;
@@ -140,6 +141,10 @@ impl SandStateBackstop {
         }
 
         let agent_id = agent_id.into();
+        if let Err(error) = validate_agent_id(&agent_id) {
+            (self.log)(&format!("snapshot rejected for invalid agent id: {error}"));
+            return;
+        }
         let (slot, created) = {
             let mut pending = self
                 .pending
@@ -182,6 +187,7 @@ impl SandStateBackstop {
 
     pub fn snapshot_now(&self, agent_id: &str) -> StateBackstopSnapshotResult {
         let result = (|| -> Result<StateBackstopSnapshotResult, String> {
+            validate_agent_id(agent_id)?;
             let path = self.db_path_for(agent_id);
             let Some(bytes) = (self.read_db_bytes)(&path)? else {
                 return Ok(StateBackstopSnapshotResult::Skipped {
@@ -214,6 +220,7 @@ impl SandStateBackstop {
     }
 
     pub fn read_snapshot(&self, agent_id: &str) -> Result<Option<Vec<u8>>, String> {
+        validate_agent_id(agent_id)?;
         let source_id = (self.source_id_for_agent)(agent_id)?;
         (self.object_store_provider)(&source_id).get(SAND_STATE_BACKSTOP_REL_PATH)
     }
@@ -297,6 +304,20 @@ fn run_debounce_worker(
     }
 }
 
+fn validate_agent_id(agent_id: &str) -> Result<(), String> {
+    let agent_id = agent_id.trim();
+    if agent_id.is_empty()
+        || agent_id.len() > MAX_AGENT_ID_BYTES
+        || matches!(agent_id, "." | "..")
+        || agent_id
+            .chars()
+            .any(|ch| ch.is_control() || matches!(ch, '/' | '\\'))
+    {
+        return Err("state backstop agent id must be one bounded path component".into());
+    }
+    Ok(())
+}
+
 pub fn is_state_backstop_enabled_value(raw: Option<&str>) -> bool {
     raw.map(str::trim)
         .map(str::to_ascii_lowercase)
@@ -317,5 +338,14 @@ mod android_tests {
         assert!(!is_state_backstop_enabled());
         assert!(is_state_backstop_enabled_value(Some("true")));
         assert!(!is_state_backstop_enabled_value(Some("false")));
+    }
+
+    #[test]
+    fn agent_identity_cannot_escape_the_canonical_agents_root() {
+        for invalid in ["", "   ", ".", "..", "../outside", "nested/agent", "nested\\agent"] {
+            assert!(validate_agent_id(invalid).is_err(), "{invalid:?} must be rejected");
+        }
+        assert!(validate_agent_id(&"a".repeat(MAX_AGENT_ID_BYTES + 1)).is_err());
+        assert!(validate_agent_id("agent:account-a-123").is_ok());
     }
 }
