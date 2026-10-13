@@ -83,7 +83,7 @@ impl LocalToolPermission {
     }
 }
 
-#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 struct PersistedAndroidUserSettings {
     time_zone_override: Option<String>,
@@ -107,6 +107,24 @@ struct PersistedAndroidUserSettings {
     inference_provider: Option<String>,
     #[serde(default)]
     inference_router_usage: BTreeMap<String, InferenceProviderUsage>,
+}
+
+impl Default for PersistedAndroidUserSettings {
+    fn default() -> Self {
+        Self {
+            time_zone_override: None,
+            legacy_local_tool_permission: LocalToolPermission::default(),
+            local_tool_permission_by_account: BTreeMap::new(),
+            local_tool_permission_ceiling: None,
+            onboarding_seen_by_account: BTreeMap::new(),
+            process_metrics_local_enabled: false,
+            webauthn_proxy_enabled: true,
+            agent_default_model_by_account: BTreeMap::new(),
+            computer_use_model_by_account: BTreeMap::new(),
+            inference_provider: None,
+            inference_router_usage: BTreeMap::new(),
+        }
+    }
 }
 
 /// Canonical Host-owned Android user settings that must survive Activity/process recreation.

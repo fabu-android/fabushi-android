@@ -841,10 +841,12 @@ mod tests {
         assert!(runtime.transition("call-1", "acct-a", call.generation, "connect", None, 3).is_err());
         runtime.transition("call-1", "acct-a", call.generation, "accept", None, 4).unwrap();
         runtime.transition("call-1", "acct-a", call.generation, "connected", None, 5).unwrap();
-        runtime.transition("call-1", "acct-a", call.generation, "reconnect", None, 6).unwrap();
-        runtime.transition("call-1", "acct-a", call.generation, "resume", None, 7).unwrap();
-        runtime.transition("call-1", "acct-a", call.generation, "connected", None, 8).unwrap();
-        runtime.transition("call-1", "acct-a", call.generation, "hangup", Some("local hangup".into()), 9).unwrap();
-        assert!(runtime.update_media("call-1", "acct-a", call.generation, json!({}), json!({}), 7).is_err());
+        let reconnected = runtime
+            .transition("call-1", "acct-a", call.generation, "reconnect", None, 6)
+            .unwrap();
+        runtime.transition("call-1", "acct-a", reconnected.generation, "resume", None, 7).unwrap();
+        runtime.transition("call-1", "acct-a", reconnected.generation, "connected", None, 8).unwrap();
+        runtime.transition("call-1", "acct-a", reconnected.generation, "hangup", Some("local hangup".into()), 9).unwrap();
+        assert!(runtime.update_media("call-1", "acct-a", reconnected.generation, json!({}), json!({}), 7).is_err());
     }
 }

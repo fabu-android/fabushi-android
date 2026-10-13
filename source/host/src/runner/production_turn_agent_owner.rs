@@ -682,6 +682,11 @@ mod tests {
         }
     }
 
+    fn durable_lifecycle() -> ProductionTurnAgentLifecycleBindings {
+        ProductionTurnAgentLifecycleBindings::new("acct", "agent", "op")
+            .with_checkpoint_persist(Arc::new(|_, _| Ok(())))
+    }
+
     fn bindings(
         privacy_calls: Arc<AtomicUsize>,
     ) -> ProductionTurnAgentBuildBindings {
@@ -708,7 +713,9 @@ mod tests {
             prompts,
             fail: false,
         })
-        .with_build_bindings(bindings(Arc::clone(&privacy_calls)));
+        .with_build_bindings(bindings(Arc::clone(&privacy_calls)))
+        .with_lifecycle_bindings(durable_lifecycle())
+        .unwrap();
         assert_eq!(privacy_calls.load(AtomicOrdering::SeqCst), 1);
         let build = owner.build_input().unwrap();
         assert_eq!(build.static_projection.max_steps, SAND_AGENT_MAX_STEPS);
@@ -873,7 +880,9 @@ mod tests {
             fail: false,
         })
         .with_upgrade_quiesce_signal(Arc::clone(&signal))
-        .with_build_bindings(bindings(Arc::new(AtomicUsize::new(0))));
+        .with_build_bindings(bindings(Arc::new(AtomicUsize::new(0))))
+        .with_lifecycle_bindings(durable_lifecycle())
+        .unwrap();
         assert!(owner.run(input()).unwrap_err().message.contains("QuiescingForUpgrade"));
         owner.cancel_quiesce_for_upgrade();
         assert!(!signal.load(Ordering::Acquire));

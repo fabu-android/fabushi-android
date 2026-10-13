@@ -4181,7 +4181,10 @@ mod tests {
         );
         let args = json!({"query":"today","limit":2,"flags":[true,null]});
         let encoded_args = encode_json_struct(&args, 0).unwrap();
-        assert_eq!(decode_proto_struct(&encoded_args, 0).unwrap(), args);
+        let decoded_args = decode_proto_struct(&encoded_args, 0).unwrap();
+        assert_eq!(decoded_args["query"], "today");
+        assert_eq!(decoded_args["limit"].as_f64(), Some(2.0));
+        assert_eq!(decoded_args["flags"], json!([true, null]));
         let request = encode_execute_sand_mcp_tool_request(
             "calendar/default",
             "events.list",
@@ -4193,10 +4196,11 @@ mod tests {
         assert_eq!(optional_string_field(&request, 2).unwrap().as_deref(), Some("events.list"));
         assert_eq!(optional_string_field(&request, 4).unwrap().as_deref(), Some("call-17"));
         assert_eq!(optional_string_field(&request, 5).unwrap().as_deref(), Some("agent-2"));
-        assert_eq!(
-            decode_proto_struct(first_message_field(&request, 3).unwrap().unwrap(), 0).unwrap(),
-            args
-        );
+        let request_args =
+            decode_proto_struct(first_message_field(&request, 3).unwrap().unwrap(), 0).unwrap();
+        assert_eq!(request_args["query"], "today");
+        assert_eq!(request_args["limit"].as_f64(), Some(2.0));
+        assert_eq!(request_args["flags"], json!([true, null]));
 
         let mut text = Vec::new();
         encode_string(1, "done", &mut text);
