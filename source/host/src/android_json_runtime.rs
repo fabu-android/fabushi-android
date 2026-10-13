@@ -54,6 +54,7 @@ use crate::extensions::telemetry::recovery_events::{
     rebuild_escalation_event, rebuild_pending_stall_event, recovery_action_event,
     replica_resync_event, resync_completed_event, send_journal_restore_event,
 };
+use crate::extensions::cross_user_sharing::android_sharing_manager::AndroidXuserSharingManager;
 use crate::extensions::cross_user_sharing::production::{
     android_xuser_environment, build_production_xuser_core, ProductionCrossUserCore,
 };
@@ -736,7 +737,7 @@ fn project_cross_user_state(
         "pendingJoinRequests": state.pending_join_requests,
         "rooms": state.rooms,
         "typingUsers": state.typing_users,
-        "canonicalRoomManagerBound": false,
+        "canonicalRoomManagerBound": core.canonical_room_manager_bound(),
     })
 }
 
@@ -1065,12 +1066,20 @@ impl AndroidJsonHost {
         let cross_user_core = if mode == AndroidHostMode::Production {
             let env = android_xuser_environment(true, std::env::vars());
             mcp_dashboard_backend.as_ref().and_then(|dashboard| {
-                build_production_xuser_core(
+                let core = build_production_xuser_core(
                     dashboard.credential_provider(),
                     &env,
                     &app_data_dir,
                 )
-                .ok()
+                .ok()?;
+                let manager = AndroidXuserSharingManager::open(
+                    app_data_dir.join("xuser-sharing").join("mirror-registry.json"),
+                    Arc::clone(&agents),
+                    Arc::clone(&transcript),
+                )
+                .ok()?;
+                core.bind_manager(Arc::new(manager));
+                Some(core)
             })
         } else {
             None
@@ -4477,7 +4486,7 @@ impl AndroidJsonHost {
         self.pending_plugin_variable_writes.clear();
         self.experiments.clear_account_scope();
         if let Some(core) = self.cross_user_core.as_ref() {
-            core.extension.fence_account_transition();
+            core.fence_account_transition()?;
         }
         self.cancel_mcp_auth_watches_for_account_change(reason)?;
         self.user_settings
@@ -4504,7 +4513,7 @@ impl AndroidJsonHost {
         core.apply_feature_policy(gate_enabled)?;
         let result = operation(core)?;
         if self.current_turn_account_fence()? != account_fence {
-            core.extension.fence_account_transition();
+            core.fence_account_transition()?;
             return Err("cross-user sharing result is stale after account switch".into());
         }
         Ok(result)
