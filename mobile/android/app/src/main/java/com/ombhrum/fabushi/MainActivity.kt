@@ -60,7 +60,7 @@ class MainActivity : ComponentActivity() {
         super.onStart()
         activityStarted = true
         if (runtimeReady) {
-            runtimePort.attachInteractiveActivity(this)
+            runtimePort.attachInteractiveActivity(this@MainActivity)
             runtimePort.setForeground(true)
             updateModel.setForeground(true)
             ensureNotificationPermission()
