@@ -47,13 +47,14 @@ struct ExperimentsState {
     network_experiments: BTreeMap<String, StatsigExperimentAssignment>,
     hydrated_user_id: Option<String>,
     authenticated_bootstrap: bool,
+    refresh_generation: u64,
 }
 
 /// Canonical Android Host owner for experiment/gate state.
 ///
-/// Network transport is intentionally outside this foundation. A future authenticated Statsig
-/// bootstrap adapter must hydrate this owner rather than giving Presentation or a second runtime
-/// independent feature-gate truth.
+/// Network transport stays outside this state owner. Authenticated Statsig refreshes must obtain
+/// a generation from this owner and commit through the generation-fenced hydrate path so logout,
+/// account switch, and overlapping refreshes cannot publish stale account-scoped truth.
 type GateListener = Arc<dyn Fn(bool) + Send + Sync>;
 pub type StopGateSubscription = Box<dyn Fn() + Send + Sync + 'static>;
 
@@ -189,15 +190,39 @@ impl HostExperimentsExtension {
         self.notify_gate_listeners();
     }
 
+    pub fn begin_authenticated_refresh(&self) -> u64 {
+        let mut state = self.state.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        state.refresh_generation = state.refresh_generation.saturating_add(1);
+        state.refresh_generation
+    }
+
     /// Atomically accepts a bootstrap only when it carries a non-empty authenticated user id.
     /// Invalid/anonymous payloads leave the previous canonical state untouched.
     pub fn hydrate_authenticated_statsig(&self, config: &str) -> Result<(), String> {
+        let generation = self.begin_authenticated_refresh();
+        self.hydrate_authenticated_statsig_if_current(generation, config)
+            .map(|accepted| {
+                debug_assert!(accepted, "fresh synchronous experiment hydrate must be accepted");
+            })
+    }
+
+    /// Commit an authenticated refresh only if no account transition or newer refresh superseded
+    /// it. Parsing happens before the state lock, but generation comparison and mutation happen
+    /// under the same lock used by clear_account_scope(), eliminating a stale-result TOCTOU race.
+    pub fn hydrate_authenticated_statsig_if_current(
+        &self,
+        generation: u64,
+        config: &str,
+    ) -> Result<bool, String> {
         let parsed = parse_statsig_bootstrap(config)?;
         let user_id = parsed
             .hydrated_user_id
             .filter(|value| !value.trim().is_empty())
             .ok_or_else(|| "Statsig bootstrap has no authenticated user id".to_string())?;
         let mut state = self.state.lock().map_err(|_| "experiments state lock poisoned".to_string())?;
+        if state.refresh_generation != generation {
+            return Ok(false);
+        }
         state.network_feature_gates = parsed.feature_gates;
         state.network_dynamic_configs = parsed.dynamic_configs;
         state.network_experiments = parsed.experiments;
@@ -205,7 +230,7 @@ impl HostExperimentsExtension {
         state.authenticated_bootstrap = true;
         drop(state);
         self.notify_gate_listeners();
-        Ok(())
+        Ok(true)
     }
 
     pub fn sand_model_experiment_state(&self) -> Option<SandModelExperimentState> {
@@ -245,6 +270,7 @@ impl HostExperimentsExtension {
     /// are installation-local and intentionally survive.
     pub fn clear_account_scope(&self) {
         let mut state = self.state.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        state.refresh_generation = state.refresh_generation.saturating_add(1);
         state.network_feature_gates.clear();
         state.network_dynamic_configs.clear();
         state.network_experiments.clear();
@@ -385,6 +411,43 @@ mod tests {
             }
         })
         .to_string()
+    }
+
+    #[test]
+    fn stale_authenticated_refresh_cannot_rehydrate_after_account_clear_or_newer_refresh() {
+        let experiments = HostExperimentsExtension::with_options(HostExperimentsOptions {
+            is_dev_build: false,
+            env_gate_overrides: None,
+        });
+        let stale = experiments.begin_authenticated_refresh();
+        experiments.clear_account_scope();
+        assert!(!experiments
+            .hydrate_authenticated_statsig_if_current(
+                stale,
+                &bootstrap(Some("old-account"), true, "old-model"),
+            )
+            .unwrap());
+        assert!(!experiments.has_authenticated_bootstrap());
+
+        let older = experiments.begin_authenticated_refresh();
+        let current = experiments.begin_authenticated_refresh();
+        assert!(!experiments
+            .hydrate_authenticated_statsig_if_current(
+                older,
+                &bootstrap(Some("old-account"), true, "old-model"),
+            )
+            .unwrap());
+        assert!(experiments
+            .hydrate_authenticated_statsig_if_current(
+                current,
+                &bootstrap(Some("new-account"), true, "new-model"),
+            )
+            .unwrap());
+        assert_eq!(experiments.hydrated_user_id().as_deref(), Some("new-account"));
+        assert_eq!(
+            experiments.configured_default_model().unwrap().model_id,
+            "new-model"
+        );
     }
 
     #[test]
