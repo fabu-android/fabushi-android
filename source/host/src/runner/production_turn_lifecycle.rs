@@ -251,6 +251,21 @@ impl ProductionTurnLifecycleStore {
         Ok(true)
     }
 
+    pub fn clear_awaiting_user_for_agent_response(
+        &mut self,
+        account_fence: &str,
+        agent_id: &str,
+    ) -> Result<bool, String> {
+        validate_identity(account_fence, "account fence")?;
+        validate_identity(agent_id, "agent id")?;
+        let key = conversation_key(account_fence, agent_id);
+        if self.state.awaiting_user.remove(&key).is_none() {
+            return Ok(false);
+        }
+        self.persist()?;
+        Ok(true)
+    }
+
     pub fn reconcile_awaiting_user(
         &mut self,
         account_fence: &str,
@@ -756,6 +771,63 @@ mod tests {
         assert!(reopened
             .awaiting_user_projection("session:a", "agent-a")
             .is_none());
+    }
+
+    #[test]
+    fn explicit_user_response_clears_only_the_matching_account_agent_wait() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("turn-lifecycle.json");
+        let mut store = ProductionTurnLifecycleStore::open(&path, 1).unwrap();
+        let epoch = store.process_epoch();
+        store
+            .mark_awaiting_user(
+                "session:a",
+                "agent-a",
+                "request-a",
+                "operation-a",
+                1,
+                epoch,
+                "Approval required",
+                2,
+            )
+            .unwrap();
+        store
+            .mark_awaiting_user(
+                "session:a",
+                "agent-b",
+                "request-b",
+                "operation-b",
+                1,
+                epoch,
+                "More input required",
+                3,
+            )
+            .unwrap();
+
+        assert!(store
+            .clear_awaiting_user_for_agent_response("session:a", "agent-a")
+            .unwrap());
+        assert!(store
+            .awaiting_user_projection("session:a", "agent-a")
+            .is_none());
+        assert!(store
+            .awaiting_user_projection("session:a", "agent-b")
+            .is_some());
+        assert!(!store
+            .clear_awaiting_user_for_agent_response("session:b", "agent-b")
+            .unwrap());
+        assert!(store
+            .awaiting_user_projection("session:a", "agent-b")
+            .is_some());
+
+        drop(store);
+        let reopened = ProductionTurnLifecycleStore::open(&path, 4).unwrap();
+        assert!(reopened
+            .awaiting_user_projection("session:a", "agent-a")
+            .is_none());
+        assert!(reopened
+            .awaiting_user_projection("session:a", "agent-b")
+            .is_some());
     }
 
     #[test]
