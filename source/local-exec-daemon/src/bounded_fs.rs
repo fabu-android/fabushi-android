@@ -77,6 +77,45 @@ impl BoundedLocalFs {
         Ok(bytes)
     }
 
+    pub fn read_file_range(
+        &self,
+        requested: &Path,
+        offset: u64,
+        limit: usize,
+    ) -> io::Result<(Vec<u8>, bool)> {
+        if limit == 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "local-exec read limit must be positive",
+            ));
+        }
+        let path = self.resolve_contained(requested)?;
+        let metadata = fs::metadata(&path)?;
+        if !metadata.is_file() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "local-exec path is not a regular file",
+            ));
+        }
+        if metadata.len() > self.max_file_bytes {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "local-exec file exceeds bounded size",
+            ));
+        }
+        if offset > metadata.len() {
+            return Ok((Vec::new(), true));
+        }
+        use std::io::{Seek, SeekFrom};
+        let mut file = fs::File::open(path)?;
+        file.seek(SeekFrom::Start(offset))?;
+        let remaining = metadata.len().saturating_sub(offset);
+        let bounded = remaining.min(limit as u64);
+        let mut bytes = Vec::with_capacity(bounded as usize);
+        file.take(bounded).read_to_end(&mut bytes)?;
+        Ok((bytes, offset.saturating_add(bytes.len() as u64) >= metadata.len()))
+    }
+
     pub fn write_file_atomic(&self, requested: &Path, bytes: &[u8]) -> io::Result<()> {
         if bytes.len() as u64 > self.max_file_bytes {
             return Err(io::Error::new(io::ErrorKind::InvalidInput, "local-exec upload exceeds bounded size"));
@@ -198,6 +237,20 @@ mod tests {
         assert!(fs.write_file_atomic(Path::new("nested/too-big.txt"), b"123456789").is_err());
         std::fs::write(root.join("oversized.txt"), b"123456789").unwrap();
         assert!(fs.read_file(Path::new("oversized.txt")).is_err());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn ranged_read_never_allocates_the_whole_bounded_file() {
+        let root = root("range");
+        let fs = BoundedLocalFs::open(&root, 1024).unwrap();
+        std::fs::write(root.join("large.txt"), b"0123456789").unwrap();
+        let (bytes, eof) = fs.read_file_range(Path::new("large.txt"), 3, 4).unwrap();
+        assert_eq!(bytes, b"3456");
+        assert!(!eof);
+        let (bytes, eof) = fs.read_file_range(Path::new("large.txt"), 7, 8).unwrap();
+        assert_eq!(bytes, b"789");
+        assert!(eof);
         let _ = std::fs::remove_dir_all(root);
     }
 
