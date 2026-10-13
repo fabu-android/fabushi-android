@@ -12,6 +12,7 @@ use crate::automation_id::stable_account_automation_id;
 use crate::automation_runtime::{run_json as automation_run_json, AutomationRuntime, AutomationSpec};
 use crate::auto_review_settings::{AutoReviewInstructions, DurableAutoReviewSettings};
 use crate::android_agent_roster::{AndroidAgentRoster, AndroidAgentRosterRecoveryOutcome};
+use crate::android_box_handoff::{AndroidBoxHandoffOwner, AndroidHandoffStart};
 use crate::android_memory_runtime::AndroidMemoryOwner;
 use crate::android_session_policy_runtime::AndroidSessionPolicyBindings;
 use crate::android_process_metrics::AndroidProcessMetricsCollector;
@@ -863,6 +864,7 @@ pub struct AndroidJsonHost {
     user_settings: Arc<Mutex<AndroidUserSettings>>,
     experiments: Arc<HostExperimentsExtension>,
     _session_policy_bindings: AndroidSessionPolicyBindings,
+    box_handoff: Arc<Mutex<AndroidBoxHandoffOwner>>,
     detected_time_zone: Arc<Mutex<Option<String>>>,
     auto_review_settings: Arc<Mutex<DurableAutoReviewSettings>>,
     transcript: Arc<Mutex<TranscriptStore>>,
@@ -1249,6 +1251,10 @@ impl AndroidJsonHost {
         ));
         let experiments = Arc::new(HostExperimentsExtension::new());
         let session_policy_bindings = AndroidSessionPolicyBindings::bind(Arc::clone(&experiments));
+        let box_handoff = Arc::new(Mutex::new(
+            AndroidBoxHandoffOwner::open(app_data_dir.join("box-handoff.json"))
+                .unwrap_or_else(|error| panic!("failed to open durable Android box handoff owner: {error}")),
+        ));
         let mcp_auth_watches = Arc::new(Mutex::new(
             AndroidMcpAuthWatchManager::open(
                 app_data_dir.join("mcp-auth-watches.json"),
@@ -1502,6 +1508,7 @@ impl AndroidJsonHost {
             user_settings,
             experiments,
             _session_policy_bindings: session_policy_bindings,
+            box_handoff,
             detected_time_zone: Arc::new(Mutex::new(None)),
             auto_review_settings,
             transcript,
@@ -2904,6 +2911,10 @@ impl AndroidJsonHost {
             "feature.memory.add" => self.memory_add(params),
             "feature.memory.remove" => self.memory_remove(params),
             "feature.memory.clear" => self.memory_clear(params),
+            "feature.agent.handoff.status" => self.agent_handoff_status(params),
+            "feature.agent.handoff.start" => self.agent_handoff_start(params),
+            "feature.agent.handoff.attachSnapshot" => self.agent_handoff_attach_snapshot(params),
+            "feature.agent.handoff.end" => self.agent_handoff_end(params),
             "feature.agent.diskPressure.observe" => self.agent_disk_pressure_observe(params),
             "feature.agent.diskPressure.record" => self.agent_disk_pressure_record(params),
             "feature.agent.turn.reconcile" => self.agent_turn_reconcile(params),
@@ -5296,6 +5307,86 @@ impl AndroidJsonHost {
         }
         self.process_metrics_recent.push_back(projected.clone());
         Ok(projected)
+    }
+
+    fn agent_handoff_status(&self, params: &Value) -> Result<Value, String> {
+        let account_fence = self.current_turn_account_fence()?;
+        let agent_id = required_string(params, "agentId")?;
+        self.box_handoff
+            .lock()
+            .map_err(|_| "Android box handoff lock poisoned".to_string())?
+            .projection(&account_fence, agent_id)
+    }
+
+    fn agent_handoff_start(&mut self, params: &Value) -> Result<Value, String> {
+        let account_fence = self.current_turn_account_fence()?;
+        let agent_id = required_string(params, "agentId")?;
+        let instruction = required_string(params, "instruction")?;
+        let started = self
+            .box_handoff
+            .lock()
+            .map_err(|_| "Android box handoff lock poisoned".to_string())?
+            .start(&account_fence, agent_id, instruction, now_ms())?;
+        Ok(match started {
+            AndroidHandoffStart::Started(pending) => json!({
+                "status": "started",
+                "requestId": pending.request_id,
+                "instruction": pending.instruction,
+                "snapshotDataUrl": pending.snapshot_data_url,
+                "createdAtMs": pending.created_at_ms,
+            }),
+            AndroidHandoffStart::AlreadyPending(pending) => json!({
+                "status": "already-pending",
+                "requestId": pending.request_id,
+                "instruction": pending.instruction,
+                "snapshotDataUrl": pending.snapshot_data_url,
+                "createdAtMs": pending.created_at_ms,
+            }),
+        })
+    }
+
+    fn agent_handoff_attach_snapshot(&mut self, params: &Value) -> Result<Value, String> {
+        let account_fence = self.current_turn_account_fence()?;
+        let agent_id = required_string(params, "agentId")?;
+        let request_id = required_string(params, "requestId")?;
+        let snapshot_data_url = required_string(params, "snapshotDataUrl")?;
+        let attached = self
+            .box_handoff
+            .lock()
+            .map_err(|_| "Android box handoff lock poisoned".to_string())?
+            .attach_snapshot_if_current(
+                &account_fence,
+                agent_id,
+                request_id,
+                snapshot_data_url,
+            )?;
+        Ok(json!({"attached": attached, "requestId": request_id}))
+    }
+
+    fn agent_handoff_end(&mut self, params: &Value) -> Result<Value, String> {
+        let account_fence = self.current_turn_account_fence()?;
+        let agent_id = required_string(params, "agentId")?;
+        let request_id = required_string(params, "requestId")?;
+        let ended = self
+            .box_handoff
+            .lock()
+            .map_err(|_| "Android box handoff lock poisoned".to_string())?
+            .end(
+                &account_fence,
+                agent_id,
+                request_id,
+                params.get("resolution").and_then(Value::as_str),
+                params.get("trigger").and_then(Value::as_str),
+            )?;
+        Ok(match ended {
+            Some(ended) => json!({
+                "ended": true,
+                "requestId": ended.request_id,
+                "resolution": ended.resolution,
+                "trigger": ended.trigger,
+            }),
+            None => json!({"ended": false, "requestId": request_id}),
+        })
     }
 
     fn memory_list(&self, params: &Value) -> Result<Value, String> {
