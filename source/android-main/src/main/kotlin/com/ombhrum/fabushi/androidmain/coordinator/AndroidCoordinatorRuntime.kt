@@ -498,6 +498,9 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
     override fun availableModelCatalog(): JSONObject =
         host.request("feature.models.available")
 
+    override fun managedSkillsCatalog(): JSONObject =
+        host.request("feature.agent.managedSkills")
+
     override fun mcpServerTools(serverId: String): JSONArray =
         host.request(
             "feature.mcp.serverTools.list",
