@@ -496,6 +496,285 @@ impl AndroidMessagingService {
             .is_some_and(|messages| messages.contains_key(&message_id))
     }
 
+    fn canonical_remote_human_attachment(
+        &self,
+        authenticated_actor_id: &str,
+        conversation_id: &str,
+        message_id: &str,
+        resource_id: &str,
+    ) -> Result<Value, String> {
+        let authenticated_actor_id = authenticated_actor_id.trim();
+        if !valid_actor_id(authenticated_actor_id) || !authenticated_actor_id.starts_with("human:") {
+            return Err("remote Human attachment actor identity is invalid".into());
+        }
+        if !bounded_id(conversation_id) || !bounded_id(message_id) {
+            return Err("remote Human attachment conversation/message identity is invalid".into());
+        }
+        if resource_id.trim().is_empty()
+            || resource_id.len() > 128
+            || resource_id.contains('/')
+            || resource_id.contains('\\')
+            || resource_id.chars().any(char::is_control)
+        {
+            return Err("remote Human attachment resource id is invalid".into());
+        }
+        let conversation = self
+            .state
+            .conversations
+            .get(conversation_id)
+            .ok_or("remote Human attachment conversation not found")?;
+        if !conversation_has_access(conversation, authenticated_actor_id) {
+            return Err("remote Human attachment conversation access denied".into());
+        }
+        let message = self
+            .state
+            .messages
+            .get(conversation_id)
+            .and_then(|messages| messages.get(message_id))
+            .ok_or("remote Human attachment message not found")?;
+        if message.get("conversationId").and_then(Value::as_str) != Some(conversation_id)
+            || message
+                .get("remoteMessageId")
+                .and_then(Value::as_str)
+                .is_none()
+        {
+            return Err("remote Human attachment must belong to a canonical server message".into());
+        }
+        let attachments = message
+            .get("content")
+            .and_then(|content| content.get("data"))
+            .and_then(|data| data.get("remoteAttachments"))
+            .and_then(Value::as_array)
+            .ok_or("canonical remote Human message has no downloadable attachments")?;
+        let attachment = attachments
+            .iter()
+            .find(|attachment| {
+                attachment.get("resourceId").and_then(Value::as_str) == Some(resource_id)
+            })
+            .ok_or("remote Human attachment resource is not present on the canonical message")?;
+        let name = required_non_empty(attachment.get("name"), "remote Human attachment name")?;
+        let size = attachment
+            .get("size")
+            .and_then(Value::as_u64)
+            .filter(|size| *size > 0 && *size <= 32 * 1024 * 1024)
+            .ok_or("remote Human attachment size is invalid")?;
+        let content_type = attachment
+            .get("contentType")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty() && value.len() <= 255)
+            .unwrap_or("application/octet-stream");
+        Ok(json!({
+            "conversationId":conversation_id,
+            "messageId":message_id,
+            "resourceId":resource_id,
+            "fileName":name,
+            "contentType":content_type,
+            "sizeBytes":size,
+            "localBlobId":attachment.get("localBlobId").cloned().unwrap_or(Value::Null),
+            "localUrl":attachment.get("localUrl").cloned().unwrap_or(Value::Null),
+        }))
+    }
+
+    /// Resolve a remote Human attachment strictly from canonical message state. Presentation may
+    /// request a conversation/message/resource tuple, but it cannot invent size/name/MIME or bytes.
+    pub fn remote_human_attachment_download_intent(
+        &self,
+        authenticated_actor_id: &str,
+        command: &Map<String, Value>,
+    ) -> Result<Option<Value>, String> {
+        if command.get("type").and_then(Value::as_str)
+            != Some("downloadRemoteHumanAttachment")
+        {
+            return Ok(None);
+        }
+        let conversation_id =
+            required_non_empty(command.get("conversationId"), "remote Human conversation id")?;
+        let message_id =
+            required_non_empty(command.get("messageId"), "remote Human message id")?;
+        let resource_id =
+            required_non_empty(command.get("resourceId"), "remote Human resource id")?;
+        self.canonical_remote_human_attachment(
+            authenticated_actor_id,
+            conversation_id,
+            message_id,
+            resource_id,
+        )
+        .map(Some)
+    }
+
+    /// Import account-owned downloaded bytes into the canonical messaging blob store and then
+    /// atomically publish the local blob reference on the existing server message.
+    pub fn import_remote_human_attachment(
+        &mut self,
+        authenticated_actor_id: &str,
+        conversation_id: &str,
+        message_id: &str,
+        resource_id: &str,
+        bytes: &[u8],
+        now_ms: i64,
+    ) -> Result<Value, String> {
+        let descriptor = self.canonical_remote_human_attachment(
+            authenticated_actor_id,
+            conversation_id,
+            message_id,
+            resource_id,
+        )?;
+        let expected_size = descriptor
+            .get("sizeBytes")
+            .and_then(Value::as_u64)
+            .ok_or("canonical remote Human attachment size is missing")?;
+        if bytes.len() as u64 != expected_size {
+            return Err(format!(
+                "remote Human attachment body length mismatch: expected {expected_size}, received {}",
+                bytes.len()
+            ));
+        }
+
+        let mut identity = Vec::new();
+        for value in [
+            authenticated_actor_id,
+            conversation_id,
+            message_id,
+            resource_id,
+        ] {
+            identity.extend_from_slice(value.as_bytes());
+            identity.push(0);
+        }
+        let blob_id = BlobId::new(format!(
+            "remote-{}",
+            crate::sha256::sha256_hex(&identity)
+        ))
+        .map_err(|error| error.to_string())?;
+        let file_name = required_non_empty(descriptor.get("fileName"), "remote Human file name")?;
+        let mime_type = required_non_empty(
+            descriptor.get("contentType"),
+            "remote Human content type",
+        )?;
+        let content_hash = crate::sha256::sha256_hex(bytes);
+        let metadata = BlobMetadata {
+            id: blob_id.clone(),
+            file_name: file_name.to_string(),
+            mime_type: mime_type.to_string(),
+            size_bytes: expected_size,
+            content_hash: Some(content_hash),
+            created_at_ms: now_ms,
+            owner_actor_id: Some(authenticated_actor_id.to_string()),
+        };
+
+        let existing_local = descriptor
+            .get("localBlobId")
+            .and_then(Value::as_str)
+            .filter(|value| !value.trim().is_empty());
+        if let Some(existing_local) = existing_local {
+            if existing_local != blob_id.0 {
+                return Err("canonical remote Human attachment local blob identity conflicts".into());
+            }
+            let current = self
+                .blobs
+                .metadata(&blob_id)
+                .map_err(|error| format!("canonical remote Human blob is unavailable: {error}"))?;
+            if current.owner_actor_id.as_deref() != Some(authenticated_actor_id)
+                || current.size_bytes != expected_size
+                || current.file_name != file_name
+                || current.mime_type != mime_type
+            {
+                return Err("canonical remote Human blob metadata conflicts".into());
+            }
+            return Ok(json!({
+                "blob":{
+                    "id":blob_id.0,
+                    "fileName":current.file_name,
+                    "mimeType":current.mime_type,
+                    "sizeBytes":current.size_bytes,
+                    "remoteUrl":format!("fabushi-blob://{}", blob_id.0)
+                },
+                "alreadyDownloaded":true
+            }));
+        }
+
+        let status = self
+            .blobs
+            .begin_upload(&metadata)
+            .map_err(|error| format!("failed to begin remote Human blob import: {error}"))?;
+        if !status.complete {
+            let mut offset = 0usize;
+            while offset < bytes.len() {
+                let end = (offset + MAX_BLOB_RANGE_BYTES as usize).min(bytes.len());
+                self.blobs
+                    .append_chunk(&blob_id, offset as u64, &bytes[offset..end])
+                    .map_err(|error| format!("failed to append remote Human blob: {error}"))?;
+                offset = end;
+            }
+            self.blobs
+                .finish_upload(&blob_id)
+                .map_err(|error| format!("failed to settle remote Human blob: {error}"))?;
+        }
+
+        let previous = self.state.clone();
+        let previous_cursor = self.state.cursor;
+        let updated_message = {
+            let message = self
+                .state
+                .messages
+                .get_mut(conversation_id)
+                .and_then(|messages| messages.get_mut(message_id))
+                .ok_or("canonical remote Human message disappeared during attachment import")?;
+            let attachments = message
+                .get_mut("content")
+                .and_then(|content| content.get_mut("data"))
+                .and_then(|data| data.get_mut("remoteAttachments"))
+                .and_then(Value::as_array_mut)
+                .ok_or("canonical remote Human attachment list disappeared during import")?;
+            let attachment = attachments
+                .iter_mut()
+                .find(|attachment| {
+                    attachment.get("resourceId").and_then(Value::as_str) == Some(resource_id)
+                })
+                .ok_or("canonical remote Human attachment disappeared during import")?;
+            let object = attachment
+                .as_object_mut()
+                .ok_or("canonical remote Human attachment is invalid")?;
+            object.insert("localBlobId".into(), Value::String(blob_id.0.clone()));
+            object.insert(
+                "localUrl".into(),
+                Value::String(format!("fabushi-blob://{}", blob_id.0)),
+            );
+            object.insert("downloadedAtMs".into(), json!(now_ms));
+            message.clone()
+        };
+        self.bump_cursor();
+        let projected = self.project_message(&updated_message, authenticated_actor_id);
+        let envelope = self.server_envelope(
+            json!({"type":"messageChanged","message":projected.clone()}),
+            now_ms,
+        );
+        if let Err(error) =
+            self.record_journal_result(authenticated_actor_id, previous_cursor, &[envelope.clone()])
+        {
+            self.state = previous;
+            return Err(error);
+        }
+        if let Err(error) = self.persist() {
+            self.state = previous;
+            return Err(format!(
+                "failed to persist canonical remote Human attachment import: {error}"
+            ));
+        }
+        Ok(json!({
+            "blob":{
+                "id":blob_id.0,
+                "fileName":metadata.file_name,
+                "mimeType":metadata.mime_type,
+                "sizeBytes":metadata.size_bytes,
+                "remoteUrl":format!("fabushi-blob://{}", blob_id.0)
+            },
+            "message":projected,
+            "envelope":envelope,
+            "alreadyDownloaded":false
+        }))
+    }
+
     pub fn execute(
         &mut self,
         params: &Value,
@@ -4619,6 +4898,106 @@ mod tests {
             "size":5
         }]))).unwrap();
         assert_eq!(valid[0]["resourceId"], "resource-1");
+    }
+
+    #[test]
+    fn remote_human_attachment_download_and_import_are_canonical_and_durable() {
+        let root = remote_root("remote-attachment-download");
+        let owner = "human:owner";
+        let peer = "human:peer";
+        let conversation_id = stable_human_direct_conversation_id(owner, peer);
+        let message_id = "human-server-message:remote-attachment";
+        let mut remote = remote_message(
+            "remote-attachment",
+            "peer",
+            "owner",
+            None,
+            "file",
+            "2026-10-13T00:00:00Z",
+        );
+        remote["attachments"] = json!([{
+            "resourceId":"resource-1",
+            "name":"hello.txt",
+            "contentType":"text/plain",
+            "size":5
+        }]);
+        {
+            let mut service = AndroidMessagingService::open(&root).unwrap();
+            service
+                .reconcile_remote_human_contacts(&[
+                    json!({"id":peer,"kind":"human","displayName":"Peer"})
+                ])
+                .unwrap();
+            service
+                .reconcile_remote_human_messages(owner, peer, &[remote])
+                .unwrap();
+
+            let command = json!({
+                "type":"downloadRemoteHumanAttachment",
+                "conversationId":conversation_id,
+                "messageId":message_id,
+                "resourceId":"resource-1"
+            });
+            let intent = service
+                .remote_human_attachment_download_intent(owner, command.as_object().unwrap())
+                .unwrap()
+                .unwrap();
+            assert_eq!(intent["fileName"], "hello.txt");
+            assert_eq!(intent["contentType"], "text/plain");
+            assert_eq!(intent["sizeBytes"], 5);
+            assert!(service
+                .remote_human_attachment_download_intent(
+                    "human:outsider",
+                    command.as_object().unwrap(),
+                )
+                .is_err());
+
+            let result = service
+                .import_remote_human_attachment(
+                    owner,
+                    &conversation_id,
+                    message_id,
+                    "resource-1",
+                    b"hello",
+                    123,
+                )
+                .unwrap();
+            let blob_id = result["blob"]["id"].as_str().unwrap().to_string();
+            assert!(blob_id.starts_with("remote-"));
+            assert_eq!(
+                service.state.messages[&conversation_id][message_id]["content"]["data"]
+                    ["remoteAttachments"][0]["localBlobId"],
+                blob_id,
+            );
+            let (name, mime, size, bytes) = service
+                .read_owned_blob_for_remote_transport(owner, &blob_id)
+                .unwrap();
+            assert_eq!((name.as_str(), mime.as_str(), size), ("hello.txt", "text/plain", 5));
+            assert_eq!(bytes, b"hello");
+
+            let replay = service
+                .import_remote_human_attachment(
+                    owner,
+                    &conversation_id,
+                    message_id,
+                    "resource-1",
+                    b"hello",
+                    124,
+                )
+                .unwrap();
+            assert_eq!(replay["alreadyDownloaded"], true);
+        }
+        let reopened = AndroidMessagingService::open(&root).unwrap();
+        let local_blob_id = reopened.state.messages[&conversation_id][message_id]["content"]["data"]
+            ["remoteAttachments"][0]["localBlobId"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let (_, _, _, bytes) = reopened
+            .read_owned_blob_for_remote_transport(owner, &local_blob_id)
+            .unwrap();
+        assert_eq!(bytes, b"hello");
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
