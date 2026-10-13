@@ -465,3 +465,78 @@ fn now_ms() -> u64 {
         .map(|duration| duration.as_millis().min(u64::MAX as u128) as u64)
         .unwrap_or_default()
 }
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn policy_defaults_are_stable_when_no_override_exists() {
+        let policy = ConversationSizePolicy::from_lookup(
+            |_| None,
+            ConversationSizeLimits::default(),
+            false,
+        );
+        assert_eq!(
+            policy,
+            ConversationSizePolicy {
+                enabled: false,
+                soft_limit_bytes: SOFT_LIMIT_DEFAULT_BYTES,
+                hard_limit_bytes: HARD_LIMIT_DEFAULT_BYTES,
+            }
+        );
+    }
+
+    #[test]
+    fn environment_overrides_configured_limits_and_floors_fractional_bytes() {
+        let policy = ConversationSizePolicy::from_lookup(
+            |name| match name {
+                "SAND_CONVERSATION_SOFT_LIMIT_BYTES" => Some("1048576.9".into()),
+                "SAND_CONVERSATION_HARD_LIMIT_BYTES" => Some("2097152.4".into()),
+                "SAND_CONVERSATION_GC" => Some("off".into()),
+                _ => None,
+            },
+            ConversationSizeLimits {
+                soft_limit_mb: Some(8.0),
+                hard_limit_mb: Some(16.0),
+            },
+            true,
+        );
+        assert_eq!(policy.soft_limit_bytes, 1_048_576);
+        assert_eq!(policy.hard_limit_bytes, 2_097_152);
+        assert!(!policy.enabled, "explicit environment policy must override the pinned default");
+    }
+
+    #[test]
+    fn configured_limits_and_pinned_gc_are_used_when_environment_is_invalid() {
+        let policy = ConversationSizePolicy::from_lookup(
+            |name| match name {
+                "SAND_CONVERSATION_SOFT_LIMIT_BYTES" => Some("0".into()),
+                "SAND_CONVERSATION_HARD_LIMIT_BYTES" => Some("not-a-number".into()),
+                "SAND_CONVERSATION_GC" => Some("unexpected".into()),
+                _ => None,
+            },
+            ConversationSizeLimits {
+                soft_limit_mb: Some(1.5),
+                hard_limit_mb: Some(3.25),
+            },
+            true,
+        );
+        assert_eq!(policy.soft_limit_bytes, 1_572_864);
+        assert_eq!(policy.hard_limit_bytes, 3_407_872);
+        assert!(policy.enabled);
+    }
+
+    #[test]
+    fn hard_limit_error_preserves_user_action_and_rounded_sizes() {
+        let error = SandConversationTooLargeError {
+            size_bytes: 300 * 1024 * 1024,
+            limit_bytes: 256 * 1024 * 1024,
+        };
+        let message = error.to_string();
+        assert!(message.contains("300 MB"));
+        assert!(message.contains("256 MB"));
+        assert!(message.contains("Start a new conversation"));
+    }
+}
