@@ -78,6 +78,25 @@ class AndroidNotificationsTest {
     }
 
     @Test
+    fun forgottenAgentsRetireNotificationDedupeStateAndEventShape() {
+        assertEquals(
+            setOf("agent-b"),
+            AndroidOsNotificationManager.removedNotificationAgentIds(
+                setOf("agent-a", "agent-b"),
+                setOf("agent-a"),
+            ),
+        )
+        assertEquals(
+            "agent-forgotten",
+            agentNotificationEventKind(
+                org.json.JSONObject()
+                    .put("kind", "agent-forgotten")
+                    .put("agentId", "agent-b"),
+            ),
+        )
+    }
+
+    @Test
     fun notificationFeedAcceptsDesktopAndNativeEventShapes() {
         assertEquals(
             "agents",
