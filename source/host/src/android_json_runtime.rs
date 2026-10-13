@@ -2220,9 +2220,12 @@ impl AndroidJsonHost {
             let (Some(level), Some(message)) = (projection.level, projection.event) else {
                 continue;
             };
-            let _ = self
-                .structured_log_spool
-                .record(level, message, projection.metadata, now_ms());
+            let _ = self.record_structured_log(
+                level,
+                message,
+                projection.metadata,
+                now_ms(),
+            );
         }
     }
 
