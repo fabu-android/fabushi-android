@@ -16408,6 +16408,59 @@
       "artifact": null,
       "verification_status": "not-verified",
       "notes": "Source and production wiring are implemented. Keep not-verified until descendant exact-head Rust/Android/package/device evidence succeeds; Remote Runner pressure reporting remains a separate executor-side enhancement and does not remove Android app-private storage pressure handling."
+    },
+    {
+      "responsibility_id": "RUNTIME-HOST-UPGRADE-ANDROID-001",
+      "domain": "runtime-update-recovery",
+      "desktop_sources": [
+        {
+          "path": "source/host/src/extensions/host_upgrade/extension.rs",
+          "blob_sha": "c2d3a5e494f6be6fe864ff4fd73989e073b4b745"
+        },
+        {
+          "path": "source/host/src/extensions/host_upgrade/host_bundle_source.rs",
+          "blob_sha": "ba33880f4b97bab840b158f7bdc672c9db22044c"
+        },
+        {
+          "path": "source/host/src/extensions/host_upgrade/host_bundle_upgrade.rs",
+          "blob_sha": "c0d0c71a5d9b367414b2674037e9afff4c17c4ee"
+        },
+        {
+          "path": "source/host/src/extensions/host_upgrade/host_upgrade_marker.rs",
+          "blob_sha": "c47a37fc35fffe3e84a1b03a74d7bbbfc4a355b5"
+        },
+        {
+          "path": "source/host/src/extensions/host_upgrade/host_upgrade_service.rs",
+          "blob_sha": "213c4ae5604a94f4c0f6eee2092370d5768c50a4"
+        },
+        {
+          "path": "source/host/src/extensions/host_upgrade/production.rs",
+          "blob_sha": "90606429ea52411e40203dde4be1c5ec166f4d8c"
+        }
+      ],
+      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "responsibility": "Safely update the shipping runtime while quiescing automation/shared-room/transcript work, preserving durable apply/outcome state, refusing unsafe replay after uncertain installation, and recovering on the next process start.",
+      "source_owner": "Desktop HostUpgradeService/Sand supervisor protocol; Android native updater + Rust Host quiesce replacement",
+      "visible_effect": "Users can receive/install updates without corrupting active Agent/shared-room work or silently retrying an installation whose outcome is unknown.",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/update/AndroidUpdateViewModel.kt",
+        "source/host/src/android_json_runtime.rs",
+        "mobile/android/app/build.gradle",
+        "source/host/src/extensions/host_upgrade/host_upgrade_marker.rs"
+      ],
+      "android_owner": "AndroidUpdateViewModel owns APK update/apply truth; Rust Host owns runtime quiesce; Android package manager/system installer owns installation.",
+      "platform_delta": "Desktop tarball/Sand supervisor self-swap is replaced by signed Android APK/App Bundle distribution and platform installation. Remote Runner upgrades belong to the authorized runner boundary rather than the phone process.",
+      "implementation_status": "mapped",
+      "production_wiring": "Native updater and Rust Host quiesce are production-wired; final signed distribution, install/upgrade recovery and remote executor upgrade evidence remain open.",
+      "unit_test": "Android updater policy/apply-state tests and Rust Host marker/quiesce tests; descendant exact-head CI required",
+      "contract_test": "required: update quiesce stops side-effect owners and OUTCOME_UNKNOWN never auto-replays install",
+      "integration_test": "required: signed staged update -> installer -> process death/restart -> reconcile",
+      "packaged_test": "required on final signed APK/AAB",
+      "device_test": "required install/upgrade on supported Android API/device",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Mechanism replacement is explicit. Do not mark verified until same-head release signing, packaged install/upgrade, process-death reconciliation and device evidence succeed."
     }
   ],
   "traceability": {
