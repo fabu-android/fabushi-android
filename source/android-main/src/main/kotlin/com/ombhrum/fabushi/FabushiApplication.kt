@@ -13,8 +13,10 @@ import com.ombhrum.fabushi.androidmain.coordinator.RootShellFocusRefreshOwner
 import com.ombhrum.fabushi.androidmain.coordinator.RootShellFocusRefreshToken
 import com.ombhrum.fabushi.androidmain.diagnostics.AndroidProcessCrashRecovery
 import com.ombhrum.fabushi.androidmain.notifications.AndroidNotificationRuntime
+import com.ombhrum.fabushi.androidmain.media.AndroidHumanCallMediaPermissionOwner
 import com.ombhrum.fabushi.androidmain.webauthn.AndroidCredentialManagerWebAuthn
 import com.ombhrum.fabushi.androidpreload.deeplink.AndroidDeepLink
+import com.ombhrum.fabushi.androidpreload.media.AndroidHumanCallMediaPermissionProjection
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidCoordinatorBridge
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidPresentationRuntimePort
 
@@ -244,6 +246,7 @@ internal class FabushiProcessRuntime(
     private val accountOAuth = AndroidAccountOAuthAdapter()
     private val externalUrl = AndroidExternalUrlAdapter()
     private val mcpOAuth = AndroidMcpOAuthAdapter(coordinator)
+    private val humanCallMediaPermissions = AndroidHumanCallMediaPermissionOwner()
     override val appAgentSurface = FabushiAppAgentSurface()
     private val notificationRuntime = AndroidNotificationRuntime(
         context = application,
@@ -373,6 +376,23 @@ internal class FabushiProcessRuntime(
     override fun launchExternalAuth(url: String): Boolean =
         accountOAuth.openExternalAuth(interactiveActivityOrNull(), url)
 
+    override fun requestHumanCallMediaPermissions(
+        audio: Boolean,
+        video: Boolean,
+        listener: (AndroidHumanCallMediaPermissionProjection) -> Unit,
+    ): Boolean {
+        val activity = interactiveActivityOrNull() ?: return false
+        return humanCallMediaPermissions.request(activity, audio, video, listener)
+    }
+
+    override fun handleHumanCallMediaPermissionResult(
+        activity: ComponentActivity,
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray,
+    ): Boolean =
+        humanCallMediaPermissions.handleResult(activity, requestCode, permissions, grantResults)
+
     override fun launchExternalUrl(url: String): Boolean =
         externalUrl.openExternalAuth(interactiveActivityOrNull(), url)
 
@@ -404,6 +424,7 @@ internal class FabushiProcessRuntime(
     }
 
     override fun detachInteractiveActivity(activity: ComponentActivity) {
+        humanCallMediaPermissions.detach(activity)
         if (interactiveActivityRef?.get() === activity) {
             interactiveActivityRef = null
             webAuthnRuntime.detach(activity)
@@ -418,6 +439,7 @@ internal class FabushiProcessRuntime(
         rootShellFocusRefreshSubscription.close()
         rootShellFocusRefreshOwner.dispose()
         rootShellFocusRefreshExecutor.shutdownNow()
+        humanCallMediaPermissions.close()
         webAuthnRuntime.close()
         rootNotificationEventSubscription.close()
         rootNotificationListeners.clear()
