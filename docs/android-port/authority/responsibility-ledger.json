@@ -4889,7 +4889,7 @@
       "retry_semantics": "caller may retry rejected/non-committed mutation; unknown execution-boundary effects are not auto-retried.",
       "idempotency_semantics": "revoke missing reference is false/no-op; upsert settles one named account-scoped record; rotate requires existing record.",
       "process_death_recovery": "encrypted noBackup vault is reopened under Android Keystore; channel/session metadata must resolve the same reference after cold start.",
-      "account_fencing": "every vault operation derives the current Host account fence; cross-account records are isolated.",
+      "account_fencing": "every vault operation derives the current Host account fence; cross-account records are isolated. Channel metadata RPC now carries expectedAccountFence; Rust rejects requests whose fence differs from the current Host fence, preventing an account switch between Keystore mutation and metadata commit from writing into the new account.",
       "security_boundary": "Android Keystore AES-GCM + noBackup encrypted document; secret values are not returned through Presentation/Coordinator list APIs and resolve only for normalized authorized origins.",
       "android_disposition": "not-applicable-with-replacement",
       "android_target": [
@@ -4903,14 +4903,14 @@
       "implementation_status": "implemented",
       "production_wiring": "Production-wired: MahayanaHost pairs AndroidCredentialVaultStore with Rust metadata-only feature.agent.channels.{listMetadata,writeMetadata,removeMetadata}; connect stores the token only in Keystore vault and rolls it back if metadata commit fails; disconnect revokes the secret first and never recreates it when metadata cleanup requires reconciliation. Typed AndroidCoordinatorRuntime exposes the lifecycle without a Presentation secret-reveal route.",
       "unit_test": "AndroidCredentialVaultStore tests cover encrypted round trip/no-reveal metadata/origin validation/revocation; android_agent_channel_metadata Rust test covers metadata isolation/reopen/invalid platform; same exact-head Actions are pending.",
-      "contract_test": "Implemented contract: Rust accepts only platform/label metadata, never token; deterministic Agent/platform secret refs are account-fenced in AndroidCredentialVaultStore; list projection includes only metadata backed by a live vault record; disconnect removes the secret boundary before metadata cleanup. Exact-head CI is pending.",
+      "contract_test": "Implemented contract: Rust accepts only platform/label metadata, never token; deterministic Agent/platform secret refs are account-fenced in AndroidCredentialVaultStore; list projection includes only metadata backed by a live vault record; disconnect removes the secret boundary before metadata cleanup. Exact-head CI is pending. Commit 62f80cfffed0350e606af2ce2032efc718e97291 adds a stale-account negative test.",
       "integration_test": "Production path now exists Coordinator -> MahayanaHost -> Keystore vault + Rust metadata owner. Real connector execution/delivery and protected-device restart acceptance remain open under separate delivery responsibility.",
       "packaged_test": "Open on final exact-head APK/AAB.",
       "device_test": "Open on protected Android device with real connector credential.",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Desktop plaintext connector_secret_store.rs is intentionally replaced by Android Keystore AES-GCM. Commits 4f0c8bbff57621ffa128cfcb4896c14348a54107, 5f885b2babc04ff0aff9bc0bf0feb16cfda48628, 3eb38f09b6513408e91225fa1ccf2855f0ed8ad1 and dbfd794099ba49262bd89cbf06d96c1a0296aebe close the production storage/bridge implementation; not verified until descendant exact-head CI/package/device evidence succeeds.",
-      "android_head_at_update": "dec953c004d833ae0379f5dc653ff7fbbee200f7"
+      "notes": "Desktop plaintext connector_secret_store.rs is intentionally replaced by Android Keystore AES-GCM. Commits 4f0c8bbff57621ffa128cfcb4896c14348a54107, 5f885b2babc04ff0aff9bc0bf0feb16cfda48628, 3eb38f09b6513408e91225fa1ccf2855f0ed8ad1 and dbfd794099ba49262bd89cbf06d96c1a0296aebe close the production storage/bridge implementation; not verified until descendant exact-head CI/package/device evidence succeeds. Account-fence hardening commits d3fba9fad405089a546e9dd43d1f4a83c7855b6b, b273395033df8fa06ffda471c7603e1b11e8a518 and 62f80cfffed0350e606af2ce2032efc718e97291.",
+      "android_head_at_update": "59eb98f9af1a1590c6cc57e475d920a218155ec8"
     },
     {
       "responsibility_id": "UI-AVATAR-MOTION-ANDROID-001",
@@ -7496,7 +7496,7 @@
       "retry_semantics": "Load has explicit retry. Connection mutations require explicit user action; do not replay credential-bearing or disconnect side effects after unknown outcome without reconciliation.",
       "idempotency_semantics": "Refresh/read may be retried subject to stable Agent/platform identity; connect/disconnect require durable operation identity and server reconciliation when outcome is unknown.",
       "process_death_recovery": "Android must restore canonical connection state from Host/service after restart rather than persisting plaintext credential in Compose/ViewModel; pending side effects reconcile by durable operation identity.",
-      "account_fencing": "Agent id alone is insufficient on Android; all channel calls and callbacks must be fenced to current authenticated account/epoch and Agent generation.",
+      "account_fencing": "Agent id alone is insufficient on Android; all channel calls and callbacks must be fenced to current authenticated account/epoch and Agent generation. Channel metadata RPC now carries expectedAccountFence; Rust rejects requests whose fence differs from the current Host fence, preventing an account switch between Keystore mutation and metadata commit from writing into the new account.",
       "security_boundary": "Credential text is transient password input and must cross only typed Coordinator/Host APIs into protected storage/connector owner; never log, persist in Compose state beyond active entry, expose to Agent transcript, or WebView.",
       "android_disposition": "android-adapted",
       "android_target": [
@@ -7514,14 +7514,14 @@
       "implementation_status": "implemented",
       "production_wiring": "Production-wired for canonical existing connection projection, reconcile and disconnect: Agent settings refreshes through typed Coordinator into MahayanaHost; only Keystore-backed Rust metadata projects as connected; existing connections override coming-soon manifest display; disconnect revokes protected secret then removes metadata, with reconcileRequired on partial cleanup. Current Discord/Slack manifests remain coming-soon so Android deliberately does not expose a new credential form.",
       "unit_test": "AgentChannelsModelTest covers current Desktop catalog and existing protected connection precedence; android_agent_channel_metadata Rust test covers Agent isolation/reopen/unsafe platform rejection. Same exact-head Actions pending.",
-      "contract_test": "Typed agentChannels/agentChannelConnect/agentChannelDisconnect/agentChannelsRefresh Coordinator contract is implemented; token stays inside MahayanaHost->AndroidCredentialVaultStore and is never forwarded to Rust/Compose; ViewModel fences channel projections by account slot/generation.",
+      "contract_test": "Typed agentChannels/agentChannelConnect/agentChannelDisconnect/agentChannelsRefresh Coordinator contract is implemented; token stays inside MahayanaHost->AndroidCredentialVaultStore and is never forwarded to Rust/Compose; ViewModel fences channel projections by account slot/generation. Commit 62f80cfffed0350e606af2ce2032efc718e97291 adds a stale-account negative test.",
       "integration_test": "Native AgentProfileEditor -> MobileBotViewModel -> AndroidCoordinatorRuntime -> MahayanaHost -> Keystore + Rust metadata path is production-wired. Real provider connect UI remains intentionally unavailable while current manifest entries are coming-soon; outbound provider delivery is tracked separately by CONNECTOR-CHANNEL-DELIVERY-ANDROID-001.",
       "packaged_test": "Required on final production package, proving credential entry is not logged/test-injected and channel status survives restart.",
       "device_test": "Required on emulator/device for connect/error/reconnect/refresh/disconnect, process death, account switch and offline/network interruption.",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Implementation commits: 4f0c8bbff57621ffa128cfcb4896c14348a54107, 888e8cbbc1c2c8600cdfc398bd7386d4e7578261, 5f885b2babc04ff0aff9bc0bf0feb16cfda48628, 3eb38f09b6513408e91225fa1ccf2855f0ed8ad1, dbfd794099ba49262bd89cbf06d96c1a0296aebe, 8861e1824f5baa8ed190767b6c7db095c732b44e, 4849c537f21ba16f07bb718db53735f671d5779f, 1adc357a5ad52787105685e14894621f7b6ed00a, 2b60b09135d20d689cf9f2787d56636581416dcb, 991c1d431f6f8b74ca9a650ac69a80f3f2f76409 and 472590a715f13237ab2bb8cbddd63a4f43a63b47. Do not conflate connection metadata with actual outbound provider delivery.",
-      "android_head_at_update": "dec953c004d833ae0379f5dc653ff7fbbee200f7"
+      "notes": "Implementation commits: 4f0c8bbff57621ffa128cfcb4896c14348a54107, 888e8cbbc1c2c8600cdfc398bd7386d4e7578261, 5f885b2babc04ff0aff9bc0bf0feb16cfda48628, 3eb38f09b6513408e91225fa1ccf2855f0ed8ad1, dbfd794099ba49262bd89cbf06d96c1a0296aebe, 8861e1824f5baa8ed190767b6c7db095c732b44e, 4849c537f21ba16f07bb718db53735f671d5779f, 1adc357a5ad52787105685e14894621f7b6ed00a, 2b60b09135d20d689cf9f2787d56636581416dcb, 991c1d431f6f8b74ca9a650ac69a80f3f2f76409 and 472590a715f13237ab2bb8cbddd63a4f43a63b47. Do not conflate connection metadata with actual outbound provider delivery. Account-fence hardening commits d3fba9fad405089a546e9dd43d1f4a83c7855b6b, b273395033df8fa06ffda471c7603e1b11e8a518 and 62f80cfffed0350e606af2ce2032efc718e97291.",
+      "android_head_at_update": "59eb98f9af1a1590c6cc57e475d920a218155ec8"
     },
     {
       "responsibility_id": "AGENT-SETTINGS-PROFILE-ANDROID-001",
