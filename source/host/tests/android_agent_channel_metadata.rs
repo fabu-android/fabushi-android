@@ -1,6 +1,8 @@
 use fabushi_mahayana_host::android_json_runtime::{AndroidHostMode, AndroidJsonHost};
 use serde_json::json;
 
+const TEST_ACCOUNT_FENCE: &str = "session:test:android";
+
 fn create_agent(host: &mut AndroidJsonHost, name: &str) -> String {
     host.dispatch("createAgent", &json!({"name":name,"description":""}))
         .unwrap()["agent"]["id"]
@@ -21,7 +23,7 @@ fn channel_metadata_is_agent_scoped_and_survives_reopen() {
         let written = host
             .dispatch(
                 "feature.agent.channels.writeMetadata",
-                &json!({"agentId":first_id,"platform":"slack","label":"Workspace A"}),
+                &json!({"agentId":first_id,"platform":"slack","label":"Workspace A","accountFence":TEST_ACCOUNT_FENCE}),
             )
             .unwrap();
         assert_eq!(written["written"], true);
@@ -29,7 +31,7 @@ fn channel_metadata_is_agent_scoped_and_survives_reopen() {
         let first = host
             .dispatch(
                 "feature.agent.channels.listMetadata",
-                &json!({"agentId":first_id}),
+                &json!({"agentId":first_id,"accountFence":TEST_ACCOUNT_FENCE}),
             )
             .unwrap();
         assert_eq!(first.as_array().unwrap().len(), 1);
@@ -39,7 +41,7 @@ fn channel_metadata_is_agent_scoped_and_survives_reopen() {
         let second = host
             .dispatch(
                 "feature.agent.channels.listMetadata",
-                &json!({"agentId":second_id}),
+                &json!({"agentId":second_id,"accountFence":TEST_ACCOUNT_FENCE}),
             )
             .unwrap();
         assert!(second.as_array().unwrap().is_empty());
@@ -49,7 +51,7 @@ fn channel_metadata_is_agent_scoped_and_survives_reopen() {
     let restored = reopened
         .dispatch(
             "feature.agent.channels.listMetadata",
-            &json!({"agentId":first_id}),
+            &json!({"agentId":first_id,"accountFence":TEST_ACCOUNT_FENCE}),
         )
         .unwrap();
     assert_eq!(restored.as_array().unwrap().len(), 1);
@@ -58,14 +60,14 @@ fn channel_metadata_is_agent_scoped_and_survives_reopen() {
     let removed = reopened
         .dispatch(
             "feature.agent.channels.removeMetadata",
-            &json!({"agentId":first_id,"platform":"slack"}),
+            &json!({"agentId":first_id,"platform":"slack","accountFence":TEST_ACCOUNT_FENCE}),
         )
         .unwrap();
     assert_eq!(removed["removed"], true);
     assert!(reopened
         .dispatch(
             "feature.agent.channels.listMetadata",
-            &json!({"agentId":first_id}),
+            &json!({"agentId":first_id,"accountFence":TEST_ACCOUNT_FENCE}),
         )
         .unwrap()
         .as_array()
@@ -81,21 +83,29 @@ fn channel_metadata_rejects_unknown_agents_and_unsafe_platform_ids() {
 
     let unknown = host.dispatch(
         "feature.agent.channels.writeMetadata",
-        &json!({"agentId":"missing-agent","platform":"slack","label":"Nope"}),
+        &json!({"agentId":"missing-agent","platform":"slack","label":"Nope","accountFence":TEST_ACCOUNT_FENCE}),
     );
     assert!(unknown.unwrap_err().contains("agent not found"));
+
+    assert!(host
+        .dispatch(
+            "feature.agent.channels.listMetadata",
+            &json!({"agentId":agent_id,"accountFence":"stale-account"}),
+        )
+        .unwrap_err()
+        .contains("stale Agent channel account fence"));
 
     let unsafe_platform = host
         .dispatch(
             "feature.agent.channels.writeMetadata",
-            &json!({"agentId":agent_id,"platform":"../escape","label":"Nope"}),
+            &json!({"agentId":agent_id,"platform":"../escape","label":"Nope","accountFence":TEST_ACCOUNT_FENCE}),
         )
         .unwrap();
     assert_eq!(unsafe_platform["written"], false);
     assert!(host
         .dispatch(
             "feature.agent.channels.listMetadata",
-            &json!({"agentId":agent_id}),
+            &json!({"agentId":agent_id,"accountFence":TEST_ACCOUNT_FENCE}),
         )
         .unwrap()
         .as_array()
