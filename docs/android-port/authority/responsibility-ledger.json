@@ -16475,6 +16475,7 @@
         "canonical TranscriptStore only; no second Android search truth"
       ],
       "protocol_wire_contract": [
+        "feature.search.global(query,messageLimit,mediaLimit)",
         "feature.contentSearch.messages(query,limit)",
         "feature.contentSearch.media(query,limit)"
       ],
@@ -16499,15 +16500,15 @@
       "android_owner": "Rust Host canonical TranscriptStore search projection",
       "platform_delta": "Linear UI-side transcript scans have been removed from production search. Android uses a Host-owned rebuildable FTS projection while preserving canonical transcript ownership.",
       "implementation_status": "implemented",
-      "production_wiring": "Canonical TranscriptStore remains unique owner; UI message/media palette queries route through typed Coordinator to AndroidJsonHost, which account-fences transcript entries before derived-index search. Media open metadata is rejoined from canonical transcript.",
-      "unit_test": "TranscriptStore content search + media search cold-reopen tests; exact-head Actions pending",
-      "contract_test": "Host production routes/result serialization present; exact-head Rust/architecture gate pending",
+      "production_wiring": "Canonical TranscriptStore remains unique owner. Command-palette global message search routes through typed Coordinator globalContentSearchMessages -> feature.search.global -> AndroidJsonHost global_content_search -> the same rebuildable AndroidContentSearchIndex. Direct message/media palette queries continue through feature.contentSearch.messages/media. All routes derive from current-account transcript entries; media open metadata is rejoined from canonical transcript.",
+      "unit_test": "AndroidContentSearchIndex persistent-index/reconcile/corruption tests plus AndroidJsonHost global_content_search_is_account_fenced_cross_agent_and_supports_zero_media_limit and per-Agent content-search tests; exact-head Actions pending",
+      "contract_test": "Commit 019ef1a16fd6f0bed9cbf61b6a35c3f9d74d8c07 wires the previously missing feature.search.global Host route used by AndroidCoordinatorRuntime.globalContentSearchMessages; exact-head Rust/architecture gate pending",
       "integration_test": "required same-head bridge search on recovered account transcript",
       "packaged_test": "required final APK/AAB acceptance",
       "device_test": "required final device search surface acceptance",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Implemented source/wiring; exact-head packaged/device evidence remains open."
+      "notes": "Implemented production wiring including the command-palette global Host route. Do not mark verified until a descendant exact HEAD passes Rust/architecture, packaged and device search acceptance."
     },
     {
       "responsibility_id": "SEARCH-DURABLE-INDEX-ANDROID-001",
