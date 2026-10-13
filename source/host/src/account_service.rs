@@ -221,6 +221,15 @@ impl AndroidAccountService {
         self.base_url.to_string()
     }
 
+    /// Returns a short-lived observational credential snapshot only while the canonical
+    /// account token is comfortably valid. Telemetry must never trigger refresh, rotate
+    /// credentials, or become a second session owner.
+    pub(crate) fn telemetry_access_token(&self, observed_at_ms: u64) -> Option<String> {
+        let session = self.session.as_ref()?;
+        (session.access_token_expires_at > observed_at_ms.saturating_add(REFRESH_LEEWAY_MS))
+            .then(|| session.access_token.clone())
+    }
+
     pub fn clear_local_session(&mut self) -> AccountSessionMutation {
         self.session = None;
         AccountSessionMutation::Clear
@@ -1563,6 +1572,18 @@ mod tests {
         assert!(normalize_api_base_url("http://127.0.0.1:3000").is_ok());
         assert!(normalize_api_base_url("https://user:pass@api.ombhrum.com").is_err());
         assert!(normalize_api_base_url("https://api.ombhrum.com?x=1").is_err());
+    }
+
+    #[test]
+    fn telemetry_token_never_refreshes_or_exposes_expiring_session() {
+        let mut raw = durable_session();
+        raw["accessTokenExpiresAt"] = json!(200_000_u64);
+        let service = AndroidAccountService::new("device-1", Some(&raw.to_string())).unwrap();
+        assert_eq!(
+            service.telemetry_access_token(100_000).as_deref(),
+            raw["accessToken"].as_str()
+        );
+        assert!(service.telemetry_access_token(150_000).is_none());
     }
 
     #[test]
