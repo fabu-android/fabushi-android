@@ -865,8 +865,9 @@ pub struct AndroidJsonHost {
     account_telemetry_spill_path: PathBuf,
     account_telemetry_shipping: Arc<AtomicBool>,
     edge_failures: EdgeFailureBuffer,
-    structured_log_spool: AndroidStructuredLogSpool,
+    structured_log_spool: Arc<Mutex<AndroidStructuredLogSpool>>,
     structured_log_counter_id: String,
+    structured_log_shipping: Arc<AtomicBool>,
     process_metrics: AndroidProcessMetricsCollector,
     process_metrics_recent: VecDeque<Value>,
     process_crash_recent: VecDeque<Value>,
@@ -1538,8 +1539,9 @@ impl AndroidJsonHost {
             account_telemetry_spill_path: app_data_dir.join("account-telemetry-spill.json"),
             account_telemetry_shipping: Arc::new(AtomicBool::new(false)),
             edge_failures: EdgeFailureBuffer::default(),
-            structured_log_spool,
+            structured_log_spool: Arc::new(Mutex::new(structured_log_spool)),
             structured_log_counter_id,
+            structured_log_shipping: Arc::new(AtomicBool::new(false)),
             process_metrics: AndroidProcessMetricsCollector::default(),
             process_metrics_recent: VecDeque::new(),
             process_crash_recent,
@@ -2224,6 +2226,32 @@ impl AndroidJsonHost {
         }
     }
 
+    fn record_structured_log(
+        &self,
+        level: &str,
+        message: &str,
+        metadata: BTreeMap<String, String>,
+        timestamp_ms: u64,
+    ) -> Result<(), String> {
+        self.structured_log_spool
+            .lock()
+            .map_err(|_| "Android structured-log spool lock poisoned".to_string())?
+            .record(level, message, metadata, timestamp_ms)
+            .map_err(|error| format!("failed to persist Android structured telemetry: {error}"))
+    }
+
+    fn rotate_structured_log_account(
+        &self,
+        account_slot: &str,
+        counter_id: &str,
+    ) -> Result<(), String> {
+        self.structured_log_spool
+            .lock()
+            .map_err(|_| "Android structured-log spool lock poisoned".to_string())?
+            .rotate_account(account_slot, counter_id)
+            .map_err(|error| format!("failed to rotate Android structured telemetry: {error}"))
+    }
+
     fn record_product_telemetry(
         &mut self,
         message: &str,
@@ -2235,8 +2263,7 @@ impl AndroidJsonHost {
             TelemetryLevel::Warn => "warn",
             TelemetryLevel::Error => "error",
         };
-        self.structured_log_spool
-            .record(level, message, event.metadata, now_ms())
+        self.record_structured_log(level, message, event.metadata, now_ms())
             .map_err(|error| format!("failed to persist Android product telemetry: {error}"))?;
         Ok(json!({"recorded":true}))
     }
@@ -2246,9 +2273,7 @@ impl AndroidJsonHost {
             return;
         };
         self.sync_structured_log_account_slot();
-        if self
-            .structured_log_spool
-            .record(
+        if self.record_structured_log(
                 projection.level.unwrap_or("info"),
                 event,
                 projection.metadata,
@@ -2749,9 +2774,7 @@ impl AndroidJsonHost {
             .account
             .account_storage_scope()
             .unwrap_or_else(|| "logged-out".to_string());
-        if self
-            .structured_log_spool
-            .rotate_account(&account_slot, &self.structured_log_counter_id)
+        if self.rotate_structured_log_account(&account_slot, &self.structured_log_counter_id)
             .is_err()
         {
             self.edge_failures
@@ -2770,14 +2793,89 @@ impl AndroidJsonHost {
             ("leg".to_string(), entry.leg),
             ("error_class".to_string(), entry.error_class),
         ]);
-        if self
-            .structured_log_spool
-            .record("error", "sand.desktop.edge_failed", metadata, now_ms())
+        if self.record_structured_log("error", "sand.desktop.edge_failed", metadata, now_ms())
             .is_err()
         {
             self.edge_failures
                 .report("structured-log-spill", "record", "StorageError");
         }
+    }
+
+    fn schedule_structured_log_ship(&mut self) {
+        let Some(backend) = self.mcp_dashboard_backend.clone() else {
+            return;
+        };
+        let Ok(account_fence) = self.current_turn_account_fence() else {
+            return;
+        };
+        let Some(account_slot) = self.account.account_storage_scope() else {
+            return;
+        };
+        let spool = Arc::clone(&self.structured_log_spool);
+        let shipping = Arc::clone(&self.structured_log_shipping);
+        if shipping
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_err()
+        {
+            return;
+        }
+        let live_account_fence = Arc::clone(&self.live_account_fence);
+        thread::spawn(move || loop {
+            let still_current = live_account_fence
+                .lock()
+                .ok()
+                .and_then(|fence| fence.clone())
+                .is_some_and(|fence| fence == account_fence);
+            if !still_current {
+                shipping.store(false, Ordering::Release);
+                return;
+            }
+
+            let batch = match spool.lock() {
+                Ok(owner) if owner.account_slot() == account_slot => owner.batch(),
+                _ => {
+                    shipping.store(false, Ordering::Release);
+                    return;
+                }
+            };
+            if batch.is_empty() {
+                shipping.store(false, Ordering::Release);
+                return;
+            }
+
+            let receipt = backend.submit_structured_logs(&batch);
+            let still_current = live_account_fence
+                .lock()
+                .ok()
+                .and_then(|fence| fence.clone())
+                .is_some_and(|fence| fence == account_fence);
+            if !still_current {
+                shipping.store(false, Ordering::Release);
+                return;
+            }
+
+            let Ok(mut owner) = spool.lock() else {
+                shipping.store(false, Ordering::Release);
+                return;
+            };
+            if owner.account_slot() != account_slot {
+                shipping.store(false, Ordering::Release);
+                return;
+            }
+            match receipt {
+                Ok((processed, dropped)) => {
+                    if owner.settle_success(processed, dropped, now_ms()).is_err() {
+                        shipping.store(false, Ordering::Release);
+                        return;
+                    }
+                }
+                Err(_) => {
+                    let _ = owner.mark_ship_failed(now_ms());
+                    shipping.store(false, Ordering::Release);
+                    return;
+                }
+            }
+        });
     }
 
     fn schedule_account_telemetry_ship(&mut self) {
@@ -3369,6 +3467,7 @@ impl AndroidJsonHost {
             other => Err(format!("unknown host method {other}")),
         };
         self.sync_structured_log_account_slot();
+        self.schedule_structured_log_ship();
         self.schedule_account_telemetry_ship();
         result
     }
@@ -6448,9 +6547,7 @@ impl AndroidJsonHost {
             ("error_domain".to_string(), "android-process".to_string()),
             ("uptime_ms".to_string(), bounded_uptime_ms.to_string()),
         ]);
-        if self
-            .structured_log_spool
-            .record(
+        if self.record_structured_log(
                 "error",
                 "sand.desktop.process_crash",
                 metadata,
