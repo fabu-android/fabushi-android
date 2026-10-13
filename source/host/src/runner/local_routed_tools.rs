@@ -1,6 +1,10 @@
 use super::AndroidRoutedToolBridge;
 use crate::android_user_settings::{AndroidUserSettings, LocalToolPermission};
 use crate::capability_broker::{PendingCapabilityCall, SharedCapabilityBroker};
+use crate::extensions::telemetry::local_exec_telemetry::{
+    local_exec_failed_telemetry, LocalExecFailedReport,
+};
+use fabushi_android_local_exec_daemon::failure_classifier::classify_local_exec_failure;
 use crate::sha256::sha256_hex;
 use fabushi_android_local_exec_daemon::{
     bounded_file_handlers::{
@@ -189,8 +193,34 @@ pub(crate) struct LocalRoutedTools {
     events: Arc<Mutex<VecDeque<Value>>>,
     parent_operation_id: String,
     parent_request_id: String,
+    conversation_id: String,
     runtime_generation: u64,
     cancelled: Arc<AtomicBool>,
+}
+
+impl LocalRoutedTools {
+    fn report_execution_failure(&self, message: &str) {
+        let classified = classify_local_exec_failure(message);
+        let projection = local_exec_failed_telemetry(&LocalExecFailedReport {
+            error_class: classified.error_class.as_str().to_string(),
+            errno: classified.errno,
+            site: "android-local".into(),
+            conversation_id: self.conversation_id.clone(),
+        });
+        if let Some(event) = projection.event {
+            if let Ok(account_fence) = self.current_account_fence() {
+                if let Ok(mut events) = self.events.lock() {
+                    events.push_back(json!({
+                        "type":"internal.local-exec.telemetry",
+                        "accountFence":account_fence,
+                        "level":projection.level.unwrap_or("warn"),
+                        "event":event,
+                        "metadata":projection.metadata,
+                    }));
+                }
+            }
+        }
+    }
 }
 
 impl AndroidRoutedToolBridge for LocalRoutedTools {
@@ -410,6 +440,7 @@ impl AndroidRoutedToolBridge for LocalRoutedTools {
                 let _ = self
                     .broker
                     .settle(&request_id, "failed", Some(message.clone()), now_ms());
+                self.report_execution_failure(&message);
                 Err(message)
             }
         }
@@ -426,6 +457,7 @@ pub(crate) fn with_local_file_tools(
     events: Arc<Mutex<VecDeque<Value>>>,
     parent_operation_id: &str,
     parent_request_id: &str,
+    conversation_id: &str,
     runtime_generation: u64,
     cancelled: Arc<AtomicBool>,
 ) -> Arc<dyn AndroidRoutedToolBridge> {
@@ -439,6 +471,7 @@ pub(crate) fn with_local_file_tools(
         events,
         parent_operation_id: parent_operation_id.to_string(),
         parent_request_id: parent_request_id.to_string(),
+        conversation_id: conversation_id.to_string(),
         runtime_generation,
         cancelled,
     })
@@ -578,6 +611,7 @@ mod tests {
             Arc::new(Mutex::new(VecDeque::new())),
             "parent-op",
             "parent-request",
+            "conversation-1",
             1,
             Arc::new(AtomicBool::new(false)),
         );
@@ -603,6 +637,7 @@ mod tests {
             Arc::new(Mutex::new(VecDeque::new())),
             "parent-op",
             "parent-request",
+            "conversation-1",
             7,
             Arc::new(AtomicBool::new(false)),
         );
