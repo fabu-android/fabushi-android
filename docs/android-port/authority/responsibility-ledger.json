@@ -18818,6 +18818,80 @@
       "artifact": null,
       "verification_status": "not-verified",
       "notes": "Mapped replacement only. Do not mark implemented/verified until wallpaper-specific RemoteBox wire plus exact-head device evidence exists."
+    },
+    {
+      "responsibility_id": "MESSAGING-CONTACT-GROUPS-ANDROID-001",
+      "domain": "messaging-navigation",
+      "desktop_sources": [
+        {
+          "path": "desktop/e2e/sidebar-contact-groups.spec.ts",
+          "blob_sha": "b93de36e915b4a914cde9b5739e44edbce2b0a4c",
+          "symbols": [
+            "sidebar contact groups E2E: ordering, exclusivity, normalization, search expansion"
+          ]
+        }
+      ],
+      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "responsibility": "Persist and project account-scoped Human contact groups with stable Pinned/named/Unassigned ordering, exclusive membership, collapse state, reserved-id normalization, search expansion, process-death recovery and stale-account fencing.",
+      "source_owner": "Desktop sidebar contact-group model exercised by packaged Electron E2E",
+      "direct_callers": [
+        "Desktop sidebar contacts renderer/editor"
+      ],
+      "downstream_dependencies": [
+        "canonical Human contact roster",
+        "conversation pinned state",
+        "sidebar search projection"
+      ],
+      "state_owner": "Rust AndroidContactGroups; Compose/ViewModel hold only an editable draft/projection",
+      "persistent_state": [
+        "account-scoped named groups",
+        "peer membership",
+        "collapse state",
+        "revision",
+        "bounded idempotent mutation history"
+      ],
+      "protocol_wire_contract": [
+        "feature.messaging.contactGroups",
+        "feature.messaging.contactGroups.set",
+        "typed AndroidContactGroupsSnapshot with durable accountFence + current sessionFence"
+      ],
+      "visible_effect": "The native Android 联系人分组 entry opens a real editor; Pinned is synthetic first, named groups keep user order/state, Unassigned is synthetic last, moving a contact is exclusive and search expands matching collapsed groups.",
+      "failure_behavior": [
+        "stale account/session rejected",
+        "stale revision rejected",
+        "operation-id input mismatch rejected",
+        "corrupt durable file quarantined",
+        "unknown peers filtered"
+      ],
+      "cancellation_behavior": "UI draft can be dismissed without mutation; committed mutation is atomic and not auto-retried under a new operation identity",
+      "retry_semantics": "same operation id with identical input replays the durable result; stale revision requires refresh/reconciliation",
+      "idempotency_semantics": "operation identity + expected revision; no duplicate durable side effect on process retry",
+      "process_death_recovery": "Rust Host reopens contact-groups.json and restores per-account revision/groups; UI rehydrates from Host snapshot",
+      "account_fencing": "read/write use durable account scope; writes additionally carry sessionFence so an editor opened before account switch cannot mutate the new account",
+      "security_boundary": "Presentation cannot manufacture canonical contacts; membership is filtered against Host canonical contact ids and pinned peers are derived from canonical direct-conversation state",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "source/host/src/android_contact_groups.rs",
+        "source/host/src/messaging_service.rs",
+        "source/host/src/android_json_runtime.rs",
+        "source/android-preload/src/main/kotlin/com/ombhrum/fabushi/androidpreload/runtime/AndroidCoordinatorPort.kt",
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/coordinator/AndroidCoordinatorRuntime.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/presentation/MessagingViewModel.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/features/conversations/FabushiMessagingSurface.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/features/conversations/ConversationSurfaces.kt"
+      ],
+      "android_owner": "Rust Host contact-group repository + typed Coordinator; native Compose owns transient editor draft only",
+      "platform_delta": "Desktop sidebar model/UI becomes native Compose, while durable grouping and account fencing are Host-owned instead of renderer-owned. Pinned membership is derived from canonical pinned direct conversations.",
+      "implementation_status": "implemented",
+      "production_wiring": "Compose 联系人分组 menu -> ConversationHome editor -> MessagingViewModel -> typed AndroidCoordinatorPort/Runtime -> feature.messaging.contactGroups(.set) -> Rust AndroidContactGroups + MessagingService canonical contacts.",
+      "unit_test": "Rust android_contact_groups tests + ContactGroupProjectionTest.kt; descendant exact-head Actions pending",
+      "contract_test": "typed accountScope/sessionFence + revision/operation identity contracts; descendant exact-head Actions pending",
+      "integration_test": "required: native editor save/reopen/search/account-switch against production Host",
+      "packaged_test": "required on final exact-head APK/AAB",
+      "device_test": "required on protected device acceptance",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Source and shipping production path implemented in 5b79319c... and 39c3ceb5.... Do not mark verified until same-final-head Actions/package/device evidence succeeds."
     }
   ],
   "traceability": {
