@@ -69,6 +69,29 @@ impl AgentTurnInterruptionRegistry {
             .is_some_and(|turn| turn.account_fence == account_fence)
     }
 
+    /// Cancel any in-flight turn owned by an Agent that is being deleted.
+    ///
+    /// Unlike priority peer interruption, deletion is a lifecycle boundary and therefore also
+    /// cancels a protected user lane. Durable terminal settlement remains owned by the turn journal.
+    pub fn cancel_deleted_agent(
+        &self,
+        agent_id: &str,
+        account_fence: &str,
+    ) -> Result<Option<String>, String> {
+        let active = self
+            .active
+            .lock()
+            .map_err(|_| "Agent turn interruption registry lock poisoned".to_string())?;
+        let Some(turn) = active.get(agent_id) else {
+            return Ok(None);
+        };
+        if turn.account_fence != account_fence {
+            return Ok(None);
+        }
+        turn.cancelled.store(true, Ordering::Release);
+        Ok(Some(turn.operation_id.clone()))
+    }
+
     pub fn interrupt_priority(
         &self,
         agent_id: &str,
@@ -836,6 +859,33 @@ mod tests {
         assert_eq!(
             interruptions.interrupt_for_deletion("agent-delete", "acct:a").unwrap().as_deref(),
             Some("operation-delete"),
+        );
+        assert!(cancelled.load(Ordering::Acquire));
+    }
+
+    #[test]
+    fn deletion_cancel_crosses_user_lane_protection_but_not_account_fence() {
+        let interruptions = AgentTurnInterruptionRegistry::default();
+        let cancelled = Arc::new(AtomicBool::new(false));
+        interruptions
+            .register(
+                "agent-a",
+                "operation-user-lane",
+                "acct:a",
+                true,
+                Arc::clone(&cancelled),
+            )
+            .unwrap();
+
+        assert_eq!(
+            interruptions.cancel_deleted_agent("agent-a", "acct:b").unwrap(),
+            None
+        );
+        assert!(!cancelled.load(Ordering::Acquire));
+
+        assert_eq!(
+            interruptions.cancel_deleted_agent("agent-a", "acct:a").unwrap(),
+            Some("operation-user-lane".to_string())
         );
         assert!(cancelled.load(Ordering::Acquire));
     }
