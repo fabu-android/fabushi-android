@@ -172,12 +172,24 @@ data class AndroidOnDemandUsage(
     val resetTimestampMs: Long?,
 )
 
+data class AndroidAccountUpgradeCta(
+    val label: String,
+    val disabled: Boolean,
+    val kind: String,
+    val url: String? = null,
+    val dashboardAction: String? = null,
+    val args: Map<String, String> = emptyMap(),
+    val successMessage: String? = null,
+)
+
 data class AndroidAccountUsageSummary(
     val sandUsagePercent: Double?,
     val sandUsageResetTimestampMs: Long?,
     val hasAvailableUsage: Boolean,
     val hasNonZeroIncludedLimit: Boolean,
     val usesPooledEnterpriseAllowance: Boolean,
+    val isEnterprise: Boolean,
+    val upgradeCta: AndroidAccountUpgradeCta?,
     val isSandTrial: Boolean,
     val hasEndedSandTrial: Boolean,
     val canCancelSandTrial: Boolean,
@@ -718,6 +730,10 @@ interface AndroidCoordinatorPort {
     ): JSONObject = error("Feedback submission is unavailable on this Coordinator port")
     fun accountUsageSummary(): AndroidAccountUsageSummary =
         error("Account usage summary is unavailable on this Coordinator port")
+    fun accountDashboardAction(
+        action: String,
+        args: Map<String, String> = emptyMap(),
+    ): JSONObject = error("Account dashboard action is unavailable on this Coordinator port")
     fun accountCancelSandTrial(): Unit =
         error("Sand trial cancellation is unavailable on this Coordinator port")
     fun credentialVaultList(): org.json.JSONArray =
