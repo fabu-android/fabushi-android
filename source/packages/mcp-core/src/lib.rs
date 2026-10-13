@@ -1,3 +1,4 @@
+pub mod mcp_state_wire;
 pub mod config {
     pub mod mcp_focus_retry_cooldown;
     pub mod mcp_fsm_timing_config;
