@@ -67,6 +67,10 @@ use crate::extensions::telemetry::connector_auth_telemetry::{
     connector_auth_telemetry, ConnectorAuthReport,
 };
 use crate::extensions::telemetry::HostTelemetryProjection;
+use crate::extensions::telemetry::gateway_command_telemetry::{
+    gateway_command_error_telemetry, gateway_command_timing_telemetry,
+    AndroidGatewayCommandReport,
+};
 use crate::extensions::telemetry::analytics_service::{
     automation_run_product_analytics_event, AndroidProductAnalyticsRuntime, ProductAnalyticsSender,
 };
@@ -3517,6 +3521,12 @@ impl AndroidJsonHost {
     }
 
     pub fn dispatch(&mut self, method: &str, params: &Value) -> Result<Value, String> {
+        let command_started_at = Instant::now();
+        let command_request_id = params
+            .get("requestId")
+            .and_then(Value::as_str)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string);
         let result = match method {
             "host.platform" => Ok(json!({"platform":"android"})),
             "feature.info" => Ok(json!({
@@ -3996,6 +4006,44 @@ impl AndroidJsonHost {
             "platform.request" => self.platform_request(params),
             other => Err(format!("unknown host method {other}")),
         };
+        let duration_ms = command_started_at.elapsed().as_millis();
+        let duration_ms = u64::try_from(duration_ms).unwrap_or(u64::MAX);
+        let (reason, error_class) = match result.as_ref().err().map(String::as_str) {
+            None => (None, None),
+            Some(error) if error.starts_with("unknown host method ") => {
+                (Some("command-failed".to_string()), Some("UnknownMethod".to_string()))
+            }
+            Some(error)
+                if error.contains(" is required")
+                    || error.contains(" must ")
+                    || error.contains("invalid")
+                    || error.contains("out of range") =>
+            {
+                (Some("command-failed".to_string()), Some("InvalidInput".to_string()))
+            }
+            Some(error)
+                if error.contains("account")
+                    || error.contains("stale")
+                    || error.contains("fence") =>
+            {
+                (Some("command-failed".to_string()), Some("AccountFence".to_string()))
+            }
+            Some(_) => (Some("command-failed".to_string()), Some("CommandError".to_string())),
+        };
+        let report = AndroidGatewayCommandReport {
+            method: method.to_string(),
+            duration_ms,
+            request_id: command_request_id,
+            reason,
+            error_class,
+        };
+        let projection = if result.is_ok() {
+            gateway_command_timing_telemetry(&report)
+        } else {
+            gateway_command_error_telemetry(&report)
+        };
+        self.record_host_telemetry_projection(projection);
+
         self.sync_structured_log_account_slot();
         self.schedule_structured_log_ship();
         self.schedule_account_telemetry_ship();
