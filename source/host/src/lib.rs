@@ -4,6 +4,7 @@
 #![allow(special_module_name)]
 
 pub mod agent_isolation;
+pub mod agents;
 pub mod android_agent_roster;
 pub mod agent_attachment;
 pub mod android_sidebar_sections;
