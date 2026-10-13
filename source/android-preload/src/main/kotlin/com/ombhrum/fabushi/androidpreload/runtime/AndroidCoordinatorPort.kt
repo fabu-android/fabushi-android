@@ -1038,6 +1038,8 @@ interface AndroidCoordinatorPort {
         agentId: String,
         beforeSeq: Long? = null,
         limit: Int = 200,
+        sinceMs: Double? = null,
+        untilMs: Double? = null,
     ): AndroidTranscriptHistoryPage =
         error("Transcript history pagination is unavailable on this Coordinator port")
     fun globalContentSearchMessages(
