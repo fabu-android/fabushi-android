@@ -27,21 +27,24 @@ class WindowChromeAndroidReplacementTest(unittest.TestCase):
         self.assertNotIn("windowControls.close", renderer)
 
     def test_native_window_background_tracks_resolved_light_and_dark_shell(self):
+        activity = ACTIVITY.read_text(encoding="utf-8")
         light_styles = LIGHT_STYLES.read_text(encoding="utf-8")
         light_colors = LIGHT_COLORS.read_text(encoding="utf-8")
         dark_styles = DARK_STYLES.read_text(encoding="utf-8")
         dark_colors = DARK_COLORS.read_text(encoding="utf-8")
 
+        self.assertIn("enableEdgeToEdge()", activity)
         self.assertIn('android:windowBackground">@color/fabushi_window_background', light_styles)
         self.assertIn('android:navigationBarColor">@color/fabushi_window_background', light_styles)
         self.assertIn('android:windowLightStatusBar">true', light_styles)
-        self.assertIn('android:windowLightNavigationBar">true', light_styles)
+        self.assertNotIn("android:windowLightNavigationBar", light_styles)
         self.assertIn("#FCFCFC", light_colors)
 
         self.assertIn('android:style/Theme.Material.NoActionBar', dark_styles)
         self.assertIn('android:windowBackground">@color/fabushi_window_background', dark_styles)
+        self.assertIn('android:navigationBarColor">@color/fabushi_window_background', dark_styles)
         self.assertIn('android:windowLightStatusBar">false', dark_styles)
-        self.assertIn('android:windowLightNavigationBar">false', dark_styles)
+        self.assertNotIn("android:windowLightNavigationBar", dark_styles)
         self.assertIn("#0B0B0B", dark_colors)
 
     def test_workspace_indicator_is_replaced_by_native_agent_header(self):
