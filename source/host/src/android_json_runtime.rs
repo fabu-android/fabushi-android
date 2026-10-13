@@ -6815,69 +6815,108 @@ impl AndroidJsonHost {
         previous_fence: &str,
         reason: &str,
     ) -> Result<(), String> {
-        self.fence_turns_for_account_change(previous_fence, reason)?;
-        self.human_calls
-            .fence_account(previous_fence, reason, now_ms())?;
+        let mut failures = Vec::new();
+        let mut record = |owner: &str, result: Result<(), String>| {
+            if let Err(error) = result {
+                failures.push(format!("{owner}: {error}"));
+            }
+        };
 
-        let teach_identity = self
-            .teach_recording
-            .lock()
-            .map_err(|_| "Teach Recording owner lock poisoned".to_string())?
-            .snapshot()
-            .clone();
-        if teach_identity.phase != TeachRecordingPhase::Idle
-            && teach_identity.account_fence.as_deref() == Some(previous_fence)
-        {
-            self.teach_recording
-                .lock()
-                .map_err(|_| "Teach Recording owner lock poisoned".to_string())?
-                .fence_account_switch(previous_fence, teach_identity.account_epoch)?;
+        record("agent-turns", self.fence_turns_for_account_change(previous_fence, reason));
+        record("human-calls", self.human_calls.fence_account(previous_fence, reason, now_ms()));
+
+        match self.teach_recording.lock() {
+            Ok(owner) => {
+                let identity = owner.snapshot().clone();
+                drop(owner);
+                if identity.phase != TeachRecordingPhase::Idle
+                    && identity.account_fence.as_deref() == Some(previous_fence)
+                {
+                    record(
+                        "teach-recording",
+                        self.teach_recording
+                            .lock()
+                            .map_err(|_| "Teach Recording owner lock poisoned".to_string())
+                            .and_then(|mut owner| owner.fence_account_switch(previous_fence, identity.account_epoch)),
+                    );
+                }
+            }
+            Err(_) => failures.push("teach-recording: Teach Recording owner lock poisoned".into()),
         }
 
-        let provisioning_identity = self
-            .onepassword_provisioning
-            .lock()
-            .map_err(|_| "1Password provisioning owner lock poisoned".to_string())?
-            .snapshot()
-            .clone();
-        if matches!(
-            provisioning_identity.phase,
-            DurableProvisioningPhase::Prepared
-                | DurableProvisioningPhase::Delivering
-                | DurableProvisioningPhase::OutcomeUnknown
-        ) && provisioning_identity.account_fence.as_deref() == Some(previous_fence)
-        {
-            self.onepassword_provisioning
-                .lock()
-                .map_err(|_| "1Password provisioning owner lock poisoned".to_string())?
-                .fence_account_switch(previous_fence, provisioning_identity.account_epoch)?;
+        match self.onepassword_provisioning.lock() {
+            Ok(owner) => {
+                let identity = owner.snapshot().clone();
+                drop(owner);
+                if matches!(
+                    identity.phase,
+                    DurableProvisioningPhase::Prepared
+                        | DurableProvisioningPhase::Delivering
+                        | DurableProvisioningPhase::OutcomeUnknown
+                ) && identity.account_fence.as_deref() == Some(previous_fence)
+                {
+                    record(
+                        "onepassword-provisioning",
+                        self.onepassword_provisioning
+                            .lock()
+                            .map_err(|_| "1Password provisioning owner lock poisoned".to_string())
+                            .and_then(|mut owner| owner.fence_account_switch(previous_fence, identity.account_epoch)),
+                    );
+                }
+            }
+            Err(_) => failures.push(
+                "onepassword-provisioning: 1Password provisioning owner lock poisoned".into(),
+            ),
         }
 
-        // Prepared variable writes may contain secret values. Even though commit is account-fenced,
-        // the old account's uncommitted secret material must not survive the transition in memory.
         self.pending_plugin_variable_writes.clear();
-        if let Some(service) = self.managed_skills.as_ref() {
-            service
-                .set_account_scope(None)
-                .map_err(|error| format!("failed to clear managed skills account scope during transition: {error}"))?;
-        }
-        self.box_handoff
-            .lock()
-            .map_err(|_| "Android box handoff lock poisoned".to_string())?
-            .forget_account(previous_fence)?;
-        self.experiments.clear_account_scope();
-        if let Some(core) = self.cross_user_core.as_ref() {
-            core.fence_account_transition()?;
-        }
-        self.cancel_mcp_auth_watches_for_account_change(reason)?;
-        self.user_settings
-            .lock()
-            .map_err(|_| "Android user settings lock poisoned".to_string())?
-            .set_local_tool_permission_ceiling(None)
-            .map_err(|error| format!("failed to clear stale local tool permission ceiling: {error}"))?;
-        Ok(())
-    }
 
+        if let Some(service) = self.managed_skills.as_ref() {
+            record(
+                "managed-skills",
+                service.set_account_scope(None).map_err(|error| {
+                    format!("failed to clear managed skills account scope during transition: {error}")
+                }),
+            );
+        }
+
+        record(
+            "box-handoff",
+            self.box_handoff
+                .lock()
+                .map_err(|_| "Android box handoff lock poisoned".to_string())
+                .and_then(|mut owner| owner.forget_account(previous_fence)),
+        );
+
+        self.experiments.clear_account_scope();
+
+        if let Some(core) = self.cross_user_core.as_ref() {
+            record("cross-user", core.fence_account_transition());
+        }
+
+        record(
+            "mcp-auth-watches",
+            self.cancel_mcp_auth_watches_for_account_change(reason),
+        );
+
+        record(
+            "user-settings",
+            self.user_settings
+                .lock()
+                .map_err(|_| "Android user settings lock poisoned".to_string())
+                .and_then(|mut settings| {
+                    settings.set_local_tool_permission_ceiling(None).map_err(|error| {
+                        format!("failed to clear stale local tool permission ceiling: {error}")
+                    })
+                }),
+        );
+
+        if failures.is_empty() {
+            Ok(())
+        } else {
+            Err(format!("account transition cleanup incomplete: {}", failures.join("; ")))
+        }
+    }
 
 
     fn cross_user_fenced<T, F>(&self, operation: F) -> Result<T, String>
