@@ -19770,6 +19770,292 @@
       "contract_test": "required: valid/stale/cross-account reply target and fork semantics",
       "integration_test": "required: native reply/fork send and process-reopen thread rendering",
       "notes": "Mapped until the complete Desktop reply-threading semantic surface is explicitly implemented/tested."
+    },
+    {
+      "responsibility_id": "TRANSCRIPT-SESSION-RUNTIME-ANDROID-001",
+      "domain": "transcript-session-lifecycle",
+      "desktop_sources": [
+        {
+          "path": "source/host/src/extensions/transcript/session_runtime.rs",
+          "blob_sha": "85993042d19f3816f23957ece2c92b9d734040c7",
+          "symbols": [
+            "SessionRuntime",
+            "DeferredActivationClaim",
+            "open_session_once",
+            "retire_inactive_session",
+            "schedule_deferred_activation",
+            "claim_deferred_activation",
+            "windowed_catch_up",
+            "switch_agent",
+            "set_window_focused"
+          ]
+        }
+      ],
+      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "responsibility": "Own active transcript/session selection, focus/viewed state, one-open session materialization, bounded deferred activation/catch-up, deleted-Agent fencing, inactive-session retirement and active-Agent switching without a second transcript owner.",
+      "source_owner": "Desktop SessionRuntime over ProductionSessionWorkers and canonical active-Agent/session state",
+      "direct_callers": [
+        "TranscriptManager active Agent/window operations",
+        "background session resolution",
+        "deferred activation/catch-up path"
+      ],
+      "downstream_dependencies": [
+        "ProductionSessionWorkers",
+        "SandAgentSessionStore",
+        "canonical transcript entries",
+        "unread/viewed state"
+      ],
+      "state_owner": "Android canonical Agent roster/session/TranscriptStore owners remain authoritative; presentation owns no active-Agent truth.",
+      "persistent_state": [
+        "active Agent identity and transcript/session durable data remain in canonical Rust owners",
+        "deferred activation is transient generation-fenced state"
+      ],
+      "protocol_wire_contract": [
+        "active Agent identity",
+        "focus/viewed timestamps",
+        "deferred activation generation + shippedThroughId",
+        "windowed transcript catch-up"
+      ],
+      "visible_effect": "Switching or reopening an Agent restores the correct transcript and unread/view state without duplicate session owners or stale activation.",
+      "failure_behavior": [
+        "deleted/missing Agent fails closed",
+        "stale deferred activation generation cannot activate",
+        "session open failure is surfaced"
+      ],
+      "cancellation_behavior": "Superseding switch/delete invalidates pending activation; inactive session retirement closes owners without deleting canonical data.",
+      "retry_semantics": "Session reopen may retry materialization but reuses canonical Agent/session identity.",
+      "idempotency_semantics": "Open-once and active-Agent identity prevent duplicate live session ownership.",
+      "process_death_recovery": "Android reconstructs active Agent/session/transcript from durable Rust owners after cold start rather than replaying UI state.",
+      "account_fencing": "Active Agent/session operations stay under the current signed-in account and stale account callbacks are rejected.",
+      "security_boundary": "Compose cannot directly open Host session stores; canonical state stays behind Host/JNI.",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "source/host/src/android_json_runtime.rs",
+        "source/host/src/android_agent_roster.rs",
+        "source/host/src/extensions/transcript/transcript_store.rs",
+        "source/host/src/extensions/session/production.rs"
+      ],
+      "android_owner": "Rust AndroidJsonHost + AndroidAgentRoster + canonical session/transcript owners",
+      "platform_delta": "Desktop window focus/session cache semantics are split across Android Host process lifecycle and native navigation while canonical state remains Rust-owned.",
+      "implementation_status": "mapped",
+      "production_wiring": "Android has canonical active-Agent roster state, account-scoped transcript/session operations and process-reopen owners, but full Desktop deferred-activation/focus/live-session-retirement parity is not yet proven.",
+      "unit_test": "Existing roster/transcript/session tests cover active Agent and reopen subsets; deferred-activation/focus retirement parity still required.",
+      "contract_test": "Required for stale generation, delete/switch, focus/unread, one-open and process-reopen semantics.",
+      "integration_test": "Required through Host to JNI to typed Kotlin Agent switching and cold-start restore.",
+      "packaged_test": "Required on final githubRelease artifact.",
+      "device_test": "Required for Activity recreation/process death/account switch.",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Human semantic review at Android head 982f895f; deliberately mapped because Desktop SessionRuntime is split across Android owners."
+    },
+    {
+      "responsibility_id": "TRANSCRIPT-ENTRY-ID-ANDROID-001",
+      "domain": "transcript-identity",
+      "desktop_sources": [
+        {
+          "path": "source/host/src/extensions/transcript/transcript_entry_ids.rs",
+          "blob_sha": "65f08c3d39a3d86386e733570682d757b2911a96",
+          "symbols": [
+            "BOOT_TURN",
+            "TranscriptEntryIdKind",
+            "next_entry_id",
+            "first_unused_id",
+            "count_user_messages",
+            "count_trailing_user_attachments",
+            "count_trailing_assistant_messages",
+            "count_trailing_send_messages"
+          ]
+        }
+      ],
+      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "responsibility": "Mint stable collision-free transcript entry IDs for user messages, attachments, assistant messages and send-message entries while preserving Desktop turn numbering including boot-turn identity.",
+      "source_owner": "Desktop transcript_entry_ids pure Rust helper",
+      "direct_callers": [
+        "transcript send/attachment/shared-room shaping"
+      ],
+      "downstream_dependencies": [
+        "canonical transcript entry list"
+      ],
+      "state_owner": "Stateless helper; canonical TranscriptStore owns persisted IDs.",
+      "persistent_state": [
+        "only the minted ID stored with canonical transcript entries"
+      ],
+      "protocol_wire_contract": [
+        "t{n}u",
+        "t{n}ua{k}",
+        "t{turn}a{k}",
+        "t{turn}s{k}",
+        "boot turn b"
+      ],
+      "visible_effect": "Replies, attachments and assistant/send-message rows retain stable identity across reopen and avoid collisions.",
+      "failure_behavior": [
+        "existing IDs are skipped rather than overwritten",
+        "counter growth saturates safely"
+      ],
+      "cancellation_behavior": "None; pure calculation.",
+      "retry_semantics": "Same canonical input deterministically returns the same first unused identity.",
+      "idempotency_semantics": "Existing-ID set plus deterministic counter search prevents collision.",
+      "process_death_recovery": "IDs derive from reopened canonical transcript entries, not in-memory counters.",
+      "account_fencing": "Caller supplies the account-scoped canonical transcript; helper owns no account state.",
+      "security_boundary": "Pure identity helper cannot authorize or mutate resources.",
+      "android_disposition": "direct-port",
+      "android_target": [
+        "source/host/src/extensions/transcript/transcript_entry_ids.rs"
+      ],
+      "android_owner": "Rust transcript_entry_ids helper + canonical TranscriptStore",
+      "platform_delta": "None; Android keeps the Rust algorithm and adds focused parity tests.",
+      "implementation_status": "implemented",
+      "production_wiring": "Android Host ships the same entry-ID algorithm in the transcript module and canonical transcript callers use it.",
+      "unit_test": "ids_preserve_desktop_turn_shape_and_skip_collisions; boot_turn_ids_remain_stable_without_user_messages",
+      "contract_test": "Covered by canonical send/transcript identity tests; exact-head CI pending.",
+      "integration_test": "Final exact-head Agent send/attachment/shared-room journeys required.",
+      "packaged_test": "Required on final githubRelease artifact.",
+      "device_test": "Required as part of final transcript recovery acceptance.",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Desktop blob compared with Android Rust direct port 2c1bc01b26ea689f706de39262a9e6e024d7ac32; implementation is present but verification awaits descendant exact-head evidence."
+    },
+    {
+      "responsibility_id": "TRANSCRIPT-HUB-ANDROID-001",
+      "domain": "transcript-runtime-primitives",
+      "desktop_sources": [
+        {
+          "path": "source/host/src/extensions/transcript/transcript_hub.rs",
+          "blob_sha": "0c4372cbc804e4182df59262c59750c8ccd34f3d",
+          "symbols": [
+            "RUNNER_UNATTACHED_MESSAGE",
+            "TranscriptEntry",
+            "Disposable",
+            "Clock",
+            "RealClock",
+            "transcript_entry_id",
+            "transcript_entry_kind"
+          ]
+        }
+      ],
+      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "responsibility": "Provide transcript runtime primitives for entry identity/kind inspection and cancellable scheduled callbacks used by transcript composition without owning canonical transcript state.",
+      "source_owner": "Desktop transcript_hub runtime primitives",
+      "direct_callers": [
+        "Transcript runtime/composition helpers"
+      ],
+      "downstream_dependencies": [
+        "system clock/thread scheduling",
+        "canonical transcript values"
+      ],
+      "state_owner": "No durable state; timer cancellation token owns only transient callback cancellation.",
+      "persistent_state": [
+        "none"
+      ],
+      "protocol_wire_contract": [
+        "transcript entry id/kind JSON fields",
+        "cancellable delayed callback semantics",
+        "runner-unattached failure wording where surfaced"
+      ],
+      "visible_effect": "Transcript timers and projections do not fire after disposal and entry helpers interpret canonical rows consistently.",
+      "failure_behavior": [
+        "missing id/kind returns none",
+        "disposed timer callback does not run"
+      ],
+      "cancellation_behavior": "Disposable cancellation fences the scheduled callback.",
+      "retry_semantics": "Caller-controlled; hub itself does not retry.",
+      "idempotency_semantics": "Entry inspection is pure; disposal is monotonic.",
+      "process_death_recovery": "No timer is durable; durable owners reconstruct required work after restart.",
+      "account_fencing": "Transient callbacks must also be fenced by owning account/generation before mutation.",
+      "security_boundary": "No capability authority; only runtime primitives.",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "source/host/src/host_event_bus.rs",
+        "source/host/src/android_json_runtime.rs",
+        "source/host/src/extensions/transcript/transcript_store.rs"
+      ],
+      "android_owner": "Rust Host event/runtime primitives around canonical TranscriptStore",
+      "platform_delta": "Android does not keep the Desktop hub file; equivalent timer/event cancellation is distributed across Host lifecycle owners.",
+      "implementation_status": "mapped",
+      "production_wiring": "Canonical entry helpers/event infrastructure exist, but complete audited equivalence for Desktop Clock/Disposable and runner-unattached surface is not yet established.",
+      "unit_test": "Partial Host event/transcript tests exist; focused cancellable-scheduler parity required.",
+      "contract_test": "Required for dispose-before-fire and stale account/generation callback fencing.",
+      "integration_test": "Required in transcript extension lifecycle/process-death tests.",
+      "packaged_test": "Required on final githubRelease artifact.",
+      "device_test": "Required through lifecycle/disposal acceptance.",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Mapped conservatively because the Desktop file is intentionally decomposed on Android."
+    },
+    {
+      "responsibility_id": "TRANSCRIPT-STORE-ANDROID-001",
+      "domain": "canonical-transcript-storage",
+      "desktop_sources": [
+        {
+          "path": "source/host/src/extensions/transcript/transcript_store.rs",
+          "blob_sha": "140976b7cbb8bce9650f41bd18a76e206a8cf18d",
+          "symbols": [
+            "TranscriptStore",
+            "get_transcript",
+            "set_transcript",
+            "append_entry",
+            "update_entry",
+            "remove_entry",
+            "clear_transcript",
+            "is_empty"
+          ]
+        }
+      ],
+      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "responsibility": "Own canonical transcript mutation semantics for get/set/append/update/remove/clear while Android additionally makes those mutations durable, duplicate-safe, searchable, pageable and recoverable after interrupted/corrupt writes.",
+      "source_owner": "Desktop TranscriptStore; Android canonical durable TranscriptStore",
+      "direct_callers": [
+        "AndroidJsonHost chat/transcript commands",
+        "send acknowledgement/prompt acceptance",
+        "transcript search/page/recovery"
+      ],
+      "downstream_dependencies": [
+        "filesystem atomic replacement/fsync",
+        "content/media search",
+        "canonical message identity"
+      ],
+      "state_owner": "One Rust TranscriptStore owns canonical durable transcript entries; UI/JNI only project them.",
+      "persistent_state": [
+        "canonical transcript JSON",
+        "last-known-good backup",
+        "temporary atomic-write file",
+        "corruption quarantine"
+      ],
+      "protocol_wire_contract": [
+        "entry id uniqueness",
+        "canonical message/attachment/send-message JSON",
+        "agent-scoped page cursor",
+        "content/media search projections"
+      ],
+      "visible_effect": "Messages survive cold start, paging/search return canonical history, and corruption/interrupted writes recover without silently fabricating success.",
+      "failure_behavior": [
+        "duplicate IDs reject",
+        "persist failure rolls in-memory mutation back",
+        "corruption is quarantined and recovered from temp/backup/salvage or reset explicitly"
+      ],
+      "cancellation_behavior": "Storage mutation is synchronous/atomic; higher-level run cancellation never rewinds an already durable accepted message.",
+      "retry_semantics": "Failed persistence may be explicitly retried using canonical/idempotent message identity; uncertain side effects reconcile via acceptance owners.",
+      "idempotency_semantics": "Append-if-absent and entry/clientNonce identity prevent duplicate canonical rows.",
+      "process_death_recovery": "open_recovering promotes valid interrupted writes, uses backup, salvages valid entries, or resets unrecoverable corruption with explicit outcome.",
+      "account_fencing": "clientNonce lookup is agent+account-fenced and callers bind store access to current account.",
+      "security_boundary": "Only Rust Host owns transcript persistence; presentation cannot write canonical storage directly.",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "source/host/src/extensions/transcript/transcript_store.rs",
+        "source/host/src/android_json_runtime.rs"
+      ],
+      "android_owner": "Rust durable TranscriptStore",
+      "platform_delta": "Android strengthens the Desktop in-memory API with crash-safe filesystem persistence, paging/search and corruption recovery required by mobile process death.",
+      "implementation_status": "implemented",
+      "production_wiring": "AndroidJsonHost constructs/reopens the durable store and chat/send/search/page/recovery paths use it as canonical transcript truth.",
+      "unit_test": "append_update_remove_clear_follow_in_memory_contract_and_survive_reopen; duplicate_entry_ids_are_never_accepted_as_canonical_transcript; recovery/page/content-search/media-search/clientNonce fence tests",
+      "contract_test": "Host chat/send acceptance and process-death contracts exercise canonical store; descendant exact-head CI pending.",
+      "integration_test": "Final exact-head send/reopen/search/page/process-death journey required.",
+      "packaged_test": "Required on final githubRelease artifact.",
+      "device_test": "Required for process death/offline/upgrade transcript acceptance.",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Android preserves Desktop mutation semantics and deliberately strengthens durability; verification awaits descendant exact-head CI/package/device evidence."
     }
   ],
   "traceability": {
