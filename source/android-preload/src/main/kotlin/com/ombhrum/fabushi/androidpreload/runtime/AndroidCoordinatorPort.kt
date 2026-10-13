@@ -1147,6 +1147,8 @@ interface AndroidCoordinatorPort {
 
     fun messagingAccessIssue(params: JSONObject): JSONObject
     fun messagingBlobRead(params: JSONObject): JSONObject
+    fun messagingForwardRecipients(params: JSONObject): JSONObject =
+        error("Messaging forward recipient search is unavailable on this Coordinator port")
     fun messagingExecute(params: JSONObject): JSONObject
 
     fun rootNotificationTrays(): JSONArray
