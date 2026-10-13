@@ -26,3 +26,5 @@ pub mod inline_image_materialization;
 pub mod sand_ack_obligation_store;
 pub mod replica_writer;
 pub mod roster_projection;
+
+pub mod prompt_acceptance_ledger;
