@@ -443,6 +443,30 @@ mod tests {
     }
 
     #[test]
+    fn spill_accepts_agent_error_event() {
+        let root = root("agent-error");
+        let path = root.join("spill.json");
+        let mut spool = AndroidStructuredLogSpool::open(&path, "account-a", "counter-a", 1_000)
+            .unwrap();
+        spool
+            .record(
+                "error",
+                "sand.agent.error",
+                BTreeMap::from([
+                    ("source".into(), "turn".into()),
+                    ("conversation_id".into(), "agent-1".into()),
+                    ("error_code".into(), "SAND-E0001".into()),
+                ]),
+                1_001,
+            )
+            .unwrap();
+        let snapshot = spool.snapshot();
+        assert_eq!(snapshot.checkpoint.records.len(), 1);
+        assert_eq!(snapshot.checkpoint.records[0].message, "sand.agent.error");
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn spill_accepts_account_signin_and_tracks_rotation_drop() {
         let mut state = AndroidStructuredLogSpillState::empty("account-a", "counter-a");
         state.checkpoint.records.push(record(1_000, "sand.desktop.signin"));
