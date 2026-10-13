@@ -66,6 +66,19 @@ class AndroidMachineIdStoreInstrumentedTest {
     }
 
     @Test
+    fun protectedIdentityRecoversInterruptedLegacyCleanupWithoutRotation() {
+        val protectedId = AndroidMachineIdStore(context).getOrCreate()
+        legacyFile.parentFile?.mkdirs()
+        legacyFile.writeText("stale-plaintext-${UUID.randomUUID()}")
+
+        val reopened = AndroidMachineIdStore(context).getOrCreate()
+
+        assertEquals(protectedId, reopened)
+        assertFalse("cold reopen must finish deleting stale legacy plaintext", legacyFile.exists())
+        assertFalse(protectedFile.readText().contains(protectedId))
+    }
+
+    @Test
     fun concurrentStoreInstancesConvergeOnOneDurableMachineId() {
         val workers = Executors.newFixedThreadPool(8)
         val start = CountDownLatch(1)
