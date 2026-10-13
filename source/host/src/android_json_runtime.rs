@@ -3877,7 +3877,6 @@ impl AndroidJsonHost {
                 source_message_id,
                 query,
                 limit,
-                i64::try_from(now_ms()).unwrap_or(i64::MAX),
             )?;
         Ok(with_account_session_mutation(
             json!({"recipients":recipients}),
