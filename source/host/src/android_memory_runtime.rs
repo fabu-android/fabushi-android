@@ -1,4 +1,4 @@
-use std::{fs, path::{Path, PathBuf}};
+use std::{fs, path::{Path, PathBuf}, sync::{atomic::AtomicBool, Arc}};
 
 use serde_json::{json, Value};
 
@@ -8,8 +8,15 @@ use crate::{
             get_project_dir, get_project_memory_shard_dir, get_user_memory_shard_dir,
             project_dir_exists, FileMemoryStore, MemoryKind, MemoryRecord, MEMORY_NOTE_PREFIX,
         },
+        memory_synthesis_service::{
+            parse_json_object, synthesis_request_json, synthesis_system_prompt,
+            verification_request_json, verification_system_prompt, MemorySynthesisOptions,
+            MemorySynthesisService, SynthesisCancelSignal, SynthesisProposalRequest,
+            SynthesisTarget, SynthesisVerificationRequest,
+        },
         project_membership::{is_safe_project_slug, AgentProjectMembership},
     },
+    runner::{AndroidHostInferenceProvider, AndroidInferenceMode},
     sha256::sha256_hex,
 };
 
@@ -184,6 +191,80 @@ impl AndroidMemoryOwner {
 
     fn store(&self, account_fence: &str, agent_id: &str) -> Result<FileMemoryStore, String> {
         self.scoped_store(account_fence, agent_id, AndroidMemoryScope::Agent)
+    }
+
+    pub fn synthesize_settled_turn(
+        &self,
+        account_fence: &str,
+        agent_id: &str,
+        evidence_id: Option<String>,
+        user: &str,
+        assistant: &str,
+        occurred_at_ms: i64,
+        mode: AndroidInferenceMode,
+        bearer_token: Option<String>,
+        cancelled: Arc<AtomicBool>,
+    ) -> Result<(), String> {
+        let target = Arc::new(self.store(account_fence, agent_id)?);
+        let list_target = Arc::clone(&target);
+        let list_agent = agent_id.to_string();
+        let list_targets = Arc::new(move || {
+            vec![(
+                list_agent.clone(),
+                Arc::clone(&list_target) as Arc<dyn SynthesisTarget>,
+            )]
+        });
+        let get_target = Arc::clone(&target);
+        let get_agent = agent_id.to_string();
+        let target_lookup = Arc::new(move |candidate: &str| {
+            (candidate == get_agent)
+                .then(|| Arc::clone(&get_target) as Arc<dyn SynthesisTarget>)
+        });
+
+        let propose_token = bearer_token.clone();
+        let propose_cancelled = Arc::clone(&cancelled);
+        let propose = Arc::new(
+            move |request: SynthesisProposalRequest, signal: SynthesisCancelSignal| {
+                let output = AndroidHostInferenceProvider::run_summarization_prompt(
+                    mode,
+                    propose_token.clone(),
+                    Arc::clone(&propose_cancelled),
+                    synthesis_system_prompt(),
+                    &synthesis_request_json(&request),
+                    &|| signal.is_cancelled(),
+                )
+                .map_err(|error| error.message)?;
+                parse_json_object(&output)
+                    .ok_or_else(|| "memory synthesis inference returned invalid JSON".to_string())
+            },
+        );
+
+        let verify_token = bearer_token;
+        let verify_cancelled = cancelled;
+        let verify = Arc::new(
+            move |request: SynthesisVerificationRequest, signal: SynthesisCancelSignal| {
+                let output = AndroidHostInferenceProvider::run_summarization_prompt(
+                    mode,
+                    verify_token.clone(),
+                    Arc::clone(&verify_cancelled),
+                    verification_system_prompt(),
+                    &verification_request_json(&request),
+                    &|| signal.is_cancelled(),
+                )
+                .map_err(|error| error.message)?;
+                let verdict = parse_json_object(&output)
+                    .ok_or_else(|| "memory synthesis verification returned invalid JSON".to_string())?;
+                Ok(verdict.get("approved").and_then(Value::as_bool) == Some(true))
+            },
+        );
+
+        let mut options = MemorySynthesisOptions::new(list_targets, target_lookup, propose);
+        options.verify = Some(verify);
+        let service = MemorySynthesisService::new(options);
+        service.start();
+        service.record_turn(agent_id, evidence_id, user, assistant, occurred_at_ms);
+        let _ = service.run_now();
+        Ok(())
     }
 
     fn scoped_store(
@@ -521,6 +602,39 @@ mod tests {
         assert!(owner
             .join_project("session:account-b", "agent-a", "alpha")
             .is_err());
+    }
+
+    #[test]
+    fn failed_synthesis_never_mutates_explicit_memory() {
+        let root = tempfile::tempdir().unwrap();
+        let owner = AndroidMemoryOwner::new(root.path());
+        owner
+            .add(
+                "session:account-a",
+                "agent-a",
+                "Keep this explicit fact",
+                "profile",
+                1_700_000_000_000,
+            )
+            .unwrap();
+
+        owner
+            .synthesize_settled_turn(
+                "session:account-a",
+                "agent-a",
+                Some("turn:r1".into()),
+                "Please remember a possible fact",
+                "Acknowledged",
+                1_700_000_001_000,
+                AndroidInferenceMode::Test,
+                None,
+                Arc::new(AtomicBool::new(false)),
+            )
+            .unwrap();
+
+        let memories = owner.list("session:account-a", "agent-a", None).unwrap();
+        assert_eq!(memories.as_array().unwrap().len(), 1);
+        assert_eq!(memories[0]["content"], "Keep this explicit fact");
     }
 
     #[test]
