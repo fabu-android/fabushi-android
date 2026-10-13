@@ -4145,6 +4145,18 @@ impl AndroidJsonHost {
                 }
             }
         }
+        if self.mode != AndroidHostMode::Test {
+            if let Some(command) = command {
+                if command.get("type").and_then(Value::as_str) == Some("sendMessage") {
+                    if let Some(remote_mutation) =
+                        self.dispatch_remote_human_send_if_needed(&actor_id, &account_fence, command)?
+                    {
+                        account_mutation = Some(remote_mutation);
+                    }
+                }
+            }
+        }
+
         // Acknowledgement telemetry is owned at the canonical Host mutation boundary. Compose may
         // optimistically project UI state, but it cannot settle or retry messaging side effects.
         let reaction_telemetry = command
@@ -4284,6 +4296,216 @@ impl AndroidJsonHost {
         }
         Ok(with_account_session_mutation(result, account_mutation))
     }
+    fn dispatch_remote_human_send_if_needed(
+        &mut self,
+        actor_id: &str,
+        account_fence: &str,
+        command: &serde_json::Map<String, Value>,
+    ) -> Result<Option<AccountSessionMutation>, String> {
+        let intent = self
+            .messaging
+            .lock()
+            .map_err(|_| "canonical Android messaging owner lock poisoned".to_string())?
+            .remote_human_send_intent(actor_id, command)?;
+        let Some(intent) = intent else {
+            return Ok(None);
+        };
+        let conversation_id = required_string(&intent, "conversationId")?.to_string();
+        let peer_actor_id = required_string(&intent, "peerActorId")?.to_string();
+        let target_user_id = required_string(&intent, "targetUserId")?.to_string();
+        let client_request_id = required_string(&intent, "clientRequestId")?.to_string();
+        let text = required_string(&intent, "text")?.to_string();
+        let reply_to_message_id = intent
+            .get("replyToMessageId")
+            .and_then(Value::as_str)
+            .map(str::to_string);
+        let account_slot = self.account.account_storage_scope();
+
+        if let Some((_, server_message_id)) = self
+            .messaging
+            .lock()
+            .map_err(|_| "canonical Android messaging owner lock poisoned".to_string())?
+            .remote_human_server_echo_for_client_request(
+                &conversation_id,
+                actor_id,
+                &client_request_id,
+            )
+        {
+            let _ = self
+                .human_remote_outbound
+                .lock()
+                .map_err(|_| "Human remote outbound journal lock poisoned".to_string())?
+                .settle_server_echo(
+                    account_slot.as_deref(),
+                    account_fence,
+                    actor_id,
+                    &client_request_id,
+                    &server_message_id,
+                )?;
+            return Ok(None);
+        }
+
+        let record = self
+            .human_remote_outbound
+            .lock()
+            .map_err(|_| "Human remote outbound journal lock poisoned".to_string())?
+            .begin(
+                account_slot.as_deref(),
+                account_fence,
+                actor_id,
+                &peer_actor_id,
+                &client_request_id,
+                &text,
+                reply_to_message_id.as_deref(),
+            )?;
+
+        match record.phase {
+            crate::human_remote_outbound::HumanRemoteOutboundPhase::Pending => {}
+            crate::human_remote_outbound::HumanRemoteOutboundPhase::Dispatching => {
+                return Err(
+                    "Human remote message is already dispatching; duplicate transport is fenced"
+                        .into(),
+                );
+            }
+            crate::human_remote_outbound::HumanRemoteOutboundPhase::Failed => {
+                return Err(
+                    "Human remote message has a proven failed dispatch; explicit retry with a fresh clientRequestId is required"
+                        .into(),
+                );
+            }
+            crate::human_remote_outbound::HumanRemoteOutboundPhase::AcceptedAwaitingEcho
+            | crate::human_remote_outbound::HumanRemoteOutboundPhase::OutcomeUnknown => {
+                let backend_peer = peer_actor_id.trim_start_matches("human:");
+                let path = human_remote_messages_path(backend_peer, None, 100)?;
+                let (remote, mutation) = self
+                    .account
+                    .authenticated_device_api_request("GET", &path, None)?;
+                validate_human_remote_envelope(&remote, "message reconciliation")?;
+                if self.current_turn_account_fence()? != account_fence {
+                    return Err(
+                        "Human remote message reconciliation became stale after the account changed"
+                            .into(),
+                    );
+                }
+                let rows = human_remote_message_rows(&remote)?;
+                self.messaging
+                    .lock()
+                    .map_err(|_| "canonical Android messaging owner lock poisoned".to_string())?
+                    .reconcile_remote_human_messages(actor_id, &peer_actor_id, &rows)?;
+                if let Some((_, server_message_id)) = self
+                    .messaging
+                    .lock()
+                    .map_err(|_| "canonical Android messaging owner lock poisoned".to_string())?
+                    .remote_human_server_echo_for_client_request(
+                        &conversation_id,
+                        actor_id,
+                        &client_request_id,
+                    )
+                {
+                    self.human_remote_outbound
+                        .lock()
+                        .map_err(|_| "Human remote outbound journal lock poisoned".to_string())?
+                        .settle_server_echo(
+                            account_slot.as_deref(),
+                            account_fence,
+                            actor_id,
+                            &client_request_id,
+                            &server_message_id,
+                        )?;
+                    return Ok(mutation);
+                }
+                return Err(
+                    "Human remote message outcome remains unknown; server reconciliation found no matching echo, so automatic resend is forbidden"
+                        .into(),
+                );
+            }
+        }
+
+        let dispatching = self
+            .human_remote_outbound
+            .lock()
+            .map_err(|_| "Human remote outbound journal lock poisoned".to_string())?
+            .mark_dispatching(&record)?;
+
+        let body = json!({
+            "targetUserId":target_user_id,
+            "text":text,
+            "clientRequestId":client_request_id,
+            "replyToMessageId":reply_to_message_id,
+            "attachments":[],
+        });
+        let remote_result = self
+            .account
+            .authenticated_device_api_request("POST", "/api/social/messages", Some(body));
+        let (remote, mutation) = match remote_result {
+            Ok(result) => result,
+            Err(error) => {
+                self.human_remote_outbound
+                    .lock()
+                    .map_err(|_| "Human remote outbound journal lock poisoned".to_string())?
+                    .mark_outcome_unknown(
+                        &dispatching,
+                        format!("Human message transport ended without a proven server outcome: {error}"),
+                    )?;
+                return Err(format!(
+                    "Human message outcome is unknown and will not be retried automatically: {error}"
+                ));
+            }
+        };
+        if self.current_turn_account_fence()? != account_fence {
+            self.human_remote_outbound
+                .lock()
+                .map_err(|_| "Human remote outbound journal lock poisoned".to_string())?
+                .mark_outcome_unknown(
+                    &dispatching,
+                    "account changed while Human message dispatch was in flight",
+                )?;
+            return Err("Human message dispatch became stale after the account changed".into());
+        }
+        validate_human_remote_envelope(&remote, "message send")?;
+        let message = remote
+            .get("message")
+            .cloned()
+            .ok_or("Fabushi Human message send response omitted message")?;
+        let returned_client_request_id =
+            required_string(&message, "clientRequestId")?;
+        if returned_client_request_id != client_request_id {
+            self.human_remote_outbound
+                .lock()
+                .map_err(|_| "Human remote outbound journal lock poisoned".to_string())?
+                .mark_outcome_unknown(
+                    &dispatching,
+                    "server returned a mismatched Human clientRequestId",
+                )?;
+            return Err("Fabushi Human message send returned a mismatched clientRequestId".into());
+        }
+        let server_message_id = remote_human_identity_text(
+            message.get("id"),
+            "message id",
+        )?;
+        let accepted = self
+            .human_remote_outbound
+            .lock()
+            .map_err(|_| "Human remote outbound journal lock poisoned".to_string())?
+            .mark_accepted(&dispatching, &server_message_id)?;
+
+        self.messaging
+            .lock()
+            .map_err(|_| "canonical Android messaging owner lock poisoned".to_string())?
+            .reconcile_remote_human_messages(actor_id, &peer_actor_id, &[message])?;
+        self.human_remote_outbound
+            .lock()
+            .map_err(|_| "Human remote outbound journal lock poisoned".to_string())?
+            .settle_server_echo(
+                account_slot.as_deref(),
+                account_fence,
+                actor_id,
+                &accepted.client_request_id,
+                &server_message_id,
+            )?;
+        Ok(mutation)
+    }
+
     fn messaging_blob_read(&mut self, params: &Value) -> Result<Value, String> {
         let (actor_id, mutation) = self.current_messaging_identity()?;
         let account_fence = self.current_turn_account_fence()?;
