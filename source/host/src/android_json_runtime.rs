@@ -6957,13 +6957,29 @@ impl AndroidJsonHost {
                 return Err("automation agent owner not found".into());
             }
         }
-        let schedule = required_string(params, "schedule")?.to_string();
+        let trigger = params.get("trigger").cloned().filter(|value| !value.is_null());
+        let schedule = params
+            .get("schedule")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string();
         let trigger_description = params
             .get("triggerDescription")
             .and_then(Value::as_str)
             .filter(|value| !value.trim().is_empty())
-            .unwrap_or(schedule.as_str())
-            .to_string();
+            .map(str::to_string)
+            .unwrap_or_else(|| {
+                if !schedule.trim().is_empty() {
+                    schedule.clone()
+                } else {
+                    trigger
+                        .as_ref()
+                        .and_then(|value| value.get("type"))
+                        .and_then(Value::as_str)
+                        .map(|kind| format!("{kind} event"))
+                        .unwrap_or_else(|| "Event trigger".to_string())
+                }
+            });
         let local_id = required_string(params, "id")?.to_string();
         let id = stable_account_automation_id(&account_fence, agent_id, &local_id);
         let existed = self.automation_runtime.has_owned_spec(&id, &account_fence, agent_id);
@@ -6972,6 +6988,7 @@ impl AndroidJsonHost {
             name: required_string(params, "name")?.to_string(),
             prompt: required_string(params, "prompt")?.to_string(),
             schedule,
+            trigger,
             agent_id: agent_id.to_string(),
             trigger_description,
             enabled: params.get("enabled").and_then(Value::as_bool).unwrap_or(true),
@@ -7225,11 +7242,19 @@ impl AndroidJsonHost {
             return Err("automation wakes are quiesced for upgrade".into());
         }
         let account_fence = self.current_turn_account_fence()?;
-        let outcome = self.automation_runtime.enqueue_event_fire(
+        let outcome = self.automation_runtime.enqueue_matching_event_fire(
             required_string(params, "automationId")?,
             &account_fence,
             required_string(params, "occurrenceId")?,
             params.get("event").cloned().ok_or("event is required")?,
+            params
+                .get("platformMatched")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
+            params
+                .get("admitMissingSubject")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
             now_ms(),
         )?;
         serde_json::to_value(outcome)
@@ -20639,6 +20664,62 @@ mod assistant_spend_guard_projection_tests {
 }
 
 #[cfg(test)]
+mod automation_event_trigger_wiring_tests {
+    use super::*;
+
+    #[test]
+    fn event_trigger_route_rejects_unrelated_delivery() {
+        let root = tempfile::tempdir().unwrap();
+        let mut host = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+        let created = host
+            .dispatch(
+                "createAgent",
+                &json!({"name":"Event Trigger Agent","isIntroductionSuppressed":true}),
+            )
+            .unwrap();
+        let agent_id = created["agent"]["id"].as_str().unwrap().to_string();
+        let stored = host
+            .dispatch(
+                "feature.automation.upsert",
+                &json!({
+                    "id":"event-trigger-routine",
+                    "agentId":agent_id,
+                    "name":"Repo event routine",
+                    "prompt":"Handle matching PRs",
+                    "trigger":{"type":"github","repo":"owner/repo","events":["pr-opened"]},
+                    "enabled":true
+                }),
+            )
+            .unwrap();
+        let automation_id = stored["id"].as_str().unwrap();
+
+        let error = host
+            .dispatch(
+                "feature.automation.event.enqueue",
+                &json!({
+                    "automationId":automation_id,
+                    "occurrenceId":"wrong-repo",
+                    "event":{"source":"github","repo":"other/repo","kind":"pr-opened"}
+                }),
+            )
+            .unwrap_err();
+        assert!(error.contains("does not match"));
+
+        let accepted = host
+            .dispatch(
+                "feature.automation.event.enqueue",
+                &json!({
+                    "automationId":automation_id,
+                    "occurrenceId":"matching-repo",
+                    "event":{"source":"github","repo":"owner/repo","kind":"pr-opened"}
+                }),
+            )
+            .unwrap();
+        assert_eq!(accepted["accepted"], true);
+    }
+}
+
+#[cfg(test)]
 mod automation_event_batch_wiring_tests {
     use super::*;
 
@@ -20661,7 +20742,7 @@ mod automation_event_batch_wiring_tests {
                     "agentId":agent_id,
                     "name":"Event routine",
                     "prompt":"Handle the event",
-                    "schedule":"@every 5m",
+                    "trigger":{"type":"github","repo":"owner/repo","events":["pr-opened"]},
                     "enabled":true
                 }),
             )
@@ -20674,7 +20755,7 @@ mod automation_event_batch_wiring_tests {
                 &json!({
                     "automationId":automation_id,
                     "occurrenceId":"event-occurrence-1",
-                    "event":{"kind":"github","id":"delivery-1"}
+                    "event":{"source":"github","repo":"owner/repo","kind":"pr-opened","id":"delivery-1"}
                 }),
             )
             .unwrap();
@@ -20685,7 +20766,7 @@ mod automation_event_batch_wiring_tests {
                 &json!({
                     "automationId":automation_id,
                     "occurrenceId":"event-occurrence-1",
-                    "event":{"kind":"github","id":"delivery-duplicate"}
+                    "event":{"source":"github","repo":"owner/repo","kind":"pr-opened","id":"delivery-duplicate"}
                 }),
             )
             .unwrap();
