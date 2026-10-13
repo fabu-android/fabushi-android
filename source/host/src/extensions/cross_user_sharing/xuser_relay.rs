@@ -1,5 +1,4 @@
 use crate::notify_drain_gate::NotifyDrainGate;
-use ureq::{Agent, AgentBuilder};
 use serde_json::Value;
 use std::collections::BTreeSet;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -11,16 +10,17 @@ pub const XUSER_RELAY_POLL_INTERVAL_MS: u64 = 4_000;
 pub const XUSER_RELAY_ERROR_BACKOFF_MS: u64 = 30_000;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SandXuserRelayHttpError {
+pub struct XuserRelayHttpError {
     pub status: u16,
     pub path: String,
 }
-impl std::fmt::Display for SandXuserRelayHttpError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "sand sharing {} returned {}", self.path, self.status)
+
+impl std::fmt::Display for XuserRelayHttpError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(formatter, "sharing {} returned {}", self.path, self.status)
     }
 }
-impl std::error::Error for SandXuserRelayHttpError {}
+impl std::error::Error for XuserRelayHttpError {}
 
 pub trait XuserRelayTransport: Send + Sync {
     fn request(
@@ -29,16 +29,18 @@ pub trait XuserRelayTransport: Send + Sync {
         url: &str,
         token: &str,
         body: Option<&Value>,
-    ) -> Result<Value, SandXuserRelayHttpError>;
+    ) -> Result<Value, XuserRelayHttpError>;
 }
 
-pub struct AndroidXuserRelayTransport {
-    client: Agent,
+/// Android Host adapter. Authentication is injected by the canonical account owner; this transport
+/// never stores or refreshes credentials and therefore cannot become a second account authority.
+pub struct UreqXuserRelayTransport {
     client_type: String,
     client_version: String,
     box_namespace: String,
 }
-impl AndroidXuserRelayTransport {
+
+impl UreqXuserRelayTransport {
     pub fn new(
         client_type: impl Into<String>,
         client_version: impl Into<String>,
@@ -60,60 +62,67 @@ impl AndroidXuserRelayTransport {
             }
         }
         Ok(Self {
-            client: AgentBuilder::new()
-                .timeout_connect(Duration::from_secs(15))
-                .timeout_read(Duration::from_secs(30))
-                .timeout_write(Duration::from_secs(30))
-                .redirects(0)
-                .build(),
             client_type,
             client_version,
             box_namespace,
         })
     }
 }
-impl XuserRelayTransport for AndroidXuserRelayTransport {
+
+impl XuserRelayTransport for UreqXuserRelayTransport {
     fn request(
         &self,
         method: &str,
         url: &str,
         token: &str,
         body: Option<&Value>,
-    ) -> Result<Value, SandXuserRelayHttpError> {
-        let request = self
-            .client
-            .request(method, url)
-            .set("authorization", &format!("Bearer {token}"))
-            .set("content-type", "application/json")
-            .set("x-cursor-client-type", &self.client_type)
-            .set("x-cursor-client-version", &self.client_version)
-            .set("x-sand-box-namespace", &self.box_namespace);
+    ) -> Result<Value, XuserRelayHttpError> {
+        let request = match method {
+            "GET" => ureq::get(url),
+            "DELETE" => ureq::delete(url),
+            _ => ureq::post(url),
+        }
+        .timeout_connect(15_000)
+        .timeout(Duration::from_secs(30))
+        .set("Authorization", &format!("Bearer {token}"))
+        .set("Content-Type", "application/json")
+        .set("x-cursor-client-type", &self.client_type)
+        .set("x-cursor-client-version", &self.client_version)
+        .set("x-sand-box-namespace", &self.box_namespace);
+
         let response = match body {
             Some(body) => request.send_json(body.clone()),
             None => request.call(),
-        }
-        .map_err(|error| SandXuserRelayHttpError {
-            status: match error {
-                ureq::Error::Status(status, _) => status,
-                ureq::Error::Transport(_) => 0,
-            },
-            path: url.into(),
-        })?;
-        let status = response.status();
-        response
-            .into_json::<Value>()
-            .map_err(|_| SandXuserRelayHttpError {
+        };
+        match response {
+            Ok(response) => {
+                let status = response.status();
+                response
+                    .into_json::<Value>()
+                    .map_err(|_| XuserRelayHttpError {
+                        status,
+                        path: url.into(),
+                    })
+            }
+            Err(ureq::Error::Status(status, _)) => Err(XuserRelayHttpError {
                 status,
                 path: url.into(),
-            })
+            }),
+            Err(ureq::Error::Transport(_)) => Err(XuserRelayHttpError {
+                status: 0,
+                path: url.into(),
+            }),
+        }
     }
 }
-pub struct SandXuserRelayClient {
+
+pub struct XuserRelayClient {
     backend_url: String,
     access_token: Arc<dyn Fn() -> Result<String, String> + Send + Sync>,
     transport: Arc<dyn XuserRelayTransport>,
 }
-impl SandXuserRelayClient {
+
+impl XuserRelayClient {
     pub fn new(
         backend_url: String,
         access_token: Arc<dyn Fn() -> Result<String, String> + Send + Sync>,
@@ -131,8 +140,8 @@ impl SandXuserRelayClient {
         method: &str,
         path: &str,
         body: Option<&Value>,
-    ) -> Result<Value, SandXuserRelayHttpError> {
-        let token = (self.access_token)().map_err(|_| SandXuserRelayHttpError {
+    ) -> Result<Value, XuserRelayHttpError> {
+        let token = (self.access_token)().map_err(|_| XuserRelayHttpError {
             status: 0,
             path: path.into(),
         })?;
@@ -158,7 +167,7 @@ impl SandXuserRelayClient {
         self.call(
             "POST",
             "/sand/xuser/poll",
-            Some(&serde_json::json!({ "ackIds": ack_ids })),
+            Some(&serde_json::json!({"ackIds":ack_ids})),
         )
     }
 
@@ -172,7 +181,7 @@ impl SandXuserRelayClient {
             .get("timestampMs")
             .and_then(Value::as_f64)
             .filter(|value| value.is_finite())
-            .map(|value| serde_json::json!({ "timestampMs": value }))
+            .map(|value| serde_json::json!({"timestampMs":value}))
             .unwrap_or_else(|| serde_json::json!({})))
     }
 
@@ -184,30 +193,30 @@ impl SandXuserRelayClient {
         Ok(match self.call_raw("POST", "/sand/share-rooms/from-agent", Some(payload)) {
             Ok(result) => project_room_invite_result(&result),
             Err(error) => serde_json::json!({
-                "status": "error",
-                "message": describe_relay_error(&error),
+                "status":"error",
+                "message":describe_relay_error(&error),
             }),
         })
     }
 
     pub fn create_room_invite(&self, room_id: &str) -> Result<Value, String> {
-        let body = serde_json::json!({ "roomId": room_id });
+        let body = serde_json::json!({"roomId":room_id});
         Ok(match self.call_raw("POST", "/sand/share-rooms/invite-links", Some(&body)) {
             Ok(result) => project_room_invite_result(&result),
             Err(error) => serde_json::json!({
-                "status": "error",
-                "message": describe_relay_error(&error),
+                "status":"error",
+                "message":describe_relay_error(&error),
             }),
         })
     }
 
     pub fn join_room(&self, link: &str) -> Result<Value, String> {
-        let body = serde_json::json!({ "link": link });
+        let body = serde_json::json!({"link":link});
         Ok(match self.call_raw("POST", "/sand/share-rooms/join", Some(&body)) {
             Ok(result) => project_join_room_result(&result),
             Err(error) => serde_json::json!({
-                "status": "error",
-                "message": describe_relay_error(&error),
+                "status":"error",
+                "message":describe_relay_error(&error),
             }),
         })
     }
@@ -232,8 +241,8 @@ impl SandXuserRelayClient {
         &self,
         room_id: &str,
         target_auth_id: Option<&str>,
-    ) -> Result<Value, SandXuserRelayHttpError> {
-        let mut body = serde_json::json!({ "roomId": room_id });
+    ) -> Result<Value, XuserRelayHttpError> {
+        let mut body = serde_json::json!({"roomId":room_id});
         if let Some(target_auth_id) = target_auth_id {
             body["targetAuthId"] = Value::String(target_auth_id.into());
         }
@@ -256,11 +265,11 @@ impl SandXuserRelayClient {
     pub fn remove_deleted_agent_raw(
         &self,
         agent_id: &str,
-    ) -> Result<Value, SandXuserRelayHttpError> {
+    ) -> Result<Value, XuserRelayHttpError> {
         self.call_raw(
             "POST",
             "/sand/share-rooms/agents/remove-deleted",
-            Some(&serde_json::json!({ "agentId": agent_id })),
+            Some(&serde_json::json!({"agentId":agent_id})),
         )
     }
 
@@ -281,36 +290,27 @@ fn project_room_invite_result(result: &Value) -> Value {
     match (room_id, share_url, expires_at_ms) {
         (Some(room_id), Some(share_url), Some(expires_at_ms)) if expires_at_ms.is_finite() => {
             serde_json::json!({
-                "status": "ok",
-                "shareUrl": share_url,
-                "expiresAtMs": expires_at_ms,
-                "roomId": room_id,
+                "status":"ok",
+                "shareUrl":share_url,
+                "expiresAtMs":expires_at_ms,
+                "roomId":room_id,
             })
         }
-        _ => serde_json::json!({
-            "status": "error",
-            "message": "Unexpected response.",
-        }),
+        _ => serde_json::json!({"status":"error","message":"Unexpected response."}),
     }
 }
 
 fn project_join_room_result(result: &Value) -> Value {
     match result.get("status").and_then(Value::as_str) {
         Some("pending") => serde_json::json!({
-            "status": "pending",
-            "roomName": result
-                .get("roomName")
-                .and_then(Value::as_str)
-                .unwrap_or("the shared room"),
+            "status":"pending",
+            "roomName":result.get("roomName").and_then(Value::as_str).unwrap_or("the shared room"),
         }),
         Some("already-member") => {
             let room = result.get("room").and_then(Value::as_object);
             let mut projected = serde_json::json!({
-                "status": "already-member",
-                "roomName": room
-                    .and_then(|room| room.get("name"))
-                    .and_then(Value::as_str)
-                    .unwrap_or("the shared room"),
+                "status":"already-member",
+                "roomName":room.and_then(|room|room.get("name")).and_then(Value::as_str).unwrap_or("the shared room"),
             });
             if let Some(room_id) = room
                 .and_then(|room| room.get("roomId"))
@@ -321,20 +321,13 @@ fn project_join_room_result(result: &Value) -> Value {
             projected
         }
         Some(status @ ("invalid" | "denied" | "rate-limited")) => {
-            serde_json::json!({ "status": status })
+            serde_json::json!({"status":status})
         }
-        _ => serde_json::json!({
-            "status": "error",
-            "message": "Unexpected response.",
-        }),
+        _ => serde_json::json!({"status":"error","message":"Unexpected response."}),
     }
 }
 
-type RelayClock = Arc<dyn Fn() -> u64 + Send + Sync>;
-type RelayBool = Arc<dyn Fn() -> bool + Send + Sync>;
-type RelayNotifyGate = NotifyDrainGate;
-pub type XuserRelayEventHandler =
-    Arc<dyn Fn(&Value) -> Result<bool, String> + Send + Sync>;
+pub type XuserRelayEventHandler = Arc<dyn Fn(&Value) -> Result<bool, String> + Send + Sync>;
 
 #[derive(Debug, Default)]
 struct RelayRuntimeState {
@@ -344,29 +337,23 @@ struct RelayRuntimeState {
     pending_ack_ids: Vec<String>,
 }
 
-/// Frozen Grok relay state machine without owning a second Host runtime.
-///
-/// The production owner may drive `tick` from the canonical Host scheduling
-/// policy and `request_drain` from NotifyBus. This type owns only the relay
-/// admission/ack/backoff semantics and remains inside the CrossUserSharing
-/// extension boundary.
-pub struct SandXuserRelayRuntime {
-    client: Arc<SandXuserRelayClient>,
+pub struct XuserRelayRuntime {
+    client: Arc<XuserRelayClient>,
     on_event: XuserRelayEventHandler,
-    now_ms: RelayClock,
-    is_notify_connected: RelayBool,
-    is_notify_safety_poll_enabled: RelayBool,
-    gate: Mutex<RelayNotifyGate>,
+    now_ms: Arc<dyn Fn() -> u64 + Send + Sync>,
+    is_notify_connected: Arc<dyn Fn() -> bool + Send + Sync>,
+    is_notify_safety_poll_enabled: Arc<dyn Fn() -> bool + Send + Sync>,
+    gate: Mutex<NotifyDrainGate>,
     state: Mutex<RelayRuntimeState>,
 }
 
-impl SandXuserRelayRuntime {
+impl XuserRelayRuntime {
     pub fn new(
-        client: Arc<SandXuserRelayClient>,
+        client: Arc<XuserRelayClient>,
         on_event: XuserRelayEventHandler,
-        now_ms: RelayClock,
-        is_notify_connected: RelayBool,
-        is_notify_safety_poll_enabled: RelayBool,
+        now_ms: Arc<dyn Fn() -> u64 + Send + Sync>,
+        is_notify_connected: Arc<dyn Fn() -> bool + Send + Sync>,
+        is_notify_safety_poll_enabled: Arc<dyn Fn() -> bool + Send + Sync>,
     ) -> Self {
         Self {
             client,
@@ -380,7 +367,7 @@ impl SandXuserRelayRuntime {
     }
 
     pub fn start(&self) {
-        let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
+        let mut state = self.state.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         if state.started {
             return;
         }
@@ -388,12 +375,12 @@ impl SandXuserRelayRuntime {
         drop(state);
         self.gate
             .lock()
-            .unwrap_or_else(|p| p.into_inner())
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
             .reset();
     }
 
     pub fn stop(&self) {
-        let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
+        let mut state = self.state.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         state.started = false;
         state.is_ticking = false;
         state.backoff_until_ms = 0;
@@ -402,7 +389,7 @@ impl SandXuserRelayRuntime {
     pub fn record_notify(&self) {
         self.gate
             .lock()
-            .unwrap_or_else(|p| p.into_inner())
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
             .record_notify();
     }
 
@@ -414,7 +401,7 @@ impl SandXuserRelayRuntime {
     pub fn pending_ack_ids(&self) -> Vec<String> {
         self.state
             .lock()
-            .unwrap_or_else(|p| p.into_inner())
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
             .pending_ack_ids
             .clone()
     }
@@ -422,21 +409,21 @@ impl SandXuserRelayRuntime {
     pub fn backoff_until_ms(&self) -> u64 {
         self.state
             .lock()
-            .unwrap_or_else(|p| p.into_inner())
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
             .backoff_until_ms
     }
 
     pub fn tick(&self) -> Result<bool, String> {
         let now = (self.now_ms)();
         let pending = {
-            let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
+            let mut state = self.state.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
             if !state.started || state.is_ticking || now < state.backoff_until_ms {
                 return Ok(false);
             }
             let should_drain = self
                 .gate
                 .lock()
-                .unwrap_or_else(|p| p.into_inner())
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
                 .should_drain(
                     now,
                     !state.pending_ack_ids.is_empty(),
@@ -450,11 +437,10 @@ impl SandXuserRelayRuntime {
             state.pending_ack_ids.clone()
         };
 
-        let result = self.client.poll(&pending);
-        let payload = match result {
+        let payload = match self.client.poll(&pending) {
             Ok(payload) => payload,
             Err(error) => {
-                let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
+                let mut state = self.state.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
                 state.is_ticking = false;
                 state.backoff_until_ms = now.saturating_add(XUSER_RELAY_ERROR_BACKOFF_MS);
                 return Err(error);
@@ -466,9 +452,7 @@ impl SandXuserRelayRuntime {
         let mut next_ack_set = BTreeSet::new();
         if let Some(events) = payload.get("events").and_then(Value::as_array) {
             for event in events {
-                let Some(record) = event.as_object() else {
-                    continue;
-                };
+                let Some(record) = event.as_object() else { continue };
                 let Some(id) = record.get("id").and_then(Value::as_str) else {
                     continue;
                 };
@@ -481,38 +465,35 @@ impl SandXuserRelayRuntime {
                     }
                     continue;
                 }
-                if (self.on_event)(event).unwrap_or(false)
-                    && next_ack_set.insert(id.to_string())
-                {
+                if (self.on_event)(event).unwrap_or(false) && next_ack_set.insert(id.to_string()) {
                     next_ack_ids.push(id.to_string());
                 }
             }
         }
 
         {
-            let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
+            let mut state = self.state.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
             state.pending_ack_ids = next_ack_ids;
             state.is_ticking = false;
             state.backoff_until_ms = 0;
         }
         self.gate
             .lock()
-            .unwrap_or_else(|p| p.into_inner())
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
             .record_poll(now);
         Ok(true)
     }
 }
 
-
-pub struct SandXuserRelayDriver {
-    runtime: Arc<SandXuserRelayRuntime>,
+pub struct XuserRelayDriver {
+    runtime: Arc<XuserRelayRuntime>,
     stopped: Arc<AtomicBool>,
     wake_tx: Mutex<Option<mpsc::Sender<()>>>,
     worker: Mutex<Option<JoinHandle<()>>>,
 }
 
-impl SandXuserRelayDriver {
-    pub fn new(runtime: Arc<SandXuserRelayRuntime>) -> Self {
+impl XuserRelayDriver {
+    pub fn new(runtime: Arc<XuserRelayRuntime>) -> Self {
         Self {
             runtime,
             stopped: Arc::new(AtomicBool::new(true)),
@@ -521,29 +502,27 @@ impl SandXuserRelayDriver {
         }
     }
 
-    pub fn runtime(&self) -> Arc<SandXuserRelayRuntime> {
+    pub fn runtime(&self) -> Arc<XuserRelayRuntime> {
         Arc::clone(&self.runtime)
     }
 
     pub fn start(&self) {
-        let mut worker = self.worker.lock().unwrap_or_else(|p| p.into_inner());
+        let mut worker = self.worker.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         if worker.is_some() {
             return;
         }
         self.stopped.store(false, Ordering::Release);
         self.runtime.start();
-
         let (wake_tx, wake_rx) = mpsc::channel();
-        *self.wake_tx.lock().unwrap_or_else(|p| p.into_inner()) = Some(wake_tx);
-
+        *self.wake_tx.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(wake_tx);
         let runtime = Arc::clone(&self.runtime);
         let stopped = Arc::clone(&self.stopped);
         *worker = thread::Builder::new()
-            .name("sand-xuser-relay".into())
+            .name("android-xuser-relay".into())
             .spawn(move || {
                 while !stopped.load(Ordering::Acquire) {
                     if let Err(error) = runtime.tick() {
-                        eprintln!("[sand:sharing] relay poll failed: {error}");
+                        eprintln!("[fabushi:xuser] relay poll failed: {error}");
                     }
                     if stopped.load(Ordering::Acquire) {
                         break;
@@ -562,7 +541,7 @@ impl SandXuserRelayDriver {
         if let Some(wake) = self
             .wake_tx
             .lock()
-            .unwrap_or_else(|p| p.into_inner())
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
             .as_ref()
         {
             let _ = wake.send(());
@@ -574,7 +553,7 @@ impl SandXuserRelayDriver {
         if let Some(wake) = self
             .wake_tx
             .lock()
-            .unwrap_or_else(|p| p.into_inner())
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
             .take()
         {
             let _ = wake.send(());
@@ -582,7 +561,7 @@ impl SandXuserRelayDriver {
         if let Some(worker) = self
             .worker
             .lock()
-            .unwrap_or_else(|p| p.into_inner())
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
             .take()
         {
             let _ = worker.join();
@@ -593,21 +572,21 @@ impl SandXuserRelayDriver {
     pub fn is_started(&self) -> bool {
         self.worker
             .lock()
-            .unwrap_or_else(|p| p.into_inner())
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
             .is_some()
     }
 }
 
-impl Drop for SandXuserRelayDriver {
+impl Drop for XuserRelayDriver {
     fn drop(&mut self) {
         self.stopped.store(true, Ordering::Release);
-        if let Ok(slot) = self.wake_tx.get_mut() {
-            if let Some(wake) = slot.take() {
+        if let Ok(wake) = self.wake_tx.get_mut() {
+            if let Some(wake) = wake.take() {
                 let _ = wake.send(());
             }
         }
-        if let Ok(slot) = self.worker.get_mut() {
-            if let Some(worker) = slot.take() {
+        if let Ok(worker) = self.worker.get_mut() {
+            if let Some(worker) = worker.take() {
                 let _ = worker.join();
             }
         }
@@ -615,10 +594,120 @@ impl Drop for SandXuserRelayDriver {
     }
 }
 
-pub fn describe_relay_error(error: &SandXuserRelayHttpError) -> String {
+pub fn describe_relay_error(error: &XuserRelayHttpError) -> String {
     match error.status {
         403 => "Sharing isn't enabled for your account.".into(),
         429 => "You're doing that too often. Try again in a minute.".into(),
         _ => "Couldn't reach the sharing service. Check your connection and try again.".into(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::VecDeque;
+    use std::sync::atomic::AtomicU64;
+
+    #[derive(Default)]
+    struct FakeTransport {
+        responses: Mutex<VecDeque<Result<Value, XuserRelayHttpError>>>,
+        bodies: Mutex<Vec<Value>>,
+    }
+
+    impl XuserRelayTransport for FakeTransport {
+        fn request(
+            &self,
+            _method: &str,
+            url: &str,
+            _token: &str,
+            body: Option<&Value>,
+        ) -> Result<Value, XuserRelayHttpError> {
+            if let Some(body) = body {
+                self.bodies.lock().unwrap().push(body.clone());
+            }
+            self.responses
+                .lock()
+                .unwrap()
+                .pop_front()
+                .unwrap_or_else(|| Err(XuserRelayHttpError {
+                    status: 0,
+                    path: url.into(),
+                }))
+        }
+    }
+
+    fn runtime(
+        transport: Arc<FakeTransport>,
+        clock: Arc<AtomicU64>,
+        events: Arc<Mutex<Vec<String>>>,
+    ) -> XuserRelayRuntime {
+        let client = Arc::new(XuserRelayClient::new(
+            "https://relay.invalid".into(),
+            Arc::new(|| Ok("token".into())),
+            transport,
+        ));
+        let event_sink = Arc::clone(&events);
+        XuserRelayRuntime::new(
+            client,
+            Arc::new(move |event| {
+                if let Some(id) = event.get("id").and_then(Value::as_str) {
+                    event_sink.lock().unwrap().push(id.into());
+                }
+                Ok(true)
+            }),
+            {
+                let clock = Arc::clone(&clock);
+                Arc::new(move || clock.load(Ordering::SeqCst))
+            },
+            Arc::new(|| true),
+            Arc::new(|| true),
+        )
+    }
+
+    #[test]
+    fn processed_events_are_acked_on_next_poll_without_duplicate_delivery() {
+        let transport = Arc::new(FakeTransport::default());
+        transport.responses.lock().unwrap().push_back(Ok(serde_json::json!({
+            "events":[{"id":"event-a","kind":"room-entry"}]
+        })));
+        transport
+            .responses
+            .lock()
+            .unwrap()
+            .push_back(Ok(serde_json::json!({"events":[]})));
+        let clock = Arc::new(AtomicU64::new(1));
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let runtime = runtime(Arc::clone(&transport), Arc::clone(&clock), Arc::clone(&events));
+        runtime.start();
+        assert!(runtime.tick().unwrap());
+        assert_eq!(runtime.pending_ack_ids(), vec!["event-a"]);
+        clock.store(5_000, Ordering::SeqCst);
+        assert!(runtime.tick().unwrap());
+        let bodies = transport.bodies.lock().unwrap();
+        assert_eq!(bodies[1]["ackIds"][0], "event-a");
+        assert_eq!(events.lock().unwrap().as_slice(), &["event-a"]);
+    }
+
+    #[test]
+    fn transport_failure_enters_backoff_without_losing_pending_ack() {
+        let transport = Arc::new(FakeTransport::default());
+        transport.responses.lock().unwrap().push_back(Ok(serde_json::json!({
+            "events":[{"id":"event-a","kind":"room-entry"}]
+        })));
+        transport.responses.lock().unwrap().push_back(Err(XuserRelayHttpError {
+            status: 0,
+            path: "/sand/xuser/poll".into(),
+        }));
+        let clock = Arc::new(AtomicU64::new(1));
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let runtime = runtime(transport, Arc::clone(&clock), events);
+        runtime.start();
+        assert!(runtime.tick().unwrap());
+        clock.store(5_000, Ordering::SeqCst);
+        assert!(runtime.tick().is_err());
+        assert_eq!(runtime.pending_ack_ids(), vec!["event-a"]);
+        assert_eq!(runtime.backoff_until_ms(), 5_000 + XUSER_RELAY_ERROR_BACKOFF_MS);
+        clock.store(5_001, Ordering::SeqCst);
+        assert!(!runtime.tick().unwrap());
     }
 }
