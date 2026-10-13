@@ -212,6 +212,8 @@ data class MobileApprovalCleanupState(
 
 data class MobileBotUiState(
     val bots: List<MobileBotSummaryAndroid> = emptyList(),
+    val channelConnectionsByAgent: Map<String, List<AgentChannelConnection>> = emptyMap(),
+    val channelLoadingAgentId: String? = null,
     val pinnedAgentIds: List<String> = emptyList(),
     val sidebarSnapshot: AndroidSidebarSectionsSnapshot = AndroidSidebarSectionsSnapshot(
         accountFence = "",
@@ -335,6 +337,7 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
     private var outlinePollJob: Job? = null
     private var outlineRefreshPending = false
     private var groupMembersGeneration = 0L
+    private var agentChannelsGeneration = 0L
     private var computerRebuildGeneration = 0L
     private val editorSuggestionFence = MobileEditorSuggestionRequestFence()
     private var editorSuggestionJob: Job? = null
@@ -630,6 +633,8 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
                             approvalCleanup = MobileApprovalCleanupState(),
                             editorSuggestions = MobileEditorSuggestionSnapshot(),
                             modelCatalog = MobileModelCatalogState(),
+                            channelConnectionsByAgent = emptyMap(),
+                            channelLoadingAgentId = null,
                         ),
                     )
                 }
@@ -937,10 +942,108 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
     fun beginAgentSettings(agentId: String) {
         if (mutableState.value.bots.none { it.id == agentId }) return
         agentSettingsFence.select(agentId, rosterSelectionAccountSlot)
+        refreshAgentChannels(agentId)
     }
 
     fun endAgentSettings(agentId: String) {
+        agentChannelsGeneration += 1
         agentSettingsFence.clear(agentId)
+        val current = mutableState.value
+        if (current.channelLoadingAgentId == agentId) {
+            commitState(current.copy(channelLoadingAgentId = null))
+        }
+    }
+
+    fun refreshAgentChannels(agentId: String) {
+        val bot = mutableState.value.bots.firstOrNull { it.id == agentId && !it.isGroup } ?: return
+        val expectedAccountSlot = rosterSelectionAccountSlot
+        val generation = ++agentChannelsGeneration
+        commitState(mutableState.value.copy(channelLoadingAgentId = bot.id))
+        viewModelScope.launch {
+            val result = withContext(Dispatchers.IO) {
+                runCatching { coordinator.agentChannelsRefresh(bot.id) }
+            }
+            if (generation != agentChannelsGeneration || expectedAccountSlot != rosterSelectionAccountSlot) return@launch
+            result.onSuccess { rows ->
+                val connections = buildList {
+                    for (index in 0 until rows.length()) {
+                        val row = rows.optJSONObject(index) ?: continue
+                        val platform = row.optString("platform").trim()
+                        if (platform.isEmpty()) continue
+                        add(
+                            AgentChannelConnection(
+                                platform = platform,
+                                label = row.optString("label").trim().ifBlank { platform },
+                                status = row.optString("status").trim().ifBlank { "connected" },
+                                detail = row.optString("detail").trim().takeIf(String::isNotEmpty),
+                            ),
+                        )
+                    }
+                }
+                val current = mutableState.value
+                commitState(
+                    current.copy(
+                        channelConnectionsByAgent = current.channelConnectionsByAgent + (bot.id to connections),
+                        channelLoadingAgentId = null,
+                    ),
+                )
+            }.onFailure { error ->
+                commitState(
+                    mutableState.value.copy(
+                        channelLoadingAgentId = null,
+                        error = error.message ?: "Agent channel refresh failed",
+                    ),
+                )
+            }
+        }
+    }
+
+    fun disconnectAgentChannel(agentId: String, platform: String) {
+        if (mutableState.value.bots.none { it.id == agentId && !it.isGroup }) return
+        val expectedAccountSlot = rosterSelectionAccountSlot
+        val generation = ++agentChannelsGeneration
+        commitState(mutableState.value.copy(channelLoadingAgentId = agentId))
+        viewModelScope.launch {
+            val result = withContext(Dispatchers.IO) {
+                runCatching { coordinator.agentChannelDisconnect(agentId, platform) }
+            }
+            if (generation != agentChannelsGeneration || expectedAccountSlot != rosterSelectionAccountSlot) return@launch
+            result.onSuccess {
+                val rows = withContext(Dispatchers.IO) {
+                    runCatching { coordinator.agentChannelsRefresh(agentId) }
+                }.getOrDefault(JSONArray())
+                if (generation != agentChannelsGeneration || expectedAccountSlot != rosterSelectionAccountSlot) return@onSuccess
+                val connections = buildList {
+                    for (index in 0 until rows.length()) {
+                        val row = rows.optJSONObject(index) ?: continue
+                        val projectedPlatform = row.optString("platform").trim()
+                        if (projectedPlatform.isEmpty()) continue
+                        add(
+                            AgentChannelConnection(
+                                platform = projectedPlatform,
+                                label = row.optString("label").trim().ifBlank { projectedPlatform },
+                                status = row.optString("status").trim().ifBlank { "connected" },
+                                detail = row.optString("detail").trim().takeIf(String::isNotEmpty),
+                            ),
+                        )
+                    }
+                }
+                val current = mutableState.value
+                commitState(
+                    current.copy(
+                        channelConnectionsByAgent = current.channelConnectionsByAgent + (agentId to connections),
+                        channelLoadingAgentId = null,
+                    ),
+                )
+            }.onFailure { error ->
+                commitState(
+                    mutableState.value.copy(
+                        channelLoadingAgentId = null,
+                        error = error.message ?: "Agent channel disconnect failed",
+                    ),
+                )
+            }
+        }
     }
 
     fun updateBotProfile(
