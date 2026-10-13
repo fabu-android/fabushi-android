@@ -228,7 +228,7 @@ impl SandActionAuditor {
             let _ = file.write_all(local_audit_jsonl_line(&record, &event_id).as_bytes());
         }
         if !is_backend_forwardable(&record) { return; }
-        let (lock, cv) = &*self.state;
+        let (lock, _) = &*self.state;
         let mut state = lock.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         if !state.accepting { return; }
         state.pending.push(AuditEvent {
@@ -243,7 +243,6 @@ impl SandActionAuditor {
             let drop_count = state.pending.len() - MAX_PENDING_AUDIT_EVENTS;
             state.pending.drain(0..drop_count);
         }
-        cv.notify_all();
     }
 
     pub fn flush(&self) {
