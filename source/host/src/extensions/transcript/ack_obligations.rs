@@ -169,6 +169,89 @@ impl AckObligations {
             .map(|_| true)
     }
 
+    /// Recover a missing acknowledgement obligation from canonical durable transcript state.
+    ///
+    /// Only current-format visible user sends carry all four acceptance fields below. Older
+    /// transcript shapes, hidden internal prompts, foreign-account entries, and already-settled
+    /// turns are intentionally ignored. Existing obligations are never incremented here: boot
+    /// reconciliation repairs a torn two-store commit, it does not replay the original send.
+    pub fn reconcile_from_transcript(
+        &self,
+        account_fence: &str,
+        entries: &[Value],
+    ) -> io::Result<usize> {
+        let account_fence = account_fence.trim();
+        if account_fence.is_empty() {
+            return Ok(0);
+        }
+
+        let assistant_ids = entries
+            .iter()
+            .filter(|entry| {
+                entry.get("kind").and_then(Value::as_str) == Some("message")
+                    && entry.get("role").and_then(Value::as_str) == Some("assistant")
+            })
+            .filter_map(|entry| entry.get("id").and_then(Value::as_str))
+            .collect::<std::collections::HashSet<_>>();
+
+        let mut candidates = HashMap::<String, f64>::new();
+        for entry in entries {
+            if entry.get("kind").and_then(Value::as_str) != Some("message")
+                || entry.get("role").and_then(Value::as_str) != Some("user")
+                || entry.get("accountFence").and_then(Value::as_str) != Some(account_fence)
+            {
+                continue;
+            }
+            let Some(agent_id) = entry
+                .get("agentId")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+            else {
+                continue;
+            };
+            let Some(operation_id) = entry
+                .get("operationId")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+            else {
+                continue;
+            };
+            let has_client_nonce = entry
+                .get("clientNonce")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .is_some_and(|value| !value.is_empty());
+            if !has_client_nonce
+                || assistant_ids.contains(format!("assistant:{operation_id}").as_str())
+            {
+                continue;
+            }
+            let accepted_at_ms = entry
+                .get("timestampMs")
+                .and_then(Value::as_f64)
+                .filter(|value| value.is_finite() && *value >= 0.0)
+                .unwrap_or(0.0);
+            candidates
+                .entry(agent_id.to_string())
+                .and_modify(|current| *current = current.max(accepted_at_ms))
+                .or_insert(accepted_at_ms);
+        }
+
+        let mut repaired = 0usize;
+        for (agent_id, accepted_at_ms) in candidates {
+            if self.ensure_send_obligation_if_missing(
+                account_fence,
+                &agent_id,
+                accepted_at_ms,
+            )? {
+                repaired = repaired.saturating_add(1);
+            }
+        }
+        Ok(repaired)
+    }
+
     pub fn record_send(&self, account_fence: &str, agent_id: &str, at_ms: f64) -> io::Result<RecordSendOutcome> {
         let _mutation = self
             .mutation_guard
@@ -566,6 +649,91 @@ mod tests {
                 .coalesced_count,
             1.0
         );
+    }
+
+    #[test]
+    fn boot_reconcile_repairs_only_current_account_unanswered_visible_sends() {
+        let root = tempfile::tempdir().unwrap();
+        let owner = AckObligations::new(root.path());
+        let transcript = vec![
+            json!({
+                "id":"request-a",
+                "kind":"message",
+                "role":"user",
+                "agentId":"agent-a",
+                "operationId":"op-a",
+                "accountFence":"acct-a",
+                "clientNonce":"nonce-a",
+                "timestampMs":10,
+            }),
+            json!({
+                "id":"request-b",
+                "kind":"message",
+                "role":"user",
+                "agentId":"agent-b",
+                "operationId":"op-b",
+                "accountFence":"acct-a",
+                "clientNonce":"nonce-b",
+                "timestampMs":20,
+            }),
+            json!({
+                "id":"assistant:op-b",
+                "kind":"message",
+                "role":"assistant",
+                "agentId":"agent-b",
+                "operationId":"op-b",
+                "content":"done",
+                "timestampMs":21,
+            }),
+            json!({
+                "id":"request-old-account",
+                "kind":"message",
+                "role":"user",
+                "agentId":"agent-c",
+                "operationId":"op-c",
+                "accountFence":"acct-b",
+                "clientNonce":"nonce-c",
+                "timestampMs":30,
+            }),
+            json!({
+                "id":"legacy-without-nonce",
+                "kind":"message",
+                "role":"user",
+                "agentId":"agent-d",
+                "operationId":"op-d",
+                "accountFence":"acct-a",
+                "timestampMs":40,
+            }),
+        ];
+
+        assert_eq!(owner.reconcile_from_transcript("acct-a", &transcript).unwrap(), 1);
+        let pending = owner.pending_for_account("acct-a");
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].agent_id, "agent-a");
+        assert_eq!(pending[0].coalesced_count, 1.0);
+        assert!(owner.pending_for_account("acct-b").is_empty());
+    }
+
+    #[test]
+    fn boot_reconcile_never_double_counts_existing_obligation() {
+        let root = tempfile::tempdir().unwrap();
+        let owner = AckObligations::new(root.path());
+        owner.record_send("acct-a", "agent-a", 5.0).unwrap();
+        let transcript = vec![json!({
+            "id":"request-a",
+            "kind":"message",
+            "role":"user",
+            "agentId":"agent-a",
+            "operationId":"op-a",
+            "accountFence":"acct-a",
+            "clientNonce":"nonce-a",
+            "timestampMs":10,
+        })];
+
+        assert_eq!(owner.reconcile_from_transcript("acct-a", &transcript).unwrap(), 0);
+        let pending = owner.pending_for_account("acct-a");
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].coalesced_count, 1.0);
     }
 
     #[test]
