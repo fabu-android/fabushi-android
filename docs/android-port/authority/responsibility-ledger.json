@@ -5699,7 +5699,7 @@
         "SendToAgent(target_id,message,images?,priority?)",
         "CreateAgent(name,description?)",
         "UpdateAgent(agent_id,name?,description?)",
-        "file:// or https:// image sources only",
+        "Android adaptation accepts https:// or canonical fabushi-attachment:// image sources; Desktop file:// inputs are intentionally not exposed on Android",
         "priority applies only to relevant 1:1 delivery and is ignored for groups",
         "message text trims and clamps to 8,000 UTF-16 units",
         "priority 1:1 interrupts conflicting in-flight non-user work before fresh-turn wake",
@@ -5718,7 +5718,7 @@
       "process_death_recovery": "agents.json and messaging-repository.json reopen committed Agent management results, messages and pending wakes. The same stable tool_call_id replays instead of recreating/redelivering, and an unacked wake is retried as the same stable wake request after Host reopen.",
       "account_fencing": "Root composition binds the current Host account fence and compares it with a shared live account epoch before and after side effects; stale-account callbacks fail closed/outcome-unknown.",
       "security_boundary": "Only the root provider routed-tool composition receives Agent management. GeneratedChildToolRegistry is unchanged so generated children do not inherit CreateAgent/UpdateAgent/SendToAgent authority.",
-      "android_disposition": "direct-port",
+      "android_disposition": "android-adapted",
       "android_target": [
         "source/host/src/runner/agent_management.rs",
         "source/host/src/android_agent_roster.rs",
@@ -5728,7 +5728,7 @@
         "source/host/src/runner/mod.rs"
       ],
       "android_owner": "Rust Host canonical Agent roster + messaging owners with root-only AgentManagementRoutedTools",
-      "platform_delta": "Desktop sink/TurnToolset composition is retained in Rust but adapted to Android Host durable JSON owners and Android process/account lifecycle fencing; no UI or generated-child owner is introduced.",
+      "platform_delta": "Desktop local file:// image inputs are replaced by canonical scoped fabushi-attachment:// identities on Android. Root-only Agent management otherwise retains Rust canonical roster/messaging ownership and Android process/account fencing.",
       "implementation_status": "implemented",
       "production_wiring": "AndroidJsonHost shares one Arc<Mutex<AndroidAgentRoster>> and one Arc<Mutex<AndroidMessagingService>> between Host façade and async provider threads, wraps only the shipping root routed-tool bridge with AgentManagementRoutedTools, registers active Agent turns for priority interruption, and drains durable messaging wakes into hidden fresh Agent turns from feature.receive; generated-child composition remains unchanged.",
       "unit_test": "Exact-head GitHub Actions run 38039531067 / rust-runtime-foundation job 114176833238 at 395dfc74d5f8300e14d73df82b98e1a4bd5b6361 passed the Host Rust suite 176/176, including Agent-management success, invalid/missing/self target rejection, UTF-16 clamp, file/https image validation, direct-priority target interruption, group-priority ignore, exact duplicate replay, mismatched duplicate fail-closed, cancellation/account fencing and Host reopen.",
@@ -5738,7 +5738,96 @@
       "device_test": "required after protected-account and release signing prerequisites are available",
       "artifact": "GitHub Actions run 38039531067 / job 114176833238 @ 395dfc74d5f8300e14d73df82b98e1a4bd5b6361: rust-runtime-foundation success; Host Rust tests 176 passed, 0 failed.",
       "verification_status": "not-verified",
-      "notes": "Current-head unit/contract/integration evidence is recorded. Responsibility remains not-verified because the shared turn_toolset.rs source row still carries unresolved Remote/Computer responsibilities and final signed package/protected-device acceptance remains required; the 176/176 Rust result is not used to inflate unrelated source rows."
+      "notes": "Current-head unit/contract/integration evidence is recorded. Responsibility remains not-verified because the shared turn_toolset.rs source row still carries unresolved Remote/Computer responsibilities and final signed package/protected-device acceptance remains required; the 176/176 Rust result is not used to inflate unrelated source rows. Security hardening commit 6f280566ff42a0d9599a6cfe98e065a52ec5bd1d removes arbitrary file:// acceptance from SendToAgent; exact-head re-verification remains required."
+    },
+    {
+      "responsibility_id": "AGENT-SEND-MESSAGE-ANDROID-001",
+      "domain": "agent-visible-message",
+      "desktop_sources": [
+        {
+          "path": "source/host/src/runner/tools/send_message_schema.rs",
+          "blob_sha": "0e11c27ace3ae51888fdef4089cd11b09271ea7d",
+          "symbols": [
+            "SendMessageInput",
+            "validate_send_message",
+            "send_message_input_schema"
+          ]
+        },
+        {
+          "path": "source/host/src/runner/tools/send_message_tool.rs",
+          "blob_sha": "2ae0c6d1bac8f8cd93b9a4ed52f1f8da423c76de",
+          "symbols": [
+            "SendMessageSink",
+            "SendMessageToolBridge",
+            "SAND_SEND_MESSAGE_TOOL_NAME"
+          ]
+        },
+        {
+          "path": "source/host/src/runner/tools/send_message_encoding.rs",
+          "blob_sha": "22e2700f4ea2f894b92f3233d0a399a296f6fa5b",
+          "symbols": [
+            "encode_send_message_wire",
+            "encode_text_content"
+          ]
+        }
+      ],
+      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "responsibility": "Expose root-Agent SendMessage as a user-visible mid-turn side effect with strict per-type validation, durable transcript idempotency, awaiting-user widget fencing, account/cancellation fencing and explicit outcome-unknown semantics. Android currently closes text, attachment and widget; cursor-agent and secret-request remain open.",
+      "source_owner": "Desktop Rust SendMessageToolBridge over the canonical visible-message sink",
+      "direct_callers": [
+        "root provider routed-tool composition",
+        "Agent turn tool loop"
+      ],
+      "downstream_dependencies": [
+        "canonical TranscriptStore",
+        "ProductionTurnLifecycleStore",
+        "turn event queue",
+        "account epoch/cancellation fence",
+        "channel delivery boundary"
+      ],
+      "state_owner": "Rust Host canonical TranscriptStore owns committed visible entries; ProductionTurnLifecycleStore owns awaiting-user state; the routed wrapper owns no duplicate canonical message database.",
+      "persistent_state": [
+        "stable send-message transcript entry keyed by operationId + tool_call_id",
+        "widget awaiting-user state"
+      ],
+      "protocol_wire_contract": [
+        "SendMessage text/attachment/widget subset in current Android implementation",
+        "https:// or fabushi-attachment:// attachment identity only",
+        "channel field fails closed until a real provider port exists"
+      ],
+      "visible_effect": "A root Agent can publish a visible text, attachment card or selectable widget during an active turn without waiting for final assistant completion; duplicates replay rather than double-publish.",
+      "failure_behavior": [
+        "unknown/cross-type fields fail closed before side effects",
+        "local file paths are rejected",
+        "existing tool_call_id with different arguments is rejected",
+        "channel send is rejected before transcript write while no provider is registered"
+      ],
+      "cancellation_behavior": "Cancellation/stale account is checked before side effects; cancellation/account switch racing a committed transcript write returns outcome-unknown keyed by tool_call_id instead of blind retry.",
+      "retry_semantics": "Exact duplicate operationId + tool_call_id with identical message returns the committed result; mismatched duplicate fails closed.",
+      "idempotency_semantics": "Transcript entry id send-message:<operationId>:<tool_call_id> is the durable idempotency key.",
+      "process_death_recovery": "Committed transcript entries survive reopen; duplicate stable tool_call identity replays. Widget awaiting-user state is durable and becomes recovery-required on process reopen.",
+      "account_fencing": "Frozen turn account fence is compared with shared live account fence before and after side effects.",
+      "security_boundary": "Only the root Agent routed-tool composition receives SendMessage. Attachment references are HTTPS or canonical scoped identities; arbitrary Android filesystem paths are not accepted.",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "source/host/src/runner/send_message.rs",
+        "source/host/src/android_json_runtime.rs",
+        "source/host/src/runner/mod.rs",
+        "source/host/src/extensions/transcript/transcript_store.rs",
+        "source/host/src/runner/production_turn_lifecycle.rs"
+      ],
+      "android_owner": "Rust Host SendMessageRoutedTools over canonical transcript/lifecycle owners",
+      "platform_delta": "Desktop permits file:// attachment sources and additionally exposes cursor-agent/secret-request card types. Android replaces local paths with canonical fabushi-attachment identities and currently exposes only types with existing native canonical card owners; the remaining two types are explicitly not claimed complete.",
+      "implementation_status": "implemented",
+      "production_wiring": "AndroidJsonHost wraps the shipping root routed-tool bridge with with_send_message_tools after Agent management and before provider execution. Generated child runners are not wrapped. Mid-turn entries persist through TranscriptStore and emit chat.message only after persistence.",
+      "unit_test": "send_message.rs focused tests cover schema subset, local-file rejection, exact duplicate replay/mismatched reuse, durable widget awaiting-user blocking and stale-account pre-side-effect fencing; exact-head GitHub Actions pending.",
+      "contract_test": "Desktop current-main SendMessage schema/tool sources were re-read. Android preserves strict validation and stable tool-call semantics while explicitly recording unsupported cursor-agent/secret-request remainder.",
+      "integration_test": "Production root routed-tool wiring implemented; same-exact-head Rust/Android CI pending.",
+      "packaged_test": "required on final APK/AAB",
+      "device_test": "required for visible mid-turn text/attachment/widget, process death and accessibility",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Partial semantic closure only: text/attachment/widget implemented. cursor-agent, secret-request and real external channel provider delivery remain open; do not mark aggregate verified."
     },
     {
       "responsibility_id": "ACCEPTANCE-MESSENGER-E2E-001",
@@ -15843,15 +15932,16 @@
       "visible_effect": "Agents can send real messages/files through connected channels and failures become actionable state instead of disappearing.",
       "android_disposition": "android-adapted",
       "android_target": [
-        "source/host/src/android_json_runtime.rs",
-        "source/host/src/mcp_auth",
-        "source/host/src/attachment_paths.rs",
-        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/coordinator/AndroidCoordinatorRuntime.kt"
+        "source/host/src/connectors/channel_delivery.rs",
+        "source/host/src/connectors/channel_attachment.rs",
+        "source/host/src/connectors/channel_messaging.rs",
+        "source/host/src/extensions/transcript/channel_delivery_unregistered_error.rs",
+        "source/host/src/android_json_runtime.rs"
       ],
       "android_owner": "Rust Host connector delivery port; Presentation must not deliver directly",
       "platform_delta": "Android local files must use scoped Host/ContentResolver staging rather than Desktop arbitrary filesystem reanchoring; channel provider transport remains Host/plugin owned.",
       "implementation_status": "mapped",
-      "production_wiring": "Missing. Android has connector/MCP auth/catalog primitives and safe attachment storage, but no shipping address-token channel delivery port or cross-user channel attachment resolver wired into transcript wakes.",
+      "production_wiring": "Android Host now carries the platform-neutral ChannelDeliveryPort/HostChannelDelivery fail-closed boundary, scoped canonical attachment resolution and Desktop-equivalent address/failure-wake shaping. Current Desktop canonical manifests mark Discord/Slack coming-soon and no non-default production ChannelDeliveryPort registration was found; Android likewise does not invent an unknown provider transport.",
       "unit_test": "required for URL/local attachment limits, unregistered delivery and provider failure",
       "contract_test": "required for account/Agent/address-token fencing and no blind retry on unknown delivery outcome",
       "integration_test": "required against real connector provider through Host",
@@ -15859,7 +15949,7 @@
       "device_test": "required for text+attachment send/failure/reconnect on Android",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Do not treat MCP connection readiness as proof of channel message delivery."
+      "notes": "Source fact: current Desktop Discord/Slack manifests are coming-soon and production composition inspection found no non-default ChannelDeliveryPort registration. Implemented Android facts: fail-closed delivery boundary, scoped attachment resolver, delivery-failure wake/humanization. Future real provider delivery remains a design requirement and this responsibility stays mapped/not-verified."
     },
     {
       "responsibility_id": "DURABLE-FILE-POLICY-ANDROID-001",
