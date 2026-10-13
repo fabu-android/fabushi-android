@@ -48,6 +48,16 @@ pub struct AutomationRun {
     pub started_at_ms: u64,
     pub updated_at_ms: u64,
     pub reason: Option<String>,
+    #[serde(default = "default_automation_trigger_kind")]
+    pub trigger_kind: String,
+    #[serde(default)]
+    pub event_batch_id: Option<String>,
+    #[serde(default)]
+    pub event_count: usize,
+}
+
+fn default_automation_trigger_kind() -> String {
+    "manual".into()
 }
 
 pub const AUTOMATION_EVENT_DEBOUNCE_MS: u64 = 750;
@@ -839,6 +849,9 @@ impl AutomationRuntime {
             started_at_ms: now_ms,
             updated_at_ms: now_ms,
             reason: None,
+            trigger_kind: default_automation_trigger_kind(),
+            event_batch_id: None,
+            event_count: 0,
         };
         self.state
             .request_to_run
@@ -846,6 +859,47 @@ impl AutomationRuntime {
         self.state.runs.insert(run_id.into(), run.clone());
         self.persist()?;
         Ok(run)
+    }
+
+    pub fn begin_event_run(
+        &mut self,
+        automation_id: &str,
+        account_fence: &str,
+        claim_id: &str,
+        run_id: &str,
+        now_ms: u64,
+    ) -> Result<Option<(AutomationRun, AutomationEventBatch)>, String> {
+        let Some(batch) = self.claim_event_batch(
+            automation_id,
+            account_fence,
+            claim_id,
+            now_ms,
+        )? else {
+            return Ok(None);
+        };
+        let request_id = format!("automation-event:{claim_id}");
+        let run = self
+            .begin_run(
+                automation_id,
+                &request_id,
+                run_id,
+                account_fence,
+                now_ms,
+            )
+            .map_err(|error| {
+                format!(
+                    "automation event run outcome-unknown: batch {} was durably claimed before run settlement failed; reconcile before replay: {error}",
+                    batch.batch_id
+                )
+            })?;
+        let current = self.current_mut(&run.run_id, account_fence, run.generation)?;
+        current.trigger_kind = "event".into();
+        current.event_batch_id = Some(batch.batch_id.clone());
+        current.event_count = batch.events.len();
+        current.updated_at_ms = now_ms;
+        let run = current.clone();
+        self.persist()?;
+        Ok(Some((run, batch)))
     }
 
     pub fn advance_step(
@@ -1597,6 +1651,45 @@ mod tests {
             .unwrap();
         assert_eq!(batch.occurrence_ids[0], "overflow-1");
         assert_eq!(batch.occurrence_ids.len(), MAX_EVENTS_IN_AUTOMATION_WAKE);
+    }
+
+    #[test]
+    fn event_batch_binds_to_one_durable_event_run() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("automation.json");
+        let mut runtime = AutomationRuntime::open(&path, 1).unwrap();
+        runtime.upsert_spec(spec("acct-a"), Some("UTC")).unwrap();
+        runtime
+            .enqueue_event_fire(
+                "daily-brief",
+                "acct-a",
+                "event-run-occurrence",
+                json!({"kind":"github","delivery":"42"}),
+                1,
+            )
+            .unwrap();
+        let (run, batch) = runtime
+            .begin_event_run(
+                "daily-brief",
+                "acct-a",
+                "event-claim-1",
+                "event-run-1",
+                1_000,
+            )
+            .unwrap()
+            .unwrap();
+        assert_eq!(run.trigger_kind, "event");
+        assert_eq!(run.event_batch_id.as_deref(), Some(batch.batch_id.as_str()));
+        assert_eq!(run.event_count, 1);
+        assert_eq!(run.request_id, "automation-event:event-claim-1");
+
+        drop(runtime);
+        let recovered = AutomationRuntime::open(&path, 2_000).unwrap();
+        let recovered_run = recovered.snapshot("event-run-1").unwrap();
+        assert_eq!(recovered_run["state"], "outcome_unknown");
+        assert_eq!(recovered_run["trigger_kind"], "event");
+        assert_eq!(recovered_run["event_count"], 1);
+        assert!(recovered_run["event_batch_id"].is_string());
     }
 
 }
