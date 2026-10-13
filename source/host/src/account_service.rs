@@ -279,6 +279,153 @@ impl AndroidAccountService {
         Ok((value, mutation))
     }
 
+    /// Upload one bounded Human direct-message resource while keeping bearer ownership inside the
+    /// canonical account service. The caller supplies canonical blob bytes but never sees a token.
+    pub(crate) fn authenticated_device_upload_resource(
+        &mut self,
+        path: &str,
+        file_name: &str,
+        bytes: &[u8],
+    ) -> Result<(Value, Option<AccountSessionMutation>), String> {
+        const MAX_RESOURCE_BYTES: usize = 32 * 1024 * 1024;
+        let file_name = file_name.trim();
+        if file_name.is_empty()
+            || file_name.len() > 255
+            || file_name.chars().any(|ch| ch.is_control() || matches!(ch, '"' | '\\' | '/'))
+        {
+            return Err("Fabushi Human attachment name is invalid.".into());
+        }
+        if bytes.is_empty() || bytes.len() > MAX_RESOURCE_BYTES {
+            return Err("Fabushi Human attachment size exceeds the backend limit.".into());
+        }
+        let (token, mutation) = self.valid_access_token()?;
+        let url = self
+            .base_url
+            .join(path.trim_start_matches('/'))
+            .map_err(|_| "Fabushi account endpoint is invalid.")?;
+        if url.origin() != self.base_url.origin() {
+            return Err("Fabushi account request escaped configured origin.".into());
+        }
+        if !valid_token(&token) {
+            return Err("Fabushi account credential is invalid.".into());
+        }
+
+        let boundary = format!(
+            "fabushi-android-{}",
+            crate::sha256::sha256_hex(
+                format!("{}:{}:{}", self.device_id, file_name, bytes.len()).as_bytes()
+            )
+        );
+        let mut body = Vec::with_capacity(bytes.len().saturating_add(512));
+        write!(
+            body,
+            "--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"{file_name}\"\r\nContent-Type: application/octet-stream\r\n\r\n"
+        )
+        .map_err(|error| format!("Fabushi Human attachment multipart encoding failed: {error}"))?;
+        body.extend_from_slice(bytes);
+        write!(body, "\r\n--{boundary}--\r\n")
+            .map_err(|error| format!("Fabushi Human attachment multipart encoding failed: {error}"))?;
+
+        let response = self
+            .agent
+            .post(url.as_str())
+            .set("Accept", "application/json")
+            .set("Authorization", &format!("Bearer {token}"))
+            .set("x-fabushi-device-id", &self.device_id)
+            .set("Content-Type", &format!("multipart/form-data; boundary={boundary}"))
+            .send_bytes(&body);
+        let value = match response {
+            Ok(response) => response
+                .into_json::<Value>()
+                .map_err(|_| "Fabushi Human attachment response is invalid JSON.".to_string())?,
+            Err(ureq::Error::Status(status, _)) => {
+                return Err(format!("Fabushi Human attachment upload failed ({status})."));
+            }
+            Err(ureq::Error::Transport(error)) => {
+                return Err(format!(
+                    "Fabushi Human attachment upload unavailable ({:?}).",
+                    error.kind()
+                ));
+            }
+        };
+        Ok((value, mutation))
+    }
+
+    /// Download one bounded Human direct-message resource with exact-size validation. A short,
+    /// oversized, or redirected response fails closed and is never exposed as canonical media.
+    pub(crate) fn authenticated_device_download_resource(
+        &mut self,
+        resource_id: &str,
+        expected_size: u64,
+    ) -> Result<(Vec<u8>, Option<AccountSessionMutation>), String> {
+        const MAX_RESOURCE_BYTES: u64 = 32 * 1024 * 1024;
+        let resource_id = resource_id.trim();
+        if resource_id.is_empty()
+            || resource_id.len() > 128
+            || resource_id.contains('/')
+            || resource_id.contains('\\')
+            || resource_id.chars().any(char::is_control)
+        {
+            return Err("Fabushi Human attachment resource id is invalid.".into());
+        }
+        if expected_size == 0 || expected_size > MAX_RESOURCE_BYTES {
+            return Err("Fabushi Human attachment size exceeds the backend limit.".into());
+        }
+        let encoded: String =
+            url::form_urlencoded::byte_serialize(resource_id.as_bytes()).collect();
+        let path = format!("/api/social/message-resources/{encoded}");
+        let (token, mutation) = self.valid_access_token()?;
+        let url = self
+            .base_url
+            .join(path.trim_start_matches('/'))
+            .map_err(|_| "Fabushi account endpoint is invalid.")?;
+        if url.origin() != self.base_url.origin() {
+            return Err("Fabushi account request escaped configured origin.".into());
+        }
+        if !valid_token(&token) {
+            return Err("Fabushi account credential is invalid.".into());
+        }
+        let response = self
+            .agent
+            .get(url.as_str())
+            .set("Accept", "application/octet-stream")
+            .set("Authorization", &format!("Bearer {token}"))
+            .set("x-fabushi-device-id", &self.device_id)
+            .call();
+        let response = match response {
+            Ok(response) => response,
+            Err(ureq::Error::Status(status, _)) => {
+                return Err(format!("Fabushi Human attachment download failed ({status})."));
+            }
+            Err(ureq::Error::Transport(error)) => {
+                return Err(format!(
+                    "Fabushi Human attachment download unavailable ({:?}).",
+                    error.kind()
+                ));
+            }
+        };
+        if let Some(length) = response.header("Content-Length").and_then(|v| v.parse::<u64>().ok()) {
+            if length != expected_size || length > MAX_RESOURCE_BYTES {
+                return Err(format!(
+                    "Fabushi Human attachment download length mismatch: expected {expected_size}, received {length}."
+                ));
+            }
+        }
+        let mut bytes = Vec::with_capacity(expected_size as usize);
+        response
+            .into_reader()
+            .take(MAX_RESOURCE_BYTES + 1)
+            .read_to_end(&mut bytes)
+            .map_err(|error| format!("Fabushi Human attachment body could not be read: {error}"))?;
+        if bytes.len() as u64 != expected_size || bytes.len() as u64 > MAX_RESOURCE_BYTES {
+            return Err(format!(
+                "Fabushi Human attachment body length mismatch: expected {expected_size}, received {}.",
+                bytes.len()
+            ));
+        }
+        Ok((bytes, mutation))
+    }
+
     pub fn update_display_name(
         &mut self,
         display_name: &str,
@@ -1059,6 +1206,104 @@ mod tests {
         assert_eq!(value, json!({"ok":true}));
         assert!(mutation.is_none());
         server.join().unwrap();
+    }
+
+    #[test]
+    fn device_bound_human_resource_transport_preserves_binary_contract() {
+        use std::io::{Read as _, Write as _};
+        use std::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            // Upload.
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut raw = Vec::new();
+            let mut buffer = [0_u8; 4096];
+            let read = stream.read(&mut buffer).unwrap();
+            raw.extend_from_slice(&buffer[..read]);
+            let request = String::from_utf8_lossy(&raw).to_string();
+            assert!(request.starts_with("POST /api/social/message-resources "));
+            assert!(request
+                .to_ascii_lowercase()
+                .contains("authorization: bearer abcdefghijklmnopqrstuvwxyz0123456789"));
+            assert!(request.contains("x-fabushi-device-id: device-1"));
+            assert!(request.contains("name=\"file\"; filename=\"hello.txt\""));
+            assert!(raw.windows(b"hello".len()).any(|window| window == b"hello"));
+            let body = r#"{"success":true,"resource":{"id":"resource-1","name":"hello.txt","size":5}}"#;
+            write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                body,
+            )
+            .unwrap();
+            stream.flush().unwrap();
+
+            // Download.
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut bytes = [0_u8; 4096];
+            let read = stream.read(&mut bytes).unwrap();
+            let request = String::from_utf8_lossy(&bytes[..read]).to_string();
+            assert!(request.starts_with("GET /api/social/message-resources/resource-1 "));
+            assert!(request.contains("Accept: application/octet-stream"));
+            assert!(request.contains("x-fabushi-device-id: device-1"));
+            write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nContent-Length: 5\r\nConnection: close\r\n\r\nhello",
+            )
+            .unwrap();
+            stream.flush().unwrap();
+        });
+
+        let raw = durable_session().to_string();
+        let mut service = AndroidAccountService::with_base_url(
+            "device-1",
+            &format!("http://{address}"),
+            Some(&raw),
+        )
+        .unwrap();
+        let (uploaded, mutation) = service
+            .authenticated_device_upload_resource(
+                "/api/social/message-resources",
+                "hello.txt",
+                b"hello",
+            )
+            .unwrap();
+        assert!(mutation.is_none());
+        assert_eq!(uploaded["resource"]["id"], "resource-1");
+        let (downloaded, mutation) = service
+            .authenticated_device_download_resource("resource-1", 5)
+            .unwrap();
+        assert!(mutation.is_none());
+        assert_eq!(downloaded, b"hello");
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn human_resource_transport_rejects_unsafe_identifiers_before_network_dispatch() {
+        let raw = durable_session().to_string();
+        let mut service = AndroidAccountService::new("device-1", Some(&raw)).unwrap();
+        assert!(service
+            .authenticated_device_upload_resource(
+                "/api/social/message-resources",
+                "../secret",
+                b"hello",
+            )
+            .is_err());
+        assert!(service
+            .authenticated_device_upload_resource(
+                "/api/social/message-resources",
+                "hello.txt",
+                &[],
+            )
+            .is_err());
+        assert!(service
+            .authenticated_device_download_resource("../secret", 5)
+            .is_err());
+        assert!(service
+            .authenticated_device_download_resource("resource-1", 0)
+            .is_err());
     }
 
     #[test]
