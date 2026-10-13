@@ -706,6 +706,75 @@
       "android_head_at_update": "8cc1bf74c6ea11585ac27f7e017131532c03dc09"
     },
     {
+      "responsibility_id": "AGENT-RUN-ERROR-ANDROID-001",
+      "domain": "agent-provider-failure-recovery",
+      "desktop_sources": [
+        {
+          "path": "source/host/src/extensions/transcript/agent_run_error.rs",
+          "blob_sha": "bb4c32acb46feefc9c9d1e35be81fe5b3485b047",
+          "symbols": [
+            "format_agent_run_error",
+            "provider_failure_tray"
+          ]
+        }
+      ],
+      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "responsibility": "Project provider/Agent run failures into a bounded user-visible recovery surface with safe detail, rate-limit/reset guidance and explicit recovery actions without automatically retrying an unknown-side-effect turn.",
+      "source_owner": "Desktop transcript agent_run_error formatter/recovery projection",
+      "direct_callers": [
+        "operation.failed Host turn event settlement",
+        "root notification tray projection"
+      ],
+      "downstream_dependencies": [
+        "canonical Agent operation events",
+        "trays service",
+        "account-fenced root notification host",
+        "typed model catalog/default-model mutation"
+      ],
+      "state_owner": "Rust Host owns failure/tray truth; Compose owns only transient model-picker visibility and user selection",
+      "persistent_state": [
+        "deduplicated Host error tray until dismissal/clear"
+      ],
+      "protocol_wire_contract": [
+        "error tray actions are capped at three",
+        "open-url accepts only http/https",
+        "dashboard-action remains typed",
+        "switch-model opens an explicit user model picker and never changes a model without user choice"
+      ],
+      "visible_effect": "Provider failures surface actionable recovery instead of disappearing; quota/rate-limit failures can explain reset timing, offer safe upgrade/dashboard links, or let the user explicitly select another available model.",
+      "failure_behavior": [
+        "malformed nested provider errors fall back to safe bounded detail",
+        "unsafe URLs are discarded",
+        "unsupported actions are not executed",
+        "model catalog failure stays visible and retryable"
+      ],
+      "cancellation_behavior": "failure presentation does not convert cancellation into automatic retry or model mutation",
+      "retry_semantics": "no automatic Agent-turn retry; only explicit user recovery action may change model or invoke a safe dashboard action",
+      "idempotency_semantics": "Host tray dedupe key is agent-run-error:<agentId>; repeated pushes replace/increment the canonical tray rather than spawning independent recovery owners",
+      "process_death_recovery": "root controller refreshes Host tray snapshot after account/transport recovery; model picker refreshes typed catalog for the current account scope",
+      "account_fencing": "root tray controller resets on account generation/epoch/identity changes and model catalog/default mutation validates the current account scope",
+      "security_boundary": "Rust sanitizes provider recovery actions; Compose revalidates URLs, caps actions, and switch-model requires explicit user selection from the typed user-available catalog",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "source/host/src/extensions/transcript/agent_run_error.rs",
+        "source/host/src/android_json_runtime.rs",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/recovered/features/window-chrome/RootShellNotificationHost.kt",
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/production/ProductionRenderer_view.kt"
+      ],
+      "android_owner": "Rust Host provider-failure tray owner + account-fenced native root notification presentation",
+      "platform_delta": "Desktop recovery actions route through renderer commands. Android uses the typed root notification bridge; switch-model opens a native Compose picker backed by the account-fenced model catalog instead of allowing an implicit model change.",
+      "implementation_status": "implemented",
+      "production_wiring": "AndroidJsonHost records operation.failed through provider_failure_tray; TrayEvent flows to AndroidPresentationRuntimePort/RootShellNotificationHost; open-url/dashboard actions are bounded and switch-model opens the native model chooser added by 4aa28c7247e898268b4939809afaf4a406067730.",
+      "unit_test": "source/host/tests/agent_run_error_contract.rs plus RootShellNotificationHostTest safe-action/switch-model projection; descendant GitHub Actions pending",
+      "contract_test": "typed tray/dashboard bridge and account-fenced model catalog/default mutation are production contracts; exact-head Actions pending",
+      "integration_test": "required: operation.failed -> root tray -> explicit switch-model selection on descendant exact head",
+      "packaged_test": "required on final exact-head APK/AAB",
+      "device_test": "required on authenticated device acceptance",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Production source/wiring implemented; do not mark verified until descendant exact-head Android/Rust/package/device evidence succeeds."
+    },
+    {
       "responsibility_id": "AGENT-GENERATED-SUBAGENT-001",
       "domain": "agent",
       "desktop_sources": [
