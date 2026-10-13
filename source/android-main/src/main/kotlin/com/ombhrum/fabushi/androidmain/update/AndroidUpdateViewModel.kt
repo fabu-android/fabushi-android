@@ -327,6 +327,10 @@ class AndroidUpdateViewModel(application: Application) : AndroidViewModel(applic
             applyStore.read()
                 ?.takeIf { it.phase == AndroidUpdateApplyPhase.REQUESTED }
                 ?.let { marker ->
+                    // The old process only stays quiesced while Android owns the installer
+                    // handoff. If the installer returns without a provable version change,
+                    // restore Host turns but keep the install outcome unknown and never replay.
+                    setHostUpgradeQuiescing(false)
                     _state.value = AndroidUpdateUiState(
                         phase = AndroidUpdatePhase.OUTCOME_UNKNOWN,
                         currentVersion = currentVersion,
@@ -909,6 +913,29 @@ class AndroidUpdateViewModel(application: Application) : AndroidViewModel(applic
             setDataAndType(uri, "application/vnd.android.package-archive")
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
         }
+        if (!setHostUpgradeQuiescing(true)) {
+            updaterTelemetry.record(
+                AndroidUpdaterTelemetryEvent(
+                    category = "apply",
+                    action = "host_quiesce",
+                    result = "failed",
+                    trigger = "manual",
+                    track = _trackPolicy.value.effectiveTrack,
+                    currentVersion = currentVersion,
+                    targetVersion = release.version,
+                ),
+            )
+            _state.value = AndroidUpdateUiState(
+                phase = AndroidUpdatePhase.ERROR,
+                currentVersion = currentVersion,
+                currentVersionCode = currentVersionCode,
+                availableVersion = release.version,
+                availableVersionCode = release.versionCode,
+                message = "更新前无法安全暂停 Host 新任务；安装器未启动，可稍后重试。",
+            )
+            return
+        }
+
         val requested = markerFor(release, AndroidUpdateApplyPhase.REQUESTED)
         applyStore.write(requested)
         updaterTelemetry.record(
@@ -933,6 +960,7 @@ class AndroidUpdateViewModel(application: Application) : AndroidViewModel(applic
                 message = "安装包已验证，系统安装器已打开。确认安装后 Android 会完成升级。",
             )
         } catch (error: Exception) {
+            setHostUpgradeQuiescing(false)
             updaterTelemetry.record(
                 AndroidUpdaterTelemetryEvent(
                     category = "apply",
@@ -961,6 +989,10 @@ class AndroidUpdateViewModel(application: Application) : AndroidViewModel(applic
             )
         }
     }
+
+    private fun setHostUpgradeQuiescing(quiescing: Boolean): Boolean =
+        runCatching { coordinator.setUpgradeQuiescing(quiescing) == quiescing }
+            .getOrDefault(false)
 
     private fun markerFor(
         release: AndroidUpdateCandidate,
