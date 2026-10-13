@@ -3973,6 +3973,7 @@ impl AndroidJsonHost {
             "feature.automation.start" => self.automation_start(params),
             "feature.automation.event.enqueue" => self.automation_event_enqueue(params),
             "feature.automation.event.claim" => self.automation_event_claim(params),
+            "feature.automation.event.start" => self.automation_event_start(params),
             "feature.automation.event.settle" => self.automation_event_settle(params),
             "feature.automation.event.reconcile" => self.automation_event_reconcile(params),
             "feature.automation.advanceStep" => self.automation_advance_step(params),
@@ -7244,6 +7245,30 @@ impl AndroidJsonHost {
         )?;
         serde_json::to_value(claimed)
             .map_err(|error| format!("failed to serialize automation event batch: {error}"))
+    }
+
+    fn automation_event_start(&mut self, params: &Value) -> Result<Value, String> {
+        if self.turn_upgrade_quiescing.load(Ordering::Acquire) {
+            return Err("automation wakes are quiesced for upgrade".into());
+        }
+        let account_fence = self.current_turn_account_fence()?;
+        let automation_id = required_string(params, "automationId")?;
+        let observed_at_ms = now_ms();
+        self.prepare_automation_spend_guard(automation_id, &account_fence, observed_at_ms)?;
+        let started = self.automation_runtime.begin_event_run(
+            automation_id,
+            &account_fence,
+            required_string(params, "claimId")?,
+            required_string(params, "runId")?,
+            observed_at_ms,
+        )?;
+        let Some((run, batch)) = started else {
+            return Ok(Value::Null);
+        };
+        Ok(json!({
+            "run": automation_run_json(&run),
+            "eventBatch": batch,
+        }))
     }
 
     fn automation_event_settle(&mut self, params: &Value) -> Result<Value, String> {
@@ -20596,19 +20621,20 @@ mod automation_event_batch_wiring_tests {
             .unwrap();
         assert_eq!(duplicate["duplicate"], true);
 
-        let account_fence = host.current_turn_account_fence().unwrap();
-        let claimed = host
-            .automation_runtime
-            .claim_event_batch(
-                &automation_id,
-                &account_fence,
-                "claim-1",
-                u64::MAX,
+        let started = host
+            .dispatch(
+                "feature.automation.event.start",
+                &json!({
+                    "automationId":automation_id,
+                    "claimId":"claim-1",
+                    "runId":"event-run-1"
+                }),
             )
-            .unwrap()
             .unwrap();
-        assert_eq!(claimed.occurrence_ids, vec!["event-occurrence-1"]);
-        let batch_id = claimed.batch_id.clone();
+        assert_eq!(started["run"]["trigger_kind"], "event");
+        assert_eq!(started["run"]["event_count"], 1);
+        assert_eq!(started["eventBatch"]["occurrence_ids"][0], "event-occurrence-1");
+        let batch_id = started["eventBatch"]["batch_id"].as_str().unwrap().to_string();
         drop(host);
 
         let mut reopened = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
