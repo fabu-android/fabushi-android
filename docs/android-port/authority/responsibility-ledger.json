@@ -17149,16 +17149,17 @@
       ],
       "android_owner": "Rust Host canonical Agent roster/materialization owner",
       "platform_delta": "Desktop stores each Agent in a dedicated session DB/directory; Android currently keeps roster/materialization metadata in one atomic app-private Rust Host roster while transcript/run owners remain separate. The semantic identity/default/cap/reopen contract is preserved; special-purpose production caller wiring remains open.",
-      "implementation_status": "mapped",
-      "production_wiring": "Ordinary createAgent, root Agent tool creation and presentation duplicate use AndroidAgentRoster in shipping Host. Commits f7fea62f0ed72d5d59c5416deb18a9d02c43b295 and 957edc50b79e72201eed2b573ce02178c290509b add the Desktop 50-Agent cap, notify default and durable origin/purpose/introduction/createdAt metadata. A shipping caller for non-default special purpose is still missing.",
-      "unit_test": "android_agent_roster tests cover notify default, 50-Agent cap, groups not consuming cap, ordinary/duplicate/tool-call overflow, purpose validation, process reopen metadata and special-purpose duplicate reset. Descendant exact-head Actions required.",
-      "contract_test": "Open: prove special-purpose caller lookup/reuse and no-purpose-forgery through production Host command boundary.",
-      "integration_test": "Open: production special-purpose creation/reuse plus process-death reopen; ordinary create/list is already wired.",
+      "implementation_status": "implemented",
+      "production_wiring": "Shipping Android Host createAgent now routes through AndroidAgentRoster::create_materialized_with_persona and accepts Desktop-equivalent origin/purpose/isIntroductionSuppressed while ordinary callers default to user/None/false. Root Agent tool and presentation create/duplicate continue through the same canonical roster; no Compose/Kotlin canonical materialization owner exists.",
+      "unit_test": "AndroidAgentRoster focused tests cover notify default, 50-Agent cap, groups not consuming cap, ordinary/duplicate/tool-call overflow, purpose validation, durable process-reopen metadata and special-purpose duplicate reset. AndroidJsonHost focused test covers shipping createAgent origin/purpose/introduction suppression and process reopen. Exact-head Actions 38330189684/38330189686 are pending at 0190f9cafc657a89bd38efb79fd4faaeb9c6f9e7.",
+      "contract_test": "Shipping Host createAgent now preserves Desktop origin/purpose/introduction-suppression contract without giving Compose a second owner. Same-head architecture/Rust gate must still succeed.",
+      "integration_test": "Production Rust dispatch is wired. Exact-head GitHub Actions, final package, and protected device process-death/reopen evidence remain required.",
       "packaged_test": "Required on final exact-head APK/AAB.",
       "device_test": "Required on protected device acceptance.",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Do not promote to implemented/verified solely from roster fields. Remaining gap is the shipping special-purpose materialization caller and same-exact-head CI/package/device evidence."
+      "notes": "Implemented source fact at commits f7fea62f0ed72d5d59c5416deb18a9d02c43b295, 957edc50b79e72201eed2b573ce02178c290509b, 4ec71adf0c044b5ae66c2aef8ae24fc8f2e85409 and 0190f9cafc657a89bd38efb79fd4faaeb9c6f9e7. Do not mark verified until descendant exact-head CI/package/device evidence succeeds. Broader Desktop createAgent gateway effects such as active-agent selection/transcript response remain separate gateway parity work.",
+      "android_head_at_update": "0190f9cafc657a89bd38efb79fd4faaeb9c6f9e7"
     }
   ],
   "traceability": {
