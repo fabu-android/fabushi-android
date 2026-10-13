@@ -4,6 +4,7 @@ pub mod agent_lifecycle;
 pub mod agent_run_error;
 pub mod channel_delivery_unregistered_error;
 pub mod pending_wake_rearm;
+pub mod run_scheduler;
 pub mod pending_card_sweeps;
 pub mod sand_pending_wake_store;
 pub mod transcript_store;
