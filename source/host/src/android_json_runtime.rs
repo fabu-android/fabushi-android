@@ -11328,16 +11328,33 @@ impl AndroidJsonHost {
             accepted_new_user_message = user_was_new;
 
             if !user_was_new {
+                let existing_user = transcript
+                    .entry(request_id)
+                    .ok_or("chat.send requestId collision omitted the canonical user entry")?;
+                let same_request = existing_user.get("kind").and_then(Value::as_str) == Some("message")
+                    && existing_user.get("role").and_then(Value::as_str) == Some("user")
+                    && existing_user.get("agentId").and_then(Value::as_str) == Some(agent_id.as_str())
+                    && existing_user.get("accountFence").and_then(Value::as_str) == Some(account_fence)
+                    && existing_user.get("clientNonce").and_then(Value::as_str) == Some(client_nonce)
+                    && existing_user.get("content").and_then(Value::as_str) == Some(message_text.as_str())
+                    && existing_user.get("richText").unwrap_or(&Value::Null) == &rich_text
+                    && existing_user.get("attachments").unwrap_or(&Value::Null) == &attachment_value;
+                if !same_request {
+                    return Err(format!(
+                        "REQUEST_IDENTITY_MISMATCH: requestId {request_id} was previously accepted with another input"
+                    ));
+                }
+
+                let mut events = self
+                    .turn_events
+                    .lock()
+                    .map_err(|_| "turn event queue lock poisoned".to_string())?;
                 if let Some(existing) = transcript.entry(&assistant_entry_id) {
                     let text = existing
                         .get("content")
                         .and_then(Value::as_str)
                         .unwrap_or_default()
                         .to_string();
-                    let mut events = self
-                        .turn_events
-                        .lock()
-                        .map_err(|_| "turn event queue lock poisoned".to_string())?;
                     if !text.is_empty() {
                         events.push_back(json!({
                             "type":"chat.message",
@@ -11356,8 +11373,16 @@ impl AndroidJsonHost {
                         "attempts":0,
                         "deduped":true,
                     }));
-                    return Ok(());
+                } else {
+                    events.push_back(json!({
+                        "type":"operation.interrupted",
+                        "operationId":operation_id,
+                        "requestId":request_id,
+                        "reason":"duplicate-request-awaiting-visible-delivery",
+                        "deduped":true,
+                    }));
                 }
+                return Ok(());
             }
         }
 
@@ -21318,6 +21343,56 @@ mod automation_spend_guard_wiring_tests {
 #[cfg(test)]
 mod user_message_received_telemetry_wiring_tests {
     use super::*;
+
+    #[test]
+    fn duplicate_request_id_never_replays_a_different_or_unsettled_user_turn() {
+        let root = tempfile::tempdir().unwrap();
+        let mut host = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+        let first = json!({
+            "text":"first",
+            "agentId":"request-id-agent",
+            "clientNonce":"nonce-a"
+        });
+        host.queue_chat_turn("op-a", "request-id-a", &first, None).unwrap();
+
+        let collision = json!({
+            "text":"second",
+            "agentId":"request-id-agent",
+            "clientNonce":"nonce-b"
+        });
+        let error = host
+            .queue_chat_turn("op-b", "request-id-a", &collision, None)
+            .unwrap_err();
+        assert!(error.contains("REQUEST_IDENTITY_MISMATCH"));
+
+        // Simulate a duplicate delivery while the first turn has no visible assistant echo yet.
+        let duplicate = host
+            .queue_chat_turn("op-c", "request-id-a", &first, None);
+        assert!(duplicate.is_ok());
+        let interrupted = host
+            .turn_events
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|event| {
+                event.get("type").and_then(Value::as_str) == Some("operation.interrupted")
+                    && event.get("requestId").and_then(Value::as_str) == Some("request-id-a")
+                    && event.get("deduped").and_then(Value::as_bool) == Some(true)
+            });
+        assert!(interrupted, "same requestId must reconcile instead of starting a second turn");
+        assert_eq!(
+            host.transcript
+                .lock()
+                .unwrap()
+                .get_transcript()
+                .iter()
+                .filter(|entry| {
+                    entry.get("id").and_then(Value::as_str) == Some("request-id-a")
+                })
+                .count(),
+            1,
+        );
+    }
 
     #[test]
     fn newly_persisted_user_message_emits_once_with_truthful_in_flight_state() {
