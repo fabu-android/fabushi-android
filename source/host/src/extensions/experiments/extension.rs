@@ -7,9 +7,30 @@ pub const SAND_DEFAULT_MODEL_CONFIG_NAME: &str = "sand_default_model";
 pub const SAND_AUTOMATIONS_MODEL_CONFIG_NAME: &str = "sand_automations_model";
 pub const SAND_COMPUTER_USE_CONFIG_NAME: &str = "sand_computer_use_playwright_config";
 pub const SAND_BROWSER_USE_CONFIG_NAME: &str = "sand_browser_use_model";
+pub const SAND_PRODUCT_FEATURE_GATE_DEFAULTS_ENV: &str = "SAND_PRODUCT_FEATURE_GATE_DEFAULTS";
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct HostExperimentsOptions {
+    pub is_dev_build: bool,
+    pub env_gate_overrides: Option<String>,
+}
+
+impl HostExperimentsOptions {
+    pub fn from_process_env() -> Self {
+        let is_dev_build = std::env::var("SAND_PACKAGED").as_deref() != Ok("1")
+            || std::env::var("SAND_HOST_DEV_ERROR_DETAIL").as_deref() == Ok("1");
+        Self {
+            is_dev_build,
+            env_gate_overrides: std::env::var("SAND_FEATURE_GATE_OVERRIDES")
+                .ok()
+                .filter(|value| !value.trim().is_empty()),
+        }
+    }
+}
 
 #[derive(Debug, Clone, Default, PartialEq)]
 struct ExperimentsState {
+    options: HostExperimentsOptions,
     settings_overrides: BTreeMap<String, bool>,
     network_feature_gates: BTreeMap<String, bool>,
     network_dynamic_configs: BTreeMap<String, BTreeMap<String, Value>>,
@@ -22,14 +43,28 @@ struct ExperimentsState {
 /// Network transport is intentionally outside this foundation. A future authenticated Statsig
 /// bootstrap adapter must hydrate this owner rather than giving Presentation or a second runtime
 /// independent feature-gate truth.
-#[derive(Default)]
 pub struct HostExperimentsExtension {
     state: Mutex<ExperimentsState>,
 }
 
+impl Default for HostExperimentsExtension {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl HostExperimentsExtension {
     pub fn new() -> Self {
-        Self::default()
+        Self::with_options(HostExperimentsOptions::from_process_env())
+    }
+
+    pub fn with_options(options: HostExperimentsOptions) -> Self {
+        Self {
+            state: Mutex::new(ExperimentsState {
+                options,
+                ..ExperimentsState::default()
+            }),
+        }
     }
 
     pub fn check_feature_gate(&self, name: &str) -> bool {
@@ -37,10 +72,22 @@ impl HostExperimentsExtension {
         if let Some(value) = state.settings_overrides.get(name).copied() {
             return value;
         }
+        if state.options.is_dev_build {
+            if let Some(value) = env_gate_override(name, state.options.env_gate_overrides.as_deref()) {
+                return value;
+            }
+        }
         if state.authenticated_bootstrap {
             if let Some(value) = state.network_feature_gates.get(name).copied() {
                 return value;
             }
+        }
+        if let Some(value) = std::env::var(SAND_PRODUCT_FEATURE_GATE_DEFAULTS_ENV)
+            .ok()
+            .as_deref()
+            .and_then(|raw| env_gate_override(name, Some(raw)))
+        {
+            return value;
         }
         bundled_feature_gate_default(name)
     }
@@ -176,6 +223,19 @@ fn statsig_gate_value(value: &Value) -> Option<bool> {
     })
 }
 
+fn env_gate_override(name: &str, raw: Option<&str>) -> Option<bool> {
+    let raw = raw?;
+    for pair in raw.split(',') {
+        let mut parts = pair.splitn(2, '=');
+        let key = parts.next().unwrap_or("").trim();
+        let value = parts.next().unwrap_or("").trim();
+        if key == name {
+            return Some(matches!(value, "1" | "true" | "on"));
+        }
+    }
+    None
+}
+
 fn bundled_feature_gate_default(name: &str) -> bool {
     matches!(
         name,
@@ -233,6 +293,29 @@ mod tests {
             }
         })
         .to_string()
+    }
+
+    #[test]
+    fn dev_override_precedes_authenticated_network_gate() {
+        let experiments = HostExperimentsExtension::with_options(HostExperimentsOptions {
+            is_dev_build: true,
+            env_gate_overrides: Some("sand_multiplayer=on".into()),
+        });
+        experiments
+            .hydrate_authenticated_statsig(&bootstrap(Some("user-a"), false, "model-a"))
+            .unwrap();
+        assert!(experiments.check_feature_gate("sand_multiplayer"));
+        experiments.set_settings_override("sand_multiplayer", Some(false));
+        assert!(!experiments.check_feature_gate("sand_multiplayer"));
+    }
+
+    #[test]
+    fn production_mode_ignores_dev_override_string() {
+        let experiments = HostExperimentsExtension::with_options(HostExperimentsOptions {
+            is_dev_build: false,
+            env_gate_overrides: Some("sand_multiplayer=on".into()),
+        });
+        assert!(!experiments.check_feature_gate("sand_multiplayer"));
     }
 
     #[test]
