@@ -3202,6 +3202,7 @@ impl AndroidJsonHost {
             "feature.transcript.window" => self.transcript_window(params, false),
             "feature.transcript.tail" => self.transcript_window(params, true),
             "feature.search.agentContent" => self.agent_content_search(params),
+            "feature.search.global" => self.global_content_search(params),
             "feature.contentSearch.messages" => self.content_search_messages(params),
             "feature.contentSearch.media" => self.content_search_media(params),
             "feature.experiments.gate" => self.experiments_gate(params),
@@ -3462,6 +3463,50 @@ impl AndroidJsonHost {
         let entries = scoped[start..end].to_vec();
         let next_before_seq = (start > 0).then_some(start);
         Ok(json!({"entries":entries,"nextBeforeSeq":next_before_seq}))
+    }
+
+    fn global_content_search(&mut self, params: &Value) -> Result<Value, String> {
+        let query = required_string(params, "query")?;
+        let message_limit = params
+            .get("messageLimit")
+            .and_then(Value::as_u64)
+            .unwrap_or(50);
+        let media_limit = params
+            .get("mediaLimit")
+            .and_then(Value::as_u64)
+            .unwrap_or(50);
+        let message_limit = usize::try_from(message_limit)
+            .map_err(|_| "global message search limit is out of range".to_string())?;
+        let media_limit = usize::try_from(media_limit)
+            .map_err(|_| "global media search limit is out of range".to_string())?;
+        if message_limit > 50 || media_limit > 50 {
+            return Err("global search limits must be between 0 and 50".to_string());
+        }
+        if query.trim().is_empty() {
+            return Ok(json!({"messages":[],"media":[]}));
+        }
+
+        let entries = self.current_account_search_entries()?;
+        let (message_matches, media_matches) =
+            self.content_search.search(&entries, query.trim(), message_limit, media_limit)?;
+        let canonical_media = entries
+            .iter()
+            .filter_map(crate::extensions::transcript::transcript_store::project_media_search_entry)
+            .map(|item| ((item.agent_id.clone(), item.entry_id.clone()), item))
+            .collect::<BTreeMap<_, _>>();
+        let media = media_matches
+            .into_iter()
+            .filter_map(|item| {
+                canonical_media
+                    .get(&(item.agent_id.clone(), item.entry_id.clone()))
+                    .cloned()
+            })
+            .collect::<Vec<_>>();
+
+        Ok(json!({
+            "messages": message_matches,
+            "media": media,
+        }))
     }
 
     fn content_search_messages(&mut self, params: &Value) -> Result<Value, String> {
@@ -11490,6 +11535,45 @@ mod tests {
             "server-a",
             "read",
         ).unwrap_err().contains("serverId must be a string"));
+    }
+
+#[test]
+    fn global_content_search_is_account_fenced_cross_agent_and_supports_zero_media_limit() {
+        let root = tempfile::tempdir().unwrap();
+        {
+            let mut host = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+            let mut transcript = host.transcript.lock().unwrap();
+            transcript.append_entry(json!({"id":"a-old","agentId":"agent-a","kind":"message","role":"user","content":"global needle old","timestampMs":1})).unwrap();
+            transcript.append_entry(json!({"id":"b-new","agentId":"agent-b","kind":"message","role":"assistant","content":"global needle new","timestampMs":2})).unwrap();
+            transcript.append_entry(json!({"id":"hidden","agentId":"agent-a","kind":"message","role":"assistant","content":"global needle hidden","hiddenOutboundAgentPeerMessage":true,"timestampMs":3})).unwrap();
+        }
+        let mut reopened = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+        let result = reopened.dispatch(
+            "feature.search.global",
+            &json!({"query":"GLOBAL needle","messageLimit":50,"mediaLimit":0}),
+        ).unwrap();
+        let messages = result["messages"].as_array().unwrap();
+        assert_eq!(
+            messages.iter().map(|value| value["entryId"].as_str().unwrap()).collect::<Vec<_>>(),
+            vec!["b-new", "a-old"],
+        );
+        assert_eq!(result["media"], json!([]));
+
+        let empty = reopened.dispatch(
+            "feature.search.global",
+            &json!({"query":"   ","messageLimit":50,"mediaLimit":0}),
+        ).unwrap();
+        assert_eq!(empty, json!({"messages":[],"media":[]}));
+        assert!(reopened.dispatch(
+            "feature.search.global",
+            &json!({"query":"needle","messageLimit":51,"mediaLimit":0}),
+        ).is_err());
+
+        reopened.logged_in = false;
+        assert!(reopened.dispatch(
+            "feature.search.global",
+            &json!({"query":"needle","messageLimit":50,"mediaLimit":0}),
+        ).is_err());
     }
 
 #[test]
