@@ -21,3 +21,5 @@ pub mod session_paths;
 pub mod call_session;
 pub mod box_handoff_service;
 pub mod pending_card_sweeps;
+#[cfg(test)]
+mod pending_card_sweeps_android_tests;
