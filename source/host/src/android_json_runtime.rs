@@ -35,6 +35,10 @@ use crate::human_remote_resource_outbound::{
 };
 use crate::env_descriptor_account_binding::EnvDescriptorAccountBinding;
 use crate::host_runner_composition::AuthenticatedRemoteHostRunner;
+use crate::remote_box_store_sync::{
+    RemoteBoxStoreSyncAction, RemoteBoxStoreSyncJournal, RemoteBoxStoreSyncRecord,
+    RemoteBoxStoreSyncState, REMOTE_BOX_STORE_SYNC_CAPABILITY,
+};
 use crate::messaging_service::AndroidMessagingService;
 use crate::mcp_server_tool_settings::McpServerToolSettings;
 use crate::composer_draft::DurableComposerDraftOwner;
@@ -1129,6 +1133,7 @@ pub struct AndroidJsonHost {
     remote_binding: Arc<Mutex<Option<RemoteDispatchBinding>>>,
     remote_runner: Arc<Mutex<Option<AuthenticatedRemoteHostRunner<AuthenticatedRemoteHttpTransport>>>>,
     remote_journal_path: PathBuf,
+    remote_box_store_sync: Mutex<RemoteBoxStoreSyncJournal>,
     automation_runtime: AutomationRuntime,
     human_calls: HumanCallRuntime,
     webauthn: WebAuthnProxyExtension,
@@ -1888,6 +1893,15 @@ impl AndroidJsonHost {
             remote_binding: Arc::new(Mutex::new(None)),
             remote_runner: Arc::new(Mutex::new(None)),
             remote_journal_path: app_data_dir.join("remote-execution-journal.json"),
+            remote_box_store_sync: Mutex::new(
+                RemoteBoxStoreSyncJournal::open(
+                    app_data_dir.join("remote-box-store-sync.json"),
+                    now_ms(),
+                )
+                .unwrap_or_else(|error| panic!(
+                    "failed to open durable Android Remote BoxStore sync journal: {error}"
+                )),
+            ),
             automation_runtime: AutomationRuntime::open(app_data_dir.join("automation-runtime.json"), now_ms())
                 .unwrap_or_else(|error| panic!("failed to open durable Android automation runtime: {error}")),
             human_calls: HumanCallRuntime::open(app_data_dir.join("human-calls.json"), now_ms())
@@ -1934,6 +1948,153 @@ impl AndroidJsonHost {
 
     fn source_map_path(&self) -> &std::path::Path {
         self.source_map.path()
+    }
+
+    fn remote_box_store_sync_binding(&self) -> Result<RemoteDispatchBinding, String> {
+        if self.remote_client_paused.load(Ordering::Acquire) {
+            return Err("trusted Remote client is paused by sand_client_pause".into());
+        }
+        let binding = self.remote_binding.lock()
+            .map_err(|_| "remote binding lock poisoned".to_string())?
+            .clone().ok_or("authorized Remote Runner binding is unavailable")?;
+        binding.active_at(now_ms())?;
+        if !binding.supports("box-store-sync") {
+            return Err("authorized Remote Runner does not advertise box-store-sync".into());
+        }
+        let current_fence = self.current_turn_account_fence()?;
+        if binding.account_fence != current_fence {
+            return Err("Remote BoxStore binding is fenced to a different account session".into());
+        }
+        Ok(binding)
+    }
+
+    fn parse_remote_box_store_sync_action(value: &str) -> Result<RemoteBoxStoreSyncAction, String> {
+        match value {
+            "hydrate" => Ok(RemoteBoxStoreSyncAction::Hydrate),
+            "snapshot" => Ok(RemoteBoxStoreSyncAction::Snapshot),
+            "chrome_session_stage" => Ok(RemoteBoxStoreSyncAction::ChromeSessionStage),
+            "vacuum" => Ok(RemoteBoxStoreSyncAction::Vacuum),
+            _ => Err("Remote BoxStore action is unsupported".into()),
+        }
+    }
+
+    fn remote_box_store_sync_dispatch(&mut self, params: &Value) -> Result<Value, String> {
+        let binding = self.remote_box_store_sync_binding()?;
+        let approval_id = required_string(params, "approvalId")?;
+        let operation_id = required_string(params, "approvalOperationId")?;
+        let request_id = required_string(params, "approvalRequestId")?;
+        let store_id = required_string(params, "storeId")?;
+        let action_wire = required_string(params, "action")?;
+        let action = Self::parse_remote_box_store_sync_action(action_wire)?;
+        let base_manifest_etag = params.get("baseManifestEtag").and_then(Value::as_str).map(str::to_string);
+        let account_fence = self.current_turn_account_fence()?;
+        let approval = self.capability_broker.approval_for_dispatch(
+            approval_id, operation_id, request_id, REMOTE_BOX_STORE_SYNC_CAPABILITY, &account_fence,
+        )?;
+        let target = approval.target.as_object().ok_or("Remote BoxStore approval target must be an object")?;
+        if target.get("executionTarget").and_then(Value::as_str) != Some("remote_box")
+            || target.get("deviceId").and_then(Value::as_str) != Some(binding.device_id.as_str())
+            || target.get("storeId").and_then(Value::as_str) != Some(store_id)
+            || target.get("action").and_then(Value::as_str) != Some(action_wire)
+        {
+            return Err("Remote BoxStore approval target does not match dispatch scope".into());
+        }
+        self.capability_broker.consume_approval_for_dispatch(
+            approval_id, operation_id, request_id, REMOTE_BOX_STORE_SYNC_CAPABILITY,
+            &account_fence, now_ms(),
+        )?;
+        let record = RemoteBoxStoreSyncRecord::prepared(
+            operation_id, request_id, account_fence.clone(), binding.account_epoch,
+            binding.device_id.clone(), store_id, action, base_manifest_etag, now_ms(),
+        )?;
+        let context = binding.context(operation_id, request_id, approval_id)?;
+        let mut domain = self.remote_box_store_sync.lock()
+            .map_err(|_| "Remote BoxStore sync journal lock poisoned".to_string())?;
+        let mut runners = self.remote_runner.lock()
+            .map_err(|_| "remote runner lock poisoned".to_string())?;
+        let runner = runners.as_mut().ok_or("authorized Remote Runner is unavailable")?;
+        match domain.dispatch_via_authorized_runner(runner, &context, record, now_ms()) {
+            Ok(result) => Ok(json!({
+                "operationId":operation_id,"requestId":request_id,"state":"completed",
+                "requiresReconciliation":false,
+                "result":serde_json::from_str::<Value>(&result.output_json)
+                    .unwrap_or(Value::String(result.output_json)),
+            })),
+            Err(error) => {
+                let state = domain.record(operation_id).map(|record| record.state);
+                if state == Some(RemoteBoxStoreSyncState::OutcomeUnknown) {
+                    Ok(json!({
+                        "operationId":operation_id,"requestId":request_id,"state":"outcome_unknown",
+                        "requiresReconciliation":true,"error":format!("{error:?}"),
+                    }))
+                } else {
+                    Err(format!("Remote BoxStore sync dispatch failed: {error:?}"))
+                }
+            }
+        }
+    }
+
+    fn remote_box_store_sync_status(&self, params: &Value) -> Result<Value, String> {
+        let operation_id = required_string(params, "operationId")?;
+        let current_fence = self.current_turn_account_fence()?;
+        let domain = self.remote_box_store_sync.lock()
+            .map_err(|_| "Remote BoxStore sync journal lock poisoned".to_string())?;
+        let record = domain.record(operation_id).ok_or("Remote BoxStore sync operation is unknown")?;
+        if record.account_fence != current_fence {
+            return Err("Remote BoxStore sync status is fenced by account identity".into());
+        }
+        serde_json::to_value(record)
+            .map_err(|error| format!("failed to encode Remote BoxStore sync status: {error}"))
+    }
+
+    fn remote_box_store_sync_reconcile(&mut self, params: &Value) -> Result<Value, String> {
+        let binding = self.remote_box_store_sync_binding()?;
+        let operation_id = required_string(params, "operationId")?;
+        let approval_id = required_string(params, "approvalId")?;
+        let current_fence = self.current_turn_account_fence()?;
+        let mut domain = self.remote_box_store_sync.lock()
+            .map_err(|_| "Remote BoxStore sync journal lock poisoned".to_string())?;
+        let record = domain.record(operation_id).cloned()
+            .ok_or("Remote BoxStore sync operation is unknown")?;
+        if record.account_fence != current_fence
+            || record.account_epoch != binding.account_epoch
+            || record.device_id != binding.device_id
+        {
+            return Err("Remote BoxStore reconciliation crossed account/device epoch".into());
+        }
+        let context = binding.context(operation_id, &record.request_id, approval_id)?;
+        let mut runners = self.remote_runner.lock()
+            .map_err(|_| "remote runner lock poisoned".to_string())?;
+        let runner = runners.as_mut().ok_or("authorized Remote Runner is unavailable")?;
+        let remote = runner.journal().record(operation_id)
+            .ok_or("Remote BoxStore transport journal is missing")?;
+        if remote.permission_grant_id != approval_id {
+            return Err("Remote BoxStore reconciliation grant identity is stale".into());
+        }
+        match domain.reconcile_via_authorized_runner(runner, &context, now_ms()) {
+            Ok(result) => Ok(json!({
+                "operationId":operation_id,"requestId":record.request_id,"state":"completed",
+                "requiresReconciliation":false,
+                "result":serde_json::from_str::<Value>(&result.output_json)
+                    .unwrap_or(Value::String(result.output_json)),
+            })),
+            Err(error) => {
+                let state = domain.record(operation_id).map(|record| record.state);
+                Ok(json!({
+                    "operationId":operation_id,"requestId":record.request_id,
+                    "state":state.map(|state| match state {
+                        RemoteBoxStoreSyncState::Prepared => "prepared",
+                        RemoteBoxStoreSyncState::Sent => "sent",
+                        RemoteBoxStoreSyncState::Completed => "completed",
+                        RemoteBoxStoreSyncState::Rejected => "rejected",
+                        RemoteBoxStoreSyncState::Cancelled => "cancelled",
+                        RemoteBoxStoreSyncState::OutcomeUnknown => "outcome_unknown",
+                    }),
+                    "requiresReconciliation":state == Some(RemoteBoxStoreSyncState::OutcomeUnknown),
+                    "error":format!("{error:?}"),
+                }))
+            }
+        }
     }
 
     fn remote_binding_status(&self) -> Value {
@@ -3433,6 +3594,9 @@ impl AndroidJsonHost {
             "feature.sourceMap.getOrCreateBoxStore" => self.source_map_get_or_create_box_store(),
             "feature.sourceMap.setMode" => self.source_map_set_mode(params),
             "feature.remote.binding.status" => Ok(self.remote_binding_status()),
+            "feature.remote.boxStoreSync.dispatch" => self.remote_box_store_sync_dispatch(params),
+            "feature.remote.boxStoreSync.status" => self.remote_box_store_sync_status(params),
+            "feature.remote.boxStoreSync.reconcile" => self.remote_box_store_sync_reconcile(params),
             "feature.teachRecording.status" => self.teach_recording_status(),
             "feature.onePassword.provisioning.status" => self.onepassword_provisioning_status(),
             "feature.onePassword.provisioning.begin" => self.onepassword_provisioning_begin(params),
@@ -14120,6 +14284,23 @@ mod tests {
             )
             .unwrap();
         assert!(duplicate["settlements"].as_array().unwrap().is_empty());
+    }
+
+    #[test]
+    fn remote_box_store_sync_dispatch_requires_protected_binding() {
+        let root = tempfile::tempdir().unwrap();
+        let mut host = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+        let error = host.dispatch(
+            "feature.remote.boxStoreSync.dispatch",
+            &json!({
+                "approvalId":"approval-missing",
+                "approvalOperationId":"operation-missing",
+                "approvalRequestId":"request-missing",
+                "storeId":"store-a",
+                "action":"snapshot"
+            }),
+        ).unwrap_err();
+        assert!(error.contains("authorized Remote Runner binding is unavailable"));
     }
 
     #[test]
