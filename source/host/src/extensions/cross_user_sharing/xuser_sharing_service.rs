@@ -583,8 +583,11 @@ impl SandXuserSharingService {
             let _ = departures.drain(relay.as_ref())?;
             // Reconcile only after the durable removal has settled; otherwise preserve the local
             // projection until the obligation can be retried after reconnect/process restart.
-            let still_pending = departures
-                .list_pending()?
+            let pending = departures
+                .pending
+                .list()
+                .map_err(|error| format!("failed to read xuser agent-removal obligation: {error}"))?;
+            let still_pending = pending
                 .iter()
                 .any(|departure| matches!(
                     departure,
