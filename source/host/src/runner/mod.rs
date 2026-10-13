@@ -6,6 +6,7 @@ pub mod multitask_todo;
 pub mod production_turn_agent_owner;
 pub mod production_turn_lifecycle;
 pub mod remote_routed_tools;
+pub mod web_routed_tools;
 pub mod sand_auto_review;
 pub mod auto_review_gate;
 pub mod stream_attempt;
@@ -54,6 +55,8 @@ pub use turn_run_shell::{
 };
 
 pub use durable_turn_journal::{DurableTurnJournal, DurableTurnRecord, DurableTurnState};
+
+pub(crate) use web_routed_tools::with_web_routed_tools;
 
 pub(crate) use remote_routed_tools::{
     with_remote_routed_tools, RemoteApprovalRegistry, RemoteDispatchBinding,

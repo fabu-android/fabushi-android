@@ -79,6 +79,9 @@ const MAX_MCP_TOOL_ARGUMENT_BYTES: usize = 1024 * 1024;
 const MAX_PROTO_JSON_DEPTH: usize = 32;
 pub const CONTROL_RPC_TIMEOUT_MS: u64 = 30_000;
 pub const RUN_GENERATE_IMAGE_PATH: &str = "/aiserver.v1.AiService/RunGenerateImage";
+pub const RUN_WEB_SEARCH_PATH: &str = "/aiserver.v1.AiService/RunWebSearch";
+pub const RUN_WEB_FETCH_PATH: &str = "/aiserver.v1.AiService/RunWebFetch";
+pub const WEB_TOOL_REQUEST_TIMEOUT_MS: u64 = 60_000;
 pub const GENERATE_IMAGE_REQUEST_TIMEOUT_MS: u64 = 60_000;
 pub const AI_AVAILABLE_MODELS_PATH: &str = "/aiserver.v1.AiService/AvailableModels";
 pub const AVAILABLE_MODELS_REQUEST_TIMEOUT_MS: u64 = 15_000;
@@ -516,6 +519,65 @@ impl CursorDashboardMcpAuthBackend {
             ghost_mode,
         )?;
         decode_available_models_response(&response)
+    }
+
+    /// Execute Desktop-parity structured WebSearch through the same Sand credential/machine-id
+    /// owner used by the rest of the authenticated backend. Presentation never receives secrets.
+    pub fn run_web_search(
+        &self,
+        search_term: &str,
+        explanation: Option<&str>,
+        model_id: &str,
+    ) -> Result<Value, String> {
+        let search_term = search_term.trim();
+        let model_id = model_id.trim();
+        if search_term.is_empty() || search_term.chars().count() > 8_192 {
+            return Err("WebSearch search_term is required and must be at most 8192 characters".into());
+        }
+        if model_id.is_empty() || model_id.chars().count() > 512 {
+            return Err("WebSearch model_id is required and must be at most 512 characters".into());
+        }
+        let explanation = explanation.map(str::trim).filter(|value| !value.is_empty());
+        if explanation.is_some_and(|value| value.chars().count() > 8_192) {
+            return Err("WebSearch explanation must be at most 8192 characters".into());
+        }
+        let credentials = self.credentials.credentials()?;
+        let mut request = Vec::new();
+        encode_string(1, search_term, &mut request);
+        if let Some(explanation) = explanation {
+            encode_string(2, explanation, &mut request);
+        }
+        encode_string(3, model_id, &mut request);
+        let ghost_mode = self.resolve_ghost_mode(&credentials);
+        let response = self.send_unary(
+            &credentials,
+            RUN_WEB_SEARCH_PATH,
+            &request,
+            WEB_TOOL_REQUEST_TIMEOUT_MS,
+            ghost_mode,
+        )?;
+        decode_web_search_response(&response)
+    }
+
+    /// Execute Desktop-parity structured WebFetch. URL safety is enforced by the routed tool
+    /// boundary before this authenticated backend method is called.
+    pub fn run_web_fetch(&self, url: &str) -> Result<Value, String> {
+        let url = url.trim();
+        if url.is_empty() || url.chars().count() > 16_384 {
+            return Err("WebFetch url is required and must be at most 16384 characters".into());
+        }
+        let credentials = self.credentials.credentials()?;
+        let mut request = Vec::new();
+        encode_string(1, url, &mut request);
+        let ghost_mode = self.resolve_ghost_mode(&credentials);
+        let response = self.send_unary(
+            &credentials,
+            RUN_WEB_FETCH_PATH,
+            &request,
+            WEB_TOOL_REQUEST_TIMEOUT_MS,
+            ghost_mode,
+        )?;
+        decode_web_fetch_response(&response)
     }
 
     pub fn submit_feedback_report(
@@ -2857,6 +2919,93 @@ fn sand_client_version() -> String {
         "lab" => format!("{base}-lab"),
         _ => base,
     }
+}
+
+fn decode_web_document(input: &[u8]) -> Result<Value, String> {
+    let mut cursor = 0usize;
+    let mut url = String::new();
+    let mut title = String::new();
+    let mut text = String::new();
+    while cursor < input.len() {
+        let key = read_varint(input, &mut cursor)?;
+        let field = (key >> 3) as u32;
+        let wire = (key & 0x07) as u8;
+        match (field, wire) {
+            (1, 2) => url = read_string(input, &mut cursor)?,
+            (2, 2) => title = read_string(input, &mut cursor)?,
+            (3, 2) => text = read_string(input, &mut cursor)?,
+            _ => skip_field(input, &mut cursor, wire)?,
+        }
+    }
+    Ok(json!({"url":url,"title":title,"text":text}))
+}
+
+fn decode_web_search_response(input: &[u8]) -> Result<Value, String> {
+    let mut cursor = 0usize;
+    let mut answer: Option<String> = None;
+    let mut documents = Vec::new();
+    while cursor < input.len() {
+        let key = read_varint(input, &mut cursor)?;
+        let field = (key >> 3) as u32;
+        let wire = (key & 0x07) as u8;
+        match (field, wire) {
+            (1, 2) => answer = Some(read_string(input, &mut cursor)?),
+            (2, 2) => documents.push(decode_web_document(read_len_delimited(input, &mut cursor)?)?),
+            _ => skip_field(input, &mut cursor, wire)?,
+        }
+    }
+    Ok(json!({"answer":answer,"documents":documents}))
+}
+
+fn decode_web_fetch_response(input: &[u8]) -> Result<Value, String> {
+    let mut cursor = 0usize;
+    let mut result: Option<Value> = None;
+    while cursor < input.len() {
+        let key = read_varint(input, &mut cursor)?;
+        let field = (key >> 3) as u32;
+        let wire = (key & 0x07) as u8;
+        match (field, wire) {
+            (1, 2) => {
+                let nested = read_len_delimited(input, &mut cursor)?;
+                let mut nested_cursor = 0usize;
+                let mut content = String::new();
+                while nested_cursor < nested.len() {
+                    let nested_key = read_varint(nested, &mut nested_cursor)?;
+                    let nested_field = (nested_key >> 3) as u32;
+                    let nested_wire = (nested_key & 0x07) as u8;
+                    if nested_field == 1 && nested_wire == 2 {
+                        content = read_string(nested, &mut nested_cursor)?;
+                    } else {
+                        skip_field(nested, &mut nested_cursor, nested_wire)?;
+                    }
+                }
+                result = Some(json!({"content":content,"error":Value::Null,"isTimeout":Value::Null}));
+            }
+            (2, 2) => {
+                let nested = read_len_delimited(input, &mut cursor)?;
+                let mut nested_cursor = 0usize;
+                let mut error = String::new();
+                let mut is_timeout = false;
+                while nested_cursor < nested.len() {
+                    let nested_key = read_varint(nested, &mut nested_cursor)?;
+                    let nested_field = (nested_key >> 3) as u32;
+                    let nested_wire = (nested_key & 0x07) as u8;
+                    match (nested_field, nested_wire) {
+                        (1, 2) => error = read_string(nested, &mut nested_cursor)?,
+                        (2, 0) => is_timeout = read_varint(nested, &mut nested_cursor)? != 0,
+                        _ => skip_field(nested, &mut nested_cursor, nested_wire)?,
+                    }
+                }
+                result = Some(json!({"content":Value::Null,"error":error,"isTimeout":is_timeout}));
+            }
+            _ => skip_field(input, &mut cursor, wire)?,
+        }
+    }
+    Ok(result.unwrap_or_else(|| json!({
+        "content":Value::Null,
+        "error":"Web fetch returned no result.",
+        "isTimeout":Value::Null
+    })))
 }
 
 #[cfg(test)]

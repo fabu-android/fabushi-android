@@ -85,7 +85,7 @@ use crate::runner::{
     SubagentRunOutcome, SubagentSteerReview, SubagentTaskReviewCallback,
     SubagentSteerReviewCallback, SubagentToolBridge, SubagentToolContext,
     build_parent_subagent_routed_tools, spawn_generated_subagent,
-    with_agent_management_tools, with_multitask_todo_tools, with_remote_routed_tools,
+    with_agent_management_tools, with_multitask_todo_tools, with_remote_routed_tools, with_web_routed_tools,
     AgentTurnInterruptionRegistry, RemoteApprovalRegistry, RemoteDispatchBinding,
     DurableMultitaskTodoStore,
 };
@@ -7629,6 +7629,7 @@ impl AndroidJsonHost {
         let agent_messaging = Arc::clone(&self.messaging);
         let live_account_fence = Arc::clone(&self.live_account_fence);
         let agent_turn_interruptions = Arc::clone(&self.agent_turn_interruptions);
+        let web_backend = self.mcp_dashboard_backend.clone();
         let remote_capability_broker = self.capability_broker.clone();
         let remote_binding = Arc::clone(&self.remote_binding);
         let remote_runner = Arc::clone(&self.remote_runner);
@@ -7926,6 +7927,21 @@ impl AndroidJsonHost {
                         Arc::clone(&multitask_todos),
                         &account_fence_owned,
                         &conversation_id_owned,
+                    )
+                } else {
+                    routed_subagent_tools
+                };
+                // Desktop root turns expose structured WebSearch/WebFetch through the authenticated
+                // inference backend. Keep credentials in Rust Host and fence late results to the
+                // frozen turn account; generated child runners do not inherit this root wrapper.
+                let routed_subagent_tools = if let Some(web_backend) = web_backend.clone() {
+                    with_web_routed_tools(
+                        routed_subagent_tools,
+                        web_backend,
+                        &model_owned,
+                        &account_fence_owned,
+                        Arc::clone(&live_account_fence),
+                        Arc::clone(&cancelled),
                     )
                 } else {
                     routed_subagent_tools
