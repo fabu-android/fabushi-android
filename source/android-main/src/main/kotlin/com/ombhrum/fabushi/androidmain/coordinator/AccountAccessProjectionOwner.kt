@@ -16,13 +16,14 @@ internal class SharedPreferencesAccountAccessEpochStore(context: Context) : Acco
     override fun readIdentity() = preferences.getString("account-identity", null)?.trim()?.takeIf(String::isNotEmpty)
     override fun readHasReachedBox() = preferences.getBoolean("has-reached-box", false)
     override fun write(epoch: Long, identity: String?, hasReachedBox: Boolean) {
-        preferences.edit()
+        val committed = preferences.edit()
             .putLong("account-epoch", epoch.coerceAtLeast(0L))
             .putBoolean("has-reached-box", hasReachedBox)
             .apply {
                 if (identity == null) remove("account-identity") else putString("account-identity", identity)
             }
-            .apply()
+            .commit()
+        check(committed) { "failed to persist account access epoch" }
     }
 }
 
@@ -160,10 +161,15 @@ internal class AccountAccessProjectionOwner(private val epochStore: AccountAcces
     @Synchronized fun observeAuth(loggedIn: Boolean, identity: String?) {
         val normalized = identity?.trim()?.takeIf { loggedIn && it.isNotEmpty() }
         if (normalized != accountIdentity) {
-            accountEpoch = next(accountEpoch)
-            accountIdentity = normalized
-            hasReachedBox = false
-            epochStore.write(accountEpoch, accountIdentity, hasReachedBox)
+            val nextEpoch = next(accountEpoch)
+            val nextIdentity = normalized
+            val nextHasReachedBox = false
+            // Persist the new fence before publishing it in memory. If the process dies after
+            // observeAuth returns, cold start must never recover the prior account epoch.
+            epochStore.write(nextEpoch, nextIdentity, nextHasReachedBox)
+            accountEpoch = nextEpoch
+            accountIdentity = nextIdentity
+            hasReachedBox = nextHasReachedBox
             generation = next(generation)
             projection = AccountAccessProjection.initial(accountEpoch).copy(
                 loggedIn = loggedIn,
@@ -190,8 +196,10 @@ internal class AccountAccessProjectionOwner(private val epochStore: AccountAcces
         val reachedNow = facts.rosterLoadState == AccountRosterLoadState.READY
         val nextHasReachedBox = hasReachedBox || reachedNow
         if (nextHasReachedBox != hasReachedBox) {
+            // The durable first-Box latch fences cold-start UX. Do not publish it until storage
+            // has committed, otherwise a process death can regress to a false first-Box state.
+            epochStore.write(accountEpoch, accountIdentity, nextHasReachedBox)
             hasReachedBox = nextHasReachedBox
-            epochStore.write(accountEpoch, accountIdentity, hasReachedBox)
         }
 
         val connectivityFailure =
