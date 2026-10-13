@@ -2853,7 +2853,13 @@ impl AndroidJsonHost {
             .lock()
             .map_err(|_| "Android structured-log spool lock poisoned".to_string())?
             .record(level, message, metadata, timestamp_ms)
-            .map_err(|error| format!("failed to persist Android structured telemetry: {error}"))
+            .map_err(|error| format!("failed to persist Android structured telemetry: {error}"))?;
+        // Background producers (event-loop pressure, HostEventBus failures, crash recovery)
+        // do not necessarily pass through dispatch(). Kick the existing account-fenced,
+        // single-flight shipper immediately after durable persistence so telemetry cannot remain
+        // stranded until a later user command or Host teardown.
+        self.schedule_structured_log_ship();
+        Ok(())
     }
 
     fn rotate_structured_log_account(
@@ -3509,7 +3515,7 @@ impl AndroidJsonHost {
         }
     }
 
-    fn schedule_structured_log_ship(&mut self) {
+    fn schedule_structured_log_ship(&self) {
         let Some(backend) = self.mcp_dashboard_backend.clone() else {
             return;
         };
