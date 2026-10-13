@@ -11492,9 +11492,39 @@ impl AndroidJsonHost {
 
                 if let Err(error) = result {
                     if !cancelled.load(Ordering::Acquire) && !terminal_emitted {
-                        let checkpoint_outcome_unknown = error
+                        let mut checkpoint_outcome_unknown = error
                             .message
                             .starts_with("durable turn checkpoint persistence failed:");
+                        let mut settlement_message = error.message.clone();
+                        if settles_visible_ack {
+                            if checkpoint_outcome_unknown {
+                                visible_ack_obligations.retire_ack_run_token(
+                                    &account_fence_owned,
+                                    &conversation_id_owned,
+                                    ack_run_token_owned.as_deref(),
+                                );
+                            } else if let Some(ack_token) = ack_run_token_owned.as_deref() {
+                                if let Err(ack_error) =
+                                    visible_ack_obligations.defer_unfulfilled_for_token(
+                                        &account_fence_owned,
+                                        &conversation_id_owned,
+                                        ack_token,
+                                        now_ms(),
+                                    )
+                                {
+                                    visible_ack_obligations.retire_ack_run_token(
+                                        &account_fence_owned,
+                                        &conversation_id_owned,
+                                        Some(ack_token),
+                                    );
+                                    checkpoint_outcome_unknown = true;
+                                    settlement_message = format!(
+                                        "{}; visible acknowledgement recovery persistence failed: {ack_error}",
+                                        error.message
+                                    );
+                                }
+                            }
+                        }
                         let settled = turn_journal
                             .lock()
                             .map_err(|_| "turn journal lock poisoned".to_string())
@@ -11505,7 +11535,7 @@ impl AndroidJsonHost {
                                         &operation_id_owned,
                                         &account_fence_owned,
                                         turn_generation,
-                                        error.message.clone(),
+                                        settlement_message.clone(),
                                         now_ms(),
                                     )
                                 } else {
@@ -11515,7 +11545,7 @@ impl AndroidJsonHost {
                                         &account_fence_owned,
                                         turn_generation,
                                         DurableTurnState::Failed,
-                                        Some(error.message.clone()),
+                                        Some(settlement_message.clone()),
                                         now_ms(),
                                     )
                                 }
@@ -11530,7 +11560,7 @@ impl AndroidJsonHost {
                                         "operationId":operation_id_owned,
                                         "requestId":request_id_owned,
                                         "reason":"outcome-unknown",
-                                        "message":error.message,
+                                        "message":settlement_message,
                                     })
                                 } else {
                                     json!({
@@ -11538,7 +11568,7 @@ impl AndroidJsonHost {
                                         "operationId":operation_id_owned,
                                         "requestId":request_id_owned,
                                         "agentId":conversation_id_owned.clone(),
-                                        "message":error.message,
+                                        "message":settlement_message,
                                     })
                                 },
                             );
