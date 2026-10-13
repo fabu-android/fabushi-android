@@ -333,4 +333,32 @@ mod tests {
         );
         assert!(!emitted);
     }
+
+    #[test]
+    fn failed_delivery_keeps_marker_for_replay_after_process_restart() {
+        let store = MemoryStore::new(Some(valid_signal_marker()));
+        assert_eq!(
+            forward_host_crash_marker_with(&store, |_| false),
+            HostCrashForwardOutcome::Deferred
+        );
+        assert!(
+            matches!(store.read(), HostCrashMarkerRead::Present(_)),
+            "a crash marker must remain durable until telemetry delivery settles"
+        );
+    }
+
+    #[test]
+    fn unavailable_store_defers_without_fabricating_delivery() {
+        let mut store = MemoryStore::new(Some(valid_signal_marker()));
+        store.available = false;
+        let mut emitted = false;
+        assert_eq!(
+            forward_host_crash_marker_with(&store, |_| {
+                emitted = true;
+                true
+            }),
+            HostCrashForwardOutcome::Deferred
+        );
+        assert!(!emitted);
+    }
 }
