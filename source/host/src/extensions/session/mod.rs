@@ -5,13 +5,11 @@ pub mod session_path_contracts;
 pub mod conversation_blobs_path;
 pub mod session_diagnostics;
 pub mod extension;
-pub mod gateway;
 pub mod agent_db_schema;
 pub mod agent_db_serde;
 pub mod agent_db_transcript_pages;
 pub mod agent_db_recovery;
 pub mod agent_db;
-pub mod agent_session;
 #[cfg(test)]
 mod agent_db_android_tests;
 pub mod channel_store;
