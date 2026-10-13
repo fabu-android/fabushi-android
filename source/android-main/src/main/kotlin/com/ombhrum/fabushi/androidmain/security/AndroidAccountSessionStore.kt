@@ -26,6 +26,7 @@ internal class AndroidAccountSessionStore(context: Context) {
     private val sessionFile = File(applicationContext.noBackupFilesDir, SESSION_FILE_NAME)
     @Volatile private var protectedStoreUnavailable = false
 
+    @Synchronized
     fun readSessionJson(): String? {
         val encoded = runCatching { sessionFile.readText(StandardCharsets.UTF_8) }.getOrNull()
             ?: return null
@@ -50,6 +51,7 @@ internal class AndroidAccountSessionStore(context: Context) {
         }
     }
 
+    @Synchronized
     fun writeSessionJson(value: String) {
         require(value.isNotBlank()) { "account session must not be blank" }
         require(value.toByteArray(StandardCharsets.UTF_8).size <= MAX_SESSION_BYTES) {
@@ -80,8 +82,33 @@ internal class AndroidAccountSessionStore(context: Context) {
         }
     }
 
+    @Synchronized
     fun clear() {
-        runCatching { sessionFile.delete() }
+        var deleteFailure: Throwable? = null
+        if (sessionFile.exists() && !sessionFile.delete()) {
+            deleteFailure = IllegalStateException("failed to remove protected account session")
+        }
+
+        // Treat logout/refusal as a cryptographic erase as well as a file deletion. If the
+        // ciphertext cannot be removed, deleting the key still guarantees a cold start cannot
+        // resurrect the refused/revoked session.
+        val keyFailure = runCatching {
+            val keyStore = KeyStore.getInstance(ANDROID_KEY_STORE).apply { load(null) }
+            if (keyStore.containsAlias(KEY_ALIAS)) {
+                keyStore.deleteEntry(KEY_ALIAS)
+            }
+        }.exceptionOrNull()
+        if (keyFailure != null) {
+            protectedStoreUnavailable = true
+        }
+
+        val failure = deleteFailure ?: keyFailure
+        if (failure != null) {
+            if (deleteFailure != null && keyFailure != null && deleteFailure !== keyFailure) {
+                deleteFailure.addSuppressed(keyFailure)
+            }
+            throw failure
+        }
     }
 
     /**
