@@ -814,6 +814,16 @@
             "Fabu Agent architecture parity ownership matrix",
             "latency/refactor boundary"
           ]
+        },
+        {
+          "path": "source/host/src/extensions/transcript/completion_revivals.rs",
+          "blob_sha": "b06f87124f566365b6e41190fc1382bf9c5628cd",
+          "symbols": [
+            "CompletionRevivals",
+            "SubagentCompletion",
+            "build_subagent_revival_prompt",
+            "QUIET_REVIVAL_INSTRUCTION"
+          ]
         }
       ],
       "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
@@ -854,7 +864,7 @@
       "cancellation_behavior": "Abort wins late completion; parent cancellation targets only children with the matching parent request and disarms pending wake.",
       "retry_semantics": "No blind replay after process death or outcome uncertainty; steering continues the same stable subagent request.",
       "idempotency_semantics": "Task identity is stable from the parent tool-call id; exact duplicate launch is idempotent and mismatched reuse fails closed.",
-      "process_death_recovery": "Running children reopen as outcome-unknown, with pending wake disarmed, until explicit account-fenced reconciliation.",
+      "process_death_recovery": "Known completed/failed child results retain pending_wake across Host reopen until durable marker handoff; marker survives process death and is redriven with deterministic journal identity. Running children reopened after unknown process death remain outcome-unknown with no automatic revival until explicit reconciliation produces a known completed/failed outcome.",
       "account_fencing": "Every mutation/settlement is fenced by current account identity plus durable process epoch.",
       "security_boundary": "Rust Host/Runner owns canonical subagent state; Presentation has only typed projection/control methods.",
       "android_disposition": "direct-port",
@@ -867,20 +877,22 @@
         "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/coordinator/AndroidCoordinatorRuntime.kt",
         "source/android-host-jni/src/lib.rs",
         "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/coordinator/AgentTurnCapabilityProjection.kt",
-        "mobile/android/app/src/test/java/com/ombhrum/fabushi/AgentTurnCapabilityProjectionTest.kt"
+        "mobile/android/app/src/test/java/com/ombhrum/fabushi/AgentTurnCapabilityProjectionTest.kt",
+        "source/host/src/extensions/transcript/completion_revivals.rs",
+        "source/host/src/extensions/transcript/sand_pending_wake_store.rs"
       ],
       "android_owner": "source/host/src/runner/subagent_runtime.rs",
       "platform_delta": "Android keeps the platform-independent lifecycle in Rust and exposes only typed Coordinator/Host control to Kotlin; process death is explicit and cannot replay unknown child effects.",
       "implementation_status": "implemented",
-      "production_wiring": "Rust owner/tool bridge/worker remain wired into shipping AndroidJsonHost and typed Coordinator/JNI path. Parent Task/CheckSubagent/MessageSubagent/StopSubagent remain root/parent control-plane only. Generated-child executable tools are now frozen before durable Task launch from the trusted Coordinator capability projection plus a Rust GeneratedChildToolRegistry of actually registered adapters; role gates mirror Desktop TurnToolsetRole for box-scoped generated children. The worker re-resolves every frozen tool name against the current adapter registry before provider execution, so adapter revocation, Host reopen, process change, or Remote Runner loss fails closed instead of replaying or fabricating a capability. The registry rejects parent-control tool names and duplicate identities. Android currently has no Host-side outbound Remote Runner/desktop/browser/computer adapter wired into this registry: local-exec is only a generic registered-action executor, box-exec currently owns job lifecycle, and FabushiRemoteDeviceGateway is the Android device's inbound semantic surface. Therefore current production child projection is empty by real adapter availability, not by a hard-coded Vec::new(); computer/browser child types remain disabled by the Coordinator until a real authorized outbound owner exists. Task/MessageSubagent review, durable duplicate identity, account/process epoch fencing, abort-wins, outcome-unknown recovery and same-provider summarization remain single-owner Rust semantics.",
-      "unit_test": "Focused Rust coverage includes role-scoped child tool projection success, parent-control injection rejection before durable launch, duplicate child tool identity rejection, adapter grant/removal fail-closed behavior, Remote Runner unavailable rejection, parent four-control-tool preservation, generated-child parent-control denial, allowed-type projection, Task/Message review allow/deny/error before mutation, duplicate frozen-config mismatch, cancel/completion race, Host reopen/process-death outcome-unknown, stale epoch, account fence/switch, parent cancellation and reconciliation. Exact-head GitHub Actions are required before verification.",
+      "production_wiring": "Generated child terminal completion now remains a durable pending_wake obligation in DurableSubagentOwner until SandPendingWakeStore accepts an account-fenced marker. subagent_worker transfers completed/failed records through SubagentCompletionWakeSink; AndroidJsonHost redrives those markers on feature.receive into hidden requestSource=subagent-revival turns using Desktop-equivalent build_subagent_revival_prompt semantics and a deterministic request id. DurableTurnJournal is checked before queueing and wake markers are cleared only after journal acceptance, so process death between acceptance and cleanup cannot duplicate the continuation. Aborted and unresolved outcome-unknown records do not auto-replay.",
+      "unit_test": "subagent_runtime focused tests cover terminal completion wake surviving reopen until acknowledgement and aborted/outcome-unknown non-replay; completion_revivals tests preserve quiet-origin/no-chatter prompt semantics. Exact-head GitHub Actions pending.",
       "contract_test": "source/host/tests/generated_subagent_android_contract.rs; role/capability child projection and adapter revoke/unavailable contracts implemented; exact-head GitHub Actions pending",
-      "integration_test": "Shipping AndroidJsonHost parent chat.send -> AndroidHostInferenceProvider -> parent-only Task bridge -> DurableSubagentOwner -> generated child worker remains the production route. Persisted child tool names are computed from real adapter registration and trusted capability state, then revalidated at worker execution. Typed AndroidCoordinatorPort -> AndroidCoordinatorRuntime -> MahayanaHost -> android-host-jni -> MahayanaCoordinator -> AndroidJsonHost remains the production composition. Exact-head package/device evidence pending.",
+      "integration_test": "android_json_runtime focused test covers completion -> durable wake marker -> hidden subagent-revival -> DurableTurnJournal acceptance -> marker clear, with appendUserMessage=false/awaitTurn=false and deterministic request identity. Exact-head GitHub Actions pending.",
       "packaged_test": "required on final exact-head APK/AAB",
       "device_test": "required after protected account secrets are configured",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Implemented durable generated-subagent lifecycle and fail-closed registry semantics only. Current child executable projection remains empty because no proven Host-side outbound Remote Runner/desktop adapter is registered. Desktop current-main now proves explicit TurnToolset executor injection plus remote pairing/session/signaling control-plane endpoints, but not the side-effectful command/ack/reconciliation client wire or its production credential binding. verification_status remains not-verified until the real production path and same-exact-HEAD CI/package/device evidence exist. docs/fabu-agent-architecture-parity.md is an architecture/reference authority rather than shipping production code; it reinforces per-Agent ownership, bounded inference context over durable transcript, per-turn runner lifetime, independent subagent lineage and no renderer-global canonical run truth. Keep non-verified until the concrete shipping responsibilities and exact-head evidence close."
+      "notes": "Implemented durable generated-subagent lifecycle and fail-closed registry semantics only. Current child executable projection remains empty because no proven Host-side outbound Remote Runner/desktop adapter is registered. Desktop current-main now proves explicit TurnToolset executor injection plus remote pairing/session/signaling control-plane endpoints, but not the side-effectful command/ack/reconciliation client wire or its production credential binding. verification_status remains not-verified until the real production path and same-exact-HEAD CI/package/device evidence exist. docs/fabu-agent-architecture-parity.md is an architecture/reference authority rather than shipping production code; it reinforces per-Agent ownership, bounded inference context over durable transcript, per-turn runner lifetime, independent subagent lineage and no renderer-global canonical run truth. Keep non-verified until the concrete shipping responsibilities and exact-head evidence close.\n2026-10-13 implementation update: commits 0caf2a1b7e69bd9b27bcc4ac44f720947bde64ca, 14805edea8789b319c87d1c89c41d2380540f839, 34d28838f0bf99a500c3db4e9cb364a6ef27984e and 62e4076a78a5d94ec257ee24d91727f4eaa486e3 close the durable completion-revival production path. Do not mark verified until a descendant exact HEAD passes Rust/architecture/full/package/device evidence."
     },
     {
       "responsibility_id": "TOOLS-CAPABILITY-BROKER-001",
