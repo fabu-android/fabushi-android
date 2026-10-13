@@ -16685,6 +16685,79 @@
       "artifact": null,
       "verification_status": "not-verified",
       "notes": "Do not infer complete managed setup parity from this record. cursor_skills_marketplace, team_rules, extension and production network/auth wiring remain unreviewed/mapped until adapted to the existing Android credential owner."
+    },
+    {
+      "responsibility_id": "AGENT-SESSION-DB-RECOVERY-ANDROID-001",
+      "domain": "agent-session-storage",
+      "desktop_sources": [
+        {
+          "path": "source/host/src/extensions/session/agent_db_recovery.rs",
+          "blob_sha": "03b6ac1255e9c18233d58a3f4f36710c71dd7b0e",
+          "symbols": [
+            "DbRecoveryOptions",
+            "init_configured_db",
+            "open_configured_db",
+            "is_store_db_healthy"
+          ]
+        }
+      ],
+      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "responsibility": "Recover canonical Agent session persistence after interrupted writes or storage corruption without silently publishing partial state: validate storage on open, quarantine corruption, salvage valid durable state where possible, fail closed around unsafe concurrent recovery, emit recovery diagnostics, and rebuild derived projections after recovery.",
+      "source_owner": "Desktop SandAgentDb recovery owner",
+      "direct_callers": [
+        "SandAgentDb open/init path",
+        "Agent session startup"
+      ],
+      "downstream_dependencies": [
+        "Agent metadata/KV state",
+        "conversation blobs",
+        "canonical transcript",
+        "derived content-search projection"
+      ],
+      "state_owner": "Android keeps one canonical owner per split store: AndroidAgentRoster for Agent metadata, TranscriptStore for transcript, ConversationBlobDb/worker for blobs. Recovery replicas/quarantines are non-canonical evidence only.",
+      "persistent_state": [
+        "agents.json plus recovery backup",
+        "transcript.json plus interrupted-write/backup/quarantine files",
+        "conversation-blobs.db plus WAL/SHM/recovery markers"
+      ],
+      "protocol_wire_contract": [
+        "recovery never fabricates success",
+        "recovered/reset outcome is observable as structured recovery telemetry",
+        "canonical state is reinstalled before production projection resumes"
+      ],
+      "visible_effect": "After process death or storage corruption, Android preserves the latest recoverable Agent roster/transcript/blob state, quarantines damaged bytes for diagnosis, rebuilds derived transcript search, and avoids silently starting from an inconsistent partial store.",
+      "failure_behavior": [
+        "unrecoverable roster/transcript corruption is quarantined then reset explicitly",
+        "conversation blob recovery fails closed when quarantine/install health cannot be established",
+        "I/O errors that are not recognized recovery cases remain errors",
+        "recovery diagnostics are best-effort and never become a second state owner"
+      ],
+      "cancellation_behavior": "startup recovery is not user-cancellable; canonical store construction either settles one recovered/reset state or fails closed before Host publication",
+      "retry_semantics": "SQLite I/O/cant-open recovery retries boundedly; interrupted JSON writes/backup recovery are replayed on next cold start; unknown recovery state is reconciled rather than causing side-effect retry",
+      "idempotency_semantics": "reopening healthy stores is read-only/idempotent; salvage uses deduplication/INSERT OR IGNORE; roster recovery replica contains only complete settled snapshots",
+      "process_death_recovery": "TranscriptStore promotes a valid interrupted write or last-known-good backup and can salvage valid top-level entries; AndroidAgentRoster recovers the latest settled recovery replica; conversation blob recovery resumes pending quarantine/replacement markers.",
+      "account_fencing": "Recovery operates inside the app/account-scoped Host data directory and does not change account epoch; existing environment/account binding gates remain authoritative before recovered state is exposed.",
+      "security_boundary": "Quarantine and recovery files remain under Host private storage. Recovery does not bypass Capability Broker, expose credentials, or create a second mutable canonical owner.",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "source/host/src/android_agent_roster.rs",
+        "source/host/src/extensions/transcript/transcript_store.rs",
+        "source/host/src/agent_isolation/conversation_blob_db.rs",
+        "source/host/src/storage/sqlite_recovery.rs",
+        "source/host/src/android_json_runtime.rs"
+      ],
+      "android_owner": "Split Rust Host persistence owners with AndroidJsonHost startup reconciliation",
+      "platform_delta": "Desktop recovers one SQLite store containing kv/blobs/transcript rows. Android deliberately splits these states: JSON roster, JSON transcript, and conversation blob SQLite. Each store applies an equivalent recovery strategy appropriate to its format; no merged Android store or duplicate owner is introduced.",
+      "implementation_status": "implemented",
+      "production_wiring": "AndroidJsonHost opens AndroidAgentRoster::open_recovering and TranscriptStore::open_recovering before projection; structured `sand.recovery_action` events record roster/transcript outcomes. Transcript recovery reconciles the content-search index. Conversation blob workers open through recovery-aware SQLite options before serving blobs.",
+      "unit_test": "AndroidAgentRoster corruption/reset and last-known-good salvage tests; TranscriptStore interrupted-write/backup/row-salvage/reset tests; ConversationBlobDb corruption/quarantine/salvage/recovery-resume tests. Exact-head GitHub Actions evidence pending.",
+      "contract_test": "Recovery output taxonomy and canonical-owner semantics are covered in Rust focused tests; exact-head Rust gate pending.",
+      "integration_test": "required: current exact-head Host cold-start recovery with roster/transcript/blob corruption fixtures and derived-index reconciliation",
+      "packaged_test": "required on final exact-head APK/AAB",
+      "device_test": "required: process-death/restart and storage-corruption acceptance on supported Android API/device",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Desktop source responsibility is implemented through Android-adapted split owners. Commits bc321686c0370e024258cac4042b935a840d7f0d, ca062d332973602b2255968d998afe7a4f1eb6cf, 91f32a3631f58c6ab7b06262600810a6dba5668f and b5dfbeb53d7e5a4777555db06253985c71f71f34 close the previously silent roster-reset gap. Do not mark verified until a descendant exact HEAD passes the relevant Rust/Android/package/device gates."
     }
   ],
   "traceability": {
