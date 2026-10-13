@@ -1,5 +1,5 @@
 use crate::extensions::content_search::android_search_index::AndroidContentSearchIndex;
-use crate::extensions::experiments::HostExperimentsExtension;
+use crate::extensions::experiments::{HostExperimentsExtension, StopGateSubscription};
 use crate::edge_failures::EdgeFailureBuffer;
 use crate::account_service::{AccountSessionMutation, AndroidAccountService};
 use crate::account_telemetry::{
@@ -776,6 +776,7 @@ pub struct AndroidJsonHost {
     mcp_auth_owner: Option<AndroidMcpAuthWatchOwner>,
     mcp_dashboard_backend: Option<Arc<CursorDashboardMcpAuthBackend>>,
     cross_user_core: Option<ProductionCrossUserCore>,
+    _cross_user_experiment_subscription: Option<StopGateSubscription>,
     mcp_server_tool_settings: Arc<Mutex<McpServerToolSettings>>,
     plugin_variables: PluginVariableStore,
     pending_plugin_variable_writes: BTreeMap<String, PreparedPluginVariableWrite>,
@@ -1079,6 +1080,17 @@ impl AndroidJsonHost {
                 .extension
                 .apply_feature_policy(experiments.check_feature_gate("sand_multiplayer"));
         }
+        let cross_user_experiment_subscription = cross_user_core.as_ref().map(|core| {
+            let extension = Arc::clone(&core.extension);
+            experiments.subscribe_gate(
+                "sand_multiplayer",
+                Arc::new(move |enabled| {
+                    if let Err(error) = extension.apply_feature_policy(enabled) {
+                        eprintln!("[fabushi:xuser] failed to apply experiment gate change: {error}");
+                    }
+                }),
+            )
+        });
         let mcp_server_tool_settings = Arc::new(Mutex::new(
             McpServerToolSettings::open(app_data_dir.join("mcp-server-tool-settings.json"))
                 .unwrap_or_else(|error| panic!("failed to open durable MCP server tool settings: {error}")),
@@ -1237,6 +1249,7 @@ impl AndroidJsonHost {
             mcp_auth_owner,
             mcp_dashboard_backend,
             cross_user_core,
+            _cross_user_experiment_subscription: cross_user_experiment_subscription,
             mcp_server_tool_settings,
             plugin_variables,
             pending_plugin_variable_writes: BTreeMap::new(),
