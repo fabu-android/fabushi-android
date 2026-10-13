@@ -3039,6 +3039,19 @@ impl AndroidJsonHost {
                     .map_err(|error| error.to_string())?;
                 Ok(agent.as_json())
             }
+            "setAgentNotifyOnUpdates" => {
+                let id = required_string(params, "id")?;
+                let is_enabled = params
+                    .get("isEnabled")
+                    .and_then(Value::as_bool)
+                    .ok_or("isEnabled is required")?;
+                self.agents
+                    .lock()
+                    .map_err(|_| "canonical Android Agent roster lock poisoned".to_string())?
+                    .set_notify_on_updates(id, is_enabled)
+                    .map_err(|error| error.to_string())?;
+                Ok(Value::Null)
+            }
             "duplicateAgent" => {
                 let id = required_string(params, "id")?;
                 let agent = self.agents
@@ -10858,6 +10871,39 @@ mod tests {
 
         host.logged_in = false;
         assert!(host.dispatch("feature.messaging.execute", &valid).is_err());
+    }
+
+    #[test]
+    fn agent_notify_on_updates_dispatch_persists_the_canonical_preference() {
+        let root = tempfile::tempdir().unwrap();
+        let agent_id;
+        {
+            let mut host = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+            let created = host
+                .dispatch(
+                    "createAgent",
+                    &json!({"name":"Notify Agent","description":""}),
+                )
+                .unwrap();
+            agent_id = created["agent"]["id"].as_str().unwrap().to_string();
+            assert_eq!(created["agent"]["notifyOnUpdatesEnabled"], true);
+            assert!(host
+                .dispatch(
+                    "setAgentNotifyOnUpdates",
+                    &json!({"id":agent_id,"isEnabled":false}),
+                )
+                .unwrap()
+                .is_null());
+            assert!(!host
+                .dispatch(
+                    "setAgentNotifyOnUpdates",
+                    &json!({"id":agent_id}),
+                )
+                .is_ok());
+        }
+
+        let reopened = AndroidAgentRoster::open(root.path().join("agents.json")).unwrap();
+        assert!(!reopened.get(&agent_id).unwrap().notify_on_updates_enabled);
     }
 
     #[test]
