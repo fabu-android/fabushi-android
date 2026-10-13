@@ -15835,6 +15835,25 @@ fn encode_api_path_segment(value: &str) -> Result<String, String> {
 }
 
 #[cfg(test)]
+fn sign_in_test_account(host: &mut AndroidJsonHost) {
+    let started = host
+        .dispatch("feature.auth.oauthStart", &json!({"provider":"google"}))
+        .expect("test OAuth start must succeed");
+    let attempt_id = started["attemptId"]
+        .as_str()
+        .expect("test OAuth start must return attemptId")
+        .to_string();
+    let completed = host
+        .dispatch(
+            "feature.auth.oauthPoll",
+            &json!({"attemptId":attempt_id}),
+        )
+        .expect("test OAuth poll must succeed");
+    assert_eq!(completed["status"], "completed");
+    assert_eq!(completed["auth"]["loggedIn"], true);
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -15903,12 +15922,14 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         {
             let mut host = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+            sign_in_test_account(&mut host);
             let mut transcript = host.transcript.lock().unwrap();
             transcript.append_entry(json!({"id":"a-old","agentId":"agent-a","kind":"message","role":"user","content":"global needle old","timestampMs":1})).unwrap();
             transcript.append_entry(json!({"id":"b-new","agentId":"agent-b","kind":"message","role":"assistant","content":"global needle new","timestampMs":2})).unwrap();
             transcript.append_entry(json!({"id":"hidden","agentId":"agent-a","kind":"message","role":"assistant","content":"global needle hidden","hiddenOutboundAgentPeerMessage":true,"timestampMs":3})).unwrap();
         }
         let mut reopened = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+        sign_in_test_account(&mut reopened);
         let result = reopened.dispatch(
             "feature.search.global",
             &json!({"query":"GLOBAL needle","messageLimit":50,"mediaLimit":0}),
@@ -15942,6 +15963,7 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         {
             let mut host = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+            sign_in_test_account(&mut host);
             let mut transcript = host.transcript.lock().unwrap();
             transcript.append_entry(json!({"id":"old","agentId":"agent-a","kind":"message","role":"user","content":"Alpha   BETA older","timestampMs":1})).unwrap();
             transcript.append_entry(json!({"id":"new","agentId":"agent-a","kind":"send-message","message":{"type":"text","content":"alpha beta newest"},"timestampMs":2})).unwrap();
@@ -15949,6 +15971,7 @@ mod tests {
             transcript.append_entry(json!({"id":"other","agentId":"agent-b","kind":"message","role":"assistant","content":"alpha beta other agent","timestampMs":4})).unwrap();
         }
         let mut reopened = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+        sign_in_test_account(&mut reopened);
         let result = reopened.dispatch("feature.search.agentContent", &json!({"agentId":"agent-a","query":"ALPHA beta","limit":5})).unwrap();
         let matches = result["matches"].as_array().unwrap();
         assert_eq!(matches.iter().map(|v| v["entryId"].as_str().unwrap()).collect::<Vec<_>>(), vec!["new","old"]);
@@ -16160,6 +16183,7 @@ mod tests {
     fn transcript_page_projects_full_thread_counts_only_for_roots_in_the_page() {
         let root = tempfile::tempdir().unwrap();
         let mut host = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+        sign_in_test_account(&mut host);
         {
             let mut transcript = host.transcript.lock().unwrap();
             for entry in [
@@ -16196,6 +16220,7 @@ mod tests {
 
         drop(host);
         let mut reopened = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+        sign_in_test_account(&mut reopened);
         assert_eq!(
             reopened
                 .dispatch(
@@ -16212,6 +16237,7 @@ mod tests {
     fn transcript_thread_matches_desktop_branch_root_semantics_and_reopens() {
         let root = tempfile::tempdir().unwrap();
         let mut host = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+        sign_in_test_account(&mut host);
         {
             let mut transcript = host.transcript.lock().unwrap();
             for entry in [
@@ -16228,6 +16254,7 @@ mod tests {
         assert_eq!(host.dispatch("feature.transcript.thread", &json!({"agentId":"agent-a","rootId":"missing"})).unwrap(), json!({"entries":[]}));
         drop(host);
         let mut reopened = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+        sign_in_test_account(&mut reopened);
         assert_eq!(reopened.dispatch("feature.transcript.thread", &json!({"agentId":"agent-a","rootId":"root-a"})).unwrap(), first);
         reopened.logged_in = false;
         assert!(reopened.dispatch("feature.transcript.thread", &json!({"agentId":"agent-a","rootId":"root-a"})).is_err());
@@ -16237,6 +16264,7 @@ mod tests {
     fn transcript_thread_rejects_branch_cycles() {
         let root = tempfile::tempdir().unwrap();
         let mut host = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+        sign_in_test_account(&mut host);
         {
             let mut transcript = host.transcript.lock().unwrap();
             for entry in [
@@ -16312,6 +16340,7 @@ mod tests {
     fn account_transition_cleanup_drops_old_account_secrets_and_fences_teach_recording() {
         let root = tempfile::tempdir().unwrap();
         let mut host = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+        sign_in_test_account(&mut host);
         let fence = host.current_turn_account_fence().unwrap();
 
         let prepared = host
@@ -16386,6 +16415,7 @@ mod tests {
     fn sidebar_sections_dispatch_is_account_fenced_durable_and_idempotent() {
         let root = tempfile::tempdir().unwrap();
         let mut first = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+        sign_in_test_account(&mut first);
         let first_agent = first
             .dispatch("createAgent", &json!({"name":"One","description":""}))
             .unwrap();
@@ -16488,6 +16518,7 @@ mod tests {
 
         drop(first);
         let mut reopened = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+        sign_in_test_account(&mut reopened);
         let restored = reopened
             .dispatch("feature.agent.sidebarSections", &json!({}))
             .unwrap();
@@ -16533,6 +16564,7 @@ mod tests {
     fn subagent_completion_wake_moves_to_durable_store_and_journal_before_marker_clear() {
         let root = tempfile::tempdir().unwrap();
         let mut host = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+        sign_in_test_account(&mut host);
         let parent = host
             .dispatch("createAgent", &json!({"name":"Parent","description":"revival parent"}))
             .unwrap();
@@ -16713,6 +16745,7 @@ mod tests {
     fn async_tasks_projection_uses_durable_parent_and_account_fenced_subagent_truth() {
         let root = tempfile::tempdir().unwrap();
         let mut host = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+        sign_in_test_account(&mut host);
         let frozen = SubagentFrozenTurnConfig {
             provider_id: "test-provider".into(),
             model_id: "test-model".into(),
@@ -16752,6 +16785,7 @@ mod tests {
 
         drop(host);
         let mut reopened = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+        sign_in_test_account(&mut reopened);
         let after_process_death = reopened
             .dispatch("feature.agent.asyncTasks", &json!({"id":"agent-parent"}))
             .unwrap();
@@ -16909,6 +16943,7 @@ mod tests {
     fn pending_subagent_review_restart_is_outcome_unknown_and_old_approval_is_stale() {
         let root = tempfile::tempdir().unwrap();
         let mut first = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+        sign_in_test_account(&mut first);
         let accepted = first
             .dispatch(
                 "feature.execute",
@@ -16946,6 +16981,7 @@ mod tests {
         assert!(approval["expiresAtMs"].is_null(), "root turn approvals must be parked");
 
         let mut reopened = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+        sign_in_test_account(&mut reopened);
         let recovered = reopened
             .turn_journal
             .lock()
@@ -17003,6 +17039,7 @@ mod tests {
     fn approval_status_retires_pre_restart_cards() {
         let root = tempfile::tempdir().unwrap();
         let mut first = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+        sign_in_test_account(&mut first);
         let accepted = first.dispatch(
             "feature.execute",
             &json!({"command":{
@@ -17020,6 +17057,7 @@ mod tests {
         drop(first);
 
         let mut reopened = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+        sign_in_test_account(&mut reopened);
         assert_eq!(
             reopened.dispatch("feature.approval.status", &json!({"approvalId":approval_id})).unwrap()["pending"],
             false,
@@ -17241,6 +17279,7 @@ mod tests {
     fn remote_box_store_sync_prepare_uses_remote_epoch_and_device_grant() {
         let root = tempfile::tempdir().unwrap();
         let mut host = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+        sign_in_test_account(&mut host);
         let account_fence = host.current_turn_account_fence().unwrap();
         let now = now_ms();
         host.set_remote_binding_json(Some(&json!({
@@ -17309,6 +17348,7 @@ mod tests {
             now_ms()
         ));
         let mut host = AndroidJsonHost::new(&root, AndroidHostMode::Test);
+        sign_in_test_account(&mut host);
         let target = host
             .dispatch("createAgent", &json!({"name":"Delete me","description":"target"}))
             .unwrap();
@@ -17436,6 +17476,7 @@ mod tests {
             now_ms()
         ));
         let mut host = AndroidJsonHost::new(&root, AndroidHostMode::Test);
+        sign_in_test_account(&mut host);
         let agent = host
             .agents
             .lock()
@@ -17496,6 +17537,7 @@ mod tests {
             now_ms()
         ));
         let mut host = AndroidJsonHost::new(&root, AndroidHostMode::Test);
+        sign_in_test_account(&mut host);
 
         let created = host.dispatch("createAgent", &json!({
             "name":"First Agent",
@@ -17543,7 +17585,8 @@ mod tests {
         assert_eq!(host.dispatch("countAgents", &json!({})).unwrap(), 1);
 
         drop(host);
-        let reopened = AndroidJsonHost::new(&root, AndroidHostMode::Test);
+        let mut reopened = AndroidJsonHost::new(&root, AndroidHostMode::Test);
+        sign_in_test_account(&mut reopened);
         let reopened_list = reopened
             .agents
             .lock()
@@ -17565,6 +17608,7 @@ mod tests {
         let deleted_id;
         {
             let mut host = AndroidJsonHost::new(&root, AndroidHostMode::Test);
+            sign_in_test_account(&mut host);
             account_fence = host.current_turn_account_fence().unwrap();
             let created = host
                 .dispatch(
@@ -17624,6 +17668,7 @@ mod tests {
         }
 
         let mut reopened = AndroidJsonHost::new(&root, AndroidHostMode::Test);
+        sign_in_test_account(&mut reopened);
         let roster = reopened.dispatch("listAgents", &json!({})).unwrap();
         assert!(roster
             .as_array()
@@ -17654,6 +17699,7 @@ mod tests {
 
         {
             let mut host = AndroidJsonHost::new(&root, AndroidHostMode::Test);
+            sign_in_test_account(&mut host);
             let accepted = host
                 .dispatch(
                     "feature.execute",
@@ -17694,6 +17740,7 @@ mod tests {
 
         {
             let mut reopened = AndroidJsonHost::new(&root, AndroidHostMode::Test);
+            sign_in_test_account(&mut reopened);
             let snapshot = reopened
                 .dispatch("feature.transcript.snapshot", &json!({}))
                 .unwrap();
@@ -17808,6 +17855,7 @@ mod tests {
     fn hidden_mcp_auth_resume_does_not_create_synthetic_user_transcript_entry() {
         let app_data = tempfile::tempdir().unwrap();
         let mut host = AndroidJsonHost::new(app_data.path(), AndroidHostMode::Test);
+        sign_in_test_account(&mut host);
         let completion = McpAuthWatchCompletion {
             generation: 7,
             server_id: "17".into(),
@@ -18234,6 +18282,7 @@ export function apply(ctx) {
             now_ms()
         ));
         let mut host = AndroidJsonHost::new(&root, AndroidHostMode::Test);
+        sign_in_test_account(&mut host);
         let created = host
             .dispatch(
                 "createAgent",
@@ -18270,6 +18319,7 @@ export function apply(ctx) {
         drop(host);
 
         let mut reopened = AndroidJsonHost::new(&root, AndroidHostMode::Test);
+        sign_in_test_account(&mut reopened);
         let recovered = reopened
             .dispatch("feature.agent.rosterMutation", &params)
             .unwrap();
@@ -18289,6 +18339,7 @@ export function apply(ctx) {
             now_ms()
         ));
         let mut host = AndroidJsonHost::new(&root, AndroidHostMode::Test);
+        sign_in_test_account(&mut host);
         let created = host
             .dispatch(
                 "createAgent",
@@ -18337,6 +18388,7 @@ export function apply(ctx) {
 
         drop(host);
         let mut reopened = AndroidJsonHost::new(&root, AndroidHostMode::Test);
+        sign_in_test_account(&mut reopened);
         let replay_after_process_death = reopened
             .dispatch("feature.agent.rosterMutation", &params)
             .unwrap();
@@ -18373,6 +18425,7 @@ export function apply(ctx) {
             now_ms()
         ));
         let mut host = AndroidJsonHost::new(&root, AndroidHostMode::Test);
+        sign_in_test_account(&mut host);
         let agent = host
             .agents
             .lock()
@@ -18462,6 +18515,7 @@ export function apply(ctx) {
         drop(host);
 
         let mut reopened = AndroidJsonHost::new(&root, AndroidHostMode::Test);
+        sign_in_test_account(&mut reopened);
         let reopened_list = reopened.dispatch("listAgents", &json!({})).unwrap();
         let reopened_row = reopened_list
             .as_array()
@@ -18520,6 +18574,7 @@ export function apply(ctx) {
     fn accepted_visible_user_response_clears_waiting_and_introduction_before_turn_dispatch() {
         let root = tempfile::tempdir().unwrap();
         let mut host = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+        sign_in_test_account(&mut host);
         let created = host
             .dispatch(
                 "createAgent",
@@ -18581,6 +18636,7 @@ export function apply(ctx) {
             now_ms()
         ));
         let mut host = AndroidJsonHost::new(&root, AndroidHostMode::Test);
+        sign_in_test_account(&mut host);
         let agent = host
             .agents
             .lock()
@@ -18669,7 +18725,8 @@ export function apply(ctx) {
         ));
         let account_fence;
         {
-            let host = AndroidJsonHost::new(&root, AndroidHostMode::Test);
+            let mut host = AndroidJsonHost::new(&root, AndroidHostMode::Test);
+            sign_in_test_account(&mut host);
             account_fence = host.current_turn_account_fence().unwrap();
             host.transcript
                 .lock()
@@ -18694,7 +18751,8 @@ export function apply(ctx) {
             );
         }
 
-        let reopened = AndroidJsonHost::new(&root, AndroidHostMode::Test);
+        let mut reopened = AndroidJsonHost::new(&root, AndroidHostMode::Test);
+        sign_in_test_account(&mut reopened);
         let pending = reopened
             .visible_ack_obligations
             .pending_for_account(&account_fence);
@@ -18726,6 +18784,7 @@ export function apply(ctx) {
             now_ms()
         ));
         let mut host = AndroidJsonHost::new(&root, AndroidHostMode::Test);
+        sign_in_test_account(&mut host);
         let account_fence = host.current_turn_account_fence().unwrap();
         host.visible_ack_obligations
             .record_send(&account_fence, "deleted-agent", 1.0)
@@ -18786,6 +18845,7 @@ export function apply(ctx) {
             now_ms()
         ));
         let mut host = AndroidJsonHost::new(&root, AndroidHostMode::Test);
+        sign_in_test_account(&mut host);
         let account_fence = host.current_turn_account_fence().unwrap();
         let generation = host
             .turn_journal
@@ -18839,6 +18899,7 @@ export function apply(ctx) {
             now_ms()
         ));
         let mut host = AndroidJsonHost::new(&root, AndroidHostMode::Test);
+        sign_in_test_account(&mut host);
         let account_fence = host.current_turn_account_fence().unwrap();
         host.turn_journal
             .lock()
@@ -18895,6 +18956,7 @@ export function apply(ctx) {
             now_ms()
         ));
         let mut host = AndroidJsonHost::new(&root, AndroidHostMode::Test);
+        sign_in_test_account(&mut host);
         host.dispatch(
             "feature.agent.upgradeQuiesce",
             &json!({"quiescing":true}),
@@ -18921,6 +18983,7 @@ export function apply(ctx) {
         drop(host);
 
         let mut host = AndroidJsonHost::new(&root, AndroidHostMode::Test);
+        sign_in_test_account(&mut host);
         assert_eq!(
             host.dispatch("feature.transcript.snapshot", &json!({})).unwrap(),
             json!([]),
@@ -18955,6 +19018,7 @@ export function apply(ctx) {
             now_ms()
         ));
         let mut host = AndroidJsonHost::new(&root, AndroidHostMode::Test);
+        sign_in_test_account(&mut host);
         let base = json!({
             "toolName":crate::runner::TASK_TOOL_NAME,
             "toolCallId":"review-tool",
@@ -19071,6 +19135,7 @@ export function apply(ctx) {
     fn completed_empty_kickstart_reopens_into_one_reply_nudge() {
         let root = tempfile::tempdir().unwrap();
         let mut host = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+        sign_in_test_account(&mut host);
         let created = host
             .dispatch(
                 "createAgent",
@@ -19112,6 +19177,7 @@ export function apply(ctx) {
         drop(host);
 
         let mut reopened = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+        sign_in_test_account(&mut reopened);
         reopened.drain_created_agent_kickstart_nudge_once().unwrap();
         let nudge_request_id = format!("agent-kickstart-nudge:{agent_id}:{created_at}");
         let first_nudge = reopened
@@ -19193,6 +19259,7 @@ export function apply(ctx) {
         let generation = first_nudge.generation;
         drop(reopened);
         let mut reopened_again = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+        sign_in_test_account(&mut reopened_again);
         reopened_again.drain_created_agent_kickstart_nudge_once().unwrap();
         assert_eq!(
             reopened_again
@@ -19285,6 +19352,7 @@ export function apply(ctx) {
 
         {
             let mut host = AndroidJsonHost::new(&root, AndroidHostMode::Test);
+            sign_in_test_account(&mut host);
             host.dispatch(
                 "createAgent",
                 &json!({"name":"Target","description":"provider target"}),
@@ -19307,6 +19375,7 @@ export function apply(ctx) {
 
         {
             let mut reopened = AndroidJsonHost::new(&root, AndroidHostMode::Test);
+            sign_in_test_account(&mut reopened);
             run_send(&mut reopened, "agent-management-provider-2");
         }
         let replayed_repository: Value = serde_json::from_slice(
@@ -19335,6 +19404,7 @@ export function apply(ctx) {
             now_ms()
         ));
         let mut host = AndroidJsonHost::new(&root, AndroidHostMode::Test);
+        sign_in_test_account(&mut host);
         let account_fence = host.current_turn_account_fence().unwrap();
         let mut command = json!({
             "type":"chat.send",
@@ -19374,7 +19444,8 @@ export function apply(ctx) {
         assert_eq!(snapshot[0].id, "a");
         drop(host);
 
-        let reopened = AndroidJsonHost::new(&root, AndroidHostMode::Test);
+        let mut reopened = AndroidJsonHost::new(&root, AndroidHostMode::Test);
+        sign_in_test_account(&mut reopened);
         let reopened_fence = reopened.current_turn_account_fence().unwrap();
         assert_eq!(
             reopened
@@ -19397,6 +19468,7 @@ export function apply(ctx) {
             now_ms()
         ));
         let mut host = AndroidJsonHost::new(&root, AndroidHostMode::Test);
+        sign_in_test_account(&mut host);
         let accepted = host
             .dispatch(
                 "feature.execute",
@@ -19602,6 +19674,7 @@ mod widget_action_tests {
     fn widget_response_and_dismiss_persist_canonically_and_reject_stale_or_settled_actions() {
         let root = tempfile::tempdir().unwrap();
         let mut host = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+        sign_in_test_account(&mut host);
         host.transcript
             .lock()
             .unwrap()
@@ -19651,6 +19724,7 @@ mod widget_action_tests {
 
         drop(host);
         let mut reopened = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+        sign_in_test_account(&mut reopened);
         let transcript = reopened
             .dispatch("feature.transcript.snapshot", &json!({}))
             .unwrap();
@@ -19665,6 +19739,7 @@ mod widget_action_tests {
     fn post_journal_approval_cleanup_is_canonical_and_failure_isolated() {
         let root = tempfile::tempdir().unwrap();
         let mut host = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+        sign_in_test_account(&mut host);
 
         let pending = host
             .dispatch(
@@ -19879,6 +19954,7 @@ mod transcript_page_contract_tests {
     fn transcript_snapshot_and_page_are_fenced_to_the_current_account() {
         let root = tempfile::tempdir().unwrap();
         let mut host = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+        sign_in_test_account(&mut host);
         {
             let mut transcript = host.transcript.lock().unwrap();
             transcript
@@ -19924,6 +20000,7 @@ mod transcript_page_contract_tests {
     fn host_transcript_window_and_tail_match_desktop_session_bounds() {
         let root = tempfile::tempdir().unwrap();
         let mut host = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+        sign_in_test_account(&mut host);
         {
             let mut transcript = host.transcript.lock().unwrap();
             for index in 0..6 {
@@ -20010,6 +20087,7 @@ mod transcript_page_contract_tests {
     fn host_content_search_reads_canonical_transcript_and_reopens() {
         let root = tempfile::tempdir().unwrap();
         let mut host = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+        sign_in_test_account(&mut host);
         {
             let mut transcript = host.transcript.lock().unwrap();
             transcript
@@ -20045,6 +20123,7 @@ mod transcript_page_contract_tests {
         drop(host);
 
         let mut reopened = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+        sign_in_test_account(&mut reopened);
         let second = reopened
             .dispatch(
                 "feature.contentSearch.messages",
@@ -20064,6 +20143,7 @@ mod transcript_page_contract_tests {
     fn host_media_search_reads_canonical_transcript_and_reopens() {
         let root = tempfile::tempdir().unwrap();
         let mut host = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+        sign_in_test_account(&mut host);
         host.transcript
             .lock()
             .unwrap()
@@ -20089,6 +20169,7 @@ mod transcript_page_contract_tests {
         drop(host);
 
         let mut reopened = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+        sign_in_test_account(&mut reopened);
         let second = reopened
             .dispatch(
                 "feature.contentSearch.media",
@@ -20103,6 +20184,7 @@ mod transcript_page_contract_tests {
     fn host_transcript_page_is_agent_scoped_exclusive_and_reopens() {
         let root = tempfile::tempdir().unwrap();
         let mut host = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+        sign_in_test_account(&mut host);
         {
             let mut transcript = host.transcript.lock().unwrap();
             for (id, agent_id) in [
@@ -20136,6 +20218,7 @@ mod transcript_page_contract_tests {
 
         drop(host);
         let mut reopened = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+        sign_in_test_account(&mut reopened);
         let older = reopened
             .dispatch(
                 "feature.transcript.page",
@@ -20851,6 +20934,7 @@ mod local_tool_permission_dispatch_tests {
     fn local_tool_permission_is_durable_and_invalid_values_do_not_mutate() {
         let root = tempfile::tempdir().unwrap();
         let mut host = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+        sign_in_test_account(&mut host);
         assert_eq!(
             host.dispatch("feature.settings.localToolPermission", &json!({}))
                 .unwrap()["permission"],
@@ -20875,6 +20959,7 @@ mod local_tool_permission_dispatch_tests {
 
         drop(host);
         let mut reopened = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+        sign_in_test_account(&mut reopened);
         assert_eq!(
             reopened.dispatch("feature.settings.localToolPermission", &json!({}))
                 .unwrap()["permission"],
@@ -20994,6 +21079,7 @@ mod default_model_settings_dispatch_tests {
     fn default_model_setting_is_account_scoped_durable_and_applies_to_send_without_explicit_model() {
         let root = tempfile::tempdir().unwrap();
         let mut host = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+        sign_in_test_account(&mut host);
         // The test Host has no dashboard model backend, so an unavailable model must fail closed
         // instead of being persisted as an unvalidated default.
         let scope = host.current_sidebar_account_scope().unwrap();
@@ -21039,6 +21125,7 @@ mod computer_use_model_settings_dispatch_tests {
     fn computer_use_model_setting_is_account_scoped_and_fails_closed_without_catalog() {
         let root = tempfile::tempdir().unwrap();
         let mut host = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+        sign_in_test_account(&mut host);
         let scope = host.current_sidebar_account_scope().unwrap();
         assert!(host
             .dispatch(
@@ -21082,6 +21169,7 @@ mod onboarding_settings_dispatch_tests {
     fn onboarding_seen_is_host_owned_durable_and_bound_to_current_account_scope() {
         let root = tempfile::tempdir().unwrap();
         let mut host = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+        sign_in_test_account(&mut host);
         assert_eq!(
             host.dispatch("feature.settings.onboardingSeen", &json!({}))
                 .unwrap()["hasSeenOnboarding"],
@@ -21101,6 +21189,7 @@ mod onboarding_settings_dispatch_tests {
         drop(host);
 
         let mut reopened = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+        sign_in_test_account(&mut reopened);
         let restored = reopened
             .dispatch("feature.settings.onboardingSeen", &json!({}))
             .unwrap();
@@ -21142,6 +21231,7 @@ mod auto_review_settings_dispatch_tests {
     fn auto_review_settings_dispatch_is_account_scoped_revision_fenced_and_durable() {
         let root = tempfile::tempdir().unwrap();
         let mut host = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+        sign_in_test_account(&mut host);
         let initial = host
             .dispatch("feature.settings.autoReviewInstructions", &json!({}))
             .unwrap();
@@ -21178,6 +21268,7 @@ mod auto_review_settings_dispatch_tests {
 
         drop(host);
         let mut reopened = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+        sign_in_test_account(&mut reopened);
         let restored = reopened
             .dispatch("feature.settings.autoReviewInstructions", &json!({}))
             .unwrap();
@@ -21711,6 +21802,7 @@ mod android_box_handoff_runtime_tests {
         let request_id;
         {
             let mut host = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+            sign_in_test_account(&mut host);
             let started = host
                 .dispatch(
                     "feature.agent.handoff.start",
@@ -21733,6 +21825,7 @@ mod android_box_handoff_runtime_tests {
 
         {
             let mut reopened = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+            sign_in_test_account(&mut reopened);
             let status = reopened
                 .dispatch(
                     "feature.agent.handoff.status",
@@ -21798,6 +21891,7 @@ mod android_box_handoff_runtime_tests {
         }
 
         let mut after_end = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+        sign_in_test_account(&mut after_end);
         assert!(
             after_end
                 .dispatch(
@@ -21814,6 +21908,7 @@ mod android_box_handoff_runtime_tests {
     fn journaled_handoff_resume_recovery_acknowledges_without_duplicate_turn() {
         let root = tempfile::tempdir().unwrap();
         let mut host = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+        sign_in_test_account(&mut host);
         let account_fence = host.current_turn_account_fence().unwrap();
         let started = host
             .box_handoff
@@ -21871,6 +21966,7 @@ mod android_box_handoff_runtime_tests {
     fn account_transition_cleanup_forgets_only_the_previous_handoff_fence() {
         let root = tempfile::tempdir().unwrap();
         let mut host = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+        sign_in_test_account(&mut host);
         host.dispatch(
             "feature.agent.handoff.start",
             &json!({"agentId":"agent-old","instruction":"Old account work"}),
@@ -21956,6 +22052,7 @@ mod host_event_bus_delivery_tests {
     fn feature_receive_projects_canonical_event_without_competing_consumption() {
         let root = tempfile::tempdir().unwrap();
         let mut host = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+        sign_in_test_account(&mut host);
         let receiver = host.host_event_bus().subscribe();
 
         let accepted = host
@@ -22005,6 +22102,7 @@ mod turn_interrupt_telemetry_wiring_tests {
     fn cancelling_running_turn_persists_interrupt_telemetry_after_canonical_settlement() {
         let root = tempfile::tempdir().unwrap();
         let mut host = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+        sign_in_test_account(&mut host);
         let account_fence = host.current_turn_account_fence().unwrap();
         let generation = host
             .turn_journal
@@ -22119,6 +22217,7 @@ mod automation_event_trigger_wiring_tests {
     fn event_trigger_route_rejects_unrelated_delivery() {
         let root = tempfile::tempdir().unwrap();
         let mut host = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+        sign_in_test_account(&mut host);
         let created = host
             .dispatch(
                 "createAgent",
@@ -22175,6 +22274,7 @@ mod automation_event_batch_wiring_tests {
     fn production_event_routes_preserve_debounce_dedupe_and_reconciliation() {
         let root = tempfile::tempdir().unwrap();
         let mut host = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+        sign_in_test_account(&mut host);
         let created = host
             .dispatch(
                 "createAgent",
@@ -22237,6 +22337,7 @@ mod automation_event_batch_wiring_tests {
         drop(host);
 
         let mut reopened = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+        sign_in_test_account(&mut reopened);
         let outcome_unknown = reopened
             .dispatch(
                 "feature.automation.event.claim",
@@ -22263,6 +22364,7 @@ mod automation_spend_guard_wiring_tests {
     fn production_automation_start_issues_guard_card_and_widget_answer_snoozes() {
         let root = tempfile::tempdir().unwrap();
         let mut host = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+        sign_in_test_account(&mut host);
         let created = host
             .dispatch(
                 "createAgent",
@@ -22359,6 +22461,7 @@ mod user_message_received_telemetry_wiring_tests {
         });
         {
             let mut host = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+            sign_in_test_account(&mut host);
             host.queue_chat_turn("acceptance-op-a", "acceptance-request-a", &command, None)
                 .unwrap();
             assert_eq!(
@@ -22377,6 +22480,7 @@ mod user_message_received_telemetry_wiring_tests {
         }
 
         let mut reopened = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+        sign_in_test_account(&mut reopened);
         reopened
             .queue_chat_turn("acceptance-op-b", "acceptance-request-b", &command, None)
             .unwrap();
@@ -22561,6 +22665,7 @@ mod user_message_received_telemetry_wiring_tests {
     fn duplicate_request_id_never_replays_a_different_or_unsettled_user_turn() {
         let root = tempfile::tempdir().unwrap();
         let mut host = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+        sign_in_test_account(&mut host);
         let account_fence = host.current_turn_account_fence().unwrap();
         host.transcript
             .lock()
@@ -22656,6 +22761,7 @@ mod user_message_received_telemetry_wiring_tests {
     fn newly_persisted_user_message_emits_once_with_truthful_in_flight_state() {
         let root = tempfile::tempdir().unwrap();
         let mut host = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+        sign_in_test_account(&mut host);
         let account_fence = host.current_turn_account_fence().unwrap();
         host.agent_turn_interruptions
             .register(
