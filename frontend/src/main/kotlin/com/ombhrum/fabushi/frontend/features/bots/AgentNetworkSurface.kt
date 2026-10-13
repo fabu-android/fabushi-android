@@ -59,6 +59,11 @@ internal fun AgentNetworkSurface(
     }
     val selected = nodes.firstOrNull { it.id == selectedId }
     val botsById = remember(bots) { bots.associateBy { it.id } }
+    var showSharedRooms by remember { mutableStateOf(false) }
+    if (showSharedRooms) {
+        SharedRoomsSurface(onBack = { showSharedRooms = false })
+        return
+    }
 
     LaunchedEffect(nodes, edges, selectedId, appAgentSurface) {
         val elements = mutableListOf(
@@ -92,6 +97,10 @@ internal fun AgentNetworkSurface(
                 Text("Org chart", color = GrokMobileInk, fontSize = 20.sp, fontWeight = FontWeight.Bold)
                 Text(agentNetworkSummary(nodes, edges), color = GrokMobileMuted, fontSize = 12.sp, modifier = Modifier.testTag("agent-network-summary"))
             }
+            TextButton(
+                onClick = { showSharedRooms = true },
+                modifier = Modifier.testTag("agent-network-shared-rooms"),
+            ) { Text("Shared rooms") }
             TextButton(onClick = { selectedId = null }) { Text("Reset") }
         }
         Box(Modifier.weight(1f).fillMaxWidth()) {
