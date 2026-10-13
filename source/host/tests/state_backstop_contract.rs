@@ -4,12 +4,12 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use mahayana_host_runtime::extensions::extension_ids_generated::HostExtensionId;
-use mahayana_host_runtime::extensions::state_backstop::extension::{
+use fabushi_mahayana_host::extensions::extension_ids_generated::HostExtensionId;
+use fabushi_mahayana_host::extensions::state_backstop::extension::{
     STATE_BACKSTOP_DEPENDENCIES, start_state_backstop_extension_with_gate,
     state_backstop_extension_id,
 };
-use mahayana_host_runtime::extensions::state_backstop::state_backstop_service::{
+use fabushi_mahayana_host::extensions::state_backstop::state_backstop_service::{
     SAND_STATE_BACKSTOP_REL_PATH, SandStateBackstop, StateBackstopObjectStore,
     StateBackstopOptions, StateBackstopSnapshotResult,
     is_state_backstop_enabled_value, read_store_db_bytes,
