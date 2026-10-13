@@ -48,7 +48,7 @@ use crate::mcp_auth::{
     SandPrivacyMode as BackendSandPrivacyMode,
 };
 use crate::extensions::telemetry::agent_error_telemetry::{
-    agent_error_telemetry, AgentErrorReport,
+    agent_error_detail_telemetry, agent_error_telemetry, AgentErrorDetail, AgentErrorReport,
 };
 use crate::extensions::telemetry::sand_error_tags::SandErrorValue;
 use crate::extensions::telemetry::connector_auth_telemetry::{
@@ -2190,22 +2190,38 @@ impl AndroidJsonHost {
             .and_then(Value::as_str)
             .filter(|value| !value.trim().is_empty())
             .map(str::to_string);
-        let projection = agent_error_telemetry(&AgentErrorReport {
+        let detail = event
+            .get("message")
+            .and_then(Value::as_str)
+            .filter(|value| !value.trim().is_empty())
+            .map(|message| AgentErrorDetail {
+                message: message.to_string(),
+                // Android terminal events intentionally do not carry provider stacks. Never
+                // synthesize or leak a stack just to satisfy the Desktop detail schema.
+                stack: None,
+            });
+        let report = AgentErrorReport {
             source: "android-turn".into(),
             conversation_id: conversation_id.to_string(),
             request_id,
+            // The terminal event does not carry a frozen provider error code. Use the registry
+            // fallback instead of guessing a transport/agent classification.
             error: SandErrorValue::new("SAND-E0001"),
-            detail: None,
-        });
-        let (Some(level), Some(message)) = (projection.level, projection.event) else {
-            return;
+            detail,
         };
+        let summary = agent_error_telemetry(&report);
+        let detail = agent_error_detail_telemetry(&report);
         self.sync_structured_log_account_slot();
         // Telemetry is observational. A spill failure must never change terminal turn truth,
         // replay a side effect, or turn an already-settled failure into another failure.
-        let _ = self
-            .structured_log_spool
-            .record(level, message, projection.metadata, now_ms());
+        for projection in std::iter::once(summary).chain(detail) {
+            let (Some(level), Some(message)) = (projection.level, projection.event) else {
+                continue;
+            };
+            let _ = self
+                .structured_log_spool
+                .record(level, message, projection.metadata, now_ms());
+        }
     }
 
     fn record_product_telemetry(
