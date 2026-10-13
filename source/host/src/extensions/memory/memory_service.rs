@@ -1471,3 +1471,64 @@ fn read_child_directory_names(path: &Path) -> Vec<String> {
         .filter_map(|entry| entry.file_name().into_string().ok())
         .collect()
 }
+
+
+#[cfg(test)]
+mod android_port_tests {
+    use super::*;
+
+    #[test]
+    fn explicit_memory_survives_reopen_and_preserves_profile_and_recent_order() {
+        let root = tempfile::tempdir().unwrap();
+        let memory_dir = root.path().join("memory");
+        let store = FileMemoryStore::new(&memory_dir);
+        store
+            .add_memory("Likes green tea", 1_700_000_000_000, MemoryKind::Profile)
+            .unwrap()
+            .expect("profile fact should be stored");
+        store
+            .add_memory("Asked about Android", 1_700_086_400_000, MemoryKind::Log)
+            .unwrap()
+            .expect("log fact should be stored");
+        drop(store);
+
+        let reopened = FileMemoryStore::new(&memory_dir);
+        let recall = reopened.recall(10);
+        assert_eq!(recall.profile.len(), 1);
+        assert_eq!(recall.profile[0].content, "Likes green tea");
+        assert_eq!(recall.recent.len(), 1);
+        assert_eq!(recall.recent[0].content, "Asked about Android");
+    }
+
+    #[test]
+    fn normalized_duplicate_does_not_create_second_memory_truth() {
+        let root = tempfile::tempdir().unwrap();
+        let store = FileMemoryStore::new(root.path().join("memory"));
+        assert!(store
+            .add_memory("  Remember   This  ", 1_700_000_000_000, MemoryKind::Log)
+            .unwrap()
+            .is_some());
+        assert!(store
+            .add_memory("remember this", 1_700_000_001_000, MemoryKind::Profile)
+            .unwrap()
+            .is_none());
+        assert_eq!(store.count_memories(), 1);
+    }
+
+    #[test]
+    fn explicit_remove_is_durable_across_process_reopen() {
+        let root = tempfile::tempdir().unwrap();
+        let memory_dir = root.path().join("memory");
+        let store = FileMemoryStore::new(&memory_dir);
+        let record = store
+            .add_memory("Temporary fact", 1_700_000_000_000, MemoryKind::Log)
+            .unwrap()
+            .expect("fact should be stored");
+        assert!(store.remove_memory(&record.id).unwrap());
+        drop(store);
+
+        let reopened = FileMemoryStore::new(&memory_dir);
+        assert!(!reopened.has_memories());
+        assert!(reopened.list_memories(10).is_empty());
+    }
+}
