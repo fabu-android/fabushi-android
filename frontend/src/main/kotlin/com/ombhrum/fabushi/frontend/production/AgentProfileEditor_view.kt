@@ -58,6 +58,9 @@ internal fun AgentProfileEditor(
     onStageGeneratedAvatarImage: suspend (String, String) -> Result<AndroidAvatarImageSource>,
     onEncodeAvatarCrop: suspend (AndroidAvatarImageSource, AndroidAvatarCrop) -> Result<String>,
     onSetNotifications: (String, Boolean) -> Unit,
+    channelConnections: List<AgentChannelConnection>,
+    channelLoading: Boolean,
+    onDisconnectChannel: (String, String) -> Unit,
 ) {
     val target = agent ?: return
     var name by remember(target.id, target.name) { mutableStateOf(target.name) }
@@ -344,7 +347,12 @@ internal fun AgentProfileEditor(
                     Text("Channels")
                     Text("Connect this agent to a messaging platform so it can talk to people there.")
                     desktopMainAgentChannelManifests
-                        .map { manifest -> projectAgentChannelRow(manifest, connection = null) }
+                        .map { manifest ->
+                            projectAgentChannelRow(
+                                manifest,
+                                channelConnections.firstOrNull { it.platform == manifest.platform },
+                            )
+                        }
                         .forEach { row ->
                             Row(
                                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -356,13 +364,28 @@ internal fun AgentProfileEditor(
                                     Text(row.manifest.displayName)
                                     Text(row.detail)
                                 }
-                                row.statusLabel?.let { label ->
-                                    Text(
-                                        label,
-                                        modifier = Modifier.testTag(
-                                            "agent-profile-channel-status-${target.id}-${row.manifest.platform}",
-                                        ),
-                                    )
+                                Column(horizontalAlignment = Alignment.End) {
+                                    row.statusLabel?.let { label ->
+                                        Text(
+                                            label,
+                                            modifier = Modifier.testTag(
+                                                "agent-profile-channel-status-${target.id}-${row.manifest.platform}",
+                                            ),
+                                        )
+                                    }
+                                    if (row.kind == AgentChannelRowKind.CONNECTED) {
+                                        TextButton(
+                                            enabled = !channelLoading,
+                                            onClick = {
+                                                onDisconnectChannel(target.id, row.manifest.platform)
+                                            },
+                                            modifier = Modifier.testTag(
+                                                "agent-profile-channel-disconnect-${target.id}-${row.manifest.platform}",
+                                            ),
+                                        ) {
+                                            Text(if (channelLoading) "Disconnecting…" else "Disconnect")
+                                        }
+                                    }
                                 }
                             }
                         }
