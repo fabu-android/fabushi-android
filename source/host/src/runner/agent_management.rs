@@ -85,6 +85,26 @@ impl AgentTurnInterruptionRegistry {
         turn.cancelled.store(true, Ordering::Release);
         Ok(Some(turn.operation_id.clone()))
     }
+    pub fn interrupt_for_deletion(
+        &self,
+        agent_id: &str,
+        account_fence: &str,
+    ) -> Result<Option<String>, String> {
+        let active = self
+            .active
+            .lock()
+            .map_err(|_| "Agent turn interruption registry lock poisoned".to_string())?;
+        let Some(turn) = active.get(agent_id) else { return Ok(None); };
+        if turn.account_fence != account_fence {
+            return Ok(None);
+        }
+        // Deletion is stronger than Agent-to-Agent priority interruption. A protected user lane
+        // may not survive the removal of its canonical Agent owner and write back into a deleted
+        // entity, so deletion always cancels the live turn inside the matching account epoch.
+        turn.cancelled.store(true, Ordering::Release);
+        Ok(Some(turn.operation_id.clone()))
+    }
+
 }
 
 pub struct AgentManagementRoutedTools {
@@ -794,6 +814,30 @@ mod tests {
         interruptions.unregister_operation("operation-target");
         assert!(!interruptions.has_active_turn(&target.id, "acct:a"));
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn deletion_interrupts_even_a_protected_user_lane_but_never_crosses_account_fence() {
+        let interruptions = AgentTurnInterruptionRegistry::default();
+        let cancelled = Arc::new(AtomicBool::new(false));
+        interruptions.register(
+            "agent-delete",
+            "operation-delete",
+            "acct:a",
+            true,
+            Arc::clone(&cancelled),
+        ).unwrap();
+
+        assert_eq!(
+            interruptions.interrupt_for_deletion("agent-delete", "acct:b").unwrap(),
+            None,
+        );
+        assert!(!cancelled.load(Ordering::Acquire));
+        assert_eq!(
+            interruptions.interrupt_for_deletion("agent-delete", "acct:a").unwrap().as_deref(),
+            Some("operation-delete"),
+        );
+        assert!(cancelled.load(Ordering::Acquire));
     }
 
     #[test]
