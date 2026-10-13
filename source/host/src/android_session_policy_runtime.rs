@@ -3,6 +3,10 @@ use std::sync::{Arc, Weak};
 use crate::extensions::{
     experiments::{HostExperimentsExtension, StopGateSubscription},
     session::{
+        box_handoff_service::{
+            BoxHandoffDeps, BoxHandoffService, HandoffRequest, HandoffStartResult, HandoffTrigger,
+            PendingHandoff,
+        },
         conversation_size_limits::{
             pin_conversation_gc, pin_conversation_size_limits_reader, ConversationSizeLimits,
         },
@@ -22,6 +26,7 @@ const LEGACY_BLOB_RETIREMENT_GATE: &str = "sand_legacy_store_blob_retirement";
 /// create another session/store owner and deliberately does not guess a Desktop agents-root for
 /// destructive maintenance while Android still ships its native transcript repository.
 pub struct AndroidSessionPolicyBindings {
+    handoff: BoxHandoffService,
     stops: Vec<StopGateSubscription>,
 }
 
@@ -49,12 +54,32 @@ impl AndroidSessionPolicyBindings {
             LEGACY_BLOB_RETIREMENT_GATE,
             Arc::new(pin_legacy_store_blob_retirement),
         ));
-        Self { stops }
+        Self {
+            handoff: BoxHandoffService::new(BoxHandoffDeps::default()),
+            stops,
+        }
+    }
+
+    pub fn pending_handoff(&self, agent_id: &str) -> Option<PendingHandoff> {
+        self.handoff.get(agent_id)
+    }
+
+    pub fn start_handoff(&self, request: HandoffRequest) -> HandoffStartResult {
+        self.handoff.start(request)
+    }
+
+    pub fn end_handoff(&self, agent_id: &str, trigger: HandoffTrigger) -> Result<bool, String> {
+        self.handoff.end(agent_id, trigger)
+    }
+
+    pub fn forget_handoff(&self, agent_id: &str) {
+        self.handoff.forget(agent_id);
     }
 }
 
 impl Drop for AndroidSessionPolicyBindings {
     fn drop(&mut self) {
+        self.handoff.clear_all();
         for stop in self.stops.drain(..) {
             stop();
         }
@@ -82,6 +107,36 @@ fn apply_gate_pins(experiments: &HostExperimentsExtension) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn shipping_binding_owns_one_handoff_registry_and_clears_terminal_state() {
+        let bindings = AndroidSessionPolicyBindings::bind(Arc::new(HostExperimentsExtension::new()));
+        let request = HandoffRequest {
+            agent_id: "agent-a".into(),
+            instruction: "Take over the remote step".into(),
+            telemetry: Default::default(),
+        };
+        let started = bindings.start_handoff(request.clone());
+        let request_id = match started {
+            HandoffStartResult::Started { request_id } => request_id,
+            other => panic!("unexpected first handoff result: {other:?}"),
+        };
+        assert_eq!(
+            bindings.pending_handoff("agent-a").as_ref().map(|value| value.request_id.as_str()),
+            Some(request_id.as_str()),
+        );
+        assert!(matches!(
+            bindings.start_handoff(request),
+            HandoffStartResult::AlreadyPending { .. }
+        ));
+        assert!(bindings
+            .end_handoff("agent-a", HandoffTrigger::Name("cancel".into()))
+            .unwrap());
+        assert!(bindings.pending_handoff("agent-a").is_none());
+        assert!(!bindings
+            .end_handoff("agent-a", HandoffTrigger::Name("cancel".into()))
+            .unwrap());
+    }
 
     #[test]
     fn dynamic_conversation_limits_follow_canonical_authenticated_experiment_state() {
