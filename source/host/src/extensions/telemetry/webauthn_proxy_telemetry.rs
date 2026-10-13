@@ -17,10 +17,47 @@ pub const KNOWN_DOM_ERROR_NAMES: &[&str] = &[
     "UnknownError",
 ];
 
+pub const WEBAUTHN_SIGN_ERROR_CLASSES: &[&str] = &[
+    "no_credentials",
+    "pin_not_set",
+    "pin_blocked",
+    "pin_other",
+    "cancelled_or_timeout",
+    "unsupported_option",
+    "hid_error",
+    "ambiguous_credential",
+    "bad_options",
+    "create_unsupported",
+    "platform_api",
+    "signer_other",
+    "helper_spawn_failed",
+    "helper_no_result",
+];
+
 pub fn branded_dom_error(value: Option<&str>) -> &'static str {
     value
         .and_then(|candidate| KNOWN_DOM_ERROR_NAMES.iter().copied().find(|known| *known == candidate))
         .unwrap_or("OtherError")
+}
+
+pub fn branded_sign_error_class(value: Option<&str>) -> &'static str {
+    value
+        .and_then(|candidate| {
+            WEBAUTHN_SIGN_ERROR_CLASSES
+                .iter()
+                .copied()
+                .find(|known| *known == candidate)
+        })
+        .unwrap_or("other")
+}
+
+fn origin_class(value: fabushi_android_shared::webauthn_gateway::WebAuthnOriginClass) -> &'static str {
+    use fabushi_android_shared::webauthn_gateway::WebAuthnOriginClass;
+    match value {
+        WebAuthnOriginClass::CursorCom => "cursor_com",
+        WebAuthnOriginClass::Subdomain => "subdomain",
+        WebAuthnOriginClass::External => "external",
+    }
 }
 
 pub fn failure_code(report: &WebAuthnBridgeReport) -> Option<&'static str> {
@@ -41,6 +78,7 @@ pub fn webauthn_proxy_telemetry(report: &WebAuthnBridgeReport) -> BTreeMap<Strin
         ("event".into(), WEBAUTHN_PROXY_EVENT.into()),
         ("stage".into(), report.stage.clone()),
         ("outcome".into(), report.outcome.clone()),
+        ("origin_class".into(), origin_class(report.origin_class).into()),
         ("ceremony_kind".into(), report.ceremony_kind.clone()),
         ("request_id".into(), report.request_id.clone()),
         ("elapsed_ms".into(), report.elapsed_ms.to_string()),
@@ -65,6 +103,12 @@ pub fn webauthn_proxy_telemetry(report: &WebAuthnBridgeReport) -> BTreeMap<Strin
     }
     if let Some(raw) = report.raw_dom_error_name.as_deref() {
         fields.insert("dom_error".into(), branded_dom_error(Some(raw)).into());
+    }
+    if let Some(raw) = report.raw_sign_error_class.as_deref() {
+        fields.insert(
+            "sign_error_class".into(),
+            branded_sign_error_class(Some(raw)).into(),
+        );
     }
     if let Some(code) = failure_code(report) {
         fields.insert("error_code".into(), code.into());
@@ -93,7 +137,9 @@ mod tests {
             elapsed_ms: 12,
         };
         let fields = webauthn_proxy_telemetry(&report);
+        assert_eq!(fields.get("origin_class").map(String::as_str), Some("external"));
         assert_eq!(fields.get("dom_error").map(String::as_str), Some("OtherError"));
+        assert_eq!(fields.get("sign_error_class").map(String::as_str), Some("other"));
         assert_eq!(fields.get("error_code").map(String::as_str), Some("webauthn_sign_failed"));
         assert_eq!(fields.get("level").map(String::as_str), Some("warn"));
     }
