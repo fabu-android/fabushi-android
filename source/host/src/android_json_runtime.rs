@@ -11,7 +11,7 @@ use crate::capability_broker::{CapabilityDecision, PendingCapabilityCall, Shared
 use crate::automation_id::stable_account_automation_id;
 use crate::automation_runtime::{run_json as automation_run_json, AutomationRuntime, AutomationSpec};
 use crate::auto_review_settings::{AutoReviewInstructions, DurableAutoReviewSettings};
-use crate::android_agent_roster::AndroidAgentRoster;
+use crate::android_agent_roster::{AndroidAgentRoster, AndroidAgentRosterRecoveryOutcome};
 use crate::android_process_metrics::AndroidProcessMetricsCollector;
 use crate::process_crash_guard::{AndroidUncleanExitKind, AndroidUncleanExitMarker};
 use crate::android_structured_log_spill::AndroidStructuredLogSpool;
@@ -1106,10 +1106,32 @@ impl AndroidJsonHost {
                 }
             }
         }
-        let agents = Arc::new(Mutex::new(
-            AndroidAgentRoster::open(app_data_dir.join("agents.json"))
-                .unwrap_or_else(|error| panic!("failed to open canonical Android agent roster: {error}")),
-        ));
+        let (agent_roster, agent_roster_recovery) =
+            AndroidAgentRoster::open_recovering(app_data_dir.join("agents.json"))
+                .unwrap_or_else(|error| {
+                    panic!("failed to recover canonical Android agent roster: {error}")
+                });
+        if let Some(recovery) = agent_roster_recovery {
+            let outcome = match recovery.outcome {
+                AndroidAgentRosterRecoveryOutcome::ResetCorruptStore => "reset_corrupt_store",
+            };
+            let metadata = BTreeMap::from([
+                ("component".to_string(), "agent_roster".to_string()),
+                ("action".to_string(), "recover".to_string()),
+                ("outcome".to_string(), outcome.to_string()),
+                (
+                    "quarantinePath".to_string(),
+                    recovery.quarantine_path.to_string_lossy().to_string(),
+                ),
+            ]);
+            let _ = structured_log_spool.record(
+                "error",
+                "sand.recovery_action",
+                metadata,
+                now_ms(),
+            );
+        }
+        let agents = Arc::new(Mutex::new(agent_roster));
         let sidebar_sections = Arc::new(Mutex::new(
             AndroidSidebarSections::open(app_data_dir.join("sidebar-sections.json"))
                 .unwrap_or_else(|error| panic!("failed to open canonical Android sidebar sections: {error}")),
