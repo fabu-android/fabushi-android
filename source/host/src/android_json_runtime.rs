@@ -2916,6 +2916,8 @@ impl AndroidJsonHost {
             "feature.call.transition" => self.human_call_transition(params),
             "feature.call.media.update" => self.human_call_media_update(params),
             "feature.call.signal.send" => self.human_call_signal_send(params),
+            "feature.call.signal.receiveRemote" => self.human_call_signal_receive_remote(params),
+            "feature.call.signal.remoteWatermark" => self.human_call_signal_remote_watermark(params),
             "feature.call.signal.list" => self.human_call_signal_list(params),
             "feature.call.reconcile" => self.human_call_reconcile(params),
             "feature.automation.upsert" => self.automation_upsert(params),
@@ -4565,6 +4567,31 @@ impl AndroidJsonHost {
             now_ms(),
         )?;
         serde_json::to_value(signal).map_err(|error| error.to_string())
+    }
+
+    fn human_call_signal_receive_remote(&mut self, params: &Value) -> Result<Value, String> {
+        let account_fence = self.current_turn_account_fence()?;
+        let signal = self.human_calls.receive_remote_signal(
+            required_string(params, "callId")?,
+            &account_fence,
+            required_u64(params, "generation")?,
+            required_u64(params, "eventSeq")?,
+            required_string(params, "senderDeviceId")?,
+            required_string(params, "kind")?,
+            params.get("payload").cloned().ok_or("signal payload is required")?,
+            now_ms(),
+        )?;
+        serde_json::to_value(signal).map_err(|error| error.to_string())
+    }
+
+    fn human_call_signal_remote_watermark(&mut self, params: &Value) -> Result<Value, String> {
+        let account_fence = self.current_turn_account_fence()?;
+        let event_seq = self.human_calls.remote_event_seq(
+            required_string(params, "callId")?,
+            &account_fence,
+            required_u64(params, "generation")?,
+        )?;
+        Ok(json!({"eventSeq":event_seq}))
     }
 
     fn human_call_signal_list(&mut self, params: &Value) -> Result<Value, String> {
