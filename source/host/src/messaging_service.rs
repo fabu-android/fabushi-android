@@ -126,8 +126,12 @@ impl AndroidMessagingService {
                     let quarantine = repository_corrupt_path(&path);
                     copy_file_durably(&path, &quarantine)?;
                     let backup = repository_backup_path(&path);
-                    let backup_bytes = fs::read(&backup).map_err(|_| primary_error)?;
-                    let decoded = decode_repository_state(&backup_bytes).map_err(|_| primary_error)?;
+                    let primary_kind = primary_error.kind();
+                    let primary_message = primary_error.to_string();
+                    let restore_error = || io::Error::new(primary_kind, primary_message.clone());
+                    let backup_bytes = fs::read(&backup).map_err(|_| restore_error())?;
+                    let decoded =
+                        decode_repository_state(&backup_bytes).map_err(|_| restore_error())?;
                     recovered_from_backup = true;
                     decoded
                 }
