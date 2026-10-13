@@ -296,6 +296,7 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
         ),
     )
     private var rosterSelectionAccountSlot: String? = null
+    private val rosterRefreshFence = RosterRefreshFence()
     private val agentSettingsFence = AgentSettingsMutationFence()
     private val mutableState = MutableStateFlow(MobileBotUiState())
     private val hiddenChatsMutationController = HiddenChatsMutationController(
@@ -633,6 +634,7 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
 
     fun refreshBots() {
         if (mutableState.value.busy || mutableState.value.rosterLoading) return
+        val refreshToken = rosterRefreshFence.begin()
         mutableState.value = mutableState.value.copy(rosterLoading = true)
         viewModelScope.launch {
             val previous = mutableState.value.bots
@@ -663,11 +665,43 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
                     )
                 }
             }
+            if (!rosterRefreshFence.isCurrent(refreshToken)) return@launch
+            if (selectionAccountResult.isFailure) {
+                commitState(
+                    mutableState.value.copy(
+                        rosterLoading = false,
+                        error = selectionAccountResult.exceptionOrNull()?.message
+                            ?: "Agent roster account scope could not be confirmed",
+                    ),
+                )
+                return@launch
+            }
+            val refreshAccountSlot = rosterSelectionAccountSlot
             val restoredSelection = rosterSelection.get().currentAgentId
             val installedResult = withContext(Dispatchers.IO) { runCatching { loadInstalledMiniAppBots() } }
             val surfaceResult = withContext(Dispatchers.IO) { runCatching { loadSurfaceBots() } }
             val pinnedResult = withContext(Dispatchers.IO) { runCatching { coordinator.agentPinnedIds() } }
             val sectionsResult = withContext(Dispatchers.IO) { runCatching { coordinator.agentSidebarSections() } }
+            val settledAccountResult = withContext(Dispatchers.IO) {
+                runCatching { canonicalRosterSelectionAccountSlot() }
+            }
+            if (!rosterRefreshFence.isCurrent(refreshToken)) return@launch
+            if (settledAccountResult.isFailure) {
+                commitState(
+                    mutableState.value.copy(
+                        rosterLoading = false,
+                        error = settledAccountResult.exceptionOrNull()?.message
+                            ?: "Agent roster account scope could not be revalidated",
+                    ),
+                )
+                return@launch
+            }
+            val settledAccountSlot = settledAccountResult.getOrNull()
+            if (!rosterRefreshFence.accepts(refreshToken, refreshAccountSlot, settledAccountSlot)) {
+                commitState(mutableState.value.copy(rosterLoading = false))
+                refreshBots()
+                return@launch
+            }
             val cachedInstalledBots = if (installedResult.isFailure) {
                 withContext(Dispatchers.IO) {
                     runCatching {
@@ -707,11 +741,17 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
                     add("sidebar sections: ${(error.message ?: error::class.java.simpleName).take(240)}")
                 }
             }
+            if (!rosterRefreshFence.accepts(refreshToken, refreshAccountSlot, rosterSelectionAccountSlot)) {
+                return@launch
+            }
             withContext(Dispatchers.IO) {
                 rosterSelection.reconcile(
                     agentIds = listOf("mahayana-assistant") + bots.map(MobileBotSummaryAndroid::id),
                     isRosterComplete = installedResult.isSuccess && surfaceResult.isSuccess,
                 )
+            }
+            if (!rosterRefreshFence.accepts(refreshToken, refreshAccountSlot, rosterSelectionAccountSlot)) {
+                return@launch
             }
             mutableState.value = mutableState.value.copy(
                 bots = bots,
@@ -1799,6 +1839,7 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
         closeConversationOutline()
         rosterSelection.reset()
         rosterSelectionAccountSlot = null
+        rosterRefreshFence.invalidate()
         openBotGeneration += 1
         sendPresentationGeneration += 1
         historyGeneration += 1
