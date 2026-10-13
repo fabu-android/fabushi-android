@@ -3529,8 +3529,36 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
 
     private fun handleOperationEvent(event: JSONObject) {
         val type = event.optString("type")
-        if (type == "agents" || type == "agent-upserted" || type == "agent-deleted") {
+        if (
+            type == "agents" ||
+            type == "agent-upserted" ||
+            type == "agent-deleted" ||
+            type == "agent.profile.changed"
+        ) {
             refreshBots()
+            return
+        }
+        if (type == "agent.timeline.event") {
+            val active = mutableState.value.activeBot
+            if (active != null && event.optString("agentId") == active.id) {
+                val timeline = event.optJSONObject("event")
+                if (timeline?.optString("type") == "name-changed") {
+                    val renamedTo = timeline.optString("to").trim()
+                    if (renamedTo.isNotEmpty()) {
+                        val updatedAt = event.optLong("updatedAt", 0L)
+                        upsert(
+                            MobileChatMessage(
+                                id = "timeline:${active.id}:$updatedAt:name-changed",
+                                role = MobileChatRole.ASSISTANT,
+                                text = "",
+                                kind = MobileChatEntryKind.ACTION,
+                                actionTitle = "Renamed to $renamedTo",
+                                actionStatus = "completed",
+                            ),
+                        )
+                    }
+                }
+            }
             return
         }
         if (type == "agent.async-tasks.changed") {
