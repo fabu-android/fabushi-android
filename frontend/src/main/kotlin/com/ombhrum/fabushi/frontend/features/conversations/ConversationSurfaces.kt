@@ -856,7 +856,13 @@ internal fun ConversationDetail(
                     )
                     OutlinedTextField(
                         value = forwardQuery,
-                        onValueChange = { forwardQuery = it; forwardActiveRecipientIndex = 0 },
+                        onValueChange = {
+                            forwardRecipientSearchGeneration += 1
+                            forwardRecipientSearchLoading = true
+                            forwardRecipientSearchError = null
+                            forwardQuery = it
+                            forwardActiveRecipientIndex = 0
+                        },
                         modifier = Modifier.fillMaxWidth().testTag("forward-recipient-search"),
                         enabled = !forwardSubmitting,
                         singleLine = true,
