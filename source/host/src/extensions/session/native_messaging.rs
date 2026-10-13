@@ -1,4 +1,5 @@
 use std::path::Path;
+use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -106,8 +107,30 @@ pub struct FabushiCallIceServer {
 /// AndroidKeyStore and must eventually be injected into a live transport through a typed Host
 /// adapter. Until that injection exists, production construction fails closed instead of reading
 /// process environment or pretending that a remote side effect succeeded.
-#[derive(Debug, Clone, Default)]
-pub struct FabushiNativeMessagingClient;
+#[derive(Clone)]
+pub struct FabushiNativeMessagingCredential {
+    pub access_token: String,
+    pub device_id: String,
+    pub user_id: Value,
+}
+
+pub trait FabushiNativeMessagingCredentialProvider: Send + Sync {
+    fn current_credential(&self) -> Result<FabushiNativeMessagingCredential, String>;
+}
+
+#[derive(Clone)]
+pub struct FabushiNativeMessagingClient {
+    credential_provider: Arc<dyn FabushiNativeMessagingCredentialProvider>,
+}
+
+impl std::fmt::Debug for FabushiNativeMessagingClient {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("FabushiNativeMessagingClient")
+            .field("credential_provider", &"<redacted canonical account owner>")
+            .finish()
+    }
+}
 
 impl FabushiNativeMessagingClient {
     pub fn from_env() -> Result<Self, String> {
@@ -117,6 +140,20 @@ impl FabushiNativeMessagingClient {
         )
     }
 
+    pub fn with_credential_provider(
+        credential_provider: Arc<dyn FabushiNativeMessagingCredentialProvider>,
+    ) -> Self {
+        Self { credential_provider }
+    }
+
+    fn current_credential(&self) -> Result<FabushiNativeMessagingCredential, String> {
+        let credential = self.credential_provider.current_credential()?;
+        required_trimmed(&credential.access_token, "accessToken")?;
+        required_trimmed(&credential.device_id, "deviceId")?;
+        let _ = fabushi_identity_text(&credential.user_id)?;
+        Ok(credential)
+    }
+
     fn unavailable<T>(&self, operation: &str) -> Result<T, String> {
         Err(format!(
             "Android native Human messaging {operation} is unavailable until the canonical account credential owner is injected."
@@ -124,7 +161,11 @@ impl FabushiNativeMessagingClient {
     }
 
     pub fn identity(&self) -> Result<FabushiNativeIdentity, String> {
-        self.unavailable("identity")
+        let credential = self.current_credential()?;
+        Ok(FabushiNativeIdentity {
+            user_id: fabushi_identity_text(&credential.user_id)?,
+            device_id: required_trimmed(&credential.device_id, "deviceId")?.to_string(),
+        })
     }
 
     pub fn upload_direct_message_resource(
@@ -246,10 +287,39 @@ mod tests {
         assert!(error.contains("disabled"));
     }
 
+    struct TestCredentialProvider;
+
+    impl FabushiNativeMessagingCredentialProvider for TestCredentialProvider {
+        fn current_credential(&self) -> Result<FabushiNativeMessagingCredential, String> {
+            Ok(FabushiNativeMessagingCredential {
+                access_token: "test-token".into(),
+                device_id: "android-device".into(),
+                user_id: Value::String("human:test".into()),
+            })
+        }
+    }
+
     #[test]
-    fn remote_operations_do_not_report_fake_success_without_injected_credentials() {
-        let client = FabushiNativeMessagingClient;
-        assert!(client.identity().is_err());
+    fn injected_identity_comes_from_the_canonical_provider_without_exposing_token() {
+        let client = FabushiNativeMessagingClient::with_credential_provider(Arc::new(
+            TestCredentialProvider,
+        ));
+        assert_eq!(
+            client.identity().unwrap(),
+            FabushiNativeIdentity {
+                user_id: "human:test".into(),
+                device_id: "android-device".into(),
+            }
+        );
+        assert!(!format!("{client:?}").contains("test-token"));
+    }
+
+    #[test]
+    fn remote_operations_do_not_report_fake_success_before_transport_is_bound() {
+        let client = FabushiNativeMessagingClient::with_credential_provider(Arc::new(
+            TestCredentialProvider,
+        ));
+        assert!(client.identity().is_ok());
         assert!(client.list_friends().is_err());
         assert!(client.list_direct_messages("human:peer", None, 20).is_err());
         assert!(client
