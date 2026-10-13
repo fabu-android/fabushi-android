@@ -5,6 +5,13 @@ use crate::extensions::cross_user_sharing::xuser_wire_normalization::{
     normalize_mirror_entry, InlineImage, MirrorEntry,
 };
 use crate::extensions::transcript::TranscriptStore;
+use crate::groups::group_store::{
+    write_sand_group_config, RemoteGroupMember, SandGroupConfig, GROUP_CONFIG_VERSION,
+};
+use crate::groups::remote_room_store::{
+    read_sand_remote_room_config, write_sand_remote_room_config, RemoteRoomMember,
+    SandRemoteRoomConfig, REMOTE_ROOM_CONFIG_VERSION,
+};
 use crate::sha256::sha256_hex;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -137,6 +144,7 @@ pub struct AndroidXuserSharingManager {
     agents: Arc<Mutex<AndroidAgentRoster>>,
     transcript: Arc<Mutex<TranscriptStore>>,
     registry: Mutex<DurableSharedRoomRegistry>,
+    room_metadata_root: PathBuf,
 }
 
 impl AndroidXuserSharingManager {
@@ -145,11 +153,107 @@ impl AndroidXuserSharingManager {
         agents: Arc<Mutex<AndroidAgentRoster>>,
         transcript: Arc<Mutex<TranscriptStore>>,
     ) -> io::Result<Self> {
+        let path = path.into();
+        let room_metadata_root = path
+            .parent()
+            .unwrap_or_else(|| std::path::Path::new("."))
+            .join("room-agents");
         Ok(Self {
             agents,
             transcript,
             registry: Mutex::new(DurableSharedRoomRegistry::open(path)?),
+            room_metadata_root,
         })
+    }
+
+    fn room_agent_dir(&self, agent_id: &str) -> PathBuf {
+        self.room_metadata_root.join(agent_id)
+    }
+
+    fn persist_room_binding(
+        &self,
+        room: &XuserRoom,
+        self_auth_id: Option<&str>,
+        agent_id: &str,
+    ) -> Result<(), String> {
+        let dir = self.room_agent_dir(agent_id);
+        let is_host = self_auth_id.is_some_and(|self_id| self_id == room.host_auth_id);
+        if is_host {
+            let local_member_ids = room
+                .members
+                .iter()
+                .filter(|member| Some(member.auth_id.as_str()) == self_auth_id)
+                .filter_map(|member| member.agent_id.as_deref())
+                .map(str::to_string)
+                .collect::<Vec<_>>();
+            let remote_members = room
+                .members
+                .iter()
+                .filter(|member| Some(member.auth_id.as_str()) != self_auth_id)
+                .filter_map(|member| {
+                    Some(RemoteGroupMember {
+                        owner_auth_id: member.auth_id.clone(),
+                        agent_id: member.agent_id.clone()?,
+                        name: member.name.clone().unwrap_or_else(|| "Agent".into()),
+                        avatar_data_url: None,
+                    })
+                })
+                .collect::<Vec<_>>();
+            write_sand_group_config(
+                &dir,
+                &SandGroupConfig {
+                    version: GROUP_CONFIG_VERSION,
+                    member_ids: local_member_ids,
+                    remote_members: (!remote_members.is_empty()).then_some(remote_members),
+                    shared_room_id: Some(room.room_id.clone()),
+                },
+            )
+            .map_err(|error| error.to_string())
+        } else {
+            let previous = read_sand_remote_room_config(&dir);
+            let members = room
+                .members
+                .iter()
+                .filter(|member| Some(member.auth_id.as_str()) != self_auth_id)
+                .map(|member| RemoteRoomMember {
+                    kind: if member.agent_id.is_some() { "agent".into() } else { "human".into() },
+                    auth_id: member.auth_id.clone(),
+                    agent_id: member.agent_id.clone().unwrap_or_default(),
+                    display_name: member.name.clone().unwrap_or_else(|| "Someone".into()),
+                    avatar_url: None,
+                })
+                .collect::<Vec<_>>();
+            write_sand_remote_room_config(
+                &dir,
+                &SandRemoteRoomConfig {
+                    version: REMOTE_ROOM_CONFIG_VERSION,
+                    room_id: room.room_id.clone(),
+                    host_auth_id: room.host_auth_id.clone(),
+                    host_name: room
+                        .members
+                        .iter()
+                        .find(|member| member.auth_id == room.host_auth_id)
+                        .and_then(|member| member.name.clone())
+                        .unwrap_or_else(|| "The host".into()),
+                    host_avatar_url: previous.and_then(|value| value.host_avatar_url),
+                    members,
+                    is_revoked: None,
+                },
+            )
+            .map_err(|error| error.to_string())
+        }
+    }
+
+    fn mark_room_metadata_revoked(&self, agent_id: &str) -> Result<(), String> {
+        let dir = self.room_agent_dir(agent_id);
+        let Some(mut config) = read_sand_remote_room_config(&dir) else {
+            return Ok(());
+        };
+        if config.is_revoked == Some(true) {
+            return Ok(());
+        }
+        config.is_revoked = Some(true);
+        write_sand_remote_room_config(&dir, &config).map_err(|error| error.to_string())
     }
 
     fn room_record(&self, room_id: &str) -> Option<SharedRoomMirrorRecord> {
@@ -197,6 +301,7 @@ impl AndroidXuserSharingManager {
             .lock()
             .map_err(|_| "agent roster lock poisoned".to_string())?;
         for mirror_id in mirror_ids {
+            self.mark_room_metadata_revoked(&mirror_id)?;
             if agents.get(&mirror_id).is_some() {
                 agents
                     .set_hidden(&mirror_id, true)
@@ -251,7 +356,7 @@ impl XuserSharingManager for AndroidXuserSharingManager {
                 .any(|member| member.auth_id == self_auth_id)
     }
 
-    fn install_room(&self, room: &XuserRoom, _self_auth_id: Option<&str>) -> Result<(), String> {
+    fn install_room(&self, room: &XuserRoom, self_auth_id: Option<&str>) -> Result<(), String> {
         let existing = self.room_record(&room.room_id);
         let mirror_agent_id = if let Some(existing) = existing.filter(|record| !record.revoked) {
             let mirror_id = existing.mirror_agent_id;
@@ -282,6 +387,7 @@ impl XuserSharingManager for AndroidXuserSharingManager {
                 .id
         };
 
+        self.persist_room_binding(room, self_auth_id, &mirror_agent_id)?;
         self.registry
             .lock()
             .map_err(|_| "shared-room registry lock poisoned".to_string())?
@@ -297,6 +403,7 @@ impl XuserSharingManager for AndroidXuserSharingManager {
             .revoke(room_id)
             .map_err(|error| error.to_string())?;
         if let Some(mirror_agent_id) = mirror_agent_id {
+            self.mark_room_metadata_revoked(&mirror_agent_id)?;
             let mut agents = self
                 .agents
                 .lock()
@@ -521,6 +628,66 @@ mod tests {
         let new_mirror = manager.find_room_agent_id("room-a").unwrap().unwrap();
         assert_ne!(old_mirror, new_mirror);
         assert!(!agents.lock().unwrap().get(&new_mirror).unwrap().is_hidden_from_sidebar);
+    }
+
+    #[test]
+    fn hosted_and_mirror_room_metadata_survive_reopen_and_revocation() {
+        let root = tempdir().unwrap();
+        let (_, _, manager) = open_manager(root.path());
+
+        let mut hosted = room();
+        hosted.host_auth_id = "self-a".into();
+        hosted.members.push(RoomMember {
+            auth_id: "self-a".into(),
+            agent_id: Some("local-agent".into()),
+            name: Some("Local".into()),
+        });
+        hosted.members.push(RoomMember {
+            auth_id: "remote-a".into(),
+            agent_id: Some("remote-agent".into()),
+            name: Some("Remote".into()),
+        });
+        manager.install_room(&hosted, Some("self-a")).unwrap();
+        let hosted_agent = manager.find_room_agent_id("room-a").unwrap().unwrap();
+        let hosted_config = crate::groups::group_store::read_sand_group_config(
+            manager.room_agent_dir(&hosted_agent),
+        )
+        .unwrap();
+        assert_eq!(hosted_config.shared_room_id.as_deref(), Some("room-a"));
+        assert!(hosted_config.member_ids.contains(&"local-agent".to_string()));
+        assert_eq!(hosted_config.remote_members.unwrap()[0].agent_id, "remote-agent");
+
+        let mirror = XuserRoom {
+            room_id: "room-b".into(),
+            name: "Mirror B".into(),
+            host_auth_id: "remote-host".into(),
+            members: vec![
+                RoomMember {
+                    auth_id: "self-a".into(),
+                    agent_id: None,
+                    name: Some("Me".into()),
+                },
+                RoomMember {
+                    auth_id: "remote-host".into(),
+                    agent_id: None,
+                    name: Some("Host".into()),
+                },
+            ],
+            avatar_data_url: None,
+        };
+        manager.install_room(&mirror, Some("self-a")).unwrap();
+        let mirror_agent = manager.find_room_agent_id("room-b").unwrap().unwrap();
+        let mirror_dir = manager.room_agent_dir(&mirror_agent);
+        let mirror_config =
+            crate::groups::remote_room_store::read_sand_remote_room_config(&mirror_dir).unwrap();
+        assert_eq!(mirror_config.room_id, "room-b");
+        assert_eq!(mirror_config.host_auth_id, "remote-host");
+        assert!(mirror_config.members.iter().all(|member| member.auth_id != "self-a"));
+
+        manager.mark_mirror_room_revoked("room-b").unwrap();
+        let revoked =
+            crate::groups::remote_room_store::read_sand_remote_room_config(&mirror_dir).unwrap();
+        assert_eq!(revoked.is_revoked, Some(true));
     }
 
     #[test]
