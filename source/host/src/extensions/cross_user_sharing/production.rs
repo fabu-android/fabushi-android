@@ -5,7 +5,8 @@ use crate::mcp_auth::dashboard_mcp_auth_backend::SandMcpCredentialProvider;
 
 use super::extension::CrossUserSharingExtension;
 use super::xuser_relay::{
-    SandXuserRelayClient, UreqXuserRelayTransport, XuserRelayTransport,
+    SandXuserRelayClient, UreqXuserRelayTransport, XuserRelayDriver, XuserRelayRuntime,
+    XuserRelayTransport,
 };
 use super::xuser_sharing_service::SandXuserSharingService;
 
@@ -52,6 +53,7 @@ pub fn build_production_xuser_relay_client(
 pub struct ProductionCrossUserCore {
     pub relay: Arc<SandXuserRelayClient>,
     pub service: Arc<SandXuserSharingService>,
+    pub relay_driver: Arc<XuserRelayDriver>,
     pub extension: Arc<CrossUserSharingExtension>,
 }
 
@@ -82,6 +84,23 @@ pub fn build_xuser_core(
     let backend_url = credentials.configuration().backend_url;
     let relay = build_xuser_relay_client(credentials, transport)?;
     let service = Arc::new(SandXuserSharingService::new(Arc::clone(&relay)));
+    let weak_service = Arc::downgrade(&service);
+    let relay_runtime = Arc::new(XuserRelayRuntime::new(
+        Arc::clone(&relay),
+        Arc::new(move |event| {
+            weak_service
+                .upgrade()
+                .map_or(Ok(true), |service| service.handle_event(event))
+        }),
+        Arc::new(system_now_ms),
+        // Android has no Desktop NotifyBus owner. While the app Host process is alive, the
+        // canonical relay driver uses its bounded safety-poll path; explicit push/foreground
+        // hints can still call request_relay_drain without creating another poller.
+        Arc::new(|| false),
+        Arc::new(|| true),
+    ));
+    let relay_driver = Arc::new(XuserRelayDriver::new(relay_runtime));
+    service.bind_relay_driver(Arc::clone(&relay_driver));
     let extension = Arc::new(CrossUserSharingExtension::new(
         Arc::clone(&service),
         &backend_url,
@@ -90,6 +109,7 @@ pub fn build_xuser_core(
     Ok(ProductionCrossUserCore {
         relay,
         service,
+        relay_driver,
         extension,
     })
 }
@@ -105,6 +125,13 @@ pub fn build_production_xuser_core(
         configuration.box_namespace,
     )?);
     build_xuser_core(credentials, transport, env)
+}
+
+fn system_now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64
 }
 
 #[cfg(test)]
@@ -182,6 +209,30 @@ mod tests {
             !core.service.is_started(),
             "environment denial must keep the process-owned sharing service stopped"
         );
+        assert!(!core.relay_driver.is_started());
+    }
+
+    #[test]
+    fn allowed_core_binds_one_relay_driver_and_stops_cleanly() {
+        let credentials: Arc<dyn SandMcpCredentialProvider> = Arc::new(
+            RotatingSandCredentials {
+                calls: Mutex::new(0),
+            },
+        );
+        let transport: Arc<dyn XuserRelayTransport> = Arc::new(CapturingTransport {
+            tokens: Mutex::new(Vec::new()),
+        });
+        let env = BTreeMap::from([
+            ("SAND_DEV_XUSER_SHARING".to_string(), "1".to_string()),
+            ("SAND_PACKAGED".to_string(), "0".to_string()),
+        ]);
+        let core = build_xuser_core(credentials, transport, &env).unwrap();
+        core.extension.apply_feature_policy(true).unwrap();
+        assert!(core.service.is_started());
+        assert!(core.relay_driver.is_started());
+        core.extension.stop();
+        assert!(!core.service.is_started());
+        assert!(!core.relay_driver.is_started());
     }
 
     #[test]
