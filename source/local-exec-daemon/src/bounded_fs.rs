@@ -113,7 +113,8 @@ impl BoundedLocalFs {
         let bounded = remaining.min(limit as u64);
         let mut bytes = Vec::with_capacity(bounded as usize);
         file.take(bounded).read_to_end(&mut bytes)?;
-        Ok((bytes, offset.saturating_add(bytes.len() as u64) >= metadata.len()))
+        let eof = offset.saturating_add(bytes.len() as u64) >= metadata.len();
+        Ok((bytes, eof))
     }
 
     pub fn write_file_atomic(&self, requested: &Path, bytes: &[u8]) -> io::Result<()> {
