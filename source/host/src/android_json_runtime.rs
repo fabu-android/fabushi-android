@@ -51,6 +51,10 @@ use crate::extensions::telemetry::agent_error_telemetry::{
     agent_error_telemetry, AgentErrorReport,
 };
 use crate::extensions::telemetry::sand_error_tags::SandErrorValue;
+use crate::extensions::telemetry::connector_auth_telemetry::{
+    connector_auth_telemetry, ConnectorAuthReport,
+};
+use crate::extensions::telemetry::HostTelemetryProjection;
 use crate::extensions::telemetry::product_events::{
     access_blocked_event, agent_load_event, agents_unreachable_event, automation_lifecycle_event,
     automation_run_event, client_persistence_event,
@@ -2219,6 +2223,52 @@ impl AndroidJsonHost {
             .record(level, message, event.metadata, now_ms())
             .map_err(|error| format!("failed to persist Android product telemetry: {error}"))?;
         Ok(json!({"recorded":true}))
+    }
+
+    fn record_host_telemetry_projection(&mut self, projection: HostTelemetryProjection) {
+        let Some(event) = projection.event else {
+            return;
+        };
+        self.sync_structured_log_account_slot();
+        if self
+            .structured_log_spool
+            .record(
+                projection.level.unwrap_or("info"),
+                event,
+                projection.metadata,
+                now_ms(),
+            )
+            .is_err()
+        {
+            // Telemetry is diagnostic state only. A storage failure must never mutate or replay
+            // the canonical MCP authentication lifecycle.
+            self.edge_failures.report(
+                "structured-log-spill",
+                "connector-auth-telemetry",
+                "StorageError",
+            );
+        }
+    }
+
+    fn record_connector_auth_watch_telemetry(
+        &mut self,
+        phase: &str,
+        outcome: &str,
+        server_name: Option<&str>,
+        server_id: Option<&str>,
+    ) {
+        let projection = connector_auth_telemetry(
+            &ConnectorAuthReport {
+                phase: phase.to_string(),
+                outcome: outcome.to_string(),
+                server_name: server_name.map(str::to_string),
+                server_id: server_id.map(str::to_string),
+                reauth: None,
+                error: None,
+            },
+            "android",
+        );
+        self.record_host_telemetry_projection(projection);
     }
 
     fn record_send_settlement_telemetry(
@@ -10188,6 +10238,12 @@ impl AndroidJsonHost {
                     if !completion_is_pending {
                         continue;
                     }
+                    self.record_connector_auth_watch_telemetry(
+                        "watch",
+                        &completion.outcome,
+                        Some(&completion.server_name),
+                        Some(&completion.server_id),
+                    );
                     let (resume_mutation, resume_accepted) =
                         match self.queue_mcp_auth_resume_turn(&completion) {
                             Ok(mutation) => (mutation, true),
@@ -10230,6 +10286,12 @@ impl AndroidJsonHost {
                     ));
                 }
                 McpAuthOwnerEvent::Cancelled(completion) => {
+                    self.record_connector_auth_watch_telemetry(
+                        "watch",
+                        "cancelled",
+                        Some(&completion.server_name),
+                        Some(&completion.server_id),
+                    );
                     self.events.push_back(json!({
                         "type":"mcp.auth.failed",
                         "serverId":completion.server_id,
@@ -10242,6 +10304,12 @@ impl AndroidJsonHost {
                     }));
                 }
                 McpAuthOwnerEvent::Expired(completion) => {
+                    self.record_connector_auth_watch_telemetry(
+                        "watch",
+                        "timeout",
+                        Some(&completion.server_name),
+                        Some(&completion.server_id),
+                    );
                     self.events.push_back(json!({
                         "type":"mcp.auth.failed",
                         "serverId":completion.server_id,
@@ -10258,6 +10326,12 @@ impl AndroidJsonHost {
                     server_id,
                     account_key,
                 } => {
+                    self.record_connector_auth_watch_telemetry(
+                        "poll",
+                        "failed",
+                        None,
+                        Some(&server_id),
+                    );
                     self.events.push_back(json!({
                         "type":"mcp.auth.poll.unreachable",
                         "serverId":server_id,
