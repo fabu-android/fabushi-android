@@ -3208,6 +3208,7 @@ impl AndroidJsonHost {
             "feature.transcript.page" => self.transcript_page(params),
             "feature.transcript.window" => self.transcript_window(params, false),
             "feature.transcript.tail" => self.transcript_window(params, true),
+            "feature.transcript.thread" => self.transcript_thread(params),
             "feature.search.agentContent" => self.agent_content_search(params),
             "feature.search.global" => self.global_content_search(params),
             "feature.contentSearch.messages" => self.content_search_messages(params),
@@ -3470,6 +3471,28 @@ impl AndroidJsonHost {
         let entries = scoped[start..end].to_vec();
         let next_before_seq = (start > 0).then_some(start);
         Ok(json!({"entries":entries,"nextBeforeSeq":next_before_seq}))
+    }
+
+    fn transcript_thread(&self, params: &Value) -> Result<Value, String> {
+        let agent_id = required_string(params, "agentId")?.trim();
+        let root_id = required_string(params, "rootId")?.trim();
+        let scoped = self.current_account_transcript_entries()?.into_iter()
+            .filter(|entry| entry.get("agentId").and_then(Value::as_str) == Some(agent_id))
+            .collect::<Vec<_>>();
+        let Some(root) = scoped.iter()
+            .find(|entry| entry.get("id").and_then(Value::as_str) == Some(root_id)).cloned()
+        else { return Ok(json!({"entries":[]})); };
+        let branched = scoped.iter()
+            .filter(|entry| entry.get("branched").and_then(Value::as_bool) == Some(true))
+            .cloned().collect::<Vec<_>>();
+        let by_id = branched.iter().filter_map(|entry| Some((
+            entry.get("id")?.as_str()?.to_string(), entry,
+        ))).collect::<BTreeMap<_, _>>();
+        let mut entries = vec![root];
+        entries.extend(branched.iter().filter(|entry| {
+            resolve_android_transcript_branch_root(entry, &by_id).as_deref() == Some(root_id)
+        }).cloned());
+        Ok(json!({"entries":entries}))
     }
 
     fn global_content_search(&mut self, params: &Value) -> Result<Value, String> {
@@ -11600,6 +11623,21 @@ fn normalize_turn_request_source(value: Option<&Value>) -> Result<Option<String>
     Ok(Some(source.to_string()))
 }
 
+fn resolve_android_transcript_branch_root(
+    entry: &Value,
+    branched_by_id: &BTreeMap<String, &Value>,
+) -> Option<String> {
+    let mut current = entry;
+    let mut seen = BTreeSet::new();
+    if let Some(id) = current.get("id").and_then(Value::as_str) { seen.insert(id.to_string()); }
+    loop {
+        let parent_id = current.get("replyTo").and_then(Value::as_str)?;
+        let Some(parent) = branched_by_id.get(parent_id) else { return Some(parent_id.to_string()); };
+        if !seen.insert(parent_id.to_string()) { return None; }
+        current = parent;
+    }
+}
+
 fn optional_non_negative_transcript_time(value: &Value, key: &str) -> Result<Option<f64>, String> {
     let Some(raw) = value.get(key).filter(|value| !value.is_null()) else {
         return Ok(None);
@@ -12019,6 +12057,48 @@ mod tests {
 
         let reopened = AndroidAgentRoster::open(root.path().join("agents.json")).unwrap();
         assert!(!reopened.get(&agent_id).unwrap().notify_on_updates_enabled);
+    }
+
+    #[test]
+    fn transcript_thread_matches_desktop_branch_root_semantics_and_reopens() {
+        let root = tempfile::tempdir().unwrap();
+        let mut host = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+        {
+            let mut transcript = host.transcript.lock().unwrap();
+            for entry in [
+                json!({"id":"root-a","agentId":"agent-a","kind":"message","role":"user","content":"root","timestampMs":1}),
+                json!({"id":"reply-a1","agentId":"agent-a","kind":"message","role":"assistant","content":"first","branched":true,"replyTo":"root-a","timestampMs":2}),
+                json!({"id":"reply-a2","agentId":"agent-a","kind":"message","role":"user","content":"nested","branched":true,"replyTo":"reply-a1","timestampMs":3}),
+                json!({"id":"other-root","agentId":"agent-a","kind":"message","role":"user","content":"other","timestampMs":4}),
+                json!({"id":"other-reply","agentId":"agent-a","kind":"message","role":"assistant","content":"other","branched":true,"replyTo":"other-root","timestampMs":5}),
+                json!({"id":"cross-agent","agentId":"agent-b","kind":"message","role":"assistant","content":"leak","branched":true,"replyTo":"root-a","timestampMs":6}),
+            ] { transcript.append_entry(entry).unwrap(); }
+        }
+        let first = host.dispatch("feature.transcript.thread", &json!({"agentId":"agent-a","rootId":"root-a"})).unwrap();
+        assert_eq!(first["entries"].as_array().unwrap().iter().map(|e| e["id"].as_str().unwrap()).collect::<Vec<_>>(), vec!["root-a","reply-a1","reply-a2"]);
+        assert_eq!(host.dispatch("feature.transcript.thread", &json!({"agentId":"agent-a","rootId":"missing"})).unwrap(), json!({"entries":[]}));
+        drop(host);
+        let mut reopened = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+        assert_eq!(reopened.dispatch("feature.transcript.thread", &json!({"agentId":"agent-a","rootId":"root-a"})).unwrap(), first);
+        reopened.logged_in = false;
+        assert!(reopened.dispatch("feature.transcript.thread", &json!({"agentId":"agent-a","rootId":"root-a"})).is_err());
+    }
+
+    #[test]
+    fn transcript_thread_rejects_branch_cycles() {
+        let root = tempfile::tempdir().unwrap();
+        let mut host = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+        {
+            let mut transcript = host.transcript.lock().unwrap();
+            for entry in [
+                json!({"id":"root-a","agentId":"agent-a","kind":"message","role":"user","content":"root"}),
+                json!({"id":"cycle-a","agentId":"agent-a","kind":"message","role":"assistant","content":"a","branched":true,"replyTo":"cycle-b"}),
+                json!({"id":"cycle-b","agentId":"agent-a","kind":"message","role":"assistant","content":"b","branched":true,"replyTo":"cycle-a"}),
+            ] { transcript.append_entry(entry).unwrap(); }
+        }
+        let projected = host.dispatch("feature.transcript.thread", &json!({"agentId":"agent-a","rootId":"root-a"})).unwrap();
+        assert_eq!(projected["entries"].as_array().unwrap().len(), 1);
+        assert_eq!(projected["entries"][0]["id"], "root-a");
     }
 
     #[test]
