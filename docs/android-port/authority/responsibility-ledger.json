@@ -17992,6 +17992,80 @@
       "notes": "Source implementation and production wiring are present. Do not mark verified until a descendant exact HEAD has green Rust/architecture/Android/package evidence plus protected packaged/device process-death acceptance. Broader Desktop agent_lifecycle.rs responsibilities such as delete/duplicate/sidebar/disk re-audit remain mapped separately and are not closed by this row."
     },
     {
+      "responsibility_id": "AGENT-DELETION-CLEANUP-ANDROID-001",
+      "domain": "agent-lifecycle-deletion",
+      "desktop_sources": [
+        {
+          "path": "source/host/src/extensions/transcript/agent_lifecycle.rs",
+          "blob_sha": "f333bbad9b18196ab904e1ea6e66f52b9c8fb8ff",
+          "symbols": [
+            "AgentDeletionRuntimeDeps",
+            "deleteAgent",
+            "deleteAgents"
+          ]
+        }
+      ],
+      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "responsibility": "Before removing a canonical Agent, fence and retire Agent-scoped live runtime state so no in-flight turn, visible-ack redrive, durable pending wake, or generated child can continue writing into the deleted Agent; preserve other Agents and account epochs.",
+      "source_owner": "Desktop transcript Agent lifecycle owner coordinating Agent deletion runtime dependencies",
+      "direct_callers": [
+        "Host deleteAgents dispatch",
+        "native presentation feature.agent.rosterMutation delete"
+      ],
+      "downstream_dependencies": [
+        "AgentTurnInterruptionRegistry",
+        "AckObligations",
+        "SandPendingWakeStore",
+        "DurableSubagentOwner",
+        "AndroidAgentRoster"
+      ],
+      "state_owner": "Rust Host deletion coordinator orchestrates existing canonical owners; AndroidAgentRoster remains the only roster owner",
+      "persistent_state": [
+        "visible acknowledgement obligations",
+        "pending wake markers",
+        "durable generated-subagent records",
+        "canonical Agent roster"
+      ],
+      "protocol_wire_contract": [
+        "feature.agent.rosterMutation kind=delete remains account-fenced and durable",
+        "deleteAgents compatibility dispatch retains canonical Host ownership"
+      ],
+      "visible_effect": "Deleting an Agent stops its live work and removes it without later ghost replies/redrives/wakes or child work reappearing, while unrelated Agents remain intact.",
+      "failure_behavior": [
+        "cleanup persistence failure fails deletion closed before roster mutation",
+        "stale presentation account fence rejects before cleanup",
+        "cross-account live turns are never cancelled",
+        "subagent abort persistence failure prevents roster delete"
+      ],
+      "cancellation_behavior": "Agent deletion is stronger than priority interruption and cancels even a protected user lane for the same Agent/account because that lane cannot outlive its canonical Agent owner.",
+      "retry_semantics": "cleanup operations are idempotent; durable rosterMutation operation id provides mutation replay identity; no side effect is blindly reissued after unknown account epoch",
+      "idempotency_semantics": "ack clear, wake clear, turn cancellation and child abort settle to stable empty/aborted states; repeated delete cleanup is safe before durable roster replay",
+      "process_death_recovery": "pending wakes/acks/subagent state are durable owners; cleanup is re-applied on a retried durable deletion intent and process reopen never treats an old running child as safely completed",
+      "account_fencing": "all cleanup uses current canonical account fence; presentation deletion additionally requires exact accountFence equality",
+      "security_boundary": "Host owns deletion and runtime cleanup; Compose cannot directly mutate runner/ack/wake/subagent state",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "source/host/src/android_json_runtime.rs",
+        "source/host/src/runner/agent_management.rs",
+        "source/host/src/extensions/transcript/ack_obligations.rs",
+        "source/host/src/extensions/transcript/sand_pending_wake_store.rs",
+        "source/host/src/runner/subagent_runtime.rs",
+        "source/host/src/android_agent_roster.rs"
+      ],
+      "android_owner": "Rust Android Host Agent deletion coordinator over existing single-owner stores",
+      "platform_delta": "Android has no Desktop process/box disposal surface in this slice; it explicitly cleans the Android shipping turn, acknowledgement, wake and generated-subagent owners before durable roster deletion. Desktop sharing/box/handoff/tray cleanup remains separately unclosed.",
+      "implementation_status": "implemented",
+      "production_wiring": "9d3da113fcec2e5183eb99f61c320306d8bd2740 adds Agent-scoped durable pending-wake clearing; 1d76baeea9cfc97c60ca0883cc6ccb6edbb0b783 adds account-fenced deletion interruption that overrides priority protection; 1a5d8ad3d7905993155fa7af5820cf96160fd973 makes wake cleanup persistence fail closed; 728eafb240f9aafdac4fb80f605fedb5ea09b8d2 wires cleanup before both compatibility deleteAgents and production presentation rosterMutation delete; 4cb207b206cf5956360d1670b4aca18b636f9e4d adds Host-level integration coverage.",
+      "unit_test": "sand_pending_wake_store::tests::clear_agent_removes_only_the_target_agent_in_one_account; agent_management::tests::deletion_interrupts_even_a_protected_user_lane_but_never_crosses_account_fence; exact-head Actions pending",
+      "contract_test": "android_json_runtime::tests::presentation_delete_cleans_agent_scoped_runtime_state_without_cross_agent_damage; exact-head Actions pending",
+      "integration_test": "Host production rosterMutation delete test seeds target+survivor wakes/acks, protected live turn and generated subagent, then asserts target cleanup and survivor preservation; exact-head Actions pending",
+      "packaged_test": "required on final exact-head APK/AAB",
+      "device_test": "required on protected packaged/device process-death acceptance",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "This closes only the Android shipping turn/ack/wake/subagent deletion cleanup slice. Desktop agent_lifecycle.rs also coordinates sharing departure, tray/background-work disposal, box release, handoff/state cleanup, active-Agent fallback and disk re-audit; row 1143 must remain mapped until those responsibilities are audited/implemented and same-exact-head evidence passes."
+    },
+    {
       "responsibility_id": "EXPERIMENTS-HOST-ANDROID-001",
       "domain": "runtime-experiments-config",
       "desktop_sources": [
