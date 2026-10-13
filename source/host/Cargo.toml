@@ -21,6 +21,7 @@ fabushi-constants = { path = "../packages/constants" }
 futures = "0.3"
 fs2 = "0.4"
 notify = "8.2.0"
+prost = "0.13"
 mahayana-plugin-runtime = { path = "../packages/mahayana-plugin-runtime" }
 mahayana-js-runtime = { path = "../packages/mahayana-js-runtime" }
 mahayana-miniapp-protocol = { path = "../packages/mahayana-miniapp-protocol" }
