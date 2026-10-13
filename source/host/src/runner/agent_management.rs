@@ -1,6 +1,7 @@
 use super::AndroidRoutedToolBridge;
 use crate::android_agent_roster::AndroidAgentRoster;
 use crate::messaging_service::AndroidMessagingService;
+use crate::extensions::transcript::transcript_store::TranscriptStore;
 use serde_json::{json, Map, Value};
 use std::collections::BTreeMap;
 use std::sync::{
@@ -90,6 +91,7 @@ pub struct AgentManagementRoutedTools {
     delegate: Arc<dyn AndroidRoutedToolBridge>,
     roster: Arc<Mutex<AndroidAgentRoster>>,
     messaging: Arc<Mutex<AndroidMessagingService>>,
+    transcript: Option<Arc<Mutex<TranscriptStore>>>,
     live_account_fence: Arc<Mutex<Option<String>>>,
     account_fence: String,
     self_agent_id: String,
@@ -102,6 +104,7 @@ impl AgentManagementRoutedTools {
         delegate: Arc<dyn AndroidRoutedToolBridge>,
         roster: Arc<Mutex<AndroidAgentRoster>>,
         messaging: Arc<Mutex<AndroidMessagingService>>,
+        transcript: Option<Arc<Mutex<TranscriptStore>>>,
         live_account_fence: Arc<Mutex<Option<String>>>,
         account_fence: &str,
         self_agent_id: &str,
@@ -112,6 +115,7 @@ impl AgentManagementRoutedTools {
             delegate,
             roster,
             messaging,
+            transcript,
             live_account_fence,
             account_fence: account_fence.to_string(),
             self_agent_id: self_agent_id.to_string(),
@@ -179,6 +183,68 @@ impl AndroidRoutedToolBridge for AgentManagementRoutedTools {
 }
 
 impl AgentManagementRoutedTools {
+    fn reconcile_direct_agent_transcript(
+        &self,
+        target_id: &str,
+        target_name: &str,
+        sender_name: &str,
+        message: &str,
+        images: &[Value],
+        delivery: &Value,
+    ) -> Result<(), String> {
+        let Some(transcript) = self.transcript.as_ref() else {
+            return Ok(());
+        };
+        let message_id = delivery
+            .get("messageId")
+            .and_then(Value::as_str)
+            .filter(|value| !value.trim().is_empty())
+            .ok_or("Agent delivery is missing durable messageId")?;
+        let timestamp_ms = delivery
+            .get("createdAtMs")
+            .and_then(Value::as_i64)
+            .ok_or("Agent delivery is missing durable createdAtMs")?;
+        let outbound_id = format!("agent-peer-out:{message_id}");
+        let inbound_id = format!("agent-peer-in:{message_id}");
+        let mut outbound = json!({
+            "kind":"message",
+            "id":outbound_id,
+            "role":"assistant",
+            "content":message,
+            "isStreaming":false,
+            "timestampMs":timestamp_ms,
+            "agentId":self.self_agent_id,
+            "accountFence":self.account_fence,
+            "toAgent":{"id":target_id,"name":target_name,"kind":"agent"},
+            "hiddenOutboundAgentPeerMessage":true,
+        });
+        let mut inbound = json!({
+            "kind":"message",
+            "id":inbound_id,
+            "role":"user",
+            "content":message,
+            "isStreaming":false,
+            "timestampMs":timestamp_ms,
+            "agentId":target_id,
+            "accountFence":self.account_fence,
+            "fromAgent":{"id":self.self_agent_id,"name":sender_name},
+        });
+        if !images.is_empty() {
+            outbound["images"] = Value::Array(images.to_vec());
+            inbound["images"] = Value::Array(images.to_vec());
+        }
+        let mut transcript = transcript
+            .lock()
+            .map_err(|_| "canonical Android transcript lock poisoned".to_string())?;
+        transcript
+            .append_entry_if_absent(outbound)
+            .map_err(|error| format!("failed to reconcile outbound Agent peer transcript: {error}"))?;
+        transcript
+            .append_entry_if_absent(inbound)
+            .map_err(|error| format!("failed to reconcile inbound Agent peer transcript: {error}"))?;
+        Ok(())
+    }
+
     fn send_to_agent(&self, args: Value, tool_call_id: &str) -> Result<Value, String> {
         self.assert_live()?;
         let object = require_object(&args, SEND_TO_AGENT_TOOL_NAME)?;
@@ -203,7 +269,14 @@ impl AgentManagementRoutedTools {
             .map_err(|_| "canonical Android Agent roster lock poisoned".to_string())?
             .get(target_id)
             .ok_or_else(|| format!("No agent or group found with id {target_id}."))?;
-        self
+        let sender_name = self
+            .roster
+            .lock()
+            .map_err(|_| "canonical Android Agent roster lock poisoned".to_string())?
+            .get(&self.self_agent_id)
+            .map(|agent| agent.name)
+            .unwrap_or_else(|| "An agent".into());
+        let delivery = self
             .messaging
             .lock()
             .map_err(|_| "canonical Android messaging owner lock poisoned".to_string())?
@@ -227,6 +300,21 @@ impl AgentManagementRoutedTools {
                     error
                 }
             })?;
+        if !target.is_group {
+            self.reconcile_direct_agent_transcript(
+                target_id,
+                &target.name,
+                &sender_name,
+                &message,
+                &images,
+                &delivery,
+            )
+            .map_err(|error| {
+                format!(
+                    "SendToAgent outcome-unknown: canonical delivery committed but Agent transcript reconciliation is incomplete; retry with the same tool_call_id: {error}"
+                )
+            })?;
+        }
         if priority && !target.is_group {
             let _ = self
                 .turn_interruptions
@@ -316,6 +404,31 @@ pub fn with_agent_management_tools(
         delegate,
         roster,
         messaging,
+        None,
+        live_account_fence,
+        account_fence,
+        self_agent_id,
+        cancelled,
+        turn_interruptions,
+    ))
+}
+
+pub fn with_agent_management_tools_and_transcript(
+    delegate: Arc<dyn AndroidRoutedToolBridge>,
+    roster: Arc<Mutex<AndroidAgentRoster>>,
+    messaging: Arc<Mutex<AndroidMessagingService>>,
+    transcript: Arc<Mutex<TranscriptStore>>,
+    live_account_fence: Arc<Mutex<Option<String>>>,
+    account_fence: &str,
+    self_agent_id: &str,
+    cancelled: Arc<AtomicBool>,
+    turn_interruptions: Arc<AgentTurnInterruptionRegistry>,
+) -> Arc<dyn AndroidRoutedToolBridge> {
+    Arc::new(AgentManagementRoutedTools::new(
+        delegate,
+        roster,
+        messaging,
+        Some(transcript),
         live_account_fence,
         account_fence,
         self_agent_id,
@@ -489,6 +602,7 @@ fn now_ms_i64() -> i64 {
 mod tests {
     use super::*;
     use crate::messaging_service::AndroidMessagingService;
+    use crate::extensions::transcript::transcript_store::TranscriptStore;
     use std::fs;
 
     struct EmptyTools;
@@ -516,11 +630,13 @@ mod tests {
         let target = roster.lock().unwrap().create("Target", "target").unwrap();
         assert_eq!(target.id, "agent-00000001");
         let messaging = Arc::new(Mutex::new(AndroidMessagingService::open(&root).unwrap()));
+        let transcript = Arc::new(Mutex::new(TranscriptStore::open(root.join("transcript.json")).unwrap()));
         let live = Arc::new(Mutex::new(Some("acct:a".into())));
-        let tools = with_agent_management_tools(
+        let tools = with_agent_management_tools_and_transcript(
             Arc::new(EmptyTools),
             Arc::clone(&roster),
             Arc::clone(&messaging),
+            transcript,
             Arc::clone(&live),
             "acct:a",
             "agent-root",
@@ -543,8 +659,24 @@ mod tests {
             "call-send",
         ).unwrap();
         assert!(result.as_str().unwrap().contains("fresh turn"));
+        let replay = tools.call_tool(
+            SEND_TO_AGENT_TOOL_NAME,
+            json!({"target_id":"agent-00000001","message":"hello","images":[{"url":"https://example.com/a.png"}],"priority":true}),
+            "call-send",
+        ).unwrap();
+        assert_eq!(replay, result);
         drop(tools);
         assert!(root.join("messaging-repository.json").exists());
+        let transcript = TranscriptStore::open(root.join("transcript.json")).unwrap().get_transcript();
+        assert_eq!(transcript.len(), 2, "delivery replay must not duplicate peer transcript entries");
+        let outbound = transcript.iter().find(|entry| entry["agentId"] == "agent-root").unwrap();
+        assert_eq!(outbound["role"], "assistant");
+        assert_eq!(outbound["toAgent"]["id"], "agent-00000001");
+        assert_eq!(outbound["images"].as_array().unwrap().len(), 1);
+        let inbound = transcript.iter().find(|entry| entry["agentId"] == "agent-00000001").unwrap();
+        assert_eq!(inbound["role"], "user");
+        assert_eq!(inbound["fromAgent"]["id"], "agent-root");
+        assert_eq!(inbound["content"], "hello");
         let _ = fs::remove_dir_all(root);
     }
 
