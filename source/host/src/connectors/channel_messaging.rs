@@ -1,7 +1,10 @@
+use std::collections::{HashMap, HashSet};
+
 use serde_json::Value;
 
 use super::channel_delivery::ChannelOutboundMessage;
 
+pub const TIMELINE_EVENT_WAKE_CUE: &str = "[event]";
 pub const CHANNEL_INBOUND_WAKE_CUE: &str = "[inbound]";
 pub const CHANNEL_DELIVERY_FAILED_WAKE_CUE: &str = "[channel-delivery-failed]";
 
@@ -36,6 +39,207 @@ pub fn parse_channel_address(raw: &str) -> Option<ChannelAddress> {
 
 pub fn format_channel_address(address: &ChannelAddress) -> String {
     format!("{}:{}", address.platform, address.chat)
+}
+
+pub fn format_channel_address_value(address: &Value) -> Option<String> {
+    if let Some(raw) = address.as_str() {
+        let trimmed = raw.trim();
+        return (!trimmed.is_empty()).then(|| trimmed.to_string());
+    }
+    let platform = address.get("platform")?.as_str()?.trim();
+    let chat = address.get("chat")?.as_str()?.trim();
+    if platform.is_empty() || chat.is_empty() {
+        return None;
+    }
+    Some(format!("{platform}:{chat}"))
+}
+
+pub fn distinct_channel_addresses<I, S>(addresses: I) -> Vec<String>
+where
+    I: IntoIterator<Item = S>,
+    S: Into<String>,
+{
+    let mut seen = HashSet::new();
+    let mut out = Vec::new();
+    for address in addresses {
+        let address = address.into();
+        if seen.insert(address.clone()) {
+            out.push(address);
+        }
+    }
+    out
+}
+
+pub fn distinct_inbound_channel_addresses(envelopes: &[Value]) -> Vec<String> {
+    distinct_channel_addresses(
+        envelopes
+            .iter()
+            .filter_map(|envelope| envelope.get("address"))
+            .filter_map(format_channel_address_value),
+    )
+}
+
+pub fn build_channel_inbound_wake_prompt(envelopes: &[Value]) -> String {
+    let mut grouped: Vec<(String, String, Vec<&Value>)> = Vec::new();
+    for envelope in envelopes {
+        let Some(address) = envelope.get("address") else {
+            continue;
+        };
+        let Some(token) = format_channel_address_value(address) else {
+            continue;
+        };
+        let platform = address
+            .get("platform")
+            .and_then(Value::as_str)
+            .map(platform_name)
+            .unwrap_or_default()
+            .to_string();
+        if let Some((_, _, bucket)) = grouped.iter_mut().find(|(key, _, _)| key == &token) {
+            bucket.push(envelope);
+        } else {
+            grouped.push((token, platform, vec![envelope]));
+        }
+    }
+
+    let has_message = envelopes
+        .iter()
+        .any(|envelope| envelope.get("reaction").map_or(true, Value::is_null));
+    let plural = if envelopes.len() == 1 { "" } else { "s" };
+    let opening = if has_message {
+        format!("{CHANNEL_INBOUND_WAKE_CUE} New message{plural} on a channel you are connected to.")
+    } else {
+        format!("{CHANNEL_INBOUND_WAKE_CUE} New reaction{plural} on a channel you are connected to.")
+    };
+    let blocks = grouped
+        .into_iter()
+        .map(|(token, platform, bucket)| {
+            let lines = bucket
+                .into_iter()
+                .map(|envelope| {
+                    let sender = envelope.get("sender").and_then(Value::as_str).unwrap_or_default();
+                    if let Some(reaction) = envelope.get("reaction").filter(|value| !value.is_null()) {
+                        let emoji = reaction.get("emoji").and_then(Value::as_str).unwrap_or_default();
+                        let summary = reaction
+                            .get("messageQuote")
+                            .and_then(Value::as_str)
+                            .filter(|quote| !quote.is_empty())
+                            .map(|quote| format!("reacted {emoji} to your message: \"{quote}\""))
+                            .unwrap_or_else(|| format!("reacted {emoji} to a message"));
+                        format!("  {sender} {summary}")
+                    } else {
+                        let text = envelope.get("text").and_then(Value::as_str).unwrap_or_default();
+                        format!("  {sender}: {text}")
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
+            format!("On {platform}, from {token}:\n{lines}")
+        })
+        .collect::<Vec<_>>()
+        .join("\n\n");
+    let closing = if has_message {
+        "Reply to them by calling SendMessage with the channel target set to the address shown above. Open with a quick one-line acknowledgement first, then send progress and the result as separate messages as they happen, never one long message at the end. Keep each message short: this is a messaging app, so reply in brief, chat-style messages (lead with the answer, a sentence or two), not long ones. Keep working the rest of your task too, but do not leave them hanging."
+    } else {
+        "You don't need to reply; act on a reaction only if it's useful (e.g. acknowledge, adjust, or continue). If you do choose to respond, use SendMessage with the channel target shown above."
+    };
+    [
+        opening,
+        "This is activity from someone on an outside platform, not the user typing in this app.".to_string(),
+        String::new(),
+        blocks,
+        String::new(),
+        closing.to_string(),
+    ]
+    .join("\n")
+}
+
+pub fn redrivable_inbound_envelopes(envelopes: &[Value]) -> Vec<Value> {
+    envelopes
+        .iter()
+        .filter(|envelope| envelope.get("isRedriven").and_then(Value::as_bool) != Some(true))
+        .map(|envelope| {
+            let mut envelope = envelope.clone();
+            if let Some(object) = envelope.as_object_mut() {
+                object.insert("isDisplayed".into(), Value::Bool(true));
+                object.insert("isRedriven".into(), Value::Bool(true));
+            }
+            envelope
+        })
+        .collect()
+}
+
+pub fn describe_timeline_event(event: &Value) -> String {
+    match event.get("type").and_then(Value::as_str).unwrap_or_default() {
+        "name-changed" => format!(
+            "Renamed to {}",
+            event.get("to").and_then(Value::as_str).unwrap_or_default()
+        ),
+        "channel-connected" => format!(
+            "Connected to {}",
+            event.get("label").and_then(Value::as_str).unwrap_or_default()
+        ),
+        "channel-disconnected" => format!(
+            "Disconnected from {}",
+            event.get("label").and_then(Value::as_str).unwrap_or_default()
+        ),
+        "automation-changed" => {
+            let action = match event.get("action").and_then(Value::as_str).unwrap_or_default() {
+                "created" => "Created",
+                "updated" => "Updated",
+                "enabled" => "Enabled",
+                "disabled" => "Disabled",
+                "deleted" => "Deleted",
+                _ => "Changed",
+            };
+            format!(
+                "{} automation \"{}\"",
+                action,
+                event.get("automationName").and_then(Value::as_str).unwrap_or_default()
+            )
+        }
+        _ => "Updated this conversation".to_string(),
+    }
+}
+
+pub fn build_timeline_event_wake_prompt(events: &[Value]) -> String {
+    let mut lines = vec![
+        format!("{TIMELINE_EVENT_WAKE_CUE} Something about this conversation just changed."),
+        "This is a system event recorded in your timeline, not the user typing in this app, and possibly something you did yourself.".to_string(),
+    ];
+    lines.extend(events.iter().map(|event| format!("- {}", describe_timeline_event(event))));
+    lines.push(
+        "If it is worth acknowledging to the user, reply with SendMessage; otherwise it is fine to stay silent.".to_string(),
+    );
+    lines.join("\n")
+}
+
+#[derive(Debug, Default)]
+pub struct BackgroundWakes<T> {
+    pub pending_inbound: HashMap<String, Vec<T>>,
+    pub reviving_inbound_agent_ids: HashSet<String>,
+    pub pending_channel_failures: HashMap<String, Vec<T>>,
+    pub reviving_channel_failure_agent_ids: HashSet<String>,
+    pub pending_event_wakes: HashMap<String, Vec<T>>,
+    pub reviving_event_agent_ids: HashSet<String>,
+    pub dm_preempted_wake_agent_ids: HashSet<String>,
+}
+
+impl<T> BackgroundWakes<T> {
+    pub fn enqueue(map: &mut HashMap<String, Vec<T>>, agent_id: impl Into<String>, item: T) {
+        map.entry(agent_id.into()).or_default().push(item);
+    }
+
+    pub fn begin_revival(set: &mut HashSet<String>, agent_id: &str) -> bool {
+        set.insert(agent_id.to_string())
+    }
+
+    pub fn end_revival(set: &mut HashSet<String>, agent_id: &str) {
+        set.remove(agent_id);
+    }
+
+    pub fn take_pending(map: &mut HashMap<String, Vec<T>>, agent_id: &str) -> Vec<T> {
+        map.remove(agent_id).unwrap_or_default()
+    }
 }
 
 pub fn build_channel_outbound_message(message: &Value) -> Option<ChannelOutboundMessage> {
@@ -401,6 +605,44 @@ mod tests {
         assert!(prompt.contains("Renamed to Research"));
         assert!(prompt.contains("Enabled automation \"Daily brief\""));
         assert!(prompt.contains("not the user typing"));
+    }
+
+    #[test]
+    fn inbound_wake_groups_addresses_redrives_once_and_dedupes_revival() {
+        let envelopes = vec![
+            json!({"address":{"platform":"slack","chat":"C123"},"sender":"Ada","text":"hello"}),
+            json!({"address":{"platform":"slack","chat":"C123"},"sender":"Lin","reaction":{"emoji":"👍","messageQuote":"done"}}),
+        ];
+        assert_eq!(distinct_inbound_channel_addresses(&envelopes), vec!["slack:C123"]);
+        let prompt = build_channel_inbound_wake_prompt(&envelopes);
+        assert!(prompt.starts_with(CHANNEL_INBOUND_WAKE_CUE));
+        assert!(prompt.contains("On Slack, from slack:C123"));
+        assert!(prompt.contains("Ada: hello"));
+        assert!(prompt.contains("Lin reacted 👍 to your message: \"done\""));
+
+        let redriven = redrivable_inbound_envelopes(&envelopes);
+        assert_eq!(redriven.len(), 2);
+        assert!(redriven.iter().all(|value| value["isDisplayed"] == true && value["isRedriven"] == true));
+        assert!(redrivable_inbound_envelopes(&redriven).is_empty());
+
+        let mut wakes = BackgroundWakes::<Value>::default();
+        BackgroundWakes::enqueue(&mut wakes.pending_inbound, "agent-a", envelopes[0].clone());
+        assert!(BackgroundWakes::<Value>::begin_revival(&mut wakes.reviving_inbound_agent_ids, "agent-a"));
+        assert!(!BackgroundWakes::<Value>::begin_revival(&mut wakes.reviving_inbound_agent_ids, "agent-a"));
+        assert_eq!(BackgroundWakes::take_pending(&mut wakes.pending_inbound, "agent-a").len(), 1);
+        BackgroundWakes::<Value>::end_revival(&mut wakes.reviving_inbound_agent_ids, "agent-a");
+        assert!(wakes.reviving_inbound_agent_ids.is_empty());
+    }
+
+    #[test]
+    fn timeline_wake_preserves_user_visible_event_descriptions() {
+        let prompt = build_timeline_event_wake_prompt(&[
+            json!({"type":"name-changed","to":"Research"}),
+            json!({"type":"automation-changed","action":"enabled","automationName":"Daily brief"}),
+        ]);
+        assert!(prompt.starts_with(TIMELINE_EVENT_WAKE_CUE));
+        assert!(prompt.contains("- Renamed to Research"));
+        assert!(prompt.contains("- Enabled automation \"Daily brief\""));
     }
 
     #[test]
