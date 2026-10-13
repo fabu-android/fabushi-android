@@ -58,6 +58,11 @@ use crate::extensions::cross_user_sharing::android_sharing_manager::AndroidXuser
 use crate::extensions::cross_user_sharing::production::{
     android_xuser_environment, build_production_xuser_core, ProductionCrossUserCore,
 };
+use crate::extensions::cross_user_sharing::xuser_entry_publisher::{
+    ResolvedXuserAttachment, SandXuserEntryPublisher, XuserEntryPublisherHost,
+};
+use crate::extensions::cross_user_sharing::xuser_relay::XuserRelayClient;
+use crate::extensions::cross_user_sharing::xuser_sharing_service::SandXuserSharingService;
 use crate::extensions::teach_recording::{DurableTeachRecordingOwner, TeachRecordingPhase};
 use crate::extensions::trays::extension::{start_trays_extension, HostTraysExtension};
 use crate::extensions::trays::trays_service::{TrayEvent, TraySubscription};
@@ -715,6 +720,62 @@ fn restored_send_journal_telemetry(
         .collect()
 }
 
+struct AndroidXuserEntryPublisherHost {
+    relay: Arc<XuserRelayClient>,
+    service: std::sync::Weak<SandXuserSharingService>,
+    transcript: Arc<Mutex<TranscriptStore>>,
+}
+
+impl XuserEntryPublisherHost for AndroidXuserEntryPublisherHost {
+    fn relay_send(&self, payload: &Value) -> Result<Value, String> {
+        self.relay.send(payload)
+    }
+
+    fn restamp_room_entry(
+        &self,
+        _room_id: &str,
+        entry_id: &str,
+        timestamp_ms: f64,
+    ) -> Result<(), String> {
+        self.transcript
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .update_entry(entry_id, |entry| {
+                let mut next = entry.clone();
+                next["timestampMs"] = json!(timestamp_ms);
+                next
+            })
+            .map(|_| ())
+            .map_err(|error| format!("failed to restamp shared-room transcript entry: {error}"))
+    }
+
+    fn now_ms(&self) -> u64 {
+        now_ms()
+    }
+
+    fn is_enabled(&self) -> bool {
+        self.service
+            .upgrade()
+            .is_some_and(|service| service.get_state().is_enabled)
+    }
+
+    fn self_auth_id(&self) -> Option<String> {
+        self.service
+            .upgrade()
+            .and_then(|service| service.get_state().self_auth_id)
+    }
+
+    fn resolve_attachment(
+        &self,
+        _url: &str,
+    ) -> Result<Option<ResolvedXuserAttachment>, String> {
+        // Attachment bytes remain fenced by DurableAgentAttachmentOwner. Do not bypass its
+        // account/Agent scope just to satisfy shared-room publishing; the dedicated scoped
+        // resolver is closed as a separate responsibility.
+        Ok(None)
+    }
+}
+
 fn project_cross_user_state(
     core: Option<&ProductionCrossUserCore>,
 ) -> Value {
@@ -1079,6 +1140,16 @@ impl AndroidJsonHost {
                 )
                 .ok()?;
                 core.bind_manager(Arc::new(manager));
+                let publisher_host: Arc<dyn XuserEntryPublisherHost> = Arc::new(
+                    AndroidXuserEntryPublisherHost {
+                        relay: Arc::clone(&core.relay),
+                        service: Arc::downgrade(&core.service),
+                        transcript: Arc::clone(&transcript),
+                    },
+                );
+                core.service.bind_entry_publisher(Arc::new(SandXuserEntryPublisher::new(
+                    publisher_host,
+                )));
                 Some(core)
             })
         } else {
