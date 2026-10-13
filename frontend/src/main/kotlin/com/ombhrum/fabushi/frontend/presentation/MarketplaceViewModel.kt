@@ -317,6 +317,19 @@ internal fun shouldApplyAccountUsageResult(
         currentAuthId = currentAuthId,
     )
 
+internal fun shouldPerformAccountUpgradeCta(
+    loggedIn: Boolean,
+    accountAuthId: String,
+    accountUsageBusy: Boolean,
+    cta: AndroidAccountUpgradeCta,
+): Boolean =
+    loggedIn &&
+        accountAuthId.isNotBlank() &&
+        !accountUsageBusy &&
+        !cta.disabled &&
+        cta.kind == "dashboard-action" &&
+        cta.dashboardAction == "requestLimitIncrease"
+
 data class CredentialVaultMetadata(
     val name: String,
     val label: String,
@@ -986,9 +999,12 @@ class MarketplaceViewModel(application: Application) : AndroidViewModel(applicat
 
     fun performAccountUpgradeCta(cta: AndroidAccountUpgradeCta) {
         val snapshot = mutableState.value
-        if (!snapshot.loggedIn || snapshot.accountAuthId.isBlank() || snapshot.accountUsageBusy ||
-            cta.disabled || cta.kind != "dashboard-action" ||
-            cta.dashboardAction != "requestLimitIncrease"
+        if (!shouldPerformAccountUpgradeCta(
+                loggedIn = snapshot.loggedIn,
+                accountAuthId = snapshot.accountAuthId,
+                accountUsageBusy = snapshot.accountUsageBusy,
+                cta = cta,
+            )
         ) return
         val generation = ++accountUsageRefreshGeneration
         val expectedAuthId = snapshot.accountAuthId
