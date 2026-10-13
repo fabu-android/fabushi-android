@@ -88,7 +88,7 @@ use crate::extensions::telemetry::host_tracing::{
 };
 use crate::extensions::telemetry::pressure_cpu_profiler::AndroidPressureCpuProfiler;
 use crate::extensions::telemetry::queue_telemetry_mappers::{
-    ack_obligation_telemetry, AckObligationReport,
+    ack_obligation_telemetry, pending_wake_telemetry, AckObligationReport, PendingWakeReport,
 };
 use crate::extensions::telemetry::automation_fire_telemetry::{
     automation_run_telemetry, AutomationRunReport,
@@ -4668,7 +4668,7 @@ impl AndroidJsonHost {
         }))
     }
 
-    fn agent_async_tasks(&self, params: &Value) -> Result<Value, String> {
+    fn agent_async_tasks(&mut self, params: &Value) -> Result<Value, String> {
         let parent_agent_id = required_string(params, "id")?;
         let account_fence = self.current_turn_account_fence()?;
         let records = self
@@ -4689,12 +4689,29 @@ impl AndroidJsonHost {
                 subagent_type: Some(record.subagent_type),
             })
             .collect::<Vec<_>>();
-        self.pending_wake_store.prune_stale_for(
+        let observed_at_ms = now_ms();
+        let pruned = self.pending_wake_store.prune_stale_for(
             &account_fence,
             parent_agent_id,
             PENDING_WAKE_STALE_MAX_AGE_MS,
-            now_ms(),
+            observed_at_ms,
         );
+        for marker in pruned {
+            let kind = match marker.kind {
+                crate::extensions::transcript::sand_pending_wake_store::PendingWakeKind::CloudAgent => "cloud-agent",
+                crate::extensions::transcript::sand_pending_wake_store::PendingWakeKind::Subagent => "subagent",
+                crate::extensions::transcript::sand_pending_wake_store::PendingWakeKind::Shell => "shell",
+            };
+            self.record_host_telemetry_projection(pending_wake_telemetry(&PendingWakeReport {
+                conversation_id: marker.agent_id,
+                outcome: "pruned".into(),
+                kind: Some(kind.into()),
+                work_id: Some(marker.work_id),
+                age_ms: Some(observed_at_ms.saturating_sub(marker.marked_at_ms) as f64),
+                reason: Some("stale".into()),
+                is_quiet_origin: Some(marker.quiet_origin.is_some()),
+            }));
+        }
         let durable = self
             .pending_wake_store
             .list_pending_for(&account_fence, parent_agent_id);
@@ -15107,6 +15124,20 @@ mod tests {
         assert_eq!(tasks[0]["id"], "shell-a");
         assert_eq!(tasks[0]["label"], "Long build");
         assert_eq!(tasks[0]["detail"], "reattached after a host restart");
+        let pending_wake_records = host
+            .structured_log_spool
+            .lock()
+            .unwrap()
+            .batch()
+            .into_iter()
+            .filter(|record| record.message == "sand.pending_wake")
+            .collect::<Vec<_>>();
+        assert_eq!(pending_wake_records.len(), 1);
+        assert_eq!(pending_wake_records[0].metadata["conversation_id"], "agent-a");
+        assert_eq!(pending_wake_records[0].metadata["outcome"], "pruned");
+        assert_eq!(pending_wake_records[0].metadata["kind"], "shell");
+        assert_eq!(pending_wake_records[0].metadata["work_id"], "stale-shell");
+        assert_eq!(pending_wake_records[0].metadata["reason"], "stale");
 
         drop(host);
         let mut reopened = AndroidJsonHost::new(&root, AndroidHostMode::Test);
