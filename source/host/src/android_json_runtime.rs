@@ -958,6 +958,14 @@ impl AndroidApprovalDecision {
     }
 }
 
+fn degraded_standing_policy_decision(decision: AndroidApprovalDecision) -> Option<(&'static str, bool)> {
+    match decision {
+        AndroidApprovalDecision::Always => Some(("allow-once", true)),
+        AndroidApprovalDecision::Never => Some(("deny", false)),
+        _ => None,
+    }
+}
+
 fn parse_android_approval_resolution(
     params: &Value,
 ) -> Result<(String, AndroidApprovalDecision), String> {
@@ -9042,7 +9050,9 @@ impl AndroidJsonHost {
         }
 
         let mut approved = decision.approved();
+        let mut effective_decision = decision.as_str();
         let mut effective_local_tool_permission = None;
+        let mut persistence_degraded: Option<String> = None;
         if remote_dispatch && decision.is_standing_policy() {
             self.sync_local_tool_permission_ceiling()?;
             let requested = match decision {
@@ -9054,18 +9064,26 @@ impl AndroidJsonHost {
                 .user_settings
                 .lock()
                 .map_err(|_| "Android user settings lock poisoned".to_string())?;
-            settings
-                .set_local_tool_permission(requested)
-                .map_err(|error| {
-                    format!("failed to persist Android local tool permission: {error}")
-                })?;
-            let effective = settings.local_tool_permission();
-            effective_local_tool_permission = Some(effective.as_str().to_string());
-            approved = match decision {
-                AndroidApprovalDecision::Always => effective != LocalToolPermission::Never,
-                AndroidApprovalDecision::Never => false,
-                _ => unreachable!("standing policy checked above"),
-            };
+            match settings.set_local_tool_permission(requested) {
+                Ok(_) => {
+                    let effective = settings.local_tool_permission();
+                    effective_local_tool_permission = Some(effective.as_str().to_string());
+                    approved = match decision {
+                        AndroidApprovalDecision::Always => effective != LocalToolPermission::Never,
+                        AndroidApprovalDecision::Never => false,
+                        _ => unreachable!("standing policy checked above"),
+                    };
+                }
+                Err(error) => {
+                    let (fallback, fallback_approved) =
+                        degraded_standing_policy_decision(decision).expect("standing policy checked above");
+                    effective_decision = fallback;
+                    approved = fallback_approved;
+                    persistence_degraded = Some(format!(
+                        "failed to persist Android local tool permission; applied {fallback} for this prompt only: {error}"
+                    ));
+                }
+            }
         }
 
         if self.subagent_review_approvals.contains(&approval_id) {
@@ -9116,8 +9134,10 @@ impl AndroidJsonHost {
                 "capability":resolution.capability,
                 "approved":approved,
                 "decision":decision.as_str(),
+                "effectiveDecision":effective_decision,
                 "remoteDispatch":true,
                 "effectiveLocalToolPermission":effective_local_tool_permission,
+                "persistenceDegraded":persistence_degraded.clone(),
             }));
             let settled_pending_remote_approvals =
                 match effective_local_tool_permission.as_deref() {
@@ -9135,11 +9155,13 @@ impl AndroidJsonHost {
                 "status":"resolved",
                 "approved":approved,
                 "decision":decision.as_str(),
+                "effectiveDecision":effective_decision,
                 "operationId":resolution.remote_operation_id,
                 "parentOperationId":resolution.parent_operation_id,
                 "capability":resolution.capability,
                 "execution": if approved { "dispatch-unlocked" } else { "denied" },
                 "effectiveLocalToolPermission":effective_local_tool_permission,
+                "persistenceDegraded":persistence_degraded,
                 "settledPendingRemoteApprovals":settled_pending_remote_approvals,
             }));
         }
@@ -13738,6 +13760,14 @@ mod local_tool_permission_dispatch_tests {
     use super::*;
 
     #[test]
+    #[test]
+    fn standing_policy_persistence_failure_degrades_to_one_shot_resolution() {
+        assert_eq!(degraded_standing_policy_decision(AndroidApprovalDecision::Always), Some(("allow-once", true)));
+        assert_eq!(degraded_standing_policy_decision(AndroidApprovalDecision::Never), Some(("deny", false)));
+        assert_eq!(degraded_standing_policy_decision(AndroidApprovalDecision::AllowOnce), None);
+        assert_eq!(degraded_standing_policy_decision(AndroidApprovalDecision::Deny), None);
+    }
+
     fn approval_resolution_accepts_four_way_and_legacy_shapes() {
         assert_eq!(
             parse_android_approval_resolution(&json!({
