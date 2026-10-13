@@ -1795,11 +1795,11 @@ mod tests {
     }
 
     #[test]
-    #[test]
     fn approval_wait_ttl_matches_desktop_local_tool_contract() {
         assert_eq!(APPROVAL_WAIT_TIMEOUT, Duration::from_secs(10 * 60));
     }
 
+    #[test]
     fn never_permission_fails_closed_before_remote_binding() {
         let root = tempfile::tempdir().unwrap();
         let mut settings =
