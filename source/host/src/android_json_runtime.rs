@@ -13,6 +13,7 @@ use crate::automation_runtime::{run_json as automation_run_json, AutomationRunti
 use crate::auto_review_settings::{AutoReviewInstructions, DurableAutoReviewSettings};
 use crate::android_agent_roster::{AndroidAgentRoster, AndroidAgentRosterRecoveryOutcome};
 use crate::android_memory_runtime::AndroidMemoryOwner;
+use crate::android_session_policy_runtime::AndroidSessionPolicyBindings;
 use crate::android_process_metrics::AndroidProcessMetricsCollector;
 use crate::process_crash_guard::{AndroidUncleanExitKind, AndroidUncleanExitMarker};
 use crate::android_structured_log_spill::AndroidStructuredLogSpool;
@@ -861,6 +862,7 @@ pub struct AndroidJsonHost {
     sidebar_sections: Arc<Mutex<AndroidSidebarSections>>,
     user_settings: Arc<Mutex<AndroidUserSettings>>,
     experiments: Arc<HostExperimentsExtension>,
+    _session_policy_bindings: AndroidSessionPolicyBindings,
     detected_time_zone: Arc<Mutex<Option<String>>>,
     auto_review_settings: Arc<Mutex<DurableAutoReviewSettings>>,
     transcript: Arc<Mutex<TranscriptStore>>,
@@ -1246,6 +1248,7 @@ impl AndroidJsonHost {
                 .unwrap_or_else(|error| panic!("failed to open canonical Android messaging repository: {error}")),
         ));
         let experiments = Arc::new(HostExperimentsExtension::new());
+        let session_policy_bindings = AndroidSessionPolicyBindings::bind(Arc::clone(&experiments));
         let mcp_auth_watches = Arc::new(Mutex::new(
             AndroidMcpAuthWatchManager::open(
                 app_data_dir.join("mcp-auth-watches.json"),
@@ -1498,6 +1501,7 @@ impl AndroidJsonHost {
             sidebar_sections,
             user_settings,
             experiments,
+            _session_policy_bindings: session_policy_bindings,
             detected_time_zone: Arc::new(Mutex::new(None)),
             auto_review_settings,
             transcript,
