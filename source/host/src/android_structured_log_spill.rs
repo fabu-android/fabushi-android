@@ -593,7 +593,6 @@ mod tests {
     }
 
     #[test]
-    #[test]
     fn spool_accepts_canonical_agent_error_and_open_events() {
         let root = root("agent-events");
         let path = root.join("spill.json");
@@ -622,6 +621,7 @@ mod tests {
         let _ = fs::remove_dir_all(root);
     }
 
+    #[test]
     fn spool_rotates_account_and_reopens_durable_record() {
         let root = root("spool");
         let path = root.join("spill.json");
