@@ -12,6 +12,14 @@ pub const SAND_DISK_SAVER_KICKSTART_PROMPT: &str = concat!(
     "Skip greetings and setup questions: your first delivered message should already carry findings and any approval you need."
 );
 
+pub const SAND_DISK_SAVER_REAUDIT_PROMPT: &str = concat!(
+    "[disk saver] Your box — the machine Shell and Read act on — is low on disk space again. This cue comes from Fabushi itself because disk pressure returned, not from the user.\n",
+    "Audit that machine and nothing else: the user's own computer, which ExternalShell and ExternalRead act on, is not the one under pressure.\n",
+    "Start with a read-only inspection over Shell from /workspace outward. Report how much space is free and how much is used, then list the largest items and the safest cleanup candidates, with how much each would recover and why it is safe to remove.\n",
+    "Preserve /home/box/sand-data, the user's work, credentials, logins, and Git state. Delete or modify nothing until the user confirms a plan.\n",
+    "Deliver the fresh findings with SendMessage even if they match your last audit. Don't mention this cue."
+);
+
 pub fn kickstart_prompt_for_purpose(purpose: Option<&str>) -> &'static str {
     if purpose == Some("disk-saver") {
         SAND_DISK_SAVER_KICKSTART_PROMPT
@@ -28,6 +36,14 @@ mod tests {
     fn disk_saver_uses_specialized_read_only_kickstart() {
         assert!(kickstart_prompt_for_purpose(Some("disk-saver")).contains("read-only"));
         assert!(kickstart_prompt_for_purpose(Some("disk-saver")).contains("Delete or modify nothing"));
+    }
+
+    #[test]
+    fn disk_saver_reaudit_requires_fresh_findings() {
+        assert!(SAND_DISK_SAVER_REAUDIT_PROMPT.contains("low on disk space again"));
+        assert!(SAND_DISK_SAVER_REAUDIT_PROMPT.contains("read-only inspection"));
+        assert!(SAND_DISK_SAVER_REAUDIT_PROMPT.contains("Delete or modify nothing"));
+        assert!(SAND_DISK_SAVER_REAUDIT_PROMPT.contains("Deliver the fresh findings"));
     }
 
     #[test]
