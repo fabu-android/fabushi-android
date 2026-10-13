@@ -3752,6 +3752,9 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
         paletteRoutineFence.cancel()
         openBotGeneration += 1
         sendPresentationGeneration += 1
+        transcriptThreadGeneration += 1
+        transcriptThreadLoadJob?.cancel()
+        transcriptThreadLoadJob = null
         asyncTasksGeneration += 1
         asyncTasksJob?.cancel()
         asyncTasksJob = null
