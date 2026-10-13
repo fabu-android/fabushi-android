@@ -8143,7 +8143,7 @@
       "desktop_sources": [
         {
           "path": "source/host/src/extensions/cross_user_sharing/extension.rs",
-          "blob_sha": "541253847ca0c628e9fc9f2780513e49dfbcb19a",
+          "blob_sha": "1668ea33986aa6970c2b86956f5cfde040dff38f",
           "symbols": [
             "CrossUserSharingExtension::stop",
             "CrossUserSharingExtension::prepare_for_upgrade"
@@ -8151,7 +8151,7 @@
         },
         {
           "path": "source/host/src/extensions/cross_user_sharing/xuser_sharing_service.rs",
-          "blob_sha": "bd8aa6c1d710bd85dcac2ebdd9f57b294522308b",
+          "blob_sha": "258e9aa3e5260e607a70a512292cfb4cdc6d8362",
           "symbols": [
             "SandXuserSharingService::set_enabled",
             "SandXuserSharingService::stop"
@@ -17484,7 +17484,7 @@
         },
         {
           "path": "source/host/src/extensions/session/agent_db.rs",
-          "blob_sha": "9f24fcebd3fe75248511e9e14fdc74759feffea0",
+          "blob_sha": "91ed720449b8e171a94887d032343103be6c829b",
           "symbols": [
             "initialize_persisted_agent_record",
             "get_agent_origin",
@@ -17990,6 +17990,95 @@
       "artifact": null,
       "verification_status": "not-verified",
       "notes": "Source implementation and production wiring are present. Do not mark verified until a descendant exact HEAD has green Rust/architecture/Android/package evidence plus protected packaged/device process-death acceptance. Broader Desktop agent_lifecycle.rs responsibilities such as delete/duplicate/sidebar/disk re-audit remain mapped separately and are not closed by this row."
+    },
+    {
+      "responsibility_id": "EXPERIMENTS-HOST-ANDROID-001",
+      "domain": "runtime-experiments-config",
+      "desktop_sources": [
+        {
+          "path": "source/host/src/extensions/experiments/extension.rs",
+          "blob_sha": "3559c6a739dd6ebe97f06e71b805b09f6657389c",
+          "symbols": [
+            "HostExperimentsExtension",
+            "check_feature_gate",
+            "dynamic_config",
+            "hydrate_authenticated_statsig_if_current",
+            "clear_account_scope"
+          ]
+        },
+        {
+          "path": "source/host/src/extensions/experiments/mod.rs",
+          "blob_sha": "7443d53ba3a48d8520ac7d4646feca55adb7d482",
+          "symbols": [
+            "experiments module exports"
+          ]
+        }
+      ],
+      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "responsibility": "Own authenticated feature-gate, dynamic-config and experiment assignment state with deterministic fallback precedence, refresh-generation fencing, account-scope clearing, subscriber notification and model-selection exposure semantics without making Presentation a second owner.",
+      "source_owner": "Desktop Host experiments extension",
+      "visible_effect": "Feature availability and model/config choices remain stable, account-scoped and stale-refresh safe across Android runtime transitions.",
+      "android_disposition": "direct-port",
+      "android_target": [
+        "source/host/src/extensions/experiments/extension.rs",
+        "source/host/src/extensions/experiments/mod.rs",
+        "source/host/src/android_json_runtime.rs"
+      ],
+      "android_owner": "Rust HostExperimentsExtension",
+      "platform_delta": "Platform-neutral Host experiment state remains Rust-to-Rust. Android does not claim Desktop Statsig transport parity until the authenticated Fabushi transport is proven.",
+      "implementation_status": "mapped",
+      "production_wiring": "HostExperimentsExtension is present in Android Host; authenticated network bootstrap transport remains partial.",
+      "unit_test": "Focused Rust tests in experiments/extension.rs cover authenticated hydrate, stale-generation rejection, fallback precedence, account clearing and exposure payload behavior.",
+      "contract_test": "Host experiment owner retains authenticated-user and generation contracts.",
+      "integration_test": "Required: authenticated Fabushi bootstrap transport and account-switch stale-refresh fencing.",
+      "packaged_test": "Required on final exact-head APK/AAB.",
+      "device_test": "Required with observable backend experiment assignment.",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Restores a responsibility definition already referenced by source inventory; keep mapped until production transport and exact-head package/device evidence close."
+    },
+    {
+      "responsibility_id": "NOTIFICATIONS-AGENT-UPDATES-ANDROID-001",
+      "domain": "notification-agent-updates",
+      "desktop_sources": [
+        {
+          "path": "source/host/src/extensions/notifications/extension.rs",
+          "blob_sha": "74ad7e92451cd9ad1c40b7a35ecd6e28776bddab"
+        },
+        {
+          "path": "source/host/src/extensions/notifications/mobile_push_notifier.rs",
+          "blob_sha": "291dddae9ca3bdba5f31569571602314ae235681"
+        },
+        {
+          "path": "source/host/src/extensions/notifications/mod.rs",
+          "blob_sha": "18afdfb8eaa8770a44e86ea998bcba617885db9e"
+        }
+      ],
+      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "responsibility": "Project canonical Agent done/needs-input transitions into bounded mobile notifications with baseline seeding, preference/hidden/focus suppression, throttle and message de-duplication, forgotten-Agent cleanup, deep-link routing and account fencing.",
+      "source_owner": "Desktop Host notifications extension plus mobile notifier",
+      "visible_effect": "Android users receive meaningful Agent completion/needs-input updates without duplicate or stale notifications.",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/notifications/os-notification-manager.kt",
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/notifications/agents-control-feed.kt",
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/notifications/dock-badge-manager.kt",
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/FabushiApplication.kt",
+        "mobile/android/app/src/test/java/com/ombhrum/fabushi/AndroidNotificationsTest.kt",
+        "tests/test_android_notification_production_wiring.py"
+      ],
+      "android_owner": "Android notification manager/feed consuming canonical Coordinator/Host Agent state",
+      "platform_delta": "Desktop notification transport is replaced by Android NotificationManager/channel/permission/deep-link semantics; canonical Agent truth remains outside notification layer.",
+      "implementation_status": "mapped",
+      "production_wiring": "Android startup seeds notification feed from canonical roster before subscriptions; final packaged/device evidence remains open.",
+      "unit_test": "AndroidNotificationsTest and production-wiring checker cover projection, dedupe and cleanup behavior.",
+      "contract_test": "NOTIFICATION-OS-001 and AGENT-RUN-LIFECYCLE-001 remain adjacent canonical-owner contracts.",
+      "integration_test": "Required: packaged Agent done/needs-input/focus/account-switch transitions.",
+      "packaged_test": "Required on final exact-head APK/AAB.",
+      "device_test": "Required with Android notification permission/channel/deep-link acceptance.",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Restores the source-inventory referenced responsibility; keep mapped/not-verified pending same-head package/device evidence."
     }
   ],
   "traceability": {
