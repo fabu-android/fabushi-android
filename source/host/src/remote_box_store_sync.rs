@@ -1,4 +1,7 @@
-use fabushi_android_shared::ExecutionRequest;
+use crate::host_runner_composition::AuthenticatedRemoteHostRunner;
+use crate::remote_execution::RemoteExecutionState;
+use fabushi_android_box_exec_daemon::{RemoteExecutionContext, RemoteExecutionTransport};
+use fabushi_android_shared::{ExecutionError, ExecutionRequest, ExecutionResult};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeMap,
@@ -292,6 +295,187 @@ impl RemoteBoxStoreSyncJournal {
             .collect()
     }
 
+    pub fn dispatch_via_authorized_runner<T: RemoteExecutionTransport>(
+        &mut self,
+        runner: &mut AuthenticatedRemoteHostRunner<T>,
+        context: &RemoteExecutionContext,
+        record: RemoteBoxStoreSyncRecord,
+        now_ms: u64,
+    ) -> Result<ExecutionResult, ExecutionError> {
+        record.validate().map_err(ExecutionError::InvalidRequest)?;
+        context.validate()?;
+        if context.operation_id != record.operation_id
+            || context.request_id != record.request_id
+            || context.account_fence != record.account_fence
+            || context.account_epoch != record.account_epoch
+            || context.device_id != record.device_id
+        {
+            return Err(ExecutionError::InvalidRequest(
+                "box-store sync authorization identity disagrees with durable record".into(),
+            ));
+        }
+        if runner.journal().record(&record.operation_id).is_some() {
+            return Err(ExecutionError::InvalidRequest(
+                "box-store sync operation already exists in Remote execution authority".into(),
+            ));
+        }
+        let request = record.execution_request().map_err(ExecutionError::InvalidRequest)?;
+        self.begin(record.clone()).map_err(ExecutionError::Transport)?;
+        if let Err(error) = runner.prepare_authorized(context, &request, now_ms) {
+            let _ = self.cancel_before_dispatch(
+                &record.operation_id, &record.account_fence, record.account_epoch, &record.device_id, now_ms,
+            );
+            return Err(error);
+        }
+        if let Err(error) = self.mark_sent(
+            &record.operation_id, &record.account_fence, record.account_epoch, &record.device_id, now_ms,
+        ) {
+            let _ = runner.cancel_prepared_authorized(context, now_ms);
+            let _ = self.cancel_before_dispatch(
+                &record.operation_id, &record.account_fence, record.account_epoch, &record.device_id, now_ms,
+            );
+            return Err(ExecutionError::Transport(error));
+        }
+        match runner.dispatch_prepared_authorized(context, &request, now_ms) {
+            Ok(result) => {
+                self.complete(
+                    &record.operation_id, &record.request_id, &record.account_fence,
+                    record.account_epoch, &record.device_id, result.output_json.clone(), now_ms,
+                ).map_err(ExecutionError::Transport)?;
+                Ok(result)
+            }
+            Err(error) => {
+                match runner.journal().record(&record.operation_id).map(|entry| entry.state.clone()) {
+                    Some(RemoteExecutionState::Rejected) => {
+                        self.settle_after_dispatch(
+                            &record.operation_id, &record.account_fence, record.account_epoch,
+                            &record.device_id, RemoteBoxStoreSyncState::Rejected, now_ms,
+                        ).map_err(ExecutionError::Transport)?;
+                    }
+                    Some(RemoteExecutionState::Pending) | Some(RemoteExecutionState::Cancelled) => {
+                        let _ = runner.cancel_prepared_authorized(context, now_ms);
+                        self.settle_after_dispatch(
+                            &record.operation_id, &record.account_fence, record.account_epoch,
+                            &record.device_id, RemoteBoxStoreSyncState::Cancelled, now_ms,
+                        ).map_err(ExecutionError::Transport)?;
+                    }
+                    _ => {
+                        self.mark_outcome_unknown(
+                            &record.operation_id, &record.account_fence, record.account_epoch,
+                            &record.device_id, now_ms,
+                        ).map_err(ExecutionError::Transport)?;
+                    }
+                }
+                Err(error)
+            }
+        }
+    }
+
+    pub fn reconcile_via_authorized_runner<T: RemoteExecutionTransport>(
+        &mut self,
+        runner: &mut AuthenticatedRemoteHostRunner<T>,
+        context: &RemoteExecutionContext,
+        now_ms: u64,
+    ) -> Result<ExecutionResult, ExecutionError> {
+        context.validate()?;
+        let record = self.record(&context.operation_id).cloned()
+            .ok_or_else(|| ExecutionError::InvalidRequest("box-store sync operation is unknown".into()))?;
+        if record.state != RemoteBoxStoreSyncState::OutcomeUnknown {
+            return Err(ExecutionError::InvalidRequest(
+                "box-store sync reconciliation requires outcome-unknown state".into(),
+            ));
+        }
+        if context.request_id != record.request_id
+            || context.account_fence != record.account_fence
+            || context.account_epoch != record.account_epoch
+            || context.device_id != record.device_id
+        {
+            return Err(ExecutionError::InvalidRequest(
+                "box-store sync reconciliation crossed account/device identity".into(),
+            ));
+        }
+        let remote = runner.journal().record(&record.operation_id).cloned()
+            .ok_or_else(|| ExecutionError::Transport(
+                "box-store sync Remote execution authority is missing; manual reconciliation required".into(),
+            ))?;
+        match remote.state {
+            RemoteExecutionState::Completed => {
+                let output = remote.terminal_output_json.unwrap_or_else(|| "{}".into());
+                self.complete(
+                    &record.operation_id, &record.request_id, &record.account_fence,
+                    record.account_epoch, &record.device_id, output.clone(), now_ms,
+                ).map_err(ExecutionError::Transport)?;
+                Ok(ExecutionResult { operation_id: record.operation_id, output_json: output })
+            }
+            RemoteExecutionState::Rejected => {
+                self.settle_after_dispatch(
+                    &record.operation_id, &record.account_fence, record.account_epoch,
+                    &record.device_id, RemoteBoxStoreSyncState::Rejected, now_ms,
+                ).map_err(ExecutionError::Transport)?;
+                Err(ExecutionError::Transport("remote_execution_rejected".into()))
+            }
+            RemoteExecutionState::Pending | RemoteExecutionState::Cancelled => {
+                if remote.state == RemoteExecutionState::Pending {
+                    runner.cancel_prepared_authorized(context, now_ms)?;
+                }
+                self.settle_after_dispatch(
+                    &record.operation_id, &record.account_fence, record.account_epoch,
+                    &record.device_id, RemoteBoxStoreSyncState::Cancelled, now_ms,
+                ).map_err(ExecutionError::Transport)?;
+                Err(ExecutionError::Transport("box_store_sync_proven_not_sent_cancelled".into()))
+            }
+            RemoteExecutionState::OutcomeUnknown => {
+                match runner.reconcile_authorized(context, now_ms) {
+                    Ok(result) => {
+                        self.complete(
+                            &record.operation_id, &record.request_id, &record.account_fence,
+                            record.account_epoch, &record.device_id, result.output_json.clone(), now_ms,
+                        ).map_err(ExecutionError::Transport)?;
+                        Ok(result)
+                    }
+                    Err(error) => {
+                        if runner.journal().record(&record.operation_id)
+                            .is_some_and(|entry| entry.state == RemoteExecutionState::Rejected)
+                        {
+                            self.settle_after_dispatch(
+                                &record.operation_id, &record.account_fence, record.account_epoch,
+                                &record.device_id, RemoteBoxStoreSyncState::Rejected, now_ms,
+                            ).map_err(ExecutionError::Transport)?;
+                        }
+                        Err(error)
+                    }
+                }
+            }
+            RemoteExecutionState::Sent | RemoteExecutionState::Acked => Err(
+                ExecutionError::Transport("box_store_sync_remote_reconciliation_not_ready".into()),
+            ),
+        }
+    }
+
+    fn settle_after_dispatch(
+        &mut self,
+        operation_id: &str,
+        account_fence: &str,
+        account_epoch: u64,
+        device_id: &str,
+        state: RemoteBoxStoreSyncState,
+        now_ms: u64,
+    ) -> Result<(), String> {
+        if !matches!(state, RemoteBoxStoreSyncState::Rejected | RemoteBoxStoreSyncState::Cancelled) {
+            return Err("box-store sync terminal settlement is invalid".into());
+        }
+        let record = self.checked_mut(operation_id, account_fence, account_epoch, device_id)?;
+        if !matches!(
+            record.state,
+            RemoteBoxStoreSyncState::Sent | RemoteBoxStoreSyncState::OutcomeUnknown
+        ) {
+            return Err("box-store sync terminal settlement requires sent or outcome-unknown state".into());
+        }
+        record.state = state;
+        record.updated_at_ms = now_ms;
+        self.persist()
+    }
+
     fn checked_mut(
         &mut self,
         operation_id: &str,
@@ -431,4 +615,126 @@ mod tests {
         assert!(journal.begin(record(RemoteBoxStoreSyncAction::Snapshot, "op-2", "req-1")).is_err());
         let _ = fs::remove_file(journal_path);
     }
+
+    #[derive(Default)]
+    struct RecordingTransport {
+        outcome: Option<fabushi_android_box_exec_daemon::RemoteDispatchOutcome>,
+    }
+
+    impl RemoteExecutionTransport for RecordingTransport {
+        fn execute(
+            &mut self,
+            _context: &RemoteExecutionContext,
+            request: &ExecutionRequest,
+        ) -> Result<fabushi_android_box_exec_daemon::RemoteDispatchOutcome, ExecutionError> {
+            Ok(self.outcome.take().unwrap_or_else(|| {
+                fabushi_android_box_exec_daemon::RemoteDispatchOutcome::Completed {
+                    ack_id: "ack-box-store".into(),
+                    result: ExecutionResult {
+                        operation_id: request.operation_id.clone(),
+                        output_json: r#"{"manifestEtag":"etag-2"}"#.into(),
+                    },
+                }
+            }))
+        }
+
+        fn reconcile(
+            &mut self,
+            _context: &RemoteExecutionContext,
+            operation_id: &str,
+            _request_id: &str,
+        ) -> Result<fabushi_android_box_exec_daemon::RemoteReconcileOutcome, ExecutionError> {
+            Ok(fabushi_android_box_exec_daemon::RemoteReconcileOutcome::Completed {
+                ack_id: "ack-reconcile".into(),
+                result: ExecutionResult {
+                    operation_id: operation_id.into(),
+                    output_json: r#"{"manifestEtag":"etag-reconciled"}"#.into(),
+                },
+            })
+        }
+
+        fn cancel(
+            &mut self,
+            _context: &RemoteExecutionContext,
+            _operation_id: &str,
+            _request_id: &str,
+        ) -> Result<fabushi_android_box_exec_daemon::RemoteCancelOutcome, ExecutionError> {
+            Ok(fabushi_android_box_exec_daemon::RemoteCancelOutcome::Confirmed {
+                ack_id: Some("ack-cancel".into()),
+            })
+        }
+    }
+
+    fn remote_context(operation_id: &str, request_id: &str) -> RemoteExecutionContext {
+        RemoteExecutionContext {
+            credential_id: "credential-1".into(),
+            bearer: fabushi_android_box_exec_daemon::RemoteBearerCredential::new(
+                "box-store-test-bearer-token-long-enough",
+            ).unwrap(),
+            account_fence: "account-a:epoch-7".into(),
+            account_epoch: 7,
+            operation_id: operation_id.into(),
+            request_id: request_id.into(),
+            permission_grant_id: "grant-box-store".into(),
+            device_id: "device-a".into(),
+        }
+    }
+
+    #[test]
+    fn authorized_runner_settles_box_store_domain_without_second_runner() {
+        let root = tempfile::tempdir().unwrap();
+        let mut domain = RemoteBoxStoreSyncJournal::open(root.path().join("box-store.json"), 1).unwrap();
+        let remote_journal = crate::remote_execution::RemoteExecutionJournal::open(
+            root.path().join("remote.json"), 1
+        ).unwrap();
+        let mut runner = AuthenticatedRemoteHostRunner::new(
+            RecordingTransport::default(), remote_journal
+        );
+        let context = remote_context("box-op-1", "box-req-1");
+        let result = domain.dispatch_via_authorized_runner(
+            &mut runner,
+            &context,
+            record(RemoteBoxStoreSyncAction::Snapshot, "box-op-1", "box-req-1"),
+            2,
+        ).unwrap();
+        assert!(result.output_json.contains("etag-2"));
+        assert_eq!(domain.record("box-op-1").unwrap().state, RemoteBoxStoreSyncState::Completed);
+        assert_eq!(runner.journal().record("box-op-1").unwrap().state, RemoteExecutionState::Completed);
+    }
+
+    #[test]
+    fn uncertain_box_store_dispatch_requires_reconciliation_and_never_replays() {
+        let root = tempfile::tempdir().unwrap();
+        let mut domain = RemoteBoxStoreSyncJournal::open(root.path().join("box-store.json"), 1).unwrap();
+        let remote_journal = crate::remote_execution::RemoteExecutionJournal::open(
+            root.path().join("remote.json"), 1
+        ).unwrap();
+        let mut runner = AuthenticatedRemoteHostRunner::new(
+            RecordingTransport {
+                outcome: Some(fabushi_android_box_exec_daemon::RemoteDispatchOutcome::OutcomeUnknown {
+                    ack_id: Some("ack-unknown".into()),
+                    reason: "connection-lost".into(),
+                }),
+            },
+            remote_journal,
+        );
+        let context = remote_context("box-op-unknown", "box-req-unknown");
+        assert!(domain.dispatch_via_authorized_runner(
+            &mut runner,
+            &context,
+            record(RemoteBoxStoreSyncAction::Snapshot, "box-op-unknown", "box-req-unknown"),
+            2,
+        ).is_err());
+        assert_eq!(
+            domain.record("box-op-unknown").unwrap().state,
+            RemoteBoxStoreSyncState::OutcomeUnknown
+        );
+        let result = domain.reconcile_via_authorized_runner(&mut runner, &context, 3).unwrap();
+        assert!(result.output_json.contains("etag-reconciled"));
+        assert_eq!(
+            domain.record("box-op-unknown").unwrap().state,
+            RemoteBoxStoreSyncState::Completed
+        );
+    }
+
 }
