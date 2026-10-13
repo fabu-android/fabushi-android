@@ -563,3 +563,86 @@ fn system_now_ms() -> u64 {
         .as_millis()
         .min(u64::MAX as u128) as u64
 }
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    fn clock(start: u64) -> (Arc<AtomicU64>, Arc<dyn Fn() -> u64 + Send + Sync>) {
+        let now = Arc::new(AtomicU64::new(start));
+        let read = Arc::clone(&now);
+        let fn_clock: Arc<dyn Fn() -> u64 + Send + Sync> =
+            Arc::new(move || read.load(Ordering::SeqCst));
+        (now, fn_clock)
+    }
+
+    #[test]
+    fn duplicate_nonce_is_idempotent_but_digest_mismatch_fails_closed() {
+        let root = tempfile::tempdir().unwrap();
+        let (_, now) = clock(10);
+        let mut ledger = PromptAcceptanceLedger::with_clock(Some(root.path()), now);
+        let pending = ledger
+            .record_pending("account-a", "nonce-a", "digest-a", "agent-a", Some("echo-a".into()))
+            .unwrap();
+        assert_eq!(pending.status, AcceptanceStatus::Pending);
+        ledger.mark_accepted("account-a", "nonce-a");
+
+        match ledger.admit_send("account-a", "nonce-a", "digest-a").unwrap() {
+            SendAdmission::Duplicate(record) => assert_eq!(record.status, AcceptanceStatus::Accepted),
+            other => panic!("expected duplicate, got {other:?}"),
+        }
+        assert_eq!(
+            ledger.admit_send("account-a", "nonce-a", "digest-b"),
+            Err(PromptAcceptanceError::DigestMismatch { client_nonce: "nonce-a".into() })
+        );
+    }
+
+    #[test]
+    fn corrupt_or_degraded_history_never_becomes_not_found() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join(SEND_ACCEPTANCE_FILE_NAME);
+        fs::write(&path, b"{broken").unwrap();
+        let (_, now) = clock(20);
+        let mut ledger = PromptAcceptanceLedger::with_clock(Some(root.path()), now);
+        assert_eq!(
+            ledger.lookup("account-a", "missing"),
+            AcceptanceLookup::UnknownDurability
+        );
+        assert!(ledger.gaps().corrupt_reset_at_ms.is_some());
+
+        drop(ledger);
+        fs::write(
+            root.path().join(format!("{SEND_ACCEPTANCE_FILE_NAME}.degraded")),
+            br#"{"version":1,"sinceMs":5}"#,
+        )
+        .unwrap();
+        let (_, now) = clock(30);
+        let mut reopened = PromptAcceptanceLedger::with_clock(Some(root.path()), now);
+        assert_eq!(
+            reopened.lookup("account-a", "still-missing"),
+            AcceptanceLookup::UnknownDurability
+        );
+        assert!(!reopened.gaps().degraded_windows.is_empty());
+    }
+
+    #[test]
+    fn canonical_digest_includes_attachment_identity_and_reply_target() {
+        let base = SendInput {
+            agent_id: Some("agent-a".into()),
+            prompt: "hello".into(),
+            rich_text: None,
+            reply_to_id: None,
+            is_fork: false,
+            attachment_paths: vec!["/private/a.png".into()],
+            attachment_names: vec!["a.png".into()],
+        };
+        let mut changed = base.clone();
+        changed.reply_to_id = Some("message-1".into());
+        assert_ne!(send_input_digest(&base), send_input_digest(&changed));
+        changed = base.clone();
+        changed.attachment_names[0] = "b.png".into();
+        assert_ne!(send_input_digest(&base), send_input_digest(&changed));
+    }
+}
