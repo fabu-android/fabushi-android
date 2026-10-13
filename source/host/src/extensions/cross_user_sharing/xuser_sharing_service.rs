@@ -289,17 +289,27 @@ impl SandXuserSharingService {
             .and_then(Value::as_array)
             .cloned()
             .unwrap_or_default();
+        let remote_self_auth_id = raw
+            .get("selfAuthId")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToOwned::to_owned);
         let remote: Vec<XuserRoom> = serde_json::from_value(
             raw.get("rooms")
                 .cloned()
                 .unwrap_or_else(|| Value::Array(vec![])),
         )
         .map_err(|e| e.to_string())?;
-        let result = reconcile_rooms(&current.rooms, remote, current.self_auth_id.as_deref());
+        let self_auth_id = remote_self_auth_id
+            .as_deref()
+            .or(current.self_auth_id.as_deref());
+        let result = reconcile_rooms(&current.rooms, remote, self_auth_id);
         let rooms = result.rooms.clone();
         let revoked_room_ids = result.revoked_room_ids.clone();
         {
             let mut s = self.state.lock().unwrap_or_else(|p| p.into_inner());
+            s.self_auth_id = remote_self_auth_id.or_else(|| current.self_auth_id.clone());
             s.pending_join_requests = pending;
             s.rooms = result.rooms;
         }
@@ -308,7 +318,7 @@ impl SandXuserSharingService {
                 manager.mark_mirror_room_revoked(&room_id)?;
             }
             for room in &rooms {
-                manager.install_room(room, current.self_auth_id.as_deref())?;
+                manager.install_room(room, self_auth_id)?;
             }
         }
         Ok(self.get_state())
@@ -870,6 +880,38 @@ mod tests {
             }
             Ok(serde_json::json!({}))
         }
+    }
+
+    #[test]
+    fn reconcile_adopts_remote_self_auth_identity() {
+        struct IdentityTransport;
+        impl XuserRelayTransport for IdentityTransport {
+            fn request(
+                &self,
+                _method: &str,
+                url: &str,
+                _token: &str,
+                _body: Option<&Value>,
+            ) -> Result<Value, XuserRelayHttpError> {
+                if url.ends_with("/sand/xuser/share-state") {
+                    return Ok(serde_json::json!({
+                        "selfAuthId":"sand-self",
+                        "rooms":[],
+                        "pendingJoinRequests":[]
+                    }));
+                }
+                Ok(serde_json::json!({}))
+            }
+        }
+        let relay = Arc::new(XuserRelayClient::new(
+            "https://sand.example".into(),
+            Arc::new(|| Ok("token".into())),
+            Arc::new(IdentityTransport),
+        ));
+        let service = SandXuserSharingService::new(relay);
+        service.set_enabled(true);
+        let state = service.reconcile_share_state().unwrap();
+        assert_eq!(state.self_auth_id.as_deref(), Some("sand-self"));
     }
 
     #[test]
