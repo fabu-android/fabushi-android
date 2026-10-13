@@ -164,6 +164,16 @@ impl McpServerToolSettings {
         self.state = next;
         Ok(())
     }
+
+    pub fn clear_account(&mut self, account_fence: &str) -> Result<(), String> {
+        validate_id(account_fence, "account fence")?;
+        let mut next = self.state.clone();
+        next.accounts.remove(account_fence);
+        next.instructions.remove(account_fence);
+        persist(&self.path, &next)?;
+        self.state = next;
+        Ok(())
+    }
 }
 
 fn validate_state(state: &PersistedStore) -> Result<(), String> {
@@ -354,6 +364,34 @@ mod tests {
         assert_eq!(
             reopened.custom_instructions_for("account:a", "17").unwrap(),
             None
+        );
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn account_departure_clears_disabled_tools_and_custom_instructions_only_for_departed_account() {
+        let path = path("account-departure");
+        let mut store = McpServerToolSettings::open(&path).unwrap();
+        store.toggle("account:a", "17", "calendar.list").unwrap();
+        store.set_custom_instructions("account:a", "17", "Read only.").unwrap();
+        store.toggle("account:b", "17", "drive.read").unwrap();
+        store.set_custom_instructions("account:b", "17", "Keep links.").unwrap();
+
+        store.clear_account("account:a").unwrap();
+        assert!(store.disabled_for("account:a", "17").unwrap().is_empty());
+        assert_eq!(store.custom_instructions_for("account:a", "17").unwrap(), None);
+        assert!(store.disabled_for("account:b", "17").unwrap().contains("drive.read"));
+        assert_eq!(
+            store.custom_instructions_for("account:b", "17").unwrap().as_deref(),
+            Some("Keep links.")
+        );
+
+        drop(store);
+        let reopened = McpServerToolSettings::open(&path).unwrap();
+        assert!(reopened.disabled_for("account:a", "17").unwrap().is_empty());
+        assert_eq!(
+            reopened.custom_instructions_for("account:b", "17").unwrap().as_deref(),
+            Some("Keep links.")
         );
         let _ = fs::remove_file(path);
     }
