@@ -8100,6 +8100,60 @@ impl AndroidJsonHost {
         Ok(projected)
     }
 
+    fn box_handoff_resume_prompt(trigger: &str) -> &'static str {
+        match trigger {
+            "dismissed" => "[The user dismissed your box help request without doing the step you asked for. Treat it as declined: do not assume the step happened, and do not immediately request the box again for the same step. Continue the task without it if you can — skip the step or find another way. If the task cannot proceed without it, send the user a brief message saying what is blocked, then stop and wait for their reply.]",
+            "viewer-closed" => "[The user closed the box desktop viewer without explicitly handing control back, so they may or may not have finished the step you asked for. Start with the read-only Screenshot tool to check the current state of the box desktop. If the step is clearly done, continue the task. If you can't tell, send the user a brief message asking whether they finished so you can keep going.]",
+            _ => "[The user handed the box back to you. Please continue your task — start with the read-only Screenshot tool to see the current state of the box desktop.]",
+        }
+    }
+
+    fn queue_box_handoff_resume_turn(
+        &mut self,
+        account_fence: &str,
+        agent_id: &str,
+        handoff_request_id: &str,
+        trigger: &str,
+    ) -> Result<Option<AccountSessionMutation>, String> {
+        let trigger = trigger.trim();
+        let request_id = format!(
+            "box-handoff-resume:{}:{}:{}",
+            handoff_request_id,
+            agent_id,
+            if trigger.is_empty() { "returned" } else { trigger },
+        );
+        let operation_id = self.next_operation_id(&request_id);
+        self.active_operations.insert(operation_id.clone());
+        let (bearer_token, session_mutation) = match self.bearer_token_for_turn() {
+            Ok(value) => value,
+            Err(error) => {
+                self.active_operations.remove(&operation_id);
+                return Err(error);
+            }
+        };
+        let command = json!({
+            "type":"chat.send",
+            "requestId":request_id,
+            "agentId":agent_id,
+            "text":Self::box_handoff_resume_prompt(trigger),
+            "hidden":true,
+            "requestSource":"handoff-resume",
+            "skipAckObligation":true,
+            "directAddressedAcceptance":true,
+        });
+        if let Err(error) = self.queue_chat_turn(
+            &operation_id,
+            command.get("requestId").and_then(Value::as_str).unwrap_or_default(),
+            &command,
+            bearer_token,
+        ) {
+            self.active_operations.remove(&operation_id);
+            return Err(error);
+        }
+        let _ = account_fence;
+        Ok(session_mutation)
+    }
+
     fn agent_handoff_status(&self, params: &Value) -> Result<Value, String> {
         let account_fence = self.current_turn_account_fence()?;
         let agent_id = required_string(params, "agentId")?;
@@ -8170,12 +8224,24 @@ impl AndroidJsonHost {
                 params.get("trigger").and_then(Value::as_str),
             )?;
         Ok(match ended {
-            Some(ended) => json!({
-                "ended": true,
-                "requestId": ended.request_id,
-                "resolution": ended.resolution,
-                "trigger": ended.trigger,
-            }),
+            Some(ended) => {
+                let resume_mutation = self.queue_box_handoff_resume_turn(
+                    &account_fence,
+                    &ended.agent_id,
+                    &ended.request_id,
+                    &ended.trigger,
+                )?;
+                with_account_session_mutation(
+                    json!({
+                        "ended": true,
+                        "requestId": ended.request_id,
+                        "resolution": ended.resolution,
+                        "trigger": ended.trigger,
+                        "resumeQueued": true,
+                    }),
+                    resume_mutation,
+                )
+            }
             None => json!({"ended": false, "requestId": request_id}),
         })
     }
