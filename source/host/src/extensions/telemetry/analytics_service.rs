@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::sync::{Arc, Mutex, mpsc};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -68,6 +68,7 @@ pub struct AndroidProductAnalyticsRuntime {
     gate_stop: Mutex<Option<StopGateSubscription>>,
     worker: Mutex<Option<JoinHandle<()>>>,
     active_day_keys: Mutex<BTreeMap<String, u64>>,
+    model_experiment_scopes: Mutex<BTreeSet<String>>,
     base_properties: BTreeMap<String, Value>,
     disabled: bool,
 }
@@ -107,6 +108,7 @@ impl AndroidProductAnalyticsRuntime {
             gate_stop: Mutex::new(None),
             worker: Mutex::new(Some(worker)),
             active_day_keys: Mutex::new(BTreeMap::new()),
+            model_experiment_scopes: Mutex::new(BTreeSet::new()),
             base_properties: BTreeMap::from([
                 ("client".into(), Value::String("sand".into())),
                 ("sand_version".into(), Value::String(client_version)),
@@ -157,6 +159,50 @@ impl AndroidProductAnalyticsRuntime {
                 timestamp_ms: wall_clock_now_ms(),
             }))
             .map_err(|_| "Product Analytics worker is unavailable".to_string())
+    }
+
+    pub fn track_model_experiment_exposure(
+        &self,
+        account_scope: &str,
+        arm: &str,
+    ) -> Result<bool, String> {
+        if self.disabled {
+            return Ok(false);
+        }
+        let account_scope = account_scope.trim();
+        if account_scope.is_empty() {
+            return Err("Model experiment exposure account scope is required".into());
+        }
+        let arm = arm.trim();
+        if !matches!(arm, "control" | "treatment") {
+            return Err("Model experiment exposure arm is invalid".into());
+        }
+        {
+            let mut scopes = self
+                .model_experiment_scopes
+                .lock()
+                .map_err(|_| "Model experiment exposure state lock poisoned".to_string())?;
+            if !scopes.insert(account_scope.to_string()) {
+                return Ok(false);
+            }
+        }
+        let result = self.track(
+            account_scope,
+            ProductAnalyticsEvent {
+                name: "sand.model_experiment.exposure".into(),
+                properties: BTreeMap::from([(
+                    "arm".into(),
+                    Value::String(arm.to_string()),
+                )]),
+            },
+        );
+        if let Err(error) = result {
+            if let Ok(mut scopes) = self.model_experiment_scopes.lock() {
+                scopes.remove(account_scope);
+            }
+            return Err(error);
+        }
+        Ok(true)
     }
 
     pub fn mark_active(&self, account_scope: &str, reason: &str) -> Result<(), String> {
@@ -454,6 +500,59 @@ mod tests {
         }
         wait_until(|| attempts.load(Ordering::SeqCst) > 0);
         assert!(runtime.mark_active("account-a", "user_action").is_ok());
+    }
+
+    #[test]
+    fn model_experiment_exposure_is_once_per_account_scope() {
+        let experiments = test_experiments(true);
+        let batches = Arc::new(Mutex::new(Vec::<Value>::new()));
+        let sink = Arc::clone(&batches);
+        let runtime = AndroidProductAnalyticsRuntime::start(
+            experiments,
+            Arc::new(move |payload| {
+                sink.lock().unwrap().push(payload.clone());
+                Ok(())
+            }),
+            "0.1.0-test".into(),
+            "dev".into(),
+        );
+        assert_eq!(
+            runtime
+                .track_model_experiment_exposure("account-a", "treatment")
+                .unwrap(),
+            true
+        );
+        assert_eq!(
+            runtime
+                .track_model_experiment_exposure("account-a", "treatment")
+                .unwrap(),
+            false
+        );
+        assert_eq!(
+            runtime
+                .track_model_experiment_exposure("account-b", "control")
+                .unwrap(),
+            true
+        );
+        wait_until(|| {
+            batches
+                .lock()
+                .unwrap()
+                .iter()
+                .flat_map(|batch| batch["events"].as_array().into_iter().flatten())
+                .filter(|event| event["eventName"] == "sand.model_experiment.exposure")
+                .count()
+                >= 2
+        });
+        let batches = batches.lock().unwrap();
+        let exposures = batches
+            .iter()
+            .flat_map(|batch| batch["events"].as_array().into_iter().flatten())
+            .filter(|event| event["eventName"] == "sand.model_experiment.exposure")
+            .collect::<Vec<_>>();
+        assert_eq!(exposures.len(), 2);
+        assert_eq!(exposures[0]["eventData"]["arm"]["stringValue"], "treatment");
+        assert_eq!(exposures[1]["eventData"]["arm"]["stringValue"], "control");
     }
 
     #[test]
