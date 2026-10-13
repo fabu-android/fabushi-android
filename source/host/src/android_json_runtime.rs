@@ -3017,7 +3017,24 @@ impl AndroidJsonHost {
                         .set_introduction_pending(&agent.id, false)
                         .map_err(|error| error.to_string())?;
                 }
-                Ok(json!({"agent": agent.as_json()}))
+                agent = agents
+                    .mark_viewed(&agent.id, now_ms(), false)
+                    .map_err(|error| error.to_string())?;
+                agents
+                    .set_active_agent(Some(&agent.id))
+                    .map_err(|error| error.to_string())?;
+                drop(agents);
+                let transcript = self
+                    .transcript
+                    .lock()
+                    .map_err(|_| "transcript lock poisoned".to_string())?
+                    .get_transcript()
+                    .into_iter()
+                    .filter(|entry| {
+                        entry.get("agentId").and_then(Value::as_str) == Some(agent.id.as_str())
+                    })
+                    .collect::<Vec<_>>();
+                Ok(json!({"agent": agent.as_json(), "transcript": transcript}))
             }
             "createGroup" => {
                 let name = required_string(params, "name")?;
@@ -3555,11 +3572,13 @@ impl AndroidJsonHost {
     }
 
     fn project_agent_roster(&self) -> Result<Vec<Value>, String> {
-        let agents = self
-            .agents
-            .lock()
-            .map_err(|_| "canonical Android Agent roster lock poisoned".to_string())?
-            .list();
+        let (agents, active_agent_id) = {
+            let roster = self
+                .agents
+                .lock()
+                .map_err(|_| "canonical Android Agent roster lock poisoned".to_string())?;
+            (roster.list(), roster.active_agent_id())
+        };
         let transcript = self
             .transcript
             .lock()
@@ -3631,6 +3650,10 @@ impl AndroidJsonHost {
                     object.insert(
                         "isRunning".into(),
                         Value::Bool(running_agents.contains(&agent.id)),
+                    );
+                    object.insert(
+                        "isActive".into(),
+                        Value::Bool(active_agent_id.as_deref() == Some(agent.id.as_str())),
                     );
                     let partners = account_fence
                         .as_deref()
@@ -13596,6 +13619,13 @@ export function apply(ctx) {
         assert_eq!(created["agent"]["origin"], "dev");
         assert_eq!(created["agent"]["purpose"], "plugin-auth");
         assert_eq!(created["agent"]["introductionPending"], false);
+        assert!(created["agent"]["lastViewedAt"].as_u64().unwrap_or_default() > 0);
+        assert_eq!(created["transcript"], json!([]));
+        let roster = host.dispatch("listAgents", &json!({})).unwrap();
+        let projected = roster.as_array().unwrap().iter()
+            .find(|agent| agent["id"] == created["agent"]["id"])
+            .expect("created Agent is projected");
+        assert_eq!(projected["isActive"], true);
 
         drop(host);
         let mut reopened = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
@@ -13605,6 +13635,7 @@ export function apply(ctx) {
             .expect("special-purpose Agent survives Host reopen");
         assert_eq!(special["origin"], "dev");
         assert_eq!(special["introductionPending"], false);
+        assert_eq!(special["isActive"], true);
         assert!(reopened.dispatch(
             "createAgent",
             &json!({"name":"Bad Purpose","purpose":"Plugin Auth"}),
