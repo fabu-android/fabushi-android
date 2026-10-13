@@ -50,6 +50,9 @@ pub const DASHBOARD_CLIENT_ACTION_PATH: &str =
     "/aiserver.v1.DashboardService/ClientAction";
 pub const ANALYTICS_SUBMIT_LOGS_PATH: &str =
     "/aiserver.v1.AnalyticsService/SubmitLogs";
+pub const ANALYTICS_TRACK_EVENTS_PATH: &str =
+    "/aiserver.v1.AnalyticsService/TrackEvents";
+pub const PRODUCT_ANALYTICS_SUBMIT_TIMEOUT_MS: u64 = 2_500;
 pub const ACCOUNT_TELEMETRY_SUBMIT_TIMEOUT_MS: u64 = 15_000;
 pub const FEEDBACK_SUBMIT_PATH: &str = "/sand/feedback";
 pub const FEEDBACK_SUBMIT_TIMEOUT_MS: u64 = 15_000;
@@ -508,6 +511,49 @@ impl CursorDashboardMcpAuthBackend {
             return Err("MCP backend RPC response exceeds bounded size".into());
         }
         Ok(bytes)
+    }
+
+    /// Send one bounded Product Analytics batch through the canonical Sand credential,
+    /// machine-id, checksum, and privacy-mode owner. This is deliberately not a generic JSON
+    /// transport: callers cannot choose an arbitrary backend path.
+    pub(crate) fn send_product_analytics_events(&self, payload: &Value) -> Result<(), String> {
+        let credentials = self.credentials.credentials()?;
+        let base = Url::parse(&credentials.backend_url)
+            .map_err(|error| format!("invalid Product Analytics backend URL: {error}"))?;
+        let url = base
+            .join(ANALYTICS_TRACK_EVENTS_PATH)
+            .map_err(|error| format!("invalid Product Analytics RPC URL: {error}"))?;
+        let timeout = Duration::from_millis(PRODUCT_ANALYTICS_SUBMIT_TIMEOUT_MS);
+        let agent = ureq::AgentBuilder::new()
+            .timeout_connect(timeout)
+            .timeout_read(timeout)
+            .timeout_write(timeout)
+            .redirects(0)
+            .build();
+        let authorization = format!("Bearer {}", credentials.access_token);
+        let checksum = create_cursor_checksum(&credentials.machine_id, system_now_ms());
+        let request_id = next_request_id();
+        let ghost_mode = self.resolve_ghost_mode(&credentials);
+        let body = serde_json::to_vec(payload)
+            .map_err(|error| format!("encode Product Analytics payload: {error}"))?;
+        if body.len() > MAX_RPC_RESPONSE_BYTES {
+            return Err("Product Analytics payload exceeds bounded size".into());
+        }
+        agent
+            .post(url.as_str())
+            .set("content-type", "application/json")
+            .set("accept", "application/json")
+            .set("connect-protocol-version", "1")
+            .set("authorization", &authorization)
+            .set("x-cursor-checksum", &checksum)
+            .set("x-cursor-client-type", SAND_CLIENT_TYPE)
+            .set("x-cursor-client-version", &credentials.client_version)
+            .set("x-sand-box-namespace", &credentials.box_namespace)
+            .set("x-ghost-mode", ghost_mode)
+            .set("x-request-id", &request_id)
+            .send_bytes(&body)
+            .map_err(|error| format!("Product Analytics transport failed: {error}"))?;
+        Ok(())
     }
 
     pub fn generate_image(
