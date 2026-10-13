@@ -28,3 +28,4 @@ pub mod session_store_factories;
 pub mod session_projection;
 pub mod session_materialization;
 pub mod session_summaries;
+pub mod session_mutations;
