@@ -1,6 +1,8 @@
 use crate::agent_attachment::AgentAttachment;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+const MAX_SETTLED_ACCEPTANCES: usize = 256;
+
 use std::{
     collections::BTreeMap,
     fs,
@@ -96,6 +98,8 @@ struct SendAcknowledgementState {
     owner_generation: u64,
     records: BTreeMap<String, SendAcknowledgementRecord>,
     seen_echoes: BTreeMap<String, BTreeMap<String, SendAcknowledgementEntryKind>>,
+    #[serde(default)]
+    settled_acceptances: BTreeMap<String, SendAcknowledgementRecord>,
 }
 
 pub struct DurableSendAcknowledgementOwner {
@@ -255,6 +259,22 @@ impl DurableSendAcknowledgementOwner {
             return Err("send acknowledgement selected model is too large".into());
         }
         validate_entries(nonce, &entries)?;
+
+        let scoped_key = scope_key(account_slot, account_fence, agent_id, nonce);
+        if let Some(existing) = self.state.settled_acceptances.get(&scoped_key) {
+            if existing.nonce == nonce
+                && existing.message_text == message_text
+                && existing.message_rich_text == message_rich_text
+                && existing.attachments == attachments
+                && existing.selected_model == selected_model
+                && existing.entries == entries
+            {
+                return Err(
+                    "send nonce was already accepted; automatic redispatch is forbidden".into(),
+                );
+            }
+            return Err("send nonce was reused with different payload".into());
+        }
 
         if let Some(key) = self.find_key(account_slot, account_fence, agent_id, nonce) {
             let existing = self.state.records.get(&key).expect("located record");
@@ -533,7 +553,23 @@ impl DurableSendAcknowledgementOwner {
         let complete = echoed_message || (!has_message && attachments_complete);
 
         if complete {
-            self.state.records.remove(&key);
+            if let Some(mut accepted) = self.state.records.remove(&key) {
+                accepted.phase = SendAcknowledgementPhase::AcceptedAwaitingEcho;
+                accepted.reason = Some("canonical echo observed".into());
+                self.state.settled_acceptances.insert(key.clone(), accepted);
+                while self.state.settled_acceptances.len() > MAX_SETTLED_ACCEPTANCES {
+                    let Some(oldest_key) = self
+                        .state
+                        .settled_acceptances
+                        .iter()
+                        .min_by_key(|(_, record)| record.entered_at_ms)
+                        .map(|(key, _)| key.clone())
+                    else {
+                        break;
+                    };
+                    self.state.settled_acceptances.remove(&oldest_key);
+                }
+            }
             self.state.seen_echoes.remove(&key);
         }
         self.persist()?;
@@ -632,6 +668,19 @@ impl DurableSendAcknowledgementOwner {
     ) -> Option<SendAcknowledgementRecord> {
         self.find_key(account_slot, account_fence, agent_id, nonce)
             .and_then(|key| self.state.records.get(&key).cloned())
+    }
+
+    pub fn settled_acceptance(
+        &self,
+        account_slot: Option<&str>,
+        account_fence: &str,
+        agent_id: &str,
+        nonce: &str,
+    ) -> Option<SendAcknowledgementRecord> {
+        self.state
+            .settled_acceptances
+            .get(&scope_key(account_slot, account_fence, agent_id, nonce))
+            .cloned()
     }
 
     fn transition(
@@ -1050,6 +1099,37 @@ mod tests {
             )
             .unwrap());
         assert!(owner.snapshot(Some("slot-a"), "session:a", "agent-a").is_empty());
+        let settled = owner
+            .settled_acceptance(Some("slot-a"), "session:a", "agent-a", "nonce-a")
+            .expect("settled acceptance retained after canonical echo");
+        assert_eq!(settled.message_text, "hello");
+        drop(owner);
+        let mut owner = DurableSendAcknowledgementOwner::open(&path, 3).unwrap();
+        assert!(owner
+            .settled_acceptance(Some("slot-a"), "session:a", "agent-a", "nonce-a")
+            .is_some());
+        let identical_replay = owner
+            .begin(
+                Some("slot-a"),
+                "session:a",
+                "agent-a",
+                "nonce-a",
+                "hello",
+                message("nonce-a"),
+            )
+            .unwrap_err();
+        assert!(identical_replay.contains("already accepted"));
+        let mismatch = owner
+            .begin(
+                Some("slot-a"),
+                "session:a",
+                "agent-a",
+                "nonce-a",
+                "different",
+                message("nonce-a"),
+            )
+            .unwrap_err();
+        assert!(mismatch.contains("different payload"));
         assert!(!owner
             .ingest_echo(
                 Some("slot-a"),
