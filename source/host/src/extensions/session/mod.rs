@@ -25,3 +25,4 @@ pub mod pending_card_sweeps;
 mod pending_card_sweeps_android_tests;
 pub mod session_maintenance;
 pub mod session_store_factories;
+pub mod session_projection;
