@@ -6,6 +6,7 @@ pub mod multitask_todo;
 pub mod production_turn_agent_owner;
 pub mod production_turn_lifecycle;
 pub mod remote_routed_tools;
+pub mod sand_labeling;
 pub mod web_routed_tools;
 pub mod sand_auto_review;
 pub mod auto_review_gate;
@@ -83,3 +84,5 @@ pub use subagent_tool_bridge::{
     TASK_TOOL_NAME, CHECK_SUBAGENT_TOOL_NAME, MESSAGE_SUBAGENT_TOOL_NAME, STOP_SUBAGENT_TOOL_NAME,
 };
 pub use subagent_worker::{build_parent_subagent_routed_tools, spawn_generated_subagent};
+
+pub use sand_labeling::FollowupLabelingTracker;
