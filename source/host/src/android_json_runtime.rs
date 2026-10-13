@@ -4912,8 +4912,9 @@ impl AndroidJsonHost {
             || !detected
                 .chars()
                 .all(|value| value.is_ascii_alphanumeric() || matches!(value, '/' | '_' | '-' | '+'))
+            || detected.parse::<chrono_tz::Tz>().is_err()
         {
-            return Err("detectedTimeZone is invalid".into());
+            return Err("detectedTimeZone must be a valid bounded IANA time zone".into());
         }
         *self
             .detected_time_zone
@@ -15290,6 +15291,14 @@ mod time_zone_settings_dispatch_tests {
                 &json!({"detectedTimeZone":"bad zone"}),
             )
             .is_err());
+        assert!(
+            host.dispatch(
+                "feature.settings.timeZone.detected",
+                &json!({"detectedTimeZone":"Etc/DefinitelyNotAZone"}),
+            )
+            .is_err(),
+            "character-safe but nonexistent IANA zones must fail closed",
+        );
 
         drop(host);
         let mut reopened = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
