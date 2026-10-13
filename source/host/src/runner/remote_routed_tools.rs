@@ -25,6 +25,7 @@ const MAX_READ_PATH: usize = 4096;
 const MAX_WRITE_CONTENT: usize = 1024 * 1024;
 const REMOTE_BROWSER_EXECUTION_TIMEOUT_MS: u64 = 90_000;
 const REMOTE_CLOUD_AGENT_EXECUTION_TIMEOUT_MS: u64 = 120_000;
+const REMOTE_REFUSED_ACTION_MEMORY: usize = 512;
 const CLOUD_AGENT_TOOL_NAME: &str = "CloudAgent";
 const CLOUD_AGENT_ACTIONS: &[&str] = &[
     "launch", "list", "models", "get", "dump", "watch", "reply", "rename",
@@ -262,6 +263,7 @@ struct RemoteApprovalWait {
     remote_operation_id: String,
     request_id: String,
     capability: String,
+    refusal_id: String,
     account_fence: String,
     account_epoch: u64,
     device_id: String,
@@ -279,6 +281,7 @@ pub(crate) struct RemoteApprovalResolution {
 #[derive(Clone, Default)]
 pub(crate) struct RemoteApprovalRegistry {
     waits: Arc<Mutex<BTreeMap<String, RemoteApprovalWait>>>,
+    refused_actions: Arc<Mutex<VecDeque<String>>>,
 }
 
 impl RemoteApprovalRegistry {
@@ -315,6 +318,9 @@ impl RemoteApprovalRegistry {
             || resolved.device_id.as_deref() != Some(wait.device_id.as_str())
         {
             return Err("remote approval callback identity disagrees with durable broker state".into());
+        }
+        if !approved {
+            self.remember_refused(wait.refusal_id.clone())?;
         }
         let (state, condvar) = &*wait.signal;
         let mut state = state
@@ -370,6 +376,28 @@ impl RemoteApprovalRegistry {
             capability: wait.capability,
             approved: false,
         }))
+    }
+
+    fn was_refused(&self, refusal_id: &str) -> Result<bool, String> {
+        self.refused_actions
+            .lock()
+            .map_err(|_| "remote refusal memory lock poisoned".to_string())
+            .map(|refused| refused.iter().any(|value| value == refusal_id))
+    }
+
+    fn remember_refused(&self, refusal_id: String) -> Result<(), String> {
+        let mut refused = self
+            .refused_actions
+            .lock()
+            .map_err(|_| "remote refusal memory lock poisoned".to_string())?;
+        if refused.iter().any(|value| value == &refusal_id) {
+            return Ok(());
+        }
+        refused.push_back(refusal_id);
+        while refused.len() > REMOTE_REFUSED_ACTION_MEMORY {
+            refused.pop_front();
+        }
+        Ok(())
     }
 
     fn register(&self, approval_id: &str, wait: RemoteApprovalWait) -> Result<(), String> {
@@ -592,6 +620,13 @@ impl AndroidRoutedToolBridge for RemoteRoutedTools {
         let operation_id = format!("remote-{identity_hash}");
         let request_id = format!("remote-request-{request_hash}");
         let approval_id = format!("remote-approval-{identity_hash}");
+        // Desktop local-tool permission remembers an exact rejected action for the lifetime of
+        // the current turn even if the model retries it under a new toolCallId. Preserve that
+        // semantic on Android by excluding toolCallId from the refusal identity while fencing it
+        // to the canonical parent operation.
+        let refusal_id = sha256_hex(
+            format!("{}\n{}\n{}", self.parent_operation_id, name, args_json).as_bytes(),
+        );
         let capability = match name {
             "Shell" | "ExternalShell" => "remote.shell",
             "Read" | "ExternalRead" => "remote.read",
@@ -604,6 +639,11 @@ impl AndroidRoutedToolBridge for RemoteRoutedTools {
         let permission_at_authorization = self.local_tool_permission()?;
         if permission_at_authorization == LocalToolPermission::Never {
             return Err("local computer tools are disabled by the current Host permission policy".into());
+        }
+        if self.approvals.was_refused(&refusal_id)? {
+            return Err(
+                "remote tool action was already denied in this turn; do not retry it".into(),
+            );
         }
         let binding = self.current_binding()?;
         let required_executor = match name {
@@ -704,6 +744,7 @@ impl AndroidRoutedToolBridge for RemoteRoutedTools {
                     remote_operation_id: operation_id.clone(),
                     request_id: request_id.clone(),
                     capability: capability.to_string(),
+                    refusal_id: refusal_id.clone(),
                     account_fence: binding.account_fence.clone(),
                     account_epoch: binding.account_epoch,
                     device_id: binding.device_id.clone(),
@@ -1883,6 +1924,7 @@ mod tests {
                     remote_operation_id: "remote-op-1".into(),
                     request_id: "request-1".into(),
                     capability: "remote.shell".into(),
+                    refusal_id: "refusal-1".into(),
                     account_fence: "session:account-a".into(),
                     account_epoch: 7,
                     device_id: "device-1".into(),
@@ -1904,6 +1946,71 @@ mod tests {
             .is_err());
     }
 
+
+    #[test]
+    fn denied_remote_action_is_remembered_for_the_turn_but_not_other_turns() {
+        let root = tempfile::tempdir().unwrap();
+        let broker = SharedCapabilityBroker::open(root.path().join("broker.json"), 1).unwrap();
+        broker
+            .request_remote_approval(
+                "approval-refused",
+                "request-refused",
+                "remote-op-refused",
+                "remote.shell",
+                json!({"deviceId":"device-1"}),
+                "session:account-a",
+                7,
+                "device-1",
+                1,
+            )
+            .unwrap();
+        let registry = RemoteApprovalRegistry::default();
+        registry
+            .register(
+                "approval-refused",
+                RemoteApprovalWait {
+                    parent_operation_id: "turn-a".into(),
+                    remote_operation_id: "remote-op-refused".into(),
+                    request_id: "request-refused".into(),
+                    capability: "remote.shell".into(),
+                    refusal_id: "turn-a:shell:echo-no".into(),
+                    account_fence: "session:account-a".into(),
+                    account_epoch: 7,
+                    device_id: "device-1".into(),
+                    signal: Arc::new((Mutex::new(None), Condvar::new())),
+                },
+            )
+            .unwrap();
+
+        let resolved = registry
+            .resolve_from_ui(
+                &broker,
+                "approval-refused",
+                false,
+                "session:account-a",
+                2,
+            )
+            .unwrap()
+            .unwrap();
+        assert!(!resolved.approved);
+        assert!(registry.was_refused("turn-a:shell:echo-no").unwrap());
+        assert!(!registry.was_refused("turn-b:shell:echo-no").unwrap());
+
+        // Repeated inserts are idempotent and bounded so Host lifetime cannot grow this memory
+        // without limit.
+        registry
+            .remember_refused("turn-a:shell:echo-no".into())
+            .unwrap();
+        for index in 0..(REMOTE_REFUSED_ACTION_MEMORY + 5) {
+            registry
+                .remember_refused(format!("other-refusal-{index}"))
+                .unwrap();
+        }
+        assert_eq!(
+            registry.refused_actions.lock().unwrap().len(),
+            REMOTE_REFUSED_ACTION_MEMORY
+        );
+    }
 
     #[test]
     fn pre_dispatch_failure_cancels_allowed_once_remote_grant() {
