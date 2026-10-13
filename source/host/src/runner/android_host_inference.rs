@@ -14,6 +14,7 @@ use std::{
 pub const DEFAULT_DACHENG_RESPONSES_BASE_URL: &str =
     "https://api.ombhrum.com/codex-deepseek/v1";
 pub const DEFAULT_SAND_MODEL_ID: &str = "grok-4.5";
+pub const SAND_SUMMARIZATION_MODEL_ID: &str = "gemini-2.5-flash";
 const SAND_AUTO_REVIEW_CLASSIFIER_TIMEOUT_SECS: u64 = 10;
 const SAND_SUBAGENT_CLASSIFIER_ERROR_REASON: &str =
     "An error occurred while classifying this task action. Please review manually.";
@@ -118,7 +119,7 @@ impl AndroidHostInferenceProvider {
             mode,
             bearer_token,
             cancelled,
-            DEFAULT_SAND_MODEL_ID,
+            SAND_SUMMARIZATION_MODEL_ID,
             system_prompt,
             user_prompt,
             should_cancel,
@@ -765,6 +766,7 @@ mod tests {
     #[test]
     fn default_model_matches_current_desktop_sand_authority() {
         assert_eq!(DEFAULT_SAND_MODEL_ID, "grok-4.5");
+        assert_eq!(SAND_SUMMARIZATION_MODEL_ID, "gemini-2.5-flash");
         assert_eq!(AndroidHostInferenceProvider::resolve_model_id("default"), "grok-4.5");
         assert_eq!(AndroidHostInferenceProvider::resolve_model_id("   "), "grok-4.5");
         assert_eq!(
