@@ -16449,6 +16449,64 @@ export function apply(ctx) {
     }
 
     #[test]
+    fn cold_start_recovers_torn_visible_ack_without_reappending_user_message() {
+        let root = std::env::temp_dir().join(format!(
+            "fabushi-visible-ack-torn-recovery-{}-{}",
+            std::process::id(),
+            now_ms()
+        ));
+        let account_fence;
+        {
+            let host = AndroidJsonHost::new(&root, AndroidHostMode::Test);
+            account_fence = host.current_turn_account_fence().unwrap();
+            host.transcript
+                .lock()
+                .unwrap()
+                .append_entry(json!({
+                    "id":"torn-user-echo",
+                    "kind":"message",
+                    "role":"user",
+                    "agentId":"mahayana-assistant",
+                    "operationId":"torn-operation",
+                    "accountFence":account_fence.clone(),
+                    "clientNonce":"torn-client-nonce",
+                    "content":"persisted before process death",
+                    "timestampMs":10_u64,
+                }))
+                .unwrap();
+            assert!(
+                host.visible_ack_obligations
+                    .pending_for_account(&account_fence)
+                    .is_empty(),
+                "fixture must model process death before acknowledgement obligation persistence",
+            );
+        }
+
+        let reopened = AndroidJsonHost::new(&root, AndroidHostMode::Test);
+        let pending = reopened
+            .visible_ack_obligations
+            .pending_for_account(&account_fence);
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].agent_id, "mahayana-assistant");
+        let entries = reopened.transcript.lock().unwrap().get_transcript();
+        assert_eq!(
+            entries
+                .iter()
+                .filter(|entry| entry.get("id").and_then(Value::as_str) == Some("torn-user-echo"))
+                .count(),
+            1,
+            "cold-start reconciliation must never reappend the accepted user message",
+        );
+        assert!(
+            entries.iter().all(|entry| {
+                entry.get("id").and_then(Value::as_str) != Some("assistant:torn-operation")
+            }),
+            "reconciliation must restore the obligation, never fabricate assistant completion",
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn settled_session_rearms_persisted_visible_ack_obligations_without_crossing_accounts() {
         let root = std::env::temp_dir().join(format!(
             "fabushi-visible-ack-session-rearm-{}-{}",
