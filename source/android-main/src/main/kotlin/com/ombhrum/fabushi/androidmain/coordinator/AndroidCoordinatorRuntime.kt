@@ -512,7 +512,7 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
     override fun computerUseModel(): JSONObject =
         host.request("feature.settings.computerUseModel")
 
-    override fun setComputerUseModel(expectedAccountScope: String, model: String?): JSONObject =
+    override fun setComputerUseModel(expectedAccountScope: String, model: JSONObject?): JSONObject =
         host.request(
             "feature.settings.computerUseModel.set",
             JSONObject()

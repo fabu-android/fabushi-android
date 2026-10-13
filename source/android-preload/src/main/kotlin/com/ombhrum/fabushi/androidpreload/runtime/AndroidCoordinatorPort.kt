@@ -604,7 +604,7 @@ interface AndroidCoordinatorPort {
         error("Default Agent model mutation is unavailable on this Coordinator port")
     fun computerUseModel(): JSONObject =
         error("Computer-use model setting is unavailable on this Coordinator port")
-    fun setComputerUseModel(expectedAccountScope: String, model: String?): JSONObject =
+    fun setComputerUseModel(expectedAccountScope: String, model: JSONObject?): JSONObject =
         error("Computer-use model mutation is unavailable on this Coordinator port")
     fun managedSkillsCatalog(): JSONObject =
         error("Managed skills catalog is unavailable on this Coordinator port")

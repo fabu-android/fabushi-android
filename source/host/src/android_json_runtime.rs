@@ -5238,8 +5238,7 @@ impl AndroidJsonHost {
             .user_settings
             .lock()
             .map_err(|_| "canonical Android user settings lock poisoned".to_string())?
-            .computer_use_model(&account_scope)
-            .map(str::to_string);
+            .computer_use_model(&account_scope);
         Ok(json!({
             "accountScope": account_scope,
             "model": model,
@@ -5254,15 +5253,22 @@ impl AndroidJsonHost {
         }
         let requested = match params.get("model") {
             None | Some(Value::Null) => None,
-            Some(Value::String(value)) => Some(value.as_str()),
-            Some(_) => return Err("computer use model must be a string or null".into()),
+            Some(Value::Object(selection)) => {
+                let model_id = selection
+                    .get("modelId")
+                    .and_then(Value::as_str)
+                    .filter(|value| !value.trim().is_empty())
+                    .ok_or_else(|| "computer use modelId is required".to_string())?;
+                self.validate_available_model_selection(Some(model_id))?;
+                params.get("model")
+            }
+            Some(_) => return Err("computer use model must be an object or null".into()),
         };
-        let validated = self.validate_available_model_selection(requested)?;
         let saved = self
             .user_settings
             .lock()
             .map_err(|_| "canonical Android user settings lock poisoned".to_string())?
-            .set_computer_use_model(&account_scope, validated.as_deref())
+            .set_computer_use_model(&account_scope, requested)
             .map_err(|error| format!("failed to persist Android computer use model: {error}"))?;
         Ok(json!({
             "accountScope": account_scope,
@@ -16419,7 +16425,7 @@ mod default_model_settings_dispatch_tests {
         assert!(host
             .dispatch(
                 "feature.settings.agentDefaultModel.set",
-                &json!({"expectedAccountScope":scope,"model":"not-in-catalog"}),
+                &json!({"expectedAccountScope":scope,"model":{"modelId":"not-in-catalog","maxMode":true,"parameters":[]}}),
             )
             .unwrap_err()
             .contains("available model catalog backend is unavailable"));
@@ -16462,7 +16468,7 @@ mod computer_use_model_settings_dispatch_tests {
         assert!(host
             .dispatch(
                 "feature.settings.computerUseModel.set",
-                &json!({"expectedAccountScope":scope,"model":"not-in-catalog"}),
+                &json!({"expectedAccountScope":scope,"model":{"modelId":"not-in-catalog","maxMode":true,"parameters":[]}}),
             )
             .unwrap_err()
             .contains("available model catalog backend is unavailable"));
