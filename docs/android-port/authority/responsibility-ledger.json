@@ -694,15 +694,16 @@
       "android_owner": "Rust Host visible acknowledgement owner",
       "platform_delta": "Desktop store is Agent-keyed inside desktop session composition. Android keeps the same product effect but adds account fencing, fsync+atomic file replacement, Host-owned process-death boot redrive, and single-Host receive-loop scheduling.",
       "implementation_status": "implemented",
-      "production_wiring": "Visible user chat.send records the durable obligation after canonical transcript acceptance; assistant transcript settlement fulfills the matching reservation; failure/cancellation/empty completion preserve and schedule recovery; reconciled proven assistant text settles separately; feature.receive starts due boot/idle redrives.",
-      "unit_test": "ack_obligations module covers reopen/account fencing, bounded redrive, non-duplicating redrive command, reservation-token stale completion fencing and unfulfilled completion deferral; SandAckObligationStore covers legacy fail-closed, account-isolated reopen, interrupt/redrive/restore and account cleanup.",
+      "production_wiring": "Visible user chat.send records the durable obligation after canonical transcript acceptance; assistant transcript settlement fulfills the matching reservation; failure/cancellation/empty completion preserve and schedule recovery; reconciled proven assistant text settles separately; feature.receive starts due boot/idle redrives. Canonical browser/OAuth session settlement now re-arms persisted obligations whenever the settled session fence changes, so same-process logout/login or account return does not strand a durable acknowledgement until another process restart.",
+      "unit_test": "ack_obligations module covers reopen/account fencing, bounded redrive, non-duplicating redrive command, reservation-token stale completion fencing and unfulfilled completion deferral; SandAckObligationStore covers legacy fail-closed, account-isolated reopen, interrupt/redrive/restore and account cleanup. android_json_runtime::tests::settled_session_rearms_persisted_visible_ack_obligations_without_crossing_accounts covers in-process session settlement, due timing, same-fence no-op and cross-account isolation; landed at 0bf11c4ce7d3194d39d9958cf78c169d10b8d738.",
       "contract_test": "Rust Host production wiring and exact-head architecture/Rust gate required; queued at time of ledger update.",
       "integration_test": "required/partially covered by Host chat.send/turn tests; exact-head process reopen + empty delivery redrive must pass in GitHub Actions.",
       "packaged_test": "required on final exact-head APK/AAB",
       "device_test": "required on authenticated process-death/device acceptance",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Source/production semantics implemented on the PR branch. Do not promote to verified until one descendant exact HEAD has green Rust/architecture plus packaged/device evidence."
+      "notes": "Source/production semantics implemented on the PR branch. Do not promote to verified until one descendant exact HEAD has green Rust/architecture plus packaged/device evidence. 0bf11c4ce7d3194d39d9958cf78c169d10b8d738 closes the same-process canonical session re-arm gap; keep not-verified until descendant exact-head CI/package/device evidence succeeds.",
+      "android_head_at_update": "8cc1bf74c6ea11585ac27f7e017131532c03dc09"
     },
     {
       "responsibility_id": "AGENT-GENERATED-SUBAGENT-001",
