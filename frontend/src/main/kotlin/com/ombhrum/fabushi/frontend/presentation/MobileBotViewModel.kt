@@ -65,6 +65,40 @@ data class MobileBotSummaryAndroid(
     val updatedAt: Long = 0L,
 ) : SidebarOrderAgent
 
+internal class RosterReplicaEventFence {
+    private var epoch: String? = null
+    private var sequence: Long = 0L
+
+    fun accept(event: JSONObject): Boolean {
+        val ordered = event.optJSONObject("ordered") ?: return false
+        if (ordered.optString("replicaKey") != "roster") return false
+        val nextEpoch = ordered.optString("epoch").trim()
+        val nextSequence = ordered.optLong("sequence", 0L)
+        if (nextEpoch.isEmpty() || nextSequence <= 0L) return false
+
+        val currentEpoch = epoch
+        if (currentEpoch == null) {
+            epoch = nextEpoch
+            sequence = nextSequence
+            return true
+        }
+        if (nextEpoch == currentEpoch) {
+            if (nextSequence <= sequence) return false
+            sequence = nextSequence
+            return true
+        }
+        if (nextSequence != 1L) return false
+        epoch = nextEpoch
+        sequence = 1L
+        return true
+    }
+
+    fun reset() {
+        epoch = null
+        sequence = 0L
+    }
+}
+
 enum class MobileApprovalDecision(val wireValue: String) {
     ALLOW_ONCE("allow-once"),
     DENY("deny"),
@@ -297,6 +331,7 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
     )
     private var rosterSelectionAccountSlot: String? = null
     private val rosterRefreshFence = RosterRefreshFence()
+    private val rosterReplicaEventFence = RosterReplicaEventFence()
     private val agentSettingsFence = AgentSettingsMutationFence()
     private val mutableState = MutableStateFlow(MobileBotUiState())
     private val hiddenChatsMutationController = HiddenChatsMutationController(
@@ -3529,16 +3564,21 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
 
     private fun handleOperationEvent(event: JSONObject) {
         val type = event.optString("type")
+        if (type == "agent.profile.changed") {
+            if (!rosterReplicaEventFence.accept(event)) return
+            refreshBots()
+            return
+        }
         if (
             type == "agents" ||
             type == "agent-upserted" ||
-            type == "agent-deleted" ||
-            type == "agent.profile.changed"
+            type == "agent-deleted"
         ) {
             refreshBots()
             return
         }
         if (type == "agent.timeline.event") {
+            if (!rosterReplicaEventFence.accept(event)) return
             val active = mutableState.value.activeBot
             if (active != null && event.optString("agentId") == active.id) {
                 val timeline = event.optJSONObject("event")
