@@ -54,6 +54,8 @@ use crate::extensions::telemetry::recovery_events::{
     rebuild_escalation_event, rebuild_pending_stall_event, recovery_action_event,
     replica_resync_event, resync_completed_event, send_journal_restore_event,
 };
+use crate::extensions::cross_user_sharing::production::build_production_xuser_relay_client;
+use crate::extensions::cross_user_sharing::xuser_relay::SandXuserRelayClient;
 use crate::extensions::teach_recording::{DurableTeachRecordingOwner, TeachRecordingPhase};
 use crate::extensions::trays::extension::{start_trays_extension, HostTraysExtension};
 use crate::extensions::trays::trays_service::{TrayEvent, TraySubscription};
@@ -746,6 +748,7 @@ pub struct AndroidJsonHost {
     mcp_auth_watches: Arc<Mutex<AndroidMcpAuthWatchManager>>,
     mcp_auth_owner: Option<AndroidMcpAuthWatchOwner>,
     mcp_dashboard_backend: Option<Arc<CursorDashboardMcpAuthBackend>>,
+    cross_user_relay: Option<Arc<SandXuserRelayClient>>,
     mcp_server_tool_settings: Arc<Mutex<McpServerToolSettings>>,
     plugin_variables: PluginVariableStore,
     pending_plugin_variable_writes: BTreeMap<String, PreparedPluginVariableWrite>,
@@ -1030,6 +1033,15 @@ impl AndroidJsonHost {
         } else {
             (None, None)
         };
+        let cross_user_relay = if mode == AndroidHostMode::Production {
+            mcp_dashboard_backend
+                .as_ref()
+                .and_then(|dashboard| {
+                    build_production_xuser_relay_client(dashboard.credential_provider()).ok()
+                })
+        } else {
+            None
+        };
         let mcp_server_tool_settings = Arc::new(Mutex::new(
             McpServerToolSettings::open(app_data_dir.join("mcp-server-tool-settings.json"))
                 .unwrap_or_else(|error| panic!("failed to open durable MCP server tool settings: {error}")),
@@ -1187,6 +1199,7 @@ impl AndroidJsonHost {
             mcp_auth_watches,
             mcp_auth_owner,
             mcp_dashboard_backend,
+            cross_user_relay,
             mcp_server_tool_settings,
             plugin_variables,
             pending_plugin_variable_writes: BTreeMap::new(),
@@ -2507,6 +2520,10 @@ impl AndroidJsonHost {
                 Ok(json!({"accepted":true,"observedAtMs":observed_at_ms}))
             },
             "feature.telemetry.processCrash.recent" => Ok(Value::Array(self.process_crash_recent.iter().cloned().collect())),
+            "feature.crossUserSharing.capability" => Ok(json!({
+                "available": self.cross_user_relay.is_some(),
+                "credentialBoundary": "sand-renewal-only",
+            })),
             "feature.agent.diskPressure.observe" => self.agent_disk_pressure_observe(params),
             "feature.agent.diskPressure.record" => self.agent_disk_pressure_record(params),
             "feature.agent.turn.reconcile" => self.agent_turn_reconcile(params),
