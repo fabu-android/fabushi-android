@@ -343,6 +343,12 @@ data class AndroidTranscriptHistoryPage(
     val nextBeforeSeq: Long?,
 )
 
+data class AndroidTranscriptThread(
+    val agentId: String,
+    val rootId: String,
+    val entries: JSONArray,
+)
+
 data class AndroidContentSearchMessage(
     val agentId: String,
     val entryId: String,
@@ -1056,6 +1062,11 @@ interface AndroidCoordinatorPort {
         untilMs: Double? = null,
     ): AndroidTranscriptHistoryPage =
         error("Transcript history pagination is unavailable on this Coordinator port")
+    fun transcriptThread(
+        agentId: String,
+        rootId: String,
+    ): AndroidTranscriptThread =
+        error("Transcript thread projection is unavailable on this Coordinator port")
     fun globalContentSearchMessages(
         query: String,
         limit: Int = 50,
