@@ -16485,20 +16485,21 @@
       "android_disposition": "android-adapted",
       "android_target": [
         "source/host/src/mcp_auth/dashboard_mcp_auth_backend.rs",
-        "source/host/src/android_json_runtime.rs"
+        "source/host/src/android_json_runtime.rs",
+        "source/host/src/managed_team_rules.rs"
       ],
-      "android_owner": "Rust Host managed-team-rules owner (incomplete)",
-      "platform_delta": "Android uses the existing protected Dashboard backend and Host dispatch instead of Electron extension composition; cached resolver semantics still need a Host-owned durable/account-fenced snapshot.",
+      "android_owner": "Rust Host ManagedTeamRulesResolver + protected Dashboard backend",
+      "platform_delta": "Android uses the protected Dashboard backend and Host dispatch. f22842 adds an account-fenced in-memory known-good resolver equivalent to Desktop refresh/failure preservation; asynchronous startup preload remains to close.",
       "implementation_status": "mapped",
-      "production_wiring": "Authenticated GetTeams/GetTeamRules plus fullPath dedupe is wired through CursorDashboardMcpAuthBackend -> AndroidJsonHost feature.account.teamRules, but requests are immediate and do not preserve a previous known-good snapshot on refresh failure.",
-      "unit_test": "required: multi-team merge/filter/dedupe plus failure-preserves-snapshot and account-switch clearing/fencing",
+      "production_wiring": "GetTeams/GetTeamRules -> CursorDashboardMcpAuthBackend -> AndroidJsonHost -> ManagedTeamRulesResolver. Successful requests refresh same-account snapshot and transient failures fall back only within the current account fence. Startup preload remains open.",
+      "unit_test": "managed_team_rules::{failed_refresh_preserves_same_account_known_good_snapshot, first_refresh_failure_remains_a_real_error, snapshots_are_account_fenced_and_clearable}; Dashboard wire/merge tests already cover direct teams, Sand/all-Agent filtering and fullPath dedupe. Descendant exact-head Actions pending.",
       "contract_test": "required: Desktop GetTeams/GetTeamRules wire/filter semantics",
       "integration_test": "required: production Dashboard credential path refreshes then serves cached rules during a bounded backend failure without crossing account fence",
       "packaged_test": "required on final exact-head package",
       "device_test": "required on protected account acceptance",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Do not treat the current direct Dashboard fetch as Desktop-equivalent cached resolver closure."
+      "notes": "f22842 closes known-good snapshot/failure/account-fence semantics. Keep mapped/not-verified because Desktop-style asynchronous startup preload plus packaged/protected-account acceptance remain open."
     },
     {
       "responsibility_id": "AGENT-MEMORY-ANDROID-001",
