@@ -112,6 +112,22 @@ impl TranscriptStore {
             ));
         }
 
+        let backup = backup_path(&path);
+        if let Ok(entries) = read_entries(&backup) {
+            let recovery_copy = temporary_path(&path);
+            fs::copy(&backup, &recovery_copy)?;
+            sync_file(&recovery_copy)?;
+            install_replacement(&recovery_copy, &path)?;
+            let _ = fs::remove_file(&temporary);
+            return Ok((
+                Self { path, entries },
+                Some(TranscriptRecoveryInfo {
+                    outcome: TranscriptRecoveryOutcome::RecoveredInterruptedWrite,
+                    quarantine_path: Some(quarantine_path),
+                }),
+            ));
+        }
+
         let _ = fs::remove_file(&temporary);
         let store = Self { path, entries: Vec::new() };
         store.persist()?;
@@ -381,6 +397,14 @@ impl TranscriptStore {
             let mut file = fs::File::create(&temporary)?;
             file.write_all(format!("{serialized}\n").as_bytes())?;
             file.sync_all()?;
+
+            if read_entries(&self.path).is_ok() {
+                let backup = backup_path(&self.path);
+                fs::copy(&self.path, &backup)?;
+                sync_file(&backup)?;
+                sync_parent(&backup)?;
+            }
+
             install_replacement(&temporary, &self.path)
         })();
         if result.is_err() {
@@ -406,9 +430,17 @@ fn temporary_path(path: &Path) -> PathBuf {
     path.with_extension("json.tmp")
 }
 
+fn backup_path(path: &Path) -> PathBuf {
+    path.with_extension("json.bak")
+}
+
 fn install_replacement(temporary: &Path, path: &Path) -> io::Result<()> {
     fs::rename(temporary, path)?;
     sync_parent(path)
+}
+
+fn sync_file(path: &Path) -> io::Result<()> {
+    fs::File::open(path)?.sync_all()
 }
 
 fn quarantine_corrupt_transcript(path: &Path) -> io::Result<PathBuf> {
@@ -913,6 +945,31 @@ mod tests {
         assert_eq!(error.kind(), io::ErrorKind::AlreadyExists);
         assert_eq!(store.get_transcript().len(), 1);
 
+        let _ = fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
+    fn recovering_open_uses_last_known_good_backup_before_resetting_corruption() {
+        let path = temp_path();
+        let mut store = TranscriptStore::open(&path).unwrap();
+        store
+            .append_entry(json!({"id":"first","agentId":"agent-a","kind":"message","content":"first"}))
+            .unwrap();
+        store
+            .append_entry(json!({"id":"second","agentId":"agent-a","kind":"message","content":"second"}))
+            .unwrap();
+        assert!(backup_path(&path).exists(), "second commit must retain the prior valid snapshot");
+
+        fs::write(&path, "{broken-canonical").unwrap();
+        fs::write(temporary_path(&path), "{broken-temp").unwrap();
+
+        let (recovered, recovery) = TranscriptStore::open_recovering(&path).unwrap();
+        let recovery = recovery.unwrap();
+        assert_eq!(recovery.outcome, TranscriptRecoveryOutcome::RecoveredInterruptedWrite);
+        assert!(recovery.quarantine_path.unwrap().exists());
+        assert_eq!(recovered.get_transcript().len(), 1);
+        assert_eq!(recovered.get_transcript()[0]["id"], "first");
+        assert_eq!(TranscriptStore::open(&path).unwrap().get_transcript()[0]["id"], "first");
         let _ = fs::remove_dir_all(path.parent().unwrap());
     }
 
