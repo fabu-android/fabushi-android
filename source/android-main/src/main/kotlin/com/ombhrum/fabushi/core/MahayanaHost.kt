@@ -8,6 +8,7 @@ import com.ombhrum.fabushi.androidmain.security.AndroidCredentialVaultStore
 import com.ombhrum.fabushi.androidmain.security.AndroidPluginVariableSecretStore
 import com.ombhrum.fabushi.androidmain.security.AndroidRemoteBindingStore
 import com.ombhrum.fabushi.androidmain.startup.AndroidDataRootBootstrap
+import org.json.JSONArray
 import org.json.JSONObject
 import java.io.Closeable
 import java.util.ArrayDeque
@@ -435,6 +436,129 @@ class MahayanaHost(
             else -> error("Unsupported Credential Vault operation")
         }
     }
+
+    fun agentChannels(agentId: String): JSONArray {
+        val cleanAgentId = validateAgentChannelId(agentId, "agent id")
+        val accountFence = currentCredentialAccountFence()
+        val configuredSecretRefs = buildSet {
+            val metadata = credentialVaultStore.listMetadata(accountFence)
+            for (index in 0 until metadata.length()) {
+                metadata.optJSONObject(index)?.optString("name")
+                    ?.takeIf(String::isNotBlank)?.let(::add)
+            }
+        }
+        val raw = requestValue(
+            "feature.agent.channels.listMetadata",
+            JSONObject().put("agentId", cleanAgentId),
+        ) as? JSONArray ?: JSONArray()
+        return JSONArray().also { projected ->
+            for (index in 0 until raw.length()) {
+                val connection = raw.optJSONObject(index) ?: continue
+                val platform = connection.optString("platform")
+                if (agentChannelSecretRef(cleanAgentId, platform) !in configuredSecretRefs) continue
+                projected.put(JSONObject(connection.toString()).put("status", "connected").put("configured", true))
+            }
+        }
+    }
+
+    fun agentChannelConnect(agentId: String, platform: String, label: String, token: String): JSONObject {
+        check(!featureHostTest && !closed) { "Agent channel mutation requires production Host" }
+        val cleanAgentId = validateAgentChannelId(agentId, "agent id")
+        val cleanPlatform = validateAgentChannelPlatform(platform)
+        val cleanLabel = label.replace(Regex("\\s+"), " ").trim().take(200).ifBlank { cleanPlatform }
+        require(token.isNotEmpty()) { "Agent channel credential is required" }
+        val accountFence = currentCredentialAccountFence()
+        val secretRef = agentChannelSecretRef(cleanAgentId, cleanPlatform)
+        credentialVaultStore.upsert(
+            accountFence,
+            secretRef,
+            "Agent $cleanPlatform · $cleanLabel",
+            token,
+            listOf("https://agent-channel.fabushi.local"),
+        )
+        return try {
+            val metadata = request(
+                "feature.agent.channels.writeMetadata",
+                JSONObject().put("agentId", cleanAgentId).put("platform", cleanPlatform).put("label", cleanLabel),
+            )
+            check(metadata.optBoolean("written", false)) { "Agent channel metadata was rejected" }
+            JSONObject().put("connected", true).put("platform", cleanPlatform)
+                .put("label", cleanLabel).put("status", "connected")
+        } catch (error: Throwable) {
+            runCatching { credentialVaultStore.revoke(accountFence, secretRef) }
+            throw error
+        }
+    }
+
+    fun agentChannelDisconnect(agentId: String, platform: String): JSONObject {
+        check(!featureHostTest && !closed) { "Agent channel mutation requires production Host" }
+        val cleanAgentId = validateAgentChannelId(agentId, "agent id")
+        val cleanPlatform = validateAgentChannelPlatform(platform)
+        val accountFence = currentCredentialAccountFence()
+        val secretRef = agentChannelSecretRef(cleanAgentId, cleanPlatform)
+        val secretRevoked = credentialVaultStore.revoke(accountFence, secretRef)
+        return try {
+            val metadata = request(
+                "feature.agent.channels.removeMetadata",
+                JSONObject().put("agentId", cleanAgentId).put("platform", cleanPlatform),
+            )
+            val metadataRemoved = metadata.optBoolean("removed", false)
+            JSONObject().put("disconnected", secretRevoked || metadataRemoved)
+                .put("secretRevoked", secretRevoked)
+                .put("metadataRemoved", metadataRemoved)
+                .put("reconcileRequired", false)
+        } catch (error: Throwable) {
+            JSONObject().put("disconnected", secretRevoked)
+                .put("secretRevoked", secretRevoked)
+                .put("metadataRemoved", false)
+                .put("reconcileRequired", true)
+                .put("error", (error.message ?: "Agent channel metadata cleanup failed").take(240))
+        }
+    }
+
+    fun agentChannelsRefresh(agentId: String): JSONArray {
+        val cleanAgentId = validateAgentChannelId(agentId, "agent id")
+        val accountFence = currentCredentialAccountFence()
+        val configuredSecretRefs = buildSet {
+            val metadata = credentialVaultStore.listMetadata(accountFence)
+            for (index in 0 until metadata.length()) {
+                metadata.optJSONObject(index)?.optString("name")
+                    ?.takeIf(String::isNotBlank)?.let(::add)
+            }
+        }
+        val raw = requestValue(
+            "feature.agent.channels.listMetadata",
+            JSONObject().put("agentId", cleanAgentId),
+        ) as? JSONArray ?: JSONArray()
+        for (index in 0 until raw.length()) {
+            val platform = raw.optJSONObject(index)?.optString("platform").orEmpty()
+            if (platform.isBlank()) continue
+            if (agentChannelSecretRef(cleanAgentId, platform) !in configuredSecretRefs) {
+                request(
+                    "feature.agent.channels.removeMetadata",
+                    JSONObject().put("agentId", cleanAgentId).put("platform", platform),
+                )
+            }
+        }
+        return agentChannels(cleanAgentId)
+    }
+
+    private fun validateAgentChannelId(raw: String, label: String): String =
+        raw.trim().also { value ->
+            require(value.isNotEmpty() && value.length <= 200 && value.none(Char::isISOControl)) {
+                "Invalid Agent channel $label"
+            }
+        }
+
+    private fun validateAgentChannelPlatform(raw: String): String =
+        raw.trim().lowercase().also { value ->
+            require(value.matches(Regex("^[a-z0-9][a-z0-9._-]{0,63}$"))) {
+                "Invalid Agent channel platform"
+            }
+        }
+
+    private fun agentChannelSecretRef(agentId: String, platform: String): String =
+        "agent-channel:$agentId:$platform"
 
     /** Internal execution-boundary consumption; Presentation has no secret reveal route. */
     internal fun credentialForOrigin(secretRef: String, origin: String): String {
