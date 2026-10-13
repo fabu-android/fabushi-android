@@ -100,16 +100,10 @@ impl AckSendGuard {
 
 impl Drop for AckSendGuard {
     fn drop(&mut self) {
-        if !self.armed
-            || self
-                .obligations
-                .store
-                .get(&self.account_fence, &self.agent_id)
-                .is_some()
-        {
+        if !self.armed {
             return;
         }
-        let _ = self.obligations.record_send(
+        let _ = self.obligations.ensure_send_obligation_if_missing(
             &self.account_fence,
             &self.agent_id,
             self.accepted_at_ms,
@@ -154,6 +148,25 @@ impl AckObligations {
             accepted_at_ms,
             armed: owes_ack,
         }
+    }
+
+    fn ensure_send_obligation_if_missing(
+        &self,
+        account_fence: &str,
+        agent_id: &str,
+        at_ms: f64,
+    ) -> io::Result<bool> {
+        let _mutation = self
+            .mutation_guard
+            .lock()
+            .map_err(|_| io::Error::other("ack obligation mutation lock poisoned"))?;
+        if self.store.get(account_fence, agent_id).is_some() {
+            return Ok(false);
+        }
+        self.clear_redrive_timer(account_fence, agent_id);
+        self.store
+            .record_send(account_fence, agent_id, at_ms)
+            .map(|_| true)
     }
 
     pub fn record_send(&self, account_fence: &str, agent_id: &str, at_ms: f64) -> io::Result<RecordSendOutcome> {
@@ -467,6 +480,10 @@ impl AckObligations {
     }
 
     pub fn clear_account(&self, account_fence: &str) -> io::Result<usize> {
+        let _mutation = self
+            .mutation_guard
+            .lock()
+            .map_err(|_| io::Error::other("ack obligation mutation lock poisoned"))?;
         if let Ok(mut schedules) = self.redrive_schedules.lock() {
             schedules.retain(|(fence, _), _| fence != account_fence);
         }
@@ -477,6 +494,10 @@ impl AckObligations {
     }
 
     pub fn clear_agent(&self, account_fence: &str, agent_id: &str) -> io::Result<bool> {
+        let _mutation = self
+            .mutation_guard
+            .lock()
+            .map_err(|_| io::Error::other("ack obligation mutation lock poisoned"))?;
         self.clear_redrive_timer(account_fence, agent_id);
         if let Ok(mut reservations) = self.reservations.lock() {
             reservations.retain(|_, reservation| {
