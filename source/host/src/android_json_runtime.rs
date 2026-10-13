@@ -4363,12 +4363,57 @@ impl AndroidJsonHost {
             }
             "updateAgent" => {
                 let id = required_string(params, "id")?;
-                let mut agents = self.agents.lock().map_err(|_| "canonical Android Agent roster lock poisoned".to_string())?;
-                let current = agents.get(id).ok_or_else(|| "agent not found".to_string())?;
-                let profile = params.get("profile").and_then(Value::as_object).ok_or("profile is required")?;
-                let name = profile.get("name").and_then(Value::as_str).unwrap_or(&current.name).to_string();
-                let description = profile.get("description").and_then(Value::as_str).unwrap_or(&current.description).to_string();
-                let agent = agents.update_profile(id, &name, &description).map_err(|error| error.to_string())?;
+                let (previous, agent) = {
+                    let mut agents = self.agents
+                        .lock()
+                        .map_err(|_| "canonical Android Agent roster lock poisoned".to_string())?;
+                    let current = agents.get(id).ok_or_else(|| "agent not found".to_string())?;
+                    let profile = params
+                        .get("profile")
+                        .and_then(Value::as_object)
+                        .ok_or("profile is required")?;
+                    let name = profile
+                        .get("name")
+                        .and_then(Value::as_str)
+                        .unwrap_or(&current.name)
+                        .to_string();
+                    let description = profile
+                        .get("description")
+                        .and_then(Value::as_str)
+                        .unwrap_or(&current.description)
+                        .to_string();
+                    let updated = agents
+                        .update_profile(id, &name, &description)
+                        .map_err(|error| error.to_string())?;
+                    (current, updated)
+                };
+                let profile_changed =
+                    previous.name != agent.name || previous.description != agent.description;
+                if previous.name != agent.name {
+                    push_turn_event(
+                        &self.turn_events,
+                        json!({
+                            "type":"agent.timeline.event",
+                            "agentId":agent.id,
+                            "updatedAt":agent.updated_at,
+                            "event":{
+                                "type":"name-changed",
+                                "from":previous.name,
+                                "to":agent.name,
+                            }
+                        }),
+                    );
+                }
+                if profile_changed {
+                    push_turn_event(
+                        &self.turn_events,
+                        json!({
+                            "type":"agent.profile.changed",
+                            "agentId":agent.id,
+                            "updatedAt":agent.updated_at,
+                        }),
+                    );
+                }
                 Ok(agent.as_json())
             }
             "setAgentHiddenFromSidebar" => {
@@ -17033,6 +17078,59 @@ mod tests {
             .cloned()
             .unwrap();
         assert_eq!(subagent.status, SubagentStatus::Aborted);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn update_agent_projects_profile_change_and_rename_without_filesystem_watch() {
+        let root = std::env::temp_dir().join(format!(
+            "fabushi-json-host-profile-projection-{}-{}",
+            std::process::id(),
+            now_ms()
+        ));
+        let mut host = AndroidJsonHost::new(&root, AndroidHostMode::Test);
+        let agent = host
+            .agents
+            .lock()
+            .unwrap()
+            .create("Before", "old description")
+            .unwrap();
+
+        let updated = host
+            .dispatch(
+                "updateAgent",
+                &json!({
+                    "id":agent.id,
+                    "profile":{"name":"After","description":"new description"}
+                }),
+            )
+            .unwrap();
+        assert_eq!(updated["name"], "After");
+
+        let timeline = host.dispatch("feature.receive", &json!({})).unwrap();
+        assert_eq!(timeline["type"], "agent.timeline.event");
+        assert_eq!(timeline["agentId"], agent.id);
+        assert_eq!(timeline["event"]["type"], "name-changed");
+        assert_eq!(timeline["event"]["from"], "Before");
+        assert_eq!(timeline["event"]["to"], "After");
+        assert_eq!(timeline["updatedAt"], updated["updatedAt"]);
+
+        let profile = host.dispatch("feature.receive", &json!({})).unwrap();
+        assert_eq!(profile["type"], "agent.profile.changed");
+        assert_eq!(profile["agentId"], agent.id);
+        assert_eq!(profile["updatedAt"], updated["updatedAt"]);
+
+        host.dispatch(
+            "updateAgent",
+            &json!({
+                "id":agent.id,
+                "profile":{"name":"After","description":"description only"}
+            }),
+        )
+        .unwrap();
+        let profile_only = host.dispatch("feature.receive", &json!({})).unwrap();
+        assert_eq!(profile_only["type"], "agent.profile.changed");
+        assert_eq!(profile_only["agentId"], agent.id);
         let _ = std::fs::remove_dir_all(root);
     }
 
