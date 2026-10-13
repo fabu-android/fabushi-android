@@ -4,6 +4,7 @@ use std::path::Path;
 use std::sync::Mutex;
 
 use serde_json::{json, Value};
+use uuid::Uuid;
 
 use super::sand_ack_obligation_store::{AckObligation, RecordSendOutcome, SandAckObligationStore};
 
@@ -12,6 +13,45 @@ pub const ACK_REDRIVE_IDLE_DELAY_MS: u64 = 5_000;
 
 pub fn build_ack_redrive_prompt() -> &'static str {
     "[System recovery] The user sent one or more messages that were never visibly acknowledged. Respond now with a real user-visible SendMessage. If the latest request is unavailable, say it may have been missed and ask the user to resend it. Never invent completion."
+    #[test]
+    fn older_turn_cannot_clear_later_coalesced_obligation() {
+        let root = tempfile::tempdir().unwrap();
+        let owner = AckObligations::new(root.path());
+        let first = owner
+            .record_send_and_mint_token("acct-a", "agent-a", 10.0)
+            .unwrap();
+        let second = owner
+            .record_send_and_mint_token("acct-a", "agent-a", 20.0)
+            .unwrap();
+        assert!(!owner
+            .fulfill_ack_obligation("acct-a", "agent-a", &first.ack_token)
+            .unwrap());
+        assert_eq!(
+            owner
+                .store
+                .get("acct-a", "agent-a")
+                .unwrap()
+                .coalesced_count,
+            2.0
+        );
+        assert!(owner
+            .fulfill_ack_obligation("acct-a", "agent-a", &second.ack_token)
+            .unwrap());
+        assert!(owner.store.get("acct-a", "agent-a").is_none());
+    }
+
+    #[test]
+    fn ack_token_never_crosses_account_fence() {
+        let root = tempfile::tempdir().unwrap();
+        let owner = AckObligations::new(root.path());
+        let reservation = owner
+            .record_send_and_mint_token("acct-a", "agent-a", 10.0)
+            .unwrap();
+        assert!(!owner
+            .fulfill_ack_obligation("acct-b", "agent-a", &reservation.ack_token)
+            .unwrap());
+        assert!(owner.store.get("acct-a", "agent-a").is_some());
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -35,6 +75,21 @@ pub enum AckRedrivePreparation {
     Ready(AckObligation),
     LostAgentDeleted(AckObligation),
     LostMaxRedrives(AckObligation),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct AckReservation {
+    pub ack_token: String,
+    pub obligation: AckObligation,
+    pub created: bool,
+}
+
+#[derive(Debug, Clone)]
+struct ReservationState {
+    account_fence: String,
+    agent_id: String,
+    previous: Option<AckObligation>,
+    recorded: AckObligation,
 }
 
 pub fn build_ack_redrive_send_args(
@@ -66,6 +121,7 @@ pub fn build_ack_redrive_send_args(
 /// durable user echo exists and ends only after a visible Agent message is durably appended.
 pub struct AckObligations {
     store: SandAckObligationStore,
+    reservations: Mutex<HashMap<String, ReservationState>>,
     redrive_schedules: Mutex<HashMap<(String, String), AckRedriveSchedule>>,
 }
 
@@ -73,6 +129,7 @@ impl AckObligations {
     pub fn new(root_dir: impl AsRef<Path>) -> Self {
         Self {
             store: SandAckObligationStore::new(root_dir),
+            reservations: Mutex::new(HashMap::new()),
             redrive_schedules: Mutex::new(HashMap::new()),
         }
     }
@@ -82,7 +139,139 @@ impl AckObligations {
         self.store.record_send(account_fence, agent_id, at_ms)
     }
 
-    pub fn fulfill(&self, account_fence: &str, agent_id: &str) -> io::Result<bool> {
+    pub fn record_send_and_mint_token(
+        &self,
+        account_fence: &str,
+        agent_id: &str,
+        at_ms: f64,
+    ) -> io::Result<AckReservation> {
+        self.clear_redrive_timer(account_fence, agent_id);
+        let previous = self.store.get(account_fence, agent_id);
+        let outcome = self.store.record_send(account_fence, agent_id, at_ms)?;
+        let ack_token = Uuid::new_v4().to_string();
+        self.reservations
+            .lock()
+            .map_err(|_| io::Error::other("ack reservation registry poisoned"))?
+            .insert(
+                ack_token.clone(),
+                ReservationState {
+                    account_fence: account_fence.to_string(),
+                    agent_id: agent_id.to_string(),
+                    previous,
+                    recorded: outcome.obligation.clone(),
+                },
+            );
+        Ok(AckReservation {
+            ack_token,
+            obligation: outcome.obligation,
+            created: outcome.created,
+        })
+    }
+
+    pub fn mint_ack_run_token(
+        &self,
+        account_fence: &str,
+        agent_id: &str,
+    ) -> io::Result<Option<String>> {
+        let Some(recorded) = self.store.get(account_fence, agent_id) else {
+            return Ok(None);
+        };
+        let ack_token = Uuid::new_v4().to_string();
+        self.reservations
+            .lock()
+            .map_err(|_| io::Error::other("ack reservation registry poisoned"))?
+            .insert(
+                ack_token.clone(),
+                ReservationState {
+                    account_fence: account_fence.to_string(),
+                    agent_id: agent_id.to_string(),
+                    previous: Some(recorded.clone()),
+                    recorded,
+                },
+            );
+        Ok(Some(ack_token))
+    }
+
+    /// Fulfill only the exact obligation snapshot reserved for this turn.
+    /// A later coalesced user send changes the durable row, so an older turn
+    /// cannot accidentally clear the newer reply obligation.
+    pub fn fulfill_ack_obligation(
+        &self,
+        account_fence: &str,
+        agent_id: &str,
+        ack_token: &str,
+    ) -> io::Result<bool> {
+        let reservation = {
+            let mut reservations = self
+                .reservations
+                .lock()
+                .map_err(|_| io::Error::other("ack reservation registry poisoned"))?;
+            let Some(reservation) = reservations.get(ack_token) else {
+                return Ok(false);
+            };
+            if reservation.account_fence != account_fence || reservation.agent_id != agent_id {
+                return Ok(false);
+            }
+            reservations.remove(ack_token).expect("reservation existed")
+        };
+        if self.store.get(account_fence, agent_id).as_ref() != Some(&reservation.recorded) {
+            return Ok(false);
+        }
+        self.clear_redrive_timer(account_fence, agent_id);
+        self.store.clear(account_fence, agent_id)
+    }
+
+    pub fn rollback_ack_reservation(
+        &self,
+        account_fence: &str,
+        agent_id: &str,
+        ack_token: &str,
+    ) -> io::Result<bool> {
+        let reservation = {
+            let mut reservations = self
+                .reservations
+                .lock()
+                .map_err(|_| io::Error::other("ack reservation registry poisoned"))?;
+            let Some(reservation) = reservations.get(ack_token) else {
+                return Ok(false);
+            };
+            if reservation.account_fence != account_fence || reservation.agent_id != agent_id {
+                return Ok(false);
+            }
+            reservations.remove(ack_token).expect("reservation existed")
+        };
+        if self.store.get(account_fence, agent_id).as_ref() != Some(&reservation.recorded) {
+            return Ok(false);
+        }
+        self.store.restore(reservation.previous, account_fence, agent_id)?;
+        Ok(true)
+    }
+
+    pub fn retire_ack_run_token(
+        &self,
+        account_fence: &str,
+        agent_id: &str,
+        ack_token: Option<&str>,
+    ) -> bool {
+        let Some(ack_token) = ack_token else {
+            return false;
+        };
+        let Ok(mut reservations) = self.reservations.lock() else {
+            return false;
+        };
+        if reservations.get(ack_token).is_some_and(|reservation| {
+            reservation.account_fence == account_fence && reservation.agent_id == agent_id
+        }) {
+            reservations.remove(ack_token);
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Reserved for externally reconciled transcript proof. Live turn completion
+    /// must use fulfill_ack_obligation with the turn's token.
+    pub fn fulfill_reconciled(&self, account_fence: &str, agent_id: &str) -> io::Result<bool> {
         self.clear_redrive_timer(account_fence, agent_id);
         self.store.clear(account_fence, agent_id)
     }
@@ -151,11 +340,19 @@ impl AckObligations {
         if let Ok(mut schedules) = self.redrive_schedules.lock() {
             schedules.retain(|(fence, _), _| fence != account_fence);
         }
+        if let Ok(mut reservations) = self.reservations.lock() {
+            reservations.retain(|_, reservation| reservation.account_fence != account_fence);
+        }
         self.store.clear_account(account_fence)
     }
 
     pub fn clear_agent(&self, account_fence: &str, agent_id: &str) -> io::Result<bool> {
         self.clear_redrive_timer(account_fence, agent_id);
+        if let Ok(mut reservations) = self.reservations.lock() {
+            reservations.retain(|_, reservation| {
+                reservation.account_fence != account_fence || reservation.agent_id != agent_id
+            });
+        }
         self.store.clear(account_fence, agent_id)
     }
 
