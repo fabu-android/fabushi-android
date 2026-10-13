@@ -18079,6 +18079,71 @@
       "artifact": null,
       "verification_status": "not-verified",
       "notes": "Restores the source-inventory referenced responsibility; keep mapped/not-verified pending same-head package/device evidence."
+    },
+    {
+      "responsibility_id": "XUSER-SHARING-ANDROID-001",
+      "domain": "agent-collaboration-source-closure",
+      "desktop_sources": [
+        {
+          "path": "source/host/src/extensions/cross_user_sharing/extension.rs",
+          "blob_sha": "1668ea33986aa6970c2b86956f5cfde040dff38f"
+        },
+        {
+          "path": "source/host/src/extensions/cross_user_sharing/mod.rs",
+          "blob_sha": "b71aae3348646606d5213c4d7dd6e58b19ae11f9"
+        },
+        {
+          "path": "source/host/src/extensions/cross_user_sharing/production.rs",
+          "blob_sha": "7689d824a7ecace001a6bed6d24075405e8e56fe"
+        },
+        {
+          "path": "source/host/src/extensions/cross_user_sharing/xuser_entry_publisher.rs",
+          "blob_sha": "2dcf30c41db575b579e539d77831fc6460ff518a"
+        },
+        {
+          "path": "source/host/src/extensions/cross_user_sharing/xuser_relay.rs",
+          "blob_sha": "cbd8a4b6dcacddbcfa74554642c89e49fc293833"
+        },
+        {
+          "path": "source/host/src/extensions/cross_user_sharing/xuser_remote_turns.rs",
+          "blob_sha": "d071da39033722db6bde5f2b5e7c17fd755ba20b"
+        },
+        {
+          "path": "source/host/src/extensions/cross_user_sharing/xuser_sharing_environment.rs",
+          "blob_sha": "8ebd6e21f3c4986461cb2cc473f4002efc33b20d"
+        },
+        {
+          "path": "source/host/src/extensions/cross_user_sharing/xuser_sharing_service.rs",
+          "blob_sha": "258e9aa3e5260e607a70a512292cfb4cdc6d8362"
+        }
+      ],
+      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "responsibility": "Track the Host-side cross-user sharing extension, relay, publisher, environment and remote-turn source closure as a sub-responsibility of the single canonical AGENT-SHARED-ROOM-ANDROID-001 runtime owner.",
+      "source_owner": "Desktop cross_user_sharing Host extension",
+      "visible_effect": "Shared-room collaboration retains relay/reconnect/remote-turn behavior while using one canonical Android shared-room owner.",
+      "android_disposition": "direct-port",
+      "android_target": [
+        "source/host/src/extensions/cross_user_sharing/extension.rs",
+        "source/host/src/extensions/cross_user_sharing/production.rs",
+        "source/host/src/extensions/cross_user_sharing/xuser_entry_publisher.rs",
+        "source/host/src/extensions/cross_user_sharing/xuser_relay.rs",
+        "source/host/src/extensions/cross_user_sharing/xuser_remote_turns.rs",
+        "source/host/src/extensions/cross_user_sharing/xuser_sharing_environment.rs",
+        "source/host/src/extensions/cross_user_sharing/xuser_sharing_service.rs",
+        "source/host/src/android_json_runtime.rs"
+      ],
+      "android_owner": "Same Rust shared-room owner recorded by AGENT-SHARED-ROOM-ANDROID-001; this record is source-coverage only and creates no second state owner.",
+      "platform_delta": "Platform-neutral relay/state-machine logic remains Rust. Android account-token leasing and mobile lifecycle wiring replace Desktop process/environment assumptions.",
+      "implementation_status": "mapped",
+      "production_wiring": "Core cross-user modules are present and partially wired through AndroidJsonHost; renewable canonical account-token lease and final authenticated relay/package/device closure remain open.",
+      "unit_test": "Focused Rust tests on cross-user reconciliation, dedupe, departure/tombstone and account-transition behavior exist; exact-head gate pending.",
+      "contract_test": "AGENT-SHARED-ROOM-ANDROID-001 remains the canonical product responsibility and state owner.",
+      "integration_test": "Required: authenticated relay polling/reconnect plus account transition on final exact head.",
+      "packaged_test": "Required on final exact-head APK/AAB.",
+      "device_test": "Required with real shared-room relay backend.",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Compatibility/source-closure sub-responsibility for source rows that already referenced this ID. It must not be interpreted as a second runtime owner."
     }
   ],
   "traceability": {
