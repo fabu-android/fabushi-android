@@ -7685,6 +7685,11 @@ impl AndroidJsonHost {
                 format!("failed to clear deleted-Agent pending wakes: {error}")
             })?;
 
+        self.messaging
+            .lock()
+            .map_err(|_| "canonical Android messaging lock poisoned".to_string())?
+            .clear_agent_wakes_for_deleted_agent(account_fence, agent_id)?;
+
         let running_subagents = {
             self.subagent_owner
                 .lock()
