@@ -17,6 +17,7 @@ use std::{
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum TranscriptRecoveryOutcome {
     RecoveredInterruptedWrite,
+    RecoveredSalvage,
     ResetCorruptStore,
 }
 
@@ -129,6 +130,19 @@ impl TranscriptStore {
         }
 
         let _ = fs::remove_file(&temporary);
+        let salvaged = salvage_valid_entries(&quarantine_path).unwrap_or_default();
+        if !salvaged.is_empty() {
+            let store = Self { path, entries: salvaged };
+            store.persist()?;
+            return Ok((
+                store,
+                Some(TranscriptRecoveryInfo {
+                    outcome: TranscriptRecoveryOutcome::RecoveredSalvage,
+                    quarantine_path: Some(quarantine_path),
+                }),
+            ));
+        }
+
         let store = Self { path, entries: Vec::new() };
         store.persist()?;
         Ok((
@@ -424,6 +438,20 @@ fn read_entries(path: &Path) -> io::Result<Vec<Value>> {
         .clone();
     validate_entries(&entries)?;
     Ok(entries)
+}
+
+fn salvage_valid_entries(path: &Path) -> io::Result<Vec<Value>> {
+    let raw = fs::read_to_string(path)?;
+    let value: Value = serde_json::from_str(&raw)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+    let entries = value
+        .as_array()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "transcript root must be an array"))?;
+    Ok(entries
+        .iter()
+        .filter(|entry| entry_id(entry).is_ok())
+        .cloned()
+        .collect())
 }
 
 fn temporary_path(path: &Path) -> PathBuf {
@@ -970,6 +998,33 @@ mod tests {
         assert_eq!(recovered.get_transcript().len(), 1);
         assert_eq!(recovered.get_transcript()[0]["id"], "first");
         assert_eq!(TranscriptStore::open(&path).unwrap().get_transcript()[0]["id"], "first");
+        let _ = fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
+    fn recovering_open_salvages_valid_entries_from_partially_corrupt_store() {
+        let path = temp_path();
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(
+            &path,
+            r#"[{"id":"keep-a","kind":"message","content":"a"},{"kind":"message","content":"broken"},{"id":"keep-b","kind":"message","content":"b"}]"#,
+        )
+        .unwrap();
+
+        let (store, recovery) = TranscriptStore::open_recovering(&path).unwrap();
+        let recovery = recovery.unwrap();
+
+        assert_eq!(recovery.outcome, TranscriptRecoveryOutcome::RecoveredSalvage);
+        assert!(recovery.quarantine_path.unwrap().exists());
+        assert_eq!(
+            store
+                .get_transcript()
+                .iter()
+                .map(|entry| entry["id"].as_str().unwrap())
+                .collect::<Vec<_>>(),
+            vec!["keep-a", "keep-b"],
+        );
+        assert_eq!(TranscriptStore::open(&path).unwrap().get_transcript().len(), 2);
         let _ = fs::remove_dir_all(path.parent().unwrap());
     }
 
