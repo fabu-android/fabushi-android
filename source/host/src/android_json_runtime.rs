@@ -13902,7 +13902,7 @@ impl AndroidJsonHost {
             let has_visible_assistant_message = transcript.iter().any(|entry| {
                 entry.get("role").and_then(Value::as_str) == Some("assistant")
                     && entry
-                        .get("text")
+                        .get("content")
                         .and_then(Value::as_str)
                         .is_some_and(|text| !text.trim().is_empty())
             });
