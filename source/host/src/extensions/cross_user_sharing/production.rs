@@ -1,9 +1,13 @@
 use std::collections::BTreeMap;
+use std::path::Path;
 use std::sync::Arc;
 
 use crate::mcp_auth::dashboard_mcp_auth_backend::SandMcpCredentialProvider;
 
 use super::extension::CrossUserSharingExtension;
+use super::xuser_departure_obligations::{SandXuserDepartureObligations, XuserDepartureRelay};
+use super::xuser_pending_departure_store::SandXuserPendingDepartureStore;
+use super::xuser_room_tombstone_store::SandXuserRoomTombstoneStore;
 use super::xuser_relay::{
     SandXuserRelayClient, UreqXuserRelayTransport, XuserRelayDriver, XuserRelayRuntime,
     XuserRelayTransport,
@@ -55,6 +59,7 @@ pub struct ProductionCrossUserCore {
     pub service: Arc<SandXuserSharingService>,
     pub relay_driver: Arc<XuserRelayDriver>,
     pub extension: Arc<CrossUserSharingExtension>,
+    pub departures: SandXuserDepartureObligations,
 }
 
 
@@ -80,6 +85,7 @@ pub fn build_xuser_core(
     credentials: Arc<dyn SandMcpCredentialProvider>,
     transport: Arc<dyn XuserRelayTransport>,
     env: &BTreeMap<String, String>,
+    app_data_dir: &Path,
 ) -> Result<ProductionCrossUserCore, String> {
     let backend_url = credentials.configuration().backend_url;
     let relay = build_xuser_relay_client(credentials, transport)?;
@@ -101,6 +107,15 @@ pub fn build_xuser_core(
     ));
     let relay_driver = Arc::new(XuserRelayDriver::new(relay_runtime));
     service.bind_relay_driver(Arc::clone(&relay_driver));
+
+    let durable_root = app_data_dir.join("xuser-sharing");
+    let departures = SandXuserDepartureObligations::new(
+        Arc::new(SandXuserPendingDepartureStore::new(&durable_root)),
+        Arc::new(SandXuserRoomTombstoneStore::new(&durable_root)),
+    );
+    let departure_relay: Arc<dyn XuserDepartureRelay> = relay.clone();
+    service.bind_departure_obligations(departures.clone(), departure_relay);
+
     let extension = Arc::new(CrossUserSharingExtension::new(
         Arc::clone(&service),
         &backend_url,
@@ -111,12 +126,14 @@ pub fn build_xuser_core(
         service,
         relay_driver,
         extension,
+        departures,
     })
 }
 
 pub fn build_production_xuser_core(
     credentials: Arc<dyn SandMcpCredentialProvider>,
     env: &BTreeMap<String, String>,
+    app_data_dir: &Path,
 ) -> Result<ProductionCrossUserCore, String> {
     let configuration = credentials.configuration();
     let transport: Arc<dyn XuserRelayTransport> = Arc::new(UreqXuserRelayTransport::new(
@@ -124,7 +141,7 @@ pub fn build_production_xuser_core(
         configuration.client_version,
         configuration.box_namespace,
     )?);
-    build_xuser_core(credentials, transport, env)
+    build_xuser_core(credentials, transport, env, app_data_dir)
 }
 
 fn system_now_ms() -> u64 {
@@ -141,6 +158,18 @@ mod tests {
     use crate::extensions::cross_user_sharing::xuser_relay::XuserRelayHttpError;
     use serde_json::{json, Value};
     use std::sync::Mutex;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn test_root(label: &str) -> std::path::PathBuf {
+        std::env::temp_dir().join(format!(
+            "fabushi-xuser-production-{label}-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        ))
+    }
 
     struct RotatingSandCredentials {
         calls: Mutex<u64>,
@@ -195,10 +224,12 @@ mod tests {
         let transport: Arc<dyn XuserRelayTransport> = Arc::new(CapturingTransport {
             tokens: Mutex::new(Vec::new()),
         });
+        let root = test_root("denied");
         let core = build_xuser_core(
             credentials,
             transport,
             &BTreeMap::new(),
+            &root,
         )
         .unwrap();
 
@@ -210,6 +241,7 @@ mod tests {
             "environment denial must keep the process-owned sharing service stopped"
         );
         assert!(!core.relay_driver.is_started());
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]
@@ -226,13 +258,19 @@ mod tests {
             ("SAND_DEV_XUSER_SHARING".to_string(), "1".to_string()),
             ("SAND_PACKAGED".to_string(), "0".to_string()),
         ]);
-        let core = build_xuser_core(credentials, transport, &env).unwrap();
+        let root = test_root("allowed");
+        let core = build_xuser_core(credentials, transport, &env, &root).unwrap();
         core.extension.apply_feature_policy(true).unwrap();
         assert!(core.service.is_started());
         assert!(core.relay_driver.is_started());
         core.extension.stop();
         assert!(!core.service.is_started());
         assert!(!core.relay_driver.is_started());
+        assert_eq!(
+            core.departures.pending.file_path.parent(),
+            Some(root.join("xuser-sharing").as_path())
+        );
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]
