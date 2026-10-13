@@ -16604,6 +16604,49 @@ export function apply(ctx) {
     }
 
     #[test]
+    fn visible_ack_redrive_lost_agent_records_structured_telemetry() {
+        let root = std::env::temp_dir().join(format!(
+            "fabushi-visible-ack-lost-agent-{}-{}",
+            std::process::id(),
+            now_ms()
+        ));
+        let mut host = AndroidJsonHost::new(&root, AndroidHostMode::Test);
+        let account_fence = host.current_turn_account_fence().unwrap();
+        host.visible_ack_obligations
+            .record_send(&account_fence, "deleted-agent", 1.0)
+            .unwrap();
+        assert!(host
+            .visible_ack_obligations
+            .schedule_after_idle(&account_fence, "deleted-agent", 0));
+
+        host.drain_visible_ack_redrive_once().unwrap();
+
+        assert!(host
+            .visible_ack_obligations
+            .pending_for_account(&account_fence)
+            .is_empty());
+        let records = host.structured_log_spool.lock().unwrap().batch();
+        let event = records
+            .iter()
+            .find(|record| record.message == "sand.ack.obligation")
+            .expect("lost visible-ack recovery must emit structured telemetry");
+        assert_eq!(event.level, "warn");
+        assert_eq!(
+            event.metadata.get("conversation_id").map(String::as_str),
+            Some("deleted-agent")
+        );
+        assert_eq!(
+            event.metadata.get("outcome").map(String::as_str),
+            Some("lost")
+        );
+        assert_eq!(
+            event.metadata.get("reason").map(String::as_str),
+            Some("agent_deleted")
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn settled_session_rearms_persisted_visible_ack_obligations_without_crossing_accounts() {
         let root = std::env::temp_dir().join(format!(
             "fabushi-visible-ack-session-rearm-{}-{}",
