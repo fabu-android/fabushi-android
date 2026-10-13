@@ -1,4 +1,4 @@
-use mahayana_host_runtime::extensions::transcript::agent_run_error::{
+use fabushi_mahayana_host::extensions::transcript::agent_run_error::{
     AgentRunErrorDescription, BackendAdditionalInfo, BackendDetail,
     backend_detail_from_error_message, checkout_deep_control_url,
     describe_agent_run_error, find_backend_connect_error, format_agent_run_error,
