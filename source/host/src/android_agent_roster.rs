@@ -175,15 +175,17 @@ impl AndroidAgentRoster {
                     }
                 }
 
-                Ok((
-                    Self {
-                        path,
-                        state: AndroidAgentRosterFile::default(),
-                    },
-                    Some(AndroidAgentRosterRecovery {
-                        outcome: AndroidAgentRosterRecoveryOutcome::ResetCorruptStore,
-                        quarantine_path: quarantine,
-                    }),
+                // A missing or invalid recovery replica is not proof that the account has no
+                // Agents. Keep the quarantine copy and restore the damaged canonical bytes so a
+                // later process start cannot silently materialize an empty roster.
+                let corrupt_bytes = fs::read(&quarantine)?;
+                write_atomic(&path, &corrupt_bytes)?;
+                Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!(
+                        "Android Agent roster is corrupt and no valid recovery replica exists; preserved quarantine at {}",
+                        quarantine.display()
+                    ),
                 ))
             }
         }
@@ -1214,23 +1216,26 @@ mod tests {
     }
 
     #[test]
-    fn corrupt_roster_is_quarantined_and_reports_reset_recovery_without_backup() {
+    fn corrupt_roster_without_recovery_replica_fails_closed_and_preserves_canonical() {
         let path = temp_path("corrupt-recovery");
         fs::write(&path, b"{not-json").unwrap();
 
-        let (roster, recovery) = AndroidAgentRoster::open_recovering(&path).unwrap();
-        assert_eq!(roster.count(), 0);
-        assert!(!path.exists());
-
-        let recovery = recovery.expect("corrupt roster must report recovery");
-        assert_eq!(
-            recovery.outcome,
-            AndroidAgentRosterRecoveryOutcome::ResetCorruptStore
+        let error = AndroidAgentRoster::open_recovering(&path).err().unwrap();
+        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+        assert_eq!(fs::read(&path).unwrap(), b"{not-json");
+        let prefix = format!(
+            "{}.corrupt-",
+            path.file_name().unwrap().to_string_lossy()
         );
-        assert!(recovery.quarantine_path.exists());
-        assert_eq!(fs::read(&recovery.quarantine_path).unwrap(), b"{not-json");
+        let quarantine = fs::read_dir(path.parent().unwrap())
+            .unwrap()
+            .filter_map(Result::ok)
+            .find(|entry| entry.file_name().to_string_lossy().starts_with(&prefix))
+            .expect("corrupt roster must retain a quarantine copy");
+        assert_eq!(fs::read(quarantine.path()).unwrap(), b"{not-json");
 
-        let _ = fs::remove_file(recovery.quarantine_path);
+        let _ = fs::remove_file(path);
+        let _ = fs::remove_file(quarantine.path());
     }
 
     #[test]
