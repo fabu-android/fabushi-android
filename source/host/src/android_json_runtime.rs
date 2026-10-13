@@ -22052,6 +22052,184 @@ mod user_message_received_telemetry_wiring_tests {
     use super::*;
 
     #[test]
+    fn prompt_acceptance_survives_process_reopen_without_redispatch() {
+        let root = tempfile::tempdir().unwrap();
+        let command = json!({
+            "text":"durable hello",
+            "agentId":"acceptance-agent",
+            "clientNonce":"acceptance-nonce"
+        });
+        {
+            let mut host = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+            host.queue_chat_turn("acceptance-op-a", "acceptance-request-a", &command, None)
+                .unwrap();
+            assert_eq!(
+                host.transcript
+                    .lock()
+                    .unwrap()
+                    .get_transcript()
+                    .iter()
+                    .filter(|entry| {
+                        entry.get("clientNonce").and_then(Value::as_str)
+                            == Some("acceptance-nonce")
+                    })
+                    .count(),
+                1
+            );
+        }
+
+        let mut reopened = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+        reopened
+            .queue_chat_turn("acceptance-op-b", "acceptance-request-b", &command, None)
+            .unwrap();
+        assert_eq!(
+            reopened
+                .transcript
+                .lock()
+                .unwrap()
+                .get_transcript()
+                .iter()
+                .filter(|entry| {
+                    entry.get("clientNonce").and_then(Value::as_str)
+                        == Some("acceptance-nonce")
+                })
+                .count(),
+            1,
+            "process reopen must reconcile the accepted canonical echo instead of appending again"
+        );
+
+        let changed = json!({
+            "text":"different payload",
+            "agentId":"acceptance-agent",
+            "clientNonce":"acceptance-nonce"
+        });
+        let error = reopened
+            .queue_chat_turn(
+                "acceptance-op-c",
+                "acceptance-request-c",
+                &changed,
+                None,
+            )
+            .unwrap_err();
+        assert!(error.contains("NONCE_DIGEST_MISMATCH"));
+    }
+
+    #[test]
+    fn pending_acceptance_without_transcript_can_complete_once_after_process_death() {
+        let root = tempfile::tempdir().unwrap();
+        let account_fence = "session:test:android";
+        let input = SendInput {
+            agent_id: Some("pending-agent".into()),
+            prompt: "resume pending".into(),
+            rich_text: None,
+            reply_to_id: None,
+            is_fork: false,
+            attachment_paths: Vec::new(),
+            attachment_names: Vec::new(),
+        };
+        {
+            let mut host = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+            host.prompt_acceptance
+                .record_pending(
+                    account_fence,
+                    "pending-nonce",
+                    send_input_digest(&input),
+                    "pending-agent",
+                    Some("pending-request".into()),
+                )
+                .unwrap();
+        }
+
+        let mut reopened = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+        reopened
+            .queue_chat_turn(
+                "pending-op",
+                "pending-request",
+                &json!({
+                    "text":"resume pending",
+                    "agentId":"pending-agent",
+                    "clientNonce":"pending-nonce"
+                }),
+                None,
+            )
+            .unwrap();
+        assert_eq!(
+            reopened
+                .transcript
+                .lock()
+                .unwrap()
+                .get_transcript()
+                .iter()
+                .filter(|entry| {
+                    entry.get("clientNonce").and_then(Value::as_str) == Some("pending-nonce")
+                })
+                .count(),
+            1
+        );
+        assert!(matches!(
+            reopened
+                .prompt_acceptance
+                .lookup(account_fence, "pending-nonce"),
+            crate::extensions::transcript::prompt_acceptance_ledger::AcceptanceLookup::Found(
+                crate::extensions::transcript::prompt_acceptance_ledger::AcceptanceRecord {
+                    status: AcceptanceStatus::Accepted,
+                    ..
+                }
+            )
+        ));
+    }
+
+    #[test]
+    fn accepted_marker_without_canonical_transcript_is_outcome_unknown() {
+        let root = tempfile::tempdir().unwrap();
+        let account_fence = "session:test:android";
+        let input = SendInput {
+            agent_id: Some("unknown-agent".into()),
+            prompt: "must not redispatch".into(),
+            rich_text: None,
+            reply_to_id: None,
+            is_fork: false,
+            attachment_paths: Vec::new(),
+            attachment_names: Vec::new(),
+        };
+        let mut host = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+        host.prompt_acceptance
+            .record_pending(
+                account_fence,
+                "unknown-nonce",
+                send_input_digest(&input),
+                "unknown-agent",
+                Some("unknown-request".into()),
+            )
+            .unwrap();
+        host.prompt_acceptance
+            .mark_accepted(account_fence, "unknown-nonce");
+
+        let error = host
+            .queue_chat_turn(
+                "unknown-op",
+                "unknown-request",
+                &json!({
+                    "text":"must not redispatch",
+                    "agentId":"unknown-agent",
+                    "clientNonce":"unknown-nonce"
+                }),
+                None,
+            )
+            .unwrap_err();
+        assert!(error.contains("SEND_ACCEPTANCE_OUTCOME_UNKNOWN"));
+        assert!(host
+            .transcript
+            .lock()
+            .unwrap()
+            .get_transcript()
+            .iter()
+            .all(|entry| {
+                entry.get("clientNonce").and_then(Value::as_str) != Some("unknown-nonce")
+            }));
+    }
+
+    #[test]
     fn duplicate_request_id_never_replays_a_different_or_unsettled_user_turn() {
         let root = tempfile::tempdir().unwrap();
         let mut host = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
