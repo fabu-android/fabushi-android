@@ -9,6 +9,7 @@ use std::{
 pub const ANDROID_STRUCTURED_LOG_SPILL_MAX_BYTES: usize = 1024 * 1024;
 pub const ANDROID_STRUCTURED_LOG_SPILL_MAX_AGE_MS: u64 = 18 * 60 * 60 * 1_000;
 pub const ANDROID_STRUCTURED_LOG_SPILL_MAX_ENTRIES: usize = 1_000;
+pub const ANDROID_STRUCTURED_LOG_BATCH_SIZE: usize = 128;
 
 const ALLOWED_EVENTS: &[&str] = &[
     "sand.access_blocked",
@@ -412,6 +413,51 @@ impl AndroidStructuredLogSpool {
         Ok(())
     }
 
+    pub fn batch(&self) -> Vec<StructuredLogRecord> {
+        self.state
+            .checkpoint
+            .records
+            .iter()
+            .take(ANDROID_STRUCTURED_LOG_BATCH_SIZE)
+            .cloned()
+            .collect()
+    }
+
+    pub fn mark_ship_failed(&mut self, now_ms: u64) -> io::Result<()> {
+        self.state.observe_drop(TelemetryDropReason::ShipFailed, 1);
+        if let Some(state) = self.spill.replace(&self.state, now_ms)? {
+            self.state = state;
+        }
+        Ok(())
+    }
+
+    pub fn settle_success(
+        &mut self,
+        processed: u64,
+        backend_dropped: u64,
+        now_ms: u64,
+    ) -> io::Result<()> {
+        let acknowledged = processed
+            .saturating_add(backend_dropped)
+            .min(self.state.checkpoint.records.len() as u64) as usize;
+        self.state.checkpoint.records.drain(..acknowledged);
+        if backend_dropped > 0 {
+            self.state
+                .observe_drop(TelemetryDropReason::BackendDropped, backend_dropped);
+        }
+        self.state.acknowledge_drop_counters();
+        match self.spill.replace(&self.state, now_ms)? {
+            Some(state) => self.state = state,
+            None => {
+                self.state = AndroidStructuredLogSpillState::empty(
+                    self.state.account_slot.clone(),
+                    self.state.checkpoint.counter_id.clone(),
+                );
+            }
+        }
+        Ok(())
+    }
+
     pub fn snapshot(&self) -> AndroidStructuredLogSpillState {
         self.state.clone()
     }
@@ -602,6 +648,70 @@ mod tests {
                 .load("account-b", 1_003)
                 .unwrap(),
             SpillLoad::Empty
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn spool_batches_and_settles_backend_receipts_durably() {
+        let root = root("ship");
+        let path = root.join("spill.json");
+        let mut spool =
+            AndroidStructuredLogSpool::open(&path, "account-a", "counter-a", 1_000).unwrap();
+        for index in 0..(ANDROID_STRUCTURED_LOG_BATCH_SIZE + 3) {
+            spool
+                .record(
+                    "info",
+                    "sand.send",
+                    BTreeMap::from([("index".into(), index.to_string())]),
+                    1_000 + index as u64,
+                )
+                .unwrap();
+        }
+        assert_eq!(spool.batch().len(), ANDROID_STRUCTURED_LOG_BATCH_SIZE);
+        spool
+            .settle_success(
+                (ANDROID_STRUCTURED_LOG_BATCH_SIZE - 1) as u64,
+                1,
+                2_000,
+            )
+            .unwrap();
+        assert_eq!(spool.batch().len(), 3);
+        assert_eq!(
+            spool.snapshot().checkpoint.counters[&TelemetryDropReason::BackendDropped].observed,
+            1
+        );
+
+        let reopened =
+            AndroidStructuredLogSpool::open(&path, "account-a", "ignored", 2_001).unwrap();
+        assert_eq!(reopened.batch().len(), 3);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn failed_ship_retains_batch_and_persists_drop_counter() {
+        let root = root("ship-failed");
+        let path = root.join("spill.json");
+        let mut spool =
+            AndroidStructuredLogSpool::open(&path, "account-a", "counter-a", 1_000).unwrap();
+        spool
+            .record(
+                "warn",
+                "sand.send_ack",
+                BTreeMap::from([("outcome".into(), "timeout".into())]),
+                1_001,
+            )
+            .unwrap();
+        let before = spool.batch();
+        spool.mark_ship_failed(1_002).unwrap();
+        assert_eq!(spool.batch(), before);
+
+        let reopened =
+            AndroidStructuredLogSpool::open(&path, "account-a", "ignored", 1_003).unwrap();
+        assert_eq!(reopened.batch(), before);
+        assert_eq!(
+            reopened.snapshot().checkpoint.counters[&TelemetryDropReason::ShipFailed].observed,
+            1
         );
         let _ = fs::remove_dir_all(root);
     }
