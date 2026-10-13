@@ -14923,6 +14923,7 @@ mod tests {
         );
     }
 
+    #[test]
     fn deterministic_test_journey_covers_auth_stream_approval_and_interrupt() {
         let app_data = tempfile::tempdir().unwrap();
         let mut host = AndroidJsonHost::new(app_data.path(), AndroidHostMode::Test);
@@ -18123,6 +18124,7 @@ mod local_tool_permission_dispatch_tests {
         assert_eq!(degraded_standing_policy_decision(AndroidApprovalDecision::Deny), None);
     }
 
+    #[test]
     fn approval_resolution_accepts_four_way_and_legacy_shapes() {
         assert_eq!(
             parse_android_approval_resolution(&json!({
