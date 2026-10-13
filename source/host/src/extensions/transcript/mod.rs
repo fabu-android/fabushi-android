@@ -15,6 +15,7 @@ pub mod run_lifecycle;
 pub mod run_scheduler;
 pub mod send_turn_dispatch;
 pub mod pending_card_sweeps;
+pub mod sand_automation_failure;
 pub mod sand_pending_wake_store;
 pub mod transcript_store;
 
