@@ -164,9 +164,11 @@ pub fn start_production_transcript_extension(
         Arc::clone(&live_account_fence),
         roster_sink,
     ));
+    let profile_fence = Arc::clone(&live_account_fence);
+    let timeline_fence = Arc::clone(&live_account_fence);
     let bridge = TranscriptExtensionEventBridge::new(
         events.clone(),
-        live_account_fence,
+        Arc::clone(&live_account_fence),
         projection_events,
     );
 
@@ -174,6 +176,14 @@ pub fn start_production_transcript_extension(
 
     let profile_roster = Arc::clone(&roster_emit);
     subscriptions.push(events.on(TRANSCRIPT_PROFILE_CHANGED_TOPIC, move |payload| {
+        let incoming_fence = payload.get("accountFence").and_then(Value::as_str);
+        let current_fence = profile_fence
+            .lock()
+            .ok()
+            .and_then(|fence| fence.clone());
+        if incoming_fence.is_none() || incoming_fence != current_fence.as_deref() {
+            return Ok(());
+        }
         let Some(agent_id) = payload.get("agentId").and_then(Value::as_str) else {
             return Ok(());
         };
@@ -183,6 +193,14 @@ pub fn start_production_transcript_extension(
 
     let timeline_roster = Arc::clone(&roster_emit);
     subscriptions.push(events.on(TRANSCRIPT_TIMELINE_EVENT_TOPIC, move |payload| {
+        let incoming_fence = payload.get("accountFence").and_then(Value::as_str);
+        let current_fence = timeline_fence
+            .lock()
+            .ok()
+            .and_then(|fence| fence.clone());
+        if incoming_fence.is_none() || incoming_fence != current_fence.as_deref() {
+            return Ok(());
+        }
         let Some(agent_id) = payload.get("agentId").and_then(Value::as_str) else {
             return Ok(());
         };
