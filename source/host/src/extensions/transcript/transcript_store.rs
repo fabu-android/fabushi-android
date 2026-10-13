@@ -563,7 +563,7 @@ fn sync_parent(_path: &Path) -> io::Result<()> {
     Ok(())
 }
 
-fn is_main_transcript_page_entry(entry: &Value) -> bool {
+pub(crate) fn is_main_transcript_page_entry(entry: &Value) -> bool {
     if entry.get("branched").and_then(Value::as_bool).unwrap_or(false) {
         return false;
     }
