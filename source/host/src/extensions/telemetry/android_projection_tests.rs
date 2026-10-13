@@ -204,3 +204,77 @@ fn automation_shadow_prune_failure_is_warn() {
     assert_eq!(projection.level, Some("warn"));
     assert_eq!(projection.metadata.get("remote_shadow_count").map(String::as_str), Some("2"));
 }
+
+
+#[test]
+fn sand_error_tags_preserve_registry_fallback_and_retryability() {
+    use super::sand_error_tags::{sand_error_tags, SandErrorValue};
+
+    let known = sand_error_tags(&SandErrorValue::new("SAND-E0101").with_string("errno", "ECONNRESET"));
+    assert_eq!(known.get("error_code").map(String::as_str), Some("SAND-E0101"));
+    assert_eq!(known.get("error_domain").map(String::as_str), Some("transport"));
+    assert_eq!(known.get("error_retryable").map(String::as_str), Some("true"));
+    assert_eq!(known.get("error_errno").map(String::as_str), Some("ECONNRESET"));
+
+    let unknown = sand_error_tags(&SandErrorValue::new("SAND-E9999"));
+    assert_eq!(unknown.get("error_code").map(String::as_str), Some("SAND-E0001"));
+    assert_eq!(unknown.get("error_domain").map(String::as_str), Some("registry"));
+    assert_eq!(unknown.get("error_retryable").map(String::as_str), Some("false"));
+}
+
+#[test]
+fn connector_auth_bounds_identity_metadata_and_unknown_connector_names() {
+    use super::connector_auth_telemetry::{
+        bounded_connector_tag, connector_auth_telemetry, ConnectorAuthReport,
+    };
+
+    assert_eq!(bounded_connector_tag(Some("GitHub")), "github");
+    assert_eq!(bounded_connector_tag(Some("private-corporate-plugin")), "other");
+
+    let projection = connector_auth_telemetry(
+        &ConnectorAuthReport {
+            phase: "callback".into(),
+            outcome: "failed".into(),
+            server_name: Some("Private Corporate Plugin".into()),
+            server_id: Some("bad server id with spaces".into()),
+            reauth: Some(true),
+            error: None,
+        },
+        "android",
+    );
+    assert_eq!(projection.level, Some("warn"));
+    assert_eq!(projection.metadata.get("connector").map(String::as_str), Some("other"));
+    assert!(!projection.metadata.contains_key("server_id"));
+    assert_eq!(projection.metadata.get("reauth").map(String::as_str), Some("true"));
+}
+
+#[test]
+fn journal_outcome_warns_for_corrupt_tail_and_errors_for_failed_outcome() {
+    use super::journal_outcome_telemetry::{
+        journal_outcome_telemetry, JournalOutcomeReport,
+    };
+    use super::sand_error_tags::SandErrorValue;
+
+    let corrupt = journal_outcome_telemetry(&JournalOutcomeReport {
+        outcome: "ok".into(),
+        op: "restore".into(),
+        conversation_id: "agent-a".into(),
+        entry_count: Some(3),
+        bytes: Some(99),
+        duration_ms: 10.6,
+        cause: Some(SandErrorValue::new("SAND-E0701").with_string("tail", "corrupt")),
+    });
+    assert_eq!(corrupt.level, Some("warn"));
+    assert_eq!(corrupt.metadata.get("duration_ms").map(String::as_str), Some("11"));
+
+    let failed = journal_outcome_telemetry(&JournalOutcomeReport {
+        outcome: "failed".into(),
+        op: "append".into(),
+        conversation_id: "agent-a".into(),
+        entry_count: None,
+        bytes: None,
+        duration_ms: 1.0,
+        cause: None,
+    });
+    assert_eq!(failed.level, Some("error"));
+}
