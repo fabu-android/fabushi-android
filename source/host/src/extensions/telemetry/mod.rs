@@ -4,6 +4,7 @@ pub mod host_crash_marker;
 pub mod webauthn_proxy_telemetry;
 pub mod product_events;
 pub mod recovery_events;
+pub mod analytics_service;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HostTelemetryProjection {
