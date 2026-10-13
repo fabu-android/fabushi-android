@@ -13,6 +13,7 @@ use std::{
     fs::{self, File},
     io::{self, Write},
     path::{Path, PathBuf},
+    time::{SystemTime, UNIX_EPOCH},
 };
 
 const MESSAGING_PROTOCOL_VERSION: u64 = 2;
@@ -114,36 +115,23 @@ impl AndroidMessagingService {
     pub fn open(app_data_dir: impl AsRef<Path>) -> io::Result<Self> {
         let app_data_dir = app_data_dir.as_ref();
         let path = app_data_dir.join("messaging-repository.json");
+        let mut recovered_from_backup = false;
         let (state, migrated_legacy_repository) = match fs::read(&path) {
-            Ok(bytes) => {
-                let mut state: MessagingRepositoryState = serde_json::from_slice(&bytes).map_err(|error| {
-                    io::Error::new(
-                        io::ErrorKind::InvalidData,
-                        format!("invalid Android messaging repository: {error}"),
-                    )
-                })?;
-                let migrated = match state.schema_version {
-                    MESSAGING_REPOSITORY_SCHEMA_VERSION => false,
-                    LEGACY_MESSAGING_REPOSITORY_SCHEMA_VERSION => {
-                        // v1 had an atomic canonical snapshot but no replay journal. Preserve
-                        // the snapshot and force older cursors through a full snapshot once.
-                        state.schema_version = MESSAGING_REPOSITORY_SCHEMA_VERSION;
-                        state.event_journal.clear();
-                        state.journal_floor_cursor = state.cursor;
-                        true
-                    }
-                    actual => {
-                        return Err(io::Error::new(
-                            io::ErrorKind::InvalidData,
-                            format!(
-                                "unsupported Android messaging repository schema {actual}; expected at most {MESSAGING_REPOSITORY_SCHEMA_VERSION}"
-                            ),
-                        ));
-                    }
-                };
-                validate_loaded_state(&state)?;
-                (state, migrated)
-            }
+            Ok(bytes) => match decode_repository_state(&bytes) {
+                Ok(decoded) => decoded,
+                Err(primary_error) => {
+                    // Preserve the damaged canonical bytes for diagnostics, but never treat a
+                    // missing/invalid recovery replica as an empty repository: request replay and
+                    // message journal state are side-effect truth.
+                    let quarantine = repository_corrupt_path(&path);
+                    copy_file_durably(&path, &quarantine)?;
+                    let backup = repository_backup_path(&path);
+                    let backup_bytes = fs::read(&backup).map_err(|_| primary_error)?;
+                    let decoded = decode_repository_state(&backup_bytes).map_err(|_| primary_error)?;
+                    recovered_from_backup = true;
+                    decoded
+                }
+            },
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
                 (MessagingRepositoryState::default(), false)
             }
@@ -157,7 +145,7 @@ impl AndroidMessagingService {
             children,
             blobs,
         };
-        if migrated_legacy_repository {
+        if migrated_legacy_repository || recovered_from_backup {
             service.persist()?;
         }
         Ok(service)
@@ -2859,14 +2847,83 @@ impl AndroidMessagingService {
             file.write_all(&bytes)?;
             file.sync_all()?;
         }
-        fs::rename(&temporary, &self.path)?;
-        if let Some(parent) = self.path.parent() {
-            if let Ok(directory) = File::open(parent) {
-                let _ = directory.sync_all();
+
+        // Keep the previous *validated* canonical snapshot as the recovery replica. Never replace
+        // the backup from a corrupt canonical file, otherwise a process crash could destroy both
+        // the request replay journal and its only trusted predecessor.
+        if let Ok(previous) = fs::read(&self.path) {
+            if decode_repository_state(&previous).is_ok() {
+                let backup = repository_backup_path(&self.path);
+                let backup_temporary = backup.with_extension("json.bak.tmp");
+                fs::copy(&self.path, &backup_temporary)?;
+                File::open(&backup_temporary)?.sync_all()?;
+                fs::rename(&backup_temporary, &backup)?;
+                sync_parent_directory(&backup)?;
             }
         }
-        Ok(())
+
+        fs::rename(&temporary, &self.path)?;
+        sync_parent_directory(&self.path)
     }
+
+}
+
+fn decode_repository_state(bytes: &[u8]) -> io::Result<(MessagingRepositoryState, bool)> {
+    let mut state: MessagingRepositoryState = serde_json::from_slice(bytes).map_err(|error| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("invalid Android messaging repository: {error}"),
+        )
+    })?;
+    let migrated = match state.schema_version {
+        MESSAGING_REPOSITORY_SCHEMA_VERSION => false,
+        LEGACY_MESSAGING_REPOSITORY_SCHEMA_VERSION => {
+            state.schema_version = MESSAGING_REPOSITORY_SCHEMA_VERSION;
+            state.event_journal.clear();
+            state.journal_floor_cursor = state.cursor;
+            true
+        }
+        actual => {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "unsupported Android messaging repository schema {actual}; expected at most {MESSAGING_REPOSITORY_SCHEMA_VERSION}"
+                ),
+            ));
+        }
+    };
+    validate_loaded_state(&state)?;
+    Ok((state, migrated))
+}
+
+fn repository_backup_path(path: &Path) -> PathBuf {
+    path.with_extension("json.bak")
+}
+
+fn repository_corrupt_path(path: &Path) -> PathBuf {
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    PathBuf::from(format!("{}.corrupt-{stamp}", path.display()))
+}
+
+fn copy_file_durably(source: &Path, destination: &Path) -> io::Result<()> {
+    if let Some(parent) = destination.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    fs::copy(source, destination)?;
+    File::open(destination)?.sync_all()?;
+    sync_parent_directory(destination)
+}
+
+fn sync_parent_directory(path: &Path) -> io::Result<()> {
+    if let Some(parent) = path.parent() {
+        if let Ok(directory) = File::open(parent) {
+            directory.sync_all()?;
+        }
+    }
+    Ok(())
 }
 
 fn validate_loaded_state(state: &MessagingRepositoryState) -> io::Result<()> {
@@ -4166,14 +4223,62 @@ mod tests {
     }
 
     #[test]
-    fn corrupt_repository_fails_closed() {
-        let root = temp_root("corrupt");
-        fs::create_dir_all(&root).unwrap();
-        fs::write(root.join("messaging-repository.json"), b"{broken").unwrap();
-        let error = AndroidMessagingService::open(&root).err().unwrap();
-        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+    fn corrupt_repository_recovers_only_from_valid_last_known_good_snapshot() {
+        let root = temp_root("corrupt-backup");
+        let owner = "human:owner";
+        {
+            let mut service = AndroidMessagingService::open(&root).unwrap();
+            seed(&mut service, owner);
+            execute(
+                &mut service,
+                "backup-second-settlement",
+                owner,
+                json!({"type":"setDraft","conversationId":"conversation:parent","text":"second settlement","replyToMessageId":Value::Null}),
+            )
+            .unwrap();
+        }
+        let path = root.join("messaging-repository.json");
+        let backup = repository_backup_path(&path);
+        assert!(backup.exists(), "a settled predecessor must be retained for corruption recovery");
+        let trusted_backup = fs::read(&backup).unwrap();
+        let (expected, _) = decode_repository_state(&trusted_backup).unwrap();
+
+        fs::write(&path, b"{broken-canonical").unwrap();
+        let recovered = AndroidMessagingService::open(&root).unwrap();
+        assert_eq!(recovered.state.cursor, expected.cursor);
+        assert_eq!(recovered.state.request_results, expected.request_results);
+        assert_eq!(recovered.state.event_journal.len(), expected.event_journal.len());
+        assert!(AndroidMessagingService::open(&root).is_ok(), "recovery must reinstall a valid canonical repository");
+        assert!(
+            fs::read_dir(&root)
+                .unwrap()
+                .filter_map(Result::ok)
+                .any(|entry| entry.file_name().to_string_lossy().starts_with("messaging-repository.json.corrupt-")),
+            "damaged canonical bytes must remain quarantined for diagnostics"
+        );
         let _ = fs::remove_dir_all(root);
     }
+
+    #[test]
+    fn corrupt_repository_without_valid_backup_stays_fail_closed() {
+        let root = temp_root("corrupt-no-backup");
+        fs::create_dir_all(&root).unwrap();
+        let path = root.join("messaging-repository.json");
+        fs::write(&path, b"{broken-canonical").unwrap();
+
+        let error = AndroidMessagingService::open(&root).err().unwrap();
+        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+        assert_eq!(fs::read(&path).unwrap(), b"{broken-canonical");
+        assert!(
+            fs::read_dir(&root)
+                .unwrap()
+                .filter_map(Result::ok)
+                .any(|entry| entry.file_name().to_string_lossy().starts_with("messaging-repository.json.corrupt-")),
+            "fail-closed recovery should still retain a diagnostic quarantine copy"
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
     #[test]
     fn blob_upload_range_read_reopen_and_account_fence_are_durable() {
         let root = temp_root("blob");
