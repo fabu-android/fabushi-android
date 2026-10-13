@@ -44,6 +44,8 @@ pub struct AndroidHandoffEnded {
 struct PersistedState {
     version: u32,
     pending_by_agent: BTreeMap<String, AndroidPendingHandoff>,
+    #[serde(default)]
+    resume_by_request: BTreeMap<String, AndroidHandoffEnded>,
 }
 
 impl Default for PersistedState {
@@ -51,6 +53,7 @@ impl Default for PersistedState {
         Self {
             version: STATE_VERSION,
             pending_by_agent: BTreeMap::new(),
+            resume_by_request: BTreeMap::new(),
         }
     }
 }
@@ -189,20 +192,70 @@ impl AndroidBoxHandoffOwner {
             return Err("box handoff request id is required".into());
         }
         let Some(live) = self.state.pending_by_agent.get(agent_id) else {
-            return Ok(None);
+            return Ok(self
+                .state
+                .resume_by_request
+                .get(request_id)
+                .filter(|ended| {
+                    ended.account_fence == account_fence && ended.agent_id == agent_id
+                })
+                .cloned());
         };
         if live.account_fence != account_fence || live.request_id != request_id {
             return Ok(None);
         }
         let live = self.state.pending_by_agent.remove(agent_id).expect("checked pending handoff");
-        self.persist()?;
-        Ok(Some(AndroidHandoffEnded {
+        let ended = AndroidHandoffEnded {
             request_id: live.request_id,
             account_fence: live.account_fence,
             agent_id: live.agent_id,
             resolution: normalized_end_value(resolution, "completed"),
             trigger: normalized_end_value(trigger, "unknown"),
-        }))
+        };
+        self.state
+            .resume_by_request
+            .insert(ended.request_id.clone(), ended.clone());
+        self.persist()?;
+        Ok(Some(ended))
+    }
+
+    pub fn pending_resumes_for_account(
+        &self,
+        account_fence: &str,
+    ) -> Result<Vec<AndroidHandoffEnded>, String> {
+        let account_fence = account_fence.trim();
+        if account_fence.is_empty() {
+            return Err("box handoff account fence is required".into());
+        }
+        Ok(self
+            .state
+            .resume_by_request
+            .values()
+            .filter(|ended| ended.account_fence == account_fence)
+            .cloned()
+            .collect())
+    }
+
+    pub fn acknowledge_resume(
+        &mut self,
+        account_fence: &str,
+        agent_id: &str,
+        request_id: &str,
+    ) -> Result<bool, String> {
+        let (account_fence, agent_id) = validate_scope(account_fence, agent_id)?;
+        let request_id = request_id.trim();
+        if request_id.is_empty() {
+            return Err("box handoff request id is required".into());
+        }
+        let Some(ended) = self.state.resume_by_request.get(request_id) else {
+            return Ok(false);
+        };
+        if ended.account_fence != account_fence || ended.agent_id != agent_id {
+            return Ok(false);
+        }
+        self.state.resume_by_request.remove(request_id);
+        self.persist()?;
+        Ok(true)
     }
 
     pub fn forget_account(&mut self, account_fence: &str) -> Result<usize, String> {
@@ -210,11 +263,17 @@ impl AndroidBoxHandoffOwner {
         if account_fence.is_empty() {
             return Err("box handoff account fence is required".into());
         }
-        let before = self.state.pending_by_agent.len();
+        let pending_before = self.state.pending_by_agent.len();
+        let resume_before = self.state.resume_by_request.len();
         self.state
             .pending_by_agent
             .retain(|_, pending| pending.account_fence != account_fence);
-        let removed = before.saturating_sub(self.state.pending_by_agent.len());
+        self.state
+            .resume_by_request
+            .retain(|_, ended| ended.account_fence != account_fence);
+        let removed = pending_before
+            .saturating_sub(self.state.pending_by_agent.len())
+            .saturating_add(resume_before.saturating_sub(self.state.resume_by_request.len()));
         if removed > 0 {
             self.persist()?;
         }
@@ -418,7 +477,49 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(ended.resolution, "cancelled");
+        assert_eq!(
+            owner
+                .end(
+                    "session:a",
+                    "agent-1",
+                    &started.request_id,
+                    Some("ignored"),
+                    Some("ignored"),
+                )
+                .unwrap(),
+            Some(ended.clone()),
+            "a retried end must replay the durable resume obligation until it is acknowledged",
+        );
         drop(owner);
-        assert_eq!(AndroidBoxHandoffOwner::open(&path).unwrap().pending_count(), 0);
+        let mut reopened = AndroidBoxHandoffOwner::open(&path).unwrap();
+        assert_eq!(reopened.pending_count(), 0);
+        assert_eq!(
+            reopened.pending_resumes_for_account("session:a").unwrap(),
+            vec![ended.clone()],
+        );
+        assert!(reopened
+            .acknowledge_resume("session:a", "agent-1", &started.request_id)
+            .unwrap());
+        drop(reopened);
+        assert!(AndroidBoxHandoffOwner::open(&path)
+            .unwrap()
+            .pending_resumes_for_account("session:a")
+            .unwrap()
+            .is_empty());
     }
+    #[test]
+    fn account_cleanup_removes_pending_and_terminal_resume_obligations_only_for_that_account() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("box-handoff.json");
+        let mut owner = AndroidBoxHandoffOwner::open(&path).unwrap();
+        let AndroidHandoffStart::Started(a) = owner.start("session:a", "agent-a", "A", 1).unwrap() else { panic!() };
+        let AndroidHandoffStart::Started(b) = owner.start("session:b", "agent-b", "B", 2).unwrap() else { panic!() };
+        owner.end("session:a", "agent-a", &a.request_id, Some("done"), Some("user")).unwrap();
+        assert_eq!(owner.forget_account("session:a").unwrap(), 1);
+        assert!(owner.pending_resumes_for_account("session:a").unwrap().is_empty());
+        assert!(owner.pending_for("session:a", "agent-a").unwrap().is_none());
+        assert!(owner.pending_for("session:b", "agent-b").unwrap().is_some());
+        assert_eq!(owner.pending_for("session:b", "agent-b").unwrap().unwrap().request_id, b.request_id);
+    }
+
 }
