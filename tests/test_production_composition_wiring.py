@@ -74,11 +74,11 @@ class ProductionCompositionWiringTest(unittest.TestCase):
             "computerRebuildMigrationExecutor",
             "computerRebuildQueueExecutor",
             "remoteComputerReconnectExecutor",
-            "storagePressureExecutor",
             "sendSubmissionExecutor",
             "rootConnectionRetryExecutor",
         ):
             self.assertIn(f"{executor}.shutdownNow()", runtime)
+        self.assertIn("mainThreadPressureSampler.close()", runtime)
         self.assertIn("computerRebuildEventHost.close()", runtime)
         self.assertIn("host.close()", runtime)
 
