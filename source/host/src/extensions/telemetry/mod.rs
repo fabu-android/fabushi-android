@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 
 pub mod host_crash_marker;
+pub mod host_lifecycle_progress;
 pub mod webauthn_proxy_telemetry;
 pub mod product_events;
 pub mod recovery_events;
@@ -34,4 +35,5 @@ pub mod host_extension_diagnostic_telemetry;
 pub mod turn_empty_delivery_telemetry;
 pub mod sand_error_tags;
 pub mod journal_outcome_telemetry;
+pub mod lifecycle_telemetry;
 pub mod connector_auth_telemetry;
