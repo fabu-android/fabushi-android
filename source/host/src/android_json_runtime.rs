@@ -2377,6 +2377,37 @@ impl AndroidJsonHost {
         Arc::clone(&self.runtime_call_cancellations)
     }
 
+    fn record_agent_turn_failure_tray(&mut self, event: &Value) {
+        let Some(agent_id) = event
+            .get("agentId")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        else {
+            return;
+        };
+        let Some(message) = event
+            .get("message")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        else {
+            return;
+        };
+        let mut tray = crate::extensions::transcript::agent_run_error::provider_failure_tray(
+            agent_id,
+            message,
+            i64::try_from(now_ms()).unwrap_or(i64::MAX),
+        );
+        tray.request_id = event
+            .get("requestId")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string);
+        self.trays.push_error(tray);
+    }
+
     fn record_agent_turn_failure_telemetry(&mut self, event: &Value) {
         let Some(conversation_id) = event
             .get("agentId")
@@ -11027,6 +11058,7 @@ impl AndroidJsonHost {
             if let Some(event) = event {
                 if event.get("type").and_then(Value::as_str) == Some("operation.failed") {
                     self.record_agent_turn_failure_telemetry(&event);
+                    self.record_agent_turn_failure_tray(&event);
                 }
                 if matches!(
                     event.get("type").and_then(Value::as_str),
