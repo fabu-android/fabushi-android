@@ -1,5 +1,6 @@
-use super::stream_attempt::{
-    ProviderFailure, StreamAttemptInput, StreamGeneration, TurnStreamProvider,
+use super::{
+    production_turn_agent_owner::SAND_AGENT_MAX_STEPS,
+    stream_attempt::{ProviderFailure, StreamAttemptInput, StreamGeneration, TurnStreamProvider},
 };
 use serde_json::{json, Map, Value};
 use std::{
@@ -367,7 +368,7 @@ impl AndroidHostInferenceProvider {
         // replaying the whole Responses turn when a later provider/tool/network leg fails.
         let mut routed_tool_dispatch_started = false;
 
-        for _tool_step in 0..8 {
+        for _tool_step in 0..SAND_AGENT_MAX_STEPS {
             if self.cancelled.load(Ordering::Acquire) {
                 return Err(ProviderFailure {
                     message: "cancelled".into(),
@@ -1030,6 +1031,14 @@ mod tests {
             )
             .unwrap_err();
         assert!(error.message.contains("outcome unknown"));
+    }
+
+    #[test]
+    fn routed_tool_loop_uses_canonical_turn_step_budget() {
+        assert_eq!(SAND_AGENT_MAX_STEPS, 5_000);
+        let source = include_str!("android_host_inference.rs");
+        assert!(source.contains("0..SAND_AGENT_MAX_STEPS"));
+        assert!(!source.contains("0..8"));
     }
 
     #[test]
