@@ -1,5 +1,6 @@
 pub mod background_wakes;
 pub mod completion_revivals;
+pub mod completion_revival_composition;
 pub mod group_chat_glue;
 pub mod group_chat_orchestrator;
 pub mod ack_obligations;
