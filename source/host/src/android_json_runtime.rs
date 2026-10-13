@@ -1036,6 +1036,7 @@ impl AndroidJsonHost {
             AndroidMessagingService::open(&app_data_dir)
                 .unwrap_or_else(|error| panic!("failed to open canonical Android messaging repository: {error}")),
         ));
+        let experiments = Arc::new(HostExperimentsExtension::new());
         let mcp_auth_watches = Arc::new(Mutex::new(
             AndroidMcpAuthWatchManager::open(
                 app_data_dir.join("mcp-auth-watches.json"),
@@ -1075,6 +1076,11 @@ impl AndroidJsonHost {
         } else {
             None
         };
+        if let Some(core) = cross_user_core.as_ref() {
+            let _ = core
+                .extension
+                .apply_feature_policy(experiments.check_feature_gate("sand_multiplayer"));
+        }
         let mcp_server_tool_settings = Arc::new(Mutex::new(
             McpServerToolSettings::open(app_data_dir.join("mcp-server-tool-settings.json"))
                 .unwrap_or_else(|error| panic!("failed to open durable MCP server tool settings: {error}")),
@@ -1219,7 +1225,7 @@ impl AndroidJsonHost {
             agents,
             sidebar_sections,
             user_settings,
-            experiments: Arc::new(HostExperimentsExtension::new()),
+            experiments,
             detected_time_zone: Arc::new(Mutex::new(None)),
             auto_review_settings,
             transcript,
@@ -2587,6 +2593,72 @@ impl AndroidJsonHost {
                     .as_ref()
                     .ok_or("cross-user sharing runtime is unavailable")?;
                 core.extension.request_relay_drain();
+                Ok(json!({"accepted":true}))
+            }
+            "feature.crossUserSharing.reconcile" => {
+                let core = self.cross_user_core.as_ref()
+                    .ok_or("cross-user sharing runtime is unavailable")?;
+                serde_json::to_value(core.service.reconcile_share_state()?)
+                    .map_err(|error| format!("failed to serialize cross-user sharing state: {error}"))
+            }
+            "feature.crossUserSharing.createFromAgent" => {
+                let core = self.cross_user_core.as_ref()
+                    .ok_or("cross-user sharing runtime is unavailable")?;
+                let agent_id = required_string(params, "agentId")?;
+                let agent_name = required_string(params, "agentName")?;
+                let avatar_data_url = params.get("avatarDataUrl").and_then(Value::as_str);
+                core.service.create_room_from_agent(&agent_id, &agent_name, avatar_data_url)
+            }
+            "feature.crossUserSharing.invite" => {
+                let core = self.cross_user_core.as_ref()
+                    .ok_or("cross-user sharing runtime is unavailable")?;
+                core.service.create_room_invite(&required_string(params, "roomId")?)
+            }
+            "feature.crossUserSharing.join" => {
+                let core = self.cross_user_core.as_ref()
+                    .ok_or("cross-user sharing runtime is unavailable")?;
+                core.service.join_room(&required_string(params, "link")?)
+            }
+            "feature.crossUserSharing.respond" => {
+                let core = self.cross_user_core.as_ref()
+                    .ok_or("cross-user sharing runtime is unavailable")?;
+                serde_json::to_value(core.service.respond_to_join_request(params)?)
+                    .map_err(|error| format!("failed to serialize sharing join decision: {error}"))
+            }
+            "feature.crossUserSharing.create" => {
+                let core = self.cross_user_core.as_ref()
+                    .ok_or("cross-user sharing runtime is unavailable")?;
+                core.service.create_shared_room(params)
+            }
+            "feature.crossUserSharing.addAgent" => {
+                let core = self.cross_user_core.as_ref()
+                    .ok_or("cross-user sharing runtime is unavailable")?;
+                serde_json::to_value(core.service.add_own_agent(params)?)
+                    .map_err(|error| format!("failed to serialize shared-room agent state: {error}"))
+            }
+            "feature.crossUserSharing.removeAgent" => {
+                let core = self.cross_user_core.as_ref()
+                    .ok_or("cross-user sharing runtime is unavailable")?;
+                let room_id = required_string(params, "roomId")?;
+                let agent_id = required_string(params, "agentId")?;
+                serde_json::to_value(core.service.remove_own_agent(&room_id, &agent_id)?)
+                    .map_err(|error| format!("failed to serialize shared-room agent state: {error}"))
+            }
+            "feature.crossUserSharing.leave" => {
+                let core = self.cross_user_core.as_ref()
+                    .ok_or("cross-user sharing runtime is unavailable")?;
+                let room_id = required_string(params, "roomId")?;
+                let target_auth_id = params.get("targetAuthId").and_then(Value::as_str);
+                serde_json::to_value(core.service.leave_shared_room(&room_id, target_auth_id)?)
+                    .map_err(|error| format!("failed to serialize shared-room leave state: {error}"))
+            }
+            "feature.crossUserSharing.typing" => {
+                let core = self.cross_user_core.as_ref()
+                    .ok_or("cross-user sharing runtime is unavailable")?;
+                let room_id = required_string(params, "roomId")?;
+                let is_typing = params.get("isTyping").and_then(Value::as_bool)
+                    .ok_or("cross-user sharing isTyping boolean is required")?;
+                core.service.set_room_typing(&room_id, is_typing)?;
                 Ok(json!({"accepted":true}))
             }
             "feature.agent.diskPressure.observe" => self.agent_disk_pressure_observe(params),
