@@ -39,13 +39,15 @@ const ANDROID_SESSION_UPTIME_BUCKET_CEILINGS_MS: [u64; 6] = [
     ANDROID_SESSION_MARKER_ORPHAN_BOUND_MS,
 ];
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum AndroidUncleanExitKind {
     UncleanExit,
     MarkerOrphaned,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct AndroidUncleanExitRecord {
     pub kind: AndroidUncleanExitKind,
     pub started_at_ms: u64,
@@ -58,6 +60,8 @@ pub struct AndroidUncleanExitRecord {
 
 pub struct AndroidUncleanExitMarker {
     path: PathBuf,
+    recovery_path: PathBuf,
+    pending_recoveries: Vec<AndroidUncleanExitRecord>,
     marker: DurableSessionMarker,
     armed: bool,
 }
@@ -86,6 +90,8 @@ impl AndroidUncleanExitMarker {
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)?;
         }
+        let recovery_path = recovery_queue_path(&path);
+        let mut pending_recoveries = read_recovery_queue(&recovery_path)?;
         let prior = read_marker(&path).ok().map(|marker| {
             let last_alive_at_ms = marker.last_alive_at_ms.max(marker.started_at_ms);
             let age_ms = now_ms.saturating_sub(last_alive_at_ms);
@@ -106,6 +112,14 @@ impl AndroidUncleanExitMarker {
                 crash_seen: marker.crash_seen,
             }
         });
+        if let Some(prior) = prior {
+            if !pending_recoveries.contains(&prior) {
+                pending_recoveries.push(prior);
+                // Settle the recovery intent before replacing the active marker. If this write
+                // fails, keep the old marker intact so the next process can still reconcile it.
+                persist_recovery_queue(&recovery_path, &pending_recoveries)?;
+            }
+        }
         let marker = DurableSessionMarker {
             started_at_ms: now_ms,
             last_alive_at_ms: now_ms,
@@ -113,7 +127,17 @@ impl AndroidUncleanExitMarker {
             app_version: current_version,
         };
         persist_marker(&path, &marker)?;
-        Ok((Self { path, marker, armed: true }, prior))
+        let next_recovery = pending_recoveries.first().cloned();
+        Ok((
+            Self {
+                path,
+                recovery_path,
+                pending_recoveries,
+                marker,
+                armed: true,
+            },
+            next_recovery,
+        ))
     }
 
     pub fn heartbeat(&mut self, now_ms: u64) -> io::Result<()> {
@@ -128,6 +152,26 @@ impl AndroidUncleanExitMarker {
         self.marker.crash_seen = true;
         self.marker.last_alive_at_ms = self.marker.last_alive_at_ms.max(now_ms);
         persist_marker(&self.path, &self.marker)
+    }
+
+    pub fn pending_recoveries(&self) -> &[AndroidUncleanExitRecord] {
+        &self.pending_recoveries
+    }
+
+    pub fn acknowledge_recovery(
+        &mut self,
+        expected: &AndroidUncleanExitRecord,
+    ) -> io::Result<bool> {
+        let Some(index) = self
+            .pending_recoveries
+            .iter()
+            .position(|candidate| candidate == expected)
+        else {
+            return Ok(false);
+        };
+        self.pending_recoveries.remove(index);
+        persist_recovery_queue(&self.recovery_path, &self.pending_recoveries)?;
+        Ok(true)
     }
 
     pub fn settle_clean(&mut self) -> io::Result<()> {
@@ -198,6 +242,39 @@ fn session_uptime_bucket_ms(uptime_ms: u64) -> u64 {
         .unwrap_or(ANDROID_SESSION_MARKER_ORPHAN_BOUND_MS)
 }
 
+fn recovery_queue_path(path: &Path) -> PathBuf {
+    let file_name = path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or("host-session-marker");
+    path.with_file_name(format!("{file_name}.recovery.json"))
+}
+
+fn read_recovery_queue(path: &Path) -> io::Result<Vec<AndroidUncleanExitRecord>> {
+    match fs::read(path) {
+        Ok(raw) => serde_json::from_slice(&raw)
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error)),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(Vec::new()),
+        Err(error) => Err(error),
+    }
+}
+
+fn persist_recovery_queue(
+    path: &Path,
+    records: &[AndroidUncleanExitRecord],
+) -> io::Result<()> {
+    if records.is_empty() {
+        return match fs::remove_file(path) {
+            Ok(()) => Ok(()),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+            Err(error) => Err(error),
+        };
+    }
+    let raw = serde_json::to_vec(records)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+    persist_bytes_atomic(path, &raw)
+}
+
 fn read_marker(path: &Path) -> io::Result<DurableSessionMarker> {
     let raw = fs::read_to_string(path)?;
     serde_json::from_str(&raw)
@@ -207,10 +284,14 @@ fn read_marker(path: &Path) -> io::Result<DurableSessionMarker> {
 fn persist_marker(path: &Path, marker: &DurableSessionMarker) -> io::Result<()> {
     let raw = serde_json::to_vec(marker)
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+    persist_bytes_atomic(path, &raw)
+}
+
+fn persist_bytes_atomic(path: &Path, raw: &[u8]) -> io::Result<()> {
     let temporary = path.with_extension(format!("tmp-{}", std::process::id()));
     let result = (|| -> io::Result<()> {
         let mut file = fs::File::create(&temporary)?;
-        file.write_all(&raw)?;
+        file.write_all(raw)?;
         file.sync_all()?;
         fs::rename(&temporary, path)?;
         Ok(())
@@ -345,6 +426,40 @@ mod tests {
         assert_eq!(prior.kind, AndroidUncleanExitKind::MarkerOrphaned);
         assert_eq!(prior.previous_uptime_bucket_ms, 86_400_000);
         drop(marker);
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn unacknowledged_recovery_survives_a_clean_followup_session() {
+        let dir = marker_root("recovery-queue");
+        let path = dir.join("session.json");
+        let _ = fs::remove_dir_all(&dir);
+
+        let (first, prior) =
+            AndroidUncleanExitMarker::open_with_version(&path, 100, "1.0.0").unwrap();
+        assert!(prior.is_none());
+        std::mem::forget(first);
+
+        let (second, prior) =
+            AndroidUncleanExitMarker::open_with_version(&path, 200, "1.0.0").unwrap();
+        let prior = prior.expect("unclean prior session must be queued before marker replacement");
+        assert_eq!(second.pending_recoveries(), std::slice::from_ref(&prior));
+        drop(second);
+
+        let (mut third, replayed) =
+            AndroidUncleanExitMarker::open_with_version(&path, 300, "1.0.0").unwrap();
+        assert_eq!(replayed.as_ref(), Some(&prior));
+        assert!(
+            third.acknowledge_recovery(&prior).unwrap(),
+            "durably settled recovery should be removed from the sidecar queue"
+        );
+        assert!(third.pending_recoveries().is_empty());
+        drop(third);
+
+        let (fourth, replayed) =
+            AndroidUncleanExitMarker::open_with_version(&path, 400, "1.0.0").unwrap();
+        assert!(replayed.is_none());
+        drop(fourth);
         let _ = fs::remove_dir_all(dir);
     }
 
