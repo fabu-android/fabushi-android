@@ -10946,6 +10946,7 @@ impl AndroidJsonHost {
                     Arc::clone(&turn_events),
                     &operation_id_owned,
                     &request_id_owned,
+                    &conversation_id_owned,
                     turn_generation,
                     Arc::clone(&cancelled),
                 );
@@ -12094,6 +12095,23 @@ impl AndroidJsonHost {
                             self.sync_structured_log_account_slot();
                             if self.record_structured_log(level,message,metadata,now_ms()).is_err() {
                                 self.edge_failures.report("structured-log-spill","memory-synthesis-telemetry","StorageError");
+                            }
+                        }
+                    }
+                    continue;
+                }
+                if event.get("type").and_then(Value::as_str) == Some("internal.local-exec.telemetry") {
+                    let event_fence = event.get("accountFence").and_then(Value::as_str);
+                    let current_fence = self.current_turn_account_fence().ok();
+                    if current_fence.as_deref() == event_fence {
+                        let level = event.get("level").and_then(Value::as_str).unwrap_or("warn");
+                        if let Some(message) = event.get("event").and_then(Value::as_str) {
+                            let metadata = event.get("metadata").and_then(Value::as_object).map(|object| {
+                                object.iter().filter_map(|(key,value)| value.as_str().map(|value|(key.clone(),value.to_string()))).collect::<BTreeMap<_,_>>()
+                            }).unwrap_or_default();
+                            self.sync_structured_log_account_slot();
+                            if self.record_structured_log(level,message,metadata,now_ms()).is_err() {
+                                self.edge_failures.report("structured-log-spill","local-exec-telemetry","StorageError");
                             }
                         }
                     }
