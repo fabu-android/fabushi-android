@@ -197,3 +197,82 @@ pub fn local_exec_provider_telemetry(
         metadata,
     }
 }
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn refusal_projection_preserves_transport_error_contract() {
+        for (cause, code) in [
+            (LocalExecRefusalCause::NoProviders, "SAND-E0111"),
+            (LocalExecRefusalCause::StaleHeartbeat, "SAND-E0112"),
+            (LocalExecRefusalCause::ComputerUnknown, "SAND-E0113"),
+        ] {
+            let projection = local_exec_refused_telemetry(&LocalExecRefusedReport {
+                cause,
+                site: "host-runner".into(),
+                conversation_id: "conversation-1".into(),
+                provider_count: 3,
+                live_provider_count: 0,
+                ever_registered: true,
+                empty_for_ms: Some(1234.6),
+            });
+            assert_eq!(projection.level, Some("warn"));
+            assert_eq!(projection.event, Some(LOCAL_EXEC_REFUSED_EVENT));
+            assert_eq!(projection.metadata.get("error_code").map(String::as_str), Some(code));
+            assert_eq!(
+                projection.metadata.get("error_domain").map(String::as_str),
+                Some("transport"),
+            );
+            assert_eq!(
+                projection.metadata.get("error_retryable").map(String::as_str),
+                Some("true"),
+            );
+            assert_eq!(
+                projection.metadata.get("empty_for_ms").map(String::as_str),
+                Some("1235"),
+            );
+        }
+    }
+
+    #[test]
+    fn execution_failure_and_provider_detach_keep_bounded_contract_fields() {
+        let failure = local_exec_failed_telemetry(&LocalExecFailedReport {
+            error_class: "permission_denied".into(),
+            errno: Some("EACCES".into()),
+            site: "android-local".into(),
+            conversation_id: "conversation-2".into(),
+        });
+        assert_eq!(failure.event, Some(LOCAL_EXEC_FAILED_EVENT));
+        assert_eq!(
+            failure.metadata.get("surface").map(String::as_str),
+            Some("external"),
+        );
+        assert_eq!(
+            failure.metadata.get("errno").map(String::as_str),
+            Some("EACCES"),
+        );
+
+        let detached = local_exec_provider_telemetry(&LocalExecProviderReport::Detached {
+            provider_id: "android-local".into(),
+            provider_count: 0,
+            age_ms: 42.4,
+            had_hello: true,
+            has_heartbeat: false,
+            was_live: true,
+            emptied: true,
+        });
+        assert_eq!(detached.event, Some(LOCAL_EXEC_PROVIDER_EVENT));
+        assert_eq!(
+            detached.metadata.get("phase").map(String::as_str),
+            Some("detached"),
+        );
+        assert_eq!(detached.metadata.get("age_ms").map(String::as_str), Some("42"));
+        assert_eq!(
+            detached.metadata.get("emptied").map(String::as_str),
+            Some("true"),
+        );
+    }
+}
