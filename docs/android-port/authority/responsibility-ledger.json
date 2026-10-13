@@ -18557,6 +18557,78 @@
       "artifact": null,
       "verification_status": "not-verified",
       "notes": "Implemented source and production wiring on descendant of b18d4d7/35228dd. Do not mark verified until one current exact HEAD passes Rust/Architecture/Full CI plus packaged/device process-death acceptance. Desktop MCP-auth/listener-connect resume helpers remain separate responsibilities."
+    },
+    {
+      "responsibility_id": "AGENT-RUN-SCHEDULER-ANDROID-001",
+      "domain": "agent-run-lifecycle",
+      "desktop_sources": [
+        {
+          "path": "source/host/src/extensions/transcript/run_scheduler.rs",
+          "blob_sha": "eb8994dc45b3722e8bfcc672e9e610c662429650",
+          "symbols": [
+            "RunScheduler",
+            "RunLane",
+            "QueuedRun",
+            "RunSettlement",
+            "WatchdogEvent"
+          ]
+        }
+      ],
+      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "responsibility": "Own per-Agent run admission and ordering across user, agent and background lanes; assign active generations; detect watchdog trip/escape; fence late zombie settlement; expose bounded diagnostics; and dispose queue state without creating a second transcript owner.",
+      "source_owner": "Desktop RunScheduler, composed by ProductionTurnDispatch",
+      "direct_callers": [
+        "source/host/src/extensions/transcript/send_turn_dispatch.rs",
+        "AndroidJsonHost turn-dispatch lease path"
+      ],
+      "downstream_dependencies": [
+        "Agent turn execution",
+        "priority interruption",
+        "queue lifecycle telemetry",
+        "visible send acknowledgement ordering"
+      ],
+      "state_owner": "Rust Host ProductionTurnDispatch -> RunScheduler; no UI or JNI queue owner",
+      "persistent_state": [
+        "RunScheduler queue/active lane state is process-local; durable turn journal/lifecycle owners remain separate and recover process death without replaying unknown side effects"
+      ],
+      "protocol_wire_contract": [
+        "RunLane priority",
+        "task generation",
+        "QueueAccepted/QueueDequeued",
+        "WatchdogEvent",
+        "RunSettlement including ZombieSettled"
+      ],
+      "visible_effect": "User turns are not starved behind background work; wedged active work can be interrupted and escaped while late completion cannot settle the replacement generation.",
+      "failure_behavior": [
+        "duplicate task id rejected",
+        "watchdog trip requests priority interruption",
+        "watchdog escape advances waiting work",
+        "late generation settlement is classified zombie instead of mutating current active run"
+      ],
+      "cancellation_behavior": "Host interruption registry is invoked on watchdog trip; lease drop unregisters operation and settles only its captured generation",
+      "retry_semantics": "Scheduler does not blindly replay side effects; process-death/outcome-unknown recovery is delegated to durable turn owners",
+      "idempotency_semantics": "generation fencing prevents stale settlement from completing a newer run; task identity and lane queue ordering are deterministic",
+      "process_death_recovery": "process-local scheduler is reconstructed; durable turn journal/lifecycle and send acknowledgement owners reconcile unsettled work before new side effects",
+      "account_fencing": "AndroidJsonHost lease is created inside the frozen current account turn and watchdog interruption is invoked with the account fence; account transition cleanup fences durable active turns",
+      "security_boundary": "scheduler only orders already-authorized Host turns; it does not grant tools or execute resources",
+      "android_disposition": "direct-port",
+      "android_target": [
+        "source/host/src/extensions/transcript/run_scheduler.rs",
+        "source/host/src/extensions/transcript/send_turn_dispatch.rs",
+        "source/host/src/android_json_runtime.rs"
+      ],
+      "android_owner": "Rust Host ProductionTurnDispatch wrapping the direct-ported RunScheduler",
+      "platform_delta": "None in the platform-independent scheduler blob. Android adapts the surrounding wait/interrupt loop with Condvar and AgentTurnInterruptionRegistry while preserving scheduler semantics.",
+      "implementation_status": "implemented",
+      "production_wiring": "AndroidJsonHost owns one Arc<(Mutex<ProductionTurnDispatch>, Condvar)>; queue admission, scheduler lease, watchdog, settlement and telemetry all flow through it.",
+      "unit_test": "send_turn_dispatch Rust tests cover lane/source classification, user priority, watchdog escape and zombie late settlement; exact-head Actions pending.",
+      "contract_test": "Same Desktop/Android scheduler blob plus ProductionTurnDispatch focused tests; exact-head Rust gate pending.",
+      "integration_test": "Shipping AndroidJsonHost queue_chat_turn -> ProductionTurnDispatch -> RunScheduler -> lease/watchdog/settle path is wired; exact-head integration evidence pending.",
+      "packaged_test": "required on final exact-head APK/AAB",
+      "device_test": "required in Agent send/automation/watchdog device acceptance",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Source and production wiring are implemented. Do not mark verified until descendant exact-head GitHub Actions and packaged/device evidence succeeds."
     }
   ],
   "traceability": {
