@@ -44,6 +44,8 @@ const ALLOWED_EVENTS: &[&str] = &[
     "sand.desktop.event_loop",
     "sand.host.event_loop",
     "sand.host.invariant_violation",
+    "sand.gateway_command_error",
+    "sand.gateway_command_timing",
     "sand.desktop.startup",
     "sand.desktop.process_crash",
     "sand.desktop.renderer_lifecycle",
