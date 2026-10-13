@@ -620,6 +620,49 @@ mod tests {
     }
 
     #[test]
+    fn runner_failure_emits_bounded_account_fenced_telemetry() {
+        let root = root("telemetry-failure");
+        std::fs::create_dir_all(&root).unwrap();
+        let settings_path = root.join("settings.json");
+        let mut settings = AndroidUserSettings::open(&settings_path).unwrap();
+        settings.set_local_tool_permission(LocalToolPermission::Always).unwrap();
+        let broker = SharedCapabilityBroker::open(root.join("broker.json"), now_ms()).unwrap();
+        let events = Arc::new(Mutex::new(VecDeque::new()));
+        let bridge = with_local_file_tools(
+            Arc::new(EmptyBridge),
+            broker,
+            Arc::new(Mutex::new(bounded_file_runner(root.join("files")).unwrap())),
+            LocalApprovalRegistry::default(),
+            Arc::new(Mutex::new(settings)),
+            Arc::new(Mutex::new(Some("acct".into()))),
+            Arc::clone(&events),
+            "parent-op",
+            "parent-request",
+            "conversation-telemetry",
+            3,
+            Arc::new(AtomicBool::new(false)),
+        );
+
+        let error = bridge
+            .call_tool("Read", json!({"path":"missing-secret.txt"}), "read-missing")
+            .unwrap_err();
+        assert!(error.starts_with("local_invalid_request:"));
+
+        let event = events.lock().unwrap().pop_front().expect("local exec telemetry");
+        assert_eq!(event["type"], "internal.local-exec.telemetry");
+        assert_eq!(event["accountFence"], "acct");
+        assert_eq!(event["event"], "sand.local_exec.exec_failed");
+        assert_eq!(event["metadata"]["conversation_id"], "conversation-telemetry");
+        assert_eq!(event["metadata"]["site"], "android-local");
+        assert_eq!(event["metadata"]["error_class"], "other");
+        assert!(
+            !event.to_string().contains("missing-secret.txt"),
+            "telemetry must not include local path or tool arguments"
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn always_permission_executes_only_through_broker_and_runner() {
         let root = root("always");
         std::fs::create_dir_all(&root).unwrap();
