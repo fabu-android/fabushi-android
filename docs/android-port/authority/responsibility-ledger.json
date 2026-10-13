@@ -17317,6 +17317,80 @@
       "artifact": null,
       "verification_status": "not-verified",
       "notes": "Commits 205411aa5046500782f819e57767b9528aa0d3a5, 6fcc71a2a2c82558c5f039ce0534ea6f88214468, dad16c6665329e014469bc7ec98279e469cb1c81 and 1fa7b225d887d7530f2d41e192b9563033012a6a add the portable service, typed gate, module and compile-graph wiring. Do not mark verified until production BoxStoreSync/object-store composition and same-head CI/package/device evidence succeed."
+    },
+    {
+      "responsibility_id": "MSG-HUMAN-REMOTE-ATTACHMENT-OUTBOUND-ANDROID-001",
+      "domain": "messaging-media",
+      "desktop_sources": [
+        {
+          "path": "source/host/src/extensions/session/native_messaging.rs",
+          "blob_sha": "984c5e023bdf2475cbec5f5db73330ad162dd78d",
+          "symbols": [
+            "upload_direct_message_resource",
+            "send_direct_message",
+            "MAX_RESOURCE_BYTES"
+          ]
+        }
+      ],
+      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "responsibility": "Send canonical Human direct-message attachments without leaking bearer credentials or blindly replaying ambiguous upload/message side effects.",
+      "source_owner": "Desktop NativeMessagingClient plus SessionExtension Human messaging owner",
+      "direct_callers": [
+        "Human direct send command",
+        "canonical Android messaging remote_human_send_intent",
+        "AndroidJsonHost remote Human dispatcher"
+      ],
+      "downstream_dependencies": [
+        "Fabushi /api/social/message-resources",
+        "Fabushi /api/social/messages",
+        "canonical messaging blob store",
+        "account session/device identity"
+      ],
+      "state_owner": "Rust canonical messaging blob store owns local bytes; AndroidAccountService owns bearer/device transport; durable resource/message journals own external side-effect outcomes.",
+      "persistent_state": [
+        "canonical messaging blob metadata/bytes",
+        "human-remote-resource-outbound.json",
+        "human-remote-outbound.json"
+      ],
+      "protocol_wire_contract": [
+        "multipart POST /api/social/message-resources field=file application/octet-stream",
+        "max resource 32 MiB",
+        "POST /api/social/messages attachments=[{resourceId}]",
+        "x-fabushi-device-id + bearer remain inside account owner"
+      ],
+      "visible_effect": "A user can send a local canonical document/photo/video/audio/voice attachment to a server-backed Human direct conversation without the Android UI owning credentials or retry truth.",
+      "failure_behavior": [
+        "invalid/foreign/oversized blob fails before network",
+        "ambiguous upload transport settles OutcomeUnknown and forbids automatic re-upload",
+        "backend-proven rejection settles Failed",
+        "ambiguous message send settles OutcomeUnknown and reconciles by clientRequestId before any resend"
+      ],
+      "cancellation_behavior": "no implicit cancellation can convert a dispatched side effect into not-executed; in-flight ambiguity remains durable outcome-unknown",
+      "retry_semantics": "same clientRequestId/blob reuses only settled resource identity; OutcomeUnknown requires reconciliation or explicit fresh user action; no blind resource/message replay",
+      "idempotency_semantics": "resource journal keys account/fence/actor/clientRequestId/blobId; message journal payload identity includes uploaded resource IDs",
+      "process_death_recovery": "Dispatching resource/message records reopen as OutcomeUnknown; Uploaded resource records survive and are reused without re-upload",
+      "account_fencing": "all resource/message journals include account fence; Host rechecks current account fence after network before settling callbacks",
+      "security_boundary": "Compose/ViewModel never receive bearer token; AndroidAccountService performs origin-fenced, no-redirect device-bound transport; blob reads require canonical actor ownership",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "source/host/src/messaging_service.rs",
+        "source/host/src/account_service.rs",
+        "source/host/src/human_remote_resource_outbound.rs",
+        "source/host/src/human_remote_outbound.rs",
+        "source/host/src/android_json_runtime.rs"
+      ],
+      "android_owner": "Rust Host canonical messaging/account/outbound owners",
+      "platform_delta": "Desktop NativeMessagingClient couples transport to the desktop session extension. Android keeps the same backend wire contract but splits canonical blob ownership, account-bound binary transport, and durable side-effect journals behind the typed Host/JNI runtime.",
+      "implementation_status": "implemented",
+      "production_wiring": "AndroidJsonHost derives attachment intent from canonical messaging, uploads canonical owned blob bytes through AndroidAccountService, durably settles resource outcome, includes resource IDs in the message outbound identity/body, then reconciles server echo.",
+      "unit_test": "account_service device_bound_human_resource_transport_preserves_binary_contract; messaging_service remote_human_send_intent_is_owned_by_canonical_direct_conversation; human_remote_resource_outbound reopen/payload/stale/rejection tests; human_remote_outbound attachment_resource_ids_are_part_of_idempotency_identity. Exact-head CI pending.",
+      "contract_test": "Desktop multipart/resource limits/device-header contract mirrored in Rust; exact-head Actions pending.",
+      "integration_test": "required: protected account send attachment through real backend and reconcile echo without duplicate resource/message",
+      "packaged_test": "required on final exact-head APK/AAB",
+      "device_test": "required on protected Android device/emulator with attachment send and process-death replay fencing",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Outbound attachment responsibility only. Desktop native_messaging.rs remains mapped because inbound resource download, full call/ICE/device acceptance and same-final-head evidence are not closed."
     }
   ],
   "traceability": {
