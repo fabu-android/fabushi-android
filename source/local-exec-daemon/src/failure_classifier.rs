@@ -6,6 +6,17 @@ pub enum LocalExecFailureClass {
     SpawnOther,
 }
 
+impl LocalExecFailureClass {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Other => "other",
+            Self::SpawnEnoent => "spawn_enoent",
+            Self::SpawnPermissions => "spawn_permissions",
+            Self::SpawnOther => "spawn_other",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LocalExecFailureClassification {
     pub error_class: LocalExecFailureClass,
