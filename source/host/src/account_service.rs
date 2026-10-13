@@ -420,9 +420,20 @@ impl AndroidAccountService {
         }
         let mut bytes = Vec::with_capacity(expected_size as usize);
         let mut reader = response.into_reader();
-        let mut limited = (&mut *reader).take(MAX_RESOURCE_BYTES + 1);
-        limited.read_to_end(&mut bytes)
-            .map_err(|error| format!("Fabushi Human attachment body could not be read: {error}"))?;
+        let mut remaining = MAX_RESOURCE_BYTES + 1;
+        let mut chunk = [0_u8; 16 * 1024];
+        while remaining > 0 {
+            let capacity = usize::try_from(remaining.min(chunk.len() as u64))
+                .unwrap_or(chunk.len());
+            let read = reader
+                .read(&mut chunk[..capacity])
+                .map_err(|error| format!("Fabushi Human attachment body could not be read: {error}"))?;
+            if read == 0 {
+                break;
+            }
+            bytes.extend_from_slice(&chunk[..read]);
+            remaining = remaining.saturating_sub(read as u64);
+        }
         if bytes.len() as u64 != expected_size || bytes.len() as u64 > MAX_RESOURCE_BYTES {
             return Err(format!(
                 "Fabushi Human attachment body length mismatch: expected {expected_size}, received {}.",
