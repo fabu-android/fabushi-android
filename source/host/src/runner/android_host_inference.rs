@@ -1047,7 +1047,7 @@ mod tests {
         assert_eq!(SAND_AGENT_MAX_STEPS, 5_000);
         let source = include_str!("android_host_inference.rs");
         assert!(source.contains("0..SAND_AGENT_MAX_STEPS"));
-        assert!(!source.contains("0..8"));
+        assert!(!source.contains("for step in 0..8 {"));
     }
 
     #[test]

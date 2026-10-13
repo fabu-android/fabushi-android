@@ -11,7 +11,7 @@ use std::{
 };
 
 pub const REMOTE_BOX_STORE_SYNC_CAPABILITY: &str = "box.store.sync";
-pub const REMOTE_BOX_STORE_SYNC_TIMEOUT_MS: u64 = 120_000;
+pub const REMOTE_BOX_STORE_SYNC_TIMEOUT_MS: u64 = 30_000;
 const MAX_IDENTITY_BYTES: usize = 512;
 const MAX_STORE_ID_BYTES: usize = 512;
 const MAX_ETAG_BYTES: usize = 2_048;

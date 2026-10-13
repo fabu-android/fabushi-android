@@ -2044,11 +2044,12 @@ mod tests {
     }
 
     #[test]
-    fn corrupt_roster_is_quarantined_before_reset() {
+    fn corrupt_roster_is_quarantined_and_fails_closed_without_recovery_replica() {
         let path = temp_path("corrupt");
         fs::write(&path, "{not-json").unwrap();
-        let roster = AndroidAgentRoster::open(&path).unwrap();
-        assert_eq!(roster.count(), 0);
+        let error = AndroidAgentRoster::open(&path).err().expect("corrupt roster without recovery must fail closed");
+        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+        assert_eq!(fs::read_to_string(&path).unwrap(), "{not-json");
         let parent = path.parent().unwrap();
         let prefix = format!("{}.", path.file_name().unwrap().to_string_lossy());
         let quarantined = fs::read_dir(parent)

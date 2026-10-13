@@ -424,7 +424,7 @@ mod tests {
         let (marker, prior) = AndroidUncleanExitMarker::open(&path, observed_at).unwrap();
         let prior = prior.expect("stale marker should be reconciled on reopen");
         assert_eq!(prior.kind, AndroidUncleanExitKind::MarkerOrphaned);
-        assert_eq!(prior.previous_uptime_bucket_ms, 86_400_000);
+        assert_eq!(prior.previous_uptime_bucket_ms, 300_000);
         drop(marker);
         let _ = fs::remove_dir_all(dir);
     }

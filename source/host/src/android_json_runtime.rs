@@ -15217,7 +15217,9 @@ fn human_remote_messages_path(
         return Err("remote Human contactId is invalid".into());
     }
     let encoded_contact: String =
-        url::form_urlencoded::byte_serialize(contact_id.as_bytes()).collect();
+        url::form_urlencoded::byte_serialize(contact_id.as_bytes())
+            .collect::<String>()
+            .replace('+', "%20");
     let mut path = format!(
         "/api/social/messages?contactId={encoded_contact}&limit={}",
         limit.clamp(1, 200),
@@ -15230,7 +15232,9 @@ fn human_remote_messages_path(
             return Err("remote Human message cursor is invalid".into());
         }
         let encoded_before: String =
-            url::form_urlencoded::byte_serialize(before.as_bytes()).collect();
+            url::form_urlencoded::byte_serialize(before.as_bytes())
+                .collect::<String>()
+                .replace('+', "%20");
         path.push_str("&before=");
         path.push_str(&encoded_before);
     }
