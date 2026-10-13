@@ -2106,7 +2106,7 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
             try {
                 delay(COMMAND_PALETTE_MESSAGE_DEBOUNCE_MS)
                 val matches = withContext(Dispatchers.IO) {
-                    coordinator.contentSearchMessages(normalized, limit = 50)
+                    coordinator.globalContentSearchMessages(normalized, limit = 50)
                 }
                 val results = commandPaletteMessagesFromHostMatches(matches)
                 if (!paletteMessageFence.accepts(token)) return@launch
