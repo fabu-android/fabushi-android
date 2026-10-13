@@ -8,6 +8,7 @@ pub mod managed_setup;
 pub mod memory;
 pub mod telemetry;
 pub mod session;
+pub mod source_map;
 pub mod webauthn_proxy;
 pub mod transcript;
 
