@@ -4335,6 +4335,9 @@ impl AndroidJsonHost {
     }
 
     fn automation_start(&mut self, params: &Value) -> Result<Value, String> {
+        if self.turn_upgrade_quiescing.load(Ordering::Acquire) {
+            return Err("automation wakes are quiesced for upgrade".into());
+        }
         let account_fence = self.current_turn_account_fence()?;
         let run = self.automation_runtime.begin_run(
             required_string(params, "automationId")?,
@@ -14025,3 +14028,35 @@ mod reaction_ack_runtime_tests {
 
 }
 
+
+
+#[cfg(test)]
+mod upgrade_automation_quiesce_tests {
+    use super::*;
+
+    #[test]
+    fn automation_wakes_are_blocked_during_upgrade_quiesce() {
+        let root = tempfile::tempdir().unwrap();
+        let mut host = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+        host.turn_upgrade_quiescing.store(true, Ordering::Release);
+
+        let blocked = host
+            .automation_start(&json!({
+                "automationId":"automation-a",
+                "requestId":"request-a",
+                "runId":"run-a",
+            }))
+            .unwrap_err();
+        assert_eq!(blocked, "automation wakes are quiesced for upgrade");
+
+        host.turn_upgrade_quiescing.store(false, Ordering::Release);
+        let resumed = host
+            .automation_start(&json!({
+                "automationId":"automation-a",
+                "requestId":"request-a",
+                "runId":"run-a",
+            }))
+            .unwrap_err();
+        assert_ne!(resumed, "automation wakes are quiesced for upgrade");
+    }
+}
