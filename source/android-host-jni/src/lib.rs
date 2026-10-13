@@ -1310,7 +1310,7 @@ mod tests {
         assert_eq!(status["result"]["activeRequestCount"], 1);
 
         let mut terminal_sequence = 0;
-        for _ in 0..8 {
+        for _ in 0..64 {
             let event = call(
                 &mut runtime,
                 json!({"method":"feature.receive","params":{}}),

@@ -32,8 +32,8 @@ class RpcEdgeRuntimeTest {
         val first = mutableListOf<Any?>()
         val second = mutableListOf<Any?>()
 
-        val firstSubscription = edge.subscribe(mapOf("changed" to first::add))
-        val secondSubscription = edge.subscribe(mapOf("changed" to second::add))
+        val firstSubscription = edge.subscribe(mapOf("changed" to { value: Any? -> first.add(value); Unit }))
+        val secondSubscription = edge.subscribe(mapOf("changed" to { value: Any? -> second.add(value); Unit }))
         edge.emit("changed", 1)
         assertEquals(listOf(1), first)
         assertEquals(listOf(1), second)

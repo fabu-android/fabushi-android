@@ -318,8 +318,8 @@ class AccountAccessProjectionOwnerTest {
             blockReason = AccountAccessBlockReason.NONE,
         )
         assertNull(
-            owner.observe(nextAccountReady, 6_000L),
             "new account epoch must not emit recovery for the prior account",
+            owner.observe(nextAccountReady, 6_000L),
         )
     }
 

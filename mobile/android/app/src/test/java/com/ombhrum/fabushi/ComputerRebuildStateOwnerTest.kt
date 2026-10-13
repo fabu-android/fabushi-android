@@ -647,7 +647,7 @@ class ComputerRebuildStateOwnerTest {
         assertTrue(projection.hasAck)
         assertTrue(projection.streamAttached)
         assertTrue(projection.dedupeKey.contains("operation-9"))
-        assertEquals(snapshot, owner.snapshot(9L), "telemetry projection must not mutate rebuild truth")
+        assertEquals("telemetry projection must not mutate rebuild truth", snapshot, owner.snapshot(9L))
 
         owner.deactivate(9L)
         assertNull(

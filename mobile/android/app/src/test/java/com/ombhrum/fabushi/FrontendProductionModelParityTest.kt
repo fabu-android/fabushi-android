@@ -635,7 +635,7 @@ class FrontendProductionModelParityTest {
         )
         val files = commandPaletteFilesFromTranscript(transcript, "pdf")
         assertEquals(listOf("visible"), files.map { it.entryId })
-        assertEquals("Launch Report.pdf", files.single().name)
+        assertEquals("Launch Report.pdf", files.single().fileName)
         assertTrue(commandPaletteMessagesFromTranscript(transcript, "secret peer").isEmpty())
         assertTrue(commandPaletteFilesFromTranscript(transcript, "secret").isEmpty())
     }
