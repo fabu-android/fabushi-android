@@ -37,4 +37,17 @@ class AgentApprovalPresentationTest {
             ),
         )
     }
+
+    @Test
+    fun processRestartWithoutLiveOperationCannotResurrectPendingApproval() {
+        assertNull(
+            projectPendingAgentApproval(
+                JSONObject()
+                    .put("type", "approval.requested")
+                    .put("approvalId", "approval-before-process-death")
+                    .put("operationId", "old-op"),
+                null,
+            ),
+        )
+    }
 }
