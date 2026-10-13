@@ -23,6 +23,8 @@ pub struct DurableTurnRecord {
     pub updated_at_ms: u64,
     pub reason: Option<String>,
     #[serde(default)]
+    pub request_source: Option<String>,
+    #[serde(default)]
     pub checkpoint_attempt: Option<usize>,
     #[serde(default)]
     pub checkpoint_emitted_chunks: Option<usize>,
@@ -76,6 +78,17 @@ impl DurableTurnJournal {
         account_fence: &str,
         now_ms: u64,
     ) -> Result<u64, String> {
+        self.begin_with_source(request_id, operation_id, account_fence, None, now_ms)
+    }
+
+    pub fn begin_with_source(
+        &mut self,
+        request_id: &str,
+        operation_id: &str,
+        account_fence: &str,
+        request_source: Option<&str>,
+        now_ms: u64,
+    ) -> Result<u64, String> {
         if let Some(existing) = self.state.records.get(request_id) {
             return match existing.state {
                 DurableTurnState::OutcomeUnknown => Err(format!(
@@ -109,6 +122,7 @@ impl DurableTurnJournal {
                 started_at_ms: now_ms,
                 updated_at_ms: now_ms,
                 reason: None,
+                request_source: request_source.map(str::to_string),
                 checkpoint_attempt: None,
                 checkpoint_emitted_chunks: None,
                 checkpointed_at_ms: None,
@@ -311,6 +325,22 @@ impl DurableTurnJournal {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn request_source_is_durable_when_owned_by_the_turn_journal() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("turns.json");
+        let mut journal = DurableTurnJournal::open(&path, 1).unwrap();
+        journal
+            .begin_with_source("r1", "o1", "acct:a", Some("automation"), 2)
+            .unwrap();
+        drop(journal);
+
+        let reopened = DurableTurnJournal::open(&path, 3).unwrap();
+        let record = reopened.record("r1").unwrap();
+        assert_eq!(record.request_source.as_deref(), Some("automation"));
+        assert_eq!(record.state, DurableTurnState::OutcomeUnknown);
+    }
 
     #[test]
     fn duplicate_account_generation_and_terminal_races_fail_closed() {
