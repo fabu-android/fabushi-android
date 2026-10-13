@@ -894,7 +894,6 @@ impl AndroidMessagingService {
                         .get("updatedAtMs")
                         .and_then(Value::as_i64)
                         .unwrap_or(0),
-                    "_projected": self.project_conversation(conversation, actor_id, now_ms),
                 })
             })
             .collect::<Vec<_>>();
@@ -926,7 +925,6 @@ impl AndroidMessagingService {
         for candidate in &mut candidates {
             if let Some(object) = candidate.as_object_mut() {
                 object.remove("_sortUpdatedAtMs");
-                object.remove("_projected");
             }
         }
         Ok(candidates)
@@ -3793,6 +3791,149 @@ mod tests {
             }}),
         )
         .is_err());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn forward_recipient_search_uses_canonical_permissions_and_protected_content() {
+        let root = temp_root("forward-recipient-search");
+        let me = "human:me";
+        let peer = "human:peer";
+        let other = "human:other";
+        let mut service = AndroidMessagingService::open(&root).unwrap();
+
+        for (request, id, name) in [
+            ("profile-me", me, "Me"),
+            ("profile-peer", peer, "Peer"),
+            ("profile-other", other, "Other Person"),
+        ] {
+            execute(
+                &mut service,
+                request,
+                id,
+                json!({"type":"upsertProfile","actor":{"id":id,"kind":"human","displayName":name}}),
+            )
+            .unwrap();
+        }
+
+        for (request, id, title, participant, updated_at, can_send_media) in [
+            ("conversation-source", "conversation:source", "Source", peer, 10, true),
+            ("conversation-newer", "conversation:newer", "Other Room", other, 30, true),
+            ("conversation-older", "conversation:older", "Peer Room", peer, 20, false),
+        ] {
+            execute(
+                &mut service,
+                request,
+                me,
+                json!({"type":"createConversation","conversation":{
+                    "id":id,
+                    "kind":"direct",
+                    "title":title,
+                    "ownerId":me,
+                    "participants":[
+                        {"actorId":me,"role":"owner","joinedAtMs":1},
+                        {"actorId":participant,"role":"member","joinedAtMs":1}
+                    ],
+                    "permissions":{
+                        "canSendMessages":true,
+                        "canSendMedia":can_send_media
+                    },
+                    "updatedAtMs":updated_at
+                }}),
+            )
+            .unwrap();
+        }
+
+        let sent = execute(
+            &mut service,
+            "source-message",
+            me,
+            json!({
+                "type":"sendMessage",
+                "conversationId":"conversation:source",
+                "clientMessageId":"forward-source",
+                "content":{"type":"text","data":{"text":{"text":"forward me","entities":[]}}}
+            }),
+        )
+        .unwrap();
+        let message_id = sent["envelopes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|envelope| envelope["event"]["type"] == "messageAdded")
+            .unwrap()["event"]["message"]["id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+
+        let all = service
+            .search_forward_recipients(
+                me,
+                "conversation:source",
+                &message_id,
+                "",
+                100,
+                100,
+            )
+            .unwrap();
+        assert_eq!(
+            all.iter()
+                .map(|row| row["id"].as_str().unwrap())
+                .collect::<Vec<_>>(),
+            vec!["conversation:newer", "conversation:older", "conversation:source"],
+            "eligible Human destinations are ordered newest first",
+        );
+
+        let query = service
+            .search_forward_recipients(
+                me,
+                "conversation:source",
+                &message_id,
+                "other person",
+                50,
+                100,
+            )
+            .unwrap();
+        assert_eq!(query.len(), 1);
+        assert_eq!(query[0]["id"], "conversation:newer");
+
+        execute(
+            &mut service,
+            "protected-source",
+            me,
+            json!({
+                "type":"sendMessage",
+                "conversationId":"conversation:source",
+                "clientMessageId":"protected-source",
+                "protectedContent":true,
+                "content":{"type":"text","data":{"text":{"text":"secret","entities":[]}}}
+            }),
+        )
+        .unwrap();
+        let protected_id = stable_message_id(me, "protected-source");
+        assert!(service
+            .search_forward_recipients(
+                me,
+                "conversation:source",
+                &protected_id,
+                "",
+                50,
+                100,
+            )
+            .unwrap()
+            .is_empty());
+
+        assert!(service
+            .search_forward_recipients(
+                me,
+                "conversation:source",
+                "missing-message",
+                "",
+                50,
+                100,
+            )
+            .is_err());
+
         let _ = fs::remove_dir_all(root);
     }
 
