@@ -10411,24 +10411,90 @@ impl AndroidJsonHost {
             prompt.push_str("\n</system_reminder>");
         }
         if !hidden {
+            let client_nonce = command
+                .get("clientNonce")
+                .and_then(Value::as_str)
+                .unwrap_or(request_id);
+            let account_fence = account_fence_for_attachment.as_str();
+            let rich_text = command.get("richText").cloned().unwrap_or(Value::Null);
+            let attachment_value = serde_json::to_value(&attachments)
+                .map_err(|error| format!("failed to canonicalize Agent attachments: {error}"))?;
             let mut transcript = self
                 .transcript
                 .lock()
                 .map_err(|_| "transcript lock poisoned".to_string())?;
+
+            if let Some(accepted) =
+                transcript.user_entry_by_client_nonce(&agent_id, client_nonce, account_fence)
+            {
+                let same_payload = accepted.get("content").and_then(Value::as_str)
+                    == Some(message_text.as_str())
+                    && accepted.get("richText").unwrap_or(&Value::Null) == &rich_text
+                    && accepted.get("attachments").unwrap_or(&Value::Null) == &attachment_value;
+                if !same_payload {
+                    return Err(format!(
+                        "NONCE_DIGEST_MISMATCH: client nonce {client_nonce} was previously accepted with another input"
+                    ));
+                }
+
+                let accepted_operation_id = accepted
+                    .get("operationId")
+                    .and_then(Value::as_str)
+                    .filter(|value| !value.trim().is_empty())
+                    .unwrap_or(request_id);
+                let accepted_assistant_id = format!("assistant:{accepted_operation_id}");
+                let mut events = self
+                    .turn_events
+                    .lock()
+                    .map_err(|_| "turn event queue lock poisoned".to_string())?;
+                if let Some(existing) = transcript.entry(&accepted_assistant_id) {
+                    let text = existing
+                        .get("content")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .to_string();
+                    if !text.is_empty() {
+                        events.push_back(json!({
+                            "type":"chat.message",
+                            "operationId":operation_id,
+                            "requestId":request_id,
+                            "role":"assistant",
+                            "text":text,
+                            "recovered":true,
+                        }));
+                    }
+                    events.push_back(json!({
+                        "type":"operation.completed",
+                        "operationId":operation_id,
+                        "requestId":request_id,
+                        "finishReason":"recovered",
+                        "attempts":0,
+                        "deduped":true,
+                    }));
+                } else {
+                    events.push_back(json!({
+                        "type":"operation.interrupted",
+                        "operationId":operation_id,
+                        "requestId":request_id,
+                        "reason":"duplicate-accepted-awaiting-visible-delivery",
+                        "deduped":true,
+                    }));
+                }
+                return Ok(());
+            }
+
             let user_was_new = transcript
                 .append_entry_if_absent(json!({
                     "id":request_id,
                     "kind":"message",
                     "role":"user",
                     "content":message_text.clone(),
-                    "richText":command.get("richText").cloned().unwrap_or(Value::Null),
+                    "richText":rich_text,
                     "attachments":attachments.clone(),
                     "operationId":operation_id,
                     "agentId":agent_id.clone(),
-                    "clientNonce":command
-                        .get("clientNonce")
-                        .and_then(Value::as_str)
-                        .unwrap_or(request_id),
+                    "accountFence":account_fence,
+                    "clientNonce":client_nonce,
                     "timestampMs":now_ms(),
                 }))
                 .map_err(|error| format!("failed to persist user transcript entry: {error}"))?;
