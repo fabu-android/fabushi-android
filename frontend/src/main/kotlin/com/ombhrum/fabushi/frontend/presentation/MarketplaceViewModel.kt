@@ -1034,6 +1034,7 @@ class MarketplaceViewModel(application: Application) : AndroidViewModel(applicat
                 cta = cta,
             )
         ) return
+        val dashboardAction = cta.dashboardAction ?: return
         val generation = ++accountUsageRefreshGeneration
         val expectedAuthId = snapshot.accountAuthId
         mutableState.value = snapshot.copy(accountUsageBusy = true, accountUsageError = null)
@@ -1041,7 +1042,7 @@ class MarketplaceViewModel(application: Application) : AndroidViewModel(applicat
             val (actionResult, reconcileResult) = withContext(Dispatchers.IO) {
                 val action = runCatching {
                     coordinator.accountDashboardAction(
-                        action = cta.dashboardAction,
+                        action = dashboardAction,
                         args = cta.args,
                     )
                 }
