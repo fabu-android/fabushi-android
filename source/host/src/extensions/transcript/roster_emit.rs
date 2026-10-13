@@ -227,11 +227,27 @@ impl ProductionRosterEmit {
         live_account_fence: Arc<Mutex<Option<String>>>,
         event_sink: RosterEventSink,
     ) -> Self {
+        let scheduled_events = Arc::clone(&event_sink);
+        let scheduled_fence = Arc::clone(&live_account_fence);
+        let scheduled_sink: RosterEventSink = Arc::new(move |mut event| {
+            let fence = scheduled_fence
+                .lock()
+                .ok()
+                .and_then(|fence| fence.clone())
+                .filter(|fence| !fence.trim().is_empty());
+            let Some(fence) = fence else {
+                return;
+            };
+            if let Some(object) = event.as_object_mut() {
+                object.insert("accountFence".into(), json!(fence));
+            }
+            scheduled_events(event);
+        });
         Self {
             agents,
             replica_writer,
             live_account_fence,
-            outline_stream: OutlineStreamScheduler::new(Arc::clone(&event_sink)),
+            outline_stream: OutlineStreamScheduler::new(scheduled_sink),
             event_sink,
             projection: Mutex::new(RosterProjection::default()),
         }
@@ -337,18 +353,8 @@ impl ProductionRosterEmit {
                     "item":item,
                 }
             }));
-        } else {
-            let fence = self.current_fence();
-            let sink = Arc::clone(&self.event_sink);
-            let agent_id = agent_id.to_string();
-            let item_id = item_id.clone();
-            let item = item.clone();
-            // The scheduler owns only transient coalescing state. Account fencing is rechecked
-            // before queueing; consumers recheck the accountFence carried by the projection.
-            if fence.is_some() {
-                self.outline_stream.queue(&agent_id, &item_id, item);
-            }
-            drop(sink);
+        } else if self.current_fence().is_some() {
+            self.outline_stream.queue(agent_id, &item_id, item);
         }
     }
 
