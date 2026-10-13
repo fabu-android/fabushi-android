@@ -483,7 +483,7 @@ impl AndroidNativeRuntime {
             "error": callback.error,
         });
         if let (Some(server_id), Some(account_key), Some(generation)) =
-            (server_id, account_key, generation)
+            (server_id.as_deref(), account_key.as_deref(), generation)
         {
             host_params["serverId"] = json!(server_id);
             host_params["accountKey"] = json!(account_key);
