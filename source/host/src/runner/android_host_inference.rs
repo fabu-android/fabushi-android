@@ -392,11 +392,7 @@ impl AndroidHostInferenceProvider {
                     let retry_after_ms = response
                         .header("Retry-After")
                         .and_then(parse_retry_after_ms);
-                    let message = if status == 429 || status >= 500 {
-                        format!("provider overloaded http_{status}")
-                    } else {
-                        format!("provider_http_{status}")
-                    };
+                    let message = provider_http_error_message(status);
                     return Err(ProviderFailure {
                         message,
                         retry_after_ms,
@@ -639,6 +635,16 @@ fn parse_retry_after_ms(value: &str) -> Option<u64> {
     value.trim().parse::<u64>().ok().map(|seconds| seconds.saturating_mul(1_000))
 }
 
+fn provider_http_error_message(status: u16) -> String {
+    match status {
+        401 | 403 => format!("provider_authentication_required http_{status}"),
+        429 => format!("provider overloaded http_{status}"),
+        status if status >= 500 => format!("provider overloaded http_{status}"),
+        _ => format!("provider_http_{status}"),
+    }
+}
+
+
 fn safe_transport_kind(error: &ureq::Transport) -> &'static str {
     use ureq::ErrorKind;
     match error.kind() {
@@ -739,6 +745,21 @@ mod tests {
             prompt: "hello".into(),
             resume_checkpoint_available: false,
         }
+    }
+
+    #[test]
+    fn provider_http_authentication_failures_have_a_stable_non_secret_contract() {
+        assert_eq!(
+            provider_http_error_message(401),
+            "provider_authentication_required http_401"
+        );
+        assert_eq!(
+            provider_http_error_message(403),
+            "provider_authentication_required http_403"
+        );
+        assert_eq!(provider_http_error_message(429), "provider overloaded http_429");
+        assert_eq!(provider_http_error_message(503), "provider overloaded http_503");
+        assert_eq!(provider_http_error_message(400), "provider_http_400");
     }
 
     #[test]
