@@ -3,6 +3,7 @@ pub mod async_task_union;
 pub mod agent_lifecycle;
 pub mod agent_run_error;
 pub mod channel_delivery_unregistered_error;
+pub mod client_side_tool_v2_inventory;
 pub mod pending_wake_rearm;
 pub mod run_scheduler;
 pub mod send_turn_dispatch;
