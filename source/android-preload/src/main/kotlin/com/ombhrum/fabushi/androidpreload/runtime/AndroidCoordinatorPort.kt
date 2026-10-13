@@ -948,6 +948,11 @@ interface AndroidCoordinatorPort {
         limit: Int = 200,
     ): AndroidTranscriptHistoryPage =
         error("Transcript history pagination is unavailable on this Coordinator port")
+    fun globalContentSearchMessages(
+        query: String,
+        limit: Int = 50,
+    ): List<AndroidContentSearchMessage> =
+        error("Indexed global content search is unavailable on this Coordinator port")
     fun contentSearchMessages(
         query: String,
         limit: Int = 50,
