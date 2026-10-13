@@ -8,6 +8,8 @@ use std::sync::{
 
 use serde_json::{Map, Value};
 
+/// Android typed mutation channel retained for Coordinator/session consumers that need a compact
+/// sequence-bearing event. This remains source-compatible with the pre-existing Android owner.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TranscriptMutation {
     pub agent_id: String,
@@ -35,13 +37,14 @@ impl TranscriptMutationBus {
     }
 }
 
-/// Desktop-compatible Session mutation payload. This is an event projection only; canonical
-/// transcript/session state remains owned by the Rust Host stores.
-pub type TranscriptMutationPayload = Map<String, Value>;
+/// Full-fidelity mutation envelope used by the Desktop-equivalent Agent DB/session runtime.
+/// Keeping this registry next to the typed Android bus avoids a second persistence owner while
+/// allowing incremental consumers to subscribe without collapsing entry payloads into a string.
+pub type TranscriptMutationEnvelope = Map<String, Value>;
 type TranscriptMutationListener =
-    Arc<dyn Fn(&TranscriptMutationPayload) + Send + Sync + 'static>;
+    Arc<dyn Fn(&TranscriptMutationEnvelope) + Send + Sync + 'static>;
 
-fn payload_listeners() -> &'static Mutex<BTreeMap<u64, TranscriptMutationListener>> {
+fn listeners() -> &'static Mutex<BTreeMap<u64, TranscriptMutationListener>> {
     static LISTENERS: OnceLock<Mutex<BTreeMap<u64, TranscriptMutationListener>>> = OnceLock::new();
     LISTENERS.get_or_init(|| Mutex::new(BTreeMap::new()))
 }
@@ -66,8 +69,8 @@ impl TranscriptMutationSubscription {
         if !self.active {
             return;
         }
-        if let Ok(mut listeners) = payload_listeners().lock() {
-            listeners.remove(&self.id);
+        if let Ok(mut values) = listeners().lock() {
+            values.remove(&self.id);
         }
         self.active = false;
     }
@@ -81,20 +84,20 @@ impl Drop for TranscriptMutationSubscription {
 
 pub fn subscribe_transcript_mutations<F>(listener: F) -> TranscriptMutationSubscription
 where
-    F: Fn(&TranscriptMutationPayload) + Send + Sync + 'static,
+    F: Fn(&TranscriptMutationEnvelope) + Send + Sync + 'static,
 {
     let id = next_listener_id();
-    payload_listeners()
+    listeners()
         .lock()
         .expect("transcript mutation listener registry poisoned")
         .insert(id, Arc::new(listener));
     TranscriptMutationSubscription { id, active: true }
 }
 
-pub fn publish_transcript_mutation(mutation: &TranscriptMutationPayload) {
-    let snapshot = payload_listeners()
+pub fn publish_transcript_mutation(mutation: &TranscriptMutationEnvelope) {
+    let snapshot = listeners()
         .lock()
-        .map(|listeners| listeners.values().cloned().collect::<Vec<_>>())
+        .map(|values| values.values().cloned().collect::<Vec<_>>())
         .unwrap_or_default();
     for listener in snapshot {
         let _ = catch_unwind(AssertUnwindSafe(|| listener(mutation)));
@@ -106,41 +109,38 @@ mod tests {
     use super::*;
 
     #[test]
-    fn typed_bus_drops_closed_subscribers_without_affecting_live_ones() {
+    fn full_fidelity_listener_receives_payload_and_unsubscribe_fences_later_events() {
+        let received = Arc::new(Mutex::new(Vec::<TranscriptMutationEnvelope>::new()));
+        let sink = Arc::clone(&received);
+        let subscription = subscribe_transcript_mutations(move |event| {
+            sink.lock().unwrap().push(event.clone());
+        });
+
+        let mut first = TranscriptMutationEnvelope::new();
+        first.insert("kind".into(), Value::String("entries-upserted".into()));
+        first.insert("agentId".into(), Value::String("agent-a".into()));
+        first.insert(
+            "entries".into(),
+            Value::Array(vec![serde_json::json!({"id":"m1","kind":"message"})]),
+        );
+        publish_transcript_mutation(&first);
+        assert_eq!(received.lock().unwrap().as_slice(), &[first.clone()]);
+
+        subscription.unsubscribe();
+        publish_transcript_mutation(&first);
+        assert_eq!(received.lock().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn typed_android_bus_remains_source_compatible() {
         let bus = TranscriptMutationBus::default();
-        let closed = bus.subscribe();
-        let live = bus.subscribe();
-        drop(closed);
+        let receiver = bus.subscribe();
         let event = TranscriptMutation {
             agent_id: "agent-a".into(),
             sequence: 7,
             kind: "entries-upserted".into(),
         };
         bus.publish(event.clone());
-        assert_eq!(live.recv().unwrap(), event);
-    }
-
-    #[test]
-    fn payload_subscription_is_explicitly_disposable() {
-        let received = Arc::new(Mutex::new(Vec::<String>::new()));
-        let sink = Arc::clone(&received);
-        let subscription = subscribe_transcript_mutations(move |mutation| {
-            if let Some(kind) = mutation.get("kind").and_then(Value::as_str) {
-                sink.lock().unwrap().push(kind.to_string());
-            }
-        });
-        let mut first = Map::new();
-        first.insert("kind".into(), Value::String("agent-needs-reindex".into()));
-        publish_transcript_mutation(&first);
-        assert_eq!(
-            received.lock().unwrap().as_slice(),
-            &["agent-needs-reindex".to_string()]
-        );
-
-        subscription.unsubscribe();
-        let mut second = Map::new();
-        second.insert("kind".into(), Value::String("entries-upserted".into()));
-        publish_transcript_mutation(&second);
-        assert_eq!(received.lock().unwrap().len(), 1);
+        assert_eq!(receiver.recv().unwrap(), event);
     }
 }
