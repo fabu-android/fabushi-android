@@ -15408,15 +15408,15 @@
       "android_owner": "Rust Host Session extension contract layer",
       "platform_delta": "None for these three platform-independent modules. Android-specific production composition and filesystem/account fencing remain separate work.",
       "implementation_status": "mapped",
-      "production_wiring": "Compiled into the Android Host Session namespace at 519f58025923ba38f9b944803fd2ba1b1371a887. No production SandAgentDb/ProductionSessionWorkers owner is wired yet, so this responsibility intentionally remains mapped.",
-      "unit_test": "agent_db_serde focused validation tests plus agent_db_transcript_pages bounded/resumable paging tests added on the current descendant chain; GitHub Actions pending.",
+      "production_wiring": "Schema/serde/paging contracts compile in the Android Host Session namespace. Desktop SandAgentDb has now been direct-ported as the long-lived Rust owner, and Android focused tests exercise durable reopen, duplicate suppression, live-handle release, stale CAS fencing and closed-owner write rejection. Shipping ProductionSessionWorkers/Agent session composition is still not wired, so this responsibility remains mapped.",
+      "unit_test": "agent_db_serde validation, transcript paging/window tests, storage::store_db lifecycle tests, agent_db_recovery salvage/corruption tests, and agent_db_android_tests owner reopen/CAS/closed-write tests are present; descendant exact-head GitHub Actions remain required.",
       "contract_test": "Rust compile/test through Android Parity Full CI and Grok Android Architecture required on a descendant exact HEAD.",
-      "integration_test": "Open: wire canonical Agent session database owner and prove account/process-death recovery.",
+      "integration_test": "Open: wire the canonical SandAgentDb into Android ProductionSessionWorkers/Agent session composition and prove account-scoped process-death recovery without a second transcript owner.",
       "packaged_test": "Open: final APK/AAB process-death/reopen acceptance.",
       "device_test": "Open: protected device Agent session recovery/paging acceptance.",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Foundation only. Presence of these modules is not treated as Desktop parity; agent_db_recovery, SandAgentDb, ProductionSessionWorkers and the production session route remain unreviewed/open."
+      "notes": "Foundation plus canonical Rust SandAgentDb owner are present. Do not upgrade to implemented/verified until the shipping Android Session composition uses this owner and descendant exact-head Rust/Android/package/device evidence succeeds."
     },
     {
       "responsibility_id": "AGENT-ISOLATION-BLOB-WORKER-ANDROID-001",
@@ -16760,6 +16760,103 @@
       "artifact": null,
       "verification_status": "not-verified",
       "notes": "Desktop source responsibility is implemented through Android-adapted split owners. Commits bc321686c0370e024258cac4042b935a840d7f0d, ca062d332973602b2255968d998afe7a4f1eb6cf, 91f32a3631f58c6ab7b06262600810a6dba5668f and b5dfbeb53d7e5a4777555db06253985c71f71f34 close the previously silent roster-reset gap. Do not mark verified until a descendant exact HEAD passes the relevant Rust/Android/package/device gates."
+    },
+    {
+      "responsibility_id": "AGENT-SESSION-DB-OWNER-ANDROID-001",
+      "domain": "agent-session-storage",
+      "desktop_sources": [
+        {
+          "path": "source/host/src/extensions/session/agent_db.rs",
+          "blob_sha": "91ed720449b8e171a94887d032343103be6c829b",
+          "symbols": [
+            "SandAgentDb",
+            "open_with_options",
+            "commit_checkpoint_root_and_confirm_user_message",
+            "append_transcript_entries",
+            "compare_and_set_latest_root_blob_id",
+            "clear_transient_state"
+          ]
+        },
+        {
+          "path": "source/host/src/storage/store_db.rs",
+          "blob_sha": "f52eddab95fcccec3b9c0e232ddf25b5f0fc27ce",
+          "symbols": [
+            "live_db_handle_count",
+            "register_live_db_handle",
+            "release_live_db_handle",
+            "bump_db_write_generation",
+            "checkpoint_sand_agent_db"
+          ]
+        }
+      ],
+      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "responsibility": "Own one durable Rust Agent session SQLite store per live Agent, including metadata/root CAS, transcript mutation/paging, unread/awaiting/profile/memory/request state, live-handle fencing, write generations, recovery retry and close/checkpoint lifecycle.",
+      "source_owner": "Desktop Rust Host SandAgentDb",
+      "direct_callers": [
+        "SandAgentSessionStore",
+        "ProductionSessionWorkers",
+        "Agent runner/session projections"
+      ],
+      "downstream_dependencies": [
+        "agent_db_recovery",
+        "agent_db_schema",
+        "agent_db_serde",
+        "agent_db_transcript_pages",
+        "storage::store_db",
+        "transcript mutation events"
+      ],
+      "state_owner": "Rust Host SandAgentDb; Compose/Kotlin must not own canonical Agent transcript/session state.",
+      "persistent_state": [
+        "metadata",
+        "latestRootBlobId",
+        "transcript_entries",
+        "awaitingUserResponse",
+        "unreadState",
+        "requestIds",
+        "episodePending",
+        "memory/profile snapshots",
+        "conversationPartners",
+        "automation spend guard"
+      ],
+      "protocol_wire_contract": [
+        "compare-and-set latestRootBlobId",
+        "transactional checkpoint root + user-message confirmation",
+        "bounded transcript paging/window",
+        "duplicate transcript insert suppression",
+        "typed mutation notifications"
+      ],
+      "visible_effect": "Agent conversations and durable run/session projections reopen after process death without duplicate transcript writes or stale checkpoint overwrite.",
+      "failure_behavior": [
+        "busy write returns bounded no-op via on_busy_error",
+        "corruption recovers only when no competing live handle exists",
+        "closed owner rejects new writes",
+        "failed recovery closes owner and releases live-handle fence"
+      ],
+      "cancellation_behavior": "DB writes are transaction scoped; caller cancellation cannot expose half-committed root/transcript state.",
+      "retry_semantics": "busy handling is bounded by caller policy; corruption is recovered at most once per live owner before a second error becomes terminal.",
+      "idempotency_semantics": "duplicate transcript ids are ignored; root update is CAS fenced; metadata initialization is insert-if-missing.",
+      "process_death_recovery": "durable SQLite state reopens through recovery-aware configuration; shipping Android Session composition still must wire this owner on cold start.",
+      "account_fencing": "The DB owner itself is path-scoped; shipping composition must derive the Agent/session path from the canonical account scope before opening it.",
+      "security_boundary": "Rust Host only. Raw SQLite handles and unvalidated rows are not exposed to Compose; Android credential/key material remains in its dedicated vault owners.",
+      "android_disposition": "direct-port",
+      "android_target": [
+        "source/host/src/extensions/session/agent_db.rs",
+        "source/host/src/extensions/session/agent_db_android_tests.rs",
+        "source/host/src/storage/store_db.rs",
+        "source/host/src/transcript_mutation_events.rs"
+      ],
+      "android_owner": "Rust Host SandAgentDb",
+      "platform_delta": "Core database owner remains Rust. Android keeps its existing typed mutation bus and adds a disposable JSON event projection only for Session mutation compatibility; this event projection is not a second canonical transcript owner.",
+      "implementation_status": "mapped",
+      "production_wiring": "The Rust owner compiles in the Host Session namespace and has focused tests, but ProductionSessionWorkers/Agent session shipping composition has not yet been wired to it.",
+      "unit_test": "agent_db_android_tests plus store_db/recovery/serde/paging focused Rust tests; descendant exact-head Actions pending.",
+      "contract_test": "Rust Host compile/test and source-authority gates required on a descendant exact HEAD.",
+      "integration_test": "Open: production Agent session owner, account/path fencing and process-death reopen.",
+      "packaged_test": "Open: final APK/AAB Agent session process-death/restart acceptance.",
+      "device_test": "Open: protected device Agent transcript/run recovery without duplicate effects.",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Direct-port source owner is present, but code presence is not parity. Keep mapped until production composition and exact-head evidence close the runtime route."
     }
   ],
   "traceability": {
