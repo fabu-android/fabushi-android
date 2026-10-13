@@ -16,7 +16,7 @@ pub struct AndroidGatewayCommandReport {
 
 fn base_metadata(report: &AndroidGatewayCommandReport) -> BTreeMap<String, String> {
     let mut metadata = BTreeMap::from([
-        ("method".into(), report.method.clone()),
+        ("method".into(), report.method.chars().take(128).collect()),
         ("duration_ms".into(), report.duration_ms.to_string()),
     ]);
     if let Some(value) = report.request_id.as_deref().filter(|value| !value.is_empty()) {
@@ -91,6 +91,7 @@ mod tests {
             reason: Some("e".repeat(512)),
             error_class: Some("c".repeat(512)),
         });
+        assert_eq!(projection.metadata["method"].chars().count(), 128);
         assert_eq!(projection.metadata["request_id"].chars().count(), 128);
         assert_eq!(projection.metadata["reason"].chars().count(), 128);
         assert_eq!(projection.metadata["error_class"].chars().count(), 64);
