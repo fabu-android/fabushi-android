@@ -31,6 +31,14 @@ pub struct AndroidAgentRecord {
     #[serde(default)]
     pub has_unread: bool,
     #[serde(default)]
+    pub last_activity_at: u64,
+    #[serde(default)]
+    pub last_viewed_at: u64,
+    #[serde(default)]
+    pub is_manually_unread: bool,
+    #[serde(default)]
+    pub unread_count: u64,
+    #[serde(default)]
     pub is_pinned: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub avatar_shape: Option<String>,
@@ -53,6 +61,10 @@ impl AndroidAgentRecord {
             "memberIds": self.member_ids,
             "isHiddenFromSidebar": self.is_hidden_from_sidebar,
             "hasUnread": self.has_unread,
+            "lastActivityAt": self.last_activity_at,
+            "lastViewedAt": self.last_viewed_at,
+            "isManuallyUnread": self.is_manually_unread,
+            "unreadCount": self.unread_count,
             "isPinned": self.is_pinned,
             "avatarShape": self.avatar_shape,
             "avatarColor": self.avatar_color,
@@ -220,6 +232,10 @@ impl AndroidAgentRoster {
             member_ids: Vec::new(),
             is_hidden_from_sidebar: false,
             has_unread: false,
+            last_activity_at: 0,
+            last_viewed_at: 0,
+            is_manually_unread: false,
+            unread_count: 0,
             is_pinned: false,
             avatar_shape,
             avatar_color,
@@ -252,6 +268,10 @@ impl AndroidAgentRoster {
             member_ids: members,
             is_hidden_from_sidebar: false,
             has_unread: false,
+            last_activity_at: 0,
+            last_viewed_at: 0,
+            is_manually_unread: false,
+            unread_count: 0,
             is_pinned: false,
             avatar_shape: None,
             avatar_color: None,
@@ -323,6 +343,10 @@ impl AndroidAgentRoster {
             member_ids: Vec::new(),
             is_hidden_from_sidebar: false,
             has_unread: false,
+            last_activity_at: 0,
+            last_viewed_at: 0,
+            is_manually_unread: false,
+            unread_count: 0,
             is_pinned: false,
             avatar_shape: None,
             avatar_color: None,
@@ -673,8 +697,81 @@ impl AndroidAgentRoster {
         self.mutate_agent(id, |agent| agent.is_hidden_from_sidebar = is_hidden)
     }
 
+    pub fn mark_activity(&mut self, id: &str, at: u64) -> io::Result<AndroidAgentRecord> {
+        let current = self
+            .get(id)
+            .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "agent not found"))?;
+        if current.last_activity_at >= at {
+            return Ok(current);
+        }
+        self.mutate_agent(id, |agent| {
+            agent.last_activity_at = at;
+            agent.unread_count = agent.unread_count.saturating_add(1);
+            agent.has_unread = true;
+        })
+    }
+
+    pub fn mark_viewed(
+        &mut self,
+        id: &str,
+        at: u64,
+        preserve_manual_unread: bool,
+    ) -> io::Result<AndroidAgentRecord> {
+        let current = self
+            .get(id)
+            .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "agent not found"))?;
+        if preserve_manual_unread && current.is_manually_unread {
+            return Ok(current);
+        }
+        if !current.is_manually_unread && current.last_viewed_at >= at {
+            return Ok(current);
+        }
+        self.mutate_agent(id, |agent| {
+            agent.last_viewed_at = at;
+            agent.is_manually_unread = false;
+            agent.unread_count = 0;
+            agent.has_unread = false;
+        })
+    }
+
+    pub fn mark_unread(&mut self, id: &str, at: u64) -> io::Result<AndroidAgentRecord> {
+        let current = self
+            .get(id)
+            .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "agent not found"))?;
+        let last_activity_at = if current.last_activity_at == 0 {
+            at
+        } else {
+            current.last_activity_at
+        };
+        let upper_bound = last_activity_at.saturating_sub(1).min(at.saturating_sub(1));
+        self.mutate_agent(id, |agent| {
+            agent.last_activity_at = last_activity_at;
+            agent.last_viewed_at = agent.last_viewed_at.min(upper_bound);
+            agent.is_manually_unread = true;
+            agent.unread_count = agent.unread_count.max(1);
+            agent.has_unread = true;
+        })
+    }
+
+    pub fn mark_read(&mut self, id: &str, at: u64) -> io::Result<AndroidAgentRecord> {
+        let current = self
+            .get(id)
+            .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "agent not found"))?;
+        self.mutate_agent(id, |agent| {
+            agent.last_viewed_at = current.last_activity_at.max(at);
+            agent.is_manually_unread = false;
+            agent.unread_count = 0;
+            agent.has_unread = false;
+        })
+    }
+
     pub fn set_unread(&mut self, id: &str, is_unread: bool) -> io::Result<AndroidAgentRecord> {
-        self.mutate_agent(id, |agent| agent.has_unread = is_unread)
+        let at = now_ms();
+        if is_unread {
+            self.mark_unread(id, at)
+        } else {
+            self.mark_read(id, at)
+        }
     }
 
     pub fn duplicate(&mut self, id: &str) -> io::Result<AndroidAgentRecord> {
@@ -697,6 +794,10 @@ impl AndroidAgentRoster {
             member_ids: source.member_ids,
             is_hidden_from_sidebar: false,
             has_unread: false,
+            last_activity_at: 0,
+            last_viewed_at: 0,
+            is_manually_unread: false,
+            unread_count: 0,
             is_pinned: false,
             avatar_shape: source.avatar_shape,
             avatar_color: source.avatar_color,
@@ -1184,8 +1285,58 @@ mod tests {
         assert_eq!(row.name, "Renamed");
         assert!(row.is_hidden_from_sidebar);
         assert!(row.has_unread);
+        assert!(row.is_manually_unread);
+        assert_eq!(row.unread_count, 1);
+        assert!(row.last_activity_at > 0);
         assert!(row.is_pinned);
         assert_eq!(reopened.pinned_agent_ids(), vec![created.id.clone()]);
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn unread_state_tracks_activity_manual_override_and_reopens() {
+        let path = temp_path("unread-state");
+        let agent_id = {
+            let mut roster = AndroidAgentRoster::open(&path).unwrap();
+            roster.create("Agent", "").unwrap().id
+        };
+
+        let mut roster = AndroidAgentRoster::open(&path).unwrap();
+        let activity = roster.mark_activity(&agent_id, 100).unwrap();
+        assert!(activity.has_unread);
+        assert_eq!(activity.last_activity_at, 100);
+        assert_eq!(activity.unread_count, 1);
+
+        let later_activity = roster.mark_activity(&agent_id, 200).unwrap();
+        assert_eq!(later_activity.unread_count, 2);
+        let duplicate_activity = roster.mark_activity(&agent_id, 200).unwrap();
+        assert_eq!(duplicate_activity.unread_count, 2, "duplicate activity timestamp must be idempotent");
+
+        let viewed = roster.mark_viewed(&agent_id, 250, false).unwrap();
+        assert!(!viewed.has_unread);
+        assert_eq!(viewed.unread_count, 0);
+        assert_eq!(viewed.last_viewed_at, 250);
+
+        let manual = roster.mark_unread(&agent_id, 300).unwrap();
+        assert!(manual.has_unread);
+        assert!(manual.is_manually_unread);
+        assert_eq!(manual.unread_count, 1);
+        let preserved = roster.mark_viewed(&agent_id, 350, true).unwrap();
+        assert!(preserved.has_unread);
+        assert!(preserved.is_manually_unread);
+
+        let read = roster.mark_read(&agent_id, 400).unwrap();
+        assert!(!read.has_unread);
+        assert!(!read.is_manually_unread);
+        assert_eq!(read.unread_count, 0);
+        drop(roster);
+
+        let reopened = AndroidAgentRoster::open(&path).unwrap();
+        let restored = reopened.get(&agent_id).unwrap();
+        assert_eq!(restored.last_activity_at, 200);
+        assert_eq!(restored.last_viewed_at, 400);
+        assert!(!restored.has_unread);
+        assert_eq!(restored.unread_count, 0);
         let _ = fs::remove_file(path);
     }
 
@@ -1421,6 +1572,10 @@ mod tests {
         assert_eq!(restored.avatar_color, None);
         assert_eq!(restored.title, None);
         assert!(!restored.notify_on_updates_enabled);
+        assert_eq!(restored.last_activity_at, 0);
+        assert_eq!(restored.last_viewed_at, 0);
+        assert!(!restored.is_manually_unread);
+        assert_eq!(restored.unread_count, 0);
 
         roster.set_unread("agent-00000001", true).unwrap();
         drop(roster);
