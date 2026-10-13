@@ -133,7 +133,7 @@ use crate::runner::{
     SubagentRunOutcome, SubagentSteerReview, SubagentTaskReviewCallback,
     SubagentSteerReviewCallback, SubagentToolBridge, SubagentToolContext,
     build_parent_subagent_routed_tools, spawn_generated_subagent,
-    with_agent_management_tools, with_multitask_todo_tools, with_remote_routed_tools, with_web_routed_tools,
+    with_agent_management_tools, with_send_message_tools, with_multitask_todo_tools, with_remote_routed_tools, with_web_routed_tools,
     AgentTurnInterruptionRegistry, RemoteApprovalRegistry, RemoteDispatchBinding,
     DurableMultitaskTodoStore,
 };
@@ -10680,6 +10680,20 @@ impl AndroidJsonHost {
                     &conversation_id_owned,
                     Arc::clone(&cancelled),
                     Arc::clone(&agent_turn_interruptions),
+                );
+                let routed_subagent_tools = with_send_message_tools(
+                    routed_subagent_tools,
+                    Arc::clone(&transcript),
+                    Arc::clone(&turn_lifecycle),
+                    Arc::clone(&turn_events),
+                    Arc::clone(&live_account_fence),
+                    &account_fence_owned,
+                    &conversation_id_owned,
+                    &request_id_owned,
+                    &operation_id_owned,
+                    turn_generation,
+                    turn_lifecycle_process_epoch,
+                    Arc::clone(&cancelled),
                 );
                 // Desktop exposes TodoWrite only on a root non-subagent turn when
                 // multitask is enabled. Keep it outside GeneratedChildToolRegistry
