@@ -4,6 +4,7 @@ use std::{
     fs,
     io::{self, Write},
     path::{Path, PathBuf},
+    sync::{Arc, Mutex},
 };
 
 pub const ANDROID_STRUCTURED_LOG_SPILL_MAX_BYTES: usize = 1024 * 1024;
@@ -343,6 +344,39 @@ pub struct AndroidStructuredLogSpool {
     state: AndroidStructuredLogSpillState,
 }
 
+#[derive(Clone, Debug)]
+pub struct SharedAndroidStructuredLogSpool {
+    inner: Arc<Mutex<AndroidStructuredLogSpool>>,
+}
+
+impl SharedAndroidStructuredLogSpool {
+    pub fn new(spool: AndroidStructuredLogSpool) -> Self {
+        Self {
+            inner: Arc::new(Mutex::new(spool)),
+        }
+    }
+
+    pub fn record(
+        &self,
+        level: &str,
+        message: &str,
+        metadata: BTreeMap<String, String>,
+        timestamp: u64,
+    ) -> io::Result<()> {
+        self.inner
+            .lock()
+            .map_err(|_| io::Error::new(io::ErrorKind::Other, "structured log spool lock poisoned"))?
+            .record(level, message, metadata, timestamp)
+    }
+
+    pub fn rotate_account(&self, account_slot: &str, counter_id: &str) -> io::Result<bool> {
+        self.inner
+            .lock()
+            .map_err(|_| io::Error::new(io::ErrorKind::Other, "structured log spool lock poisoned"))?
+            .rotate_account(account_slot, counter_id)
+    }
+}
+
 impl AndroidStructuredLogSpool {
     pub fn open(
         path: impl Into<PathBuf>,
@@ -593,6 +627,7 @@ mod tests {
     }
 
     #[test]
+    #[test]
     fn spool_accepts_canonical_agent_error_and_open_events() {
         let root = root("agent-events");
         let path = root.join("spill.json");
@@ -621,7 +656,6 @@ mod tests {
         let _ = fs::remove_dir_all(root);
     }
 
-    #[test]
     fn spool_rotates_account_and_reopens_durable_record() {
         let root = root("spool");
         let path = root.join("spill.json");
