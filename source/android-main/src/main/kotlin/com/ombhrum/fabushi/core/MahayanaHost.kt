@@ -765,10 +765,14 @@ class MahayanaHost(
                 JSONObject(nativeDispatch(state.handle, request.toString()))
             }
         }
+        // Account persistence is private platform plumbing and must settle even when the business
+        // request itself failed. In particular, a terminal refresh rejection can clear Rust
+        // account ownership while returning ok=false; persist the revocation fence before exposing
+        // that error so process death cannot resurrect the rejected encrypted session.
+        consumePrivateAccountSessionMutation(response)
         if (!response.optBoolean("ok", false)) {
             error(response.optString("error", "Mahayana host request failed"))
         }
-        consumePrivateAccountSessionMutation(response)
         return response
     }
 
