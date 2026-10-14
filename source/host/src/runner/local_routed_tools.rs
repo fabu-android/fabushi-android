@@ -706,7 +706,7 @@ mod tests {
             "conversation-review",
             9,
             Arc::new(AtomicBool::new(false)),
-            Some(Arc::new(|_, _| {
+            Some(Arc::new(|_: &str, _: &serde_json::Value| {
                 Ok(RemoteAutoReviewDecision::Reject {
                     reason: "blocked by focused review".into(),
                 })
