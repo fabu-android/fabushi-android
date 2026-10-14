@@ -12842,10 +12842,9 @@ impl AndroidJsonHost {
                                 let review_mode = match tool_name {
                                     "Shell" | "Write" => review_modes.box_shell,
                                     "ExternalShell" => review_modes.host_shell,
-                                    "Computer" | "Screenshot" | "BrowserOpen" | "BrowserClick"
-                                    | "BrowserType" | "BrowserKey" | "BrowserScroll"
-                                    | "BrowserWait" | "BrowserSnapshot" => review_modes.computer,
+                                    "Computer" | "Screenshot" => review_modes.computer,
                                     "CloudAgent" => review_modes.cloud_agent,
+                                    _ if tool_name.starts_with("browser_") => review_modes.computer,
                                     _ => SandAutoReviewMode::Off,
                                 };
                                 if review_mode == SandAutoReviewMode::Off {
