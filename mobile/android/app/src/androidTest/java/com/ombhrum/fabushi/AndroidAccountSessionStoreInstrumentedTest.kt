@@ -2,6 +2,7 @@ package com.ombhrum.fabushi
 
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import com.ombhrum.fabushi.androidmain.security.AccountSessionRevocationFence
 import com.ombhrum.fabushi.androidmain.security.AndroidAccountSessionStore
 import java.io.File
 import org.junit.After
@@ -17,10 +18,14 @@ class AndroidAccountSessionStoreInstrumentedTest {
     private val context = ApplicationProvider.getApplicationContext<android.content.Context>()
     private val store = AndroidAccountSessionStore(context)
     private val ciphertext = File(context.noBackupFilesDir, "fabushi-account-session.v1")
+    private val revocationMarker =
+        File(context.noBackupFilesDir, "fabushi-account-session.revoked.v1")
 
     @After
     fun cleanup() {
-        store.clear()
+        runCatching { store.clear() }
+        ciphertext.deleteRecursively()
+        revocationMarker.deleteRecursively()
     }
 
     @Test
@@ -74,8 +79,28 @@ class AndroidAccountSessionStoreInstrumentedTest {
         ciphertext.writeBytes(encrypted)
 
         // The ciphertext survived the simulated deletion failure, but clear() destroyed the
-        // Keystore key before reporting failure. A cold-start store must therefore reject it.
+        // Keystore key and persisted the revocation fence before reporting failure. Cold start
+        // therefore refuses the old credential without needing to decrypt or mutate it.
         assertNull(AndroidAccountSessionStore(context).readSessionJson())
-        assertFalse(ciphertext.exists())
+        assertTrue(revocationMarker.exists())
+        assertTrue(ciphertext.exists())
+    }
+
+    @Test
+    fun durableRevocationFenceBlocksColdStartUntilReplacementSessionPersists() {
+        val oldSession = """{"accessToken":"old-access","refreshToken":"old-refresh","accessTokenExpiresAt":2000000000000,"refreshTokenExpiresAt":2100000000000,"sessionId":"session-old","deviceId":"device-old","username":"user@example.com","userId":"user-old"}"""
+        val replacementSession = """{"accessToken":"new-access","refreshToken":"new-refresh","accessTokenExpiresAt":2200000000000,"refreshTokenExpiresAt":2300000000000,"sessionId":"session-new","deviceId":"device-new","username":"user@example.com","userId":"user-new"}"""
+        store.writeSessionJson(oldSession)
+
+        AccountSessionRevocationFence(revocationMarker).markRevoked()
+
+        assertNull(AndroidAccountSessionStore(context).readSessionJson())
+        assertTrue(ciphertext.exists())
+        assertTrue(revocationMarker.exists())
+
+        store.writeSessionJson(replacementSession)
+
+        assertFalse(revocationMarker.exists())
+        assertEquals(replacementSession, AndroidAccountSessionStore(context).readSessionJson())
     }
 }

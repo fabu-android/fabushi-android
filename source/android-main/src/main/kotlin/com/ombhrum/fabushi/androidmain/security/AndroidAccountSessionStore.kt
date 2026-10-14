@@ -13,6 +13,53 @@ import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
 
+
+/**
+ * Durable storage-only revocation fence for account credentials.
+ *
+ * This marker contains no account data. It exists only to make a completed logout/refusal
+ * fail-closed across process death when both ciphertext deletion and AndroidKeyStore cleanup are
+ * unavailable. The Rust Host remains the sole account/session owner; this class only protects the
+ * platform persistence boundary from resurrecting a previously revoked session.
+ */
+internal class AccountSessionRevocationFence(private val markerFile: File) {
+    @Synchronized
+    fun isRevoked(): Boolean = markerFile.exists()
+
+    @Synchronized
+    fun markRevoked() {
+        if (markerFile.exists()) return
+        val parent = requireNotNull(markerFile.parentFile) { "revocation fence requires a parent" }
+        parent.mkdirs()
+        val temporary = File(parent, "${markerFile.name}.tmp")
+        try {
+            FileOutputStream(temporary).use { stream ->
+                stream.write(FORMAT.toByteArray(StandardCharsets.UTF_8))
+                stream.fd.sync()
+            }
+            if (!temporary.renameTo(markerFile)) {
+                markerFile.delete()
+                check(temporary.renameTo(markerFile)) {
+                    "failed to atomically persist account-session revocation fence"
+                }
+            }
+        } finally {
+            temporary.delete()
+        }
+    }
+
+    @Synchronized
+    fun clear() {
+        if (markerFile.exists() && !markerFile.delete()) {
+            error("failed to clear account-session revocation fence")
+        }
+    }
+
+    private companion object {
+        const val FORMAT = "fabushi-account-session-revoked-v1"
+    }
+}
+
 /**
  * Platform-only secret resource for the canonical Rust account service.
  *
@@ -24,10 +71,14 @@ import javax.crypto.spec.GCMParameterSpec
 internal class AndroidAccountSessionStore(context: Context) {
     private val applicationContext = context.applicationContext
     private val sessionFile = File(applicationContext.noBackupFilesDir, SESSION_FILE_NAME)
+    private val revocationFence = AccountSessionRevocationFence(
+        File(applicationContext.noBackupFilesDir, REVOCATION_FILE_NAME),
+    )
     @Volatile private var protectedStoreUnavailable = false
 
     @Synchronized
     fun readSessionJson(): String? {
+        if (revocationFence.isRevoked()) return null
         val encoded = runCatching { sessionFile.readText(StandardCharsets.UTF_8) }.getOrNull()
             ?: return null
         val lines = encoded.split('\n')
@@ -77,6 +128,9 @@ internal class AndroidAccountSessionStore(context: Context) {
                 sessionFile.delete()
                 check(temporary.renameTo(sessionFile)) { "failed to atomically replace account session" }
             }
+            // A new authenticated session becomes durable only after its encrypted replacement is
+            // on disk. Clearing the prior revocation fence last prevents crash-time resurrection.
+            revocationFence.clear()
         } finally {
             temporary.delete()
         }
@@ -84,6 +138,10 @@ internal class AndroidAccountSessionStore(context: Context) {
 
     @Synchronized
     fun clear() {
+        // Persist revocation before touching either half of the encrypted credential. If both
+        // physical ciphertext deletion and key deletion fail, cold start still refuses the old
+        // session instead of silently resurrecting it.
+        val revocationFenceFailure = runCatching { revocationFence.markRevoked() }.exceptionOrNull()
         var deleteFailure: Throwable? = null
         if (sessionFile.exists() && !sessionFile.delete()) {
             deleteFailure = IllegalStateException("failed to remove protected account session")
@@ -107,8 +165,14 @@ internal class AndroidAccountSessionStore(context: Context) {
             if (deleteFailure != null && keyFailure != null && deleteFailure !== keyFailure) {
                 deleteFailure.addSuppressed(keyFailure)
             }
+            if (revocationFenceFailure != null && revocationFenceFailure !== failure) {
+                failure.addSuppressed(revocationFenceFailure)
+            }
             throw failure
         }
+        // When both ciphertext and key erasure succeeded, a marker write failure is harmless:
+        // there is no credential material left to resurrect. Otherwise any erase failure above is
+        // surfaced while a successfully persisted fence keeps the revoked session unusable.
     }
 
     /**
@@ -155,6 +219,7 @@ internal class AndroidAccountSessionStore(context: Context) {
         const val TRANSFORMATION = "AES/GCM/NoPadding"
         const val FORMAT_VERSION = "fabushi-account-session-v1"
         const val SESSION_FILE_NAME = "fabushi-account-session.v1"
+        const val REVOCATION_FILE_NAME = "fabushi-account-session.revoked.v1"
         const val GCM_TAG_BITS = 128
         const val MAX_SESSION_BYTES = 64 * 1024
     }
