@@ -1,4 +1,5 @@
 use super::AndroidRoutedToolBridge;
+use super::remote_routed_tools::{RemoteAutoReviewDecision, RemoteAutoReviewPreflight};
 use crate::android_user_settings::{AndroidUserSettings, LocalToolPermission};
 use crate::capability_broker::{PendingCapabilityCall, SharedCapabilityBroker};
 use crate::extensions::telemetry::local_exec_telemetry::{
@@ -196,6 +197,7 @@ pub(crate) struct LocalRoutedTools {
     conversation_id: String,
     runtime_generation: u64,
     cancelled: Arc<AtomicBool>,
+    auto_review_preflight: Option<RemoteAutoReviewPreflight>,
 }
 
 impl LocalRoutedTools {
@@ -282,6 +284,21 @@ impl AndroidRoutedToolBridge for LocalRoutedTools {
         if permission == LocalToolPermission::Never {
             return Err("local file tools are disabled by the current Host permission policy".into());
         }
+        let auto_review = if name == "Write" {
+            match self.auto_review_preflight.as_ref() {
+                Some(preflight) => preflight(name, &args)?,
+                None => RemoteAutoReviewDecision::Allow,
+            }
+        } else {
+            RemoteAutoReviewDecision::Allow
+        };
+        let (force_manual_approval, auto_review_reason) = match auto_review {
+            RemoteAutoReviewDecision::Allow => (false, None),
+            RemoteAutoReviewDecision::RequireApproval { reason } => (true, Some(reason)),
+            RemoteAutoReviewDecision::Reject { reason } => {
+                return Err(format!("local file action rejected by Auto-review: {reason}"));
+            }
+        };
 
         let identity = sha256_hex(
             format!(
@@ -294,7 +311,7 @@ impl AndroidRoutedToolBridge for LocalRoutedTools {
         let request_id = format!("local-request-{}", &identity[..32]);
         let approval_id = format!("approval-local-{}", &identity[..32]);
 
-        if permission == LocalToolPermission::Always {
+        if permission == LocalToolPermission::Always && !force_manual_approval {
             let decision = self.broker.authorize(
                 &request_id,
                 "host.local-runner",
@@ -316,7 +333,7 @@ impl AndroidRoutedToolBridge for LocalRoutedTools {
                 &request_id,
                 &operation_id,
                 capability,
-                json!({"tool":name,"arguments":args}),
+                json!({"tool":name,"arguments":args,"autoReviewReason":auto_review_reason}),
                 &account_fence,
                 now_ms(),
             )?;
@@ -339,7 +356,8 @@ impl AndroidRoutedToolBridge for LocalRoutedTools {
                     "capability":capability,
                     "target":{"executor":"android-local","tool":name},
                     "accountFence":account_fence,
-                    "reason":"Agent requested bounded app-local file access"
+                    "reason":auto_review_reason.clone().unwrap_or_else(|| "Agent requested bounded app-local file access".into()),
+                    "autoReview":force_manual_approval
                 }));
             }
 
@@ -460,6 +478,7 @@ pub(crate) fn with_local_file_tools(
     conversation_id: &str,
     runtime_generation: u64,
     cancelled: Arc<AtomicBool>,
+    auto_review_preflight: Option<RemoteAutoReviewPreflight>,
 ) -> Arc<dyn AndroidRoutedToolBridge> {
     Arc::new(LocalRoutedTools {
         delegate,
@@ -474,6 +493,7 @@ pub(crate) fn with_local_file_tools(
         conversation_id: conversation_id.to_string(),
         runtime_generation,
         cancelled,
+        auto_review_preflight,
     })
 }
 
@@ -614,6 +634,7 @@ mod tests {
             "conversation-1",
             1,
             Arc::new(AtomicBool::new(false)),
+            None,
         );
         assert!(bridge.list_tools().unwrap().is_empty());
         let _ = std::fs::remove_dir_all(root);
@@ -641,6 +662,7 @@ mod tests {
             "conversation-telemetry",
             3,
             Arc::new(AtomicBool::new(false)),
+            None,
         );
 
         let error = bridge
@@ -683,6 +705,7 @@ mod tests {
             "conversation-1",
             7,
             Arc::new(AtomicBool::new(false)),
+            None,
         );
         bridge
             .call_tool(
