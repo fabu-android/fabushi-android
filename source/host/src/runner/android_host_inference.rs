@@ -183,24 +183,43 @@ impl AndroidHostInferenceProvider {
         if action.is_empty() || prompt.is_empty() {
             return Err(ProviderFailure::new("subagent auto-review target is invalid"));
         }
+        let target = json!({
+            "action":"sand_subagent",
+            "arguments":{
+                "action":action,
+                "prompt":prompt,
+                "subagent_id":subagent_id,
+                "subagent_type":subagent_type,
+            }
+        });
+        Self::run_auto_review_target(mode, bearer_token, cancelled, &target)
+    }
+
+    pub fn run_auto_review_target(
+        mode: AndroidInferenceMode,
+        bearer_token: Option<String>,
+        cancelled: Arc<AtomicBool>,
+        target: &Value,
+    ) -> Result<AndroidSubagentReviewDecision, ProviderFailure> {
         if cancelled.load(Ordering::Acquire) {
             return Err(ProviderFailure::new("cancelled"));
         }
+        let test_target = target.to_string();
         if mode == AndroidInferenceMode::Test {
-            if prompt.contains("[[review:error]]") {
-                return Err(ProviderFailure::new("test subagent auto-review failure"));
+            if test_target.contains("[[review:error]]") {
+                return Err(ProviderFailure::new("test auto-review failure"));
             }
-            if prompt.contains("[[review:reject]]") {
+            if test_target.contains("[[review:reject]]") {
                 return Ok(AndroidSubagentReviewDecision::Reject {
-                    reason: "Generated-subagent auto-review rejected this action.".into(),
+                    reason: "Auto-review rejected this action.".into(),
                 });
             }
-            if prompt.contains("[[review:block]]") || prompt.contains("[[review:deny]]") {
+            if test_target.contains("[[review:block]]") || test_target.contains("[[review:deny]]") {
                 return Ok(AndroidSubagentReviewDecision::Block {
-                    reason: "Blocked by generated-subagent auto-review.".into(),
-                    proposed_rule: prompt
+                    reason: "Blocked by Auto-review.".into(),
+                    proposed_rule: test_target
                         .contains("[[review:rule]]")
-                        .then(|| "Allow this generated-subagent action when explicitly approved.".into()),
+                        .then(|| "Allow this action when explicitly approved.".into()),
                 });
             }
             return Ok(AndroidSubagentReviewDecision::Allow);
@@ -211,19 +230,10 @@ impl AndroidHostInferenceProvider {
             Arc::clone(&cancelled),
         )?;
         provider.configure_subagent_review_timeout();
-        let target = json!({
-            "action":"sand_subagent",
-            "arguments":{
-                "action":action,
-                "prompt":prompt,
-                "subagent_id":subagent_id,
-                "subagent_type":subagent_type,
-            }
-        });
-        let review_prompt = build_subagent_review_prompt(&target);
+        let review_prompt = build_subagent_review_prompt(target);
         let input = StreamAttemptInput {
-            operation_id: "subagent-auto-review".into(),
-            agent_id: "mahayana-subagent-review".into(),
+            operation_id: "auto-review".into(),
+            agent_id: "mahayana-auto-review".into(),
             model: provider.default_model.clone(),
             prompt: review_prompt,
             resume_checkpoint_available: false,
