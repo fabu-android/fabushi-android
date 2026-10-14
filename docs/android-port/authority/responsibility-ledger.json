@@ -7350,6 +7350,25 @@
           "symbols": [
             "shipping group-members footer/layout styles"
           ]
+        },
+        {
+          "path": "source/host/src/groups/group_store.rs",
+          "blob_sha": "b549d45b3fae8e69f32eb91f0e43df1fc8be9e97",
+          "symbols": [
+            "SandGroupConfig",
+            "read_sand_group_config",
+            "write_sand_group_config"
+          ]
+        },
+        {
+          "path": "source/host/src/groups/mod.rs",
+          "blob_sha": "54944942c3a7ff05582a6e124dadd48bb64a4645",
+          "symbols": [
+            "group_chat",
+            "group_store",
+            "remote_room_store",
+            "xuser"
+          ]
         }
       ],
       "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
@@ -8121,6 +8140,25 @@
             "ensure_mirror_room",
             "post_shared_room_guest_message",
             "append_mirror_room_entry"
+          ]
+        },
+        {
+          "path": "source/host/src/groups/remote_room_store.rs",
+          "blob_sha": "bcdaeaa030984729fbfd614835da6ef0d169cedd",
+          "symbols": [
+            "SandRemoteRoomConfig",
+            "read_sand_remote_room_config",
+            "write_sand_remote_room_config"
+          ]
+        },
+        {
+          "path": "source/host/src/groups/mod.rs",
+          "blob_sha": "54944942c3a7ff05582a6e124dadd48bb64a4645",
+          "symbols": [
+            "group_chat",
+            "group_store",
+            "remote_room_store",
+            "xuser"
           ]
         }
       ],
@@ -18394,6 +18432,34 @@
         {
           "path": "source/host/src/extensions/cross_user_sharing/xuser_sharing_service.rs",
           "blob_sha": "258e9aa3e5260e607a70a512292cfb4cdc6d8362"
+        },
+        {
+          "path": "source/host/src/groups/xuser.rs",
+          "blob_sha": "d0c844a9a93e43b32c8c5686bcee37392b5df078",
+          "symbols": [
+            "build_shared_room_guardrail_prompt",
+            "build_remote_member_turn_prompts",
+            "to_xuser_turn_messages"
+          ]
+        },
+        {
+          "path": "source/host/src/groups/remote_room_store.rs",
+          "blob_sha": "bcdaeaa030984729fbfd614835da6ef0d169cedd",
+          "symbols": [
+            "SandRemoteRoomConfig",
+            "read_sand_remote_room_config",
+            "write_sand_remote_room_config"
+          ]
+        },
+        {
+          "path": "source/host/src/groups/mod.rs",
+          "blob_sha": "54944942c3a7ff05582a6e124dadd48bb64a4645",
+          "symbols": [
+            "group_chat",
+            "group_store",
+            "remote_room_store",
+            "xuser"
+          ]
         }
       ],
       "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
@@ -19631,6 +19697,42 @@
             "post_shared_room_guest_message",
             "append_mirror_room_entry"
           ]
+        },
+        {
+          "path": "source/host/src/groups/group_chat.rs",
+          "blob_sha": "9645e9d831098200c4f423de595b7d2784f9e54b",
+          "symbols": [
+            "resolve_responders",
+            "build_group_member_system_prompt",
+            "build_group_turn_prompt"
+          ]
+        },
+        {
+          "path": "source/host/src/groups/group_store.rs",
+          "blob_sha": "b549d45b3fae8e69f32eb91f0e43df1fc8be9e97",
+          "symbols": [
+            "SandGroupConfig",
+            "read_sand_group_config",
+            "write_sand_group_config"
+          ]
+        },
+        {
+          "path": "source/host/src/groups/xuser.rs",
+          "blob_sha": "d0c844a9a93e43b32c8c5686bcee37392b5df078",
+          "symbols": [
+            "build_shared_room_guardrail_prompt",
+            "build_remote_member_turn_prompts"
+          ]
+        },
+        {
+          "path": "source/host/src/groups/mod.rs",
+          "blob_sha": "54944942c3a7ff05582a6e124dadd48bb64a4645",
+          "symbols": [
+            "group_chat",
+            "group_store",
+            "remote_room_store",
+            "xuser"
+          ]
         }
       ],
       "responsibility": "Fan one group-room send into bounded member turns, persist member-authored room entries, distinguish local from remote members, preserve per-member failure and shared-room publication, and avoid a second group state owner.",
@@ -20247,6 +20349,116 @@
       "artifact": null,
       "verification_status": "not-verified",
       "notes": "Android preserves Desktop mutation semantics and deliberately strengthens durability; verification awaits descendant exact-head CI/package/device evidence."
+    },
+    {
+      "responsibility_id": "HOST-GATEWAY-TRANSPORT-ANDROID-001",
+      "domain": "host-transport",
+      "desktop_sources": [
+        {
+          "path": "source/host/src/gateway_command_error.rs",
+          "blob_sha": "a7827b29c7f53899b1f34e7c989849816f4090fb",
+          "symbols": [
+            "GatewayCommandError",
+            "classify_gateway_command_error"
+          ]
+        },
+        {
+          "path": "source/host/src/gateway_config.rs",
+          "blob_sha": "64af7f6354047fe18b3e94fe629236ee0ade1942",
+          "symbols": [
+            "GatewayServerConfig",
+            "resolve_gateway_server_config",
+            "gateway_scheme"
+          ]
+        },
+        {
+          "path": "source/host/src/gateway_protocol.rs",
+          "blob_sha": "13b6a5bad55c133ed67e39bc94b7e500808a82a5",
+          "symbols": [
+            "GATEWAY_PREPARE_UPGRADE_PATH",
+            "is_grok_gateway_command",
+            "parse_command_args",
+            "slim_command_result",
+            "slim_event"
+          ]
+        },
+        {
+          "path": "source/host/src/gateway_server.rs",
+          "blob_sha": "1ce506ae0bc75ee96418e55eb64a935dd7865ac0",
+          "symbols": [
+            "GatewayApi",
+            "GatewayBridgeHub",
+            "GatewayServer",
+            "start_gateway_server"
+          ]
+        }
+      ],
+      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "responsibility": "Preserve the Desktop Host gateway's closed command surface, request/result/event shaping, failure classification, authorization and remote reachability while replacing the Desktop process-local HTTP/SSE transport with Android's typed Kotlin/JNI façade and explicit authorized remote-device gateway.",
+      "source_owner": "Desktop Host GatewayServer/GatewayApi plus frozen host_gateway_api command ownership",
+      "direct_callers": [
+        "Desktop renderer/Coordinator gateway clients",
+        "upgrade/local-exec/WebAuthn/avatar/Host event bridge consumers"
+      ],
+      "downstream_dependencies": [
+        "Host command dispatch",
+        "Host event bus",
+        "telemetry",
+        "upgrade lifecycle",
+        "local/remote execution",
+        "WebAuthn",
+        "avatar projection"
+      ],
+      "state_owner": "Rust Host remains canonical business/state owner; AndroidCoordinatorRuntime is typed transport; FabushiRemoteDeviceGateway owns Android platform remote transport; Compose owns no gateway truth.",
+      "persistent_state": [
+        "no renderer-owned gateway state",
+        "remote binding/session state remains in Android platform stores",
+        "Host durable owners remain below transport"
+      ],
+      "protocol_wire_contract": [
+        "frozen Host gateway method set remains closed",
+        "prepare-upgrade compatibility path",
+        "typed request/result/event projection",
+        "request identity/account generation fencing",
+        "bounded payloads and explicit authorization"
+      ],
+      "visible_effect": "Android users retain the same Host capabilities without exposing an arbitrary local Desktop HTTP server to the app UI; in-app calls use typed JNI and authorized remote-device capabilities use the Android remote gateway.",
+      "failure_behavior": [
+        "malformed/unknown methods fail closed",
+        "policy/input rejections remain distinct from internal gateway failures",
+        "network/timeout/refused/DNS errors preserve structured classification",
+        "remote binding is not silently enabled"
+      ],
+      "cancellation_behavior": "request cancellation is owned by typed Coordinator/Host request lifecycle; the UI does not cancel or retry arbitrary raw gateway HTTP calls.",
+      "retry_semantics": "reads may be retried by canonical owners; unknown-side-effect commands are never blindly replayed after timeout and reconcile through durable Host/Coordinator state.",
+      "idempotency_semantics": "request identities/dedupe remain below presentation; duplicate side-effect dispatch must be fenced by canonical Host/Coordinator owners.",
+      "process_death_recovery": "Android reconnects typed Coordinator/Host state after process death rather than recreating a Desktop HTTP listener as canonical owner; durable runs/remote sessions reconcile through their existing owners.",
+      "account_fencing": "typed Coordinator process/account epoch and Android remote binding/session scopes prevent stale-account callbacks from mutating current state.",
+      "security_boundary": "Compose -> ViewModel -> AndroidCoordinatorPort -> AndroidCoordinatorRuntime -> JNI/Rust Host for local calls; explicit FabushiRemoteDeviceGateway + capability validation for remote calls. No arbitrary web page receives a privileged Host gateway.",
+      "android_disposition": "not-applicable-with-replacement",
+      "android_target": [
+        "source/host/src/gateway_command_error.rs",
+        "source/host/src/gateway_config.rs",
+        "source/host/src/gateway_protocol.rs",
+        "source/host/src/gateway_server.rs",
+        "source/host/src/host_gateway_api.rs",
+        "source/host/src/android_json_runtime.rs",
+        "source/android-preload/src/main/kotlin/com/ombhrum/fabushi/androidpreload/runtime/AndroidCoordinatorPort.kt",
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/coordinator/AndroidCoordinatorRuntime.kt",
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/remote/FabushiRemoteDeviceGateway.kt"
+      ],
+      "android_owner": "typed Coordinator/JNI local transport + Rust Host command owner + explicit Android remote-device gateway",
+      "platform_delta": "Desktop process-local HTTP/SSE server, env TLS files and renderer-oriented gateway endpoints are not the Android in-app transport. Equivalent product responsibilities are decomposed into typed JNI and Android remote platform transport while preserving Host command ownership and security fences.",
+      "implementation_status": "mapped",
+      "production_wiring": "AndroidJsonRuntime is the shipping Host dispatcher for typed JNI. Gateway protocol/error/config compatibility modules exist, and FabushiRemoteDeviceGateway owns explicit remote platform transport. No shipping start_gateway_server caller exists; method-by-method replacement closure is still under audit.",
+      "unit_test": "gateway_config loopback fail-closed tests; gateway_command_error transport classification tests; gateway protocol helper tests where present",
+      "contract_test": "existing architecture checks enforce typed bridge/no arbitrary presentation Host bypass; exact gateway replacement contract coverage remains incomplete",
+      "integration_test": "984032a6 predecessor exact-head Rust foundation and existing Android regression passed; full gateway replacement integration remains open",
+      "packaged_test": "required: release package must prove typed local Host operations and remote gateway operations without privileged local HTTP exposure",
+      "device_test": "required: login/chat/tools/MCP/WebAuthn/remote reconnect/process-death/account-switch journeys",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Semantic mapping only. Do not mark implemented/verified until every applicable Desktop gateway responsibility is proven through Android shipping composition plus same-exact-HEAD integration/package/device evidence."
     }
   ],
   "traceability": {
