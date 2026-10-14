@@ -3177,6 +3177,29 @@
             "validateMcpServerId",
             "mcpServerIdToInt32"
           ]
+        },
+        {
+          "path": "source/host/src/mcp_auth/host_mcp_auth_completion.rs",
+          "blob_sha": "6efccc02bb03705dc38cf77da1cdcfc9cb365f52",
+          "symbols": [
+            "HostMcpAuthCompletion",
+            "HostMcpAuthCompletionEvent"
+          ]
+        },
+        {
+          "path": "source/host/src/mcp_auth/mcp_auth_wait_registry.rs",
+          "blob_sha": "36511aaaaf5be61414c18b7a9bd63b0ec50bcd4e",
+          "symbols": [
+            "McpAuthWaitRegistry",
+            "McpAuthCompletionIdentity"
+          ]
+        },
+        {
+          "path": "source/host/src/mcp_auth/mod.rs",
+          "blob_sha": "c5f2cc9afe42b50bd4b12a5b6f690220180fca8c",
+          "symbols": [
+            "MCP auth module exports"
+          ]
         }
       ],
       "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
@@ -6055,6 +6078,15 @@
             "HostDiagnostic",
             "pin_host_diagnostics_reporter",
             "report_host_diagnostic"
+          ]
+        },
+        {
+          "path": "source/host/src/ports/telemetry.rs",
+          "blob_sha": "c5f13495719a1c8722bae78ceb86d2e5529605c3",
+          "symbols": [
+            "SandErrorDetail",
+            "sand_error_detail",
+            "NoopSandTelemetry"
           ]
         }
       ],
@@ -10949,6 +10981,14 @@
             "stageComposerFiles",
             "commitComposerAttachments",
             "formatStageAttachmentFailureNotice"
+          ]
+        },
+        {
+          "path": "source/host/src/media_mime.rs",
+          "blob_sha": "20f47798376971d53ecab97f888669f46f1b87df",
+          "symbols": [
+            "attachment_byte_limit_for_name",
+            "format_attachment_too_large_notice"
           ]
         }
       ],
@@ -15928,6 +15968,15 @@
           "symbols": [
             "wireDesktopUncleanExitSettlement"
           ]
+        },
+        {
+          "path": "source/host/src/process_crash_guard.rs",
+          "blob_sha": "7f962c4985b1631d45bd8a84f68407d9616354f9",
+          "symbols": [
+            "ProcessCrashGuard",
+            "install_process_crash_guards",
+            "handle_process_crash"
+          ]
         }
       ],
       "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
@@ -16377,7 +16426,18 @@
       "device_test": "required for link preview, generated image, execution attachment, video playback and process-death recovery",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Basic attachment parity remains tracked separately; this responsibility prevents broad source rows from being falsely closed by the picker/staging slice."
+      "notes": "Basic attachment parity remains tracked separately; this responsibility prevents broad source rows from being falsely closed by the picker/staging slice.",
+      "desktop_sources": [
+        {
+          "path": "source/host/src/media_mime.rs",
+          "blob_sha": "20f47798376971d53ecab97f888669f46f1b87df",
+          "symbols": [
+            "image_mime_from_path",
+            "video_mime_from_path",
+            "audio_mime_from_path"
+          ]
+        }
+      ]
     },
     {
       "responsibility_id": "AUTH-INFERENCE-CREDENTIAL-ANDROID-001",
@@ -16435,7 +16495,18 @@
       "device_test": "required for smart/manual approval behavior, account switch and process-death recovery",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Keep fail-closed: absence/failure of auto-review must never turn into automatic approval."
+      "notes": "Keep fail-closed: absence/failure of auto-review must never turn into automatic approval.",
+      "desktop_sources": [
+        {
+          "path": "source/host/src/runner/auto_review_gate.rs",
+          "blob_sha": "19a639f62547506744a15dad21fae2c0de348d36",
+          "symbols": [
+            "AutoReviewGate",
+            "AutoReviewGateDependencies",
+            "ShellApprovalSurface"
+          ]
+        }
+      ]
     },
     {
       "responsibility_id": "AUTOMATION-CLOUD-SYNC-ANDROID-001",
@@ -18468,6 +18539,14 @@
             "group_store",
             "remote_room_store",
             "xuser"
+          ]
+        },
+        {
+          "path": "source/host/src/notify_drain_gate.rs",
+          "blob_sha": "854a94830eab0ee214b418f67ca5e8ad920acc13",
+          "symbols": [
+            "NotifyDrainGate",
+            "NOTIFY_DRAIN_FLOOR_MS"
           ]
         }
       ],
