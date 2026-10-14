@@ -162,19 +162,26 @@ impl AndroidAccountService {
                 // Match Desktop cursor-auth semantics: a refresh transport/protocol failure is
                 // not itself proof that the durable credential was revoked. refresh_if_needed()
                 // explicitly removes self.session only for terminal identity/revocation outcomes.
-                // Preserve a still-owned session here so a later Host call or cold start can
-                // reconcile it instead of turning one transient outage into credential deletion.
-                let mutation = self
-                    .session
-                    .is_none()
-                    .then_some(AccountSessionMutation::Clear);
+                //
+                // When the session is still owned, keep the public identity projection logged in
+                // and attach the refresh error as diagnostic context. Returning loggedIn=false
+                // here would make the Android Coordinator advance the account epoch and tear down
+                // unrelated account-scoped state during a transient outage. Bearer-requiring Host
+                // operations still call refresh_if_needed()/valid_access_token() and fail closed.
+                if self.session.is_some() {
+                    let mut status = self.status_projection();
+                    if let Some(object) = status.as_object_mut() {
+                        object.insert("refreshErrorMessage".into(), json!(error));
+                    }
+                    return Ok((status, None));
+                }
                 Ok((
                     json!({
                         "loggedIn":false,
                         "user":Value::Null,
                         "errorMessage":error,
                     }),
-                    mutation,
+                    Some(AccountSessionMutation::Clear),
                 ))
             }
         }
@@ -1556,8 +1563,8 @@ mod tests {
 
         let (status, mutation) = service.public_status().unwrap();
 
-        assert_eq!(status["loggedIn"], false);
-        assert!(status["errorMessage"]
+        assert_eq!(status["loggedIn"], true);
+        assert!(status["refreshErrorMessage"]
             .as_str()
             .is_some_and(|value| value.contains("503")));
         assert_eq!(mutation, None);
