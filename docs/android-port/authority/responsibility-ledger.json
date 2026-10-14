@@ -1745,6 +1745,21 @@
             "RoutineEditor",
             "RoutineRunHistory"
           ]
+        },
+        {
+          "path": "source/host/src/extensions/transcript/workflow_commands.rs",
+          "blob_sha": "35d5863225b4de40e6f321873f33fba3e7a2e43d",
+          "symbols": [
+            "WorkflowCommands",
+            "watch_agent_workflows",
+            "prepare_run_now",
+            "expand_references",
+            "dispatch",
+            "dispose",
+            "prepare_workflow_run_now",
+            "expand_workflow_references",
+            "dispatch_workflow_command_with_runtime"
+          ]
         }
       ],
       "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
@@ -1795,7 +1810,7 @@
       "device_test": "required on emulator/physical device as applicable",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Durable run/approval/idempotency, Host-owned stable account+Agent+local automation ids, and cron/@every/time-zone next-run derivation are implemented. GitHub/Slack listener triggers, status/routine notices, full native routines presentation, actual background executor and packaged/device evidence remain open; keep mapped/not-verified."
+      "notes": "Durable run/approval/idempotency, Host-owned stable account+Agent+local automation ids, and cron/@every/time-zone next-run derivation are implemented. GitHub/Slack listener triggers, status/routine notices, full native routines presentation, actual background executor and packaged/device evidence remain open; keep mapped/not-verified. Reverse-link audit 2964bcac536302cf1e2f8afb676e757d43fba0b3: source/host/src/extensions/transcript/workflow_commands.rs@35d5863225b4de40e6f321873f33fba3e7a2e43d — Desktop workflow commands own per-Agent watch lifecycle, run-now planning, workflow-reference expansion, dispatch and dispose. Android durable AutomationRuntime exists, but listener/watch/reference expansion, OS scheduling and actual multi-Agent background execution remain open."
     },
     {
       "responsibility_id": "SETTINGS-SCOPE-001",
@@ -2693,6 +2708,21 @@
             "Fabu Agent architecture parity ownership matrix",
             "latency/refactor boundary"
           ]
+        },
+        {
+          "path": "source/host/src/extensions/transcript/turn_runtime.rs",
+          "blob_sha": "50272d988ed531632d970cf2904138f92f392172",
+          "symbols": [
+            "MAX_REPLY_NUDGES",
+            "REPLY_NUDGE_PROMPT",
+            "CLOSING_SEND_NUDGE_PROMPT",
+            "TurnTerminalProjection",
+            "project_turn_terminal",
+            "should_attempt_reply_nudge",
+            "shape_reply_nudge_turn_input",
+            "shape_closing_send_nudge_turn_input",
+            "should_supersede_stale_turn"
+          ]
         }
       ],
       "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
@@ -2753,7 +2783,7 @@
       "device_test": "Blocked on protected-account emulator journey until Actions secrets are configured.",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Implemented source/production wiring, intentionally not verified until same exact-head CI plus packaged process-death evidence. Coordinator pending/event replay remains an adjacent open responsibility. docs/fabu-agent-architecture-parity.md is an architecture/reference authority rather than shipping production code; it reinforces per-Agent ownership, bounded inference context over durable transcript, per-turn runner lifetime, independent subagent lineage and no renderer-global canonical run truth. Keep non-verified until the concrete shipping responsibilities and exact-head evidence close."
+      "notes": "Implemented source/production wiring, intentionally not verified until same exact-head CI plus packaged process-death evidence. Coordinator pending/event replay remains an adjacent open responsibility. docs/fabu-agent-architecture-parity.md is an architecture/reference authority rather than shipping production code; it reinforces per-Agent ownership, bounded inference context over durable transcript, per-turn runner lifetime, independent subagent lineage and no renderer-global canonical run truth. Keep non-verified until the concrete shipping responsibilities and exact-head evidence close. Reverse-link audit 2964bcac536302cf1e2f8afb676e757d43fba0b3: source/host/src/extensions/transcript/turn_runtime.rs@50272d988ed531632d970cf2904138f92f392172 — Desktop turn runtime owns terminal projection, bounded reply/closing-send nudges and queued stale-turn supersession. Android has durable turn identity and kickstart nudge pieces, but full three-nudge/closing-send/queued-stale semantics remain not fully closed."
     },
     {
       "responsibility_id": "REMOTE-COMMAND-JOURNAL-001",
@@ -8080,6 +8110,18 @@
             "closed typed RPC method set",
             "identity/reply validation contract"
           ]
+        },
+        {
+          "path": "source/host/src/extensions/transcript/shared_rooms.rs",
+          "blob_sha": "657a55ea77b814d03f05d7d307ac1819cda3870e",
+          "symbols": [
+            "SharedRooms",
+            "post_local_agent_message",
+            "ensure_hosted_shared_room",
+            "ensure_mirror_room",
+            "post_shared_room_guest_message",
+            "append_mirror_room_entry"
+          ]
         }
       ],
       "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
@@ -8147,7 +8189,7 @@
       "device_test": "required for invite/join approval/add-remove/leave/reconnect/account switch/process death/accessibility against live authorized Sand backend",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Source/production wiring is implemented, including canonical Rust room manager and native management surface. Keep not-verified until descendant exact-head Rust/Kotlin/packaged/device gates succeed and live authorized shared-room backend evidence closes."
+      "notes": "Source/production wiring is implemented, including canonical Rust room manager and native management surface. Keep not-verified until descendant exact-head Rust/Kotlin/packaged/device gates succeed and live authorized shared-room backend evidence closes. Reverse-link audit 2964bcac536302cf1e2f8afb676e757d43fba0b3: source/host/src/extensions/transcript/shared_rooms.rs@657a55ea77b814d03f05d7d307ac1819cda3870e — Desktop SharedRooms owns local group post/fanout plus hosted/mirror shared-room mutation. Android has shared-room/cross-user owners, but local per-member fanout, failure isolation and recovery are not fully closed."
     },
     {
       "responsibility_id": "AGENT-SHARED-ROOM-ACCOUNT-FENCE-ANDROID-001",
@@ -9199,6 +9241,20 @@
             "appendAutoReviewAllowInstruction",
             "ResolveAutoReviewApprovalInput"
           ]
+        },
+        {
+          "path": "source/host/src/extensions/transcript/widget_responses.rs",
+          "blob_sha": "97b4b47b61b3c2cd18d381758ebec2640714f1d3",
+          "symbols": [
+            "WidgetResponses",
+            "respond_to_widget_with",
+            "rollback_widget_response",
+            "settle_stale_auto_review_card",
+            "settle_stale_local_tool_permission_card",
+            "submit_secret",
+            "apply_reaction",
+            "react_to_message"
+          ]
         }
       ],
       "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
@@ -9251,7 +9307,7 @@
       "device_test": "required protected-account approval acceptance",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Do not inherit TOOLS-CAPABILITY-BROKER-001 verification: this source adds user-visible Auto Review policy mutation semantics."
+      "notes": "Do not inherit TOOLS-CAPABILITY-BROKER-001 verification: this source adds user-visible Auto Review policy mutation semantics. Reverse-link audit 2964bcac536302cf1e2f8afb676e757d43fba0b3: source/host/src/extensions/transcript/widget_responses.rs@97b4b47b61b3c2cd18d381758ebec2640714f1d3 — Desktop WidgetResponses centralizes choice response rollback, auto-review/local-permission stale settlement, typed secret submission and reaction mutation. Android choice/approval pieces exist, while secret and Agent reaction production paths remain confirmed gaps."
     },
     {
       "responsibility_id": "TRANSCRIPT-CLOUD-AGENT-CARD-ANDROID-001",
@@ -9748,6 +9804,20 @@
           "symbols": [
             "ConversationTranscript"
           ]
+        },
+        {
+          "path": "source/host/src/extensions/transcript/widget_responses.rs",
+          "blob_sha": "97b4b47b61b3c2cd18d381758ebec2640714f1d3",
+          "symbols": [
+            "WidgetResponses",
+            "respond_to_widget_with",
+            "rollback_widget_response",
+            "settle_stale_auto_review_card",
+            "settle_stale_local_tool_permission_card",
+            "submit_secret",
+            "apply_reaction",
+            "react_to_message"
+          ]
         }
       ],
       "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
@@ -9806,7 +9876,7 @@
       "device_test": "required protected/device Agent chat acceptance",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Do not alias Human messaging setReaction to this responsibility without proving Agent transcript protocol and canonical feed ownership."
+      "notes": "Do not alias Human messaging setReaction to this responsibility without proving Agent transcript protocol and canonical feed ownership. Reverse-link audit 2964bcac536302cf1e2f8afb676e757d43fba0b3: source/host/src/extensions/transcript/widget_responses.rs@97b4b47b61b3c2cd18d381758ebec2640714f1d3 — Desktop WidgetResponses centralizes choice response rollback, auto-review/local-permission stale settlement, typed secret submission and reaction mutation. Android choice/approval pieces exist, while secret and Agent reaction production paths remain confirmed gaps."
     },
     {
       "responsibility_id": "PLUGIN-SKILLS-LIFECYCLE-ANDROID-001",
@@ -9926,6 +9996,20 @@
             "createSecretRequestActionAdapter",
             "createSecretRequestTransport"
           ]
+        },
+        {
+          "path": "source/host/src/extensions/transcript/widget_responses.rs",
+          "blob_sha": "97b4b47b61b3c2cd18d381758ebec2640714f1d3",
+          "symbols": [
+            "WidgetResponses",
+            "respond_to_widget_with",
+            "rollback_widget_response",
+            "settle_stale_auto_review_card",
+            "settle_stale_local_tool_permission_card",
+            "submit_secret",
+            "apply_reaction",
+            "react_to_message"
+          ]
         }
       ],
       "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
@@ -9977,7 +10061,7 @@
       "device_test": "required protected/device Agent journey",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Do not substitute generic approval or plugin-variable UI; secret-request has its own canonical transcript contract."
+      "notes": "Do not substitute generic approval or plugin-variable UI; secret-request has its own canonical transcript contract. Reverse-link audit 2964bcac536302cf1e2f8afb676e757d43fba0b3: source/host/src/extensions/transcript/widget_responses.rs@97b4b47b61b3c2cd18d381758ebec2640714f1d3 — Desktop WidgetResponses centralizes choice response rollback, auto-review/local-permission stale settlement, typed secret submission and reaction mutation. Android choice/approval pieces exist, while secret and Agent reaction production paths remain confirmed gaps."
     },
     {
       "responsibility_id": "TRANSCRIPT-THREAD-LIFECYCLE-ANDROID-001",
@@ -10237,6 +10321,20 @@
             "createWidgetInteractionTransport",
             "createWidgetInteractionAdapter"
           ]
+        },
+        {
+          "path": "source/host/src/extensions/transcript/widget_responses.rs",
+          "blob_sha": "97b4b47b61b3c2cd18d381758ebec2640714f1d3",
+          "symbols": [
+            "WidgetResponses",
+            "respond_to_widget_with",
+            "rollback_widget_response",
+            "settle_stale_auto_review_card",
+            "settle_stale_local_tool_permission_card",
+            "submit_secret",
+            "apply_reaction",
+            "react_to_message"
+          ]
         }
       ],
       "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
@@ -10291,7 +10389,7 @@
       "device_test": "required protected/device Agent journey",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Implementation present at current code HEAD; do not mark verified until same-head Actions and packaged/device acceptance pass. Compose accessibility/input conventions replace desktop keyboard specifics."
+      "notes": "Implementation present at current code HEAD; do not mark verified until same-head Actions and packaged/device acceptance pass. Compose accessibility/input conventions replace desktop keyboard specifics. Reverse-link audit 2964bcac536302cf1e2f8afb676e757d43fba0b3: source/host/src/extensions/transcript/widget_responses.rs@97b4b47b61b3c2cd18d381758ebec2640714f1d3 — Desktop WidgetResponses centralizes choice response rollback, auto-review/local-permission stale settlement, typed secret submission and reaction mutation. Android choice/approval pieces exist, while secret and Agent reaction production paths remain confirmed gaps."
     },
     {
       "responsibility_id": "TRANSCRIPT-TOOL-RESULT-CARDS-ANDROID-001",
@@ -13185,6 +13283,20 @@
             "authorizeLocalToolAction",
             "localToolApprovalCovers"
           ]
+        },
+        {
+          "path": "source/host/src/extensions/transcript/widget_responses.rs",
+          "blob_sha": "97b4b47b61b3c2cd18d381758ebec2640714f1d3",
+          "symbols": [
+            "WidgetResponses",
+            "respond_to_widget_with",
+            "rollback_widget_response",
+            "settle_stale_auto_review_card",
+            "settle_stale_local_tool_permission_card",
+            "submit_secret",
+            "apply_reaction",
+            "react_to_message"
+          ]
         }
       ],
       "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
@@ -13251,7 +13363,7 @@
       "device_test": "required with real Authorized Remote Runner/bounded Local Runner",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Account-fence hardening implemented by 477d9b32e6c27790fe0ae2921bf2b1ff89e9559d and 4d5c4bde06f8214146b25da20178d1d456c27ed2: standing grants no longer cross accounts; legacy global grants fail closed to Ask. Implementation remains not-verified until a descendant exact HEAD passes Rust/Android/package/device gates with a real Authorized Remote Runner or bounded Local Runner.",
+      "notes": "Account-fence hardening implemented by 477d9b32e6c27790fe0ae2921bf2b1ff89e9559d and 4d5c4bde06f8214146b25da20178d1d456c27ed2: standing grants no longer cross accounts; legacy global grants fail closed to Ask. Implementation remains not-verified until a descendant exact HEAD passes Rust/Android/package/device gates with a real Authorized Remote Runner or bounded Local Runner. Reverse-link audit 2964bcac536302cf1e2f8afb676e757d43fba0b3: source/host/src/extensions/transcript/widget_responses.rs@97b4b47b61b3c2cd18d381758ebec2640714f1d3 — Desktop WidgetResponses centralizes choice response rollback, auto-review/local-permission stale settlement, typed secret submission and reaction mutation. Android choice/approval pieces exist, while secret and Agent reaction production paths remain confirmed gaps.",
       "android_head_at_update": "242d5b2efc5f1f7eaf6c4bad26ba571f5a0f827c"
     },
     {
@@ -14055,6 +14167,21 @@
           "symbols": [
             "TerminalOutputView"
           ]
+        },
+        {
+          "path": "source/host/src/extensions/transcript/turn_runtime.rs",
+          "blob_sha": "50272d988ed531632d970cf2904138f92f392172",
+          "symbols": [
+            "MAX_REPLY_NUDGES",
+            "REPLY_NUDGE_PROMPT",
+            "CLOSING_SEND_NUDGE_PROMPT",
+            "TurnTerminalProjection",
+            "project_turn_terminal",
+            "should_attempt_reply_nudge",
+            "shape_reply_nudge_turn_input",
+            "shape_closing_send_nudge_turn_input",
+            "should_supersede_stale_turn"
+          ]
         }
       ],
       "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
@@ -14107,7 +14234,7 @@
       "device_test": "required",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Implemented, not verified. Production consumption now exists; final exact-head Kotlin/Compose/lint plus packaged/device selectable-text/live-region evidence remain open.",
+      "notes": "Implemented, not verified. Production consumption now exists; final exact-head Kotlin/Compose/lint plus packaged/device selectable-text/live-region evidence remain open. Reverse-link audit 2964bcac536302cf1e2f8afb676e757d43fba0b3: source/host/src/extensions/transcript/turn_runtime.rs@50272d988ed531632d970cf2904138f92f392172 — Desktop turn runtime owns terminal projection, bounded reply/closing-send nudges and queued stale-turn supersession. Android has durable turn identity and kickstart nudge pieces, but full three-nudge/closing-send/queued-stale semantics remain not fully closed.",
       "android_head_at_update": "2e6f7598ab3a73fcec2ab5be857e55ae52bad2ac"
     },
     {
@@ -17992,6 +18119,21 @@
             "SAND_DISK_SAVER_KICKSTART_PROMPT",
             "REPLY_NUDGE_PROMPT"
           ]
+        },
+        {
+          "path": "source/host/src/extensions/transcript/turn_runtime.rs",
+          "blob_sha": "50272d988ed531632d970cf2904138f92f392172",
+          "symbols": [
+            "MAX_REPLY_NUDGES",
+            "REPLY_NUDGE_PROMPT",
+            "CLOSING_SEND_NUDGE_PROMPT",
+            "TurnTerminalProjection",
+            "project_turn_terminal",
+            "should_attempt_reply_nudge",
+            "shape_reply_nudge_turn_input",
+            "shape_closing_send_nudge_turn_input",
+            "should_supersede_stale_turn"
+          ]
         }
       ],
       "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
@@ -18052,7 +18194,7 @@
       "device_test": "required on protected device acceptance, including process death between empty kickstart and nudge",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Source implementation and production wiring are present. Do not mark verified until a descendant exact HEAD has green Rust/architecture/Android/package evidence plus protected packaged/device process-death acceptance. Broader Desktop agent_lifecycle.rs responsibilities such as delete/duplicate/sidebar/disk re-audit remain mapped separately and are not closed by this row."
+      "notes": "Source implementation and production wiring are present. Do not mark verified until a descendant exact HEAD has green Rust/architecture/Android/package evidence plus protected packaged/device process-death acceptance. Broader Desktop agent_lifecycle.rs responsibilities such as delete/duplicate/sidebar/disk re-audit remain mapped separately and are not closed by this row. Reverse-link audit 2964bcac536302cf1e2f8afb676e757d43fba0b3: source/host/src/extensions/transcript/turn_runtime.rs@50272d988ed531632d970cf2904138f92f392172 — Desktop turn runtime owns terminal projection, bounded reply/closing-send nudges and queued stale-turn supersession. Android has durable turn identity and kickstart nudge pieces, but full three-nudge/closing-send/queued-stale semantics remain not fully closed."
     },
     {
       "responsibility_id": "AGENT-DELETION-CLEANUP-ANDROID-001",
@@ -18377,6 +18519,21 @@
         {
           "path": "source/host/src/extensions/telemetry/queue_telemetry_mappers.rs",
           "blob_sha": "14c769121cb2f1e8940af037e8d4fbd825bbdc36"
+        },
+        {
+          "path": "source/host/src/extensions/transcript/turn_runtime.rs",
+          "blob_sha": "50272d988ed531632d970cf2904138f92f392172",
+          "symbols": [
+            "MAX_REPLY_NUDGES",
+            "REPLY_NUDGE_PROMPT",
+            "CLOSING_SEND_NUDGE_PROMPT",
+            "TurnTerminalProjection",
+            "project_turn_terminal",
+            "should_attempt_reply_nudge",
+            "shape_reply_nudge_turn_input",
+            "shape_closing_send_nudge_turn_input",
+            "should_supersede_stale_turn"
+          ]
         }
       ],
       "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
@@ -18410,7 +18567,7 @@
       "device_test": "missing",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Do not mark implemented/verified yet. Remaining earliest gap in this responsibility is sand.send_dispatch production timing/skew ownership."
+      "notes": "Do not mark implemented/verified yet. Remaining earliest gap in this responsibility is sand.send_dispatch production timing/skew ownership. Reverse-link audit 2964bcac536302cf1e2f8afb676e757d43fba0b3: source/host/src/extensions/transcript/turn_runtime.rs@50272d988ed531632d970cf2904138f92f392172 — Desktop turn runtime owns terminal projection, bounded reply/closing-send nudges and queued stale-turn supersession. Android has durable turn identity and kickstart nudge pieces, but full three-nudge/closing-send/queued-stale semantics remain not fully closed."
     },
     {
       "responsibility_id": "OBSERVABILITY-TURN-INTERRUPT-001",
@@ -18944,6 +19101,17 @@
             "ROSTER_REPLICA_KEY",
             "timeline/profile/outline projection emit"
           ]
+        },
+        {
+          "path": "source/host/src/extensions/transcript/transcript_manager.rs",
+          "blob_sha": "3d86d37255aebeff06707ed5888fb722b9760a73",
+          "symbols": [
+            "TranscriptTurnExecutionPort",
+            "TranscriptManagerServices",
+            "TranscriptManager",
+            "bind_roster_emit",
+            "emit_agent_update"
+          ]
         }
       ],
       "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
@@ -19012,7 +19180,7 @@
       "device_test": "required for process death/restart and streaming outline/profile projection without duplicate transcript mutation.",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Reviewed from Desktop authority 371b72f… and Android exact head 470f3090fd0d166df698635cba62c5e41ca76d64. This row intentionally records a real partial composition gap; it must not be promoted to verified until production wiring and same-head CI/package/device evidence exist."
+      "notes": "Reviewed from Desktop authority 371b72f… and Android exact head 470f3090fd0d166df698635cba62c5e41ca76d64. This row intentionally records a real partial composition gap; it must not be promoted to verified until production wiring and same-head CI/package/device evidence exist. Reverse-link audit 2964bcac536302cf1e2f8afb676e757d43fba0b3: source/host/src/extensions/transcript/transcript_manager.rs@3d86d37255aebeff06707ed5888fb722b9760a73 — Desktop TranscriptManager composes session workers, transcript runtime, runner registry, ack obligations, automation, background wakes, shared rooms, group chat and widget responses. Android owners exist in pieces; shipping composition/dispose/cold-start fencing remains partial."
     },
     {
       "responsibility_id": "TRANSCRIPT-REPLICA-PROJECTION-ANDROID-001",
@@ -19298,6 +19466,17 @@
             "parse_upgrade_resume_file",
             "upsert_resume_marker"
           ]
+        },
+        {
+          "path": "source/host/src/extensions/transcript/upgrade_recreate_resume.rs",
+          "blob_sha": "1d3c1007c6b29718902820030f3baa1819da81ba",
+          "symbols": [
+            "UpgradeQuiesceSummary",
+            "UpgradeRecreateResume",
+            "quiesce_for_upgrade",
+            "resume_after_recreate",
+            "build_upgrade_resume_prompt"
+          ]
         }
       ],
       "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
@@ -19346,7 +19525,7 @@
       "device_test": "required in final upgrade/process-death acceptance",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Direct port exists with process-reopen tests; not promoted to verified."
+      "notes": "Direct port exists with process-reopen tests; not promoted to verified. Reverse-link audit 2964bcac536302cf1e2f8afb676e757d43fba0b3: source/host/src/extensions/transcript/upgrade_recreate_resume.rs@1d3c1007c6b29718902820030f3baa1819da81ba — Desktop upgrade recreate owner quiesces running work and resumes after process recreate. Android has a durable upgrade-resume store/quiesce path, while final signed-install/process-recreate/source-aware acceptance remains open."
     },
     {
       "responsibility_id": "TRANSCRIPT-SEND-ACCEPTANCE-ANDROID-001",
@@ -19440,6 +19619,18 @@
             "collect_new_member_send_messages",
             "LocalGroupFanoutDisposition"
           ]
+        },
+        {
+          "path": "source/host/src/extensions/transcript/shared_rooms.rs",
+          "blob_sha": "657a55ea77b814d03f05d7d307ac1819cda3870e",
+          "symbols": [
+            "SharedRooms",
+            "post_local_agent_message",
+            "ensure_hosted_shared_room",
+            "ensure_mirror_room",
+            "post_shared_room_guest_message",
+            "append_mirror_room_entry"
+          ]
         }
       ],
       "responsibility": "Fan one group-room send into bounded member turns, persist member-authored room entries, distinguish local from remote members, preserve per-member failure and shared-room publication, and avoid a second group state owner.",
@@ -19489,7 +19680,7 @@
       "unit_test": "group_chat_orchestrator and group_chat_glue focused tests exist; full Desktop fanout matrix still required",
       "contract_test": "required: local+remote members, DM preemption, per-member failure, shared-room publish and stale-account fencing",
       "integration_test": "required: real multi-Agent group send through Host/Coordinator",
-      "notes": "Mapped conservatively; no implementation promotion until the Desktop fanout semantic matrix is closed."
+      "notes": "Mapped conservatively; no implementation promotion until the Desktop fanout semantic matrix is closed. Reverse-link audit 2964bcac536302cf1e2f8afb676e757d43fba0b3: source/host/src/extensions/transcript/shared_rooms.rs@657a55ea77b814d03f05d7d307ac1819cda3870e — Desktop SharedRooms owns local group post/fanout plus hosted/mirror shared-room mutation. Android has shared-room/cross-user owners, but local per-member fanout, failure isolation and recovery are not fully closed."
     },
     {
       "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
