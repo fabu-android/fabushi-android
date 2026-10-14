@@ -12775,6 +12775,48 @@ impl AndroidJsonHost {
                     &conversation_id_owned,
                     turn_generation,
                     Arc::clone(&cancelled),
+                    Some({
+                        let review_cancelled = Arc::clone(&cancelled);
+                        let review_token = auto_review_token.clone();
+                        let review_instructions = auto_review_instructions.clone();
+                        let review_mode = auto_review_modes.box_shell;
+                        Arc::new(move |tool_name: &str, tool_args: &Value| {
+                            if tool_name != "Write" || review_mode == SandAutoReviewMode::Off {
+                                return Ok(RemoteAutoReviewDecision::Allow);
+                            }
+                            let target = json!({
+                                "action":"android_local_write",
+                                "arguments":{
+                                    "tool":tool_name,
+                                    "input":tool_args,
+                                    "allow_instructions":review_instructions.allow_instructions,
+                                    "block_instructions":review_instructions.block_instructions,
+                                }
+                            });
+                            let decision = AndroidHostInferenceProvider::run_auto_review_target(
+                                match mode {
+                                    AndroidHostMode::Test => AndroidInferenceMode::Test,
+                                    AndroidHostMode::Production => AndroidInferenceMode::Production,
+                                },
+                                review_token.clone(),
+                                Arc::clone(&review_cancelled),
+                                &target,
+                            )
+                            .map_err(|error| error.message)?;
+                            if review_mode == SandAutoReviewMode::Shadow {
+                                return Ok(RemoteAutoReviewDecision::Allow);
+                            }
+                            Ok(match decision {
+                                AndroidSubagentReviewDecision::Allow => {
+                                    RemoteAutoReviewDecision::Allow
+                                }
+                                AndroidSubagentReviewDecision::Block { reason, .. }
+                                | AndroidSubagentReviewDecision::Reject { reason } => {
+                                    RemoteAutoReviewDecision::RequireApproval { reason }
+                                }
+                            })
+                        }) as RemoteAutoReviewPreflight
+                    }),
                 );
                 let routed_subagent_tools = if subagent_capabilities.remote_box_available {
                     with_remote_routed_tools(
