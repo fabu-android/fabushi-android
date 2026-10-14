@@ -335,6 +335,8 @@ data class AndroidSecretSubmissionResult(
     val secretProvided: Boolean,
     val operationId: String? = null,
     val reason: String? = null,
+    val outcomeUnknown: Boolean = false,
+    val reconcileRequired: Boolean = false,
 )
 
 data class AndroidToolResultCard(

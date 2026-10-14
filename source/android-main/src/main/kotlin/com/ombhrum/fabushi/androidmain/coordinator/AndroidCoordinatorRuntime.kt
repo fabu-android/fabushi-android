@@ -2488,6 +2488,8 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
             secretProvided = result.optBoolean("secretProvided", false),
             operationId = result.optString("operationId").takeIf(String::isNotBlank),
             reason = result.optString("reason").takeIf(String::isNotBlank),
+            outcomeUnknown = result.optBoolean("outcomeUnknown", false),
+            reconcileRequired = result.optBoolean("reconcileRequired", false),
         )
     }
 

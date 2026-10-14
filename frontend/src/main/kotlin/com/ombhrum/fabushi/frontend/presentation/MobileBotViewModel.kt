@@ -2981,19 +2981,75 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
                 }
             }
             if (!isCurrentSendScope(bot.id, accountSlot, scopeGeneration)) return@launch
-            val withoutPending = mutableState.value.secretPendingEntryIds - entryId
             val settled = result.getOrNull()
-            if (result.isFailure || settled?.accepted != true || !settled.secretProvided) {
+            val shouldReconcile = result.isFailure ||
+                settled?.secretProvided == true ||
+                settled?.outcomeUnknown == true ||
+                settled?.reconcileRequired == true
+            var reconciliationFailure: Throwable? = null
+            if (shouldReconcile) {
+                try {
+                    refreshDurableSendProjection(bot.id, accountSlot, scopeGeneration)
+                } catch (error: CancellationException) {
+                    throw error
+                } catch (error: Throwable) {
+                    reconciliationFailure = error
+                }
+            }
+            if (!isCurrentSendScope(bot.id, accountSlot, scopeGeneration)) return@launch
+
+            val withoutPending = mutableState.value.secretPendingEntryIds - entryId
+            val durableProvided = mutableState.value.messages.firstOrNull {
+                it.id == entryId && it.kind == MobileChatEntryKind.SECRET_REQUEST
+            }?.secretRequest?.provided == true
+            if (durableProvided) {
                 commitState(
                     mutableState.value.copy(
                         secretPendingEntryIds = withoutPending,
-                        error = result.exceptionOrNull()?.message
-                            ?: settled?.reason
-                            ?: "Credential could not be stored securely",
+                        error = null,
                     ),
                 )
                 return@launch
             }
+            if (settled?.secretProvided == true) {
+                commitState(
+                    mutableState.value.copy(
+                        secretPendingEntryIds = withoutPending,
+                        error = reconciliationFailure?.let {
+                            "Credential was stored securely, but transcript reconciliation failed: " +
+                                (it.message ?: "unknown refresh failure")
+                        } ?: "Credential was stored securely, but transcript settlement is still reconciling",
+                    ),
+                )
+                return@launch
+            }
+            if (
+                result.isFailure ||
+                settled?.accepted != true ||
+                settled?.outcomeUnknown == true ||
+                settled?.reconcileRequired == true
+            ) {
+                commitState(
+                    mutableState.value.copy(
+                        secretPendingEntryIds = withoutPending,
+                        error = when {
+                            settled?.outcomeUnknown == true ->
+                                settled.reason
+                                    ?: "Credential write outcome is uncertain. Fabushi will not submit it again automatically."
+                            reconciliationFailure != null ->
+                                reconciliationFailure?.message ?: "Credential reconciliation failed"
+                            else ->
+                                result.exceptionOrNull()?.message
+                                    ?: settled?.reason
+                                    ?: "Credential could not be stored securely"
+                        },
+                    ),
+                )
+                return@launch
+            }
+
+            // A successful submission must still settle the durable transcript before the
+            // presentation leaves the pending state.
             try {
                 refreshDurableSendProjection(bot.id, accountSlot, scopeGeneration)
                 if (isCurrentSendScope(bot.id, accountSlot, scopeGeneration)) {

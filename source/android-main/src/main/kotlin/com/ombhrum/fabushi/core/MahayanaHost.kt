@@ -532,20 +532,39 @@ class MahayanaHost(
             secret,
             listOf("https://agent-channel.fabushi.local"),
         )
-        val metadata = request(
-            "feature.agent.channels.writeMetadata",
-            JSONObject()
-                .put("agentId", cleanAgentId)
-                .put("platform", platform)
-                .put("label", label)
-                .put("accountFence", accountFence),
-        )
-        check(metadata.optBoolean("written", false)) {
-            "Agent channel metadata was rejected after secure credential storage"
+
+        fun outcomeUnknown(reason: String): JSONObject = JSONObject()
+            .put("accepted", false)
+            .put("generation", generation)
+            .put("secretProvided", false)
+            .put("outcomeUnknown", true)
+            .put("reconcileRequired", true)
+            .put("reason", reason.take(240))
+
+        val metadata = runCatching {
+            request(
+                "feature.agent.channels.writeMetadata",
+                JSONObject()
+                    .put("agentId", cleanAgentId)
+                    .put("platform", platform)
+                    .put("label", label)
+                    .put("accountFence", accountFence),
+            )
+        }.getOrElse { error ->
+            return outcomeUnknown(
+                error.message
+                    ?: "Credential was stored securely but channel metadata outcome is unknown",
+            )
         }
-        check(currentCredentialAccountFence() == accountFence) {
-            "Secret request became stale after credential storage"
+        if (!metadata.optBoolean("written", false)) {
+            return outcomeUnknown("Credential was stored securely but channel metadata was not confirmed")
         }
+        if (currentCredentialAccountFence() != accountFence) {
+            return outcomeUnknown(
+                "Credential was stored securely but the account changed before transcript settlement",
+            )
+        }
+
         val commitParams = JSONObject()
             .put("agentId", cleanAgentId)
             .put("entryId", cleanEntryId)
@@ -554,7 +573,34 @@ class MahayanaHost(
             .put("platform", platform)
             .put("field", field)
         accountSlot?.trim()?.takeIf(String::isNotEmpty)?.let { commitParams.put("accountSlot", it) }
-        return request("feature.transcript.secret.commit", commitParams)
+
+        return runCatching {
+            request("feature.transcript.secret.commit", commitParams)
+        }.getOrElse { error ->
+            // Do not replay the credential write. Re-read the durable transcript only:
+            // transcript_secret_commit is settlement-idempotent, so a completed write is
+            // observable as secretProvided=true even if the continuation response was lost.
+            val durable = runCatching {
+                request("feature.transcript.secret.prepare", prepareParams)
+            }.getOrNull()
+            if (durable?.optBoolean("secretProvided", false) == true) {
+                JSONObject()
+                    .put("accepted", true)
+                    .put("generation", generation)
+                    .put("secretProvided", true)
+                    .put("outcomeUnknown", false)
+                    .put("reconcileRequired", true)
+                    .put(
+                        "reason",
+                        "Credential settlement was recovered from the durable transcript",
+                    )
+            } else {
+                outcomeUnknown(
+                    error.message
+                        ?: "Credential was stored securely but transcript settlement is unknown",
+                )
+            }
+        }
     }
 
     fun agentChannelDisconnect(agentId: String, platform: String): JSONObject {

@@ -20193,6 +20193,24 @@ mod widget_action_tests {
             .as_str()
             .is_some_and(|value| !value.is_empty()));
 
+        let duplicate_commit = host
+            .dispatch(
+                "feature.transcript.secret.commit",
+                &json!({
+                    "agentId":"agent-a",
+                    "entryId":"secret-a",
+                    "generation":7,
+                    "accountFence":fence,
+                    "platform":"discord",
+                    "field":"token"
+                }),
+            )
+            .unwrap();
+        assert_eq!(duplicate_commit["accepted"], false);
+        assert_eq!(duplicate_commit["reason"], "settled");
+        assert_eq!(duplicate_commit["secretProvided"], true);
+        assert!(duplicate_commit.get("operationId").is_none());
+
         let duplicate = host
             .dispatch(
                 "feature.transcript.secret.prepare",
