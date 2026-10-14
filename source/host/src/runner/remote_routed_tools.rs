@@ -274,6 +274,16 @@ struct RemoteApprovalWait {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum RemoteAutoReviewDecision {
+    Allow,
+    RequireApproval { reason: String },
+    Reject { reason: String },
+}
+
+pub(crate) type RemoteAutoReviewPreflight =
+    Arc<dyn Fn(&str, &Value) -> Result<RemoteAutoReviewDecision, String> + Send + Sync>;
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct RemoteApprovalResolution {
     pub(crate) parent_operation_id: String,
     pub(crate) remote_operation_id: String,
@@ -478,6 +488,7 @@ pub(crate) struct RemoteRoutedTools {
     parent_request_id: String,
     cancelled: Arc<AtomicBool>,
     client_paused: Arc<AtomicBool>,
+    auto_review_preflight: Option<RemoteAutoReviewPreflight>,
 }
 
 impl AndroidRoutedToolBridge for RemoteRoutedTools {
@@ -717,6 +728,17 @@ impl AndroidRoutedToolBridge for RemoteRoutedTools {
         if !binding.supports(required_executor) {
             return Err(format!("trusted Remote binding does not declare executor {required_executor}"));
         }
+        let auto_review = match self.auto_review_preflight.as_ref() {
+            Some(preflight) => preflight(name, &args)?,
+            None => RemoteAutoReviewDecision::Allow,
+        };
+        let (force_manual_approval, auto_review_reason) = match auto_review {
+            RemoteAutoReviewDecision::Allow => (false, None),
+            RemoteAutoReviewDecision::RequireApproval { reason } => (true, Some(reason)),
+            RemoteAutoReviewDecision::Reject { reason } => {
+                return Err(format!("remote tool action rejected by Auto-review: {reason}"));
+            }
+        };
         let context = binding.context(&operation_id, &request_id, &approval_id)?;
         let request = ExecutionRequest {
             operation_id: operation_id.clone(),
@@ -765,6 +787,7 @@ impl AndroidRoutedToolBridge for RemoteRoutedTools {
                 "tool":name,
                 "arguments":args,
                 "inputIdentity":identity_hash,
+                "autoReviewReason":auto_review_reason,
             }),
             &binding.account_fence,
             binding.account_epoch,
@@ -772,7 +795,9 @@ impl AndroidRoutedToolBridge for RemoteRoutedTools {
             now_ms(),
         )?;
 
-        let approved = if permission_at_authorization == LocalToolPermission::Always {
+        let approved = if permission_at_authorization == LocalToolPermission::Always
+            && !force_manual_approval
+        {
             let resolved = self.broker.resolve_approval(
                 &approval_id,
                 true,
@@ -827,6 +852,8 @@ impl AndroidRoutedToolBridge for RemoteRoutedTools {
                     "accountEpoch":binding.account_epoch,
                     "deviceId":binding.device_id,
                     "remoteDispatch":true,
+                    "autoReview":force_manual_approval,
+                    "reason":auto_review_reason,
                 }),
             )?;
 
@@ -1033,6 +1060,7 @@ pub(crate) fn with_remote_routed_tools(
     parent_request_id: &str,
     cancelled: Arc<AtomicBool>,
     client_paused: Arc<AtomicBool>,
+    auto_review_preflight: Option<RemoteAutoReviewPreflight>,
 ) -> Arc<dyn AndroidRoutedToolBridge> {
     Arc::new(RemoteRoutedTools {
         delegate,
@@ -1048,6 +1076,7 @@ pub(crate) fn with_remote_routed_tools(
         parent_request_id: parent_request_id.to_string(),
         cancelled,
         client_paused,
+        auto_review_preflight,
     })
 }
 
