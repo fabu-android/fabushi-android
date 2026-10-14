@@ -4614,6 +4614,17 @@ impl AndroidJsonHost {
         result
     }
 
+    /// Drain a private account-session persistence mutation after a Host request failed.
+    ///
+    /// Normal successful results carry this mutation inside the result object. A terminal
+    /// credential revocation can instead be discovered while a bearer-requiring request is
+    /// failing, so JNI must still forward the Clear intent to Android's protected store before
+    /// surfacing the request error.
+    pub fn take_pending_account_session_mutation(&mut self) -> Option<Value> {
+        self.account
+            .take_pending_session_mutation()
+            .map(|mutation| mutation.as_private_projection())
+    }
 
     fn current_account_transcript_entries(&self) -> Result<Vec<Value>, String> {
         let account_slot = self.account.account_storage_scope();
