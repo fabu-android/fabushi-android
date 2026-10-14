@@ -1880,6 +1880,7 @@ mod tests {
             parent_request_id: "parent-request".into(),
             cancelled: Arc::new(AtomicBool::new(false)),
             client_paused: Arc::new(AtomicBool::new(false)),
+            auto_review_preflight: None,
         };
 
         let error = tools
@@ -1907,6 +1908,7 @@ mod tests {
             parent_request_id: "parent-request".into(),
             cancelled: Arc::new(AtomicBool::new(false)),
             client_paused: Arc::clone(&paused),
+            auto_review_preflight: None,
         };
 
         assert!(tools.list_tools().unwrap().is_empty());
