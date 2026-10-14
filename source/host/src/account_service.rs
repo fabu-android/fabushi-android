@@ -83,6 +83,9 @@ pub struct AndroidAccountService {
     session_telemetry: AccountTelemetryBuffer,
     refresh_consecutive_failures: u64,
     refresh_degraded_since_ms: Option<u64>,
+    // Terminal auth revocation discovered while a bearer-requiring request is failing must still
+    // cross JNI so Android can persist its revocation fence before the process can die.
+    pending_session_mutation: Option<AccountSessionMutation>,
 }
 
 impl AndroidAccountService {
@@ -119,6 +122,7 @@ impl AndroidAccountService {
             session_telemetry: AccountTelemetryBuffer::default(),
             refresh_consecutive_failures: 0,
             refresh_degraded_since_ms: None,
+            pending_session_mutation: None,
         })
     }
 
@@ -156,8 +160,21 @@ impl AndroidAccountService {
     pub fn public_status(
         &mut self,
     ) -> Result<(Value, Option<AccountSessionMutation>), String> {
+        // A prior bearer-requiring request may have discovered a terminal refresh rejection and
+        // failed before it could return a normal result. Keep the durable Clear pending until a
+        // platform boundary consumes it; auth.status is the fallback reconciliation path.
+        if let Some(mutation) = self.take_pending_session_mutation() {
+            return Ok((self.status_projection(), Some(mutation)));
+        }
         match self.refresh_if_needed(now_ms()) {
-            Ok(mutation) => Ok((self.status_projection(), mutation)),
+            Ok(mutation) => {
+                if mutation.is_some() {
+                    // refresh_if_needed can return the same terminal mutation directly (for
+                    // example, a missing/expired durable refresh credential). It is now in-band.
+                    self.pending_session_mutation = None;
+                }
+                Ok((self.status_projection(), mutation))
+            },
             Err(error) => {
                 // Match Desktop cursor-auth semantics: a refresh transport/protocol failure is
                 // not itself proof that the durable credential was revoked. refresh_if_needed()
@@ -181,10 +198,15 @@ impl AndroidAccountService {
                         "user":Value::Null,
                         "errorMessage":error,
                     }),
-                    Some(AccountSessionMutation::Clear),
+                    self.take_pending_session_mutation()
+                        .or(Some(AccountSessionMutation::Clear)),
                 ))
             }
         }
+    }
+
+    pub fn take_pending_session_mutation(&mut self) -> Option<AccountSessionMutation> {
+        self.pending_session_mutation.take()
     }
 
     pub fn valid_access_token(
@@ -247,6 +269,18 @@ impl AndroidAccountService {
 
     pub fn drain_session_telemetry(&mut self) -> Vec<AccountTelemetryProjection> {
         self.session_telemetry.drain()
+    }
+
+    fn mark_refresh_session_revoked(&mut self, cause: SessionSignoutCause) {
+        self.session = None;
+        self.pending_session_mutation = Some(AccountSessionMutation::Clear);
+        self.session_telemetry
+            .report_session(SessionReport::SignedOut {
+                cause,
+                // AndroidAccountSessionStore turns this into a durable revocation fence after the
+                // private mutation crosses JNI. Until then the Rust owner must report honestly.
+                durable: false,
+            });
     }
 
     fn record_refresh_failure(&mut self, failure: SessionRefreshFailure, observed_at_ms: u64) {
@@ -761,14 +795,16 @@ impl AndroidAccountService {
             return Ok(None);
         }
         let Some(refresh_token) = current.refresh_token.clone() else {
-            self.session = None;
-            self.session_telemetry
-                .report_session(SessionReport::SignedOut {
-                    cause: SessionSignoutCause::SessionRevoked,
-                    durable: false,
-                });
+            self.mark_refresh_session_revoked(SessionSignoutCause::SessionRevoked);
             return Ok(Some(AccountSessionMutation::Clear));
         };
+        if current
+            .refresh_token_expires_at
+            .is_some_and(|expires_at| expires_at <= now_ms)
+        {
+            self.mark_refresh_session_revoked(SessionSignoutCause::SessionRevoked);
+            return Ok(Some(AccountSessionMutation::Clear));
+        }
         let raw = match self.request_json(
             "/api/auth/refresh",
             "POST",
@@ -780,7 +816,11 @@ impl AndroidAccountService {
         ) {
             Ok(raw) => raw,
             Err(error) => {
-                self.record_refresh_failure(classify_refresh_failure(&error), now_ms);
+                let failure = classify_refresh_failure(&error);
+                self.record_refresh_failure(failure.clone(), now_ms);
+                if is_terminal_refresh_rejection(&failure) {
+                    self.mark_refresh_session_revoked(SessionSignoutCause::SessionRevoked);
+                }
                 return Err(error);
             }
         };
@@ -792,18 +832,17 @@ impl AndroidAccountService {
             }
         };
         if next.device_id != current.device_id || next.user_id != current.user_id {
-            self.session = None;
-            self.session_telemetry
-                .report_session(SessionReport::SignedOut {
-                    cause: SessionSignoutCause::Unparseable,
-                    durable: false,
-                });
+            self.mark_refresh_session_revoked(SessionSignoutCause::Unparseable);
             return Err("Fabushi refreshed account session changed identity.".into());
         }
         let verified = match self.resolve_identity(next) {
             Ok(verified) => verified,
             Err(error) => {
-                self.record_refresh_failure(classify_refresh_failure(&error), now_ms);
+                let failure = classify_refresh_failure(&error);
+                self.record_refresh_failure(failure.clone(), now_ms);
+                if is_terminal_refresh_rejection(&failure) {
+                    self.mark_refresh_session_revoked(SessionSignoutCause::SessionRevoked);
+                }
                 return Err(error);
             }
         };
@@ -973,6 +1012,10 @@ fn merge_refresh_rotation(
         return Err("Fabushi refreshed account session has no durable refresh credential.".into());
     }
     Ok((next, rotation_rescued))
+}
+
+fn is_terminal_refresh_rejection(failure: &SessionRefreshFailure) -> bool {
+    matches!(failure, SessionRefreshFailure::HttpStatus(401 | 403))
 }
 
 fn classify_refresh_failure(error: &str) -> SessionRefreshFailure {
@@ -1575,6 +1618,57 @@ mod tests {
     }
 
     #[test]
+    fn terminal_refresh_rejection_keeps_clear_pending_for_failed_bearer_request() {
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut bytes = [0_u8; 4096];
+            let read = stream.read(&mut bytes).unwrap();
+            let request = String::from_utf8_lossy(&bytes[..read]);
+            assert!(request.starts_with("POST /api/auth/refresh "));
+            let body = r#"{"error":"refresh credential revoked"}"#;
+            write!(
+                stream,
+                "HTTP/1.1 401 Unauthorized\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                body,
+            )
+            .unwrap();
+            stream.flush().unwrap();
+        });
+
+        let mut session = durable_session();
+        session["accessTokenExpiresAt"] = json!(1_u64);
+        let mut service = AndroidAccountService::with_base_url(
+            "device-1",
+            &format!("http://{address}"),
+            Some(&session.to_string()),
+        )
+        .unwrap();
+
+        let error = service.valid_access_token().unwrap_err();
+        assert!(error.contains("401"));
+        assert!(service.session.is_none());
+        assert_eq!(
+            service.pending_session_mutation,
+            Some(AccountSessionMutation::Clear)
+        );
+
+        // auth.status remains a reconciliation fallback if the original failing caller never got
+        // to consume the private mutation.
+        let (status, mutation) = service.public_status().unwrap();
+        assert_eq!(status["loggedIn"], false);
+        assert_eq!(mutation, Some(AccountSessionMutation::Clear));
+        assert_eq!(service.pending_session_mutation, None);
+
+        server.join().unwrap();
+    }
+
+    #[test]
     fn refresh_telemetry_tracks_failure_recovery_and_missing_refresh_signout() {
         let raw = durable_session().to_string();
         let mut service = AndroidAccountService::new("device-1", Some(&raw)).unwrap();
@@ -1602,6 +1696,10 @@ mod tests {
 
     #[test]
     fn refresh_failure_classifier_preserves_http_network_and_bad_payload_taxonomy() {
+        assert!(is_terminal_refresh_rejection(&SessionRefreshFailure::HttpStatus(401)));
+        assert!(is_terminal_refresh_rejection(&SessionRefreshFailure::HttpStatus(403)));
+        assert!(!is_terminal_refresh_rejection(&SessionRefreshFailure::HttpStatus(429)));
+        assert!(!is_terminal_refresh_rejection(&SessionRefreshFailure::HttpStatus(503)));
         assert_eq!(
             classify_refresh_failure("Fabushi account request failed (429)."),
             SessionRefreshFailure::HttpStatus(429)
