@@ -15,6 +15,9 @@ use crate::automation_runtime::{
     AutomationSpendGuardDecision,
 };
 use crate::auto_review_settings::{AutoReviewInstructions, DurableAutoReviewSettings};
+use crate::runner::sand_auto_review::{
+    resolve_sand_auto_review_modes, SandAutoReviewMode,
+};
 use crate::android_agent_roster::{AndroidAgentRoster, AndroidAgentRosterRecoveryOutcome};
 use crate::android_box_handoff::{AndroidBoxHandoffOwner, AndroidHandoffStart};
 use crate::android_memory_runtime::AndroidMemoryOwner;
@@ -179,7 +182,8 @@ use crate::runner::{
     with_agent_management_tools_and_transcript,
     with_send_message_tools, with_multitask_todo_tools,
     with_local_file_tools, with_remote_routed_tools, with_web_routed_tools,
-    AgentTurnInterruptionRegistry, LocalApprovalRegistry, RemoteApprovalRegistry, RemoteDispatchBinding,
+    AgentTurnInterruptionRegistry, LocalApprovalRegistry, RemoteApprovalRegistry,
+    RemoteAutoReviewDecision, RemoteAutoReviewPreflight, RemoteDispatchBinding,
     DurableMultitaskTodoStore,
 };
 use fabushi_android_shared::feedback::normalize_feedback_submit_args;
@@ -12318,6 +12322,26 @@ impl AndroidJsonHost {
         let remote_client_paused = Arc::clone(&self.remote_client_paused);
         let remote_approvals = self.remote_approvals.clone();
         let remote_user_settings = Arc::clone(&self.user_settings);
+        let auto_review_snapshot = self
+            .auto_review_settings
+            .lock()
+            .map_err(|_| "auto-review settings lock poisoned".to_string())?
+            .snapshot(&account_fence)?;
+        let auto_review_override = std::env::var("SAND_AUTO_REVIEW_MODE")
+            .ok()
+            .and_then(|value| match value.trim().to_ascii_lowercase().as_str() {
+                "off" => Some(SandAutoReviewMode::Off),
+                "shadow" => Some(SandAutoReviewMode::Shadow),
+                "enforce" => Some(SandAutoReviewMode::Enforce),
+                _ => None,
+            });
+        let auto_review_modes = resolve_sand_auto_review_modes(
+            auto_review_snapshot.instructions.is_enabled,
+            self.experiments.check_feature_gate("sand_auto_review"),
+            auto_review_override,
+        );
+        let auto_review_instructions = auto_review_snapshot.instructions.clone();
+        let auto_review_token = bearer_token.clone();
         let remote_local_tool_permission_ceiling = match self.mode {
             AndroidHostMode::Test => None,
             AndroidHostMode::Production => match self.mcp_dashboard_backend.as_ref() {
@@ -12767,6 +12791,59 @@ impl AndroidJsonHost {
                         &request_id_owned,
                         Arc::clone(&cancelled),
                         Arc::clone(&remote_client_paused),
+                        Some({
+                            let review_cancelled = Arc::clone(&cancelled);
+                            let review_token = auto_review_token.clone();
+                            let review_instructions = auto_review_instructions.clone();
+                            let review_modes = auto_review_modes.clone();
+                            Arc::new(move |tool_name: &str, tool_args: &Value| {
+                                let review_mode = match tool_name {
+                                    "Shell" | "Write" => review_modes.box_shell,
+                                    "ExternalShell" => review_modes.host_shell,
+                                    "Computer" | "Screenshot" | "BrowserOpen" | "BrowserClick"
+                                    | "BrowserType" | "BrowserKey" | "BrowserScroll"
+                                    | "BrowserWait" | "BrowserSnapshot" => review_modes.computer,
+                                    "CloudAgent" => review_modes.cloud_agent,
+                                    _ => SandAutoReviewMode::Off,
+                                };
+                                if review_mode == SandAutoReviewMode::Off {
+                                    return Ok(RemoteAutoReviewDecision::Allow);
+                                }
+                                let target = json!({
+                                    "action":"android_remote_tool",
+                                    "arguments":{
+                                        "tool":tool_name,
+                                        "input":tool_args,
+                                        "allow_instructions":review_instructions.allow_instructions,
+                                        "block_instructions":review_instructions.block_instructions,
+                                    }
+                                });
+                                let decision = AndroidHostInferenceProvider::run_auto_review_target(
+                                    match mode {
+                                        AndroidHostMode::Test => AndroidInferenceMode::Test,
+                                        AndroidHostMode::Production => AndroidInferenceMode::Production,
+                                    },
+                                    review_token.clone(),
+                                    Arc::clone(&review_cancelled),
+                                    &target,
+                                )
+                                .map_err(|error| error.message)?;
+                                if review_mode == SandAutoReviewMode::Shadow {
+                                    return Ok(RemoteAutoReviewDecision::Allow);
+                                }
+                                Ok(match decision {
+                                    AndroidSubagentReviewDecision::Allow => {
+                                        RemoteAutoReviewDecision::Allow
+                                    }
+                                    AndroidSubagentReviewDecision::Block { reason, .. } => {
+                                        RemoteAutoReviewDecision::RequireApproval { reason }
+                                    }
+                                    AndroidSubagentReviewDecision::Reject { reason } => {
+                                        RemoteAutoReviewDecision::RequireApproval { reason }
+                                    }
+                                })
+                            }) as RemoteAutoReviewPreflight
+                        }),
                     )
                 } else {
                     routed_subagent_tools

@@ -73,7 +73,8 @@ pub use durable_turn_journal::{DurableTurnJournal, DurableTurnRecord, DurableTur
 pub(crate) use web_routed_tools::with_web_routed_tools;
 
 pub(crate) use remote_routed_tools::{
-    with_remote_routed_tools, RemoteApprovalRegistry, RemoteDispatchBinding,
+    with_remote_routed_tools, RemoteApprovalRegistry, RemoteAutoReviewDecision,
+    RemoteAutoReviewPreflight, RemoteDispatchBinding,
 };
 
 pub(crate) use local_routed_tools::{with_local_file_tools, LocalApprovalRegistry};
