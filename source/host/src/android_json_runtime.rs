@@ -11106,7 +11106,10 @@ impl AndroidJsonHost {
             "hidden":true,
             "appendUserMessage":false,
             "awaitTurn":false,
-            "requestSource":"secret-request",
+            // Desktop submitSecret resumes through resume_with_hidden_handoff, whose
+            // canonical durable turn source is handoff-resume. Keep the secret-specific
+            // request identity below, but do not invent a second request-source taxonomy.
+            "requestSource":"handoff-resume",
         }}))?;
         let operation_id = continuation
             .get("operationId")
