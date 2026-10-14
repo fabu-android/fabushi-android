@@ -685,6 +685,49 @@ mod tests {
     }
 
     #[test]
+    fn auto_review_rejects_local_write_before_always_permission_side_effect() {
+        let root = root("auto-review-reject");
+        std::fs::create_dir_all(&root).unwrap();
+        let settings_path = root.join("settings.json");
+        let mut settings = AndroidUserSettings::open(&settings_path).unwrap();
+        settings.set_local_tool_permission_for("acct", "always").unwrap();
+        let broker = SharedCapabilityBroker::open(root.join("broker.json"), now_ms()).unwrap();
+        let files_root = root.join("files");
+        let bridge = with_local_file_tools(
+            Arc::new(EmptyBridge),
+            broker,
+            Arc::new(Mutex::new(bounded_file_runner(files_root.clone()).unwrap())),
+            LocalApprovalRegistry::default(),
+            Arc::new(Mutex::new(settings)),
+            Arc::new(Mutex::new(Some("acct".into()))),
+            Arc::new(Mutex::new(VecDeque::new())),
+            "parent-op",
+            "parent-request",
+            "conversation-review",
+            9,
+            Arc::new(AtomicBool::new(false)),
+            Some(Arc::new(|_, _| {
+                Ok(RemoteAutoReviewDecision::Reject {
+                    reason: "blocked by focused review".into(),
+                })
+            }) as RemoteAutoReviewPreflight),
+        );
+        let error = bridge
+            .call_tool(
+                "Write",
+                json!({"path":"blocked.txt","content":"must-not-write"}),
+                "write-blocked",
+            )
+            .unwrap_err();
+        assert!(error.contains("rejected by Auto-review"));
+        assert!(
+            !files_root.join("blocked.txt").exists(),
+            "Auto-review rejection must happen before the Local Runner side effect"
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn always_permission_executes_only_through_broker_and_runner() {
         let root = root("always");
         std::fs::create_dir_all(&root).unwrap();
