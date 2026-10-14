@@ -14,6 +14,26 @@ fn automatic_recreate_decision_is_host_owned_and_precedes_android_side_effect() 
         r#""auto_update" | "hibernation_auto_update""#
     ));
 
+    let route = host
+        .split("fn box_recreate_decided_telemetry")
+        .nth(1)
+        .and_then(|part| part.split("fn recovery_telemetry").next())
+        .expect("recreate decision route body");
+    for legacy_field in [
+        "\"requestId\"",
+        "\"decision\"",
+        "\"kind\"",
+        "\"preserveData\"",
+        "\"forceRecreate\"",
+        "\"forceUpdate\"",
+        "\"hasOperationId\"",
+    ] {
+        assert!(
+            !route.contains(legacy_field),
+            "{legacy_field} must not reuse the Desktop automatic recreate-decision taxonomy",
+        );
+    }
+
     let coordinator = include_str!(
         "../../android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/coordinator/AndroidCoordinatorRuntime.kt"
     );

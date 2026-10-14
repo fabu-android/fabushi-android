@@ -3522,72 +3522,15 @@ impl AndroidJsonHost {
     }
 
     fn box_recreate_decided_telemetry(&mut self, params: &Value) -> Result<Value, String> {
-        let metadata = if let Some(trigger) = params.get("trigger").and_then(Value::as_str) {
-            if !matches!(trigger, "auto_update" | "hibernation_auto_update") {
-                return Err("unsupported box recreate decision trigger".into());
-            }
-            BTreeMap::from([
-                ("trigger".into(), trigger.to_string()),
-                ("mode".into(), "pod_recreate".into()),
-                ("preserved".into(), "true".into()),
-            ])
-        } else {
-            let bounded = |name: &str| -> Result<String, String> {
-                let value = required_string(params, name)?.trim();
-                if value.is_empty()
-                    || value.chars().count() > 240
-                    || value.chars().any(char::is_control)
-                {
-                    return Err(format!("{name} is invalid"));
-                }
-                Ok(value.to_string())
-            };
-            let decision = bounded("decision")?;
-            if !matches!(decision.as_str(), "accepted" | "rejected" | "outcome-unknown") {
-                return Err("unsupported box recreate decision".into());
-            }
-            let kind = bounded("kind")?;
-            if !matches!(kind.as_str(), "update" | "reset") {
-                return Err("unsupported box recreate kind".into());
-            }
-            BTreeMap::from([
-                ("request_id".into(), bounded("requestId")?),
-                ("decision".into(), decision),
-                ("kind".into(), kind),
-                (
-                    "preserve_data".into(),
-                    params
-                        .get("preserveData")
-                        .and_then(Value::as_bool)
-                        .ok_or("preserveData is required")?
-                        .to_string(),
-                ),
-                (
-                    "force_recreate".into(),
-                    params
-                        .get("forceRecreate")
-                        .and_then(Value::as_bool)
-                        .ok_or("forceRecreate is required")?
-                        .to_string(),
-                ),
-                (
-                    "force_update".into(),
-                    params
-                        .get("forceUpdate")
-                        .and_then(Value::as_bool)
-                        .ok_or("forceUpdate is required")?
-                        .to_string(),
-                ),
-                (
-                    "has_operation_id".into(),
-                    params
-                        .get("hasOperationId")
-                        .and_then(Value::as_bool)
-                        .ok_or("hasOperationId is required")?
-                        .to_string(),
-                ),
-            ])
-        };
+        let trigger = required_string(params, "trigger")?;
+        if !matches!(trigger, "auto_update" | "hibernation_auto_update") {
+            return Err("unsupported box recreate decision trigger".into());
+        }
+        let metadata = BTreeMap::from([
+            ("trigger".into(), trigger.to_string()),
+            ("mode".into(), "pod_recreate".into()),
+            ("preserved".into(), "true".into()),
+        ]);
         self.record_host_telemetry_projection(box_recreate_decided_telemetry(metadata));
         Ok(json!({"recorded":true}))
     }
@@ -20703,48 +20646,48 @@ mod box_recreate_decided_dispatch_tests {
     use super::*;
 
     #[test]
-    fn rebuild_decision_and_auto_update_shapes_share_the_durable_mapper() {
+    fn automatic_recreate_decision_route_rejects_manual_rebuild_shapes() {
         let root = tempfile::tempdir().unwrap();
         let mut host = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
-        let accepted = host.dispatch(
-            "feature.telemetry.boxRecreateDecided",
-            &json!({
-                "requestId":"rebuild-1",
-                "decision":"accepted",
-                "kind":"reset",
-                "preserveData":false,
-                "forceRecreate":true,
-                "forceUpdate":false,
-                "hasOperationId":true
-            }),
-        ).unwrap();
-        assert_eq!(accepted["recorded"], true);
         assert_eq!(
             host.dispatch(
                 "feature.telemetry.boxRecreateDecided",
                 &json!({"trigger":"auto_update"}),
-            ).unwrap()["recorded"],
+            )
+            .unwrap()["recorded"],
             true,
         );
+        assert_eq!(
+            host.dispatch(
+                "feature.telemetry.boxRecreateDecided",
+                &json!({"trigger":"hibernation_auto_update"}),
+            )
+            .unwrap()["recorded"],
+            true,
+        );
+        assert!(host
+            .dispatch(
+                "feature.telemetry.boxRecreateDecided",
+                &json!({
+                    "requestId":"rebuild-1",
+                    "decision":"accepted",
+                    "kind":"reset",
+                    "preserveData":false,
+                    "forceRecreate":true,
+                    "forceUpdate":false,
+                    "hasOperationId":true
+                }),
+            )
+            .unwrap_err()
+            .contains("trigger is required"));
         let durable = std::fs::read_to_string(
             root.path().join("android-structured-log-spill.v1.json"),
-        ).unwrap();
-        assert!(durable.contains("sand.box.recreate_decided"));
-        assert!(durable.contains("rebuild-1"));
-        assert!(durable.contains("accepted"));
+        )
+        .unwrap();
+        assert_eq!(durable.matches("sand.box.recreate_decided").count(), 2);
         assert!(durable.contains("auto_update"));
-        assert!(host.dispatch(
-            "feature.telemetry.boxRecreateDecided",
-            &json!({
-                "requestId":"rebuild-2",
-                "decision":"invented",
-                "kind":"reset",
-                "preserveData":false,
-                "forceRecreate":true,
-                "forceUpdate":false,
-                "hasOperationId":false
-            }),
-        ).is_err());
+        assert!(durable.contains("hibernation_auto_update"));
+        assert!(!durable.contains("rebuild-1"));
     }
 }
 
