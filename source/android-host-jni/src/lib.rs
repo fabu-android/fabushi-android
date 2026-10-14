@@ -265,7 +265,16 @@ impl AndroidNativeRuntime {
             Ok(result_json) => serde_json::from_str::<Value>(&result_json)
                 .unwrap_or_else(|_| Value::String(result_json)),
             Err(failure) => {
-                return failure_response(envelope.get("id").cloned(), failure);
+                let account_session_mutation = self
+                    .coordinator
+                    .host_mut()
+                    .runtime
+                    .take_pending_account_session_mutation();
+                return failure_response_with_private_account_mutation(
+                    envelope.get("id").cloned(),
+                    failure,
+                    account_session_mutation,
+                );
             }
         };
 
@@ -640,13 +649,26 @@ fn success_response(id: Option<Value>, result: Value) -> String {
 }
 
 fn failure_response(id: Option<Value>, failure: CoordinatorFailure) -> String {
-    json!({
+    failure_response_with_private_account_mutation(id, failure, None)
+}
+
+fn failure_response_with_private_account_mutation(
+    id: Option<Value>,
+    failure: CoordinatorFailure,
+    account_session_mutation: Option<Value>,
+) -> String {
+    let mut envelope = json!({
         "id": id.unwrap_or(Value::Null),
         "ok": false,
         "error": format!("{}: {}", failure.code, failure.message),
         "errorCode": failure.code.to_string(),
-    })
-    .to_string()
+    });
+    if let Some(mutation) = account_session_mutation {
+        envelope["result"] = json!({
+            "_accountSessionMutation": mutation,
+        });
+    }
+    envelope.to_string()
 }
 
 fn error_response(id: Option<Value>, error: String) -> String {
@@ -1151,6 +1173,29 @@ mod tests {
             std::thread::yield_now();
         }
         panic!("{label} was not observed before the 5 second deadline");
+    }
+
+    #[test]
+    fn failed_host_envelope_preserves_private_account_clear_mutation() {
+        let failure = CoordinatorFailure::new(
+            CoordinatorFailureCode::HostUnavailable,
+            "refresh credential revoked",
+        );
+        let raw = failure_response_with_private_account_mutation(
+            Some(json!("auth-terminal")),
+            failure,
+            Some(json!({"action":"clear"})),
+        );
+        let envelope: Value = serde_json::from_str(&raw).unwrap();
+        assert_eq!(envelope["ok"], false);
+        assert_eq!(envelope["id"], "auth-terminal");
+        assert_eq!(
+            envelope["result"]["_accountSessionMutation"]["action"],
+            "clear"
+        );
+        assert!(envelope["error"]
+            .as_str()
+            .is_some_and(|value| value.contains("refresh credential revoked")));
     }
 
     #[test]
