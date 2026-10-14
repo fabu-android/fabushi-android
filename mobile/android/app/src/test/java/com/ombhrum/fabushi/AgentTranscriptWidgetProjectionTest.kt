@@ -99,4 +99,42 @@ class AgentTranscriptWidgetProjectionTest {
         ).single().widget!!
         assertEquals("Beta", settled.respondedValue)
     }
+    @Test
+    fun secretRequestProjectsWithoutSecretValueAndSettlesFromCanonicalFlag() {
+        val entry = JSONObject()
+            .put("id", "secret-a")
+            .put("kind", "send-message")
+            .put("agentId", "agent-a")
+            .put("secretProvided", false)
+            .put(
+                "message",
+                JSONObject()
+                    .put("type", "secret-request")
+                    .put(
+                        "secretRequest",
+                        JSONObject()
+                            .put("label", "Discord token")
+                            .put("description", "Connect this Agent to Discord")
+                            .put("value", "must-never-project")
+                            .put(
+                                "target",
+                                JSONObject()
+                                    .put("kind", "channel-credential")
+                                    .put("platform", "discord")
+                                    .put("field", "token"),
+                            ),
+                    ),
+            )
+        val projected = canonicalMobileTranscriptForAgent(JSONArray().put(entry), "agent-a").single()
+        assertEquals(MobileChatEntryKind.SECRET_REQUEST, projected.kind)
+        assertEquals("Discord token", projected.secretRequest!!.label)
+        assertEquals("Connect this Agent to Discord", projected.secretRequest!!.description)
+        assertFalse(projected.secretRequest!!.provided)
+        assertFalse(projected.toString().contains("must-never-project"))
+
+        entry.put("secretProvided", true)
+        val settled = canonicalMobileTranscriptForAgent(JSONArray().put(entry), "agent-a").single()
+        assertTrue(settled.secretRequest!!.provided)
+    }
+
 }

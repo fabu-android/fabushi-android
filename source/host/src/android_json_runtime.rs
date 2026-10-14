@@ -4525,6 +4525,8 @@ impl AndroidJsonHost {
             "feature.composerDraft.attachment.readRange" => self.composer_draft_attachment_read_range(params),
             "feature.widget.respond" => self.widget_respond(params),
             "feature.widget.dismiss" => self.widget_dismiss(params),
+            "feature.transcript.secret.prepare" => self.transcript_secret_prepare(params),
+            "feature.transcript.secret.commit" => self.transcript_secret_commit(params),
             "feature.receive" => self.feature_receive(),
             "feature.interrupt" => self.feature_interrupt(params),
             "feature.approval.resolve" => self.feature_approval_resolve(params),
@@ -10950,6 +10952,175 @@ impl AndroidJsonHost {
         Ok(json!({ "records": records }))
     }
 
+
+    fn transcript_secret_prepare(&mut self, params: &Value) -> Result<Value, String> {
+        let account_fence = self.current_turn_account_fence()?;
+        let account_slot = params
+            .get("accountSlot")
+            .and_then(Value::as_str)
+            .filter(|value| !value.trim().is_empty());
+        let entry_id = required_string(params, "entryId")?;
+        let agent_id = required_string(params, "agentId")?;
+        let generation = params.get("generation").and_then(Value::as_u64).unwrap_or(0);
+
+        let current = self
+            .transcript
+            .lock()
+            .map_err(|_| "transcript lock poisoned".to_string())?
+            .entry(entry_id)
+            .ok_or("secret request transcript entry was not found")?;
+        if current.get("agentId").and_then(Value::as_str) != Some(agent_id) {
+            return Err("secret request is fenced to another Agent".into());
+        }
+        if let Some(entry_slot) = current.get("accountSlot").and_then(Value::as_str) {
+            if Some(entry_slot) != account_slot {
+                return Err("secret request is fenced to another account slot".into());
+            }
+        }
+        if let Some(entry_fence) = current.get("accountFence").and_then(Value::as_str) {
+            if entry_fence != account_fence {
+                return Err("secret request is fenced to another account generation".into());
+            }
+        }
+        if current.get("kind").and_then(Value::as_str) != Some("send-message")
+            || current.pointer("/message/type").and_then(Value::as_str) != Some("secret-request")
+        {
+            return Err("transcript entry is not a secret request".into());
+        }
+        if current.get("secretProvided").and_then(Value::as_bool) == Some(true) {
+            return Ok(json!({
+                "accepted":false,
+                "reason":"settled",
+                "generation":generation,
+                "secretProvided":true,
+            }));
+        }
+        let request = current
+            .pointer("/message/secretRequest")
+            .and_then(Value::as_object)
+            .ok_or("secret request payload missing")?;
+        let target = request
+            .get("target")
+            .and_then(Value::as_object)
+            .ok_or("secret request target missing")?;
+        let target_kind = target
+            .get("kind")
+            .and_then(Value::as_str)
+            .ok_or("secret request target kind missing")?;
+        if target_kind != "channel-credential" {
+            return Err("unsupported secret request target".into());
+        }
+        let platform = target
+            .get("platform")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty() && value.len() <= 64)
+            .ok_or("secret request platform missing")?;
+        let field = target
+            .get("field")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty() && value.len() <= 64)
+            .ok_or("secret request field missing")?;
+        if !platform
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'.' | b'_' | b'-'))
+            || !field
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
+        {
+            return Err("secret request target is invalid".into());
+        }
+        let label = request
+            .get("label")
+            .and_then(Value::as_str)
+            .unwrap_or("credential")
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+            .chars()
+            .take(120)
+            .collect::<String>();
+        Ok(json!({
+            "accepted":true,
+            "generation":generation,
+            "accountFence":account_fence,
+            "agentId":agent_id,
+            "entryId":entry_id,
+            "platform":platform,
+            "field":field,
+            "label":if label.is_empty() {"credential"} else {label.as_str()},
+            "targetKind":target_kind,
+            "secretProvided":false,
+        }))
+    }
+
+    fn transcript_secret_commit(&mut self, params: &Value) -> Result<Value, String> {
+        let live_account_fence = self.current_turn_account_fence()?;
+        let requested_account_fence = required_string(params, "accountFence")?;
+        if requested_account_fence != live_account_fence {
+            return Err("secret request commit was fenced by account generation".into());
+        }
+        let prepared = self.transcript_secret_prepare(params)?;
+        let generation = params.get("generation").and_then(Value::as_u64).unwrap_or(0);
+        if prepared.get("accepted").and_then(Value::as_bool) != Some(true) {
+            return Ok(prepared);
+        }
+        for key in ["platform", "field"] {
+            if prepared.get(key).and_then(Value::as_str) != params.get(key).and_then(Value::as_str) {
+                return Err("secret request target changed before commit".into());
+            }
+        }
+        let entry_id = required_string(params, "entryId")?;
+        let agent_id = required_string(params, "agentId")?;
+        let updated = self
+            .transcript
+            .lock()
+            .map_err(|_| "transcript lock poisoned".to_string())?
+            .update_entry(entry_id, |entry| {
+                let mut next = entry.clone();
+                next["secretProvided"] = Value::Bool(true);
+                next
+            })
+            .map_err(|error| format!("failed to persist secret request settlement: {error}"))?
+            .ok_or("secret request transcript entry disappeared before commit")?;
+        if updated.get("agentId").and_then(Value::as_str) != Some(agent_id) {
+            return Err("secret request settlement crossed Agent fence".into());
+        }
+        let label = prepared
+            .get("label")
+            .and_then(Value::as_str)
+            .unwrap_or("credential");
+        let target_kind = prepared
+            .get("targetKind")
+            .and_then(Value::as_str)
+            .unwrap_or("channel-credential");
+        let acknowledgement = format!(
+            "[The user securely provided the requested secret: \"{label}\". It was written straight to its destination ({target_kind}); you never see the value and it is not in this conversation.]\nConfirm to the user that it is set, then continue. For a connector credential, the connection links within a few seconds, so you can check and report its status."
+        );
+        let continuation = self.feature_execute(&json!({"command":{
+            "type":"chat.send",
+            "requestId":format!("secret-provided:{agent_id}:{entry_id}:{generation}"),
+            "agentId":agent_id,
+            "text":acknowledgement,
+            "hidden":true,
+            "appendUserMessage":false,
+            "awaitTurn":false,
+            "requestSource":"secret-request",
+        }}))?;
+        let operation_id = continuation
+            .get("operationId")
+            .and_then(Value::as_str)
+            .filter(|value| !value.trim().is_empty())
+            .ok_or("secret request continuation did not return an operation id")?;
+        Ok(json!({
+            "accepted":true,
+            "generation":generation,
+            "secretProvided":true,
+            "operationId":operation_id,
+            "entry":updated,
+        }))
+    }
 
     fn widget_respond(&mut self, params: &Value) -> Result<Value, String> {
         let account_fence = self.current_turn_account_fence()?;
@@ -19930,6 +20101,122 @@ mod widget_action_tests {
         let dismissed = rows.iter().find(|row| row["id"] == "widget-b").unwrap();
         assert_eq!(answered["respondedValue"], "a");
         assert_eq!(dismissed["widgetDismissed"], true);
+    }
+
+    fn secret_request_entry(id: &str, agent_id: &str, account_fence: &str) -> Value {
+        json!({
+            "id":id,
+            "kind":"send-message",
+            "agentId":agent_id,
+            "accountFence":account_fence,
+            "message":{
+                "type":"secret-request",
+                "secretRequest":{
+                    "label":" Discord bot token ",
+                    "target":{
+                        "kind":"channel-credential",
+                        "platform":"discord",
+                        "field":"token"
+                    }
+                }
+            }
+        })
+    }
+
+    #[test]
+    fn secret_request_prepare_and_commit_are_account_fenced_durable_and_secret_free() {
+        let root = tempfile::tempdir().unwrap();
+        let mut host = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+        sign_in_test_account(&mut host);
+        let fence = host.current_turn_account_fence().unwrap();
+        host.transcript
+            .lock()
+            .unwrap()
+            .append_entry(secret_request_entry("secret-a", "agent-a", &fence))
+            .unwrap();
+
+        assert!(host
+            .dispatch(
+                "feature.transcript.secret.prepare",
+                &json!({"agentId":"agent-b","entryId":"secret-a","generation":7}),
+            )
+            .is_err());
+
+        let prepared = host
+            .dispatch(
+                "feature.transcript.secret.prepare",
+                &json!({
+                    "agentId":"agent-a",
+                    "entryId":"secret-a",
+                    "generation":7,
+                    "value":"secret-token-must-never-enter-native-transcript"
+                }),
+            )
+            .unwrap();
+        assert_eq!(prepared["accepted"], true);
+        assert_eq!(prepared["accountFence"], fence);
+        assert_eq!(prepared["platform"], "discord");
+        assert_eq!(prepared["field"], "token");
+        assert_eq!(prepared["label"], "Discord bot token");
+        assert!(prepared.get("value").is_none());
+
+        assert!(host
+            .dispatch(
+                "feature.transcript.secret.commit",
+                &json!({
+                    "agentId":"agent-a",
+                    "entryId":"secret-a",
+                    "generation":7,
+                    "accountFence":"session:stale:android",
+                    "platform":"discord",
+                    "field":"token"
+                }),
+            )
+            .is_err());
+
+        let committed = host
+            .dispatch(
+                "feature.transcript.secret.commit",
+                &json!({
+                    "agentId":"agent-a",
+                    "entryId":"secret-a",
+                    "generation":7,
+                    "accountFence":fence,
+                    "platform":"discord",
+                    "field":"token"
+                }),
+            )
+            .unwrap();
+        assert_eq!(committed["accepted"], true);
+        assert_eq!(committed["secretProvided"], true);
+        assert!(committed["operationId"]
+            .as_str()
+            .is_some_and(|value| !value.is_empty()));
+
+        let duplicate = host
+            .dispatch(
+                "feature.transcript.secret.prepare",
+                &json!({"agentId":"agent-a","entryId":"secret-a","generation":8}),
+            )
+            .unwrap();
+        assert_eq!(duplicate["accepted"], false);
+        assert_eq!(duplicate["reason"], "settled");
+
+        drop(host);
+        let mut reopened = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+        sign_in_test_account(&mut reopened);
+        let snapshot = reopened
+            .dispatch("feature.transcript.snapshot", &json!({}))
+            .unwrap();
+        let entry = snapshot
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|entry| entry["id"] == "secret-a")
+            .unwrap();
+        assert_eq!(entry["secretProvided"], true);
+        let durable = std::fs::read_to_string(reopened.transcript.lock().unwrap().path()).unwrap();
+        assert!(!durable.contains("secret-token-must-never-enter-native-transcript"));
     }
 
     #[test]

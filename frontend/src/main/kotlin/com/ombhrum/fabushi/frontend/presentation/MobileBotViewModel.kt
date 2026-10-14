@@ -293,6 +293,7 @@ data class MobileBotUiState(
     val pendingApproval: PendingAgentApproval? = null,
     val approvalCleanup: MobileApprovalCleanupState = MobileApprovalCleanupState(),
     val widgetPendingEntryIds: Set<String> = emptySet(),
+    val secretPendingEntryIds: Set<String> = emptySet(),
     val editorSuggestions: MobileEditorSuggestionSnapshot = MobileEditorSuggestionSnapshot(),
     val modelCatalog: MobileModelCatalogState = MobileModelCatalogState(),
     val messageTargetId: String? = null,
@@ -691,6 +692,7 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
                     commitState(
                         mutableState.value.copy(
                             widgetPendingEntryIds = emptySet(),
+                            secretPendingEntryIds = emptySet(),
                             approvalCleanup = MobileApprovalCleanupState(),
                             editorSuggestions = MobileEditorSuggestionSnapshot(),
                             modelCatalog = MobileModelCatalogState(),
@@ -1553,6 +1555,7 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
                 pendingApproval = null,
                 approvalCleanup = MobileApprovalCleanupState(),
                 widgetPendingEntryIds = emptySet(),
+                secretPendingEntryIds = emptySet(),
                 editorSuggestions = MobileEditorSuggestionSnapshot(),
                 messageTargetId = targetEntryId,
                 error = null,
@@ -1858,6 +1861,7 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
                 pendingApproval = null,
                 approvalCleanup = MobileApprovalCleanupState(),
                 widgetPendingEntryIds = emptySet(),
+                secretPendingEntryIds = emptySet(),
                 editorSuggestions = MobileEditorSuggestionSnapshot(),
                 messageTargetId = null,
                 error = null,
@@ -2945,6 +2949,73 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
 
     fun dismissWidget(entryId: String) {
         runWidgetAction(entryId, null)
+    }
+
+    fun submitSecret(entryId: String, value: String) {
+        val snapshot = mutableState.value
+        val bot = snapshot.activeBot ?: return
+        if (bot.miniAppId != null || entryId.isBlank() || value.isBlank()) return
+        val secretCard = snapshot.messages.firstOrNull {
+            it.id == entryId && it.kind == MobileChatEntryKind.SECRET_REQUEST
+        }?.secretRequest ?: return
+        if (secretCard.provided || entryId in snapshot.secretPendingEntryIds) return
+
+        val accountSlot = rosterSelectionAccountSlot
+        val scopeGeneration = sendPresentationGeneration
+        commitState(
+            snapshot.copy(
+                secretPendingEntryIds = snapshot.secretPendingEntryIds + entryId,
+                error = null,
+            ),
+        )
+        viewModelScope.launch {
+            val result = withContext(Dispatchers.IO) {
+                runCatching {
+                    coordinator.submitSecret(
+                        accountSlot = accountSlot,
+                        agentId = bot.id,
+                        entryId = entryId,
+                        value = value,
+                        generation = scopeGeneration,
+                    )
+                }
+            }
+            if (!isCurrentSendScope(bot.id, accountSlot, scopeGeneration)) return@launch
+            val withoutPending = mutableState.value.secretPendingEntryIds - entryId
+            val settled = result.getOrNull()
+            if (result.isFailure || settled?.accepted != true || !settled.secretProvided) {
+                commitState(
+                    mutableState.value.copy(
+                        secretPendingEntryIds = withoutPending,
+                        error = result.exceptionOrNull()?.message
+                            ?: settled?.reason
+                            ?: "Credential could not be stored securely",
+                    ),
+                )
+                return@launch
+            }
+            try {
+                refreshDurableSendProjection(bot.id, accountSlot, scopeGeneration)
+                if (isCurrentSendScope(bot.id, accountSlot, scopeGeneration)) {
+                    commitState(
+                        mutableState.value.copy(
+                            secretPendingEntryIds = mutableState.value.secretPendingEntryIds - entryId,
+                        ),
+                    )
+                }
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Throwable) {
+                if (isCurrentSendScope(bot.id, accountSlot, scopeGeneration)) {
+                    commitState(
+                        mutableState.value.copy(
+                            secretPendingEntryIds = withoutPending,
+                            error = error.message ?: "Credential reconciliation failed",
+                        ),
+                    )
+                }
+            }
+        }
     }
 
     private fun runWidgetAction(entryId: String, response: String?) {

@@ -181,6 +181,26 @@ internal fun canonicalMobileTranscriptForAgent(
                     )
                     continue
                 }
+                if (message.optString("type") == "secret-request") {
+                    val request = message.optJSONObject("secretRequest") ?: continue
+                    val target = request.optJSONObject("target") ?: continue
+                    if (target.optString("kind") != "channel-credential") continue
+                    val label = request.optString("label").trim().ifBlank { "Credential" }
+                    projected[id] = MobileChatMessage(
+                        id = id,
+                        role = MobileChatRole.ASSISTANT,
+                        text = label,
+                        kind = MobileChatEntryKind.SECRET_REQUEST,
+                        secretRequest = MobileSecretRequestCard(
+                            label = label,
+                            description = request.optString("description").trim().takeIf(String::isNotEmpty),
+                            provided = entry.optBoolean("secretProvided", false),
+                        ),
+                        hasTranscriptReaction = canonicalTranscriptHasReaction(entry),
+                        hasTranscriptThreadChip = entry.optBoolean("hasThreadChip", false),
+                    )
+                    continue
+                }
                 if (message.optString("type") != "widget") continue
                 val widget = message.optJSONObject("widget") ?: continue
                 val prompt = widget.optString("prompt").trim()

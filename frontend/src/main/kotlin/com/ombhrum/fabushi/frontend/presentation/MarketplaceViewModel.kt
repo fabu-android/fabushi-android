@@ -197,7 +197,7 @@ data class PermissionRequest(
 )
 
 enum class MobileChatRole { USER, ASSISTANT }
-enum class MobileChatEntryKind { MESSAGE, ACTION, THINKING, MINI_APP, WIDGET, TOOL_RESULT }
+enum class MobileChatEntryKind { MESSAGE, ACTION, THINKING, MINI_APP, WIDGET, SECRET_REQUEST, TOOL_RESULT }
 
 data class MobileWidgetOption(
     val label: String,
@@ -213,6 +213,12 @@ data class MobileWidgetCard(
     val dismissOnMoveOn: Boolean = false,
     val respondedValue: String? = null,
     val dismissed: Boolean = false,
+)
+
+data class MobileSecretRequestCard(
+    val label: String,
+    val description: String? = null,
+    val provided: Boolean = false,
 )
 
 data class MobileToolResultCard(
@@ -253,6 +259,7 @@ data class MobileChatMessage(
     val sendAcknowledgementGeneration: Long? = null,
     val sendFailureReason: String? = null,
     val widget: MobileWidgetCard? = null,
+    val secretRequest: MobileSecretRequestCard? = null,
     val toolResult: MobileToolResultCard? = null,
     val toolCallId: String? = null,
     val attachments: List<MobileTranscriptAttachment> = emptyList(),

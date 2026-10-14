@@ -58,6 +58,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -347,6 +348,57 @@ internal fun GrokBotRowAndroid(
 }
 
 @Composable
+private fun MobileSecretRequestTranscriptCard(
+    entry: MobileChatMessage,
+    pending: Boolean,
+    onSubmit: (String) -> Unit,
+) {
+    val card = entry.secretRequest ?: return
+    var secretValue by remember(entry.id) { mutableStateOf("") }
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .background(Color(0xFFF6F6F7), RoundedCornerShape(14.dp))
+            .padding(12.dp)
+            .testTag("mobile-bot-secret-request-" + entry.id),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Text(card.label, color = GrokMobileInk, fontWeight = FontWeight.SemiBold)
+        card.description?.takeIf(String::isNotBlank)?.let {
+            Text(it, color = GrokMobileMuted, fontSize = 12.sp)
+        }
+        if (card.provided) {
+            Text("Credential saved securely", color = GrokMobileMuted, fontSize = 12.sp)
+        } else {
+            OutlinedTextField(
+                value = secretValue,
+                onValueChange = { secretValue = it.take(64 * 1024) },
+                enabled = !pending,
+                singleLine = true,
+                visualTransformation = PasswordVisualTransformation(),
+                label = { Text("Secret") },
+                modifier = Modifier.fillMaxWidth().testTag("mobile-bot-secret-input-" + entry.id),
+            )
+            Button(
+                onClick = {
+                    val submitted = secretValue
+                    secretValue = ""
+                    if (submitted.isNotBlank()) onSubmit(submitted)
+                },
+                enabled = !pending && secretValue.isNotBlank(),
+                modifier = Modifier.testTag("mobile-bot-secret-submit-" + entry.id),
+            ) {
+                if (pending) {
+                    CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 1.5.dp)
+                } else {
+                    Text("Save securely")
+                }
+            }
+        }
+    }
+}
+
+@Composable
 internal fun GrokBotChatAndroid(
     bot: MobileBotSummaryAndroid,
     state: MobileBotUiState,
@@ -369,6 +421,7 @@ internal fun GrokBotChatAndroid(
     onCloseTranscriptThread: () -> Unit,
     onRespondToWidget: (String, String) -> Unit,
     onDismissWidget: (String) -> Unit,
+    onSubmitSecret: (String, String) -> Unit,
     onStop: () -> Unit,
     onResolveApproval: (MobileApprovalDecision) -> Unit,
     onMessageTargetConsumed: (String) -> Unit,
@@ -697,6 +750,12 @@ internal fun GrokBotChatAndroid(
                             pending = entry.id in state.widgetPendingEntryIds,
                             onRespond = { value -> onRespondToWidget(entry.id, value) },
                             onDismiss = { onDismissWidget(entry.id) },
+                        )
+                    entry.kind == MobileChatEntryKind.SECRET_REQUEST && entry.secretRequest != null ->
+                        MobileSecretRequestTranscriptCard(
+                            entry = entry,
+                            pending = entry.id in state.secretPendingEntryIds,
+                            onSubmit = { value -> onSubmitSecret(entry.id, value) },
                         )
                     entry.role == MobileChatRole.USER -> Column(
                         Modifier.fillMaxWidth(),

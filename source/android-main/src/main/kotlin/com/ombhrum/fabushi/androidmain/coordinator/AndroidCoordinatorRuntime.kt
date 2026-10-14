@@ -72,6 +72,7 @@ import com.ombhrum.fabushi.androidpreload.runtime.AndroidContactGroupsSnapshot
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidSidebarSection
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidSidebarSectionsSnapshot
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidWidgetActionResult
+import com.ombhrum.fabushi.androidpreload.runtime.AndroidSecretSubmissionResult
 import com.ombhrum.fabushi.androidmain.security.AndroidRemoteControlSessionStore
 import com.ombhrum.fabushi.androidmain.security.AndroidRemotePairingStore
 import com.ombhrum.fabushi.androidmain.security.RemoteControlSessionCredential
@@ -2470,6 +2471,23 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
             generation = generation,
             operationId = operationId,
             reason = reply.optString("reason").trim().takeIf(String::isNotEmpty),
+        )
+    }
+
+    override fun submitSecret(
+        accountSlot: String?,
+        agentId: String,
+        entryId: String,
+        value: String,
+        generation: Long,
+    ): AndroidSecretSubmissionResult {
+        val result = host.submitTranscriptSecret(accountSlot, agentId, entryId, value, generation)
+        return AndroidSecretSubmissionResult(
+            accepted = result.optBoolean("accepted", false),
+            generation = result.optLong("generation", generation),
+            secretProvided = result.optBoolean("secretProvided", false),
+            operationId = result.optString("operationId").takeIf(String::isNotBlank),
+            reason = result.optString("reason").takeIf(String::isNotBlank),
         )
     }
 

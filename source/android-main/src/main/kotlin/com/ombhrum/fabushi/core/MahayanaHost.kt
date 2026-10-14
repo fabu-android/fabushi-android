@@ -491,6 +491,72 @@ class MahayanaHost(
         }
     }
 
+    fun submitTranscriptSecret(
+        accountSlot: String?,
+        agentId: String,
+        entryId: String,
+        value: String,
+        generation: Long,
+    ): JSONObject {
+        check(!featureHostTest && !closed) { "Transcript secret submission requires production Host" }
+        val cleanAgentId = validateAgentChannelId(agentId, "agent id")
+        val cleanEntryId = entryId.trim().also {
+            require(it.isNotEmpty() && it.length <= 512 && it.none(Char::isISOControl)) {
+                "Invalid secret request entry id"
+            }
+        }
+        val secret = value.trim()
+        require(secret.isNotEmpty()) { "Secret value is required" }
+        require(secret.toByteArray(Charsets.UTF_8).size <= 64 * 1024) { "Secret value is too large" }
+
+        val prepareParams = JSONObject()
+            .put("agentId", cleanAgentId)
+            .put("entryId", cleanEntryId)
+            .put("generation", generation)
+        accountSlot?.trim()?.takeIf(String::isNotEmpty)?.let { prepareParams.put("accountSlot", it) }
+        val prepared = request("feature.transcript.secret.prepare", prepareParams)
+        if (!prepared.optBoolean("accepted", false)) return prepared
+        val accountFence = prepared.getString("accountFence")
+        check(currentCredentialAccountFence() == accountFence) {
+            "Secret request was fenced by an account transition"
+        }
+        val platform = validateAgentChannelPlatform(prepared.getString("platform"))
+        val field = validateAgentChannelField(prepared.getString("field"))
+        val label = prepared.optString("label").replace(Regex("\s+"), " ").trim()
+            .take(120).ifBlank { "credential" }
+        val secretRef = agentChannelSecretRef(cleanAgentId, platform, field)
+        credentialVaultStore.upsert(
+            accountFence,
+            secretRef,
+            "Agent $platform · $label",
+            secret,
+            listOf("https://agent-channel.fabushi.local"),
+        )
+        val metadata = request(
+            "feature.agent.channels.writeMetadata",
+            JSONObject()
+                .put("agentId", cleanAgentId)
+                .put("platform", platform)
+                .put("label", label)
+                .put("accountFence", accountFence),
+        )
+        check(metadata.optBoolean("written", false)) {
+            "Agent channel metadata was rejected after secure credential storage"
+        }
+        check(currentCredentialAccountFence() == accountFence) {
+            "Secret request became stale after credential storage"
+        }
+        val commitParams = JSONObject()
+            .put("agentId", cleanAgentId)
+            .put("entryId", cleanEntryId)
+            .put("generation", generation)
+            .put("accountFence", accountFence)
+            .put("platform", platform)
+            .put("field", field)
+        accountSlot?.trim()?.takeIf(String::isNotEmpty)?.let { commitParams.put("accountSlot", it) }
+        return request("feature.transcript.secret.commit", commitParams)
+    }
+
     fun agentChannelDisconnect(agentId: String, platform: String): JSONObject {
         check(!featureHostTest && !closed) { "Agent channel mutation requires production Host" }
         val cleanAgentId = validateAgentChannelId(agentId, "agent id")
@@ -560,8 +626,19 @@ class MahayanaHost(
             }
         }
 
-    private fun agentChannelSecretRef(agentId: String, platform: String): String =
-        "agent-channel:$agentId:$platform"
+    private fun validateAgentChannelField(raw: String): String =
+        raw.trim().also { value ->
+            require(value.matches(Regex("^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"))) {
+                "Invalid Agent channel credential field"
+            }
+        }
+
+    private fun agentChannelSecretRef(agentId: String, platform: String, field: String = "token"): String =
+        if (field == "token") {
+            "agent-channel:$agentId:$platform"
+        } else {
+            "agent-channel:$agentId:$platform:$field"
+        }
 
     /** Internal execution-boundary consumption; Presentation has no secret reveal route. */
     internal fun credentialForOrigin(secretRef: String, origin: String): String {

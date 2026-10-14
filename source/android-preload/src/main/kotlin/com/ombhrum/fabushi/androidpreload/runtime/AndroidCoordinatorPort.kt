@@ -329,6 +329,14 @@ data class AndroidWidgetActionResult(
     val reason: String? = null,
 )
 
+data class AndroidSecretSubmissionResult(
+    val accepted: Boolean,
+    val generation: Long,
+    val secretProvided: Boolean,
+    val operationId: String? = null,
+    val reason: String? = null,
+)
+
 data class AndroidToolResultCard(
     val kind: String,
     val toolCallId: String,
@@ -1074,6 +1082,14 @@ interface AndroidCoordinatorPort {
         generation: Long,
     ): AndroidWidgetActionResult =
         error("Transcript widget dismissal is unavailable on this Coordinator port")
+    fun submitSecret(
+        accountSlot: String?,
+        agentId: String,
+        entryId: String,
+        value: String,
+        generation: Long,
+    ): AndroidSecretSubmissionResult =
+        error("Transcript secret submission is unavailable on this Coordinator port")
     fun featureInterrupt(params: JSONObject): JSONObject
     fun featureApprovalResolve(params: JSONObject): JSONObject
     fun featureApprovalStatus(approvalId: String): Boolean =
