@@ -6047,6 +6047,15 @@
             "SandStructuredLogTelemetry 90-entry facade audit",
             "Host-owned structured-log producer/mapper/settlement contracts"
           ]
+        },
+        {
+          "path": "source/host/src/host_diagnostics.rs",
+          "blob_sha": "9585418e747473b56bcb81ea01eba4ec1b50b214",
+          "symbols": [
+            "HostDiagnostic",
+            "pin_host_diagnostics_reporter",
+            "report_host_diagnostic"
+          ]
         }
       ],
       "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
@@ -20391,6 +20400,24 @@
             "GatewayServer",
             "start_gateway_server"
           ]
+        },
+        {
+          "path": "source/host/src/host_discovery.rs",
+          "blob_sha": "05c727261b11552839f0d17f2c6f935cca94b27d",
+          "symbols": [
+            "GatewayDiscoveryInfo",
+            "write_gateway_discovery",
+            "clear_gateway_discovery"
+          ]
+        },
+        {
+          "path": "source/host/src/host_gateway_api.rs",
+          "blob_sha": "b983d0d112a1cc30c8ca2c1d4678704ddf88890f",
+          "symbols": [
+            "HostGatewayOwner",
+            "CreateAgentNonceLedger",
+            "sanitize_create_agent_args"
+          ]
         }
       ],
       "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
@@ -20459,6 +20486,515 @@
       "artifact": null,
       "verification_status": "not-verified",
       "notes": "Semantic mapping only. Do not mark implemented/verified until every applicable Desktop gateway responsibility is proven through Android shipping composition plus same-exact-HEAD integration/package/device evidence."
+    },
+    {
+      "responsibility_id": "TRANSCRIPT-INITIAL-LOAD-ANDROID-001",
+      "domain": "transcript",
+      "desktop_sources": [
+        {
+          "path": "source/host/src/host_initial_transcript_load.rs",
+          "blob_sha": "06da15e7c17cc568c7eb2666c64c34c28ff704dd",
+          "symbols": [
+            "load_initial_transcript_resiliently",
+            "InitialTranscriptDegradedReason"
+          ]
+        }
+      ],
+      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "responsibility": "Load the initial canonical Agent transcript with bounded SQLite-busy retry and explicit degraded handling for Agent-limit/storage-corruption without creating a second transcript owner.",
+      "source_owner": "Desktop initial transcript bootstrap over ProductionSessionWorkers/SessionRuntime",
+      "direct_callers": [
+        "Host bootstrap/runtime composition and domain owners where wired"
+      ],
+      "downstream_dependencies": [
+        "canonical Host state",
+        "process/account lifecycle",
+        "durable storage and typed Android transport as applicable"
+      ],
+      "state_owner": "Rust Host/domain owners retain canonical state; Android platform code supplies lifecycle/storage/transport adapters and presentation owns no duplicate durable truth.",
+      "persistent_state": [
+        "app-private durable state only where the source responsibility requires persistence; no renderer-owned duplicate database"
+      ],
+      "protocol_wire_contract": [
+        "bounded busy retry",
+        "agent-id + load-limit validation",
+        "explicit degraded reason",
+        "canonical transcript remains single owner"
+      ],
+      "visible_effect": "Cold start/reopen can show the canonical transcript or an explicit degraded state instead of duplicating/losing messages.",
+      "failure_behavior": [
+        "fail closed on malformed/stale/corrupt state",
+        "do not convert partial compatibility code into a second canonical owner"
+      ],
+      "cancellation_behavior": "cancellation follows the owning Host/Coordinator operation; bootstrap/storage helpers do not invent UI-owned cancellation.",
+      "retry_semantics": "only idempotent reads/bootstrap reconciliation may retry; side effects remain owned by canonical Host/Coordinator recovery.",
+      "idempotency_semantics": "reopen/reconciliation must not duplicate canonical side effects or durable ownership.",
+      "process_death_recovery": "reopen from app-private durable owners and fence stale process/account generations rather than replaying user side effects.",
+      "account_fencing": "account-scoped operations are fenced by Android Coordinator/Host account generation where applicable; process-global helpers cannot switch account authority.",
+      "security_boundary": "Compose -> typed Coordinator -> Rust Host/TranscriptStore; no UI-owned transcript fallback.",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "source/host/src/host_initial_transcript_load.rs",
+        "source/host/src/extensions/transcript/transcript_store.rs",
+        "source/host/src/android_json_runtime.rs"
+      ],
+      "android_owner": "Rust Host/domain owner plus Android-specific lifecycle/storage/transport adapter",
+      "platform_delta": "Desktop session bootstrap is adapted to an Android trait/options boundary over app-private canonical transcript storage.",
+      "implementation_status": "mapped",
+      "production_wiring": "Semantic owner/target is identified, but a complete shipping caller/lifecycle proof is not yet present on 8920deab.",
+      "unit_test": "focused source-level tests exist where present; exact descendant Actions required",
+      "contract_test": "required to prove the source responsibility is composed through the canonical Android Host/Coordinator path",
+      "integration_test": "required on exact descendant GitHub Actions; no local validation is used",
+      "packaged_test": "required where this responsibility affects final APK/AAB behavior",
+      "device_test": "required for lifecycle/process-death/account-switch behavior where applicable",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Mapped because helper semantics exist but shipping bootstrap composition is not yet proven."
+    },
+    {
+      "responsibility_id": "HOST-INVARIANT-ANDROID-001",
+      "domain": "host-runtime",
+      "desktop_sources": [
+        {
+          "path": "source/host/src/host_invariant.rs",
+          "blob_sha": "8f4f5b4ac03200a099d390e7d8e102041b67f768",
+          "symbols": [
+            "SandInvariantReport",
+            "install_invariant_reporter",
+            "invariant_failure"
+          ]
+        }
+      ],
+      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "responsibility": "Preserve fail-stop Host invariant reporting with stripped user-safe diagnostics and a single reporter owner.",
+      "source_owner": "Desktop Host invariant reporter",
+      "direct_callers": [
+        "Host bootstrap/runtime composition and domain owners where wired"
+      ],
+      "downstream_dependencies": [
+        "canonical Host state",
+        "process/account lifecycle",
+        "durable storage and typed Android transport as applicable"
+      ],
+      "state_owner": "Rust Host/domain owners retain canonical state; Android platform code supplies lifecycle/storage/transport adapters and presentation owns no duplicate durable truth.",
+      "persistent_state": [
+        "app-private durable state only where the source responsibility requires persistence; no renderer-owned duplicate database"
+      ],
+      "protocol_wire_contract": [
+        "single installed reporter",
+        "stripped invariant message",
+        "fail-stop panic"
+      ],
+      "visible_effect": "Invariant violations terminate the invalid execution path while exposing only bounded diagnostic metadata.",
+      "failure_behavior": [
+        "fail closed on malformed/stale/corrupt state",
+        "do not convert partial compatibility code into a second canonical owner"
+      ],
+      "cancellation_behavior": "cancellation follows the owning Host/Coordinator operation; bootstrap/storage helpers do not invent UI-owned cancellation.",
+      "retry_semantics": "only idempotent reads/bootstrap reconciliation may retry; side effects remain owned by canonical Host/Coordinator recovery.",
+      "idempotency_semantics": "reopen/reconciliation must not duplicate canonical side effects or durable ownership.",
+      "process_death_recovery": "reopen from app-private durable owners and fence stale process/account generations rather than replaying user side effects.",
+      "account_fencing": "account-scoped operations are fenced by Android Coordinator/Host account generation where applicable; process-global helpers cannot switch account authority.",
+      "security_boundary": "Reporter receives bounded diagnostic fields only; secrets/raw payloads are not part of the invariant contract.",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "source/host/src/host_invariant.rs"
+      ],
+      "android_owner": "Rust Host/domain owner plus Android-specific lifecycle/storage/transport adapter",
+      "platform_delta": "Platform-independent logic is direct-ported; Android still needs shipping reporter composition evidence.",
+      "implementation_status": "mapped",
+      "production_wiring": "Semantic owner/target is identified, but a complete shipping caller/lifecycle proof is not yet present on 8920deab.",
+      "unit_test": "focused source-level tests exist where present; exact descendant Actions required",
+      "contract_test": "required to prove the source responsibility is composed through the canonical Android Host/Coordinator path",
+      "integration_test": "required on exact descendant GitHub Actions; no local validation is used",
+      "packaged_test": "required where this responsibility affects final APK/AAB behavior",
+      "device_test": "required for lifecycle/process-death/account-switch behavior where applicable",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Byte-identical source but no external shipping caller was found, so not implemented/verified."
+    },
+    {
+      "responsibility_id": "HOST-PROCESS-LOCK-ANDROID-001",
+      "domain": "host-lifecycle",
+      "desktop_sources": [
+        {
+          "path": "source/host/src/host_lock.rs",
+          "blob_sha": "0d5156b6d053ba1f0beeb5dd54d0e83671365e5d",
+          "symbols": [
+            "HostLockOutcome",
+            "acquire_host_lock"
+          ]
+        }
+      ],
+      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "responsibility": "Guarantee one canonical Host process owner per app-private lock root, recover stale PID locks, and refuse a competing live owner without Desktop process-kill takeover.",
+      "source_owner": "Desktop Host lock/takeover owner",
+      "direct_callers": [
+        "Host bootstrap/runtime composition and domain owners where wired"
+      ],
+      "downstream_dependencies": [
+        "canonical Host state",
+        "process/account lifecycle",
+        "durable storage and typed Android transport as applicable"
+      ],
+      "state_owner": "Rust Host/domain owners retain canonical state; Android platform code supplies lifecycle/storage/transport adapters and presentation owns no duplicate durable truth.",
+      "persistent_state": [
+        "app-private durable state only where the source responsibility requires persistence; no renderer-owned duplicate database"
+      ],
+      "protocol_wire_contract": [
+        "atomic lock acquisition",
+        "stale PID cleanup",
+        "duplicate live owner rejection"
+      ],
+      "visible_effect": "Process recreation cannot silently create two canonical Host owners.",
+      "failure_behavior": [
+        "fail closed on malformed/stale/corrupt state",
+        "do not convert partial compatibility code into a second canonical owner"
+      ],
+      "cancellation_behavior": "cancellation follows the owning Host/Coordinator operation; bootstrap/storage helpers do not invent UI-owned cancellation.",
+      "retry_semantics": "only idempotent reads/bootstrap reconciliation may retry; side effects remain owned by canonical Host/Coordinator recovery.",
+      "idempotency_semantics": "reopen/reconciliation must not duplicate canonical side effects or durable ownership.",
+      "process_death_recovery": "reopen from app-private durable owners and fence stale process/account generations rather than replaying user side effects.",
+      "account_fencing": "account-scoped operations are fenced by Android Coordinator/Host account generation where applicable; process-global helpers cannot switch account authority.",
+      "security_boundary": "App-private lock file only; Android does not gain arbitrary process termination authority.",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "source/host/src/host_lock.rs",
+        "source/host/src/main.rs"
+      ],
+      "android_owner": "Rust Host/domain owner plus Android-specific lifecycle/storage/transport adapter",
+      "platform_delta": "Android removes arbitrary process command inspection/termination and uses fail-closed stale/live PID ownership.",
+      "implementation_status": "mapped",
+      "production_wiring": "Semantic owner/target is identified, but a complete shipping caller/lifecycle proof is not yet present on 8920deab.",
+      "unit_test": "focused source-level tests exist where present; exact descendant Actions required",
+      "contract_test": "required to prove the source responsibility is composed through the canonical Android Host/Coordinator path",
+      "integration_test": "required on exact descendant GitHub Actions; no local validation is used",
+      "packaged_test": "required where this responsibility affects final APK/AAB behavior",
+      "device_test": "required for lifecycle/process-death/account-switch behavior where applicable",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Compatibility HostMain wiring exists but final Android process owner/lifecycle proof is open."
+    },
+    {
+      "responsibility_id": "HOST-DATA-PATHS-ANDROID-001",
+      "domain": "host-storage",
+      "desktop_sources": [
+        {
+          "path": "source/host/src/host_paths.rs",
+          "blob_sha": "255d75860956a4aedfa448bea06ce13017f1b1a0",
+          "symbols": [
+            "get_sand_root_dir",
+            "get_sand_production_root_dir",
+            "reanchor_sand_path"
+          ]
+        }
+      ],
+      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "responsibility": "Resolve canonical Host durable roots and well-known marker/secret/lock paths inside Android app-private storage and re-anchor migrated paths without Desktop home/Box assumptions.",
+      "source_owner": "Desktop Host path resolver",
+      "direct_callers": [
+        "Host bootstrap/runtime composition and domain owners where wired"
+      ],
+      "downstream_dependencies": [
+        "canonical Host state",
+        "process/account lifecycle",
+        "durable storage and typed Android transport as applicable"
+      ],
+      "state_owner": "Rust Host/domain owners retain canonical state; Android platform code supplies lifecycle/storage/transport adapters and presentation owns no duplicate durable truth.",
+      "persistent_state": [
+        "app-private durable state only where the source responsibility requires persistence; no renderer-owned duplicate database"
+      ],
+      "protocol_wire_contract": [
+        "app-private root",
+        "deterministic production subroot",
+        "well-known marker paths",
+        "safe root re-anchoring"
+      ],
+      "visible_effect": "Durable Host state survives restart without leaking into arbitrary shared filesystem paths.",
+      "failure_behavior": [
+        "fail closed on malformed/stale/corrupt state",
+        "do not convert partial compatibility code into a second canonical owner"
+      ],
+      "cancellation_behavior": "cancellation follows the owning Host/Coordinator operation; bootstrap/storage helpers do not invent UI-owned cancellation.",
+      "retry_semantics": "only idempotent reads/bootstrap reconciliation may retry; side effects remain owned by canonical Host/Coordinator recovery.",
+      "idempotency_semantics": "reopen/reconciliation must not duplicate canonical side effects or durable ownership.",
+      "process_death_recovery": "reopen from app-private durable owners and fence stale process/account generations rather than replaying user side effects.",
+      "account_fencing": "account-scoped operations are fenced by Android Coordinator/Host account generation where applicable; process-global helpers cannot switch account authority.",
+      "security_boundary": "Only app-owned/scoped storage paths are valid; no arbitrary /home/box or renderer path authority.",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "source/host/src/host_paths.rs",
+        "source/host/src/android_json_runtime.rs",
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/FabushiApplication.kt"
+      ],
+      "android_owner": "Rust Host/domain owner plus Android-specific lifecycle/storage/transport adapter",
+      "platform_delta": "Desktop env/home/Box filesystem conventions become explicit app-private Android roots.",
+      "implementation_status": "mapped",
+      "production_wiring": "Semantic owner/target is identified, but a complete shipping caller/lifecycle proof is not yet present on 8920deab.",
+      "unit_test": "focused source-level tests exist where present; exact descendant Actions required",
+      "contract_test": "required to prove the source responsibility is composed through the canonical Android Host/Coordinator path",
+      "integration_test": "required on exact descendant GitHub Actions; no local validation is used",
+      "packaged_test": "required where this responsibility affects final APK/AAB behavior",
+      "device_test": "required for lifecycle/process-death/account-switch behavior where applicable",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Mapped pending exact shipping root/migration/package evidence."
+    },
+    {
+      "responsibility_id": "HOST-PRODUCTION-EXTENSIONS-ANDROID-001",
+      "domain": "host-composition",
+      "desktop_sources": [
+        {
+          "path": "source/host/src/host_production_extensions.rs",
+          "blob_sha": "6294645234707fef8472aff85737c2550252fd0b",
+          "symbols": [
+            "ProductionHostExtensions",
+            "start_production_host_extensions",
+            "ProductionHostBoxExtensions"
+          ]
+        }
+      ],
+      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "responsibility": "Compose all applicable shipping Host extensions exactly once, wire diagnostics/backstops/events to canonical owners, and dispose/account-fence them with the Host lifecycle.",
+      "source_owner": "Desktop production Host extension composition",
+      "direct_callers": [
+        "Host bootstrap/runtime composition and domain owners where wired"
+      ],
+      "downstream_dependencies": [
+        "canonical Host state",
+        "process/account lifecycle",
+        "durable storage and typed Android transport as applicable"
+      ],
+      "state_owner": "Rust Host/domain owners retain canonical state; Android platform code supplies lifecycle/storage/transport adapters and presentation owns no duplicate durable truth.",
+      "persistent_state": [
+        "app-private durable state only where the source responsibility requires persistence; no renderer-owned duplicate database"
+      ],
+      "protocol_wire_contract": [
+        "single extension composition",
+        "start/dispose lifecycle",
+        "canonical diagnostic/event routing",
+        "platform replacement for Desktop-only extensions"
+      ],
+      "visible_effect": "All applicable Host features are live after cold start and disposed/fenced on process/account transition without duplicate owners.",
+      "failure_behavior": [
+        "fail closed on malformed/stale/corrupt state",
+        "do not convert partial compatibility code into a second canonical owner"
+      ],
+      "cancellation_behavior": "cancellation follows the owning Host/Coordinator operation; bootstrap/storage helpers do not invent UI-owned cancellation.",
+      "retry_semantics": "only idempotent reads/bootstrap reconciliation may retry; side effects remain owned by canonical Host/Coordinator recovery.",
+      "idempotency_semantics": "reopen/reconciliation must not duplicate canonical side effects or durable ownership.",
+      "process_death_recovery": "reopen from app-private durable owners and fence stale process/account generations rather than replaying user side effects.",
+      "account_fencing": "account-scoped operations are fenced by Android Coordinator/Host account generation where applicable; process-global helpers cannot switch account authority.",
+      "security_boundary": "Extensions cannot bypass typed Host/Capability Broker boundaries or persist credentials in presentation state.",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "source/host/src/host_production_extensions.rs",
+        "source/host/src/android_json_runtime.rs",
+        "source/host/src/extensions"
+      ],
+      "android_owner": "Rust Host/domain owner plus Android-specific lifecycle/storage/transport adapter",
+      "platform_delta": "Desktop registry/bootstrap is decomposed into AndroidJsonRuntime direct extension composition; Desktop-only browser/Box mechanisms require Android adapters/Remote Runner.",
+      "implementation_status": "mapped",
+      "production_wiring": "Semantic owner/target is identified, but a complete shipping caller/lifecycle proof is not yet present on 8920deab.",
+      "unit_test": "focused source-level tests exist where present; exact descendant Actions required",
+      "contract_test": "required to prove the source responsibility is composed through the canonical Android Host/Coordinator path",
+      "integration_test": "required on exact descendant GitHub Actions; no local validation is used",
+      "packaged_test": "required where this responsibility affects final APK/AAB behavior",
+      "device_test": "required for lifecycle/process-death/account-switch behavior where applicable",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "ProductionExtensionRegistry is not a shipping proof; full extension composition remains open."
+    },
+    {
+      "responsibility_id": "HOST-REQUEST-CONTEXT-ANDROID-001",
+      "domain": "host-context",
+      "desktop_sources": [
+        {
+          "path": "source/host/src/host_request_context.rs",
+          "blob_sha": "3228d29b4fab111ddc46c6208e4e5532fd1d46dc",
+          "symbols": [
+            "HostRequestContext",
+            "create_host_request_context",
+            "resolve_time_zone"
+          ]
+        }
+      ],
+      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "responsibility": "Create a validated per-request Host context carrying request identity, account identity and effective time zone without allowing presentation to become an account/policy owner.",
+      "source_owner": "Desktop Host request-context provider",
+      "direct_callers": [
+        "Host bootstrap/runtime composition and domain owners where wired"
+      ],
+      "downstream_dependencies": [
+        "canonical Host state",
+        "process/account lifecycle",
+        "durable storage and typed Android transport as applicable"
+      ],
+      "state_owner": "Rust Host/domain owners retain canonical state; Android platform code supplies lifecycle/storage/transport adapters and presentation owns no duplicate durable truth.",
+      "persistent_state": [
+        "app-private durable state only where the source responsibility requires persistence; no renderer-owned duplicate database"
+      ],
+      "protocol_wire_contract": [
+        "request id",
+        "account id",
+        "normalized effective time zone"
+      ],
+      "visible_effect": "Host operations use the current account/time-zone context and reject blank/invalid request identity.",
+      "failure_behavior": [
+        "fail closed on malformed/stale/corrupt state",
+        "do not convert partial compatibility code into a second canonical owner"
+      ],
+      "cancellation_behavior": "cancellation follows the owning Host/Coordinator operation; bootstrap/storage helpers do not invent UI-owned cancellation.",
+      "retry_semantics": "only idempotent reads/bootstrap reconciliation may retry; side effects remain owned by canonical Host/Coordinator recovery.",
+      "idempotency_semantics": "reopen/reconciliation must not duplicate canonical side effects or durable ownership.",
+      "process_death_recovery": "reopen from app-private durable owners and fence stale process/account generations rather than replaying user side effects.",
+      "account_fencing": "account-scoped operations are fenced by Android Coordinator/Host account generation where applicable; process-global helpers cannot switch account authority.",
+      "security_boundary": "Context is derived below typed Coordinator transport; UI cannot forge durable account authority.",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "source/host/src/host_request_context.rs",
+        "source/host/src/android_json_runtime.rs",
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/coordinator/AndroidCoordinatorRuntime.kt"
+      ],
+      "android_owner": "Rust Host/domain owner plus Android-specific lifecycle/storage/transport adapter",
+      "platform_delta": "Desktop renderer rule/full-name resolvers are replaced by canonical Android account/settings owners; the compatibility context keeps request/account/time-zone fields.",
+      "implementation_status": "mapped",
+      "production_wiring": "Semantic owner/target is identified, but a complete shipping caller/lifecycle proof is not yet present on 8920deab.",
+      "unit_test": "focused source-level tests exist where present; exact descendant Actions required",
+      "contract_test": "required to prove the source responsibility is composed through the canonical Android Host/Coordinator path",
+      "integration_test": "required on exact descendant GitHub Actions; no local validation is used",
+      "packaged_test": "required where this responsibility affects final APK/AAB behavior",
+      "device_test": "required for lifecycle/process-death/account-switch behavior where applicable",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Mapped because the standalone context constructor is not yet a shipping caller."
+    },
+    {
+      "responsibility_id": "HOST-ROSTER-BOOKKEEPING-ANDROID-001",
+      "domain": "host-roster",
+      "desktop_sources": [
+        {
+          "path": "source/host/src/host_roster_bookkeeping.rs",
+          "blob_sha": "754c4d556117d904f93aa800fa390f1aba61cae6",
+          "symbols": [
+            "HostRosterBookkeeping"
+          ]
+        }
+      ],
+      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "responsibility": "Coordinate cross-store bookkeeping when Agents are created/deleted/recovered so transcript, attachments, snapshot/source-map and remote workspace state cannot retain contradictory orphan ownership.",
+      "source_owner": "Desktop HostRosterBookkeeping over multiple durable ports",
+      "direct_callers": [
+        "Host bootstrap/runtime composition and domain owners where wired"
+      ],
+      "downstream_dependencies": [
+        "canonical Host state",
+        "process/account lifecycle",
+        "durable storage and typed Android transport as applicable"
+      ],
+      "state_owner": "Rust Host/domain owners retain canonical state; Android platform code supplies lifecycle/storage/transport adapters and presentation owns no duplicate durable truth.",
+      "persistent_state": [
+        "app-private durable state only where the source responsibility requires persistence; no renderer-owned duplicate database"
+      ],
+      "protocol_wire_contract": [
+        "ordered cross-store bookkeeping",
+        "idempotent cleanup",
+        "recovery reconciliation"
+      ],
+      "visible_effect": "Deleting/recovering an Agent leaves no visible orphan transcript/attachment/workspace records and does not delete another account's state.",
+      "failure_behavior": [
+        "fail closed on malformed/stale/corrupt state",
+        "do not convert partial compatibility code into a second canonical owner"
+      ],
+      "cancellation_behavior": "cancellation follows the owning Host/Coordinator operation; bootstrap/storage helpers do not invent UI-owned cancellation.",
+      "retry_semantics": "only idempotent reads/bootstrap reconciliation may retry; side effects remain owned by canonical Host/Coordinator recovery.",
+      "idempotency_semantics": "reopen/reconciliation must not duplicate canonical side effects or durable ownership.",
+      "process_death_recovery": "reopen from app-private durable owners and fence stale process/account generations rather than replaying user side effects.",
+      "account_fencing": "account-scoped operations are fenced by Android Coordinator/Host account generation where applicable; process-global helpers cannot switch account authority.",
+      "security_boundary": "Canonical Rust owners validate identity/account fences; presentation cannot directly delete durable store records.",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "source/host/src/host_roster_bookkeeping.rs",
+        "source/host/src/android_agent_roster.rs",
+        "source/host/src/extensions/transcript/transcript_store.rs"
+      ],
+      "android_owner": "Rust Host/domain owner plus Android-specific lifecycle/storage/transport adapter",
+      "platform_delta": "Android has dedicated canonical Rust stores instead of Desktop port bundle; equivalent ordered cleanup/recovery must be composed across them.",
+      "implementation_status": "mapped",
+      "production_wiring": "Semantic owner/target is identified, but a complete shipping caller/lifecycle proof is not yet present on 8920deab.",
+      "unit_test": "focused source-level tests exist where present; exact descendant Actions required",
+      "contract_test": "required to prove the source responsibility is composed through the canonical Android Host/Coordinator path",
+      "integration_test": "required on exact descendant GitHub Actions; no local validation is used",
+      "packaged_test": "required where this responsibility affects final APK/AAB behavior",
+      "device_test": "required for lifecycle/process-death/account-switch behavior where applicable",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Reduced compatibility owner exists but no shipping caller was found; cross-store ordering remains a production gap."
+    },
+    {
+      "responsibility_id": "HOST-RUNNER-COMPOSITION-ANDROID-001",
+      "domain": "runner",
+      "desktop_sources": [
+        {
+          "path": "source/host/src/host_runner_composition.rs",
+          "blob_sha": "f1729d4af9a9e3b18431a06e28510252b262f7cf",
+          "symbols": [
+            "HostRunnerComposition",
+            "AuthorizedHostRunnerComposition"
+          ]
+        }
+      ],
+      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "responsibility": "Compose bounded local and authenticated remote Runner execution behind the Capability Broker, preserve cancellation/result routing, and prevent unauthorized fallback or unknown-side-effect retry.",
+      "source_owner": "Desktop Host Runner composition and production turn surfaces",
+      "direct_callers": [
+        "Host bootstrap/runtime composition and domain owners where wired"
+      ],
+      "downstream_dependencies": [
+        "canonical Host state",
+        "process/account lifecycle",
+        "durable storage and typed Android transport as applicable"
+      ],
+      "state_owner": "Rust Host/domain owners retain canonical state; Android platform code supplies lifecycle/storage/transport adapters and presentation owns no duplicate durable truth.",
+      "persistent_state": [
+        "app-private durable state only where the source responsibility requires persistence; no renderer-owned duplicate database"
+      ],
+      "protocol_wire_contract": [
+        "Capability Broker decision precedes Runner",
+        "authenticated remote transport",
+        "bounded local root",
+        "no implicit remote fallback"
+      ],
+      "visible_effect": "Authorized tools execute on the correct local/remote boundary and failures/cancellation reconcile without privilege expansion.",
+      "failure_behavior": [
+        "fail closed on malformed/stale/corrupt state",
+        "do not convert partial compatibility code into a second canonical owner"
+      ],
+      "cancellation_behavior": "cancellation follows the owning Host/Coordinator operation; bootstrap/storage helpers do not invent UI-owned cancellation.",
+      "retry_semantics": "only idempotent reads/bootstrap reconciliation may retry; side effects remain owned by canonical Host/Coordinator recovery.",
+      "idempotency_semantics": "reopen/reconciliation must not duplicate canonical side effects or durable ownership.",
+      "process_death_recovery": "reopen from app-private durable owners and fence stale process/account generations rather than replaying user side effects.",
+      "account_fencing": "account-scoped operations are fenced by Android Coordinator/Host account generation where applicable; process-global helpers cannot switch account authority.",
+      "security_boundary": "Runner receives an already-authorized bounded request and cannot switch account, widen grants or expose credentials.",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "source/host/src/host_runner_composition.rs",
+        "source/host/src/runner",
+        "source/host/src/remote_execution.rs",
+        "source/host/src/capability_broker.rs"
+      ],
+      "android_owner": "Rust Host/domain owner plus Android-specific lifecycle/storage/transport adapter",
+      "platform_delta": "Desktop local/Box production turn surfaces become AndroidLocalRunner plus authenticated Remote Runner with explicit account/grant transport fencing.",
+      "implementation_status": "mapped",
+      "production_wiring": "Semantic owner/target is identified, but a complete shipping caller/lifecycle proof is not yet present on 8920deab.",
+      "unit_test": "focused source-level tests exist where present; exact descendant Actions required",
+      "contract_test": "required to prove the source responsibility is composed through the canonical Android Host/Coordinator path",
+      "integration_test": "required on exact descendant GitHub Actions; no local validation is used",
+      "packaged_test": "required where this responsibility affects final APK/AAB behavior",
+      "device_test": "required for lifecycle/process-death/account-switch behavior where applicable",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Focused composition tests exist, but shipping constructor/call chain is not yet proven on this head."
     }
   ],
   "traceability": {
