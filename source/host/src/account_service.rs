@@ -159,14 +159,22 @@ impl AndroidAccountService {
         match self.refresh_if_needed(now_ms()) {
             Ok(mutation) => Ok((self.status_projection(), mutation)),
             Err(error) => {
-                self.session = None;
+                // Match Desktop cursor-auth semantics: a refresh transport/protocol failure is
+                // not itself proof that the durable credential was revoked. refresh_if_needed()
+                // explicitly removes self.session only for terminal identity/revocation outcomes.
+                // Preserve a still-owned session here so a later Host call or cold start can
+                // reconcile it instead of turning one transient outage into credential deletion.
+                let mutation = self
+                    .session
+                    .is_none()
+                    .then_some(AccountSessionMutation::Clear);
                 Ok((
                     json!({
                         "loggedIn":false,
                         "user":Value::Null,
                         "errorMessage":error,
                     }),
-                    Some(AccountSessionMutation::Clear),
+                    mutation,
                 ))
             }
         }
@@ -1510,6 +1518,53 @@ mod tests {
         assert!(rescued);
         assert_eq!(next.refresh_token, current.refresh_token);
         assert_eq!(next.refresh_token_expires_at, current.refresh_token_expires_at);
+    }
+
+    #[test]
+    fn transient_refresh_failure_preserves_durable_session_and_avoids_clear_mutation() {
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut bytes = [0_u8; 4096];
+            let read = stream.read(&mut bytes).unwrap();
+            let request = String::from_utf8_lossy(&bytes[..read]);
+            assert!(request.starts_with("POST /api/auth/refresh "));
+            let body = r#"{"error":"temporarily unavailable"}"#;
+            write!(
+                stream,
+                "HTTP/1.1 503 Service Unavailable\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                body,
+            )
+            .unwrap();
+            stream.flush().unwrap();
+        });
+
+        let mut session = durable_session();
+        session["accessTokenExpiresAt"] = json!(1_u64);
+        let mut service = AndroidAccountService::with_base_url(
+            "device-1",
+            &format!("http://{address}"),
+            Some(&session.to_string()),
+        )
+        .unwrap();
+        let before_fence = service.session_fence();
+
+        let (status, mutation) = service.public_status().unwrap();
+
+        assert_eq!(status["loggedIn"], false);
+        assert!(status["errorMessage"]
+            .as_str()
+            .is_some_and(|value| value.contains("503")));
+        assert_eq!(mutation, None);
+        assert_eq!(service.session_fence(), before_fence);
+        assert!(service.session.is_some());
+
+        server.join().unwrap();
     }
 
     #[test]
