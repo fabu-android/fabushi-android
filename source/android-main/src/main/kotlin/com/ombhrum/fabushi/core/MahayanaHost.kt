@@ -522,7 +522,7 @@ class MahayanaHost(
         }
         val platform = validateAgentChannelPlatform(prepared.getString("platform"))
         val field = validateAgentChannelField(prepared.getString("field"))
-        val label = prepared.optString("label").replace(Regex("\s+"), " ").trim()
+        val label = prepared.optString("label").replace(Regex("\\s+"), " ").trim()
             .take(120).ifBlank { "credential" }
         val secretRef = agentChannelSecretRef(cleanAgentId, platform, field)
         credentialVaultStore.upsert(
