@@ -2,8 +2,11 @@ use crate::box_store_manifest_format::{
     BOX_STORE_BLOBS_PREFIX, BoxStoreManifest, BoxStoreManifestEntry, parse_box_store_manifest,
 };
 use crate::box_store_hydration::{
-    remove_hydration_handoff_marker, write_hydration_handoff_marker,
-    BOX_STORE_HYDRATION_HANDOFF_FILE_NAME, INCOMPLETE_LEGACY_HYDRATE_REASON,
+    apply_copy_in_download_owner, build_copy_in_watchdog_event,
+    remove_hydration_handoff_marker, resolve_copy_in_download_owner,
+    write_copy_in_status_throttled, write_hydration_handoff_marker,
+    CopyInProgress, CopyInTraceStatus, BOX_STORE_HYDRATION_HANDOFF_FILE_NAME,
+    COPY_IN_STUCK_THRESHOLD_MS, INCOMPLETE_LEGACY_HYDRATE_REASON,
 };
 use crate::box_store_workspace_ignore::{load_workspace_ignore, WorkspaceIgnore};
 use crate::box_store_pack_restore::read_pack_blob;
@@ -19,6 +22,7 @@ use std::{
     fs::{self, File},
     io::{Read, Write},
     path::{Component, Path, PathBuf},
+    time::{SystemTime, UNIX_EPOCH},
 };
 
 pub const BOX_STORE_SYNC_CAPABILITY: &str = "box.store.sync";
@@ -36,6 +40,9 @@ pub struct RemoteBoxStoreBackendConfig {
     pub sand_data_root: PathBuf,
     pub cli_config_root: PathBuf,
     pub chrome_session_root: PathBuf,
+    /// Optional Desktop/legacy BoxStore root used only to reconcile a never-seeded or
+    /// incomplete frozen V2 primary during Android migration.
+    pub legacy_store_root: Option<PathBuf>,
 }
 
 impl RemoteBoxStoreBackendConfig {
@@ -51,6 +58,13 @@ impl RemoteBoxStoreBackendConfig {
                 return Err(ExecutionError::InvalidRequest(format!(
                     "box-store {label} must be an absolute path"
                 )));
+            }
+        }
+        if let Some(path) = self.legacy_store_root.as_ref() {
+            if path.as_os_str().is_empty() || !path.is_absolute() {
+                return Err(ExecutionError::InvalidRequest(
+                    "box-store legacy store root must be an absolute path".into(),
+                ));
             }
         }
         Ok(())
@@ -126,6 +140,86 @@ enum ActionError {
 
 pub struct RemoteBoxStoreBackend {
     config: RemoteBoxStoreBackendConfig,
+}
+
+#[derive(Clone, Debug)]
+struct FrozenManifestSnapshot {
+    manifest: Option<BoxStoreManifest>,
+    etag: Option<String>,
+}
+
+fn read_frozen_manifest_snapshot(path: &Path) -> Result<Option<FrozenManifestSnapshot>, ActionError> {
+    if !path.exists() {
+        return Ok(None);
+    }
+    let bytes = fs::read(path)
+        .map_err(|error| ActionError::SafeReject(format!("read manifest: {error}")))?;
+    let value: serde_json::Value = match serde_json::from_slice(&bytes) {
+        Ok(value) => value,
+        Err(_) => {
+            return Ok(Some(FrozenManifestSnapshot {
+                manifest: None,
+                etag: None,
+            }))
+        }
+    };
+    let manifest = parse_box_store_manifest(&value);
+    Ok(Some(FrozenManifestSnapshot {
+        manifest,
+        etag: Some(sha256_bytes(&bytes)),
+    }))
+}
+
+fn store_db_agent_ids(manifest: &BoxStoreManifest) -> BTreeSet<String> {
+    const PREFIX: &str = "home/box/sand-data/agents/";
+    manifest
+        .entries
+        .iter()
+        .filter_map(|(path, entry)| {
+            if !entry.is_file() {
+                return None;
+            }
+            let rest = path.strip_prefix(PREFIX)?;
+            let agent_id = rest.strip_suffix("/store.db")?;
+            (!agent_id.is_empty() && !agent_id.contains('/')).then(|| agent_id.to_string())
+        })
+        .collect()
+}
+
+fn wall_clock_now_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis()
+        .min(u64::MAX as u128) as u64
+}
+
+fn mark_primary_legacy_hydration_incomplete(path: &Path) -> Result<(), ActionError> {
+    let existing = if path.exists() {
+        let bytes = fs::read(path)
+            .map_err(|error| ActionError::SafeReject(format!("read primary manifest: {error}")))?;
+        let value: serde_json::Value = serde_json::from_slice(&bytes)
+            .map_err(|error| ActionError::SafeReject(format!("parse primary manifest: {error}")))?;
+        parse_box_store_manifest(&value)
+            .ok_or_else(|| ActionError::SafeReject("primary manifest is not frozen V2".into()))?;
+        value
+    } else {
+        serde_json::json!({
+            "version": 2,
+            "updatedAtMs": 1,
+            "fullyHydrated": false,
+            "entries": {}
+        })
+    };
+    let mut value = existing;
+    let object = value
+        .as_object_mut()
+        .ok_or_else(|| ActionError::SafeReject("primary frozen manifest is not an object".into()))?;
+    object.insert("fullyHydrated".into(), serde_json::Value::Bool(false));
+    let encoded = serde_json::to_vec(&value)
+        .map_err(|error| ActionError::SafeReject(format!("encode primary manifest: {error}")))?;
+    atomic_write(path, &encoded)
+        .map_err(|error| ActionError::OutcomeUnknown(format!("mark primary hydrate incomplete: {error}")))
 }
 
 impl RemoteBoxStoreBackend {
@@ -438,44 +532,149 @@ impl RemoteBoxStoreBackend {
         identity: &RemoteRequestIdentity,
         input: &Input,
     ) -> Result<Option<String>, ActionError> {
-        let manifest_path = self.manifest_path(&input.store_id);
-        if !manifest_path.exists() {
+        let primary_dir = self.store_dir(&input.store_id);
+        let primary_manifest_path = primary_dir.join("manifest.json");
+        let primary = read_frozen_manifest_snapshot(&primary_manifest_path)?;
+
+        let legacy_dir = self
+            .config
+            .legacy_store_root
+            .as_ref()
+            .map(|root| root.join(&input.store_id));
+        let legacy = match legacy_dir.as_ref() {
+            Some(dir) => read_frozen_manifest_snapshot(&dir.join("manifest.json"))?,
+            None => None,
+        };
+
+        if primary.is_none() && legacy.is_none() {
             return Ok(None);
         }
-        let bytes = fs::read(&manifest_path)
-            .map_err(|error| ActionError::SafeReject(format!("read manifest: {error}")))?;
-        let value: serde_json::Value = match serde_json::from_slice(&bytes) {
-            Ok(value) => value,
-            Err(_) => return Ok(None),
-        };
-        let Some(manifest): Option<BoxStoreManifest> = parse_box_store_manifest(&value) else {
+        // A non-frozen manifest belongs to the native Android store format and must continue
+        // through the existing hydrate implementation rather than being misclassified as V2.
+        if primary.as_ref().is_some_and(|snapshot| snapshot.manifest.is_none())
+            && legacy.as_ref().is_none_or(|snapshot| snapshot.manifest.is_none())
+        {
             return Ok(None);
-        };
-        let current_etag = sha256_bytes(&bytes);
-        if let Some(requested) = input.base_manifest_etag.as_deref() {
-            if requested != current_etag {
-                return Err(ActionError::SafeReject(
-                    "box-store hydrate manifest ETag changed".into(),
-                ));
-            }
-        }
-        if manifest.fully_hydrated == Some(false) {
-            return Err(ActionError::SafeReject(format!(
-                "{INCOMPLETE_LEGACY_HYDRATE_REASON}: frozen V2 manifest requires legacy source reconciliation before restore"
-            )));
         }
 
         let handoff_marker = self
             .config
             .sand_data_root
             .join(BOX_STORE_HYDRATION_HANDOFF_FILE_NAME);
-        remove_hydration_handoff_marker(&handoff_marker).map_err(|error| {
-            ActionError::SafeReject(format!("clear hydration handoff marker: {error}"))
-        })?;
 
-        let objects = self.objects_dir(&input.store_id);
+        let mut legacy_reconciliation = false;
+        let mut download_from_legacy = false;
+        let (manifest, source_dir, source_etag) = match primary.as_ref().and_then(|s| s.manifest.as_ref()) {
+            Some(primary_manifest) if primary_manifest.fully_hydrated != Some(false) => {
+                let etag = primary.as_ref().expect("primary snapshot").etag.clone();
+                (primary_manifest.clone(), primary_dir.clone(), etag)
+            }
+            Some(primary_manifest) => {
+                let legacy_manifest = legacy
+                    .as_ref()
+                    .and_then(|snapshot| snapshot.manifest.as_ref())
+                    .ok_or_else(|| ActionError::SafeReject(format!(
+                        "{INCOMPLETE_LEGACY_HYDRATE_REASON}: frozen V2 manifest requires legacy source reconciliation before restore"
+                    )))?;
+                legacy_reconciliation = true;
+                let legacy_ids = store_db_agent_ids(legacy_manifest);
+                if legacy_ids.is_empty() {
+                    return Err(ActionError::SafeReject(format!(
+                        "{INCOMPLETE_LEGACY_HYDRATE_REASON}: legacy source has no store.db identities to validate V2"
+                    )));
+                }
+                let primary_ids = store_db_agent_ids(primary_manifest);
+                if !legacy_ids.iter().all(|id| primary_ids.contains(id)) {
+                    return Err(ActionError::SafeReject(format!(
+                        "{INCOMPLETE_LEGACY_HYDRATE_REASON}: primary V2 store.db coverage is below the legacy source"
+                    )));
+                }
+                let etag = primary.as_ref().expect("primary snapshot").etag.clone();
+                (primary_manifest.clone(), primary_dir.clone(), etag)
+            }
+            None => {
+                let legacy_manifest = legacy
+                    .as_ref()
+                    .and_then(|snapshot| snapshot.manifest.as_ref())
+                    .filter(|manifest| !manifest.entries.is_empty())
+                    .ok_or_else(|| ActionError::SafeReject(
+                        "legacy source manifest is empty for unseeded primary".into(),
+                    ))?;
+                legacy_reconciliation = true;
+                download_from_legacy = true;
+                let legacy_snapshot = legacy.as_ref().expect("legacy snapshot");
+                (
+                    legacy_manifest.clone(),
+                    legacy_dir.as_ref().expect("legacy dir").clone(),
+                    legacy_snapshot.etag.clone(),
+                )
+            }
+        };
+
+        if let Some(requested) = input.base_manifest_etag.as_deref() {
+            let comparison = if primary.is_some() {
+                primary.as_ref().and_then(|snapshot| snapshot.etag.as_deref())
+            } else {
+                source_etag.as_deref()
+            };
+            if comparison != Some(requested) {
+                return Err(ActionError::SafeReject(
+                    "box-store hydrate manifest ETag changed".into(),
+                ));
+            }
+        }
+
+        if legacy_reconciliation {
+            remove_hydration_handoff_marker(&handoff_marker).map_err(|error| {
+                ActionError::SafeReject(format!("clear hydration handoff marker: {error}"))
+            })?;
+            mark_primary_legacy_hydration_incomplete(&primary_manifest_path)?;
+        } else {
+            remove_hydration_handoff_marker(&handoff_marker).map_err(|error| {
+                ActionError::SafeReject(format!("clear hydration handoff marker: {error}"))
+            })?;
+        }
+
+        let status_path = primary_dir.join("copy-in-status.json");
+        let started_ms = wall_clock_now_ms();
+        let mut last_status_write_ms = None;
+        let mut last_watchdog_ms = started_ms;
+        let mut watchdog_files = 0usize;
+        let owner = self
+            .config
+            .sand_data_root
+            .parent()
+            .and_then(resolve_copy_in_download_owner);
+        write_copy_in_status_throttled(
+            &status_path,
+            &serde_json::json!({
+                "phase":"copying",
+                "restored":0,
+                "total":manifest.entries.len(),
+                "bytes":0,
+                "hydrateSource":legacy_reconciliation.then_some("legacy"),
+            }),
+            started_ms,
+            &mut last_status_write_ms,
+            true,
+        )
+        .map_err(|error| ActionError::OutcomeUnknown(format!(
+            "write initial copy-in status: {error}"
+        )))?;
+
+        let objects = source_dir.join(BOX_STORE_BLOBS_PREFIX);
         let mut restored = 0usize;
         let mut restored_bytes = 0u64;
+        let authoritative_store_db_ids = if legacy_reconciliation {
+            legacy
+                .as_ref()
+                .and_then(|snapshot| snapshot.manifest.as_ref())
+                .map(store_db_agent_ids)
+                .unwrap_or_default()
+        } else {
+            store_db_agent_ids(&manifest)
+        };
+
         for (rel_path, entry) in &manifest.entries {
             let (root, relative) = self.frozen_destination(rel_path)?;
             let destination = root.join(relative);
@@ -502,9 +701,13 @@ impl RemoteBoxStoreBackend {
                     let payload = if object.exists() {
                         read_bounded_file(&object)?
                     } else {
-                        read_pack_blob(&self.store_dir(&input.store_id), sha, *size)
-                            .map_err(|error| ActionError::SafeReject(format!("read frozen pack object for {rel_path}: {error}")))?
-                            .ok_or_else(|| ActionError::SafeReject(format!("box-store object is missing for {rel_path}")))?
+                        read_pack_blob(&source_dir, sha, *size)
+                            .map_err(|error| ActionError::SafeReject(format!(
+                                "read frozen pack object for {rel_path}: {error}"
+                            )))?
+                            .ok_or_else(|| ActionError::SafeReject(format!(
+                                "box-store object is missing for {rel_path}"
+                            )))?
                     };
                     if payload.len() as u64 != *size || sha256_bytes(&payload) != *sha {
                         return Err(ActionError::SafeReject(format!(
@@ -522,34 +725,140 @@ impl RemoteBoxStoreBackend {
                                 "set frozen manifest mode for {rel_path}: {error}"
                             )))?;
                     }
+                    apply_copy_in_download_owner(&destination, owner).map_err(|error| {
+                        ActionError::OutcomeUnknown(format!(
+                            "apply frozen copy-in owner for {rel_path}: {error}"
+                        ))
+                    })?;
                     restored_bytes = restored_bytes.saturating_add(*size);
                 }
             }
             restored += 1;
+
+            let now_ms = wall_clock_now_ms();
+            write_copy_in_status_throttled(
+                &status_path,
+                &serde_json::json!({
+                    "phase":"copying",
+                    "restored":restored,
+                    "total":manifest.entries.len(),
+                    "bytes":restored_bytes,
+                    "hydrateSource":legacy_reconciliation.then_some("legacy"),
+                }),
+                now_ms,
+                &mut last_status_write_ms,
+                false,
+            )
+            .map_err(|error| ActionError::OutcomeUnknown(format!(
+                "write copy-in progress status: {error}"
+            )))?;
+
+            if now_ms.saturating_sub(last_watchdog_ms) >= COPY_IN_STUCK_THRESHOLD_MS {
+                let event = build_copy_in_watchdog_event(
+                    restored > watchdog_files,
+                    CopyInProgress {
+                        total: manifest.entries.len(),
+                        files: restored,
+                        bytes: restored_bytes,
+                    },
+                    now_ms.saturating_sub(started_ms),
+                    COPY_IN_STUCK_THRESHOLD_MS,
+                    Some(&CopyInTraceStatus {
+                        copy_stage: Some(match entry {
+                            BoxStoreManifestEntry::Symlink { .. } => "symlink".into(),
+                            _ => "manifest".into(),
+                        }),
+                        file_entries: Some(
+                            manifest.entries.values().filter(|entry| entry.is_file()).count(),
+                        ),
+                        symlink_entries: Some(
+                            manifest.entries.values().filter(|entry| entry.is_symlink()).count(),
+                        ),
+                        ..CopyInTraceStatus::default()
+                    }),
+                );
+                eprintln!(
+                    "[box-copy-in-watchdog] level={} metadata={}",
+                    event.level,
+                    serde_json::to_string(&event.metadata).unwrap_or_else(|_| "{}".into())
+                );
+                watchdog_files = restored;
+                last_watchdog_ms = now_ms;
+            }
         }
 
-        let marker = self
-            .store_dir(&input.store_id)
+        let restored_store_db_entries = authoritative_store_db_ids
+            .iter()
+            .filter(|agent_id| {
+                self.config
+                    .sand_data_root
+                    .join("agents")
+                    .join(agent_id)
+                    .join("store.db")
+                    .is_file()
+            })
+            .count();
+        if legacy_reconciliation && restored_store_db_entries < authoritative_store_db_ids.len() {
+            return Err(ActionError::SafeReject(format!(
+                "{INCOMPLETE_LEGACY_HYDRATE_REASON}: advertised_store_db={} restored_store_db={restored_store_db_entries}",
+                authoritative_store_db_ids.len()
+            )));
+        }
+
+        let marker = primary_dir
             .join("hydration")
             .join(format!("{}.json", sha256_bytes(identity.operation_id.as_bytes())));
         let marker_bytes = serde_json::to_vec(&serde_json::json!({
             "operationId": identity.operation_id,
-            "manifestEtag": current_etag,
+            "manifestEtag": source_etag,
             "entries": restored,
             "frozenManifestVersion": manifest.version,
+            "hydrateSource": legacy_reconciliation.then_some("legacy"),
+            "storeDbEntries": authoritative_store_db_ids.len(),
+            "restoredStoreDbEntries": restored_store_db_entries,
         }))
         .map_err(|error| ActionError::OutcomeUnknown(format!("encode hydration marker: {error}")))?;
         atomic_write(&marker, &marker_bytes).map_err(|error| {
             ActionError::OutcomeUnknown(format!("write hydration completion marker: {error}"))
         })?;
 
+        if legacy_reconciliation {
+            write_hydration_handoff_marker(&handoff_marker).map_err(|error| {
+                ActionError::OutcomeUnknown(format!("write hydration handoff marker: {error}"))
+            })?;
+        }
+
+        write_copy_in_status_throttled(
+            &status_path,
+            &serde_json::json!({
+                "phase":"done",
+                "restored":restored,
+                "total":manifest.entries.len(),
+                "bytes":restored_bytes,
+                "outcome":"hydrated",
+                "hydrateSource":legacy_reconciliation.then_some("legacy"),
+                "storeDbEntries":authoritative_store_db_ids.len(),
+                "restoredStoreDbEntries":restored_store_db_entries,
+            }),
+            wall_clock_now_ms(),
+            &mut last_status_write_ms,
+            true,
+        )
+        .map_err(|error| ActionError::OutcomeUnknown(format!(
+            "write final copy-in status: {error}"
+        )))?;
+
         Ok(Some(serde_json::json!({
             "storeId": input.store_id,
             "action": "hydrate",
-            "manifestEtag": current_etag,
+            "manifestEtag": source_etag,
             "entries": restored,
             "bytes": restored_bytes,
             "frozenManifestVersion": manifest.version,
+            "hydrateSource": legacy_reconciliation.then_some("legacy"),
+            "downloadedFromLegacy": download_from_legacy,
+            "storeDbEntries": authoritative_store_db_ids.len(),
+            "restoredStoreDbEntries": restored_store_db_entries,
         }).to_string()))
     }
 
@@ -859,7 +1168,7 @@ fn collect_files(
             }
             let target = target
                 .to_str()
-                .filter(|value| !value.is_empty() && value.len() <= 8 * 1024 && !value.contains(' '))
+                .filter(|value| !value.is_empty() && value.len() <= 8 * 1024 && !value.contains('\0'))
                 .ok_or_else(|| ActionError::SafeReject("box-store symlink target is invalid".into()))?
                 .to_string();
             output.push(ManifestEntry {
@@ -952,7 +1261,7 @@ fn validate_manifest_entries(entries: &[ManifestEntry]) -> Result<(), ActionErro
         if let Some(target) = entry.symlink_target.as_deref() {
             if target.is_empty()
                 || target.len() > 8 * 1024
-                || target.contains(' ')
+                || target.contains('\0')
                 || !entry.object_sha256.is_empty()
                 || entry.size_bytes != 0
             {
@@ -1237,6 +1546,7 @@ mod tests {
             sand_data_root: root.join("box/home/box/sand-data"),
             cli_config_root: root.join("box/home/box/cli-config"),
             chrome_session_root: root.join("box/home/box/chrome-session"),
+            legacy_store_root: None,
         }
     }
 
@@ -1559,33 +1869,173 @@ mod tests {
         }
     }
 
-    #[test]
-    fn incomplete_frozen_v2_manifest_fails_closed_until_legacy_reconciliation_exists() {
-        let config = config("frozen-incomplete");
-        let store = config.store_root.join("store-a");
-        fs::create_dir_all(&store).unwrap();
+    fn write_frozen_file_entry(
+        store_root: &Path,
+        store_id: &str,
+        rel_path: &str,
+        payload: &[u8],
+        fully_hydrated: bool,
+    ) {
+        let store = store_root.join(store_id);
+        fs::create_dir_all(store.join("blobs")).unwrap();
+        let digest = sha256_bytes(payload);
+        fs::write(store.join("blobs").join(&digest), payload).unwrap();
         fs::write(
             store.join("manifest.json"),
             serde_json::to_vec(&serde_json::json!({
-                "version": 2,
-                "updatedAtMs": 1,
-                "writerWindowId": "desktop-copy-in",
-                "fullyHydrated": false,
-                "entries": {}
+                "version":2,
+                "updatedAtMs":1,
+                "writerWindowId":"legacy-contract",
+                "fullyHydrated":fully_hydrated,
+                "entries":{
+                    rel_path:{
+                        "kind":"file",
+                        "sha":digest,
+                        "size":payload.len(),
+                        "mode":384
+                    }
+                }
             })).unwrap(),
         ).unwrap();
+    }
+
+    #[test]
+    fn unseeded_primary_hydrates_from_legacy_and_persists_incomplete_primary_handoff() {
+        let mut config = config("legacy-unseeded");
+        let legacy_root = config.store_root.parent().unwrap().join("legacy-store");
+        config.legacy_store_root = Some(legacy_root.clone());
+        let payload = b"legacy-agent-store\n";
+        write_frozen_file_entry(
+            &legacy_root,
+            "store-a",
+            "home/box/sand-data/agents/agent-a/store.db",
+            payload,
+            true,
+        );
+        let marker = config
+            .sand_data_root
+            .join(BOX_STORE_HYDRATION_HANDOFF_FILE_NAME);
+        fs::create_dir_all(&config.sand_data_root).unwrap();
+        fs::write(&marker, b"stale-complete\n").unwrap();
+
         let mut backend = RemoteBoxStoreBackend::open(config.clone()).unwrap();
-        let outcome = backend.start(
-            &identity("frozen-incomplete", "frozen-incomplete-request"),
-            &request("frozen-incomplete", "hydrate", None),
+        let output = completed(
+            backend
+                .start(
+                    &identity("legacy-unseeded", "legacy-unseeded-request"),
+                    &request("legacy-unseeded", "hydrate", None),
+                )
+                .unwrap(),
+        );
+        let parsed: serde_json::Value = serde_json::from_str(&output).unwrap();
+        assert_eq!(parsed["hydrateSource"], "legacy");
+        assert_eq!(parsed["downloadedFromLegacy"], true);
+        assert_eq!(parsed["storeDbEntries"], 1);
+        assert_eq!(parsed["restoredStoreDbEntries"], 1);
+        assert_eq!(
+            fs::read(config.sand_data_root.join("agents/agent-a/store.db")).unwrap(),
+            payload
+        );
+        let primary: serde_json::Value = serde_json::from_slice(
+            &fs::read(config.store_root.join("store-a/manifest.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(primary["fullyHydrated"], false);
+        assert_eq!(primary["entries"].as_object().unwrap().len(), 0);
+        assert_eq!(fs::read_to_string(marker).unwrap(), "complete\n");
+    }
+
+    #[test]
+    fn incomplete_primary_requires_legacy_store_db_identity_coverage() {
+        let mut config = config("legacy-coverage");
+        let legacy_root = config.store_root.parent().unwrap().join("legacy-store");
+        config.legacy_store_root = Some(legacy_root.clone());
+
+        write_frozen_file_entry(
+            &config.store_root,
+            "store-a",
+            "home/box/sand-data/agents/agent-a/store.db",
+            b"a",
+            false,
+        );
+        let legacy_store = legacy_root.join("store-a");
+        fs::create_dir_all(legacy_store.join("blobs")).unwrap();
+        let digest_a = sha256_bytes(b"a");
+        let digest_b = sha256_bytes(b"b");
+        fs::write(legacy_store.join("blobs").join(&digest_a), b"a").unwrap();
+        fs::write(legacy_store.join("blobs").join(&digest_b), b"b").unwrap();
+        fs::write(
+            legacy_store.join("manifest.json"),
+            serde_json::to_vec(&serde_json::json!({
+                "version":2,
+                "updatedAtMs":1,
+                "fullyHydrated":true,
+                "entries":{
+                    "home/box/sand-data/agents/agent-a/store.db":{
+                        "kind":"file","sha":digest_a,"size":1,"mode":384
+                    },
+                    "home/box/sand-data/agents/agent-b/store.db":{
+                        "kind":"file","sha":digest_b,"size":1,"mode":384
+                    }
+                }
+            })).unwrap(),
         ).unwrap();
+
+        let mut backend = RemoteBoxStoreBackend::open(config.clone()).unwrap();
+        let outcome = backend
+            .start(
+                &identity("legacy-coverage", "legacy-coverage-request"),
+                &request("legacy-coverage", "hydrate", None),
+            )
+            .unwrap();
         match outcome {
             RemoteBackendStartOutcome::Rejected { reason } => {
-                assert!(reason.contains(INCOMPLETE_LEGACY_HYDRATE_REASON));
+                assert!(reason.contains("primary V2 store.db coverage is below"));
             }
-            other => panic!("expected fail-closed rejection, got {other:?}"),
+            other => panic!("expected coverage rejection, got {other:?}"),
         }
-        assert!(!config.sand_data_root.join(BOX_STORE_HYDRATION_HANDOFF_FILE_NAME).exists());
+        assert!(
+            !config
+                .sand_data_root
+                .join(BOX_STORE_HYDRATION_HANDOFF_FILE_NAME)
+                .exists()
+        );
+    }
+
+    #[test]
+    fn incomplete_primary_fails_when_legacy_has_no_store_db_identity() {
+        let mut config = config("legacy-no-store-db");
+        let legacy_root = config.store_root.parent().unwrap().join("legacy-store");
+        config.legacy_store_root = Some(legacy_root.clone());
+
+        write_frozen_file_entry(
+            &config.store_root,
+            "store-a",
+            "home/box/sand-data/agents/agent-a/store.db",
+            b"a",
+            false,
+        );
+        write_frozen_file_entry(
+            &legacy_root,
+            "store-a",
+            "workspace/readme.txt",
+            b"legacy",
+            true,
+        );
+
+        let mut backend = RemoteBoxStoreBackend::open(config.clone()).unwrap();
+        let outcome = backend
+            .start(
+                &identity("legacy-no-db", "legacy-no-db-request"),
+                &request("legacy-no-db", "hydrate", None),
+            )
+            .unwrap();
+        match outcome {
+            RemoteBackendStartOutcome::Rejected { reason } => {
+                assert!(reason.contains("no store.db identities to validate V2"));
+            }
+            other => panic!("expected no-store-db rejection, got {other:?}"),
+        }
     }
 
     #[test]

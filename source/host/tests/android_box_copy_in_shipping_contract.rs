@@ -23,15 +23,44 @@ fn android_shipping_box_copy_in_routes_through_remote_box_owner_and_unique_struc
 }
 
 #[test]
-fn external_box_runner_hydrates_frozen_manifests_with_pack_fallback_and_handoff_marker() {
+fn external_box_runner_hydrates_frozen_manifests_with_legacy_reconciliation_pack_fallback_and_runtime_fences() {
     let backend = include_str!("../../box-exec-daemon/src/box_store_backend.rs");
-    assert!(backend.contains("fn try_hydrate_frozen_manifest"));
-    assert!(backend.contains("parse_box_store_manifest"));
-    assert!(backend.contains("read_pack_blob(&self.store_dir(&input.store_id), sha, *size)"));
-    assert!(backend.contains("remove_hydration_handoff_marker"));
-    assert!(backend.contains("write_hydration_handoff_marker"));
-    assert!(backend.contains("manifest.fully_hydrated == Some(false)"));
-    assert!(backend.contains("legacy source reconciliation before restore"));
+    for required in [
+        "fn try_hydrate_frozen_manifest",
+        "read_frozen_manifest_snapshot",
+        "legacy_store_root",
+        "store_db_agent_ids",
+        "primary V2 store.db coverage is below the legacy source",
+        "legacy source has no store.db identities to validate V2",
+        "mark_primary_legacy_hydration_incomplete",
+        "read_pack_blob(&source_dir, sha, *size)",
+        "remove_hydration_handoff_marker",
+        "write_hydration_handoff_marker",
+        "write_copy_in_status_throttled",
+        "build_copy_in_watchdog_event",
+        "resolve_copy_in_download_owner",
+        "apply_copy_in_download_owner",
+    ] {
+        assert!(
+            backend.contains(required),
+            "shipping external Box runner omitted frozen copy-in responsibility: {required}",
+        );
+    }
+
+    let hydration = include_str!("../../box-exec-daemon/src/box_store_hydration.rs");
+    for required in [
+        "COPY_IN_STATUS_THROTTLE_MS: u64 = 750",
+        "COPY_IN_STUCK_THRESHOLD_MS: u64 = 5 * 60_000",
+        "pub fn write_copy_in_status_throttled",
+        "pub fn build_copy_in_watchdog_event",
+        "pub fn resolve_copy_in_download_owner_values",
+        "pub fn apply_copy_in_download_owner",
+    ] {
+        assert!(
+            hydration.contains(required),
+            "frozen copy-in runtime contract omitted {required}",
+        );
+    }
 
     let pack = include_str!("../../box-exec-daemon/src/box_store_pack_restore.rs");
     assert!(pack.contains("pub fn read_pack_blob"));
