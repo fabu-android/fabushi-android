@@ -25,7 +25,7 @@
 
 Android Keystore 保存或保护应用密钥；业务数据可按风险模型加密。强制区分凭据撤销与仅本地退出。备份规则排除不可迁移的密钥材料，恢复后重新认证而非伪造有效会话。崩溃报告和性能报告只记录必要的技术标识，不默认附带完整对话、附件、屏幕或账号信息。
 
-生产包不得含测试账户导入入口、调试调度器、未受保护的导出组件或万能工具开关。当前 discovery 中 githubRelease 开启 CI_ACCOUNT_SESSION_IMPORT_ENABLED，属于待核实/整改的发布风险，不能仅因历史 CI 通过就放行；需检查实际代码路径与 release manifest，发布前证明测试入口已关闭或移除。
+生产包不得含测试账户导入入口、调试调度器、未受保护的导出组件或万能工具开关。当前源码已将 release/githubRelease 的 CI_ACCOUNT_SESSION_IMPORT_ENABLED 固定为 false，仅 ciAcceptance 为 true；production cargo-ndk 也不启用 ci-account-session-import feature，而 CI package gate 会直接扫描最终 githubRelease DEX/native library 拒绝测试会话标记。该 source fact 仍不能替代最终 exact-head APK/AAB 证据：发布前必须由同一 exact HEAD 的 minified githubRelease artifact 证明测试入口确实被移除。
 
 ## 交付要求
 
