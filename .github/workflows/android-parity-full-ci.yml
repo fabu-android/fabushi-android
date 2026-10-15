@@ -68,7 +68,23 @@ jobs:
         with:
           targets: aarch64-linux-android,x86_64-linux-android
       - name: Install Android NDK for native Host
-        run: sdkmanager 'ndk;28.2.13676358'
+        run: |
+          set -euo pipefail
+          NDK_PACKAGE='ndk;28.2.13676358'
+          NDK_HOME="$ANDROID_HOME/ndk/28.2.13676358"
+          NDK_CLANG="$NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/clang"
+          for attempt in 1 2 3; do
+            if sdkmanager "$NDK_PACKAGE" && test -x "$NDK_CLANG"; then
+              exit 0
+            fi
+            echo "NDK install attempt $attempt failed; clearing incomplete SDK download state" >&2
+            rm -rf "$NDK_HOME" "$ANDROID_HOME/.temp" "$HOME/.android/cache"
+            if [ "$attempt" -lt 3 ]; then
+              sleep $((attempt * 5))
+            fi
+          done
+          echo "failed to install a complete $NDK_PACKAGE after 3 attempts" >&2
+          exit 1
       - name: Install cargo-ndk
         run: command -v cargo-ndk >/dev/null 2>&1 || cargo install cargo-ndk --locked
       - name: Build exact-HEAD native Mahayana Coordinator Host
@@ -176,7 +192,23 @@ jobs:
         with:
           targets: aarch64-linux-android,x86_64-linux-android
       - name: Install Android NDK for native Host
-        run: sdkmanager 'ndk;28.2.13676358'
+        run: |
+          set -euo pipefail
+          NDK_PACKAGE='ndk;28.2.13676358'
+          NDK_HOME="$ANDROID_HOME/ndk/28.2.13676358"
+          NDK_CLANG="$NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/clang"
+          for attempt in 1 2 3; do
+            if sdkmanager "$NDK_PACKAGE" && test -x "$NDK_CLANG"; then
+              exit 0
+            fi
+            echo "NDK install attempt $attempt failed; clearing incomplete SDK download state" >&2
+            rm -rf "$NDK_HOME" "$ANDROID_HOME/.temp" "$HOME/.android/cache"
+            if [ "$attempt" -lt 3 ]; then
+              sleep $((attempt * 5))
+            fi
+          done
+          echo "failed to install a complete $NDK_PACKAGE after 3 attempts" >&2
+          exit 1
       - name: Install cargo-ndk
         run: command -v cargo-ndk >/dev/null 2>&1 || cargo install cargo-ndk --locked
       - name: Build release native Mahayana Coordinator Host
