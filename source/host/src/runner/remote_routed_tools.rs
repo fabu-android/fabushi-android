@@ -108,6 +108,17 @@ fn is_remote_browser_tool(name: &str) -> bool {
     REMOTE_BROWSER_TOOL_NAMES.contains(&name)
 }
 
+fn remote_execution_input_json(name: &str, args: &Value) -> String {
+    // CloudAgent is a first-class typed Remote capability whose external Runner backend
+    // deserializes CloudAgentRequest directly. Other legacy Remote tools retain the shared
+    // tool-wrapper envelope expected by their generic execution backend.
+    if name == CLOUD_AGENT_TOOL_NAME {
+        args.to_string()
+    } else {
+        json!({"tool":name,"arguments":args}).to_string()
+    }
+}
+
 fn remote_cloud_agent_tool_definition() -> Value {
     json!({
         "type":"function",
@@ -777,7 +788,7 @@ impl AndroidRoutedToolBridge for RemoteRoutedTools {
             "Write" => "remote.write",
             COPY_TO_BOX_TOOL_NAME | COPY_FROM_BOX_TOOL_NAME => "box.file.transfer",
             "Computer" | "Screenshot" => "computer.use",
-            CLOUD_AGENT_TOOL_NAME => "cloud.agent",
+            CLOUD_AGENT_TOOL_NAME => "cloud-agent",
             _ if browser_tool => "browser.use",
             _ => unreachable!("unsupported Remote routed tool was delegated"),
         };
@@ -836,7 +847,7 @@ impl AndroidRoutedToolBridge for RemoteRoutedTools {
         let request = ExecutionRequest {
             operation_id: operation_id.clone(),
             capability_id: capability.to_string(),
-            input_json: json!({"tool":name,"arguments":args}).to_string(),
+            input_json: remote_execution_input_json(name, &args),
             timeout_ms,
         };
 
@@ -2579,6 +2590,31 @@ mod tests {
                 4,
             )
             .is_err());
+    }
+
+    #[test]
+    fn cloud_agent_remote_wire_is_typed_and_matches_runner_capability() {
+        let args = json!({
+            "action":"watch",
+            "agent_id":"bc-123",
+            "include_archived":false
+        });
+        let encoded = remote_execution_input_json(CLOUD_AGENT_TOOL_NAME, &args);
+        let parsed: Value = serde_json::from_str(&encoded).unwrap();
+        assert_eq!(parsed, args);
+        assert!(parsed.get("tool").is_none());
+        assert!(parsed.get("arguments").is_none());
+
+        let shell = remote_execution_input_json("Shell", &json!({"command":"pwd"}));
+        let shell: Value = serde_json::from_str(&shell).unwrap();
+        assert_eq!(shell["tool"], "Shell");
+        assert_eq!(shell["arguments"]["command"], "pwd");
+
+        let capability = match CLOUD_AGENT_TOOL_NAME {
+            CLOUD_AGENT_TOOL_NAME => "cloud-agent",
+            _ => unreachable!(),
+        };
+        assert_eq!(capability, fabushi_android_box_exec_daemon::CLOUD_AGENT_CAPABILITY);
     }
 
     #[test]
