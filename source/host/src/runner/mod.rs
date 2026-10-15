@@ -18,6 +18,7 @@ pub mod local_routed_tools;
 pub mod sand_labeling;
 pub mod web_routed_tools;
 pub mod generate_image_routed_tools;
+pub mod large_output_spill;
 pub mod sand_auto_review;
 pub mod sand_auto_review_classifier_run;
 pub mod sand_auto_review_summaries;
