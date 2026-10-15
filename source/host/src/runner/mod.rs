@@ -161,3 +161,5 @@ pub use subagent_worker::{
 };
 
 pub use sand_labeling::FollowupLabelingTracker;
+
+pub mod shell_terminal_watch;
