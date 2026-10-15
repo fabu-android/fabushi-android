@@ -113,6 +113,7 @@ struct OperationRecord {
     error: Option<String>,
 }
 
+#[derive(Debug)]
 enum ActionError {
     SafeReject(String),
     OutcomeUnknown(String),
@@ -886,6 +887,7 @@ fn io_error(error: std::io::Error) -> ExecutionError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::box_store_workspace_ignore::SAND_WORKSPACE_IGNORE_FILE_NAME;
     use std::time::{SystemTime, UNIX_EPOCH};
 
     fn root(label: &str) -> PathBuf {
