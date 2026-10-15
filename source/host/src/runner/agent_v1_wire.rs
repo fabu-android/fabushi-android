@@ -185,6 +185,94 @@ fn required_string(value: Option<&serde_json::Value>, field: &'static str) -> Re
         .ok_or_else(|| format!("{field} is required"))
 }
 
+pub const FROZEN_COMMUNICATE_TOOL_NAMES: &[&str] = &[
+    "SendToAgent",
+    "CreateAgent",
+    "UpdateAgent",
+    "CheckSubagent",
+    "MessageSubagent",
+    "StopSubagent",
+    "CopyToBox",
+    "CopyFromBox",
+    "update_state",
+];
+
+pub fn is_agent_v1_observed_tool(name: &str) -> bool {
+    matches!(name, "SendMessage" | "send_message")
+        || FROZEN_COMMUNICATE_TOOL_NAMES.contains(&name)
+}
+
+fn encode_markdown_image_destination(url: &str) -> String {
+    let mut output = String::new();
+    for ch in url.chars() {
+        match ch {
+            '<' => output.push_str("%3C"),
+            '>' => output.push_str("%3E"),
+            '\r' => output.push_str("%0D"),
+            '\n' => output.push_str("%0A"),
+            _ => output.push(ch),
+        }
+    }
+    format!("<{output}>")
+}
+
+fn send_message_text_content(message: &serde_json::Value) -> Result<String, String> {
+    let content = required_string(
+        message.get("content").or_else(|| message.get("text")),
+        "SendMessage text content",
+    )?;
+    let Some(images) = message.get("images").and_then(serde_json::Value::as_array) else {
+        return Ok(content);
+    };
+    if images.is_empty() {
+        return Ok(content);
+    }
+    let markdown = images
+        .iter()
+        .map(|image| {
+            let url = image
+                .get("url")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default();
+            let alt = image
+                .get("alt")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default()
+                .chars()
+                .map(|ch| if matches!(ch, '[' | ']' | '\n') { ' ' } else { ch })
+                .collect::<String>();
+            format!("![{}]({})", alt.trim(), encode_markdown_image_destination(url))
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    Ok(format!("{content}\n\n{markdown}"))
+}
+
+fn widget_summary(message: &serde_json::Value) -> Result<String, String> {
+    let widget = message
+        .get("widget")
+        .ok_or_else(|| "SendMessage widget payload is required".to_string())?;
+    let prompt = required_string(widget.get("prompt"), "SendMessage widget prompt")?;
+    let labels = widget
+        .get("options")
+        .and_then(serde_json::Value::as_array)
+        .map(|options| {
+            options
+                .iter()
+                .filter_map(|option| option.get("label").and_then(serde_json::Value::as_str))
+                .filter(|label| !label.trim().is_empty())
+                .map(str::trim)
+                .collect::<Vec<_>>()
+                .join(" / ")
+        })
+        .unwrap_or_default();
+    Ok(if labels.is_empty() {
+        prompt
+    } else {
+        format!("{prompt} — {labels}")
+    })
+}
+
 fn send_message_args_from_json(args: &serde_json::Value) -> Result<SendMessageArgs, String> {
     let message = args.get("message").unwrap_or(args);
     let kind = message
@@ -192,13 +280,9 @@ fn send_message_args_from_json(args: &serde_json::Value) -> Result<SendMessageAr
         .and_then(serde_json::Value::as_str)
         .unwrap_or("text");
     let message = match kind {
-        "text" => {
-            let content = required_string(
-                message.get("content").or_else(|| message.get("text")),
-                "SendMessage text content",
-            )?;
-            send_message_args::Message::Text(SendMessageText { content })
-        }
+        "text" => send_message_args::Message::Text(SendMessageText {
+            content: send_message_text_content(message)?,
+        }),
         "attachment" => {
             let url = required_string(message.get("url"), "SendMessage attachment url")?;
             let alt = message
@@ -207,38 +291,33 @@ fn send_message_args_from_json(args: &serde_json::Value) -> Result<SendMessageAr
                 .map(ToOwned::to_owned);
             send_message_args::Message::Attachment(SendMessageAttachment { url, alt })
         }
+        "widget" => send_message_args::Message::Text(SendMessageText {
+            content: widget_summary(message)?,
+        }),
         _ => return Err("unsupported SendMessage canonical message type".into()),
     };
     Ok(SendMessageArgs { message: Some(message) })
 }
 
-fn communicate_update_args_from_json(
-    args: &serde_json::Value,
-) -> Result<CommunicateUpdateArgs, String> {
-    let optional = |snake: &str, camel: &str| {
-        args.get(snake)
-            .or_else(|| args.get(camel))
-            .and_then(serde_json::Value::as_str)
-            .map(ToOwned::to_owned)
-    };
-    let decoded = CommunicateUpdateArgs {
-        current_step: optional("current_step", "currentStep"),
-        final_summary: optional("final_summary", "finalSummary"),
-        completed_subtitle: optional("completed_subtitle", "completedSubtitle"),
-    };
-    if decoded.current_step.is_none()
-        && decoded.final_summary.is_none()
-        && decoded.completed_subtitle.is_none()
-    {
-        return Err("CommunicateUpdate requires at least one canonical field".into());
-    }
-    Ok(decoded)
+fn encode_sand_step(key: &str, value: &str) -> String {
+    serde_json::json!({
+        "__sand_tool__": true,
+        key: value,
+    })
+    .to_string()
+}
+
+fn communicate_result_text(value: &serde_json::Value) -> String {
+    value
+        .as_str()
+        .map(ToOwned::to_owned)
+        .unwrap_or_else(|| value.to_string())
 }
 
 /// Encode the canonical agent.v1 wire observation for shipping Runner dispatches.
 ///
-/// Unknown tools are outside this protobuf subset and return `Ok(None)`. The two
-/// canonical tools owned here fail closed on malformed args/results instead of
+/// Unknown tools are outside this protobuf subset and return `Ok(None)`. SendMessage
+/// and the frozen Desktop communicate-wrapper tool set fail closed rather than
 /// falling back to JSON bytes.
 pub fn encode_routed_tool_call_observation(
     name: &str,
@@ -281,35 +360,38 @@ pub fn encode_routed_tool_call_observation(
                 }),
             })
         }
-        "CommunicateUpdate" | "communicate_update" => {
-            let args = communicate_update_args_from_json(args)?;
-            let result = match result {
+        name if FROZEN_COMMUNICATE_TOOL_NAMES.contains(&name) => {
+            // Desktop does not expose a literal CommunicateUpdate tool. Instead it wraps
+            // these routed tool executions in field-48 CommunicateUpdate observations.
+            // Preserve the real routed tool name on the outer observation while the wire
+            // payload carries Desktop's canonical __sand_tool__ completion projection.
+            let (current_step, result) = match result {
                 Ok(value) => {
-                    let current_step = required_string(
-                        value.get("currentStep").or_else(|| value.get("current_step")),
-                        "CommunicateUpdate result current_step",
-                    )?;
-                    let message_index = value
-                        .get("messageIndex")
-                        .or_else(|| value.get("message_index"))
-                        .and_then(serde_json::Value::as_u64)
-                        .and_then(|value| u32::try_from(value).ok())
-                        .ok_or_else(|| {
-                            "CommunicateUpdate result message_index is required".to_string()
-                        })?;
-                    communicate_update_result::Result::Success(CommunicateUpdateSuccess {
-                        current_step,
-                        message_index,
-                    })
+                    let text = communicate_result_text(value);
+                    (
+                        encode_sand_step("result", &text),
+                        communicate_update_result::Result::Success(CommunicateUpdateSuccess {
+                            current_step: text,
+                            message_index: 0,
+                        }),
+                    )
                 }
-                Err(error) => {
+                Err(error) => (
+                    encode_sand_step(
+                        "error",
+                        if error.is_empty() { "Tool failed." } else { error },
+                    ),
                     communicate_update_result::Result::Error(CommunicateUpdateError {
                         error: error.to_string(),
-                    })
-                }
+                    }),
+                ),
             };
             agent_tool_call::Tool::CommunicateUpdateToolCall(CommunicateUpdateToolCall {
-                args: Some(args),
+                args: Some(CommunicateUpdateArgs {
+                    current_step: Some(current_step),
+                    final_summary: None,
+                    completed_subtitle: None,
+                }),
                 result: Some(CommunicateUpdateResult {
                     result: Some(result),
                 }),
@@ -414,14 +496,10 @@ mod tests {
             Some(agent_tool_call::Tool::SendMessageToolCall(_))
         ));
 
-        let update_args = serde_json::json!({
-            "currentStep":"working",
-            "finalSummary":"done",
-            "completedSubtitle":"complete"
-        });
-        let update_result = serde_json::json!({"currentStep":"working","messageIndex":7});
+        let update_args = serde_json::json!({"id":"agent-7","description":"working"});
+        let update_result = serde_json::json!({"updated":true});
         let bytes = encode_routed_tool_call_observation(
-            "CommunicateUpdate",
+            "UpdateAgent",
             &update_args,
             Ok(&update_result),
             "update-7",
@@ -432,10 +510,20 @@ mod tests {
         .unwrap();
         let decoded = decode_agent_tool_call(&bytes).unwrap();
         assert_eq!(decoded.tool_call_id.as_deref(), Some("update-7"));
-        assert!(matches!(
-            decoded.tool,
-            Some(agent_tool_call::Tool::CommunicateUpdateToolCall(_))
-        ));
+        match decoded.tool.unwrap() {
+            agent_tool_call::Tool::CommunicateUpdateToolCall(call) => {
+                assert_eq!(
+                    call.args.unwrap().current_step.as_deref(),
+                    Some(r#"{"__sand_tool__":true,"result":"{\"updated\":true}"}"#)
+                );
+                assert!(matches!(
+                    call.result.unwrap().result.unwrap(),
+                    communicate_update_result::Result::Success(result)
+                        if result.current_step == r#"{"updated":true}"# && result.message_index == 0
+                ));
+            }
+            _ => panic!("wrong AgentToolCall tag"),
+        }
     }
 
     #[test]
@@ -470,6 +558,39 @@ mod tests {
         )
         .is_err());
         assert!(decode_agent_tool_call(&[0x80]).is_err());
+        let widget = serde_json::json!({
+            "type":"widget",
+            "widget":{"prompt":"Choose","options":[{"label":"Alpha"},{"label":"Beta"}]}
+        });
+        let widget_result = serde_json::json!({"messageId":"widget-message"});
+        let widget_wire = encode_routed_tool_call_observation(
+            "SendMessage",
+            &widget,
+            Ok(&widget_result),
+            "widget-call",
+            1,
+            2,
+        )
+        .unwrap()
+        .unwrap();
+        let widget_decoded = decode_agent_tool_call(&widget_wire).unwrap();
+        match widget_decoded.tool.unwrap() {
+            agent_tool_call::Tool::SendMessageToolCall(call) => match call.args.unwrap().message.unwrap() {
+                send_message_args::Message::Text(text) => assert_eq!(text.content, "Choose — Alpha / Beta"),
+                _ => panic!("widget must project to canonical SendMessageText"),
+            },
+            _ => panic!("widget must remain field 55 SendMessageToolCall"),
+        }
+        assert!(encode_routed_tool_call_observation(
+            "CommunicateUpdate",
+            &serde_json::json!({}),
+            Ok(&serde_json::json!({})),
+            "legacy-literal",
+            1,
+            2,
+        )
+        .unwrap()
+        .is_none());
         assert!(encode_routed_tool_call_observation(
             "OtherTool",
             &serde_json::json!({}),

@@ -1,5 +1,5 @@
 use super::{
-    agent_v1_wire::encode_routed_tool_call_observation,
+    agent_v1_wire::{encode_routed_tool_call_observation, is_agent_v1_observed_tool},
     production_turn_agent_owner::SAND_AGENT_MAX_STEPS,
     stream_attempt::{ProviderFailure, StreamAttemptInput, StreamGeneration, TurnStreamProvider},
 };
@@ -569,10 +569,7 @@ impl AndroidHostInferenceProvider {
                     return Err(ProviderFailure::new("cancelled"));
                 }
 
-                let canonical_agent_v1_tool = matches!(
-                    name.as_str(),
-                    "SendMessage" | "send_message" | "CommunicateUpdate" | "communicate_update"
-                );
+                let canonical_agent_v1_tool = is_agent_v1_observed_tool(&name);
                 let observation_sink = if canonical_agent_v1_tool {
                     Some(self.tool_call_observation_sink.as_ref().ok_or_else(|| ProviderFailure {
                         message: "canonical agent.v1 tool observation sink is not bound".into(),
@@ -1196,7 +1193,7 @@ mod tests {
                 }),
                 json!({
                     "type":"function",
-                    "name":"CommunicateUpdate",
+                    "name":"UpdateAgent",
                     "parameters":{"type":"object"}
                 }),
             ])
@@ -1352,15 +1349,15 @@ mod tests {
     }
 
     #[test]
-    fn production_communicate_update_bridge_failure_records_error_and_suppresses_retry() {
+    fn production_frozen_communicate_bridge_failure_records_error_and_suppresses_retry() {
         use super::super::agent_v1_wire::{
             agent_tool_call, communicate_update_result, decode_agent_tool_call,
         };
 
         let endpoint = spawn_sse_server(vec![tool_sse(
-            "CommunicateUpdate",
+            "UpdateAgent",
             "call-update-3",
-            r#"{"currentStep":"working","finalSummary":"partial"}"#,
+            r#"{"id":"agent-3","description":"working"}"#,
         )]);
         let calls = Arc::new(AtomicUsize::new(0));
         let sink = Arc::new(RecordingObservationSink::default());
@@ -1384,6 +1381,7 @@ mod tests {
         assert_eq!(observations.len(), 1);
         let observation = &observations[0];
         assert!(!observation.succeeded);
+        assert_eq!(observation.tool_name, "UpdateAgent");
         assert_eq!(&observation.protobuf_bytes[..2], &[0x82, 0x03]);
         let decoded = decode_agent_tool_call(&observation.protobuf_bytes).unwrap();
         assert_eq!(decoded.tool_call_id.as_deref(), Some("call-update-3"));
@@ -1402,11 +1400,108 @@ mod tests {
     }
 
     #[test]
+    fn production_frozen_communicate_success_uses_real_dispatch_result() {
+        use super::super::agent_v1_wire::{
+            agent_tool_call, communicate_update_result, decode_agent_tool_call,
+        };
+
+        let endpoint = spawn_sse_server(vec![
+            tool_sse(
+                "CreateAgent",
+                "call-create-2",
+                r#"{"name":"Researcher","description":"Investigate"}"#,
+            ),
+            final_sse(),
+        ]);
+        let calls = Arc::new(AtomicUsize::new(0));
+        let sink = Arc::new(RecordingObservationSink::default());
+        let mut provider = AndroidHostInferenceProvider::with_endpoint(
+            "a".repeat(32),
+            endpoint,
+            Arc::new(AtomicBool::new(false)),
+        )
+        .with_routed_tools(Arc::new(CanonicalProductionTools {
+            result: Ok(Value::String("Created agent Researcher (id: agent-2)".into())),
+            calls: Arc::clone(&calls),
+        }))
+        .with_tool_call_observation_sink(sink.clone());
+
+        let output = provider.start_stream(&input(), 1).unwrap();
+        assert_eq!(output.chunks.concat(), "done");
+        assert_eq!(calls.load(AtomicOrdering::SeqCst), 1);
+
+        let observations = sink.observations.lock().unwrap();
+        assert_eq!(observations.len(), 1);
+        let observation = &observations[0];
+        assert_eq!(observation.tool_name, "CreateAgent");
+        let decoded = decode_agent_tool_call(&observation.protobuf_bytes).unwrap();
+        assert_eq!(decoded.tool_call_id.as_deref(), Some("call-create-2"));
+        assert_eq!(decoded.started_at_ms, Some(observation.started_at_ms));
+        assert_eq!(decoded.completed_at_ms, Some(observation.completed_at_ms));
+        match decoded.tool.unwrap() {
+            agent_tool_call::Tool::CommunicateUpdateToolCall(call) => {
+                let args = call.args.unwrap();
+                assert!(args
+                    .current_step
+                    .as_deref()
+                    .is_some_and(|value| value.contains("\"result\":\"Created agent Researcher")));
+                assert!(matches!(
+                    call.result.unwrap().result.unwrap(),
+                    communicate_update_result::Result::Success(result)
+                        if result.current_step == "Created agent Researcher (id: agent-2)"
+                            && result.message_index == 0
+                ));
+            }
+            _ => panic!("expected canonical field 48 CommunicateUpdateToolCall"),
+        }
+    }
+
+    #[test]
     fn production_canonical_dispatch_fails_closed_for_malformed_args_and_results() {
+        let widget_endpoint = spawn_sse_server(vec![
+            tool_sse(
+                "SendMessage",
+                "widget-call",
+                r#"{"type":"widget","widget":{"prompt":"Choose","options":[{"label":"Alpha"},{"label":"Beta"}]}}"#,
+            ),
+            final_sse(),
+        ]);
+        let widget_calls = Arc::new(AtomicUsize::new(0));
+        let widget_sink = Arc::new(RecordingObservationSink::default());
+        let mut widget_provider = AndroidHostInferenceProvider::with_endpoint(
+            "a".repeat(32),
+            widget_endpoint,
+            Arc::new(AtomicBool::new(false)),
+        )
+        .with_routed_tools(Arc::new(CanonicalProductionTools {
+            result: Ok(json!({"sent":true,"messageId":"widget-message"})),
+            calls: Arc::clone(&widget_calls),
+        }))
+        .with_tool_call_observation_sink(widget_sink.clone());
+        widget_provider.start_stream(&input(), 1).unwrap();
+        assert_eq!(widget_calls.load(AtomicOrdering::SeqCst), 1);
+        let widget_observations = widget_sink.observations.lock().unwrap();
+        assert_eq!(widget_observations.len(), 1);
+        let widget_decoded = super::super::agent_v1_wire::decode_agent_tool_call(
+            &widget_observations[0].protobuf_bytes,
+        )
+        .unwrap();
+        match widget_decoded.tool.unwrap() {
+            super::super::agent_v1_wire::agent_tool_call::Tool::SendMessageToolCall(call) => {
+                assert!(matches!(
+                    call.args.unwrap().message.unwrap(),
+                    super::super::agent_v1_wire::send_message_args::Message::Text(text)
+                        if text.content == "Choose — Alpha / Beta"
+                ));
+            }
+            _ => panic!("widget must remain canonical field 55"),
+        }
+        drop(widget_observations);
+
         let malformed_args_endpoint = spawn_sse_server(vec![tool_sse(
             "SendMessage",
             "bad-args",
-            r#"{"message":{"type":"widget","content":"nope"}}"#,
+            r#"{"type":"unknown","content":"nope"}"#,
         )]);
         let malformed_args_calls = Arc::new(AtomicUsize::new(0));
         let sink = Arc::new(RecordingObservationSink::default());
