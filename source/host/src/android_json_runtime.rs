@@ -9228,20 +9228,27 @@ impl AndroidJsonHost {
                 .and_then(Value::as_str)
                 .map(str::trim)
                 .filter(|value| !value.is_empty())
+                .map(str::to_string)
             else {
                 continue;
             };
-            let failure_id = failure.get("id").and_then(Value::as_str).unwrap_or_default();
+            let failure_id = failure
+                .get("id")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string();
             let already_queued = wakes
                 .pending_channel_failures
-                .get(agent_id)
+                .get(&agent_id)
                 .is_some_and(|pending| {
-                    pending.iter().any(|item| item.get("id").and_then(Value::as_str) == Some(failure_id))
+                    pending.iter().any(|item| {
+                        item.get("id").and_then(Value::as_str) == Some(failure_id.as_str())
+                    })
                 });
             if !already_queued {
                 BackgroundWakes::enqueue(
                     &mut wakes.pending_channel_failures,
-                    agent_id.to_string(),
+                    agent_id,
                     failure,
                 );
             }

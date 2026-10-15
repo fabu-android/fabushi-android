@@ -1,16 +1,15 @@
 use std::fs;
 use std::path::PathBuf;
 
-fn repo_root() -> PathBuf {
+fn source_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()
-        .and_then(|path| path.parent())
         .expect("host crate must live below source/")
         .to_path_buf()
 }
 
 fn source(path: &str) -> String {
-    fs::read_to_string(repo_root().join(path)).expect("shipping source must be readable")
+    fs::read_to_string(source_root().join(path)).expect("shipping source must be readable")
 }
 
 #[test]
