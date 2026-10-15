@@ -343,6 +343,17 @@ pub fn with_send_message_tools_counted_to_target(
 }
 
 fn send_message_definition() -> Value {
+    let secret_schema = json!({
+        "type":"object",
+        "required":["label","connector","field"],
+        "additionalProperties":false,
+        "properties":{
+            "label":{"type":"string","minLength":1},
+            "description":{"type":"string"},
+            "connector":{"type":"string","minLength":1,"maxLength":64},
+            "field":{"type":"string","minLength":1,"maxLength":64}
+        }
+    });
     json!({
         "type":"function",
         "name":SEND_MESSAGE_TOOL_NAME,
@@ -359,17 +370,7 @@ fn send_message_definition() -> Value {
                 "alt":{"type":"string"},
                 "reply_to":{"type":"string"},
                 "channel":{"type":"string"},
-                "secret":{
-                    "type":"object",
-                    "required":["label","connector","field"],
-                    "additionalProperties":false,
-                    "properties":{
-                        "label":{"type":"string","minLength":1},
-                        "description":{"type":"string"},
-                        "connector":{"type":"string","minLength":1,"maxLength":64},
-                        "field":{"type":"string","minLength":1,"maxLength":64}
-                    }
-                },
+                "secret":secret_schema,
                 "widget":{
                     "type":"object",
                     "required":["prompt","options"],
