@@ -180,7 +180,7 @@ use crate::runner::{
     SubagentSteerReviewCallback, SubagentToolBridge, SubagentToolContext,
     build_parent_subagent_routed_tools, spawn_generated_subagent, SubagentCompletionWakeSink,
     with_agent_management_tools_and_transcript,
-    with_send_message_tools, with_multitask_todo_tools,
+    with_send_message_tools, with_send_message_tools_counted_to_target, with_multitask_todo_tools,
     with_local_file_tools, with_remote_routed_tools, with_web_routed_tools,
     AgentTurnInterruptionRegistry, LocalApprovalRegistry, RemoteApprovalRegistry,
     RemoteAutoReviewDecision, RemoteAutoReviewPreflight, RemoteDispatchBinding,
@@ -1431,6 +1431,13 @@ enum AndroidApprovalDecision {
     Always,
     Never,
 }
+
+#[derive(Clone, Debug)]
+struct GroupTurnContext {
+    delivery_group_id: String,
+    is_shared_room_runner: bool,
+}
+
 
 impl AndroidApprovalDecision {
     fn parse(value: &str) -> Result<Self, String> {
@@ -11948,6 +11955,23 @@ impl AndroidJsonHost {
         command: &Value,
         bearer_token: Option<String>,
     ) -> Result<(), String> {
+        self.queue_chat_turn_with_context(
+            operation_id,
+            request_id,
+            command,
+            bearer_token,
+            None,
+        )
+    }
+
+    fn queue_chat_turn_with_context(
+        &mut self,
+        operation_id: &str,
+        request_id: &str,
+        command: &Value,
+        bearer_token: Option<String>,
+        group_context: Option<GroupTurnContext>,
+    ) -> Result<(), String> {
         let message_text = command
             .get("text")
             .and_then(Value::as_str)
@@ -12569,6 +12593,8 @@ impl AndroidJsonHost {
         let request_id_owned = request_id.to_string();
         let assistant_entry_id_owned = assistant_entry_id.clone();
         let conversation_id_owned = agent_id.clone();
+        let group_context_owned = group_context.clone();
+        let group_send_count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let model_owned = model.clone();
         let summarization_token = bearer_token.clone();
         let profile_revision_owned = profile_revision.clone();
@@ -12998,20 +13024,39 @@ impl AndroidJsonHost {
                     Arc::clone(&cancelled),
                     Arc::clone(&agent_turn_interruptions),
                 );
-                let routed_subagent_tools = with_send_message_tools(
-                    routed_subagent_tools,
-                    Arc::clone(&transcript),
-                    Arc::clone(&turn_lifecycle),
-                    Arc::clone(&turn_events),
-                    Arc::clone(&live_account_fence),
-                    &account_fence_owned,
-                    &conversation_id_owned,
-                    &request_id_owned,
-                    &operation_id_owned,
-                    turn_generation,
-                    turn_lifecycle_process_epoch,
-                    Arc::clone(&cancelled),
-                );
+                let routed_subagent_tools = if let Some(group_context) = group_context_owned.as_ref() {
+                    with_send_message_tools_counted_to_target(
+                        routed_subagent_tools,
+                        Arc::clone(&transcript),
+                        Arc::clone(&turn_lifecycle),
+                        Arc::clone(&turn_events),
+                        Arc::clone(&live_account_fence),
+                        &account_fence_owned,
+                        &conversation_id_owned,
+                        &group_context.delivery_group_id,
+                        &request_id_owned,
+                        &operation_id_owned,
+                        turn_generation,
+                        turn_lifecycle_process_epoch,
+                        Arc::clone(&cancelled),
+                        Arc::clone(&group_send_count),
+                    )
+                } else {
+                    with_send_message_tools(
+                        routed_subagent_tools,
+                        Arc::clone(&transcript),
+                        Arc::clone(&turn_lifecycle),
+                        Arc::clone(&turn_events),
+                        Arc::clone(&live_account_fence),
+                        &account_fence_owned,
+                        &conversation_id_owned,
+                        &request_id_owned,
+                        &operation_id_owned,
+                        turn_generation,
+                        turn_lifecycle_process_epoch,
+                        Arc::clone(&cancelled),
+                    )
+                };
                 // Desktop exposes TodoWrite only on a root non-subagent turn when
                 // multitask is enabled. Keep it outside GeneratedChildToolRegistry
                 // so no generated child can inherit root bookkeeping authority.
@@ -13277,8 +13322,10 @@ impl AndroidJsonHost {
                         conversation_id: conversation_id_owned.clone(),
                         is_box_scoped_subagent: false,
                         is_subagent_runner: false,
-                        is_shared_room_runner: false,
-                        sand_send_message_delivery_owed: false,
+                        is_shared_room_runner: group_context_owned
+                            .as_ref()
+                            .is_some_and(|context| context.is_shared_room_runner),
+                        sand_send_message_delivery_owed: group_context_owned.is_some(),
                         transcripts_folder_available: true,
                     },
                     privacy_mode_resolver,
