@@ -12,15 +12,21 @@ pub const TRANSIENT_ERRNO_CODES: &[&str] = &[
 ];
 
 pub const TRANSIENT_MESSAGE_TOKENS: &[&str] = &[
+    "timeout",
+    "timed out",
+    "deadline_exceeded",
+    "transport",
     "socket hang up",
     "premature close",
     "stream closed",
     "closed stream",
-    "connection reset",
-    "connection closed",
-    "connection terminated",
+    "connection",
+    "reset",
+    "broken pipe",
     "network error",
-    "the operation was aborted",
+    "operation was aborted",
+    "[aborted]",
+    "[unavailable]",
 ];
 
 pub const MAX_SERVER_RETRY_AFTER_MS: u64 = 30_000;
@@ -156,6 +162,15 @@ mod tests {
         assert!(should_retry_turn_attempt(
             false,
             "ResourceExhausted",
+            false,
+            false,
+            1,
+            policy,
+            false,
+        ));
+        assert!(should_retry_turn_attempt(
+            false,
+            "provider timeout http_408",
             false,
             false,
             1,

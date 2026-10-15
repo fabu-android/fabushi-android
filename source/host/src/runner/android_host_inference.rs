@@ -811,6 +811,7 @@ fn parse_retry_after_ms(value: &str) -> Option<u64> {
 fn provider_http_error_message(status: u16) -> String {
     match status {
         401 | 403 => format!("provider_authentication_required http_{status}"),
+        408 => format!("provider timeout http_{status}"),
         429 => format!("provider overloaded http_{status}"),
         status if status >= 500 => format!("provider overloaded http_{status}"),
         _ => format!("provider_http_{status}"),
@@ -932,6 +933,7 @@ mod tests {
             provider_http_error_message(403),
             "provider_authentication_required http_403"
         );
+        assert_eq!(provider_http_error_message(408), "provider timeout http_408");
         assert_eq!(provider_http_error_message(429), "provider overloaded http_429");
         assert_eq!(provider_http_error_message(503), "provider overloaded http_503");
         assert_eq!(provider_http_error_message(400), "provider_http_400");

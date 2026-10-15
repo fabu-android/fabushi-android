@@ -31,7 +31,7 @@
   "symlinks": [],
   "truncation_fallback_used": false,
   "initial_status": "unreviewed",
-  "ledger_sha256": "a18ba5a605ac382028b3780ab6879d6867825220cb92732382b5b65b7df0fe53",
-  "closure_review": "mahayana-cli-codex-compat-nonshipping-at-0a5cad5",
+  "ledger_sha256": "833e4d0d2620042d84d458146ecb252e562eab63b0c71200fda647e2d3ebe65b",
+  "closure_review": "incremental-semantic-audit-transient-retry-parity-at-103db13",
   "product_acceptance": "not-claimed"
 }
