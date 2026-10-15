@@ -1993,6 +1993,181 @@ mod tests {
     }
 
     #[test]
+    fn production_loop_non_text_send_message_does_not_clear_start_ack_condition() {
+        use super::super::turn_tool_session_reminders::{
+            EARLY_RESULT_REMINDER_MESSAGE, START_OF_TURN_ACK_REMINDER_MESSAGE,
+        };
+
+        let (endpoint, requests) = spawn_recording_sse_server(vec![
+            tool_sse(
+                "SendMessage",
+                "widget-1",
+                r#"{"type":"widget","widget":{"id":"demo"}}"#,
+            ),
+            tool_sse("Read", "read-2", "{}"),
+            tool_sse("Read", "read-3", "{}"),
+            tool_sse("Read", "read-4", "{}"),
+            final_sse(),
+        ]);
+        let mut provider = AndroidHostInferenceProvider::with_endpoint(
+            "a".repeat(32),
+            endpoint,
+            Arc::new(AtomicBool::new(false)),
+        )
+        .with_turn_tool_session_reminders(true)
+        .with_routed_tools(Arc::new(ReminderTools {
+            calls: Arc::new(AtomicUsize::new(0)),
+            cancelled: None,
+        }));
+
+        provider.start_stream(&input(), 1).unwrap();
+        let requests = requests.lock().unwrap();
+        assert_eq!(requests.len(), 5);
+        assert!(request_contains_user_reminder(
+            &requests[2],
+            EARLY_RESULT_REMINDER_MESSAGE
+        ));
+        assert!(request_contains_user_reminder(
+            &requests[4],
+            START_OF_TURN_ACK_REMINDER_MESSAGE
+        ));
+    }
+
+    #[test]
+    fn production_loop_regular_send_message_threshold_matches_desktop_after_early_result() {
+        use super::super::turn_tool_session_reminders::{
+            EARLY_RESULT_REMINDER_MESSAGE, SEND_MESSAGE_REMINDER_MESSAGE,
+        };
+
+        let mut responses = vec![
+            tool_sse(
+                "SendMessage",
+                "send-1",
+                r#"{"type":"text","content":"Checking now."}"#,
+            ),
+            tool_sse("Read", "read-early", "{}"),
+        ];
+        for index in 0..7 {
+            responses.push(tool_sse("Read", &format!("read-{index}"), "{}"));
+        }
+        responses.push(final_sse());
+        let (endpoint, requests) = spawn_recording_sse_server(responses);
+        let mut provider = AndroidHostInferenceProvider::with_endpoint(
+            "a".repeat(32),
+            endpoint,
+            Arc::new(AtomicBool::new(false)),
+        )
+        .with_turn_tool_session_reminders(true)
+        .with_routed_tools(Arc::new(ReminderTools {
+            calls: Arc::new(AtomicUsize::new(0)),
+            cancelled: None,
+        }));
+
+        provider.start_stream(&input(), 1).unwrap();
+        let requests = requests.lock().unwrap();
+        assert_eq!(requests.len(), 10);
+        assert!(request_contains_user_reminder(
+            &requests[2],
+            EARLY_RESULT_REMINDER_MESSAGE
+        ));
+        assert!(request_contains_user_reminder(
+            &requests[9],
+            SEND_MESSAGE_REMINDER_MESSAGE
+        ));
+    }
+
+    #[test]
+    fn production_loop_early_result_fires_once_per_silent_streak_and_resets_on_send_message() {
+        use super::super::turn_tool_session_reminders::EARLY_RESULT_REMINDER_MESSAGE;
+
+        let (endpoint, requests) = spawn_recording_sse_server(vec![
+            tool_sse(
+                "SendMessage",
+                "send-1",
+                r#"{"type":"text","content":"Starting."}"#,
+            ),
+            tool_sse("Read", "read-2", "{}"),
+            tool_sse("Read", "read-3", "{}"),
+            tool_sse("Read", "read-4", "{}"),
+            tool_sse(
+                "SendMessage",
+                "send-5",
+                r#"{"message":{"type":"text","content":"Still working."}}"#,
+            ),
+            tool_sse("Read", "read-6", "{}"),
+            final_sse(),
+        ]);
+        let mut provider = AndroidHostInferenceProvider::with_endpoint(
+            "a".repeat(32),
+            endpoint,
+            Arc::new(AtomicBool::new(false)),
+        )
+        .with_turn_tool_session_reminders(true)
+        .with_routed_tools(Arc::new(ReminderTools {
+            calls: Arc::new(AtomicUsize::new(0)),
+            cancelled: None,
+        }));
+
+        provider.start_stream(&input(), 1).unwrap();
+        let requests = requests.lock().unwrap();
+        assert_eq!(requests.len(), 7);
+        let early_indices = requests
+            .iter()
+            .enumerate()
+            .filter_map(|(index, request)| {
+                request_contains_user_reminder(request, EARLY_RESULT_REMINDER_MESSAGE)
+                    .then_some(index)
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(early_indices, vec![2, 6]);
+    }
+
+    struct FailingReminderTools {
+        calls: Arc<AtomicUsize>,
+    }
+
+    impl AndroidRoutedToolBridge for FailingReminderTools {
+        fn list_tools(&self) -> Result<Vec<Value>, String> {
+            Ok(vec![json!({
+                "type":"function",
+                "name":"Read",
+                "parameters":{"type":"object"}
+            })])
+        }
+
+        fn call_tool(
+            &self,
+            _name: &str,
+            _args: Value,
+            _tool_call_id: &str,
+        ) -> Result<Value, String> {
+            self.calls.fetch_add(1, AtomicOrdering::SeqCst);
+            Err("synthetic dispatch failure".into())
+        }
+    }
+
+    #[test]
+    fn tool_dispatch_failure_does_not_repeat_side_effect_or_issue_reminder_request() {
+        let (endpoint, requests) =
+            spawn_recording_sse_server(vec![tool_sse("Read", "read-1", "{}")]);
+        let calls = Arc::new(AtomicUsize::new(0));
+        let mut provider = AndroidHostInferenceProvider::with_endpoint(
+            "a".repeat(32),
+            endpoint,
+            Arc::new(AtomicBool::new(false)),
+        )
+        .with_turn_tool_session_reminders(true)
+        .with_routed_tools(Arc::new(FailingReminderTools {
+            calls: Arc::clone(&calls),
+        }));
+
+        let error = provider.start_stream(&input(), 1).unwrap_err();
+        assert!(error.message.contains("synthetic dispatch failure"));
+        assert_eq!(calls.load(AtomicOrdering::SeqCst), 1);
+        assert_eq!(requests.lock().unwrap().len(), 1);
+    }
+
+    #[test]
     fn cancellation_after_tool_dispatch_does_not_repeat_side_effect_or_send_reminder_request() {
         let cancelled = Arc::new(AtomicBool::new(false));
         let (endpoint, requests) =
