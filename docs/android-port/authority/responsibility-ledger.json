@@ -17395,6 +17395,34 @@
       "notes": "Implemented production caller is narrower than the Desktop aggregate background-wakes contract. Inbound channel wakes, broadcast/admin/timeline event wakes and CloudAgent/background-shell watchers remain separate mapped work and are not promoted by this row."
     },
     {
+      "responsibility_id": "BACKGROUND-WAKES-TIMELINE-ANDROID-001",
+      "domain": "agent-background-wakes",
+      "desktop_path": "source/host/tests/background_wakes_production_contract.rs; source/host/app/src/main.rs",
+      "desktop_symbol": "timeline wake sink / build_timeline_event_wake_prompt / automation-changed",
+      "source_sha": "fccb102632895449c487ef45e9b5969de7746e91",
+      "responsibility": "Persist Agent timeline changes and revive an idle Agent with one hidden, deduplicated continuation turn while preserving account fencing and process-death recovery.",
+      "source_owner": "Desktop roster timeline sink + BackgroundWakes event revival",
+      "visible_effect": "An Agent can notice relevant automation timeline changes after they occur without duplicating a continuation after process restart.",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "source/host/src/extensions/transcript/background_wakes.rs",
+        "source/host/src/android_json_runtime.rs",
+        "source/host/tests/android_background_wakes_shipping_contract.rs"
+      ],
+      "android_owner": "Rust AndroidJsonHost + canonical TranscriptStore/turn journal; BackgroundWakes remains an in-process coordinator only",
+      "platform_delta": "Android persists the wake payload and claim in canonical Host transcript state because the app process can die between the timeline mutation and the hidden continuation. Activity/Compose owns no wake truth.",
+      "implementation_status": "implemented",
+      "production_wiring": "feature.automation.upsert and feature.automation.setAgentEnabled persist automation-changed timeline-event-wake rows for the owning Agent. feature.receive reconstructs unclaimed current-account rows after reopen, defers while that Agent has an active turn, coalesces per Agent, derives a deterministic timeline-event-revival request id, checks the durable turn journal before queue admission, and writes a transcript claim only after the hidden turn is known queued/already journaled.",
+      "unit_test": "android_json_runtime::automation_event_trigger_wiring_tests::automation_timeline_wake_is_durable_account_fenced_and_recoverable; exact-head Actions pending",
+      "contract_test": "source/host/tests/android_background_wakes_shipping_contract.rs timeline-event shipping contract; exact-head Actions pending",
+      "integration_test": "Same-exact-head Rust Host production composition required; channel connection/disconnection timeline callers remain separate work.",
+      "packaged_test": "Required on final APK/AAB for process-death/reopen timeline revival.",
+      "device_test": "Required in final automation/process-death acceptance.",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Narrow automation-changed timeline slice only. Inbound channel wakes, admin broadcast, channel-connected/channel-disconnected timeline callers and the aggregate background-wakes source row remain mapped/not-verified."
+    },
+    {
       "responsibility_id": "DURABLE-FILE-POLICY-ANDROID-001",
       "domain": "runtime-durable-storage-policy",
       "desktop_path": "source/host/src/durable_file_policy.rs",

@@ -54,6 +54,25 @@ fn failed_channel_delivery_rebuilds_a_durable_hidden_revival_without_blind_retry
 }
 
 #[test]
+fn automation_timeline_event_wake_is_persisted_recovered_and_deduped_before_hidden_revival() {
+    let runtime = source("host/src/android_json_runtime.rs");
+    for needle in [
+        "timeline-event-wake",
+        "timeline-event-revival-claim",
+        "persist_timeline_event_wake",
+        "recover_timeline_event_wakes",
+        "drain_timeline_event_revival_once",
+        "build_timeline_event_wake_prompt",
+        "requestSource\":\"timeline-event",
+        "turn_journal",
+    ] {
+        assert!(runtime.contains(needle), "timeline-event shipping wake must contain {needle}");
+    }
+    assert!(runtime.contains("self.drain_timeline_event_revival_once()?"));
+    assert!(runtime.contains("\"type\":\"automation-changed\""));
+}
+
+#[test]
 fn background_shell_watcher_is_shipping_only_with_durable_remote_owner_and_revival() {
     let runtime = source("host/src/android_json_runtime.rs");
     let owner = source("host/src/remote_background_work.rs");

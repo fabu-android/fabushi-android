@@ -150,7 +150,9 @@ use crate::extensions::teach_recording::{DurableTeachRecordingOwner, TeachRecord
 use crate::extensions::trays::extension::{start_trays_extension, HostTraysExtension};
 use crate::extensions::trays::trays_service::{TrayEvent, TraySubscription};
 use crate::extensions::transcript::{AsyncTask, SandPendingWakeStore, TranscriptRecoveryOutcome, TranscriptStore, merge_async_tasks};
-use crate::extensions::transcript::background_wakes::{BackgroundWakes, build_channel_delivery_failure_wake_prompt};
+use crate::extensions::transcript::background_wakes::{
+    BackgroundWakes, build_channel_delivery_failure_wake_prompt, build_timeline_event_wake_prompt,
+};
 use crate::extensions::transcript::completion_revivals::{
     build_shell_revival_prompt, build_subagent_revival_prompt, ShellCompletion,
     SubagentCompletion,
@@ -8435,6 +8437,7 @@ impl AndroidJsonHost {
         let time_zone = self.effective_time_zone()?;
         let listener_platforms = spec.trigger.as_ref().map(trigger_listener_platforms).unwrap_or_default();
         let listener_enabled = spec.enabled;
+        let automation_name = spec.name.clone();
         self.automation_runtime.upsert_spec(spec, time_zone.as_deref())?;
         if listener_enabled && !listener_platforms.is_empty() {
             let surfaced = surface_listener_connect_cards(
@@ -8478,7 +8481,19 @@ impl AndroidJsonHost {
                 )?;
             }
         }
-        self.record_automation_lifecycle_telemetry(&id, &account_fence, if existed { "updated" } else { "created" });
+        let lifecycle_action = if existed { "updated" } else { "created" };
+        self.record_automation_lifecycle_telemetry(&id, &account_fence, lifecycle_action);
+        if self.persist_timeline_event_wake(
+            &account_fence,
+            agent_id,
+            json!({
+                "type":"automation-changed",
+                "action":lifecycle_action,
+                "automationName":automation_name,
+            }),
+        ).is_err() {
+            self.edge_failures.report("background-wakes", "timeline-event-persist", "StorageError");
+        }
         Ok(json!({"id":id,"localId":local_id,"stored":true}))
     }
 
@@ -8534,11 +8549,23 @@ impl AndroidJsonHost {
             enabled,
             time_zone.as_deref(),
         )?;
+        let lifecycle_action = if enabled { "enabled" } else { "disabled" };
         self.record_automation_lifecycle_telemetry(
             automation_id,
             &account_fence,
-            if enabled { "enabled" } else { "disabled" },
+            lifecycle_action,
         );
+        if self.persist_timeline_event_wake(
+            &account_fence,
+            agent_id,
+            json!({
+                "type":"automation-changed",
+                "action":lifecycle_action,
+                "automationName":spec.name.clone(),
+            }),
+        ).is_err() {
+            self.edge_failures.report("background-wakes", "timeline-event-persist", "StorageError");
+        }
         serde_json::to_value(spec).map_err(|error| error.to_string())
     }
 
@@ -10143,6 +10170,210 @@ impl AndroidJsonHost {
             &completions,
             &work_ids,
         );
+        Ok(())
+    }
+
+    fn timeline_event_claim_id(wake_id: &str) -> String {
+        format!("timeline-event-revival-claim:{wake_id}")
+    }
+
+    fn persist_timeline_event_wake(
+        &mut self,
+        account_fence: &str,
+        agent_id: &str,
+        event: Value,
+    ) -> Result<String, String> {
+        let observed_at_ms = now_ms();
+        let event_json = serde_json::to_string(&event)
+            .map_err(|error| format!("failed to encode timeline wake event: {error}"))?;
+        let material = format!(
+            "{account_fence}\n{agent_id}\n{observed_at_ms}\n{event_json}"
+        );
+        let wake_id = format!(
+            "timeline-event-wake:{}",
+            crate::sha256::sha256_hex(material.as_bytes())
+        );
+        self.transcript
+            .lock()
+            .map_err(|_| "transcript lock poisoned".to_string())?
+            .append_entry_if_absent(json!({
+                "id":wake_id.clone(),
+                "kind":"timeline-event-wake",
+                "accountFence":account_fence,
+                "agentId":agent_id,
+                "event":event,
+                "timestampMs":observed_at_ms,
+            }))
+            .map_err(|error| format!("failed to persist timeline event wake: {error}"))?;
+        Ok(wake_id)
+    }
+
+    fn recover_timeline_event_wakes(&mut self) -> Result<(), String> {
+        let account_fence = match self.current_turn_account_fence() {
+            Ok(value) => value,
+            Err(_) => return Ok(()),
+        };
+        let entries = self
+            .transcript
+            .lock()
+            .map_err(|_| "transcript lock poisoned".to_string())?
+            .get_transcript();
+        let claimed = entries
+            .iter()
+            .filter(|entry| entry.get("kind").and_then(Value::as_str) == Some("timeline-event-revival-claim"))
+            .filter(|entry| entry.get("accountFence").and_then(Value::as_str) == Some(account_fence.as_str()))
+            .filter_map(|entry| entry.get("wakeId").and_then(Value::as_str))
+            .map(str::to_string)
+            .collect::<BTreeSet<_>>();
+        let pending = entries
+            .into_iter()
+            .filter(|entry| entry.get("kind").and_then(Value::as_str) == Some("timeline-event-wake"))
+            .filter(|entry| entry.get("accountFence").and_then(Value::as_str) == Some(account_fence.as_str()))
+            .filter(|entry| {
+                entry.get("id").and_then(Value::as_str)
+                    .is_some_and(|id| !claimed.contains(id))
+            })
+            .collect::<Vec<_>>();
+        let mut wakes = self.background_wakes
+            .lock()
+            .map_err(|_| "background wake owner lock poisoned".to_string())?;
+        for wake in pending {
+            let Some(agent_id) = wake.get("agentId").and_then(Value::as_str)
+                .map(str::trim).filter(|value| !value.is_empty()).map(str::to_string) else {
+                continue;
+            };
+            let wake_id = wake.get("id").and_then(Value::as_str).unwrap_or_default();
+            let already_queued = wakes.pending_event_wakes.get(&agent_id).is_some_and(|items| {
+                items.iter().any(|item| item.get("id").and_then(Value::as_str) == Some(wake_id))
+            });
+            if !already_queued {
+                BackgroundWakes::enqueue(&mut wakes.pending_event_wakes, agent_id, wake);
+            }
+        }
+        Ok(())
+    }
+
+    fn mark_timeline_event_wakes_claimed(&mut self, wakes: &[Value]) -> Result<(), String> {
+        let observed_at_ms = now_ms();
+        let account_fence = self.current_turn_account_fence()?;
+        let mut transcript = self.transcript
+            .lock()
+            .map_err(|_| "transcript lock poisoned".to_string())?;
+        for wake in wakes {
+            let Some(wake_id) = wake.get("id").and_then(Value::as_str) else { continue; };
+            transcript.append_entry_if_absent(json!({
+                "id":Self::timeline_event_claim_id(wake_id),
+                "kind":"timeline-event-revival-claim",
+                "wakeId":wake_id,
+                "accountFence":account_fence,
+                "agentId":wake.get("agentId").cloned().unwrap_or(Value::Null),
+                "timestampMs":observed_at_ms,
+            })).map_err(|error| format!("failed to persist timeline event revival claim: {error}"))?;
+        }
+        Ok(())
+    }
+
+    fn drain_timeline_event_revival_once(&mut self) -> Result<(), String> {
+        self.recover_timeline_event_wakes()?;
+        let candidate = {
+            let wakes = self.background_wakes
+                .lock()
+                .map_err(|_| "background wake owner lock poisoned".to_string())?;
+            wakes.pending_event_wakes.keys().next().cloned()
+        };
+        let Some(agent_id) = candidate else { return Ok(()); };
+        let account_fence = self.current_turn_account_fence()?;
+        if self.agent_turn_interruptions.has_active_turn(&agent_id, &account_fence) {
+            return Ok(());
+        }
+        let wakes_to_run = {
+            let mut wakes = self.background_wakes
+                .lock()
+                .map_err(|_| "background wake owner lock poisoned".to_string())?;
+            if !BackgroundWakes::<Value>::begin_revival(&mut wakes.reviving_event_agent_ids, &agent_id) {
+                return Ok(());
+            }
+            BackgroundWakes::take_pending(&mut wakes.pending_event_wakes, &agent_id)
+        };
+        let finish = |owner: &Arc<Mutex<BackgroundWakes<Value>>>, agent_id: &str| {
+            if let Ok(mut wakes) = owner.lock() {
+                BackgroundWakes::<Value>::end_revival(&mut wakes.reviving_event_agent_ids, agent_id);
+            }
+        };
+        if wakes_to_run.is_empty() {
+            finish(&self.background_wakes, &agent_id);
+            return Ok(());
+        }
+        let mut wake_ids = wakes_to_run.iter()
+            .filter_map(|wake| wake.get("id").and_then(Value::as_str))
+            .map(str::to_string).collect::<Vec<_>>();
+        wake_ids.sort();
+        wake_ids.dedup();
+        let request_id = format!(
+            "timeline-event-revival:{}:{}",
+            agent_id,
+            crate::sha256::sha256_hex(wake_ids.join("\n").as_bytes())
+        );
+        if self.turn_journal.lock()
+            .map_err(|_| "turn journal lock poisoned".to_string())?
+            .record(&request_id).is_some()
+        {
+            self.mark_timeline_event_wakes_claimed(&wakes_to_run)?;
+            finish(&self.background_wakes, &agent_id);
+            return Ok(());
+        }
+        let events = wakes_to_run.iter()
+            .filter_map(|wake| wake.get("event").cloned())
+            .collect::<Vec<_>>();
+        if events.is_empty() {
+            self.mark_timeline_event_wakes_claimed(&wakes_to_run)?;
+            finish(&self.background_wakes, &agent_id);
+            return Ok(());
+        }
+        let (bearer_token, _session_mutation) = match self.bearer_token_for_turn() {
+            Ok(value) => value,
+            Err(_) => {
+                let mut owner = self.background_wakes.lock()
+                    .map_err(|_| "background wake owner lock poisoned".to_string())?;
+                for wake in wakes_to_run {
+                    BackgroundWakes::enqueue(&mut owner.pending_event_wakes, agent_id.clone(), wake);
+                }
+                BackgroundWakes::<Value>::end_revival(&mut owner.reviving_event_agent_ids, &agent_id);
+                return Ok(());
+            }
+        };
+        let operation_id = self.next_operation_id(&request_id);
+        self.active_operations.insert(operation_id.clone());
+        let command = json!({
+            "type":"chat.send",
+            "requestId":request_id,
+            "agentId":agent_id,
+            "text":build_timeline_event_wake_prompt(&events),
+            "hidden":true,
+            "appendUserMessage":false,
+            "awaitTurn":false,
+            "requestSource":"timeline-event",
+            "skipAckObligation":true,
+            "directAddressedAcceptance":true,
+        });
+        match self.queue_chat_turn(
+            &operation_id,
+            command.get("requestId").and_then(Value::as_str).unwrap_or_default(),
+            &command,
+            bearer_token,
+        ) {
+            Ok(()) => self.mark_timeline_event_wakes_claimed(&wakes_to_run)?,
+            Err(_) => {
+                self.active_operations.remove(&operation_id);
+                self.agent_turn_interruptions.unregister_operation(&operation_id);
+                let mut owner = self.background_wakes.lock()
+                    .map_err(|_| "background wake owner lock poisoned".to_string())?;
+                for wake in wakes_to_run {
+                    BackgroundWakes::enqueue(&mut owner.pending_event_wakes, agent_id.clone(), wake);
+                }
+            }
+        }
+        finish(&self.background_wakes, &agent_id);
         Ok(())
     }
 
@@ -16722,6 +16953,7 @@ impl AndroidJsonHost {
         self.drain_listener_connect_resume_once()?;
         self.drain_box_handoff_resume_once()?;
         self.drain_channel_failure_revival_once()?;
+        self.drain_timeline_event_revival_once()?;
         self.drain_subagent_completion_revival_once()?;
         self.drain_remote_shell_completion_revival_once()?;
         self.drain_remote_cloud_agent_completion_revival_once()?;
@@ -25772,6 +26004,58 @@ mod automation_event_trigger_wiring_tests {
         assert_eq!(cards.len(), 1);
         assert_eq!(cards[0]["message"]["platform"], "slack");
         assert_eq!(cards[0]["message"]["reason"], "so this routine can fire");
+    }
+
+    #[test]
+    fn automation_timeline_wake_is_durable_account_fenced_and_recoverable() {
+        let root = tempfile::tempdir().unwrap();
+        let agent_id;
+        let account_fence;
+        {
+            let mut host = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+            sign_in_test_account(&mut host);
+            let created = host
+                .dispatch(
+                    "createAgent",
+                    &json!({"name":"Timeline Agent","isIntroductionSuppressed":true}),
+                )
+                .unwrap();
+            agent_id = created["agent"]["id"].as_str().unwrap().to_string();
+            account_fence = host.current_turn_account_fence().unwrap();
+            host.dispatch(
+                "feature.automation.upsert",
+                &json!({
+                    "id":"timeline-routine",
+                    "agentId":agent_id,
+                    "name":"Timeline routine",
+                    "prompt":"Report status",
+                    "schedule":"0 9 * * *",
+                    "enabled":true
+                }),
+            )
+            .unwrap();
+            let transcript = host.transcript.lock().unwrap().get_transcript();
+            let wakes = transcript
+                .iter()
+                .filter(|entry| entry["kind"] == "timeline-event-wake")
+                .collect::<Vec<_>>();
+            assert_eq!(wakes.len(), 1);
+            assert_eq!(wakes[0]["accountFence"], account_fence);
+            assert_eq!(wakes[0]["agentId"], agent_id);
+            assert_eq!(wakes[0]["event"]["type"], "automation-changed");
+            assert_eq!(wakes[0]["event"]["action"], "created");
+            assert_eq!(wakes[0]["event"]["automationName"], "Timeline routine");
+        }
+
+        let mut reopened = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+        sign_in_test_account(&mut reopened);
+        assert_eq!(reopened.current_turn_account_fence().unwrap(), account_fence);
+        reopened.recover_timeline_event_wakes().unwrap();
+        let wakes = reopened.background_wakes.lock().unwrap();
+        let pending = wakes.pending_event_wakes.get(&agent_id).unwrap();
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0]["accountFence"], account_fence);
+        assert_eq!(pending[0]["event"]["type"], "automation-changed");
     }
 
     #[test]
