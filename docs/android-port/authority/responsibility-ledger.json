@@ -1986,6 +1986,34 @@
             "workflow_library_watches_external_and_atomic_edits",
             "stat_parse_cache_reuses_stable_fingerprints_and_invalidates_changes"
           ]
+        },
+        {
+          "path": "source/host/src/workflows/mod.rs",
+          "blob_sha": "fcb148c03aeeb1591c53a30305dfcee215471df0",
+          "symbols": [
+            "FileWorkflowStore/GlobalWorkflowLibrary/stat-keyed parse cache production responsibility"
+          ]
+        },
+        {
+          "path": "source/host/src/workflows/stat_keyed_parse_cache.rs",
+          "blob_sha": "2d01892ae5167bb0c06a7c509c7d1044cb5399d7",
+          "symbols": [
+            "FileWorkflowStore/GlobalWorkflowLibrary/stat-keyed parse cache production responsibility"
+          ]
+        },
+        {
+          "path": "source/host/src/workflows/workflow_library.rs",
+          "blob_sha": "807e99e6168aa0575336ecbcb821287979f64f1c",
+          "symbols": [
+            "FileWorkflowStore/GlobalWorkflowLibrary/stat-keyed parse cache production responsibility"
+          ]
+        },
+        {
+          "path": "source/host/src/workflows/workflow_store.rs",
+          "blob_sha": "5132f6889bfa31372b3f1a9faf604d5874f2e1d4",
+          "symbols": [
+            "FileWorkflowStore/GlobalWorkflowLibrary/stat-keyed parse cache production responsibility"
+          ]
         }
       ],
       "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
@@ -2036,7 +2064,7 @@
       "device_test": "required on emulator/physical device as applicable",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Durable run/approval/idempotency, Host-owned stable account+Agent+local automation ids, and cron/@every/time-zone next-run derivation are implemented. GitHub/Slack listener triggers, status/routine notices, full native routines presentation, actual background executor and packaged/device evidence remain open; keep mapped/not-verified. Reverse-link audit 2964bcac536302cf1e2f8afb676e757d43fba0b3: source/host/src/extensions/transcript/workflow_commands.rs@35d5863225b4de40e6f321873f33fba3e7a2e43d — Desktop workflow commands own per-Agent watch lifecycle, run-now planning, workflow-reference expansion, dispatch and dispose. Android durable AutomationRuntime exists, but listener/watch/reference expansion, OS scheduling and actual multi-Agent background execution remain open."
+      "notes": "Durable run/approval/idempotency, Host-owned stable account+Agent+local automation ids, and cron/@every/time-zone next-run derivation are implemented. GitHub/Slack listener triggers, status/routine notices, full native routines presentation, actual background executor and packaged/device evidence remain open; keep mapped/not-verified. Reverse-link audit 2964bcac536302cf1e2f8afb676e757d43fba0b3: source/host/src/extensions/transcript/workflow_commands.rs@35d5863225b4de40e6f321873f33fba3e7a2e43d — Desktop workflow commands own per-Agent watch lifecycle, run-now planning, workflow-reference expansion, dispatch and dispose. Android durable AutomationRuntime exists, but listener/watch/reference expansion, OS scheduling and actual multi-Agent background execution remain open. d56b2e490051fc3b10ae96e75928d557f7530898 exact-blob/shipping audit: workflows/mod.rs, stat_keyed_parse_cache.rs, workflow_library.rs and workflow_store.rs are byte-identical direct ports and are production-reachable from Android Session composition. Source rows are implemented; AUTOMATION-WORKFLOW-001 remains mapped because broader routine scheduling/listener/UI/execution responsibilities are still open."
     },
     {
       "responsibility_id": "SETTINGS-SCOPE-001",
