@@ -1415,9 +1415,44 @@
             "REMOTE_COMPUTER_WORKER_SOURCE",
             "WORKER_ROUTER_SOURCE"
           ]
+        },
+        {
+          "path": "source/host/src/network_enrollment_owner.rs",
+          "blob_sha": "dac2ea3dfa439570de57722c23f583b160f15af9",
+          "symbols": [
+            "NetworkEnrollmentOwner",
+            "network generation",
+            "worker lifecycle"
+          ]
+        },
+        {
+          "path": "source/host/src/network_worker_process.rs",
+          "blob_sha": "30751cc27346195887ed072bae751788a9b35b9e",
+          "symbols": [
+            "NetworkWorkerProcess",
+            "isolated network worker protocol"
+          ]
+        },
+        {
+          "path": "source/host/src/sensitive_input_challenge.rs",
+          "blob_sha": "0da331c512db4ecadd951be97a0c48fb966cacb5",
+          "symbols": [
+            "SensitiveInputChallenge",
+            "binding",
+            "one-time consume"
+          ]
+        },
+        {
+          "path": "source/host/src/remote_computer_target.rs",
+          "blob_sha": "602493decac443fbefdf3e9af3ccda2caad2012d",
+          "symbols": [
+            "native remote target",
+            "snapshot generation fence",
+            "lease-fenced execution"
+          ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "b6a66fd2b6aa1619565e3d25015bbbf0b4b8263d",
       "responsibility": "Own remote device identity, pairing/revoke, command lifecycle, reconnect, human takeover and side-effect reconciliation.",
       "source_owner": "Mahayana platform/remote runtime",
       "direct_callers": [
@@ -1475,7 +1510,7 @@
       "device_test": "required on emulator/physical device as applicable",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Implementation is recorded as implemented only after Desktop main 92fcc2b0 protocol merge, Android native data-plane review, and Android client create-outcome reconciliation wiring. Verification remains not-verified until descendant exact-head compile/unit/package/device evidence succeeds. Release signing, protected account and Authorized Remote Runner enrollment remain separate hard blockers. Current Desktop rows 571-574 (box-exec Cargo/CLI/lib/entrypoint) were reviewed against the Android Remote Runner crate. Android intentionally replaces the desktop-local daemon process lifecycle with TLS/device-bound remote execution plus durable execute/reconcile/cancel semantics; this mapping remains not-verified pending exact-head production/package/device evidence. Desktop authority rebaseline to b6a66fd2b6aa1619565e3d25015bbbf0b4b8263d: one or more source anchors changed; prior implementation/verification status was conservatively invalidated pending semantic re-audit."
+      "notes": "Implementation is recorded as implemented only after Desktop main 92fcc2b0 protocol merge, Android native data-plane review, and Android client create-outcome reconciliation wiring. Verification remains not-verified until descendant exact-head compile/unit/package/device evidence succeeds. Release signing, protected account and Authorized Remote Runner enrollment remain separate hard blockers. Current Desktop rows 571-574 (box-exec Cargo/CLI/lib/entrypoint) were reviewed against the Android Remote Runner crate. Android intentionally replaces the desktop-local daemon process lifecycle with TLS/device-bound remote execution plus durable execute/reconcile/cancel semantics; this mapping remains not-verified pending exact-head production/package/device evidence. Desktop authority rebaseline to b6a66fd2b6aa1619565e3d25015bbbf0b4b8263d: one or more source anchors changed; prior implementation/verification status was conservatively invalidated pending semantic re-audit. Desktop authority b6a66fd2b6aa1619565e3d25015bbbf0b4b8263d delta audit at Android 70cef594d202971c2ff3b960ab0e542952cc0751: newly changed/added source anchors were attached conservatively; mapping does not claim equivalent production implementation or verification. Local staged upload has shipping code pending exact-head CI; network-worker/enrollment/sensitive-input/native-target deltas remain partial gaps."
     },
     {
       "responsibility_id": "COMMERCE-LIFECYCLE-001",
@@ -16057,11 +16092,22 @@
           "path": "source/host/local-exec/local-exec-provider.ts",
           "blob_sha": "870e2ec06486602e916df3c619b6e8544f1e3911",
           "symbols": [
-            "bounded upload/download"
+            "bounded staged upload/download",
+            "expectedVersion",
+            "SHA-256",
+            "atomic commit"
+          ]
+        },
+        {
+          "path": "source/host/src/extensions/local_exec/local_exec_bridge.rs",
+          "blob_sha": "59e2a849300e9343673199467c2301725328a004",
+          "symbols": [
+            "local exec transport bridge",
+            "file upload/download bridge"
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "b6a66fd2b6aa1619565e3d25015bbbf0b4b8263d",
       "responsibility": "Bound already-authorized AndroidLocal filesystem access to one app-owned root with traversal/symlink escape rejection, bounded regular-file I/O, atomic writes and cwd fallback.",
       "source_owner": "Desktop local-exec machine/provider filesystem boundary",
       "direct_callers": [
@@ -16113,7 +16159,7 @@
       "device_test": "required",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Production wiring gap is closed in source by 3a43094f584c2f4ac74aaf76ef04ed155870ac45 and baba70fdf426dcdc75c87623e58ceca87d3bba93. Keep not-verified until a descendant exact HEAD passes Rust/Android/package/device evidence; this still does not claim unrestricted Desktop local-exec parity. Desktop authority rebaseline to b6a66fd2b6aa1619565e3d25015bbbf0b4b8263d: one or more source anchors changed; prior implementation/verification status was conservatively invalidated pending semantic re-audit."
+      "notes": "Production wiring gap is closed in source by 3a43094f584c2f4ac74aaf76ef04ed155870ac45 and baba70fdf426dcdc75c87623e58ceca87d3bba93. Keep not-verified until a descendant exact HEAD passes Rust/Android/package/device evidence; this still does not claim unrestricted Desktop local-exec parity. Desktop authority rebaseline to b6a66fd2b6aa1619565e3d25015bbbf0b4b8263d: one or more source anchors changed; prior implementation/verification status was conservatively invalidated pending semantic re-audit. Desktop authority b6a66fd2b6aa1619565e3d25015bbbf0b4b8263d delta audit at Android 70cef594d202971c2ff3b960ab0e542952cc0751: newly changed/added source anchors were attached conservatively; mapping does not claim equivalent production implementation or verification. Local staged upload has shipping code pending exact-head CI; network-worker/enrollment/sensitive-input/native-target deltas remain partial gaps."
     },
     {
       "responsibility_id": "AGENT-SESSION-DB-CONTRACTS-ANDROID-001",
