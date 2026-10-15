@@ -31,7 +31,7 @@
   "symlinks": [],
   "truncation_fallback_used": false,
   "initial_status": "unreviewed",
-  "ledger_sha256": "91666ed453ac87e70d7a964e04cc77143e91217830c8970c95dfb38052848cd3",
-  "closure_review": "incremental-semantic-audit-stream-attempt-gap-at-a14b0fb",
+  "ledger_sha256": "5c69042a6c7ee5e71324f6ddb6d7acb2c7e485082b440bb80943e2f89b34b680",
+  "closure_review": "codex-upstream-nonshipping-build-reachability-at-b0ed4a8",
   "product_acceptance": "not-claimed"
 }
