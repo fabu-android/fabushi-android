@@ -299,12 +299,13 @@ fn send_message_args_from_json(args: &serde_json::Value) -> Result<SendMessageAr
     Ok(SendMessageArgs { message: Some(message) })
 }
 
-fn encode_sand_step(key: &str, value: &str) -> String {
-    serde_json::json!({
-        "__sand_tool__": true,
-        key: value,
-    })
-    .to_string()
+fn encode_sand_step(fields: &[(&str, String)]) -> String {
+    let mut payload = serde_json::Map::new();
+    payload.insert("__sand_tool__".into(), serde_json::Value::Bool(true));
+    for (key, value) in fields {
+        payload.insert((*key).to_string(), serde_json::Value::String(value.clone()));
+    }
+    serde_json::Value::Object(payload).to_string()
 }
 
 fn communicate_result_text(value: &serde_json::Value) -> String {
@@ -314,7 +315,56 @@ fn communicate_result_text(value: &serde_json::Value) -> String {
         .unwrap_or_else(|| value.to_string())
 }
 
-/// Encode the canonical agent.v1 wire observation for shipping Runner dispatches.
+/// Encode Desktop's initial Runner observation before a routed side effect starts.
+///
+/// Unknown tools remain outside this protobuf subset. The returned AgentToolCall has
+/// started_at_ms but intentionally no completed_at_ms/result, matching Desktop's
+/// SendMessageToolBridge / CommunicateRoutedToolBridge initial phase.
+pub fn encode_routed_tool_call_initial_observation(
+    name: &str,
+    args: &serde_json::Value,
+    tool_call_id: &str,
+    started_at_ms: u64,
+) -> Result<Option<Vec<u8>>, String> {
+    let tool_call_id = tool_call_id.trim();
+    if tool_call_id.is_empty() {
+        return Err("tool_call_id is required".into());
+    }
+    let tool = match name {
+        "SendMessage" | "send_message" => {
+            agent_tool_call::Tool::SendMessageToolCall(SendMessageToolCall {
+                args: Some(send_message_args_from_json(args)?),
+                result: None,
+            })
+        }
+        name if FROZEN_COMMUNICATE_TOOL_NAMES.contains(&name) => {
+            let current_step = encode_sand_step(&[
+                ("phase", "executing".to_string()),
+                ("tool", name.to_string()),
+            ]);
+            agent_tool_call::Tool::CommunicateUpdateToolCall(CommunicateUpdateToolCall {
+                args: Some(CommunicateUpdateArgs {
+                    current_step: Some(current_step),
+                    final_summary: None,
+                    completed_subtitle: None,
+                }),
+                result: None,
+            })
+        }
+        _ => return Ok(None),
+    };
+    Ok(Some(
+        AgentToolCall {
+            tool: Some(tool),
+            tool_call_id: Some(tool_call_id.to_string()),
+            started_at_ms: Some(started_at_ms),
+            completed_at_ms: None,
+        }
+        .encode_to_vec(),
+    ))
+}
+
+/// Encode the canonical completed agent.v1 wire observation for shipping Runner dispatches.
 ///
 /// Unknown tools are outside this protobuf subset and return `Ok(None)`. SendMessage
 /// and the frozen Desktop communicate-wrapper tool set fail closed rather than
@@ -369,7 +419,7 @@ pub fn encode_routed_tool_call_observation(
                 Ok(value) => {
                     let text = communicate_result_text(value);
                     (
-                        encode_sand_step("result", &text),
+                        encode_sand_step(&[("result", text.clone())]),
                         communicate_update_result::Result::Success(CommunicateUpdateSuccess {
                             current_step: text,
                             message_index: 0,
@@ -377,10 +427,14 @@ pub fn encode_routed_tool_call_observation(
                     )
                 }
                 Err(error) => (
-                    encode_sand_step(
+                    encode_sand_step(&[(
                         "error",
-                        if error.is_empty() { "Tool failed." } else { error },
-                    ),
+                        if error.is_empty() {
+                            "Tool failed.".to_string()
+                        } else {
+                            error.to_string()
+                        },
+                    )]),
                     communicate_update_result::Result::Error(CommunicateUpdateError {
                         error: error.to_string(),
                     }),
@@ -470,6 +524,47 @@ mod tests {
         assert!(decode_agent_tool_call(&[0x80]).is_err());
         assert!(encode_send_message_text_success("", "x", 1, 2, "m").is_err());
         assert!(encode_send_message_text_success("c", "x", 3, 2, "m").is_err());
+    }
+
+    #[test]
+    fn initial_observation_matches_desktop_phase_and_has_no_completed_result() {
+        let send = encode_routed_tool_call_initial_observation(
+            "SendMessage",
+            &serde_json::json!({"type":"text","content":"hello"}),
+            "send-initial",
+            10,
+        )
+        .unwrap()
+        .unwrap();
+        let decoded = decode_agent_tool_call(&send).unwrap();
+        assert_eq!(decoded.tool_call_id.as_deref(), Some("send-initial"));
+        assert_eq!(decoded.started_at_ms, Some(10));
+        assert_eq!(decoded.completed_at_ms, None);
+        match decoded.tool.unwrap() {
+            agent_tool_call::Tool::SendMessageToolCall(call) => assert!(call.result.is_none()),
+            _ => panic!("expected SendMessage field 55"),
+        }
+
+        let communicate = encode_routed_tool_call_initial_observation(
+            "UpdateAgent",
+            &serde_json::json!({"id":"agent-1","description":"work"}),
+            "update-initial",
+            20,
+        )
+        .unwrap()
+        .unwrap();
+        let decoded = decode_agent_tool_call(&communicate).unwrap();
+        assert_eq!(decoded.completed_at_ms, None);
+        match decoded.tool.unwrap() {
+            agent_tool_call::Tool::CommunicateUpdateToolCall(call) => {
+                assert_eq!(
+                    call.args.unwrap().current_step.as_deref(),
+                    Some(r#"{"__sand_tool__":true,"phase":"executing","tool":"UpdateAgent"}"#)
+                );
+                assert!(call.result.is_none());
+            }
+            _ => panic!("expected CommunicateUpdate field 48"),
+        }
     }
 
     #[test]

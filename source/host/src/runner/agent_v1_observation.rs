@@ -4,31 +4,37 @@ use super::android_host_inference::{
 use crate::extensions::transcript::TranscriptStore;
 use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use serde_json::{json, Value};
-use std::sync::{Arc, Mutex};
+use std::{
+    collections::VecDeque,
+    sync::{Arc, Mutex},
+};
 
 /// Persists the canonical agent.v1 Runner observation into the existing canonical
 /// transcript store. This deliberately reuses TranscriptStore rather than creating
 /// a second tool-call state owner.
 pub struct DurableAgentV1ObservationOwner {
     transcript: Arc<Mutex<TranscriptStore>>,
+    events: Arc<Mutex<VecDeque<Value>>>,
     account_fence: String,
 }
 
 impl DurableAgentV1ObservationOwner {
     pub fn new(
         transcript: Arc<Mutex<TranscriptStore>>,
+        events: Arc<Mutex<VecDeque<Value>>>,
         account_fence: impl Into<String>,
     ) -> Self {
         Self {
             transcript,
+            events,
             account_fence: account_fence.into(),
         }
     }
 
     fn entry_id(observation: &AndroidToolCallObservation) -> String {
         format!(
-            "agent-v1-tool-observation:{}:{}",
-            observation.operation_id, observation.tool_call_id
+            "agent-v1-tool-observation:{}:{}:{}",
+            observation.operation_id, observation.tool_call_id, observation.phase
         )
     }
 
@@ -39,9 +45,14 @@ impl DurableAgentV1ObservationOwner {
             "agentId": observation.agent_id,
             "operationId": observation.operation_id,
             "accountFence": self.account_fence,
+            "phase": observation.phase,
             "toolName": observation.tool_name,
             "toolCallId": observation.tool_call_id,
-            "status": if observation.succeeded { "success" } else { "error" },
+            "status": match observation.succeeded {
+                Some(true) => "success",
+                Some(false) => "error",
+                None => "started",
+            },
             "startedAtMs": observation.started_at_ms,
             "completedAtMs": observation.completed_at_ms,
             "wireType": "agent.v1.AgentToolCall",
@@ -60,8 +71,14 @@ impl AndroidToolCallObservationSink for DurableAgentV1ObservationOwner {
         {
             return Err("canonical agent.v1 observation identity or bytes are missing".into());
         }
-        if observation.completed_at_ms < observation.started_at_ms {
-            return Err("canonical agent.v1 observation timestamp order is invalid".into());
+        match (observation.phase.as_str(), observation.completed_at_ms, observation.succeeded) {
+            ("initial", None, None) => {}
+            ("completed", Some(completed_at_ms), Some(_))
+                if completed_at_ms >= observation.started_at_ms => {}
+            ("completed", Some(_), Some(_)) => {
+                return Err("canonical agent.v1 observation timestamp order is invalid".into());
+            }
+            _ => return Err("canonical agent.v1 observation phase metadata is invalid".into()),
         }
 
         let expected = self.entry(observation);
@@ -80,7 +97,21 @@ impl AndroidToolCallObservationSink for DurableAgentV1ObservationOwner {
         }
         transcript
             .append_entry(expected)
-            .map_err(|error| format!("failed to persist canonical agent.v1 observation: {error}"))
+            .map_err(|error| format!("failed to persist canonical agent.v1 observation: {error}"))?;
+        self.events
+            .lock()
+            .map_err(|_| "turn event queue lock poisoned while recording agent.v1 observation".to_string())?
+            .push_back(json!({
+                "type": "agent-tool-call",
+                "agentId": observation.agent_id,
+                "operationId": observation.operation_id,
+                "phase": observation.phase,
+                "tool": observation.tool_name,
+                "toolCallId": observation.tool_call_id,
+                "encoding": "agent.v1.protobuf",
+                "wire": observation.protobuf_bytes,
+            }));
+        Ok(())
     }
 }
 
@@ -92,12 +123,13 @@ mod tests {
         AndroidToolCallObservation {
             agent_id: "agent-a".into(),
             operation_id: "operation-a".into(),
+            phase: "completed".into(),
             tool_name: "SendMessage".into(),
             tool_call_id: "call-a".into(),
             protobuf_bytes: bytes,
             started_at_ms: 10,
-            completed_at_ms: 12,
-            succeeded: true,
+            completed_at_ms: Some(12),
+            succeeded: Some(true),
         }
     }
 
@@ -106,7 +138,12 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let path = root.path().join("transcript.json");
         let transcript = Arc::new(Mutex::new(TranscriptStore::open(&path).unwrap()));
-        let owner = DurableAgentV1ObservationOwner::new(Arc::clone(&transcript), "account-a");
+        let events = Arc::new(Mutex::new(VecDeque::new()));
+        let owner = DurableAgentV1ObservationOwner::new(
+            Arc::clone(&transcript),
+            Arc::clone(&events),
+            "account-a",
+        );
 
         let first = observation(vec![0xda, 0x03, 0x00]);
         owner.record(&first).unwrap();
@@ -121,12 +158,48 @@ mod tests {
         drop(transcript);
         let reopened = TranscriptStore::open(&path).unwrap();
         let entry = reopened
-            .entry("agent-v1-tool-observation:operation-a:call-a")
+            .entry("agent-v1-tool-observation:operation-a:call-a:completed")
             .expect("durable observation");
         assert_eq!(entry["kind"], "tool-call");
         assert_eq!(entry["accountFence"], "account-a");
         assert_eq!(entry["wireType"], "agent.v1.AgentToolCall");
         assert_eq!(entry["wireEncoding"], "protobuf-base64");
         assert_eq!(entry["wireBytes"], BASE64_STANDARD.encode(first.protobuf_bytes));
+        let event = events.lock().unwrap().pop_front().expect("runtime observation event");
+        assert_eq!(event["type"], "agent-tool-call");
+        assert_eq!(event["phase"], "completed");
+        assert_eq!(event["toolCallId"], "call-a");
+        assert_eq!(event["encoding"], "agent.v1.protobuf");
+    }
+
+    #[test]
+    fn initial_and_completed_phases_have_separate_durable_identities() {
+        let root = tempfile::tempdir().unwrap();
+        let transcript = Arc::new(Mutex::new(
+            TranscriptStore::open(root.path().join("transcript.json")).unwrap(),
+        ));
+        let events = Arc::new(Mutex::new(VecDeque::new()));
+        let owner = DurableAgentV1ObservationOwner::new(
+            Arc::clone(&transcript),
+            Arc::clone(&events),
+            "account-a",
+        );
+        let mut initial = observation(vec![0xba, 0x03, 0x00]);
+        initial.phase = "initial".into();
+        initial.completed_at_ms = None;
+        initial.succeeded = None;
+        owner.record(&initial).unwrap();
+        owner.record(&observation(vec![0xba, 0x03, 0x01])).unwrap();
+        assert!(transcript
+            .lock()
+            .unwrap()
+            .entry("agent-v1-tool-observation:operation-a:call-a:initial")
+            .is_some());
+        assert!(transcript
+            .lock()
+            .unwrap()
+            .entry("agent-v1-tool-observation:operation-a:call-a:completed")
+            .is_some());
+        assert_eq!(events.lock().unwrap().len(), 2);
     }
 }

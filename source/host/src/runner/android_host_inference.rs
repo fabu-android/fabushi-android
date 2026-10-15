@@ -1,5 +1,8 @@
 use super::{
-    agent_v1_wire::{encode_routed_tool_call_observation, is_agent_v1_observed_tool},
+    agent_v1_wire::{
+        encode_routed_tool_call_initial_observation, encode_routed_tool_call_observation,
+        is_agent_v1_observed_tool,
+    },
     production_turn_agent_owner::SAND_AGENT_MAX_STEPS,
     stream_attempt::{ProviderFailure, StreamAttemptInput, StreamGeneration, TurnStreamProvider},
 };
@@ -48,12 +51,13 @@ pub trait AndroidRoutedToolBridge: Send + Sync {
 pub struct AndroidToolCallObservation {
     pub agent_id: String,
     pub operation_id: String,
+    pub phase: String,
     pub tool_name: String,
     pub tool_call_id: String,
     pub protobuf_bytes: Vec<u8>,
     pub started_at_ms: u64,
-    pub completed_at_ms: u64,
-    pub succeeded: bool,
+    pub completed_at_ms: Option<u64>,
+    pub succeeded: Option<bool>,
 }
 
 pub trait AndroidToolCallObservationSink: Send + Sync {
@@ -582,19 +586,38 @@ impl AndroidHostInferenceProvider {
                 };
 
                 let started_at_ms = unix_time_ms();
-                if canonical_agent_v1_tool {
-                    // Validate canonical arguments and identifiers before a side effect starts.
-                    // The final observation below is encoded again with the real dispatch result.
-                    encode_routed_tool_call_observation(
+                if let Some(sink) = observation_sink {
+                    let encoded = encode_routed_tool_call_initial_observation(
                         &name,
                         &arguments,
-                        Err("preflight"),
                         &call_id,
-                        started_at_ms,
                         started_at_ms,
                     )
                     .map_err(|message| ProviderFailure {
                         message,
+                        retry_after_ms: None,
+                        first_token_stall: false,
+                        stream_output_produced: !all_chunks.is_empty() || routed_tool_dispatch_started,
+                    })?
+                    .ok_or_else(|| ProviderFailure {
+                        message: "canonical agent.v1 initial observation was not encoded".into(),
+                        retry_after_ms: None,
+                        first_token_stall: false,
+                        stream_output_produced: !all_chunks.is_empty() || routed_tool_dispatch_started,
+                    })?;
+                    sink.record(&AndroidToolCallObservation {
+                        agent_id: input.agent_id.clone(),
+                        operation_id: input.operation_id.clone(),
+                        phase: "initial".into(),
+                        tool_name: name.clone(),
+                        tool_call_id: call_id.clone(),
+                        protobuf_bytes: encoded,
+                        started_at_ms,
+                        completed_at_ms: None,
+                        succeeded: None,
+                    })
+                    .map_err(|message| ProviderFailure {
+                        message: format!("canonical agent.v1 initial observation persistence failed: {message}"),
                         retry_after_ms: None,
                         first_token_stall: false,
                         stream_output_produced: !all_chunks.is_empty() || routed_tool_dispatch_started,
@@ -631,12 +654,13 @@ impl AndroidHostInferenceProvider {
                     sink.record(&AndroidToolCallObservation {
                         agent_id: input.agent_id.clone(),
                         operation_id: input.operation_id.clone(),
+                        phase: "completed".into(),
                         tool_name: name.clone(),
                         tool_call_id: call_id.clone(),
                         protobuf_bytes: encoded,
                         started_at_ms,
-                        completed_at_ms,
-                        succeeded: dispatch.is_ok(),
+                        completed_at_ms: Some(completed_at_ms),
+                        succeeded: Some(dispatch.is_ok()),
                     })
                     .map_err(|message| ProviderFailure {
                         message: format!("canonical agent.v1 observation persistence failed: {message}"),
@@ -1318,19 +1342,21 @@ mod tests {
         assert_eq!(calls.load(AtomicOrdering::SeqCst), 1);
 
         let observations = sink.observations.lock().unwrap();
-        assert_eq!(observations.len(), 1);
-        let observation = &observations[0];
+        assert_eq!(observations.len(), 2);
+        assert_eq!(observations[0].phase, "initial");
+        let observation = &observations[1];
+        assert_eq!(observation.phase, "completed");
         assert_eq!(observation.agent_id, "agent");
         assert_eq!(observation.operation_id, "op");
         assert_eq!(observation.tool_call_id, "call-send-9");
-        assert!(observation.succeeded);
-        assert!(observation.completed_at_ms >= observation.started_at_ms);
+        assert_eq!(observation.succeeded, Some(true));
+        assert!(observation.completed_at_ms.unwrap() >= observation.started_at_ms);
         assert_eq!(&observation.protobuf_bytes[..2], &[0xba, 0x03]);
 
         let decoded = decode_agent_tool_call(&observation.protobuf_bytes).unwrap();
         assert_eq!(decoded.tool_call_id.as_deref(), Some("call-send-9"));
         assert_eq!(decoded.started_at_ms, Some(observation.started_at_ms));
-        assert_eq!(decoded.completed_at_ms, Some(observation.completed_at_ms));
+        assert_eq!(decoded.completed_at_ms, observation.completed_at_ms);
         match decoded.tool.unwrap() {
             agent_tool_call::Tool::SendMessageToolCall(call) => {
                 assert!(matches!(
@@ -1378,15 +1404,17 @@ mod tests {
         assert_eq!(calls.load(AtomicOrdering::SeqCst), 1);
 
         let observations = sink.observations.lock().unwrap();
-        assert_eq!(observations.len(), 1);
-        let observation = &observations[0];
-        assert!(!observation.succeeded);
+        assert_eq!(observations.len(), 2);
+        assert_eq!(observations[0].phase, "initial");
+        let observation = &observations[1];
+        assert_eq!(observation.phase, "completed");
+        assert_eq!(observation.succeeded, Some(false));
         assert_eq!(observation.tool_name, "UpdateAgent");
         assert_eq!(&observation.protobuf_bytes[..2], &[0x82, 0x03]);
         let decoded = decode_agent_tool_call(&observation.protobuf_bytes).unwrap();
         assert_eq!(decoded.tool_call_id.as_deref(), Some("call-update-3"));
         assert_eq!(decoded.started_at_ms, Some(observation.started_at_ms));
-        assert_eq!(decoded.completed_at_ms, Some(observation.completed_at_ms));
+        assert_eq!(decoded.completed_at_ms, observation.completed_at_ms);
         match decoded.tool.unwrap() {
             agent_tool_call::Tool::CommunicateUpdateToolCall(call) => {
                 assert!(matches!(
@@ -1431,13 +1459,15 @@ mod tests {
         assert_eq!(calls.load(AtomicOrdering::SeqCst), 1);
 
         let observations = sink.observations.lock().unwrap();
-        assert_eq!(observations.len(), 1);
-        let observation = &observations[0];
+        assert_eq!(observations.len(), 2);
+        assert_eq!(observations[0].phase, "initial");
+        let observation = &observations[1];
+        assert_eq!(observation.phase, "completed");
         assert_eq!(observation.tool_name, "CreateAgent");
         let decoded = decode_agent_tool_call(&observation.protobuf_bytes).unwrap();
         assert_eq!(decoded.tool_call_id.as_deref(), Some("call-create-2"));
         assert_eq!(decoded.started_at_ms, Some(observation.started_at_ms));
-        assert_eq!(decoded.completed_at_ms, Some(observation.completed_at_ms));
+        assert_eq!(decoded.completed_at_ms, observation.completed_at_ms);
         match decoded.tool.unwrap() {
             agent_tool_call::Tool::CommunicateUpdateToolCall(call) => {
                 let args = call.args.unwrap();
@@ -1481,9 +1511,11 @@ mod tests {
         widget_provider.start_stream(&input(), 1).unwrap();
         assert_eq!(widget_calls.load(AtomicOrdering::SeqCst), 1);
         let widget_observations = widget_sink.observations.lock().unwrap();
-        assert_eq!(widget_observations.len(), 1);
+        assert_eq!(widget_observations.len(), 2);
+        assert_eq!(widget_observations[0].phase, "initial");
+        assert_eq!(widget_observations[1].phase, "completed");
         let widget_decoded = super::super::agent_v1_wire::decode_agent_tool_call(
-            &widget_observations[0].protobuf_bytes,
+            &widget_observations[1].protobuf_bytes,
         )
         .unwrap();
         match widget_decoded.tool.unwrap() {
@@ -1541,7 +1573,10 @@ mod tests {
         assert!(error.message.contains("message_id"));
         assert!(error.stream_output_produced);
         assert_eq!(malformed_result_calls.load(AtomicOrdering::SeqCst), 1);
-        assert!(sink.observations.lock().unwrap().is_empty());
+        let malformed_result_observations = sink.observations.lock().unwrap();
+        assert_eq!(malformed_result_observations.len(), 1);
+        assert_eq!(malformed_result_observations[0].phase, "initial");
+        assert_eq!(malformed_result_observations[0].completed_at_ms, None);
     }
 
     #[test]

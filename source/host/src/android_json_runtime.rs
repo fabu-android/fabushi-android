@@ -13228,6 +13228,7 @@ impl AndroidJsonHost {
                 let agent_v1_observation_owner = Arc::new(
                     DurableAgentV1ObservationOwner::new(
                         Arc::clone(&transcript),
+                        Arc::clone(&turn_events),
                         account_fence_owned.clone(),
                     ),
                 );
