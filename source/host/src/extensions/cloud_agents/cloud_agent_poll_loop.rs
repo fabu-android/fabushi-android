@@ -50,6 +50,13 @@ pub fn deterministic_jitter_fraction(identity: &str, attempt: u64) -> f64 {
     let n=u64::from_le_bytes(d[0..8].try_into().expect("sha256 prefix")); (n as f64)/(u64::MAX as f64)
 }
 
+pub fn parse_rate_limit_retry_after_ms(message: &str) -> Option<u64> {
+    let marker = "retry_after_ms=";
+    let start = message.find(marker)? + marker.len();
+    let digits = message[start..].chars().take_while(|c| c.is_ascii_digit()).collect::<String>();
+    (!digits.is_empty()).then(|| digits.parse::<u64>().ok()).flatten()
+}
+
 pub fn cloud_agent_rate_limit_pause_ms(retry_after_ms:Option<u64>, identity:&str, attempt:u64)->u64{
     let base=retry_after_ms.unwrap_or(CLOUD_AGENT_RATE_LIMIT_FALLBACK_MS);
     let jitter=(base as f64*deterministic_jitter_fraction(identity,attempt)*CLOUD_AGENT_RATE_LIMIT_JITTER_RATIO).round() as u64;
