@@ -217,6 +217,7 @@ use crate::runner::{
     RemoteAutoReviewDecision, RemoteAutoReviewPreflight, RemoteDispatchBinding,
     DurableMultitaskTodoStore,
 };
+use fabushi_android_shared::ExecutionError;
 use fabushi_android_shared::feedback::normalize_feedback_submit_args;
 use fabushi_constants::composer::text_size_allowed;
 use fabushi_android_shared::node::mcp::mcp_auth_watch_lifecycle::{
