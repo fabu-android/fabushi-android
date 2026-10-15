@@ -13235,6 +13235,7 @@ impl AndroidJsonHost {
                 let provider = match mode {
                     AndroidHostMode::Test => {
                         AndroidHostInferenceProvider::new(AndroidInferenceMode::Test)
+                            .with_turn_tool_session_reminders(true)
                             .with_routed_tools(Arc::clone(&routed_subagent_tools))
                             .with_tool_call_observation_sink(agent_v1_observation_owner.clone())
                     }
@@ -13269,6 +13270,7 @@ impl AndroidJsonHost {
                         };
                         match AndroidHostInferenceProvider::production(token, cancelled.clone()) {
                             Ok(provider) => provider
+                                .with_turn_tool_session_reminders(true)
                                 .with_routed_tools(Arc::clone(&routed_subagent_tools))
                                 .with_tool_call_observation_sink(agent_v1_observation_owner.clone()),
                             Err(error) => {
