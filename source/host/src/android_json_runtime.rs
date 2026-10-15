@@ -16,6 +16,8 @@ use crate::automation_runtime::{
 };
 use crate::automation_trigger::trigger_listener_platforms;
 use crate::runner::listener_connect_cards::surface_listener_connect_cards;
+use crate::listener_connect_watch::{DurableListenerConnectWatchStore, PendingListenerConnectWatch};
+use crate::listener_connectivity::AndroidListenerConnectivity;
 use crate::auto_review_settings::{AutoReviewInstructions, DurableAutoReviewSettings};
 use crate::runner::sand_auto_review::{
     resolve_sand_auto_review_modes, SandAutoReviewMode,
@@ -1369,6 +1371,7 @@ pub struct AndroidJsonHost {
     mcp_auth_watches: Arc<Mutex<AndroidMcpAuthWatchManager>>,
     mcp_auth_owner: Option<AndroidMcpAuthWatchOwner>,
     mcp_dashboard_backend: Option<Arc<CursorDashboardMcpAuthBackend>>,
+    listener_connectivity: Option<AndroidListenerConnectivity>,
     action_audit: Option<Arc<SandActionAuditor>>,
     product_analytics: Option<Arc<AndroidProductAnalyticsRuntime>>,
     _host_tracing: Option<Arc<HostTracing>>,
@@ -1434,6 +1437,7 @@ pub struct AndroidJsonHost {
     remote_journal_path: PathBuf,
     remote_box_store_sync: Mutex<RemoteBoxStoreSyncJournal>,
     automation_runtime: AutomationRuntime,
+    listener_connect_watches: DurableListenerConnectWatchStore,
     human_calls: HumanCallRuntime,
     webauthn: WebAuthnProxyExtension,
     webauthn_provider_queues: BTreeMap<String, VecDeque<WebAuthnRequestFrame>>,
@@ -1865,6 +1869,9 @@ impl AndroidJsonHost {
         } else {
             (None, None)
         };
+        let listener_connectivity = mcp_dashboard_backend
+            .as_ref()
+            .map(|dashboard| AndroidListenerConnectivity::new(Arc::clone(dashboard)));
         let action_audit = if mode == AndroidHostMode::Production {
             mcp_dashboard_backend.as_ref().map(|dashboard| {
                 let audit_root = app_data_dir.join("action-audit");
@@ -2253,6 +2260,7 @@ impl AndroidJsonHost {
             mcp_auth_watches,
             mcp_auth_owner,
             mcp_dashboard_backend,
+            listener_connectivity,
             action_audit,
             product_analytics,
             _host_tracing: host_tracing,
@@ -2342,6 +2350,11 @@ impl AndroidJsonHost {
             ),
             automation_runtime: AutomationRuntime::open(app_data_dir.join("automation-runtime.json"), now_ms())
                 .unwrap_or_else(|error| panic!("failed to open durable Android automation runtime: {error}")),
+            listener_connect_watches: DurableListenerConnectWatchStore::open(
+                app_data_dir.join("listener-connect-watches.json"),
+                now_ms(),
+            )
+            .unwrap_or_else(|error| panic!("failed to open durable listener connect watch owner: {error}")),
             human_calls: HumanCallRuntime::open(app_data_dir.join("human-calls.json"), now_ms())
                 .unwrap_or_else(|error| panic!("failed to open durable Android Human call runtime: {error}")),
             webauthn: WebAuthnProxyExtension::new(WebAuthnProxyExtensionConfig::default()),
@@ -7575,14 +7588,10 @@ impl AndroidJsonHost {
         let listener_enabled = spec.enabled;
         self.automation_runtime.upsert_spec(spec, time_zone.as_deref())?;
         if listener_enabled && !listener_platforms.is_empty() {
-            let store = self.agent_channel_store(&account_fence, agent_id)?;
-            let connected = store.list_connections();
             let surfaced = surface_listener_connect_cards(
                 &listener_platforms,
                 Some(|platform: &str| -> Result<bool, String> {
-                    Ok(connected.iter().any(|connection| {
-                        connection.platform == platform && connection.status == "configured"
-                    }))
+                    self.listener_platform_connected(&account_fence, agent_id, platform)
                 }),
                 |platform| match platform {
                     "slack" => Some("Slack".to_string()),
@@ -7612,6 +7621,12 @@ impl AndroidJsonHost {
                 self.transcript_extension
                     .event_bridge()
                     .listener_connect_card(agent_id, card.platform.as_str());
+                self.listener_connect_watches.watch(
+                    &account_fence,
+                    agent_id,
+                    card.platform.as_str(),
+                    now_ms(),
+                )?;
             }
         }
         self.record_automation_lifecycle_telemetry(&id, &account_fence, if existed { "updated" } else { "created" });
@@ -14904,6 +14919,152 @@ impl AndroidJsonHost {
         Ok(())
     }
 
+    fn listener_platform_connected(
+        &self,
+        account_fence: &str,
+        agent_id: &str,
+        platform: &str,
+    ) -> Result<bool, String> {
+        if let Some(connectivity) = self.listener_connectivity.as_ref() {
+            return connectivity.is_platform_connected(platform);
+        }
+        // Isolated Rust tests have no protected Sand credential. They exercise the same state
+        // machine against the canonical Host channel store; production never substitutes this
+        // metadata projection for the authenticated Dashboard connection-status RPC.
+        self.agent_channel_store(account_fence, agent_id)?
+            .is_platform_connected(platform)
+            .map_err(|error| format!("listener connection lookup failed: {error}"))
+    }
+
+    fn poll_listener_connect_watches(&mut self) -> Result<(), String> {
+        let account_fence = match self.current_turn_account_fence() {
+            Ok(value) => value,
+            Err(_) => return Ok(()),
+        };
+        let watches = self.listener_connect_watches.pending_for_account(&account_fence, now_ms())?;
+        for watch in watches {
+            if watch.ready {
+                continue;
+            }
+            let connected = match self.listener_platform_connected(
+                &watch.account_fence,
+                &watch.agent_id,
+                &watch.platform,
+            ) {
+                Ok(connected) => connected,
+                Err(_) => continue,
+            };
+            self.listener_connect_watches.observe(
+                &watch.account_fence,
+                &watch.agent_id,
+                &watch.platform,
+                watch.generation,
+                connected,
+                now_ms(),
+            )?;
+        }
+        Ok(())
+    }
+
+    fn queue_listener_connect_resume_turn(
+        &mut self,
+        watch: &PendingListenerConnectWatch,
+    ) -> Result<Option<AccountSessionMutation>, String> {
+        let current_fence = self.current_turn_account_fence()?;
+        if current_fence != watch.account_fence {
+            return Ok(None);
+        }
+        let is_group = self
+            .agents
+            .lock()
+            .map_err(|_| "canonical Android Agent roster lock poisoned".to_string())?
+            .get(&watch.agent_id)
+            .map(|agent| agent.is_group)
+            .unwrap_or(false);
+        if is_group {
+            self.listener_connect_watches.acknowledge(watch)?;
+            return Ok(None);
+        }
+        let request_id = format!(
+            "listener-connect-resume:{}:{}:{}:{}",
+            crate::sha256::sha256_hex(watch.account_fence.as_bytes()),
+            watch.agent_id,
+            watch.platform,
+            watch.generation,
+        );
+        if self
+            .turn_journal
+            .lock()
+            .map_err(|_| "turn journal lock poisoned".to_string())?
+            .record(&request_id)
+            .is_some()
+        {
+            self.listener_connect_watches.acknowledge(watch)?;
+            return Ok(None);
+        }
+        let operation_id = self.next_operation_id(&request_id);
+        self.active_operations.insert(operation_id.clone());
+        let (bearer_token, session_mutation) = match self.bearer_token_for_turn() {
+            Ok(value) => value,
+            Err(error) => {
+                self.active_operations.remove(&operation_id);
+                return Err(error);
+            }
+        };
+        let display = match watch.platform.as_str() {
+            "slack" => "Slack",
+            "github" => "GitHub",
+            other => other,
+        };
+        let prompt = format!(
+            "[The {display} listener finished connecting. Continue the task that was paused for this listener connection. Do not ask the user to report back that it connected.]"
+        );
+        let command = json!({
+            "type":"chat.send",
+            "requestId":request_id,
+            "agentId":watch.agent_id,
+            "text":prompt,
+            "hidden":true,
+            "appendUserMessage":false,
+            "awaitTurn":false,
+            "requestSource":"handoff-resume",
+            "skipAckObligation":true,
+            "directAddressedAcceptance":true,
+        });
+        if let Err(error) = self.queue_chat_turn(
+            &operation_id,
+            command.get("requestId").and_then(Value::as_str).unwrap_or_default(),
+            &command,
+            bearer_token,
+        ) {
+            self.active_operations.remove(&operation_id);
+            self.agent_turn_interruptions.unregister_operation(&operation_id);
+            return Err(error);
+        }
+        self.listener_connect_watches.acknowledge(watch)?;
+        Ok(session_mutation)
+    }
+
+    fn drain_listener_connect_resume_once(&mut self) -> Result<(), String> {
+        self.poll_listener_connect_watches()?;
+        let account_fence = match self.current_turn_account_fence() {
+            Ok(value) => value,
+            Err(_) => return Ok(()),
+        };
+        let Some(watch) = self
+            .listener_connect_watches
+            .ready_for_account(&account_fence)
+            .into_iter()
+            .next()
+        else {
+            return Ok(());
+        };
+        // Transient provider/auth failures leave the durable ready watch intact. A later receive
+        // retries the deterministic request id; once the turn journal owns it, ACK is idempotent.
+        let _ = self.queue_listener_connect_resume_turn(&watch);
+        Ok(())
+    }
+
     fn publish_host_event_projection(&self, event: &Value) {
         let family = event
             .get("type")
@@ -14928,6 +15089,7 @@ impl AndroidJsonHost {
 
     fn feature_receive(&mut self) -> Result<Value, String> {
         self.drain_mcp_auth_owner_events()?;
+        self.drain_listener_connect_resume_once()?;
         self.drain_box_handoff_resume_once()?;
         self.drain_subagent_completion_revival_once()?;
         self.drain_agent_wake_once()?;
@@ -23623,6 +23785,99 @@ mod human_remote_sync_contract_tests {
     }
 }
 
+
+#[cfg(test)]
+mod listener_connect_resume_runtime_tests {
+    use super::*;
+
+    #[test]
+    fn reconnect_transition_queues_one_hidden_resume_and_acks_durable_watch() {
+        let root = tempfile::tempdir().unwrap();
+        let mut host = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+        sign_in_test_account(&mut host);
+        let account_fence = host.current_turn_account_fence().unwrap();
+        let agent = host.agents.lock().unwrap().create("Listener Agent", "").unwrap();
+        let generation = host.listener_connect_watches
+            .watch(&account_fence, &agent.id, "slack", now_ms())
+            .unwrap();
+
+        host.poll_listener_connect_watches().unwrap();
+        let pending = host.listener_connect_watches
+            .pending_for_account(&account_fence, now_ms())
+            .unwrap();
+        assert_eq!(pending.len(), 1);
+        assert!(pending[0].armed);
+        assert!(!pending[0].ready);
+
+        host.agent_channel_store(&account_fence, &agent.id)
+            .unwrap()
+            .write_metadata("slack", "Ops")
+            .unwrap();
+        host.poll_listener_connect_watches().unwrap();
+        let ready = host.listener_connect_watches.ready_for_account(&account_fence);
+        assert_eq!(ready.len(), 1);
+        assert_eq!(ready[0].generation, generation);
+        let request_id = format!(
+            "listener-connect-resume:{}:{}:slack:{}",
+            crate::sha256::sha256_hex(account_fence.as_bytes()),
+            agent.id,
+            generation,
+        );
+        host.drain_listener_connect_resume_once().unwrap();
+        let journal = host.turn_journal.lock().unwrap();
+        let record = journal.record(&request_id).expect("hidden resume must enter durable turn journal");
+        assert_eq!(record.request_source.as_deref(), Some("handoff-resume"));
+        assert_eq!(record.agent_id.as_deref(), Some(agent.id.as_str()));
+        drop(journal);
+        assert!(host.listener_connect_watches.ready_for_account(&account_fence).is_empty());
+
+        let first_generation = host
+            .turn_journal
+            .lock()
+            .unwrap()
+            .record(&request_id)
+            .unwrap()
+            .generation;
+        host.drain_listener_connect_resume_once().unwrap();
+        assert_eq!(
+            host.turn_journal.lock().unwrap().record(&request_id).unwrap().generation,
+            first_generation,
+            "duplicate receive must not create a second durable resume generation",
+        );
+    }
+
+    #[test]
+    fn process_reopen_restores_armed_watch_and_account_fences_ready_completion() {
+        let root = tempfile::tempdir().unwrap();
+        let agent_id;
+        let account_fence;
+        {
+            let mut host = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+            sign_in_test_account(&mut host);
+            account_fence = host.current_turn_account_fence().unwrap();
+            let agent = host.agents.lock().unwrap().create("Reconnect Agent", "").unwrap();
+            agent_id = agent.id.clone();
+            host.listener_connect_watches
+                .watch(&account_fence, &agent_id, "github", now_ms())
+                .unwrap();
+            host.poll_listener_connect_watches().unwrap();
+            assert!(host.listener_connect_watches
+                .pending_for_account(&account_fence, now_ms()).unwrap()[0].armed);
+        }
+
+        let mut reopened = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+        sign_in_test_account(&mut reopened);
+        let reopened_fence = reopened.current_turn_account_fence().unwrap();
+        assert_eq!(reopened_fence, account_fence, "same protected account must restore the same fence");
+        reopened.agent_channel_store(&reopened_fence, &agent_id)
+            .unwrap()
+            .write_metadata("github", "GitHub")
+            .unwrap();
+        reopened.poll_listener_connect_watches().unwrap();
+        assert_eq!(reopened.listener_connect_watches.ready_for_account(&reopened_fence).len(), 1);
+        assert!(reopened.listener_connect_watches.ready_for_account("stale-account-fence").is_empty());
+    }
+}
 
 #[cfg(test)]
 mod host_event_bus_delivery_tests {

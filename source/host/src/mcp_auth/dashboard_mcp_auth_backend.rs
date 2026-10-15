@@ -534,6 +534,24 @@ impl CursorDashboardMcpAuthBackend {
         Ok(bytes)
     }
 
+    /// Bounded listener-connect status RPCs reuse the canonical Sand credential owner. Keep the
+    /// allowlist explicit so automation code cannot turn this into a generic authenticated RPC.
+    pub(crate) fn send_listener_integration_unary(
+        &self,
+        path: &str,
+        body: &[u8],
+        timeout_ms: u64,
+    ) -> Result<Vec<u8>, String> {
+        match path {
+            "/aiserver.v1.DashboardService/GetSlackUserSettings"
+            | "/aiserver.v1.DashboardService/GetScmConnectionStatus" => {}
+            _ => return Err("listener integration Dashboard RPC path is not allowed".into()),
+        }
+        let credentials = self.credentials.credentials()?;
+        let ghost_mode = self.resolve_ghost_mode(&credentials);
+        self.send_unary(&credentials, path, body, timeout_ms, ghost_mode)
+    }
+
     /// Fetch the authenticated Statsig bootstrap through the canonical Sand credential and
     /// installation identity. This is intentionally a single allowlisted JSON endpoint rather
     /// than a generic HTTP escape hatch for callers.

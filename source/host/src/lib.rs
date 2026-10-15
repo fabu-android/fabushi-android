@@ -64,6 +64,8 @@ pub mod host_secret_store;
 pub mod human_call_runtime;
 pub mod human_remote_outbound;
 pub mod human_remote_resource_outbound;
+pub mod listener_connect_watch;
+pub mod listener_connectivity;
 #[allow(special_module_name)]
 pub mod main;
 pub mod managed_team_rules;

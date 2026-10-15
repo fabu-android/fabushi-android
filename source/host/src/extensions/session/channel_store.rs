@@ -116,6 +116,20 @@ impl FileChannelStore {
         Some(label_for(platform, object.get("label").and_then(Value::as_str)))
     }
 
+    pub fn is_platform_connected(&self, platform: &str) -> Result<bool, ChannelStoreError> {
+        if !is_safe_folder_id(platform) {
+            return Ok(false);
+        }
+        let path = self.config_path(platform);
+        let raw = match fs::read_to_string(path) {
+            Ok(raw) => raw,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(false),
+            Err(error) => return Err(error.into()),
+        };
+        let value = serde_json::from_str::<Value>(&raw)?;
+        Ok(value.as_object().is_some())
+    }
+
     pub fn list_connections(&self) -> Vec<ChannelConnection> {
         self.list_platforms()
             .into_iter()
