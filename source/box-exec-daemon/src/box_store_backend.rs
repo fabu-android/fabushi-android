@@ -80,6 +80,8 @@ struct ManifestEntry {
     rel_path: String,
     object_sha256: String,
     size_bytes: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    symlink_target: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -347,6 +349,10 @@ impl RemoteBoxStoreBackend {
                 workspace_ignore.as_ref(),
             )?;
             for mut entry in captured {
+                if entry.symlink_target.is_some() {
+                    entries.push(entry);
+                    continue;
+                }
                 let source = root.join(rel_path_to_path(&entry.rel_path)?);
                 let bytes = read_bounded_file(&source)?;
                 let sha = sha256_bytes(&bytes);
@@ -434,7 +440,23 @@ impl RemoteBoxStoreBackend {
             let root = self.category_root(&entry.category)?;
             let relative = rel_path_to_path(&entry.rel_path)?;
             let destination = root.join(relative);
-            ensure_within(root, &destination)?;
+            ensure_restore_parent(root, &destination)?;
+            if let Some(target) = entry.symlink_target.as_deref() {
+                if !symlink_target_stays_within_root(root, &destination, Path::new(target)) {
+                    return Err(ActionError::SafeReject(format!(
+                        "box-store symlink target escapes category root for {}/{}",
+                        entry.category, entry.rel_path
+                    )));
+                }
+                restore_symlink(root, &destination, target).map_err(|error| {
+                    ActionError::OutcomeUnknown(format!(
+                        "hydrate symlink {}/{}: {error}",
+                        entry.category, entry.rel_path
+                    ))
+                })?;
+                restored += 1;
+                continue;
+            }
             let object = self.objects_dir(&input.store_id).join(&entry.object_sha256);
             let bytes = read_bounded_file(&object)?;
             if bytes.len() as u64 != entry.size_bytes || sha256_bytes(&bytes) != entry.object_sha256 {
@@ -671,14 +693,37 @@ fn collect_files(
         let path = child.path();
         let metadata = fs::symlink_metadata(&path)
             .map_err(|error| ActionError::SafeReject(format!("stat snapshot path: {error}")))?;
-        if metadata.file_type().is_symlink() {
-            continue;
-        }
         let relative = path
             .strip_prefix(root)
             .map_err(|_| ActionError::SafeReject("snapshot path escaped category root".into()))?
             .to_path_buf();
         let rel_path = path_to_rel_string(&relative)?;
+        if metadata.file_type().is_symlink() {
+            if ignore.is_some_and(|rules| rules.ignores(&rel_path)) {
+                continue;
+            }
+            let target = fs::read_link(&path)
+                .map_err(|error| ActionError::SafeReject(format!("read snapshot symlink: {error}")))?;
+            if !symlink_target_stays_within_root(root, &path, &target) {
+                return Err(ActionError::SafeReject(format!(
+                    "box-store symlink target escapes category root: {}",
+                    path.display()
+                )));
+            }
+            let target = target
+                .to_str()
+                .filter(|value| !value.is_empty() && value.len() <= 8 * 1024 && !value.contains(' '))
+                .ok_or_else(|| ActionError::SafeReject("box-store symlink target is invalid".into()))?
+                .to_string();
+            output.push(ManifestEntry {
+                category: category.to_string(),
+                rel_path,
+                object_sha256: String::new(),
+                size_bytes: 0,
+                symlink_target: Some(target),
+            });
+            continue;
+        }
         if metadata.is_dir() {
             if ignore.is_some_and(|rules| rules.can_prune_dir(&rel_path)) {
                 continue;
@@ -710,6 +755,7 @@ fn collect_files(
             rel_path,
             object_sha256: sha256_bytes(&bytes),
             size_bytes: bytes.len() as u64,
+            symlink_target: None,
         });
     }
     Ok(())
@@ -756,21 +802,34 @@ fn validate_manifest_entries(entries: &[ManifestEntry]) -> Result<(), ActionErro
             ));
         }
         rel_path_to_path(&entry.rel_path)?;
-        if !is_sha256(&entry.object_sha256) {
-            return Err(ActionError::SafeReject(
-                "box-store manifest object digest is invalid".into(),
-            ));
-        }
-        if entry.size_bytes > MAX_FILE_BYTES {
-            return Err(ActionError::SafeReject(
-                "box-store manifest file exceeds per-file limit".into(),
-            ));
-        }
-        total = total.saturating_add(entry.size_bytes);
-        if total > MAX_TOTAL_BYTES {
-            return Err(ActionError::SafeReject(
-                "box-store manifest exceeds total byte limit".into(),
-            ));
+        if let Some(target) = entry.symlink_target.as_deref() {
+            if target.is_empty()
+                || target.len() > 8 * 1024
+                || target.contains(' ')
+                || !entry.object_sha256.is_empty()
+                || entry.size_bytes != 0
+            {
+                return Err(ActionError::SafeReject(
+                    "box-store manifest symlink entry is invalid".into(),
+                ));
+            }
+        } else {
+            if !is_sha256(&entry.object_sha256) {
+                return Err(ActionError::SafeReject(
+                    "box-store manifest object digest is invalid".into(),
+                ));
+            }
+            if entry.size_bytes > MAX_FILE_BYTES {
+                return Err(ActionError::SafeReject(
+                    "box-store manifest file exceeds per-file limit".into(),
+                ));
+            }
+            total = total.saturating_add(entry.size_bytes);
+            if total > MAX_TOTAL_BYTES {
+                return Err(ActionError::SafeReject(
+                    "box-store manifest exceeds total byte limit".into(),
+                ));
+            }
         }
         if !seen.insert((entry.category.as_str(), entry.rel_path.as_str())) {
             return Err(ActionError::SafeReject(
@@ -856,6 +915,128 @@ fn ensure_within(root: &Path, destination: &Path) -> Result<(), ActionError> {
         ));
     }
     Ok(())
+}
+
+fn lexical_normalize(path: &Path) -> PathBuf {
+    let mut normalized = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                normalized.pop();
+            }
+            other => normalized.push(other.as_os_str()),
+        }
+    }
+    normalized
+}
+
+fn symlink_target_stays_within_root(root: &Path, symlink_path: &Path, target: &Path) -> bool {
+    let root = lexical_normalize(root);
+    let candidate = if target.is_absolute() {
+        lexical_normalize(target)
+    } else {
+        let Some(parent) = symlink_path.parent() else {
+            return false;
+        };
+        lexical_normalize(&parent.join(target))
+    };
+    candidate == root || candidate.starts_with(&root)
+}
+
+fn ensure_restore_parent(root: &Path, destination: &Path) -> Result<(), ActionError> {
+    ensure_within(root, destination)?;
+    fs::create_dir_all(root)
+        .map_err(|error| ActionError::SafeReject(format!("create category root: {error}")))?;
+    let root_metadata = fs::symlink_metadata(root)
+        .map_err(|error| ActionError::SafeReject(format!("stat category root: {error}")))?;
+    if root_metadata.file_type().is_symlink() || !root_metadata.is_dir() {
+        return Err(ActionError::SafeReject(
+            "box-store category root is not a real directory".into(),
+        ));
+    }
+    let parent = destination
+        .parent()
+        .ok_or_else(|| ActionError::SafeReject("box-store destination has no parent".into()))?;
+    let relative = parent
+        .strip_prefix(root)
+        .map_err(|_| ActionError::SafeReject("box-store destination escaped category root".into()))?;
+    let mut current = root.to_path_buf();
+    for component in relative.components() {
+        if !matches!(component, Component::Normal(_)) {
+            return Err(ActionError::SafeReject(
+                "box-store restore parent is invalid".into(),
+            ));
+        }
+        current.push(component.as_os_str());
+        match fs::symlink_metadata(&current) {
+            Ok(metadata) if metadata.file_type().is_symlink() => {
+                return Err(ActionError::SafeReject(format!(
+                    "box-store restore parent contains symlink: {}",
+                    current.display()
+                )));
+            }
+            Ok(metadata) if metadata.is_dir() => {}
+            Ok(_) => {
+                return Err(ActionError::SafeReject(format!(
+                    "box-store restore parent is not a directory: {}",
+                    current.display()
+                )));
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                fs::create_dir(&current).map_err(|error| {
+                    ActionError::SafeReject(format!(
+                        "create restore parent {}: {error}",
+                        current.display()
+                    ))
+                })?;
+            }
+            Err(error) => {
+                return Err(ActionError::SafeReject(format!(
+                    "stat restore parent {}: {error}",
+                    current.display()
+                )));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn restore_symlink(root: &Path, destination: &Path, target: &str) -> Result<(), String> {
+    let target_path = Path::new(target);
+    if !symlink_target_stays_within_root(root, destination, target_path) {
+        return Err("symlink target escapes category root".into());
+    }
+    match fs::symlink_metadata(destination) {
+        Ok(metadata) if metadata.is_dir() && !metadata.file_type().is_symlink() => {
+            fs::remove_dir_all(destination).map_err(|error| error.to_string())?;
+        }
+        Ok(_) => {
+            fs::remove_file(destination).map_err(|error| error.to_string())?;
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error.to_string()),
+    }
+    let temp = destination.with_extension(format!(
+        "symlink-tmp-{}-{}",
+        std::process::id(),
+        &sha256_bytes(format!("{}:{}", destination.display(), target).as_bytes())[..12]
+    ));
+    let _ = fs::remove_file(&temp);
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(target_path, &temp).map_err(|error| error.to_string())?;
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = target_path;
+        return Err("box-store symlink restore is unsupported on this runner platform".into());
+    }
+    let result = fs::rename(&temp, destination).map_err(|error| error.to_string());
+    if result.is_err() {
+        let _ = fs::remove_file(&temp);
+    }
+    result
 }
 
 fn atomic_write(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
@@ -1009,6 +1190,78 @@ mod tests {
             "complete\n"
         );
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn snapshot_and_hydrate_preserve_safe_relative_symlink() {
+        let config = config("symlink-roundtrip");
+        fs::create_dir_all(&config.workspace_root).unwrap();
+        fs::write(config.workspace_root.join("note.txt"), b"one").unwrap();
+        std::os::unix::fs::symlink("note.txt", config.workspace_root.join("alias.txt")).unwrap();
+        let mut backend = RemoteBoxStoreBackend::open(config.clone()).unwrap();
+
+        let first = completed(
+            backend
+                .start(
+                    &identity("op-sym-1", "req-sym-1"),
+                    &request("op-sym-1", "snapshot", None),
+                )
+                .unwrap(),
+        );
+        let etag = serde_json::from_str::<serde_json::Value>(&first).unwrap()["manifestEtag"]
+            .as_str()
+            .unwrap()
+            .to_string();
+
+        fs::remove_file(config.workspace_root.join("alias.txt")).unwrap();
+        completed(
+            backend
+                .start(
+                    &identity("op-sym-2", "req-sym-2"),
+                    &request("op-sym-2", "hydrate", Some(&etag)),
+                )
+                .unwrap(),
+        );
+        let alias = config.workspace_root.join("alias.txt");
+        assert!(fs::symlink_metadata(&alias).unwrap().file_type().is_symlink());
+        assert_eq!(fs::read_link(alias).unwrap(), PathBuf::from("note.txt"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn hydrate_rejects_existing_parent_symlink_escape() {
+        let config = config("parent-symlink");
+        let nested = config.workspace_root.join("nested");
+        fs::create_dir_all(&nested).unwrap();
+        fs::write(nested.join("note.txt"), b"inside").unwrap();
+        let outside = config.store_root.parent().unwrap().join("outside");
+        fs::create_dir_all(&outside).unwrap();
+        let mut backend = RemoteBoxStoreBackend::open(config.clone()).unwrap();
+
+        let first = completed(
+            backend
+                .start(
+                    &identity("op-parent-1", "req-parent-1"),
+                    &request("op-parent-1", "snapshot", None),
+                )
+                .unwrap(),
+        );
+        let etag = serde_json::from_str::<serde_json::Value>(&first).unwrap()["manifestEtag"]
+            .as_str()
+            .unwrap()
+            .to_string();
+
+        fs::remove_dir_all(&nested).unwrap();
+        std::os::unix::fs::symlink(&outside, &nested).unwrap();
+        let outcome = backend
+            .start(
+                &identity("op-parent-2", "req-parent-2"),
+                &request("op-parent-2", "hydrate", Some(&etag)),
+            )
+            .unwrap();
+        assert!(matches!(outcome, RemoteBackendStartOutcome::Rejected { .. }));
+        assert!(!outside.join("note.txt").exists());
     }
 
     #[test]
