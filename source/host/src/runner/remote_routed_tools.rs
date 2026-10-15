@@ -37,6 +37,9 @@ const CLOUD_AGENT_DESTRUCTIVE_ACTIONS: &[&str] = &["cancel", "archive", "unarchi
 
 const REMOTE_BROWSER_TOOL_NAMES: &[&str] = &[
     "browser_navigate",
+    "browser_refresh",
+    "browser_back",
+    "browser_forward",
     "browser_snapshot",
     "browser_click",
     "browser_mouse_click_xy",
@@ -63,6 +66,9 @@ struct RemoteBrowserToolSpec {
 fn remote_browser_specs() -> Vec<RemoteBrowserToolSpec> {
     vec![
         RemoteBrowserToolSpec { name: "browser_navigate", description: "Navigate the box browser to a URL. By default reuses your tab; set newTab: true to open in a new tab. Returns the resulting page state with a screenshot.", required: &["url"] },
+        RemoteBrowserToolSpec { name: "browser_refresh", description: "Refresh the exact claimed browser tab. Requires viewId plus the current expectedGeneration and returns a new generation.", required: &["viewId", "expectedGeneration"] },
+        RemoteBrowserToolSpec { name: "browser_back", description: "Navigate the exact claimed browser tab backward in history. Requires viewId plus the current expectedGeneration and returns a new generation.", required: &["viewId", "expectedGeneration"] },
+        RemoteBrowserToolSpec { name: "browser_forward", description: "Navigate the exact claimed browser tab forward in history. Requires viewId plus the current expectedGeneration and returns a new generation.", required: &["viewId", "expectedGeneration"] },
         RemoteBrowserToolSpec { name: "browser_snapshot", description: "Capture a structured snapshot of the current page with ref handles for interactive elements.", required: &[] },
         RemoteBrowserToolSpec { name: "browser_click", description: "Click an element by ref from browser_snapshot.", required: &["ref"] },
         RemoteBrowserToolSpec { name: "browser_mouse_click_xy", description: "Click at viewport coordinates.", required: &["x", "y"] },
@@ -134,7 +140,10 @@ fn remote_browser_tool_definitions() -> Vec<Value> {
             }
             properties
                 .entry("viewId".to_string())
-                .or_insert_with(|| json!({"type":"string"}));
+                .or_insert_with(|| json!({"type":"string","minLength":1}));
+            properties
+                .entry("expectedGeneration".to_string())
+                .or_insert_with(|| json!({"type":"string","minLength":1,"maxLength":240}));
             if spec.name == "browser_tabs" {
                 properties.insert(
                     "action".to_string(),
@@ -771,7 +780,7 @@ impl AndroidRoutedToolBridge for RemoteRoutedTools {
                     RemoteExecutionState::Rejected => return Err("remote_execution_rejected".into()),
                     RemoteExecutionState::Cancelled => return Err("remote_execution_cancelled".into()),
                 };
-                return parse_remote_tool_output(name, &result.output_json);
+                return parse_remote_tool_output(name, &args, &result.output_json);
             }
         }
 
@@ -991,7 +1000,7 @@ impl AndroidRoutedToolBridge for RemoteRoutedTools {
             .map_err(|_| "remote runner lock poisoned".to_string())?;
         let runner = guard.as_mut().ok_or("trusted Remote runner is unavailable")?;
         match runner.dispatch_prepared_authorized(&context, &request, now_ms()) {
-            Ok(result) => parse_remote_tool_output(name, &result.output_json),
+            Ok(result) => parse_remote_tool_output(name, &args, &result.output_json),
             Err(ExecutionError::Transport(message))
                 if message.contains("remote_outcome_unknown") =>
             {
@@ -1348,9 +1357,10 @@ fn validate_remote_browser_allowed_keys(
     name: &str,
     object: &serde_json::Map<String, Value>,
 ) -> Result<(), String> {
-    const COMMON: &[&str] = &["viewId", "element"];
+    const COMMON: &[&str] = &["viewId", "element", "expectedGeneration"];
     let tool_keys: &[&str] = match name {
         "browser_navigate" => &["url", "newTab"],
+        "browser_refresh" | "browser_back" | "browser_forward" => &[],
         "browser_snapshot" => &["interactive", "maxDepth", "selector"],
         "browser_click" => &["ref", "offsetX", "offsetY", "holdDurationMs", "doubleClick", "button", "modifiers"],
         "browser_mouse_click_xy" => &["x", "y", "button"],
@@ -1396,11 +1406,24 @@ fn validate_remote_browser_tool_input(name: &str, args: &Value) -> Result<u64, S
 
     validate_browser_optional_string(object, "viewId")?;
     validate_browser_optional_string(object, "element")?;
+    validate_browser_optional_string(object, "expectedGeneration")?;
+    if let Some(generation) = object.get("expectedGeneration").and_then(Value::as_str) {
+        if generation.is_empty()
+            || generation.len() > 240
+            || generation.chars().any(char::is_control)
+        {
+            return Err("Remote Browser expectedGeneration must be a non-empty string of at most 240 non-control characters".into());
+        }
+    }
 
     match name {
         "browser_navigate" => {
             validate_browser_required_string(object, name, "url")?;
             validate_browser_optional_bool(object, "newTab")?;
+        }
+        "browser_refresh" | "browser_back" | "browser_forward" => {
+            validate_browser_required_string(object, name, "viewId")?;
+            validate_browser_required_string(object, name, "expectedGeneration")?;
         }
         "browser_snapshot" => {
             validate_browser_optional_bool(object, "interactive")?;
@@ -1767,7 +1790,7 @@ fn parse_remote_output(output: &str) -> Value {
     serde_json::from_str(output).unwrap_or_else(|_| Value::String(output.to_string()))
 }
 
-fn parse_remote_tool_output(name: &str, output: &str) -> Result<Value, String> {
+fn parse_remote_tool_output(name: &str, args: &Value, output: &str) -> Result<Value, String> {
     let parsed = parse_remote_output(output);
     if !is_remote_browser_tool(name) {
         return Ok(parsed);
@@ -1778,13 +1801,42 @@ fn parse_remote_tool_output(name: &str, output: &str) -> Result<Value, String> {
     if object.get("text").and_then(Value::as_str).is_none() {
         return Err("Remote Browser result omitted string text".into());
     }
-    if object.get("isError").and_then(Value::as_bool).is_none() {
-        return Err("Remote Browser result omitted boolean isError".into());
-    }
+    let is_error = object
+        .get("isError")
+        .and_then(Value::as_bool)
+        .ok_or("Remote Browser result omitted boolean isError")?;
     match object.get("imageB64") {
         Some(Value::Null) | Some(Value::String(_)) => {}
         Some(_) => return Err("Remote Browser imageB64 must be a string or null".into()),
         None => return Err("Remote Browser result omitted imageB64".into()),
+    }
+    if matches!(name, "browser_refresh" | "browser_back" | "browser_forward") && !is_error {
+        let requested = args
+            .as_object()
+            .ok_or("Remote Browser fenced navigation arguments must be an object")?;
+        let expected_view_id = requested
+            .get("viewId")
+            .and_then(Value::as_str)
+            .ok_or("Remote Browser fenced navigation requires viewId")?;
+        let expected_generation = requested
+            .get("expectedGeneration")
+            .and_then(Value::as_str)
+            .ok_or("Remote Browser fenced navigation requires expectedGeneration")?;
+        let returned_view_id = object
+            .get("viewId")
+            .and_then(Value::as_str)
+            .ok_or("Remote Browser fenced navigation result omitted viewId")?;
+        let returned_generation = object
+            .get("generation")
+            .and_then(Value::as_str)
+            .filter(|value| !value.is_empty())
+            .ok_or("Remote Browser fenced navigation result omitted generation")?;
+        if returned_view_id != expected_view_id {
+            return Err("Remote Browser fenced navigation returned a stale/different viewId".into());
+        }
+        if returned_generation == expected_generation {
+            return Err("Remote Browser fenced navigation did not advance generation".into());
+        }
     }
     Ok(parsed)
 }
@@ -2383,6 +2435,24 @@ mod tests {
             &json!({"fullPage":"yes"}),
         )
         .is_err());
+        for name in ["browser_refresh", "browser_back", "browser_forward"] {
+            assert!(validate_remote_tool_input(name, &json!({})).is_err());
+            assert!(validate_remote_tool_input(
+                name,
+                &json!({"viewId":"view-a","expectedGeneration":"generation-7"}),
+            )
+            .is_ok());
+            assert!(validate_remote_tool_input(
+                name,
+                &json!({"viewId":"view-a","expectedGeneration":""}),
+            )
+            .is_err());
+            assert!(validate_remote_tool_input(
+                name,
+                &json!({"viewId":"view-a","expectedGeneration":"bad\nvalue"}),
+            )
+            .is_err());
+        }
 
         // Remote Browser credentials belong to the authenticated transport,
         // never to tool input or browser UA/header mutation.
@@ -2409,6 +2479,7 @@ mod tests {
     fn browser_remote_result_must_match_desktop_bridge_shape() {
         let valid = parse_remote_tool_output(
             "browser_snapshot",
+            &json!({}),
             r#"{"text":"snapshot","imageB64":null,"isError":false}"#,
         )
         .expect("desktop browser output");
@@ -2417,23 +2488,64 @@ mod tests {
 
         assert!(parse_remote_tool_output(
             "browser_snapshot",
+            &json!({}),
             r#"{"text":"snapshot","isError":false}"#,
         )
         .is_err());
         assert!(parse_remote_tool_output(
             "browser_snapshot",
+            &json!({}),
             r#"{"text":"snapshot","imageB64":12,"isError":false}"#,
         )
         .is_err());
         assert!(parse_remote_tool_output(
             "browser_snapshot",
+            &json!({}),
             r#"{"text":"snapshot","imageB64":null,"isError":"false"}"#,
         )
         .is_err());
         assert_eq!(
-            parse_remote_tool_output("Shell", "plain-text").unwrap(),
+            parse_remote_tool_output("Shell", &json!({}), "plain-text").unwrap(),
             Value::String("plain-text".into()),
         );
+    }
+
+    #[test]
+    fn browser_history_navigation_rejects_stale_view_and_generation_results() {
+        let args = json!({"viewId":"view-a","expectedGeneration":"generation-7"});
+        let valid = parse_remote_tool_output(
+            "browser_refresh",
+            &args,
+            r#"{"text":"refreshed","imageB64":null,"isError":false,"viewId":"view-a","generation":"generation-8"}"#,
+        )
+        .unwrap();
+        assert_eq!(valid["generation"], "generation-8");
+        assert!(parse_remote_tool_output(
+            "browser_back",
+            &args,
+            r#"{"text":"back","imageB64":null,"isError":false,"viewId":"view-old","generation":"generation-8"}"#,
+        )
+        .is_err());
+        assert!(parse_remote_tool_output(
+            "browser_forward",
+            &args,
+            r#"{"text":"forward","imageB64":null,"isError":false,"viewId":"view-a","generation":"generation-7"}"#,
+        )
+        .is_err());
+        assert!(parse_remote_tool_output(
+            "browser_refresh",
+            &args,
+            r#"{"text":"refresh","imageB64":null,"isError":false,"viewId":"view-a"}"#,
+        )
+        .is_err());
+        // A driver-declared error is terminal input to the Host. Never rewrite it into a
+        // synthetic success or retry the navigation side effect.
+        assert!(parse_remote_tool_output(
+            "browser_refresh",
+            &args,
+            r#"{"text":"stale generation","imageB64":null,"isError":true}"#,
+        )
+        .is_ok());
     }
 
     #[test]
