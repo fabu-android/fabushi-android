@@ -391,7 +391,7 @@ impl AndroidHostInferenceProvider {
             return Err(ProviderFailure::new("prompt is required"));
         }
         if self.mode == AndroidInferenceMode::Test {
-            if input.prompt.trim() == "[[test:system-instructions]]" {
+            if input.prompt.contains("[[test:system-instructions]]") {
                 let text = self.system_instructions.clone().unwrap_or_default();
                 on_chunk(&text).map_err(ProviderFailure::new)?;
                 return Ok(StreamGeneration {
