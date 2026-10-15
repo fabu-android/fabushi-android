@@ -168,6 +168,16 @@ pub struct McpServerToolSummary {
     pub name: String,
     pub title: Option<String>,
     pub description: Option<String>,
+    pub provider_identifier: String,
+    pub input_schema: Value,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct McpMetaServerDescriptor {
+    pub server_id: String,
+    pub server_identifier: String,
+    pub server_name: String,
+    pub tools: Vec<McpServerToolSummary>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -966,6 +976,54 @@ impl CursorDashboardMcpAuthBackend {
             .collect()
     }
 
+    pub fn list_meta_server_descriptors(&self) -> Result<Vec<McpMetaServerDescriptor>, String> {
+        let credentials = self.credentials.credentials()?;
+        let ghost_mode = self.resolve_ghost_mode(&credentials);
+        let available = self.send_unary(
+            &credentials,
+            DASHBOARD_GET_AVAILABLE_MCP_SERVERS_PATH,
+            &[],
+            CONTROL_RPC_TIMEOUT_MS,
+            ghost_mode,
+        )?;
+        let mut descriptors = Vec::new();
+        for server in decode_available_mcp_servers_response(&available)? {
+            if !server.enabled || server.disabled_by_team_admin_policy {
+                continue;
+            }
+            let Some(identifier) = server
+                .server_identifier
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+            else {
+                continue;
+            };
+            let request = encode_list_sand_mcp_tools_request(&[identifier]);
+            let response = self.send_unary(
+                &credentials,
+                DASHBOARD_LIST_SAND_MCP_TOOLS_PATH,
+                &request,
+                LIST_TOOLS_TIMEOUT_MS,
+                ghost_mode,
+            )?;
+            let mut tools = decode_list_sand_mcp_tools(&response, identifier)?;
+            for tool in &mut tools {
+                if tool.provider_identifier.trim().is_empty() {
+                    tool.provider_identifier = identifier.to_string();
+                }
+            }
+            descriptors.push(McpMetaServerDescriptor {
+                server_id: server.id.to_string(),
+                server_identifier: identifier.to_string(),
+                server_name: server.name,
+                tools,
+            });
+        }
+        descriptors.sort_by(|left, right| left.server_identifier.cmp(&right.server_identifier));
+        Ok(descriptors)
+    }
+
     pub fn list_server_tools(&self, server_id: &str) -> Result<Vec<McpServerToolSummary>, String> {
         let requested_id = server_id
             .parse::<i32>()
@@ -1052,6 +1110,28 @@ impl CursorDashboardMcpAuthBackend {
         tool_call_id: &str,
         agent_id: Option<&str>,
     ) -> Result<McpToolExecutionBackendResult, String> {
+        self.execute_server_tool_with_timeout(
+            server_id,
+            tool_name,
+            args,
+            tool_call_id,
+            agent_id,
+            EXECUTE_TOOL_TIMEOUT_MS,
+        )
+    }
+
+    pub fn execute_server_tool_with_timeout(
+        &self,
+        server_id: &str,
+        tool_name: &str,
+        args: &Value,
+        tool_call_id: &str,
+        agent_id: Option<&str>,
+        timeout_ms: u64,
+    ) -> Result<McpToolExecutionBackendResult, String> {
+        if timeout_ms == 0 || timeout_ms > 2 * 60 * 60 * 1_000 {
+            return Err("MCP execution timeout is outside the supported bounded range".into());
+        }
         let requested_id = parse_mcp_server_id(server_id)?;
         let tool_name = validate_mcp_tool_execution_string(tool_name, "tool name", 512)?;
         let tool_call_id =
@@ -1099,7 +1179,7 @@ impl CursorDashboardMcpAuthBackend {
             &credentials,
             DASHBOARD_EXECUTE_SAND_MCP_TOOL_PATH,
             &request,
-            EXECUTE_TOOL_TIMEOUT_MS,
+            timeout_ms,
             ghost_mode,
         ) {
             Ok(response) => Ok(McpToolExecutionBackendResult::Settled(
@@ -1109,7 +1189,7 @@ impl CursorDashboardMcpAuthBackend {
                 Ok(McpToolExecutionBackendResult::OutcomeUnknown {
                     message: format!(
                         "Backend MCP execution for \"{tool_name}\" timed out after {}s. The connector may still have applied it, so retry only if repeating the call is safe.",
-                        EXECUTE_TOOL_TIMEOUT_MS / 1_000
+                        timeout_ms / 1_000
                     ),
                 })
             }
@@ -2072,13 +2152,18 @@ fn decode_mcp_tool_definition(input: &[u8]) -> Result<McpServerToolSummary, Stri
     let mut name = String::new();
     let mut title = None;
     let mut description = None;
+    let mut provider_identifier = String::new();
+    let mut input_schema = None;
+    let mut input_schema_json = None;
     while cursor < input.len() {
         let key = read_varint(input, &mut cursor)?;
         let field = (key >> 3) as u32;
         let wire = (key & 0x07) as u8;
         match (field, wire) {
-            // agent.v1.McpToolDefinition:
-            // name=1, description=2, provider_identifier=4, tool_name=5.
+            // Canonical agent.v1.McpToolDefinition:
+            // name=1, description=2, input_schema=3, provider_identifier=4,
+            // tool_name=5, input_schema_json=6. Keep discovery schema instead of
+            // discarding it: GetMcpTools depends on this exact contract.
             (1, 2) => {
                 let value = read_string(input, &mut cursor)?;
                 if !value.trim().is_empty() {
@@ -2091,7 +2176,12 @@ fn decode_mcp_tool_definition(input: &[u8]) -> Result<McpServerToolSummary, Stri
                     description = Some(value);
                 }
             }
+            (3, 2) => {
+                input_schema = Some(decode_proto_value(read_len_delimited(input, &mut cursor)?, 0)?);
+            }
+            (4, 2) => provider_identifier = read_string(input, &mut cursor)?,
             (5, 2) => name = read_string(input, &mut cursor)?,
+            (6, 2) => input_schema_json = Some(read_string(input, &mut cursor)?),
             _ => skip_field(input, &mut cursor, wire)?,
         }
     }
@@ -2103,10 +2193,24 @@ fn decode_mcp_tool_definition(input: &[u8]) -> Result<McpServerToolSummary, Stri
     {
         return Err("MCP tool definition exceeds bounded metadata limits".into());
     }
+    let input_schema = match input_schema {
+        Some(value) => value,
+        None => match input_schema_json
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            Some(raw) => serde_json::from_str(raw)
+                .map_err(|error| format!("MCP input_schema_json is invalid JSON: {error}"))?,
+            None => json!({"type":"object"}),
+        },
+    };
     Ok(McpServerToolSummary {
         name,
         title,
         description,
+        provider_identifier,
+        input_schema,
     })
 }
 
@@ -4258,6 +4362,7 @@ mod tests {
         encode_string(2, "List calendar events", &mut list_tool);
         encode_string(4, "calendar/default", &mut list_tool);
         encode_string(5, "list", &mut list_tool);
+        encode_string(6, r#"{"type":"object","properties":{"limit":{"type":"integer"}}}"#, &mut list_tool);
         encode_len_delimited(3, &list_tool, &mut server);
         let mut create_tool = Vec::new();
         encode_string(1, "Create event", &mut create_tool);
@@ -4270,7 +4375,10 @@ mod tests {
         assert_eq!(tools[0].name, "list");
         assert_eq!(tools[0].title.as_deref(), Some("List events"));
         assert_eq!(tools[0].description.as_deref(), Some("List calendar events"));
+        assert_eq!(tools[0].provider_identifier, "calendar/default");
+        assert_eq!(tools[0].input_schema["properties"]["limit"]["type"], "integer");
         assert_eq!(tools[1].name, "create");
+        assert_eq!(tools[1].input_schema, json!({"type":"object"}));
         assert_eq!(decode_list_sand_mcp_tools_count(&response, "calendar/default").unwrap(), 2);
         assert!(decode_list_sand_mcp_tools_count(&response, "other").is_err());
     }

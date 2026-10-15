@@ -197,6 +197,7 @@ use crate::runner::{
     with_box_help_routed_tool, with_generate_image_routed_tools, with_local_file_tools,
     with_remote_routed_tools, with_web_routed_tools, WAITING_USER_CANCELLATION_PREFIX,
     with_reaction_routed_tool, ReactionDeliveryCounter,
+    with_mcp_meta_routed_tools, McpMetaCallTarget, McpMetaReviewPreflight,
     AgentTurnInterruptionRegistry, LocalApprovalRegistry, RemoteApprovalRegistry,
     RemoteAutoReviewDecision, RemoteAutoReviewPreflight, RemoteDispatchBinding,
     DurableMultitaskTodoStore,
@@ -763,6 +764,129 @@ fn wait_for_subagent_review_approval(
         let (next, _) = wake
             .wait_timeout(state, Duration::from_millis(wait_ms))
             .map_err(|_| "subagent review approval waiter lock poisoned".to_string())?;
+        state = next;
+    }
+}
+
+fn wait_for_mcp_review_approval(
+    broker: &SharedCapabilityBroker,
+    registry: &SubagentReviewApprovalRegistry,
+    turn_events: &Arc<Mutex<VecDeque<Value>>>,
+    cancelled: &Arc<AtomicBool>,
+    parent_agent_id: &str,
+    parent_request_id: &str,
+    account_fence: &str,
+    process_epoch: u64,
+    tool_call_id: &str,
+    target: &McpMetaCallTarget,
+    reason: &str,
+    proposed_rule: Option<&str>,
+    expiry_policy: SubagentReviewApprovalExpiryPolicy,
+) -> Result<bool, String> {
+    if cancelled.load(Ordering::Acquire) {
+        return Err("cancelled".into());
+    }
+    let target_json = json!({
+        "action":"mcp",
+        "arguments":{
+            "server_display_name":target.server_name.clone(),
+            "server_identifier":target.server_identifier.clone(),
+            "tool_name":target.tool_name.clone(),
+            "mcp_arguments":target.arguments.clone(),
+            "allow_instructions":"Allow only when the user would reasonably expect this MCP action.",
+            "block_instructions":"Block destructive, privileged, or externally visible actions unless clearly authorized.",
+        },
+        "reason":reason,
+        "proposedRule":proposed_rule,
+    });
+    let fingerprint = crate::sha256::sha256_hex(
+        format!(
+            "{account_fence}\n{process_epoch}\n{parent_request_id}\n{tool_call_id}\n{}\n{}\n{}",
+            target.server_identifier,
+            target.tool_name,
+            target.arguments,
+        ).as_bytes(),
+    );
+    let identity = &fingerprint[..32];
+    let approval_id = format!("approval-mcp-review-{identity}");
+    let request_id = format!("mcp-review-request-{identity}");
+    let operation_id = format!("mcp-review-operation-{identity}");
+    let capability = "mcp.execute";
+    let signal = registry.register(&approval_id, parent_agent_id)?;
+    if let Err(error) = broker.request_approval(
+        &approval_id,
+        &request_id,
+        &operation_id,
+        capability,
+        target_json.clone(),
+        account_fence,
+        now_ms(),
+    ) {
+        registry.remove(&approval_id);
+        return Err(error);
+    }
+    if let Err(error) = turn_events
+        .lock()
+        .map_err(|_| "MCP review event queue lock poisoned".to_string())
+        .map(|mut events| {
+            events.push_back(json!({
+                "type":"approval.requested",
+                "approvalId":approval_id,
+                "operationId":operation_id,
+                "requestId":request_id,
+                "capability":capability,
+                "target":target_json,
+                "accountFence":account_fence,
+                "reason":reason,
+                "autoReview":true,
+                "expiresAtMs":match expiry_policy {
+                    SubagentReviewApprovalExpiryPolicy::Park => Value::Null,
+                    SubagentReviewApprovalExpiryPolicy::Ttl => json!(now_ms().saturating_add(SUBAGENT_REVIEW_APPROVAL_TTL_MS)),
+                },
+            }));
+        })
+    {
+        let _ = broker.cancel_approval_operation(&operation_id, "MCP approval event unavailable", now_ms());
+        registry.remove(&approval_id);
+        return Err(error);
+    }
+    let deadline = matches!(expiry_policy, SubagentReviewApprovalExpiryPolicy::Ttl)
+        .then(|| now_ms().saturating_add(SUBAGENT_REVIEW_APPROVAL_TTL_MS));
+    let (state, wake) = &*signal;
+    let mut state = state.lock().map_err(|_| "MCP review waiter lock poisoned".to_string())?;
+    loop {
+        if let Some(approved) = *state {
+            drop(state);
+            if approved {
+                broker.consume_approval_for_dispatch(
+                    &approval_id,
+                    &operation_id,
+                    &request_id,
+                    capability,
+                    account_fence,
+                    now_ms(),
+                )?;
+            }
+            registry.remove(&approval_id);
+            return Ok(approved);
+        }
+        if cancelled.load(Ordering::Acquire) {
+            drop(state);
+            let _ = broker.cancel_approval_operation(&operation_id, "turn cancelled", now_ms());
+            registry.remove(&approval_id);
+            return Err("cancelled".into());
+        }
+        let now = now_ms();
+        if deadline.is_some_and(|deadline| now >= deadline) {
+            drop(state);
+            let _ = broker.cancel_approval_operation(&operation_id, "MCP approval expired", now);
+            registry.remove(&approval_id);
+            return Ok(false);
+        }
+        let wait_ms = deadline.map(|deadline| deadline.saturating_sub(now).min(100)).unwrap_or(100);
+        let (next, _) = wake
+            .wait_timeout(state, Duration::from_millis(wait_ms))
+            .map_err(|_| "MCP review waiter lock poisoned".to_string())?;
         state = next;
     }
 }
@@ -12988,6 +13112,9 @@ impl AndroidJsonHost {
         let live_account_fence = Arc::clone(&self.live_account_fence);
         let agent_turn_interruptions = Arc::clone(&self.agent_turn_interruptions);
         let web_backend = self.mcp_dashboard_backend.clone();
+        let mcp_meta_backend = self.mcp_dashboard_backend.clone();
+        let mcp_meta_settings = Arc::clone(&self.mcp_server_tool_settings);
+        let mcp_meta_broker = self.capability_broker.clone();
         let local_capability_broker = self.capability_broker.clone();
         let local_runner = Arc::clone(&self.local_runner);
         let local_approvals = self.local_approvals.clone();
@@ -13193,6 +13320,98 @@ impl AndroidJsonHost {
                         return;
                     }
                 };
+                let mcp_review_setting = auto_review_modes.mcp;
+                let mcp_review_token = bearer_token.clone();
+                let mcp_review_cancelled = Arc::clone(&cancelled);
+                let mcp_review_broker = subagent_review_broker.clone();
+                let mcp_review_approvals = Arc::clone(&subagent_review_approvals);
+                let mcp_review_events = Arc::clone(&subagent_review_events);
+                let mcp_review_parent_agent = conversation_id_owned.clone();
+                let mcp_review_parent_request = request_id_owned.clone();
+                let mcp_review_account_fence = account_fence_owned.clone();
+                let mcp_review_parent_operation = operation_id_owned.clone();
+                let mcp_review_shell = Arc::clone(&turn_run_shell);
+                let mcp_review_lifecycle = Arc::clone(&turn_lifecycle);
+                let mcp_review_expiry_policy = subagent_review_expiry_policy;
+                let mcp_review_preflight: McpMetaReviewPreflight = Arc::new(
+                    move |target, tool_call_id| {
+                        if tool_call_id.trim().is_empty() {
+                            return Err("MCP auto-review tool_call_id is required".into());
+                        }
+                        if matches!(mcp_review_setting, SandAutoReviewMode::Off) {
+                            return Ok(());
+                        }
+                        if mcp_review_approvals.has_pending_for_agent(&mcp_review_parent_agent) {
+                            return Err("an approval is already pending for this agent".into());
+                        }
+                        let review_target = json!({
+                            "action":"mcp",
+                            "arguments":{
+                                "server_display_name":target.server_name.clone(),
+                                "server_identifier":target.server_identifier.clone(),
+                                "tool_name":target.tool_name.clone(),
+                                "mcp_arguments":target.arguments.clone(),
+                                "allow_instructions":"Allow only when the user would reasonably expect this MCP action.",
+                                "block_instructions":"Block destructive, privileged, or externally visible actions unless clearly authorized.",
+                            }
+                        });
+                        let decision = AndroidHostInferenceProvider::run_auto_review_target(
+                            review_mode,
+                            mcp_review_token.clone(),
+                            Arc::clone(&mcp_review_cancelled),
+                            &review_target,
+                        )
+                        .map_err(|error| error.message)?;
+                        if matches!(mcp_review_setting, SandAutoReviewMode::Shadow) {
+                            return Ok(());
+                        }
+                        match decision {
+                            AndroidSubagentReviewDecision::Allow => Ok(()),
+                            AndroidSubagentReviewDecision::Reject { reason } => Err(reason),
+                            AndroidSubagentReviewDecision::Block { reason, proposed_rule } => {
+                                mark_turn_awaiting_user(
+                                    &mcp_review_shell,
+                                    &mcp_review_lifecycle,
+                                    &mcp_review_account_fence,
+                                    &mcp_review_parent_agent,
+                                    &mcp_review_parent_request,
+                                    &mcp_review_parent_operation,
+                                    turn_generation,
+                                    turn_lifecycle_process_epoch,
+                                    &reason,
+                                )?;
+                                let approval = wait_for_mcp_review_approval(
+                                    &mcp_review_broker,
+                                    &mcp_review_approvals,
+                                    &mcp_review_events,
+                                    &mcp_review_cancelled,
+                                    &mcp_review_parent_agent,
+                                    &mcp_review_parent_request,
+                                    &mcp_review_account_fence,
+                                    subagent_review_process_epoch,
+                                    tool_call_id,
+                                    target,
+                                    &reason,
+                                    proposed_rule.as_deref(),
+                                    mcp_review_expiry_policy,
+                                );
+                                let cleared = clear_turn_awaiting_user(
+                                    &mcp_review_shell,
+                                    &mcp_review_lifecycle,
+                                    &mcp_review_account_fence,
+                                    &mcp_review_parent_agent,
+                                    &mcp_review_parent_request,
+                                    &mcp_review_parent_operation,
+                                    turn_generation,
+                                    turn_lifecycle_process_epoch,
+                                );
+                                let approved = approval?;
+                                cleared?;
+                                if approved { Ok(()) } else { Err(reason) }
+                            }
+                        }
+                    },
+                );
                 let task_review_token = bearer_token.clone();
                 let task_review_cancelled = Arc::clone(&cancelled);
                 let task_review_broker = subagent_review_broker.clone();
@@ -13438,6 +13657,20 @@ impl AndroidJsonHost {
                     Arc::clone(&cancelled),
                     ReactionDeliveryCounter::default(),
                 );
+                let routed_subagent_tools = match mcp_meta_backend.clone() {
+                    Some(backend) => with_mcp_meta_routed_tools(
+                        routed_subagent_tools,
+                        backend,
+                        Arc::clone(&mcp_meta_settings),
+                        mcp_meta_broker.clone(),
+                        &account_fence_owned,
+                        Arc::clone(&live_account_fence),
+                        &conversation_id_owned,
+                        Arc::clone(&cancelled),
+                        Some(Arc::clone(&mcp_review_preflight)),
+                    ),
+                    None => routed_subagent_tools,
+                };
                 // Desktop root Agents can explicitly suspend the turn for human-only box work.
                 // The routed adapter mutates only the durable AndroidBoxHandoffOwner; provider
                 // termination and durable awaiting-user settlement are handled below from its
