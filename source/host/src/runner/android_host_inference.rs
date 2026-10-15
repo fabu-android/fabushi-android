@@ -2002,7 +2002,7 @@ mod tests {
             tool_sse(
                 "SendMessage",
                 "widget-1",
-                r#"{"type":"widget","widget":{"id":"demo"}}"#,
+                r#"{"type":"widget","widget":{"prompt":"Choose","options":[{"label":"One"}]}}"#,
             ),
             tool_sse("Read", "read-2", "{}"),
             tool_sse("Read", "read-3", "{}"),
