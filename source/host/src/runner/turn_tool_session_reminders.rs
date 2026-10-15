@@ -72,9 +72,19 @@ impl TurnToolSessionReminderState {
 }
 
 pub fn is_text_send_message_args(args: Option<&Value>) -> bool {
-    args.and_then(Value::as_object)
-        .and_then(|object| object.get("type"))
+    let Some(object) = args.and_then(Value::as_object) else {
+        return false;
+    };
+    object
+        .get("type")
         .and_then(Value::as_str)
+        .or_else(|| {
+            object
+                .get("message")
+                .and_then(Value::as_object)
+                .and_then(|message| message.get("type"))
+                .and_then(Value::as_str)
+        })
         == Some("text")
 }
 
