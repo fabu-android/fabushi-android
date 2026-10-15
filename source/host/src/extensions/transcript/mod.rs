@@ -3,6 +3,7 @@ pub mod completion_revivals;
 pub mod completion_revival_composition;
 pub mod group_chat_glue;
 pub mod group_chat_orchestrator;
+pub mod group_fanout_store;
 pub mod ack_obligations;
 pub mod async_task_union;
 pub mod agent_lifecycle;
