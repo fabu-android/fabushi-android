@@ -59554,6 +59554,85 @@
       "artifact": null,
       "verification_status": "not-verified",
       "notes": "This is a mechanism-level not-applicable-with-replacement, not deletion of Desktop shell/read/computer capability. Do not promote to verified until a descendant exact HEAD passes required source/Rust/package/device evidence and a real independently authenticated external Runner is available."
+    },
+    {
+      "responsibility_id": "HOST-BOOTSTRAP-ANDROID-001",
+      "domain": "host-bootstrap",
+      "desktop_sources": [
+        {
+          "path": "source/host/tests/bootstrap_contract.rs",
+          "blob_sha": "3b98f32a75479e5cc3fe13f4c482ba8750f6674c",
+          "symbols": [
+            "gateway_config_matches_grok_auth_tls_and_loopback_rules",
+            "host_paths_match_grok_override_variant_and_model_visibility_rules",
+            "gateway_discovery_is_validated_written_and_cleared",
+            "host_lock_takes_over_only_known_host_processes"
+          ]
+        }
+      ],
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
+      "responsibility": "Compose the shipping Android Host process owner over the app-private data root: preserve gateway policy semantics while replacing Desktop standalone-process discovery/takeover with a single JNI-owned Host lock, generation-fenced native discovery, bounded stale-lock recovery and Android lifecycle-safe process identity handling.",
+      "source_owner": "Desktop Host bootstrap, host_paths, gateway discovery and single-Host lock lifecycle",
+      "direct_callers": [
+        "Desktop Host executable startup",
+        "AndroidNativeRuntime production constructors"
+      ],
+      "downstream_dependencies": [
+        "AndroidJsonHost",
+        "MahayanaCoordinator durable state",
+        "typed JNI transport",
+        "process-death recovery",
+        "gateway compatibility policy"
+      ],
+      "state_owner": "AndroidNativeRuntime owns the process-scoped bootstrap guard; Rust Host/Coordinator retain canonical product state; app-private host-runtime directory owns only bootstrap lock/discovery metadata.",
+      "persistent_state": [
+        "app_data_dir/host-runtime/host.lock",
+        "app_data_dir/host-runtime/native-runtime-discovery.json",
+        "discovery pid/generation/transport",
+        "Coordinator durable state remains separately owned"
+      ],
+      "protocol_wire_contract": [
+        "native discovery transport=jni",
+        "pid plus generation fencing",
+        "single live Fabushi Host owner",
+        "foreign PID lock reclaim without process signalling",
+        "gateway_config keeps Desktop loopback/auth/TLS compatibility semantics where applicable"
+      ],
+      "visible_effect": "The packaged Android app starts exactly one Rust Host/Coordinator owner through JNI, reconnects cleanly after process recreation, and never depends on a stale Desktop-style standalone Host process or privileged local HTTP discovery endpoint.",
+      "failure_behavior": [
+        "invalid or duplicate live Fabushi Host ownership fails closed",
+        "dead/corrupt/foreign stale lock metadata is boundedly reclaimed",
+        "native discovery write failure aborts production runtime construction rather than silently running undiscoverable",
+        "stale bootstrap guard cannot delete a newer generation discovery record"
+      ],
+      "cancellation_behavior": "Dropping the process-owned runtime guard releases only its own lock/discovery metadata and does not synthesize cancellation of durable Coordinator operations.",
+      "retry_semantics": "App process recreation creates a new generation and reopens durable Coordinator/Host state; it does not replay unknown side effects as bootstrap recovery.",
+      "idempotency_semantics": "Exclusive Host lock prevents two shipping native owners; generation-fenced discovery cleanup prevents an older handle from deleting newer owner metadata.",
+      "process_death_recovery": "A stale dead-process lock is reclaimed, production JNI writes a new native discovery generation, Coordinator durable reopen reconciles outstanding operations, and old generation metadata cannot clobber the new owner.",
+      "account_fencing": "Bootstrap itself is process/generation scoped; account fencing remains in Coordinator/AndroidJsonHost and is not duplicated in discovery state.",
+      "security_boundary": "Android local in-app transport remains typed JNI. The bootstrap guard lives under app-private data, exposes no bearer token or arbitrary HTTP endpoint, and never signals or kills a foreign process.",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "source/host/src/gateway_config.rs",
+        "source/host/src/host_paths.rs",
+        "source/host/src/host_lock.rs",
+        "source/host/src/host_discovery.rs",
+        "source/android-host-jni/src/lib.rs",
+        "source/host/tests/android_bootstrap_shipping_contract.rs"
+      ],
+      "android_owner": "AndroidNativeRuntime process owner + Rust host_lock/host_discovery/host_paths",
+      "platform_delta": "Desktop standalone Host may identify and terminate/take over another known Host and writes gateway HTTP discovery. Android app lifecycle must not kill another app process and its in-process canonical transport is JNI, so it fails closed on a live Fabushi Host, only reclaims foreign/dead stale lock files, and writes generation-fenced native JNI discovery instead of a fake gateway port.",
+      "implementation_status": "implemented",
+      "production_wiring": "Both shipping AndroidNativeRuntime production constructor paths create AndroidHostBootstrapGuard before AndroidJsonHost. The guard resolves app-private host-runtime paths through host_paths, acquires the Host lock, atomically writes pid/generation/transport=jni discovery and fenced-clears discovery on drop. host_lock production identity detection uses procfs on Android/Linux, never sends process signals, and distinguishes foreign PID reuse from a real Fabushi Host.",
+      "unit_test": "host_lock tests cover dead/corrupt/same-process/live-foreign/live-Fabushi ownership; host_discovery test covers generation-fenced native clear; android-host-jni test covers production lock/discovery lifetime.",
+      "contract_test": "source/host/tests/android_bootstrap_shipping_contract.rs freezes the shipping JNI caller, private data root, no-kill lock replacement and pid+generation discovery fencing.",
+      "integration_test": "Pending same-exact-HEAD GitHub Actions after this commit; predecessor bootstrap primitive tests are not reused as verification.",
+      "packaged_test": "Pending final APK/AAB launch/process-reopen inspection on the same release head.",
+      "device_test": "Pending install/launch/process-kill/reopen/account-switch acceptance on a supported Android device.",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "This closes the Desktop bootstrap_contract.rs source responsibility without promoting the broader HOST-GATEWAY-TRANSPORT-ANDROID-001 aggregate, which remains mapped until its remaining gateway method/policy replacements are complete. No local Rust/Kotlin/JNI build or test was run.",
+      "android_head_at_update": "1d43d0c5ae13e5c9ac963ad4d0ea68442f07d4f2"
     }
   ],
   "traceability": {

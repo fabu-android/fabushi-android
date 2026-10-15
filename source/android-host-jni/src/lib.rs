@@ -16,10 +16,67 @@ use fabushi_mahayana_agent_coordinator::{
 use fabushi_mahayana_host::android_json_runtime::{
     AndroidHostMode, AndroidJsonHost, RuntimeCallCancellationRegistry,
 };
+use fabushi_mahayana_host::host_discovery::{
+    clear_native_runtime_discovery_if_owner, write_native_runtime_discovery,
+    NativeRuntimeDiscoveryInfo,
+};
+use fabushi_mahayana_host::host_lock::{acquire_host_lock, HostLock};
+use fabushi_mahayana_host::host_paths::{
+    get_android_host_lock_path, get_android_native_discovery_path,
+};
 use fabushi_mahayana_host::box_rebuild_backend::AndroidBoxRebuildBackend;
 use serde_json::{json, Value};
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
+
+struct AndroidHostBootstrapGuard {
+    _lock: HostLock,
+    discovery_path: PathBuf,
+    pid: u32,
+    generation: u64,
+}
+
+impl AndroidHostBootstrapGuard {
+    fn open(app_data_dir: &std::path::Path, generation: u64) -> Self {
+        let lock_path = get_android_host_lock_path(app_data_dir);
+        let discovery_path = get_android_native_discovery_path(app_data_dir);
+        let pid = std::process::id();
+        let lock = acquire_host_lock(&lock_path, pid)
+            .unwrap_or_else(|error| panic!("failed to acquire Android Host runtime lock: {error}"));
+        let started_at_ms = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis()
+            .min(u128::from(u64::MAX)) as u64;
+        write_native_runtime_discovery(
+            &discovery_path,
+            &NativeRuntimeDiscoveryInfo {
+                pid,
+                started_at_ms: started_at_ms.max(1),
+                generation,
+                transport: "jni".into(),
+            },
+        )
+        .unwrap_or_else(|error| panic!("failed to write Android Host native discovery: {error}"));
+        Self {
+            _lock: lock,
+            discovery_path,
+            pid,
+            generation,
+        }
+    }
+}
+
+impl Drop for AndroidHostBootstrapGuard {
+    fn drop(&mut self) {
+        let _ = clear_native_runtime_discovery_if_owner(
+            &self.discovery_path,
+            self.pid,
+            self.generation,
+        );
+    }
+}
 
 struct CoordinatorHost {
     runtime: AndroidJsonHost,
@@ -59,6 +116,7 @@ impl HostPort for CoordinatorHost {
 
 pub struct AndroidNativeRuntime {
     coordinator: MahayanaCoordinator<CoordinatorHost>,
+    _bootstrap_guard: Option<AndroidHostBootstrapGuard>,
     mcp_oauth: OAuthForwarder,
     mode: AndroidHostMode,
     next_request_id: u64,
@@ -81,6 +139,8 @@ impl AndroidNativeRuntime {
         initial_account_session_json: Option<&str>,
     ) -> Self {
         let app_data_dir = app_data_dir.into();
+        let bootstrap_guard = (mode == AndroidHostMode::Production)
+            .then(|| AndroidHostBootstrapGuard::open(&app_data_dir, generation));
         let runtime = AndroidJsonHost::new_with_account_session(
             app_data_dir.clone(),
             mode,
@@ -101,6 +161,7 @@ impl AndroidNativeRuntime {
         };
         Self {
             coordinator,
+            _bootstrap_guard: bootstrap_guard,
             mcp_oauth: OAuthForwarder::default(),
             mode,
             next_request_id: 0,
@@ -134,6 +195,8 @@ impl AndroidNativeRuntime {
         app_version: &str,
     ) -> Self {
         let app_data_dir = app_data_dir.into();
+        let bootstrap_guard = (mode == AndroidHostMode::Production)
+            .then(|| AndroidHostBootstrapGuard::open(&app_data_dir, generation));
         let runtime = AndroidJsonHost::new_with_account_session_and_device_id_and_app_version(
             app_data_dir.clone(),
             mode,
@@ -156,6 +219,7 @@ impl AndroidNativeRuntime {
         };
         Self {
             coordinator,
+            _bootstrap_guard: bootstrap_guard,
             mcp_oauth: OAuthForwarder::default(),
             mode,
             next_request_id: 0,
@@ -1340,6 +1404,28 @@ mod tests {
         );
         assert_eq!(accepted["ok"], true);
         assert_eq!(accepted["result"]["accepted"], true);
+    }
+
+    #[test]
+    fn production_runtime_owns_host_lock_and_generation_fenced_native_discovery() {
+        let root = test_root("bootstrap-owner");
+        let discovery = root.join("host-runtime/native-runtime-discovery.json");
+        let lock = root.join("host-runtime/host.lock");
+        {
+            let runtime = AndroidNativeRuntime::new(root.clone(), AndroidHostMode::Production, 17);
+            assert!(lock.exists());
+            let info = fabushi_mahayana_host::host_discovery::read_native_runtime_discovery(
+                &discovery,
+            )
+            .unwrap();
+            assert_eq!(info.pid, std::process::id());
+            assert_eq!(info.generation, 17);
+            assert_eq!(info.transport, "jni");
+            drop(runtime);
+        }
+        assert!(!lock.exists());
+        assert!(!discovery.exists());
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]

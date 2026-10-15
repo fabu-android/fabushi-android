@@ -13,6 +13,7 @@ pub enum HostLockOutcome {
     Created,
     ReclaimedDead,
     ReclaimedCorrupt,
+    ReclaimedForeign,
 }
 
 #[derive(Debug)]
@@ -88,19 +89,51 @@ fn try_create_lock(path: &Path, pid: u32) -> io::Result<Option<File>> {
     }
 }
 
+
+pub fn read_process_command(pid: u32) -> Option<String> {
+    #[cfg(target_os = "linux")]
+    {
+        let bytes = fs::read(format!("/proc/{pid}/cmdline")).ok()?;
+        if bytes.is_empty() {
+            return None;
+        }
+        let value = String::from_utf8_lossy(&bytes)
+            .replace('\0', " ")
+            .trim()
+            .to_string();
+        return (!value.is_empty()).then_some(value);
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = pid;
+        None
+    }
+}
+
+pub fn is_android_fabushi_host_process(pid: u32) -> bool {
+    read_process_command(pid).is_some_and(|command| {
+        let normalized = command.to_ascii_lowercase();
+        normalized.contains("fabushi")
+            || normalized.contains("mahayana")
+            || normalized.contains("ombhrum")
+    })
+}
+
 pub fn default_is_process_alive(pid: u32) -> bool {
     // Android/Linux exposes a live process through procfs. We intentionally do
     // not signal or terminate it: a second Host owner must fail closed.
     Path::new("/proc").join(pid.to_string()).exists()
 }
 
-pub fn acquire_host_lock_with<IsAlive>(
+pub fn acquire_host_lock_with_identity<IsAlive, IsHost>(
     path: &Path,
     pid: u32,
     mut is_alive: IsAlive,
+    mut is_host_process: IsHost,
 ) -> io::Result<HostLockAcquisition>
 where
     IsAlive: FnMut(u32) -> bool,
+    IsHost: FnMut(u32) -> bool,
 {
     if pid == 0 {
         return Err(io::Error::new(io::ErrorKind::InvalidInput, "pid must be non-zero"));
@@ -132,11 +165,19 @@ where
                     "Host lock is already held by this process",
                 ));
             }
-            Ok(holder) if is_alive(holder) => {
+            Ok(holder) if is_alive(holder) && is_host_process(holder) => {
+                // Desktop may terminate/take over a known sibling Host. Android delegates
+                // process ownership to the OS and must never signal another live app process.
                 return Err(io::Error::new(
                     io::ErrorKind::AlreadyExists,
-                    format!("Host lock is held by live process {holder}"),
+                    format!("Host lock is held by live Fabushi Host process {holder}"),
                 ));
+            }
+            Ok(holder) if is_alive(holder) => {
+                // PID reuse or an unrelated process must not permanently wedge the app.
+                // Reclaim only the lock file; never signal the foreign process.
+                outcome = HostLockOutcome::ReclaimedForeign;
+                previous_pid = Some(holder);
             }
             Ok(holder) => {
                 outcome = HostLockOutcome::ReclaimedDead;
@@ -163,8 +204,24 @@ where
     ))
 }
 
+pub fn acquire_host_lock_with<IsAlive>(
+    path: &Path,
+    pid: u32,
+    is_alive: IsAlive,
+) -> io::Result<HostLockAcquisition>
+where
+    IsAlive: FnMut(u32) -> bool,
+{
+    acquire_host_lock_with_identity(path, pid, is_alive, |_| true)
+}
+
 pub fn acquire_host_lock(path: &Path, pid: u32) -> io::Result<HostLockAcquisition> {
-    acquire_host_lock_with(path, pid, default_is_process_alive)
+    acquire_host_lock_with_identity(
+        path,
+        pid,
+        default_is_process_alive,
+        is_android_fabushi_host_process,
+    )
 }
 
 #[cfg(test)]
@@ -214,6 +271,26 @@ mod tests {
 
         fs::write(&path, "999").unwrap();
         acquired.lock.release().unwrap();
+        assert_eq!(read_lock_pid(&path).unwrap(), 999);
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn foreign_live_pid_is_reclaimed_without_signalling_or_replacing_a_real_host() {
+        let path = temp_path("foreign");
+        fs::write(&path, "777").unwrap();
+        let acquired =
+            acquire_host_lock_with_identity(&path, 888, |_| true, |_| false).unwrap();
+        assert_eq!(acquired.outcome, HostLockOutcome::ReclaimedForeign);
+        assert_eq!(acquired.previous_pid, Some(777));
+        assert_eq!(read_lock_pid(&path).unwrap(), 888);
+        drop(acquired);
+        assert!(!path.exists());
+
+        fs::write(&path, "999").unwrap();
+        let error =
+            acquire_host_lock_with_identity(&path, 888, |_| true, |_| true).unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::AlreadyExists);
         assert_eq!(read_lock_pid(&path).unwrap(), 999);
         let _ = fs::remove_file(path);
     }

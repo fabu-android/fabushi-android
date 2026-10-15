@@ -57,6 +57,75 @@ pub fn read_gateway_discovery(path: &Path) -> io::Result<GatewayDiscoveryInfo> {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NativeRuntimeDiscoveryInfo {
+    pub pid: u32,
+    pub started_at_ms: u64,
+    pub generation: u64,
+    pub transport: String,
+}
+
+impl NativeRuntimeDiscoveryInfo {
+    pub fn validate(&self) -> bool {
+        self.pid > 0
+            && self.started_at_ms > 0
+            && self.generation > 0
+            && self.transport == "jni"
+    }
+}
+
+pub fn write_native_runtime_discovery(
+    path: &Path,
+    info: &NativeRuntimeDiscoveryInfo,
+) -> io::Result<()> {
+    if !info.validate() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "invalid native runtime discovery",
+        ));
+    }
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let file_name = path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or("native-runtime-discovery.json");
+    let temp = path.with_file_name(format!("{file_name}.{}.tmp", std::process::id()));
+    let encoded = serde_json::to_vec_pretty(info)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+    fs::write(&temp, encoded)?;
+    fs::rename(&temp, path)
+}
+
+pub fn read_native_runtime_discovery(path: &Path) -> io::Result<NativeRuntimeDiscoveryInfo> {
+    let bytes = fs::read(path)?;
+    let info: NativeRuntimeDiscoveryInfo = serde_json::from_slice(&bytes)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+    if info.validate() {
+        Ok(info)
+    } else {
+        Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "invalid native runtime discovery",
+        ))
+    }
+}
+
+pub fn clear_native_runtime_discovery_if_owner(
+    path: &Path,
+    pid: u32,
+    generation: u64,
+) -> io::Result<()> {
+    match read_native_runtime_discovery(path) {
+        Ok(info) if info.pid == pid && info.generation == generation => clear_gateway_discovery(path),
+        Ok(_) => Ok(()),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error),
+    }
+}
+
 pub fn clear_gateway_discovery(path: &Path) -> io::Result<()> {
     match fs::remove_file(path) {
         Ok(()) => Ok(()),
@@ -90,6 +159,23 @@ mod tests {
         write_gateway_discovery(&path, &info).unwrap();
         assert_eq!(read_gateway_discovery(&path).unwrap(), info);
         clear_gateway_discovery(&path).unwrap();
+        assert!(!path.exists());
+    }
+
+    #[test]
+    fn native_runtime_discovery_is_generation_fenced_on_clear() {
+        let path = temp_path();
+        let info = NativeRuntimeDiscoveryInfo {
+            pid: 42,
+            started_at_ms: 7,
+            generation: 9,
+            transport: "jni".into(),
+        };
+        write_native_runtime_discovery(&path, &info).unwrap();
+        assert_eq!(read_native_runtime_discovery(&path).unwrap(), info);
+        clear_native_runtime_discovery_if_owner(&path, 42, 8).unwrap();
+        assert!(path.exists());
+        clear_native_runtime_discovery_if_owner(&path, 42, 9).unwrap();
         assert!(!path.exists());
     }
 

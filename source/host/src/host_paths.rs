@@ -9,4 +9,16 @@ pub fn get_gateway_discovery_path(root:&Path)->PathBuf{root.join("gateway-discov
 pub fn get_host_lock_path(root:&Path)->PathBuf{root.join("host.lock")}
 pub fn get_host_secrets_path(root:&Path)->PathBuf{root.join("secrets")}
 pub fn get_host_crash_marker_path(root:&Path)->PathBuf{root.join("host-crash.marker")}
+
+pub fn get_android_host_runtime_root(app_data_dir:&Path)->PathBuf{
+    app_data_dir.join("host-runtime")
+}
+
+pub fn get_android_host_lock_path(app_data_dir:&Path)->PathBuf{
+    get_android_host_runtime_root(app_data_dir).join("host.lock")
+}
+
+pub fn get_android_native_discovery_path(app_data_dir:&Path)->PathBuf{
+    get_android_host_runtime_root(app_data_dir).join("native-runtime-discovery.json")
+}
 pub fn reanchor_sand_path(old_root:&Path,new_root:&Path,path:&Path)->Option<PathBuf>{path.strip_prefix(old_root).ok().map(|relative|new_root.join(relative))}
