@@ -17094,22 +17094,26 @@
       "visible_effect": "Eligible tool approvals may be auto-reviewed safely while stale or failed classifier decisions cannot silently authorize actions, and users can see awaiting state when review is pending.",
       "android_disposition": "android-adapted",
       "android_target": [
+        "source/host/src/android_json_runtime.rs",
+        "source/host/src/runner/auto_review_gate.rs",
+        "source/host/src/runner/local_routed_tools.rs",
+        "source/host/src/runner/remote_routed_tools.rs",
         "source/host/src/capability_broker.rs",
-        "source/host/src/mcp_auth/dashboard_mcp_auth_backend.rs",
-        "source/host/src/android_json_runtime.rs"
+        "source/host/tests/auto_review_gate_contract.rs",
+        "source/host/tests/sand_auto_review_contract.rs"
       ],
-      "android_owner": "Future Rust Host auto-review service layered above Capability Broker; UI only projects waiting/result state",
-      "platform_delta": "No Android-specific reason to move the classifier/security state into Kotlin; only presentation and lifecycle adapters differ. Manual approval remains the fail-closed fallback until this Host service is real.",
-      "implementation_status": "mapped",
-      "production_wiring": "Partial source only. Android has sand_auto_review controller plus classifier/automation/cloud/computer/subagent modules, AutoReviewService, awaiting bridge and stale-card sweep primitives. However current exact-branch production reachability audit found AndroidJsonHost does not construct/retain AutoReviewService and there is no shipping AutoReviewService::bind_runner call; android_json_runtime.rs only resolves configured modes. Manual Capability Broker remains the actual shipping approval boundary.",
-      "unit_test": "required for settled-memory cap, stale race, cancellation/completion race, expiry sweep and mode parsing",
-      "contract_test": "required for classifier wire/auth/privacy semantics and no implicit grant on classifier failure",
-      "integration_test": "required with real approval flow and Capability Broker consumption",
+      "android_owner": "Rust Host turn-frozen Auto Review preflight over AndroidHostInferenceProvider; durable pending/manual approval remains single-owned by CapabilityBroker/approval registry",
+      "platform_delta": "Android does not instantiate Desktop AutoReviewService as a second pending-approval owner. It freezes account-scoped durable instructions plus experiment/mode at turn start, runs real reviewer inference before each eligible local/remote side effect, and translates Block/Reject into the existing account/device/epoch-fenced Capability Broker approval owner. Shadow observes but allows; Off bypasses review.",
+      "implementation_status": "implemented",
+      "production_wiring": "Implemented through AndroidJsonHost turn construction: durable Auto Review snapshot + experiment/local override -> resolve_sand_auto_review_modes -> RemoteAutoReviewPreflight closures on local Write and Remote Shell/Write/ExternalShell/Computer/Screenshot/CloudAgent/browser_* -> AndroidHostInferenceProvider::run_auto_review_target before dispatch. Enforce Block/Reject becomes RequireApproval in the existing local/remote approval registry; Shadow allows after classification. Capability Broker remains the sole grant/TTL/stale/account/device fence and side-effect dispatch boundary; no duplicate AutoReview pending store is introduced.",
+      "unit_test": "source/host/tests/sand_auto_review_contract.rs plus local_routed_tools/remote_routed_tools focused tests cover modes, expiry/fingerprints, classification and reject-before-side-effect.",
+      "contract_test": "source/host/tests/auto_review_gate_contract.rs asserts shipping Android Host freezes rules/mode before routed side effects and installs the real inference preflight. Exact-head CI after this ledger change is required.",
+      "integration_test": "Shipping turn tool path is production-wired; final signed package/device approval-card/reconnect/account-switch acceptance remains required.",
       "packaged_test": "required on final APK/AAB",
       "device_test": "required for smart/manual approval behavior, account switch and process-death recovery",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Keep fail-closed: absence/failure of auto-review must never turn into automatic approval. 3cf4a3d7fc2e9c770e88e001dafe37293a0f9b2f re-audit corrected the stale blanket 'no auto-review source' claim: controller/classifier/service source exists, but production composition is still missing. Six newly reviewed source rows remain mapped, not implemented.",
+      "notes": "Keep fail-closed: absence/failure of auto-review must never turn into automatic approval. 3cf4a3d7fc2e9c770e88e001dafe37293a0f9b2f re-audit corrected the stale blanket 'no auto-review source' claim: controller/classifier/service source exists, but production composition is still missing. Six newly reviewed source rows remain mapped, not implemented. e1b941f7e7eb2bd48d2943ea3a8cca8bb90b5928 production re-audit: Android uses a deliberate stateless reviewer preflight + existing CapabilityBroker approval owner rather than Desktop AutoReviewService pending state. Responsibility is implemented but remains not-verified until current/final exact-head CI and package/device evidence.",
       "desktop_sources": [
         {
           "path": "source/host/src/runner/auto_review_gate.rs",
@@ -17160,6 +17164,20 @@
           "blob_sha": "d7a4221a18c0a9f88f664bd54cac7987561d9c48",
           "symbols": [
             "Sand Auto Review controller/classifier/tool-family decision responsibility"
+          ]
+        },
+        {
+          "path": "source/host/tests/auto_review_gate_contract.rs",
+          "blob_sha": "b8d9fd2e9a21c74b84fdebcd03f4296ca1d9be4b",
+          "symbols": [
+            "Auto Review production/focused contract"
+          ]
+        },
+        {
+          "path": "source/host/tests/sand_auto_review_contract.rs",
+          "blob_sha": "00faed593b5f6df164bad1b5b85054e59edd5786",
+          "symbols": [
+            "Auto Review production/focused contract"
           ]
         }
       ]
