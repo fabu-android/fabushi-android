@@ -1,4 +1,8 @@
 use crate::extensions::content_search::android_search_index::AndroidContentSearchIndex;
+use crate::extensions::cloud_agents::cloud_agent_poll_loop::{
+    cloud_agent_rate_limit_pause_ms, parse_rate_limit_retry_after_ms,
+    CLOUD_AGENT_MAX_WAIT_MS, CLOUD_AGENT_POLL_INTERVAL_MS,
+};
 use crate::extensions::source_map::source_map_service::{SandSourceMap, SandSourceMode};
 use crate::extensions::experiments::{select_sand_experiment_turn_model, HostExperimentsExtension, StopGateSubscription};
 use crate::edge_failures::EdgeFailureBuffer;
@@ -2546,7 +2550,15 @@ impl AndroidJsonHost {
         let cloud_await_runner = Arc::clone(&remote_runner);
         let cloud_await_work = Arc::clone(&remote_background_work);
         let cloud_await = Arc::new(move |work_id: &str, _after_followup: bool| -> CloudAgentWatchOutcome {
+            let started_at_ms = now_ms();
+            let mut rate_limit_attempt = 0_u64;
             loop {
+                if now_ms().saturating_sub(started_at_ms) >= CLOUD_AGENT_MAX_WAIT_MS {
+                    return CloudAgentWatchOutcome {
+                        status: "error".into(),
+                        text: format!("CloudAgent {work_id} is still running after the bounded watch window; the durable operation was not replayed."),
+                    };
+                }
                 let Some(record) = cloud_await_work
                     .lock()
                     .ok()
@@ -2571,7 +2583,7 @@ impl AndroidJsonHost {
                 }
                 let binding = cloud_await_binding.lock().ok().and_then(|value| value.clone());
                 let Some(binding) = binding else {
-                    std::thread::sleep(Duration::from_millis(SHELL_REWATCH_POLL_DEFAULT_MS));
+                    std::thread::sleep(Duration::from_millis(CLOUD_AGENT_POLL_INTERVAL_MS));
                     continue;
                 };
                 if binding.account_fence != record.account_fence
@@ -2580,7 +2592,7 @@ impl AndroidJsonHost {
                     || !binding.supports("cloud-agent")
                     || binding.active_at(now_ms()).is_err()
                 {
-                    std::thread::sleep(Duration::from_millis(SHELL_REWATCH_POLL_DEFAULT_MS));
+                    std::thread::sleep(Duration::from_millis(CLOUD_AGENT_POLL_INTERVAL_MS));
                     continue;
                 }
                 let context = match binding.context(
@@ -2590,7 +2602,7 @@ impl AndroidJsonHost {
                 ) {
                     Ok(context) => context,
                     Err(_) => {
-                        std::thread::sleep(Duration::from_millis(SHELL_REWATCH_POLL_DEFAULT_MS));
+                        std::thread::sleep(Duration::from_millis(CLOUD_AGENT_POLL_INTERVAL_MS));
                         continue;
                     }
                 };
@@ -2598,13 +2610,13 @@ impl AndroidJsonHost {
                     let mut guard = match cloud_await_runner.lock() {
                         Ok(guard) => guard,
                         Err(_) => {
-                            std::thread::sleep(Duration::from_millis(SHELL_REWATCH_POLL_DEFAULT_MS));
+                            std::thread::sleep(Duration::from_millis(CLOUD_AGENT_POLL_INTERVAL_MS));
                             continue;
                         }
                     };
                     let Some(runner) = guard.as_mut() else {
                         drop(guard);
-                        std::thread::sleep(Duration::from_millis(SHELL_REWATCH_POLL_DEFAULT_MS));
+                        std::thread::sleep(Duration::from_millis(CLOUD_AGENT_POLL_INTERVAL_MS));
                         continue;
                     };
                     runner.reconcile_authorized(&context, now_ms())
@@ -2622,10 +2634,30 @@ impl AndroidJsonHost {
                         };
                     }
                     Err(ExecutionError::Transport(message))
+                        if message.contains("cloud_agent_rate_limited") =>
+                    {
+                        let retry_after_ms = parse_rate_limit_retry_after_ms(&message);
+                        let identity = format!(
+                            "{}:{}:{}:{}:{}",
+                            record.account_fence,
+                            record.account_epoch,
+                            record.device_id,
+                            record.operation_id,
+                            record.request_id,
+                        );
+                        let delay = cloud_agent_rate_limit_pause_ms(
+                            retry_after_ms,
+                            &identity,
+                            rate_limit_attempt,
+                        );
+                        rate_limit_attempt = rate_limit_attempt.saturating_add(1);
+                        std::thread::sleep(Duration::from_millis(delay));
+                    }
+                    Err(ExecutionError::Transport(message))
                         if message.contains("remote_execution_accepted_pending")
                             || message.contains("remote_outcome_unknown_reconcile_pending") =>
                     {
-                        std::thread::sleep(Duration::from_millis(SHELL_REWATCH_POLL_DEFAULT_MS));
+                        std::thread::sleep(Duration::from_millis(CLOUD_AGENT_POLL_INTERVAL_MS));
                     }
                     Err(ExecutionError::Transport(message))
                         if message.contains("remote_execution_rejected")
@@ -2636,7 +2668,7 @@ impl AndroidJsonHost {
                     Err(_) => {
                         // Transient observation failure does not prove the launched CloudAgent
                         // failed; keep reconciling the exact authorized operation.
-                        std::thread::sleep(Duration::from_millis(SHELL_REWATCH_POLL_DEFAULT_MS));
+                        std::thread::sleep(Duration::from_millis(CLOUD_AGENT_POLL_INTERVAL_MS));
                     }
                 }
             }
